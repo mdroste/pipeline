@@ -364,13 +364,10 @@ fn load_object(
 ) -> WorkbenchResult<Option<(Value, String)>> {
     let conn = store.connection()?;
     Ok(match kind {
-        "note" => {
-            let notes = research::list_notes(store, ws, true)?;
-            notes.into_iter().find(|n| n.id == id).map(|n| {
-                let title = n.body.chars().take(80).collect::<String>();
-                (serde_json::to_value(n).unwrap_or(Value::Null), title)
-            })
-        }
+        "note" => research::note(store, ws, id)?.map(|n| {
+            let title = n.body.chars().take(80).collect::<String>();
+            (serde_json::to_value(n).unwrap_or(Value::Null), title)
+        }),
         "paper" => {
             let papers = research::list_papers(store, ws)?;
             let Some(p) = papers.into_iter().find(|p| p.paper.id == id) else {
@@ -502,8 +499,7 @@ fn load_object(
             Some((v, title))
         }
         "claim" => {
-            let ledger = research::research_ledger(store, ws)?;
-            let Some(c) = ledger.claims.into_iter().find(|c| c.id == id) else {
+            let Some(c) = research::claim(store, ws, id)? else {
                 return Ok(None);
             };
             let mut stmt = conn.prepare("SELECT id,version,claim_text,kind,origin,paper_locator_json,dependency_hash,created_at FROM claim_versions WHERE claim_id=?1 ORDER BY version").map_err(err)?;
@@ -521,8 +517,7 @@ fn load_object(
             Some((v, title))
         }
         "evidence" => {
-            let ledger = research::research_ledger(store, ws)?;
-            let Some(e) = ledger.evidence.into_iter().find(|e| e.id == id) else {
+            let Some(e) = research::evidence(store, ws, id)? else {
                 return Ok(None);
             };
             let mut stmt = conn.prepare("SELECT id,method,checker_identity,input_hashes_json,observed_result_json,limitations,passed,created_at FROM verification_records WHERE evidence_link_id=?1 ORDER BY created_at").map_err(err)?;
@@ -1373,12 +1368,16 @@ fn local_object(store: &Store, kind: &str, id: &str) -> WorkbenchResult<Option<L
         external: Vec::new(),
         limitations: BTreeSet::new(),
     };
-    Ok(
-        load_object(store, &ws, &ix, kind, id, &mut scratch)?.map(|(value, _)| LocalObject {
-            workspace_id: ws,
-            value,
-        }),
-    )
+    // The row exists: it is never "new". A value that cannot be loaded (a
+    // retired object, a kind beyond its list view) compares as a conflict
+    // rather than letting the import INSERT onto its primary key.
+    let value = load_object(store, &ws, &ix, kind, id, &mut scratch)?
+        .map(|(value, _)| value)
+        .unwrap_or(Value::Null);
+    Ok(Some(LocalObject {
+        workspace_id: ws,
+        value,
+    }))
 }
 fn derived_id(namespace: &str, id: &str) -> String {
     let prefix = id.split('_').next().unwrap_or("obj");

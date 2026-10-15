@@ -337,6 +337,40 @@ pub fn confirm_evidence(
     get_evidence(store, &workspace_id, &request.evidence_id)
 }
 
+/// One claim by id, including retired ones (exchange export and planning).
+pub(crate) fn claim(
+    store: &Store,
+    workspace_id: &str,
+    id: &str,
+) -> WorkbenchResult<Option<ClaimRecord>> {
+    validate_id("workspace id", workspace_id)?;
+    open_connection(store)?
+        .query_row(
+            "SELECT c.id, c.workspace_id, c.paper_id, c.workflow_state, v.id, v.version, v.claim_text, v.kind, v.origin, v.paper_locator_json, v.dependency_hash, c.created_at, c.updated_at FROM claims c JOIN claim_versions v ON v.id = c.current_version_id WHERE c.id = ?1 AND c.workspace_id = ?2",
+            params![id, workspace_id],
+            claim_from_row,
+        )
+        .optional()
+        .map_err(|error| WorkbenchError::storage("Failed to read claim", error))
+}
+
+/// One evidence link by id, regardless of list limits (exchange export).
+pub(crate) fn evidence(
+    store: &Store,
+    workspace_id: &str,
+    id: &str,
+) -> WorkbenchResult<Option<EvidenceRecord>> {
+    validate_id("workspace id", workspace_id)?;
+    open_connection(store)?
+        .query_row(
+            "SELECT id, workspace_id, claim_version_id, target_type, target_id, locator_json, relation, assessment, assessor, dependency_hash, freshness, stale_reason, created_at, updated_at FROM evidence_links WHERE id = ?1 AND workspace_id = ?2",
+            params![id, workspace_id],
+            evidence_from_row,
+        )
+        .optional()
+        .map_err(|error| WorkbenchError::storage("Failed to read evidence link", error))
+}
+
 pub fn research_ledger(store: &Store, workspace_id: &str) -> WorkbenchResult<ResearchLedger> {
     validate_id("workspace id", workspace_id)?;
     let connection = open_connection(store)?;

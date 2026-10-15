@@ -444,3 +444,90 @@ fn reimporting_a_ledger_package_is_identical_not_conflicting() {
         .unwrap()
         .is_empty());
 }
+
+#[test]
+fn retired_claims_and_large_note_sets_survive_export_and_reimport() {
+    let (temp, store, ws, root) = fixture();
+    populate(&store, &ws, &root);
+    for index in 0..520 {
+        research::create_note(
+            &store,
+            CreateNoteRequest {
+                workspace_id: ws.clone(),
+                paper_id: None,
+                kind: "decision".into(),
+                body: format!("Observation {index}"),
+                state: None,
+                origin: "user".into(),
+                pinned: false,
+                operation_id: format!("bulk-note-{index}"),
+            },
+            false,
+        )
+        .unwrap();
+    }
+    let claim = research::propose_claim(
+        &store,
+        research::ProposeClaimRequest {
+            workspace_id: ws.clone(),
+            paper_id: None,
+            claim: "Welfare rises with trade".into(),
+            kind: "empirical".into(),
+            origin: "user".into(),
+            operation_id: "claim-bulk".into(),
+        },
+        false,
+    )
+    .unwrap();
+    let selection = ExchangeSelection {
+        include_ledger: true,
+        ..selection()
+    };
+    // Every selected object is packaged, not only the first page of a list view.
+    let preview = preview_exchange(&store, &ws, &selection).unwrap();
+    assert!(
+        preview.external_references.is_empty(),
+        "{:?}",
+        preview.external_references
+    );
+    assert_eq!(
+        preview.objects.iter().filter(|o| o.kind == "note").count(),
+        521
+    );
+    let path = temp.path().join("bulk.pwex");
+    export_exchange(
+        &store,
+        ExportExchangeRequest {
+            workspace_id: ws.clone(),
+            path: path.to_string_lossy().into_owned(),
+            selection,
+        },
+    )
+    .unwrap();
+    research::set_claim_state(
+        &store,
+        research::SetClaimStateRequest {
+            claim_id: claim.id.clone(),
+            state: "retired".into(),
+            operation_id: "retire".into(),
+        },
+    )
+    .unwrap();
+    // Re-importing into the same Workspace records a conflict for the retired
+    // claim instead of aborting on its primary key.
+    let report = import_exchange(
+        &store,
+        ImportExchangeRequest {
+            path: path.to_string_lossy().into_owned(),
+            target: ExchangeTarget::ExistingWorkspace {
+                workspace_id: ws.clone(),
+            },
+            operation_id: "reimport-retired".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(report.conflicts, 1);
+    let conflicts = list_conflicts(&store, &ws).unwrap();
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].object_kind, "claim");
+}
