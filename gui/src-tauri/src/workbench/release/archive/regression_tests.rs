@@ -34,7 +34,7 @@ fn import(store: &Store, path: &Path) -> WorkbenchResult<ArchiveReport> {
         },
     )
 }
-fn replace_entry(path: &Path, target: &str, replacement: &[u8]) {
+fn rewrite_entries(path: &Path, mut rewrite: impl FnMut(&str, Vec<u8>) -> Vec<u8>) {
     let mut archive = zip::ZipArchive::new(File::open(path).unwrap()).unwrap();
     let mut entries = Vec::new();
     for i in 0..archive.len() {
@@ -47,10 +47,72 @@ fn replace_entry(path: &Path, target: &str, replacement: &[u8]) {
     let mut zip = zip::ZipWriter::new(File::create(path).unwrap());
     for (name, bytes) in entries {
         zip.start_file(&name, SimpleFileOptions::default()).unwrap();
-        zip.write_all(if name == target { replacement } else { &bytes })
-            .unwrap();
+        zip.write_all(&rewrite(&name, bytes)).unwrap();
     }
     zip.finish().unwrap();
+}
+fn replace_entry(path: &Path, target: &str, replacement: &[u8]) {
+    rewrite_entries(path, |name, bytes| {
+        if name == target {
+            replacement.to_vec()
+        } else {
+            bytes
+        }
+    });
+}
+/// Patch the uncompressed size both headers declare for `name`, leaving the
+/// deflate stream (and its CRC) intact: the shape of a decompression bomb.
+fn declare_uncompressed_size(path: &Path, name: &str, size: u32) {
+    let mut bytes = fs::read(path).unwrap();
+    let mut patched = 0;
+    for (signature, size_offset, name_offset) in [
+        (0x0403_4b50u32, 22usize, 30usize),
+        (0x0201_4b50u32, 24usize, 46usize),
+    ] {
+        let mut at = 0;
+        while at + name_offset + name.len() <= bytes.len() {
+            if u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) == signature
+                && &bytes[at + name_offset..at + name_offset + name.len()] == name.as_bytes()
+            {
+                bytes[at + size_offset..at + size_offset + 4].copy_from_slice(&size.to_le_bytes());
+                patched += 1;
+            }
+            at += 1;
+        }
+    }
+    assert_eq!(patched, 2, "both zip headers for {name} must be patched");
+    fs::write(path, bytes).unwrap();
+}
+#[test]
+fn lying_entry_sizes_are_rejected_before_the_stream_is_expanded() {
+    let output = tempfile::tempdir().unwrap();
+    let path = output.path().join("bomb.pwrx");
+    let mut zip = zip::ZipWriter::new(File::create(&path).unwrap());
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    zip.start_file("manifest.json", options).unwrap();
+    let mut body = br#"{"format":""#.to_vec();
+    body.resize(16 * 1024 * 1024, b'a');
+    body.extend_from_slice(br#""}"#);
+    zip.write_all(&body).unwrap();
+    zip.start_file("database/research.sqlite3", options)
+        .unwrap();
+    zip.write_all(b"not a database").unwrap();
+    zip.finish().unwrap();
+    declare_uncompressed_size(&path, "manifest.json", 1024);
+
+    let request = ExportArchiveRequest {
+        path: path.to_string_lossy().into(),
+    };
+    let error = inspect_archive(request).unwrap_err();
+    assert!(error.message.contains("exceeds 4 MiB"), "{}", error.message);
+    let empty = tempfile::tempdir().unwrap();
+    let store = Store::open_at(empty.path()).unwrap();
+    let error = import(&store, &path).unwrap_err();
+    assert!(
+        error.message.contains("size does not match"),
+        "{}",
+        error.message
+    );
 }
 #[test]
 fn restore_reconciles_unfinished_turns_and_discards_foreign_trash_authority() {

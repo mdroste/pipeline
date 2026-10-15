@@ -1122,7 +1122,15 @@ fn extract(path: &str) -> WorkbenchResult<Extracted> {
             fs::create_dir_all(parent).map_err(err)?;
         }
         let mut output = File::create(&destination).map_err(err)?;
-        std::io::copy(&mut entry, &mut output).map_err(err)?;
+        // Bound the decompressed stream by the declared size; see archive.rs.
+        let declared = entry.size();
+        let copied =
+            std::io::copy(&mut (&mut entry).take(declared + 1), &mut output).map_err(err)?;
+        if copied != declared {
+            return Err(WorkbenchError::invalid(
+                "Package entry size does not match its header",
+            ));
+        }
     }
     let manifest: ExchangeManifest = serde_json::from_reader(
         File::open(temp.path().join("manifest.json"))

@@ -18,6 +18,7 @@ const ARCHIVE_FORMAT_VERSION: u32 = 2;
 const MAX_ARCHIVE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 20_000;
 const MAX_ENTRY_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_MANIFEST_BYTES: u64 = 4 * 1024 * 1024;
 
 fn validate_absolute_file(path: &str, extension: &str) -> WorkbenchResult<PathBuf> {
     let path = PathBuf::from(path);
@@ -161,7 +162,7 @@ pub fn inspect_archive(request: ExportArchiveRequest) -> WorkbenchResult<Archive
             ));
         }
         if name == "manifest.json" {
-            if entry.size() > 4 * 1024 * 1024 {
+            if entry.size() > MAX_MANIFEST_BYTES {
                 return Err(WorkbenchError::invalid("Archive manifest exceeds 4 MiB"));
             }
             manifest_index = Some(index);
@@ -169,10 +170,18 @@ pub fn inspect_archive(request: ExportArchiveRequest) -> WorkbenchResult<Archive
     }
     let index =
         manifest_index.ok_or_else(|| WorkbenchError::invalid("Archive manifest is missing"))?;
-    let manifest: ArchiveManifest =
-        serde_json::from_reader(archive.by_index(index).map_err(|error| {
-            WorkbenchError::invalid(format!("Invalid archive manifest: {error}"))
-        })?)
+    // The declared size is untrusted: bound the decompressed stream itself.
+    let mut raw = Vec::new();
+    archive
+        .by_index(index)
+        .map_err(|error| WorkbenchError::invalid(format!("Invalid archive manifest: {error}")))?
+        .take(MAX_MANIFEST_BYTES + 1)
+        .read_to_end(&mut raw)
+        .map_err(|error| WorkbenchError::storage("Failed to read archive manifest", error))?;
+    if raw.len() as u64 > MAX_MANIFEST_BYTES {
+        return Err(WorkbenchError::invalid("Archive manifest exceeds 4 MiB"));
+    }
+    let manifest: ArchiveManifest = serde_json::from_slice(&raw)
         .map_err(|error| WorkbenchError::invalid(format!("Invalid archive manifest: {error}")))?;
     validate_manifest(&manifest)?;
     Ok(ArchiveInspection {
@@ -710,7 +719,7 @@ pub fn import_archive(
                 "Archive contains duplicate entry names",
             ));
         }
-        if name == "manifest.json" && entry.size() > 4 * 1024 * 1024 {
+        if name == "manifest.json" && entry.size() > MAX_MANIFEST_BYTES {
             return Err(WorkbenchError::invalid("Archive manifest exceeds 4 MiB"));
         }
         if entry.size() > MAX_ENTRY_BYTES {
@@ -730,9 +739,19 @@ pub fn import_archive(
         }
         let mut output = File::create(&destination)
             .map_err(|error| WorkbenchError::storage("Failed to create import file", error))?;
-        std::io::copy(&mut entry, &mut output).map_err(|error| {
-            WorkbenchError::storage("Failed to extract research archive", error)
-        })?;
+        // Deflate streams are bounded only by their compressed size; cap the
+        // copy at the declared size (+1 so an honest entry still reaches EOF
+        // and its CRC check) and refuse entries whose header lies.
+        let declared = entry.size();
+        let copied =
+            std::io::copy(&mut (&mut entry).take(declared + 1), &mut output).map_err(|error| {
+                WorkbenchError::storage("Failed to extract research archive", error)
+            })?;
+        if copied != declared {
+            return Err(WorkbenchError::invalid(
+                "Archive entry size does not match its header",
+            ));
+        }
     }
     let manifest: ArchiveManifest = serde_json::from_reader(
         File::open(temporary.path().join("manifest.json"))
