@@ -28,6 +28,11 @@ fn editor_root(store: &Store, ws: &str, checkpoint: Option<&str>) -> WorkbenchRe
 }
 fn editable(path: &str) -> WorkbenchResult<()> {
     files::relative(path)?;
+    if ignored(path, &[]) {
+        return Err(WorkbenchError::invalid(
+            "Files in excluded build or cache folders cannot be edited here",
+        ));
+    }
     if !super::super::file_workspace::editable_source(path) {
         return Err(WorkbenchError::invalid(
             "Choose a supported UTF-8 source or text file",

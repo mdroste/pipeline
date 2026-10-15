@@ -244,6 +244,11 @@ pub(super) fn checkpoint(
     let mut total = 0;
     for path in paths {
         files::relative(&path)?;
+        if ignored(&path, &[]) {
+            return Err(WorkbenchError::invalid(
+                "This path is inside a build, cache or dependency folder that task capture excludes; choose another file",
+            ));
+        }
         if base.contains_key(&path) {
             return Err(WorkbenchError::invalid("Duplicate task path"));
         }
@@ -401,6 +406,20 @@ pub(super) fn capture_changes(
         let bytes = reader.read(&f.path)?;
         f.hash = Some(blob(store, ws, &bytes, checkpoint_id)?);
         proposed.insert(f.path.clone(), f);
+    }
+    // A captured base file that inventory skips (an ignored folder) must
+    // never read as deleted merely because it was skipped: re-read it from
+    // the task copy so acceptance cannot unlink the original.
+    for (path, entry) in &c.base {
+        if proposed.contains_key(path) || !ignored(path, &[]) {
+            continue;
+        }
+        if let Ok(bytes) = reader.read(path) {
+            let mut f = entry.clone();
+            f.size = bytes.len() as u64;
+            f.hash = Some(blob(store, ws, &bytes, checkpoint_id)?);
+            proposed.insert(path.clone(), f);
+        }
     }
     c.proposed = proposed;
     c.state = "review".into();
