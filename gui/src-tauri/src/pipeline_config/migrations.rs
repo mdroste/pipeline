@@ -1,6 +1,22 @@
 use super::*;
 
 /// Apply catalog changes to profiles created by older Pipeline releases.
+/// A built-in that fails current validation is left alone (and logged), as
+/// load_profile already skips it; failing the whole catalog here would block
+/// every launch and every run until the user repairs the file by hand.
+fn validated_for_migration(path: &Path, profile: &ProfileData, migration: &str) -> bool {
+    match validate_profile_data(profile) {
+        Ok(()) => true,
+        Err(error) => {
+            eprintln!(
+                "WARNING: left '{}' unchanged by the {migration} migration: {error}",
+                path.display()
+            );
+            false
+        }
+    }
+}
+
 pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
     let marker = profiles.join(".builtin-catalog-v3");
     if !marker.exists() {
@@ -177,7 +193,9 @@ pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
                 &profile.extraction.input_mode,
                 builtin_primary_readers(id),
             );
-            validate_profile_data(&profile)?;
+            if !validated_for_migration(&path, &profile, "artifact-flow") {
+                continue;
+            }
             let json = serde_json::to_string_pretty(&profile)
                 .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
             restore_profile_bytes(&path, json.as_bytes())
@@ -212,7 +230,9 @@ pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
             let mut profile: ProfileData = serde_json::from_str(&content)
                 .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
             if migrate_shipped_prompt_defaults(&mut profile) {
-                validate_profile_data(&profile)?;
+                if !validated_for_migration(&path, &profile, "shipped-prompt") {
+                    continue;
+                }
                 let json = serde_json::to_string_pretty(&profile).map_err(|error| {
                     format!("Failed to serialize '{}': {error}", path.display())
                 })?;
@@ -244,7 +264,9 @@ pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
             let mut profile: ProfileData = serde_json::from_str(&content)
                 .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
             if migrate_efficient_retrieval_defaults(&mut profile) {
-                validate_profile_data(&profile)?;
+                if !validated_for_migration(&path, &profile, "efficient-retrieval") {
+                    continue;
+                }
                 let json = serde_json::to_string_pretty(&profile).map_err(|error| {
                     format!("Failed to serialize '{}': {error}", path.display())
                 })?;
@@ -280,7 +302,9 @@ pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
             let mut profile: ProfileData = serde_json::from_str(&content)
                 .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
             if migrate_review_quality_prompt_defaults(&mut profile) {
-                validate_profile_data(&profile)?;
+                if !validated_for_migration(&path, &profile, "review-quality-prompt") {
+                    continue;
+                }
                 let json = serde_json::to_string_pretty(&profile).map_err(|error| {
                     format!("Failed to serialize '{}': {error}", path.display())
                 })?;
@@ -314,8 +338,9 @@ pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
                 .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
             let mut profile: ProfileData = serde_json::from_str(&content)
                 .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
-            validate_profile_data(&profile)?;
-            if matches_prior_stock_full_review(&profile)? {
+            if validated_for_migration(&path, &profile, "context-cache")
+                && matches_prior_stock_full_review(&profile)?
+            {
                 profile.context_cache.enabled = true;
                 let json = serde_json::to_string_pretty(&profile).map_err(|error| {
                     format!("Failed to serialize '{}': {error}", path.display())
@@ -346,7 +371,7 @@ pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
 /// is not a no-op when replayed against current profiles — it would undo
 /// auto_review_profile()'s deliberately narrowed auto_validate context.
 /// Keep this list in sync when adding a migration marker.
-const CATALOG_MIGRATION_MARKERS: &[&str] = &[
+pub(super) const CATALOG_MIGRATION_MARKERS: &[&str] = &[
     ".builtin-catalog-v3",
     ".builtin-catalog-v4",
     ".builtin-catalog-v6",
@@ -490,7 +515,9 @@ pub(super) fn refresh_builtin_auto_review_contracts(profiles: &Path) -> Result<(
 
         profile.orientation_prompt = replacement.orientation_prompt;
         profile.orientation_schema = replacement.orientation_schema;
-        validate_profile_data(&profile)?;
+        if !validated_for_migration(&path, &profile, "structured-contract") {
+            continue;
+        }
         let json = serde_json::to_string_pretty(&profile)
             .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
         restore_profile_bytes(&path, json.as_bytes())
@@ -521,7 +548,9 @@ pub(super) fn compact_builtin_auto_review_prompts(profiles: &Path) -> Result<(),
             continue;
         }
         profile.orientation_prompt = template.clone();
-        validate_profile_data(&profile)?;
+        if !validated_for_migration(&path, &profile, "compact-prompt") {
+            continue;
+        }
         let json = serde_json::to_string_pretty(&profile)
             .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
         restore_profile_bytes(&path, json.as_bytes())
@@ -588,8 +617,7 @@ pub(super) fn refresh_parsimonious_prompt_defaults(profiles: &Path) -> Result<()
                 }
             }
         }
-        if changed {
-            validate_profile_data(&profile)?;
+        if changed && validated_for_migration(&path, &profile, "prompt-parsimony") {
             let json = serde_json::to_string_pretty(&profile)
                 .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
             restore_profile_bytes(&path, json.as_bytes())
@@ -630,8 +658,7 @@ pub(super) fn refresh_parsimonious_prompt_defaults(profiles: &Path) -> Result<()
                 }
             }
         }
-        if changed {
-            validate_profile_data(&profile)?;
+        if changed && validated_for_migration(&path, &profile, "prompt-parsimony") {
             let json = serde_json::to_string_pretty(&profile)
                 .map_err(|error| format!("Failed to serialize '{}': {error}", path.display()))?;
             restore_profile_bytes(&path, json.as_bytes())

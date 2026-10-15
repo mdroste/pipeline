@@ -1020,6 +1020,7 @@ use builtins::default_steps;
 use migrations::{
     archive_retired_profile, compact_builtin_auto_review_prompts, migrate_builtin_catalog,
     migrate_review_quality_prompt_defaults, prompt_digest, refresh_builtin_auto_review_contracts,
+    CATALOG_MIGRATION_MARKERS,
 };
 #[cfg(test)]
 use profiles::{

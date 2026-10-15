@@ -449,3 +449,33 @@ fn expanded_builtin_auto_review_prompt_is_compacted_without_touching_custom_prom
     assert_eq!(compacted.orientation_prompt, template);
     assert_eq!(fs::read(custom_path).unwrap(), custom_bytes);
 }
+
+fn mark_all_catalog_migrations_except(dir: &Path, skipped: &str) {
+    for marker in CATALOG_MIGRATION_MARKERS {
+        if *marker != skipped {
+            fs::write(dir.join(marker), b"recorded\n").unwrap();
+        }
+    }
+}
+
+#[test]
+fn a_builtin_that_fails_current_validation_does_not_block_the_catalog() {
+    let dir = tempfile::tempdir().unwrap();
+    mark_all_catalog_migrations_except(dir.path(), ".builtin-catalog-v6");
+    // A 0.9.x-era edit that current rules reject: an undeclared variable.
+    let mut profile = auto_review_profile();
+    profile.steps[0]
+        .prompt
+        .push_str("\nUse the {var:journal} house style.");
+    assert!(validate_profile_data(&profile)
+        .unwrap_err()
+        .contains("undeclared variable"));
+    let path = dir.path().join("auto-review.json");
+    let original = serde_json::to_vec_pretty(&profile).unwrap();
+    fs::write(&path, &original).unwrap();
+
+    migrate_builtin_catalog(dir.path()).unwrap();
+
+    assert!(dir.path().join(".builtin-catalog-v6").exists());
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
