@@ -1009,7 +1009,7 @@ use builtins::{
     V15_RETIRED_BUILTIN_PROFILES, V9_RETIRED_BUILTIN_PROFILES,
 };
 use migrations::ensure_migrated;
-use persistence::save_profile_unlocked;
+use persistence::{save_profile_unlocked, save_profile_unlocked_at};
 use profiles::restore_profile_bytes;
 use storage::{profile_path, profiles_dir, validate_profile_id};
 use validation::{validate_profile_data, validate_profile_steps};
@@ -1024,7 +1024,8 @@ use migrations::{
 };
 #[cfg(test)]
 use profiles::{
-    delete_profile_file_transactionally, duplicate_profile_data, validate_bundle_profiles,
+    delete_profile_file_transactionally, duplicate_profile_data, reset_defaults_at,
+    validate_bundle_profiles,
 };
 #[cfg(test)]
 use validation::validate_run_conditions;

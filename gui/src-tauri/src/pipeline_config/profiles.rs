@@ -19,14 +19,34 @@ pub fn save_for(profile_id: &str, config: &PipelineConfig) -> Result<(), String>
 
 /// Reset active profile to defaults: the matching stock definition for a
 /// built-in, otherwise the default Automatic Paper Review (Full) pipeline.
-pub fn reset_defaults() -> PipelineConfig {
-    let d = match get_active_profile_id().as_str() {
-        "auto-review-quick" => quick_auto_review_profile().into(),
-        "grant-review" => grant_review_profile().into(),
-        _ => defaults(),
+/// The stock definition is written without re-reading the existing file, so
+/// a profile that no longer passes validation can still be reset.
+pub fn reset_defaults() -> Result<PipelineConfig, String> {
+    let _ = ensure_migrated();
+    let id = get_active_profile_id();
+    let _lock = lock_profile_mutations()?;
+    reset_defaults_at(&profiles_dir()?, &id)
+}
+
+pub(super) fn reset_defaults_at(profiles: &Path, id: &str) -> Result<PipelineConfig, String> {
+    validate_profile_id(id)?;
+    let path = profiles.join(format!("{id}.json"));
+    let stock: ProfileData = match id {
+        "auto-review" => auto_review_profile(),
+        "auto-review-quick" => quick_auto_review_profile(),
+        "grant-review" => grant_review_profile(),
+        _ => {
+            // Keep the custom profile's display name, read leniently.
+            let name = read_profile_file(&path)
+                .ok()
+                .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+                .and_then(|value| value.get("name")?.as_str().map(str::to_string))
+                .unwrap_or_else(|| id.to_string());
+            ProfileData::from_config(name, &defaults())
+        }
     };
-    let _ = save(&d);
-    d
+    save_profile_unlocked_at(&path, &stock)?;
+    Ok(stock.into())
 }
 
 // ── Profile management ──────────────────────────────────────────────

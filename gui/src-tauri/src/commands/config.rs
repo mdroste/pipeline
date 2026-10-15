@@ -486,7 +486,7 @@ pub async fn preview_provider_schema(
 
 #[tauri::command]
 pub async fn reset_pipeline_config() -> Result<PipelineConfig, String> {
-    Ok(pipeline_config::reset_defaults())
+    pipeline_config::reset_defaults()
 }
 
 // --- Profiles ---

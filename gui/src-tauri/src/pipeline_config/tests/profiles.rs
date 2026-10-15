@@ -403,3 +403,33 @@ fn fresh_installs_record_every_catalog_marker() {
     assert!(dir.path().join(".compact-auto-review-prompt-v1").exists());
     assert!(dir.path().join(".prompt-parsimony-v1").exists());
 }
+
+#[test]
+fn reset_writes_the_stock_definition_even_when_the_file_is_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut broken = auto_review_profile();
+    broken.steps[0].prompt.push_str("\nSee {var:topic}.");
+    assert!(validate_profile_data(&broken).is_err());
+    let path = dir.path().join("auto-review.json");
+    fs::write(&path, serde_json::to_vec_pretty(&broken).unwrap()).unwrap();
+
+    let reset = reset_defaults_at(dir.path(), "auto-review").unwrap();
+    let on_disk: ProfileData = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert!(validate_profile_data(&on_disk).is_ok());
+    assert_eq!(
+        serde_json::to_value(&on_disk).unwrap(),
+        serde_json::to_value(auto_review_profile()).unwrap()
+    );
+    assert_eq!(reset.steps.len(), on_disk.steps.len());
+
+    // A custom profile keeps its name and gets the default pipeline.
+    fs::write(
+        dir.path().join("mine.json"),
+        br#"{"name":"My review","steps":"not a list"}"#,
+    )
+    .unwrap();
+    assert!(reset_defaults_at(dir.path(), "mine").is_ok());
+    let custom: ProfileData =
+        serde_json::from_slice(&fs::read(dir.path().join("mine.json")).unwrap()).unwrap();
+    assert_eq!(custom.name, "My review");
+}

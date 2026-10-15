@@ -31,7 +31,10 @@ pub(crate) fn load_profile(id: &str) -> Result<ProfileData, String> {
 }
 
 pub(super) fn save_profile_unlocked(id: &str, profile: &ProfileData) -> Result<(), String> {
-    let path = profile_path(id)?;
+    save_profile_unlocked_at(&profile_path(id)?, profile)
+}
+
+pub(super) fn save_profile_unlocked_at(path: &Path, profile: &ProfileData) -> Result<(), String> {
     validate_profile_data(profile)?;
     let json =
         serde_json::to_string_pretty(profile).map_err(|e| format!("Failed to serialize: {e}"))?;
