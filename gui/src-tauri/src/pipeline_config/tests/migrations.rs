@@ -479,3 +479,48 @@ fn a_builtin_that_fails_current_validation_does_not_block_the_catalog() {
     assert!(dir.path().join(".builtin-catalog-v6").exists());
     assert_eq!(fs::read(&path).unwrap(), original);
 }
+
+#[test]
+fn the_shipped_free_form_grant_suite_is_replaced_by_the_typed_suite() {
+    let dir = tempfile::tempdir().unwrap();
+    mark_all_catalog_migrations_except(dir.path(), ".structured-grant-review-contract-v2");
+    let current = grant_review_profile();
+    let legacy_steps = current
+        .steps
+        .iter()
+        .filter(|step| step.id != "grant_validate")
+        .map(|step| StepConfig {
+            output_schema: None,
+            ..step.clone()
+        })
+        .collect::<Vec<_>>();
+    let legacy = ProfileData::new(
+        "Grant Proposal Review",
+        legacy_steps,
+        MergeConfig::default(),
+    );
+    let path = dir.path().join("grant-review.json");
+    let original = serde_json::to_vec_pretty(&legacy).unwrap();
+    fs::write(&path, &original).unwrap();
+
+    migrate_builtin_catalog(dir.path()).unwrap();
+
+    let replaced: ProfileData = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let validate = replaced
+        .steps
+        .iter()
+        .find(|step| step.id == "grant_validate")
+        .expect("typed validation step installed");
+    assert_eq!(
+        validate.output_schema.as_ref().unwrap()[crate::pipeline::structured::SCHEMA_REFERENCE_KEY],
+        "findings-v2-validation"
+    );
+    assert_eq!(
+        fs::read(dir.path().join(".retired-builtins/grant-review.json")).unwrap(),
+        original
+    );
+    assert!(dir
+        .path()
+        .join(".structured-grant-review-contract-v2")
+        .exists());
+}

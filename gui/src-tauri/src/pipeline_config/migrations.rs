@@ -157,7 +157,7 @@ pub(super) fn migrate_builtin_catalog(profiles: &Path) -> Result<(), String> {
     // validation step. Preserve the old file in the retired-builtins archive,
     // then install the current definition. Profiles that merely reuse the
     // built-in id but do not have the grant-review skeleton are left alone.
-    let structured_grant_review_marker = profiles.join(".structured-grant-review-contract-v1");
+    let structured_grant_review_marker = profiles.join(".structured-grant-review-contract-v2");
     if !structured_grant_review_marker.exists() {
         refresh_stale_grant_review_suite(profiles)?;
         fs::write(
@@ -385,6 +385,7 @@ pub(super) const CATALOG_MIGRATION_MARKERS: &[&str] = &[
     ".compact-auto-review-prompt-v1",
     ".prompt-parsimony-v1",
     ".structured-grant-review-contract-v1",
+    ".structured-grant-review-contract-v2",
 ];
 
 /// Replace a legacy built-in Grant Review suite with its typed, validated
@@ -399,22 +400,21 @@ pub(super) fn refresh_stale_grant_review_suite(profiles: &Path) -> Result<(), St
         .map_err(|error| format!("Failed to read '{}': {error}", path.display()))?;
     let profile: ProfileData = serde_json::from_str(&content)
         .map_err(|error| format!("Failed to parse '{}': {error}", path.display()))?;
-    let has_legacy_skeleton = [
-        "grant_significance",
-        "grant_approach",
-        "grant_investigators",
-        "grant_clarity",
-        "grant_synthesis",
-    ]
-    .iter()
-    .all(|step_id| profile.steps.iter().any(|step| step.id == *step_id));
+    // The free-form suite that shipped (0.9.x: grant_aims, grant_feasibility,
+    // grant_clarity, grant_consistency, grant_synthesis) has a synthesis step
+    // and no typed validation step; the earlier key set never shipped.
+    let has_legacy_skeleton = profile
+        .steps
+        .iter()
+        .any(|step| step.id == "grant_synthesis")
+        && !profile.steps.iter().any(|step| step.id == "grant_validate");
     let is_current = profile.steps.iter().any(|step| step.id == "grant_validate")
         && profile
             .steps
             .iter()
             .find(|step| step.id == "grant_validate")
             .and_then(|step| step.output_schema.as_ref())
-            .and_then(|schema| schema.get("x-pipeline-schema-ref"))
+            .and_then(|schema| schema.get(crate::pipeline::structured::SCHEMA_REFERENCE_KEY))
             .and_then(serde_json::Value::as_str)
             == Some("findings-v2-validation");
     if !has_legacy_skeleton || is_current {
