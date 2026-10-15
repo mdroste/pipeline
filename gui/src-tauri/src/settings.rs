@@ -998,6 +998,15 @@ impl Settings {
     /// Antigravity is the exception: subscription mode is disabled, so any
     /// stored value is coerced to "api" and older settings files keep loading.
     /// Codex's native backend migrates independently of subscription/API mode.
+    /// Apply the compatibility normalization the persisted loader uses, so an
+    /// imported export from an earlier build validates the way it would load.
+    pub fn normalized_for_import(mut self) -> Self {
+        self.migrate_legacy_model_fields();
+        self.normalize_access_modes();
+        self.drop_unknown_providers();
+        self
+    }
+
     fn normalize_access_modes(&mut self) {
         if self.codex_backend_preference_version == 0 {
             if self.codex_backend == "legacy_cli" {

@@ -683,3 +683,17 @@ fn quarantine_never_overwrites_a_backup_or_a_concurrent_repair() {
     assert!(quarantine_corrupt_file(&path, "second corrupt").is_none());
     assert_eq!(fs::read_to_string(path).unwrap(), "{}");
 }
+
+#[test]
+fn imported_bundle_settings_are_normalized_before_validation() {
+    let exported = Settings {
+        antigravity_access_mode: "subscription".to_string(),
+        preferred_provider: "gemini".to_string(),
+        ..Default::default()
+    };
+    assert!(exported.validate().is_err());
+    let normalized = exported.normalized_for_import();
+    assert_eq!(normalized.validate(), Ok(()));
+    assert_eq!(normalized.antigravity_access_mode, "api");
+    assert_ne!(normalized.preferred_provider, "gemini");
+}

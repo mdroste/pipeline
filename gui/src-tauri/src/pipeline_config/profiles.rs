@@ -405,6 +405,10 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
             active_profile,
         } => {
             let validated = validate_bundle_profiles(&profiles, &active_profile)?;
+            // Older bundles carry values the loader normalizes on every launch
+            // (retired providers, retired access modes); validate what the
+            // app would actually load, not the raw export.
+            let imported_settings = imported_settings.normalized_for_import();
             imported_settings.validate()?;
             if imported_settings.active_profile != active_profile {
                 return Err(format!(
