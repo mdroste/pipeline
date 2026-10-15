@@ -38,7 +38,7 @@ pub(super) fn save_profile_unlocked_at(path: &Path, profile: &ProfileData) -> Re
     validate_profile_data(profile)?;
     let json =
         serde_json::to_string_pretty(profile).map_err(|e| format!("Failed to serialize: {e}"))?;
-    restore_profile_bytes(&path, json.as_bytes())
+    restore_profile_bytes(path, json.as_bytes())
         .map_err(|e| format!("Failed to save profile '{}': {e}", path.display()))
 }
 

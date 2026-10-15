@@ -224,3 +224,7 @@ the API-key readiness record labeled Google API.
 - `runs/unlisted.rs` registers files that landed in a run directory without `add_text`: a destructive policy for model output and a non-destructive one for captured source snapshots. `runs/history.rs` owns the single run lock path shared by the pipeline guard, recovery, and pin release.
 - `workbench/release/archive.rs` owns the bounded zip-entry copy shared with `.pwex` import; `workbench/research/papers.rs` hashes host-owned files through their resolved targets for launch manifests.
 - `agent_runtime/codex/transport.rs` offers a lossless per-thread server-request sink that Review App Server calls register for the life of a call.
+- `workbench/release/exchange/fingerprint.rs` owns the content fingerprint that ignores import-rewritten bookkeeping; `workbench/research/notes.rs` and `ledger.rs` load single notes, claims (including retired) and evidence links by id for export.
+- `settings/recovery.rs` owns load diagnostics for the Settings page, discarding a stored key that no longer decrypts, and import normalization of exported settings.
+- `cli_io.rs` (included by `bin/cli.rs`) owns pipe-safe stdout output, report file writing, and absolute resolution of CLI input paths.
+- `workbench/missions.rs` owns the read-only source-scope refresh and the retry re-adoption used by missions and self-discovery; `orchestration/discovery/mod.rs` classifies failures as attention or blocked.

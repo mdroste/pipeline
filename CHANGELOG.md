@@ -5,8 +5,8 @@ the first public release was not maintained as a stable release series.
 
 ## Unreleased
 
-Fixes from the October 2026 pre-release audit
-([docs/bug-triage-2026-10.md](docs/bug-triage-2026-10.md), findings 1–13).
+Fixes from the October 2026 pre-release audit (`docs/bug-triage-2026-10.md`,
+findings 1–13 held the release; findings 14–44 follow below).
 
 - A conversation message whose send is rejected after dispatch (for example
   while a project job holds its write resources) is restored to the composer
@@ -47,6 +47,52 @@ Fixes from the October 2026 pre-release audit
 - Saving or checkpointing a file inside a folder that task capture excludes
   (`target`, `node_modules`, `.cache`, …) is refused instead of silently
   deleting the original file on acceptance.
+
+Further fixes from the same audit (findings 14–44):
+
+- Self-discovery runs no longer end as "blocked" because the source
+  conversation gained a draft or a message, a setting changed, or one child
+  turn failed; they ask for attention and offer Retry. Finished runs reclaim
+  the input copies of their read-only reviewer roles.
+- Review steps that reuse a warmed Claude CLI session can write their
+  supporting files again; the shared workspace itself stays read-only.
+- The artifact viewer no longer offers to launch a program written during a
+  run (exe, jar, pkg, dmg, …).
+- `pipeline-cli` exits cleanly when its output pipe closes early, resolves
+  relative `--input`, `--input-dir` and `--extra-input` paths so the app can
+  file those runs under a project, and accepts a bare `.tex` file name.
+- A Review finished while its automation receipt was unknown can be
+  reconciled instead of being re-run.
+- Staged LaTeX projects keep figures referenced through `\graphicspath` or
+  from chapter files in the document bundle.
+- Cancelling a run during PaddleOCR-VL verification no longer makes the next
+  run fail with "operation already running"; installing over a current parser
+  no longer rebuilds its runtime.
+- Mission Retry works after a steering message to the planner conversation,
+  long check instructions no longer make results impossible to adopt, and
+  mission prompts tolerate `{{input:…}}` text in research content.
+- Automations waiting for an execution slot record the wait once instead of
+  every two seconds.
+- Automation step ids may not be `done`, `enter`, or purely numeric; such ids
+  collided with internal bookkeeping and skipped steps.
+- Quality reports count only real schema retries, so multi-agent and fan-out
+  steps that succeed first try are no longer labelled degraded, and fan-out
+  findings steps produce a conformant product that keeps the validation ledger.
+- Built-in workflows that no longer pass validation no longer block every
+  launch; upgraded installs receive the typed Grant Review suite; "Reset to
+  defaults" repairs an invalid built-in; settings backups from 0.9.x import
+  again; and a stored API key that cannot be decrypted can be discarded from
+  Settings so runs can launch.
+- The manuscript reader counts the last PDF page, so it can be recorded as
+  inspected; plain editor saves no longer leave an open task and a copy
+  directory behind.
+- Project packages (`.pwex`) re-import without spurious evidence conflicts,
+  include every selected note or retired claim, and no longer abort when a
+  retired claim is re-imported.
+- Paper search excerpts and project search tolerate single-line files and
+  punctuation-only query words.
+- A conversation keeps up with automation-driven turns on its thread and
+  unlocks its composer when the runtime connection drops.
 
 ## 1.0.2 — 2026-10-08
 

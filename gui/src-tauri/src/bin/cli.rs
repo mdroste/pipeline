@@ -7,7 +7,7 @@
 use pipeline_gui_lib::emit::{CliEvents, EventBus};
 use pipeline_gui_lib::{commands, engines, pipeline_config};
 use std::collections::{HashMap, HashSet};
-use std::io::{Read as _, Write as _};
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -862,7 +862,7 @@ async fn cmd_check(args: CheckArgs) -> i32 {
     };
     if args.json {
         match serde_json::to_string_pretty(&plan) {
-            Ok(encoded) => emit_stdout(&format!("{encoded}")),
+            Ok(encoded) => emit_stdout(&encoded),
             Err(error) => {
                 eprintln!("Error: failed to encode dependency report: {error}");
                 return 1;
@@ -884,9 +884,7 @@ async fn cmd_check(args: CheckArgs) -> i32 {
             .filter(|dependency| dependency.required)
             .collect::<Vec<_>>();
         if required.is_empty() {
-            emit_stdout(&format!(
-                "No external dependencies are required for this run."
-            ));
+            emit_stdout("No external dependencies are required for this run.");
         }
         for dependency in required {
             let ready = pipeline_gui_lib::deps::dependency_ready(dependency);
@@ -915,95 +913,6 @@ async fn cmd_check(args: CheckArgs) -> i32 {
     } else {
         1
     }
-}
-
-/// Write one line of report or JSON output. The Rust runtime ignores SIGPIPE,
-/// so `println!` panics (exit 101) when the reader of a pipe has gone away;
-/// stop printing quietly instead and let the exit code reflect the run.
-fn emit_stdout(text: &str) {
-    emit_to(&mut std::io::stdout().lock(), text);
-}
-
-fn emit_to(out: &mut impl std::io::Write, text: &str) -> bool {
-    match out
-        .write_all(text.as_bytes())
-        .and_then(|()| out.write_all(b"\n"))
-        .and_then(|()| out.flush())
-    {
-        Ok(()) => true,
-        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => false,
-        Err(error) => {
-            eprintln!("Error: cannot write to stdout: {error}");
-            false
-        }
-    }
-}
-
-/// Run manifests and automations treat input paths as absolute; resolve a
-/// relative CLI path against the current directory once, up front.
-fn absolutize(path: &str) -> Result<String, String> {
-    let candidate = Path::new(path);
-    if candidate.is_absolute() {
-        return Ok(path.to_string());
-    }
-    let cwd = std::env::current_dir()
-        .map_err(|error| format!("Cannot resolve the current directory: {error}"))?;
-    Ok(cwd.join(candidate).to_string_lossy().into_owned())
-}
-
-fn absolutize_inputs(inputs: HashMap<String, String>) -> Result<HashMap<String, String>, String> {
-    inputs
-        .into_iter()
-        .map(|(key, value)| absolutize(&value).map(|value| (key, value)))
-        .collect()
-}
-
-fn finish_single_run(value: &serde_json::Value, out: Option<&str>, force: bool) -> i32 {
-    let markdown = match report_markdown(value) {
-        Ok(markdown) => markdown,
-        Err(error) => {
-            eprintln!("Error: {error}");
-            return 1;
-        }
-    };
-    match out {
-        Some("-") => emit_stdout(&format!("{markdown}")),
-        Some(path) => {
-            if let Err(error) = write_report_file(Path::new(path), markdown, force) {
-                eprintln!("Error: {error}");
-                return 1;
-            }
-            eprintln!("Wrote report to {path}");
-        }
-        None => emit_stdout(&format!("{markdown}")),
-    }
-    if let Some(run_id) = value.get("run_id").and_then(|id| id.as_str()) {
-        eprintln!("Run: {run_id}");
-    }
-    let failed = failed_step_count(value);
-    if failed > 0 {
-        eprintln!("{failed} step(s) failed");
-        1
-    } else {
-        0
-    }
-}
-
-fn report_markdown(value: &serde_json::Value) -> Result<&str, String> {
-    value
-        .get("markdown")
-        .and_then(|markdown| markdown.as_str())
-        .filter(|markdown| !markdown.is_empty())
-        .ok_or_else(|| "Pipeline returned no Markdown report".to_string())
-}
-
-fn failed_step_count(value: &serde_json::Value) -> usize {
-    value
-        .get("report")
-        .and_then(|report| report.get("failed_steps"))
-        .and_then(|failed| failed.as_array())
-        .map(Vec::len)
-        .unwrap_or(0)
 }
 
 fn report_run_error(error: &str) -> i32 {
@@ -1173,65 +1082,6 @@ fn prepare_batch_outputs(
     Ok(Some(outputs))
 }
 
-fn validate_output_path(path: &Path, force: bool) -> Result<(), String> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(format!(
-            "{} is a symbolic link; choose a regular output path",
-            path.display()
-        )),
-        Ok(metadata) if !metadata.is_file() => {
-            Err(format!("{} is not a regular file", path.display()))
-        }
-        Ok(_) if !force => Err(format!(
-            "{} already exists; pass --force to replace it",
-            path.display()
-        )),
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            if let Some(parent) = path
-                .parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-            {
-                if !parent.is_dir() {
-                    return Err(format!(
-                        "output directory {} does not exist or is not a directory",
-                        parent.display()
-                    ));
-                }
-            }
-            Ok(())
-        }
-        Err(error) => Err(format!(
-            "Could not inspect output path {}: {error}",
-            path.display()
-        )),
-    }
-}
-
-fn write_report_file(path: &Path, markdown: &str, force: bool) -> Result<(), String> {
-    if force {
-        return std::fs::write(path, markdown)
-            .map_err(|error| format!("Failed to write {}: {error}", path.display()));
-    }
-    let mut output = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| {
-            if error.kind() == std::io::ErrorKind::AlreadyExists {
-                format!(
-                    "{} already exists; pass --force to replace it",
-                    path.display()
-                )
-            } else {
-                format!("Failed to create {}: {error}", path.display())
-            }
-        })?;
-    output
-        .write_all(markdown.as_bytes())
-        .map_err(|error| format!("Failed to write {}: {error}", path.display()))
-}
-
 const MAX_WORKFLOW_BYTES: usize = 10_000_000;
 
 fn read_workflow_source(source: &str) -> Result<String, String> {
@@ -1295,7 +1145,7 @@ fn cmd_workflow(args: WorkflowArgs) -> i32 {
         WorkflowArgs::Schema => {
             match serde_json::to_string_pretty(&pipeline_config::workflow_json_schema()) {
                 Ok(schema) => {
-                    emit_stdout(&format!("{schema}"));
+                    emit_stdout(&schema);
                     0
                 }
                 Err(error) => {
@@ -1319,14 +1169,13 @@ fn cmd_workflow(args: WorkflowArgs) -> i32 {
                 Ok(workflow) => workflow,
                 Err(error) => {
                     if json {
-                        emit_stdout(&format!(
-                            "{}",
-                            serde_json::to_string_pretty(&serde_json::json!({
+                        emit_stdout(
+                            &serde_json::to_string_pretty(&serde_json::json!({
                                 "valid": false,
                                 "error": error,
                             }))
-                            .expect("workflow validation error is serializable")
-                        ));
+                            .expect("workflow validation error is serializable"),
+                        );
                     } else {
                         eprintln!("Error: {error}");
                     }
@@ -1335,11 +1184,10 @@ fn cmd_workflow(args: WorkflowArgs) -> i32 {
             };
             let summary = workflow_validation_summary(&workflow);
             if json {
-                emit_stdout(&format!(
-                    "{}",
-                    serde_json::to_string_pretty(&summary)
-                        .expect("workflow validation summary is serializable")
-                ));
+                emit_stdout(
+                    &serde_json::to_string_pretty(&summary)
+                        .expect("workflow validation summary is serializable"),
+                );
             } else {
                 emit_stdout(&format!(
                     "Valid workflow '{}' ({} steps, {})",
@@ -1355,14 +1203,13 @@ fn cmd_workflow(args: WorkflowArgs) -> i32 {
                 Ok(workflow) => workflow,
                 Err(error) => {
                     if json {
-                        emit_stdout(&format!(
-                            "{}",
-                            serde_json::to_string_pretty(&serde_json::json!({
+                        emit_stdout(
+                            &serde_json::to_string_pretty(&serde_json::json!({
                                 "installed": false,
                                 "error": error,
                             }))
-                            .expect("workflow install error is serializable")
-                        ));
+                            .expect("workflow install error is serializable"),
+                        );
                     } else {
                         eprintln!("Error: {error}");
                     }
@@ -1373,14 +1220,13 @@ fn cmd_workflow(args: WorkflowArgs) -> i32 {
                 Ok(installed) => installed,
                 Err(error) => {
                     if json {
-                        emit_stdout(&format!(
-                            "{}",
-                            serde_json::to_string_pretty(&serde_json::json!({
+                        emit_stdout(
+                            &serde_json::to_string_pretty(&serde_json::json!({
                                 "installed": false,
                                 "error": error,
                             }))
-                            .expect("workflow install error is serializable")
-                        ));
+                            .expect("workflow install error is serializable"),
+                        );
                     } else {
                         eprintln!("Error: {error}");
                     }
@@ -1388,17 +1234,16 @@ fn cmd_workflow(args: WorkflowArgs) -> i32 {
                 }
             };
             if json {
-                emit_stdout(&format!(
-                    "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({
+                emit_stdout(
+                    &serde_json::to_string_pretty(&serde_json::json!({
                         "installed": true,
                         "id": installed.id,
                         "name": installed.name,
                         "step_count": installed.step_count,
                         "fingerprint": workflow.document.fingerprint,
                     }))
-                    .expect("workflow install summary is serializable")
-                ));
+                    .expect("workflow install summary is serializable"),
+                );
             } else {
                 emit_stdout(&format!(
                     "Installed workflow '{}' as {}",
@@ -1414,7 +1259,7 @@ fn cmd_profiles(args: ProfilesArgs) -> i32 {
     match args {
         ProfilesArgs::Show { id } => match pipeline_config::export_profile_data(&id) {
             Ok(profile) => {
-                emit_stdout(&format!("{profile}"));
+                emit_stdout(&profile);
                 0
             }
             Err(error) => {
@@ -1431,7 +1276,7 @@ fn cmd_profiles(args: ProfilesArgs) -> i32 {
             }
             Ok(profiles) if json => match serde_json::to_string_pretty(&profiles) {
                 Ok(encoded) => {
-                    emit_stdout(&format!("{encoded}"));
+                    emit_stdout(&encoded);
                     0
                 }
                 Err(error) => {
@@ -1518,7 +1363,7 @@ async fn cmd_engine_status(json: bool) -> i32 {
     };
     if json {
         match serde_json::to_string_pretty(&statuses) {
-            Ok(encoded) => emit_stdout(&format!("{encoded}")),
+            Ok(encoded) => emit_stdout(&encoded),
             Err(error) => {
                 eprintln!("Error: failed to encode engine status: {error}");
                 return 1;
@@ -1589,7 +1434,11 @@ async fn install_engine_with_interrupt(bus: EventBus, id: &str) -> Result<(), St
     }
 }
 
-#[cfg(test)]
 // Kept outside src/bin: the Tauri bundler treats src/bin/<dir> as a binary.
+#[path = "../cli_io.rs"]
+mod io;
+use io::*;
+
+#[cfg(test)]
 #[path = "../cli_tests.rs"]
 mod tests;
