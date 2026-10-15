@@ -872,3 +872,82 @@ fn deleting_a_conversation_removes_its_native_projection_graph() {
         "a replayed operation id is rejected"
     );
 }
+
+#[test]
+fn reprojection_under_a_new_incarnation_keeps_transcript_order() {
+    use crate::workbench::codex::NormalizedEvent;
+
+    let (_temporary, store, _workspace_root) = fixture();
+    let session = store
+        .create_session(CreateSessionRequest {
+            workspace_id: None,
+            title: "Ordered transcript".to_string(),
+            operation_id: "ordered-session".to_string(),
+        })
+        .unwrap()
+        .record;
+    let first = store
+        .bind_session(&session.id, "codex-epoch-1", "thread-1")
+        .unwrap();
+    let item = |id: &str, kind: &str, text: &str| json!({"id": id, "type": kind, "text": text});
+    let completed = |epoch: u64, id: &str, kind: &str, text: &str| NormalizedEvent::ItemCompleted {
+        epoch,
+        thread_id: "thread-1".to_string(),
+        turn_id: "turn-1".to_string(),
+        item_id: id.to_string(),
+        item_kind: kind.to_string(),
+        item: item(id, kind, text),
+    };
+    store
+        .project_codex_event(
+            &first.id,
+            &completed(1, "item-user", "userMessage", "Question"),
+        )
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    store
+        .project_codex_event(
+            &first.id,
+            &completed(1, "item-agent", "agentMessage", "Answer"),
+        )
+        .unwrap();
+
+    // A later connection epoch binds a new incarnation and reconciles the
+    // finished turn in one batch; the items must keep their original order.
+    let second = store
+        .bind_session(&session.id, "codex-epoch-2", "thread-1")
+        .unwrap();
+    assert_ne!(first.id, second.id);
+    store
+        .project_codex_event(
+            &second.id,
+            &NormalizedEvent::TurnCompleted {
+                epoch: 2,
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+                status: "completed".to_string(),
+                turn: json!({
+                    "id": "turn-1",
+                    "status": "completed",
+                    "items": [
+                        item("item-user", "userMessage", "Question"),
+                        item("item-agent", "agentMessage", "Answer"),
+                        item("item-new", "agentMessage", "Late addition"),
+                    ]
+                }),
+            },
+        )
+        .unwrap();
+    let items = store.transcript_page(&session.id, None).unwrap().items;
+    let ids: Vec<&str> = items.iter().map(|i| i.provider_item_id.as_str()).collect();
+    assert_eq!(ids, ["item-user", "item-agent", "item-new"]);
+    assert!(items[0].created_at < items[1].created_at);
+    assert!(items[1].created_at < items[2].created_at);
+    let snapshot = store.conversation_snapshot(&session.id).unwrap();
+    let ordered: Vec<&str> = snapshot
+        .items
+        .iter()
+        .map(|i| i.provider_item_id.as_str())
+        .collect();
+    assert_eq!(ordered, ["item-user", "item-agent", "item-new"]);
+}

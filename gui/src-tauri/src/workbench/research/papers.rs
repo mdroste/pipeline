@@ -93,6 +93,19 @@ fn ensure_safe_regular_file(path: &Path) -> WorkbenchResult<u64> {
     Ok(metadata.len())
 }
 
+/// Hash a host-owned file through its resolved target (dotfile managers
+/// symlink shell startup files and environment configuration); the caller
+/// records the declared path so existing fingerprints are unchanged.
+pub(super) fn hash_resolved_file(
+    path: &Path,
+    label: &str,
+) -> WorkbenchResult<(PathBuf, String, u64)> {
+    let resolved = fs::canonicalize(path)
+        .map_err(|error| WorkbenchError::storage(&format!("Failed to resolve {label}"), error))?;
+    let (hash, size) = hash_file(&resolved)?;
+    Ok((resolved, hash, size))
+}
+
 pub(super) fn hash_file(path: &Path) -> WorkbenchResult<(String, u64)> {
     let size = ensure_safe_regular_file(path)?;
     let mut file = fs::File::open(path)
@@ -547,7 +560,9 @@ fn revision_text(
         )
     })?;
     let path = PathBuf::from(reference);
-    if !path.starts_with(store.root_path().join("blobs")) {
+    // Immutable text lives directly under blobs/; a lexical prefix check would
+    // accept `<blobs>/../x` from a tampered archive.
+    if path.parent() != Some(store.root_path().join("blobs").as_path()) {
         return Err(WorkbenchError::invalid(
             "Paper text reference escaped Workspace storage",
         ));
@@ -587,6 +602,9 @@ pub fn paper_read(store: &Store, request: PaperReadRequest) -> WorkbenchResult<P
     })
 }
 
+/// Upper bound on the excerpt bytes one search call returns.
+const MAX_SEARCH_EXCERPT_BYTES: usize = 64 * 1024;
+
 pub fn paper_search(
     store: &Store,
     workspace_id: &str,
@@ -598,21 +616,26 @@ pub fn paper_search(
     let (revision, text) = revision_text(store, workspace_id, revision_id)?;
     let haystack = text.to_ascii_lowercase();
     let needle = query.to_ascii_lowercase();
-    let mut hits = Vec::new();
+    let mut hits: Vec<PaperSearchHit> = Vec::new();
     let mut cursor = 0;
     let limit = limit.clamp(1, MAX_SEARCH_RESULTS);
+    let mut excerpt_bytes = 0usize;
     while hits.len() < limit {
+        // Tool results and receipts carry every excerpt; keep one call bounded.
+        if excerpt_bytes > MAX_SEARCH_EXCERPT_BYTES {
+            break;
+        }
         let Some(relative) = haystack[cursor..].find(&needle) else {
             break;
         };
         let start = cursor + relative;
         let end = start + needle.len();
-        let mut excerpt_start = text[..start]
-            .rfind('\n')
-            .map_or(start.saturating_sub(160), |value| value + 1);
-        let mut excerpt_end = text[end..]
-            .find('\n')
-            .map_or((end + 160).min(text.len()), |value| end + value);
+        // Clamp the window inside the line: a minified single-line file would
+        // otherwise return the whole line for every hit.
+        let line_start = text[..start].rfind('\n').map_or(0, |v| v + 1);
+        let line_end = text[end..].find('\n').map_or(text.len(), |v| end + v);
+        let mut excerpt_start = line_start.max(start.saturating_sub(160));
+        let mut excerpt_end = line_end.min(end + 160);
         while !text.is_char_boundary(excerpt_start) {
             excerpt_start += 1;
         }
@@ -621,6 +644,8 @@ pub fn paper_search(
         }
         let line = text[..start].bytes().filter(|byte| *byte == b'\n').count() + 1;
         let page_count = text[..start].bytes().filter(|byte| *byte == 0x0c).count();
+        let excerpt = text[excerpt_start..excerpt_end].trim().to_string();
+        excerpt_bytes += excerpt.len();
         hits.push(PaperSearchHit {
             revision_id: revision.id.clone(),
             content_hash: revision.content_hash.clone(),
@@ -628,7 +653,7 @@ pub fn paper_search(
             end,
             line,
             page: (revision.input_kind == "pdf").then_some(page_count + 1),
-            excerpt: text[excerpt_start..excerpt_end].trim().to_string(),
+            excerpt,
         });
         cursor = end;
     }

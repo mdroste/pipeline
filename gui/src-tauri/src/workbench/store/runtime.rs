@@ -225,9 +225,16 @@ impl Store {
             NormalizedEvent::TurnCompleted { turn_id, turn, .. } => {
                 upsert_projected_turn(&transaction, binding_id, turn_id, turn, &timestamp, true)?;
                 if let Some(items) = turn.get("items").and_then(Value::as_array) {
-                    for item in items {
+                    for (index, item) in items.iter().enumerate() {
                         let item_id = required_json_string(item, "id", "completed turn item")?;
                         let item_kind = required_json_string(item, "type", "completed turn item")?;
+                        // Re-projection under a new incarnation must keep the
+                        // transcript order: inherit the prior row's time, and
+                        // give genuinely new rows strictly increasing times
+                        // (random ids cannot order items within one batch).
+                        let item_timestamp =
+                            prior_item_created_at(&transaction, &binding.session_id, item_id)?
+                                .unwrap_or_else(|| offset_rfc3339(&timestamp, index));
                         upsert_projected_item(
                             &transaction,
                             binding_id,
@@ -236,7 +243,7 @@ impl Store {
                             item_kind,
                             item,
                             true,
-                            &timestamp,
+                            &item_timestamp,
                         )?;
                     }
                 }
@@ -255,7 +262,8 @@ impl Store {
                 item_kind,
                 item,
                 false,
-                &timestamp,
+                &prior_item_created_at(&transaction, &binding.session_id, item_id)?
+                    .unwrap_or_else(|| timestamp.clone()),
             )?,
             NormalizedEvent::ItemCompleted {
                 turn_id,
@@ -271,7 +279,8 @@ impl Store {
                 item_kind,
                 item,
                 true,
-                &timestamp,
+                &prior_item_created_at(&transaction, &binding.session_id, item_id)?
+                    .unwrap_or_else(|| timestamp.clone()),
             )?,
             _ => unreachable!("non-projectable events returned above"),
         }
@@ -292,4 +301,32 @@ impl Store {
             .map_err(|error| WorkbenchError::storage("Failed to commit event projection", error))?;
         Ok(Some(sequence))
     }
+}
+
+/// The ordering time an earlier incarnation already assigned to this
+/// provider item, if any. Same-incarnation upserts keep created_at anyway.
+fn prior_item_created_at(
+    connection: &Connection,
+    session_id: &str,
+    provider_item_id: &str,
+) -> WorkbenchResult<Option<String>> {
+    connection
+        .query_row(
+            "SELECT i.created_at FROM transcript_items i JOIN session_bindings b ON b.id = i.binding_id WHERE b.session_id = ?1 AND i.provider_item_id = ?2 ORDER BY b.incarnation DESC LIMIT 1",
+            params![session_id, provider_item_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| WorkbenchError::storage("Failed to read prior transcript item", error))
+}
+
+/// `timestamp` plus `index` nanoseconds in the same RFC 3339 layout `now()`
+/// produces, so text ordering in SQLite matches time ordering.
+fn offset_rfc3339(timestamp: &str, index: usize) -> String {
+    if index == 0 {
+        return timestamp.to_string();
+    }
+    chrono::DateTime::parse_from_rfc3339(timestamp)
+        .map(|time| (time + chrono::Duration::nanoseconds(index as i64)).to_rfc3339())
+        .unwrap_or_else(|_| timestamp.to_string())
 }

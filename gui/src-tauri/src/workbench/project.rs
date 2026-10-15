@@ -172,21 +172,36 @@ fn put(
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(err)?;
-    let current: Option<i64> = tx
+    // `id` is the sole primary key. Look it up unscoped so a deterministic id
+    // (response_/zotero_ hashes) owned by another project or kind is refused
+    // instead of silently overwritten by the upsert below.
+    let current: Option<(String, String, i64)> = tx
         .query_row(
-            "SELECT revision FROM project_records WHERE id=?1 AND workspace_id=?2 AND kind=?3",
-            params![object_id, workspace_id, kind],
-            |r| r.get(0),
+            "SELECT workspace_id,kind,revision FROM project_records WHERE id=?1",
+            [object_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()
         .map_err(err)?;
-    if current.unwrap_or(0) != expected {
+    if let Some((owner, owner_kind, _)) = &current {
+        if owner != workspace_id || owner_kind != kind {
+            return Err(WorkbenchError::conflict(
+                "This record ID belongs to another project or object kind",
+            ));
+        }
+    }
+    if current.as_ref().map_or(0, |c| c.2) != expected {
         return Err(WorkbenchError::conflict(
             "This project record changed; refresh before editing",
         ));
     }
     let timestamp = now();
-    tx.execute("INSERT INTO project_records(id,workspace_id,kind,revision,body_json,updated_at) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,body_json=excluded.body_json,updated_at=excluded.updated_at",params![object_id,workspace_id,kind,expected+1,encoded,timestamp]).map_err(err)?;
+    let changed = tx.execute("INSERT INTO project_records(id,workspace_id,kind,revision,body_json,updated_at) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,body_json=excluded.body_json,updated_at=excluded.updated_at WHERE project_records.workspace_id=excluded.workspace_id AND project_records.kind=excluded.kind",params![object_id,workspace_id,kind,expected+1,encoded,timestamp]).map_err(err)?;
+    if changed != 1 {
+        return Err(WorkbenchError::conflict(
+            "This record ID belongs to another project or object kind",
+        ));
+    }
     tx.commit().map_err(err)?;
     record(store, workspace_id, object_id, kind)
 }

@@ -324,17 +324,40 @@ pub(super) fn recover_resumable_run_dir(
 /// Completed step checkpoints become a partial `report.json`, allowing the
 /// normal re-run path to reuse them.
 pub fn recover_resumable_runs() -> Result<usize, String> {
-    use fs2::FileExt as _;
-    let root = runs_dir()?;
-    let pipeline_dir = root
-        .parent()
-        .ok_or("Cannot resolve Pipeline data directory")?;
-    let lock = fs::OpenOptions::new()
+    // This process may itself hold the guard (the OS lock is per file, not per
+    // process); never rewrite the run it is executing.
+    if crate::commands::pipeline_is_running() {
+        return Ok(0);
+    }
+    recover_resumable_runs_at(&runs_dir()?, &run_lock_path()?)
+}
+
+/// The one OS-level lock shared by the pipeline guard, incomplete-run
+/// recovery, and pin release. It lives next to the active `runs/` directory so
+/// a custom data folder never splits the lock between two files.
+pub fn run_lock_path() -> Result<PathBuf, String> {
+    Ok(crate::storage::data_root()?.join("run.lock"))
+}
+
+/// Open (creating if needed) the shared run lock without locking it.
+pub fn open_run_lock(path: &Path) -> Result<fs::File, String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create Pipeline data directory: {e}"))?;
+    }
+    fs::OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .open(pipeline_dir.join("run.lock"))
+        .open(path)
+        .map_err(|e| format!("Failed to open the Pipeline run lock: {e}"))
+}
+
+/// Recovery over an explicit runs directory and lock file.
+pub(super) fn recover_resumable_runs_at(root: &Path, lock_path: &Path) -> Result<usize, String> {
+    use fs2::FileExt as _;
+    let lock = open_run_lock(lock_path)
         .map_err(|error| format!("Failed to open Pipeline recovery lock: {error}"))?;
     if lock.try_lock_exclusive().is_err() {
         return Ok(0);
@@ -342,7 +365,7 @@ pub fn recover_resumable_runs() -> Result<usize, String> {
 
     let mut recovered = 0usize;
     let mut walk = crate::safety::WalkBudget::new("Incomplete-run recovery");
-    for entry in fs::read_dir(&root)
+    for entry in fs::read_dir(root)
         .map_err(|error| format!("Failed to list runs for recovery: {error}"))?
         .flatten()
     {
@@ -746,8 +769,21 @@ pub fn list_trashed_runs() -> Result<Vec<TrashedRun>, String> {
 }
 
 pub fn restore_trashed_run(run_id: &str) -> Result<(), String> {
+    restore_trashed_run_at(&runs_dir()?, &trash_runs_dir()?, run_id)
+}
+
+pub(super) fn restore_trashed_run_at(
+    root: &Path,
+    trash: &Path,
+    run_id: &str,
+) -> Result<(), String> {
     validate_run_id(run_id)?;
-    let trash = trash_runs_dir()?;
+    // Compare canonical with canonical: the default data folder is never
+    // canonicalized, and on Windows (verbatim prefix) or through a symlinked
+    // folder the uncanonicalized Trash path never equals the resolved parent.
+    let trash = trash
+        .canonicalize()
+        .map_err(|error| format!("Cannot resolve run Trash: {error}"))?;
     let source = trash.join(run_id);
     let canonical = source
         .canonicalize()
@@ -755,7 +791,6 @@ pub fn restore_trashed_run(run_id: &str) -> Result<(), String> {
     if canonical.parent() != Some(trash.as_path()) || !canonical.is_dir() {
         return Err("Invalid trashed run id".to_string());
     }
-    let root = runs_dir()?;
     let destination = root.join(run_id);
     if destination.exists() {
         return Err("A run with this id already exists in History".to_string());
@@ -764,7 +799,7 @@ pub fn restore_trashed_run(run_id: &str) -> Result<(), String> {
         .map_err(|_| "Trashed run has no valid manifest".to_string())?;
     fs::rename(&canonical, &destination)
         .map_err(|error| format!("Failed to restore run from Trash: {error}"))?;
-    sync_directory(&root)?;
+    sync_directory(root)?;
     sync_directory(&trash)
 }
 

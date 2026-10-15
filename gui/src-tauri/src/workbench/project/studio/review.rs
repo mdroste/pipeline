@@ -101,18 +101,12 @@ pub(super) fn import_findings(
     )?;
     let mut imported = Vec::new();
     for f in package.findings.iter().filter(|f| selected.contains(&f.id)) {
-        let object_id = format!(
-            "response_{}",
-            hash(
-                format!(
-                    "workflow\0{}\0{}\0{}",
-                    package.run_id, package.source_step_id, f.id
-                )
-                .as_bytes()
-            )
+        let fingerprint = format!(
+            "workflow\0{}\0{}\0{}",
+            package.run_id, package.source_step_id, f.id
         );
+        let (object_id, old) = scoped_record(store, ws, "response", "response", &fingerprint);
         let source = json!({"kind":"workflow","runId":package.run_id,"sourceStepId":package.source_step_id,"findingId":f.id,"snapshotHash":snapshot,"finding":f,"packageHash":preview["packageHash"]});
-        let old = record(store, ws, &object_id, "response").ok();
         if old.as_ref().is_some_and(|r| r.body["source"] == source) {
             imported.push(old.unwrap());
             continue;

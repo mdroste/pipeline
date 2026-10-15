@@ -286,6 +286,9 @@ pub(super) async fn run_connected(
         .as_str()
         .ok_or("[codex-capability] Missing thread identity")?
         .to_string();
+    // Tool calls must never be lost to event-queue lag: take them through the
+    // thread's lossless request channel for the life of this call.
+    let mut requests = c.native.client.server_request_sink(&thread);
     let effective_model = start["model"].as_str().unwrap_or_default();
     c.native
         .client
@@ -335,8 +338,14 @@ pub(super) async fn run_connected(
     let mut usage = logging::CallUsage::default();
     let mut usage_available = false;
     let mut output_bytes = 0usize;
+    let mut lagged = false;
     loop {
-        match events.recv().await {
+        let next = tokio::select! {
+            biased;
+            request = requests.recv() => request.ok_or(broadcast::error::RecvError::Closed),
+            event = events.recv() => event,
+        };
+        match next {
             Ok(NormalizedEvent::ItemCompleted {
                 thread_id,
                 turn_id,
@@ -445,6 +454,17 @@ pub(super) async fn run_connected(
                         terminal.get("error").filter(|e| !e.is_null()),
                         &status,
                     ))
+                } else if lagged {
+                    // Item events may have been skipped; the thread is the
+                    // source of truth for the finished turn's items.
+                    attempt.record["state"] = json!("completed_reconciled");
+                    match read_turn(&c, &thread, &turn).await {
+                        Ok(snapshot) => snapshot["items"]
+                            .as_array()
+                            .ok_or_else(|| format!("{UNKNOWN} Reconciliation omitted items"))
+                            .and_then(|values| final_answer(values.iter())),
+                        Err(error) => Err(error),
+                    }
                 } else {
                     final_answer(items.values())
                 };
@@ -468,24 +488,15 @@ pub(super) async fn run_connected(
                 logging::emit_usage(app, usage);
                 return Err(format!("{UNKNOWN} Workflow App Server disconnected after submission; inspect attempt {id}"));
             }
-            Err(broadcast::error::RecvError::Lagged(_)) => {
+            Err(broadcast::error::RecvError::Lagged(skipped)) => {
                 // Never lose terminal output silently. Fresh threads contain exactly
                 // one submitted turn; read is reconciliation, never a new submission.
-                let snapshot = c
-                    .native
-                    .client
-                    .request(
-                        "thread/read",
-                        json!({"threadId":thread,"includeTurns":true}),
-                        DEFAULT_REQUEST_TIMEOUT,
-                    )
-                    .await
-                    .map_err(|e| format!("{UNKNOWN} Reconciliation failed: {e}"))?;
-                if let Some(terminal) = snapshot["thread"]["turns"].as_array().and_then(|turns| {
-                    turns
-                        .iter()
-                        .find(|t| t["id"] == turn && t["status"] == "completed")
-                }) {
+                logging::emit(
+                    app,
+                    format!("[App Server] {label}: event stream lagged by {skipped}; reconciling from the thread"),
+                );
+                let terminal = read_turn(&c, &thread, &turn).await?;
+                if terminal["status"] == "completed" {
                     let values = terminal["items"]
                         .as_array()
                         .ok_or_else(|| format!("{UNKNOWN} Reconciliation omitted items"))?;
@@ -502,13 +513,34 @@ pub(super) async fn run_connected(
                     logging::emit_usage(app, usage);
                     return Ok(result);
                 }
-                return Err(format!(
-                    "{UNKNOWN} Event stream lagged while a turn was active; it was not repeated"
-                ));
+                // The turn is still running: tool requests arrive through the
+                // lossless sink, so keep waiting and reconcile items at the end.
+                lagged = true;
+                attempt.record["lagged"] = json!(true);
+                attempt.save()?;
             }
             _ => {}
         }
     }
+}
+
+/// The submitted turn as the App Server records it (thread/read), used to
+/// reconcile after the event stream lagged.
+async fn read_turn(c: &Arc<Connection>, thread: &str, turn: &str) -> Result<Value, String> {
+    let snapshot = c
+        .native
+        .client
+        .request(
+            "thread/read",
+            json!({"threadId":thread,"includeTurns":true}),
+            DEFAULT_REQUEST_TIMEOUT,
+        )
+        .await
+        .map_err(|e| format!("{UNKNOWN} Reconciliation failed: {e}"))?;
+    snapshot["thread"]["turns"]
+        .as_array()
+        .and_then(|turns| turns.iter().find(|t| t["id"] == turn).cloned())
+        .ok_or_else(|| format!("{UNKNOWN} Reconciliation did not return the submitted turn"))
 }
 
 pub(super) fn validate_thread(

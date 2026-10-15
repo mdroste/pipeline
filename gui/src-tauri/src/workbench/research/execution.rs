@@ -1425,7 +1425,7 @@ pub(super) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Val
             .and_then(Path::parent)
             .map(|p| p.join("pyvenv.cfg"));
         if let Some(config) = config.filter(|p| p.is_file()) {
-            let (hash, size) = hash_file(&config)?;
+            let (_, hash, size) = hash_resolved_file(&config, "Python environment")?;
             json!({"configuration":config,"hash":hash,"size":size})
         } else {
             Value::Null
@@ -1455,9 +1455,7 @@ pub(super) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Val
             Path::new(&profile.cwd).join(path)
         };
         if path.is_file() {
-            let path = fs::canonicalize(path)
-                .map_err(|e| WorkbenchError::storage("Failed to resolve launch script", e))?;
-            let (hash, size) = hash_file(&path)?;
+            let (path, hash, size) = hash_resolved_file(&path, "launch script")?;
             launch_files.push(json!({"path":path,"hash":hash,"size":size}));
         }
     }
@@ -1473,8 +1471,8 @@ pub(super) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Val
         {
             for name in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
                 let path = home.join(name);
-                startup.push(if path.exists() {
-                    let (hash, size) = hash_file(&path)?;
+                startup.push(if path.is_file() {
+                    let (_, hash, size) = hash_resolved_file(&path, "shell startup file")?;
                     json!({"path":path,"hash":hash,"size":size})
                 } else {
                     json!({"path":path,"missing":true})

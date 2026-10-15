@@ -55,6 +55,9 @@ export function BinaryCard({
 }) {
   const [openError, setOpenError] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
+  // A model-written program (exe, jar, pkg, ...) must never be one click away
+  // from running with the researcher's privileges.
+  const executable = content.kind === "executable";
 
   const openInSystemViewer = async () => {
     setOpenError(null);
@@ -79,16 +82,23 @@ export function BinaryCard({
       <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
         {formatBytes(content.bytes)} — not previewable in the app.
       </p>
-      <button
-        type="button"
-        onClick={openInSystemViewer}
-        disabled={opening}
-        className="py-1.5 px-4 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
+      {executable ? (
+        <p className="text-xs text-gray-600 dark:text-gray-300">
+          This file is a program written during the run. Pipeline does not
+          launch it; inspect it from its folder if you need it.
+        </p>
+      ) : (
+        <button
+          type="button"
+          onClick={openInSystemViewer}
+          disabled={opening}
+          className="py-1.5 px-4 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
                    text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors
                    disabled:cursor-wait disabled:opacity-50"
-      >
-        {opening ? "Opening…" : "Open in system viewer"}
-      </button>
+        >
+          {opening ? "Opening…" : "Open in system viewer"}
+        </button>
+      )}
       {openError && (
         <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-400">
           {openError}

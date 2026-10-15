@@ -457,19 +457,14 @@ pub fn import_zotero(
         let version = item["version"]
             .as_u64()
             .ok_or_else(|| WorkbenchError::invalid("Zotero item lacks a version"))?;
-        let object_id = format!(
-            "zotero_{}",
-            hash(
-                format!(
-                    "{}\0{}\0{key}\0{version}\0{}",
-                    preview.server_id.as_deref().unwrap_or("legacy-local"),
-                    item["library"],
-                    hash(&serde_json::to_vec(item).map_err(err)?)
-                )
-                .as_bytes()
-            )
+        let fingerprint = format!(
+            "{}\0{}\0{key}\0{version}\0{}",
+            preview.server_id.as_deref().unwrap_or("legacy-local"),
+            item["library"],
+            hash(&serde_json::to_vec(item).map_err(err)?)
         );
-        if let Ok(old) = record(store, ws, &object_id, "bibliography") {
+        let (object_id, old) = scoped_record(store, ws, "zotero", "bibliography", &fingerprint);
+        if let Some(old) = old {
             result.push(old);
             continue;
         }

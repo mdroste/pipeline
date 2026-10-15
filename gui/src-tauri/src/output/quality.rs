@@ -58,8 +58,16 @@ pub fn build_report_quality(
         if !output.provider.trim().is_empty() {
             providers.insert(output.provider.clone());
         }
-        schema_retry_events =
-            schema_retry_events.saturating_add(output.attempt_count.saturating_sub(1));
+        // attempt_count sums every provider call of the step (agents, merge,
+        // fan-out units); only per-call retries are schema retries.
+        let retries = if output.calls.is_empty() {
+            output.attempt_count.saturating_sub(1)
+        } else {
+            output.calls.iter().fold(0u32, |total, call| {
+                total.saturating_add(call.attempt_count.saturating_sub(1))
+            })
+        };
+        schema_retry_events = schema_retry_events.saturating_add(retries);
     }
 
     let mut verified_evidence = 0u32;
@@ -256,5 +264,64 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.status, "degraded");
         assert_eq!(first.unverified_evidence, 1);
+    }
+
+    #[test]
+    fn multi_call_steps_count_retries_per_call_not_per_step() {
+        let extraction = ExtractionResult {
+            text: "input".into(),
+            method: "test".into(),
+            source_path: "input.md".into(),
+            paper_hash: "abc".into(),
+            quality_notes: Vec::new(),
+        };
+        let sample = crate::pipeline::orient::orientation_sample(&extraction.text);
+        let products = RunProducts {
+            schema_version: 2,
+            primary_step_id: "review".into(),
+            findings: None,
+            validation_dispositions: Vec::new(),
+            named: Vec::new(),
+        };
+        let config = crate::pipeline_config::workflow_template().unwrap().config;
+        let call = |attempt_count: u32| crate::models::StepCallRecord {
+            attempt_count,
+            ..Default::default()
+        };
+        let first_try = StepOutput {
+            step_id: "review".into(),
+            raw_text: "merged".into(),
+            attempt_count: 3,
+            calls: vec![call(1), call(1), call(1)],
+            ..Default::default()
+        };
+        let quality = build_report_quality(
+            &extraction,
+            None,
+            &sample,
+            &config,
+            &[first_try],
+            &[],
+            &products,
+        );
+        assert_eq!(quality.schema_retry_events, 0);
+        assert_eq!(quality.status, "done");
+        let retried = StepOutput {
+            step_id: "review".into(),
+            raw_text: "merged".into(),
+            attempt_count: 4,
+            calls: vec![call(2), call(1), call(1)],
+            ..Default::default()
+        };
+        let quality = build_report_quality(
+            &extraction,
+            None,
+            &sample,
+            &config,
+            &[retried],
+            &[],
+            &products,
+        );
+        assert_eq!(quality.schema_retry_events, 1);
     }
 }

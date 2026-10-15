@@ -201,9 +201,41 @@ export function useWorkbenchEvents({
         );
         if (owner?.epoch === payload.epoch)
           finishSubmission("connection closed");
+        else if (!owner && activeRef.current) {
+          // A turn adopted from hydration cannot finish once its connection
+          // is gone; leaving it active locks the composer until navigation.
+          activeRef.current = null;
+          setActive(null);
+          setStream("");
+          const selected = sessionRef.current;
+          // Hydrate only when reconciliation settled the turn: hydrating an
+          // unchanged snapshot would re-adopt the dead turn.
+          if (selected)
+            void workbenchClient
+              .reconcileSession(selected)
+              .then((changed) => (changed ? hydrate(selected) : undefined))
+              .catch(() => undefined);
+        }
         setRequests((old) =>
           old.filter((request) => request.epoch !== payload.epoch),
         );
+      }
+
+      // An automation may start a turn on the viewed conversation's thread;
+      // adopt it so its deltas end in a real message, not a frozen bubble.
+      if (
+        payload.kind === "turnStarted" &&
+        !owner &&
+        !activeRef.current &&
+        matchesThread(payload.threadId) &&
+        typeof payload.turnId === "string"
+      ) {
+        const turn = {
+          threadId: String(payload.threadId),
+          turnId: payload.turnId,
+        };
+        activeRef.current = turn;
+        setActive(turn);
       }
 
       if (
@@ -272,7 +304,7 @@ export function useWorkbenchEvents({
         else if (
           !owner &&
           matchesThread(payload.threadId) &&
-          activeRef.current?.turnId === payload.turnId
+          (!activeRef.current || activeRef.current.turnId === payload.turnId)
         ) {
           activeRef.current = null;
           setActive(null);

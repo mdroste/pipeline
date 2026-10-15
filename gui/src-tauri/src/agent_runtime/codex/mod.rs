@@ -9,6 +9,6 @@ pub(crate) mod simulator;
 pub(crate) mod transport;
 pub(crate) mod wire;
 pub use account::*;
-pub use transport::{AppServerClient, RequestError, DEFAULT_REQUEST_TIMEOUT};
+pub use transport::{AppServerClient, RequestError, ServerRequestSink, DEFAULT_REQUEST_TIMEOUT};
 pub use wire::{InitializeResult, NormalizedEvent};
 pub(crate) mod session;

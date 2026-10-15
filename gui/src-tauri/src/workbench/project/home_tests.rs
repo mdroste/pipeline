@@ -57,3 +57,63 @@ fn target_date_is_optional_validated_and_readable_from_older_settings() {
     // No paper is chosen, so there is nothing to compare a folder against.
     assert_eq!(home(&store, &ws).unwrap().working_copy_changed, 0);
 }
+
+#[test]
+fn put_refuses_a_record_id_owned_by_another_workspace() {
+    struct Fixture {
+        store: Store,
+        ws: String,
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::open_at(&temp.path().join("store")).unwrap();
+    let workspace = |name: &str| {
+        store
+            .create_workspace(CreateWorkspaceRequest {
+                name: name.into(),
+                root: None,
+                operation_id: format!("create-{name}"),
+            })
+            .unwrap()
+            .record
+            .id
+    };
+    let ws = workspace("Research");
+    let other = workspace("Other");
+    let f = Fixture { store, ws };
+    put(
+        &f.store,
+        &f.ws,
+        "zotero_x",
+        "bibliography",
+        0,
+        &serde_json::json!({"owner":"A"}),
+    )
+    .unwrap();
+    let error = put(
+        &f.store,
+        &other,
+        "zotero_x",
+        "bibliography",
+        0,
+        &serde_json::json!({"owner":"B"}),
+    )
+    .unwrap_err();
+    assert!(
+        error.message.contains("another project"),
+        "{}",
+        error.message
+    );
+    assert!(put(
+        &f.store,
+        &f.ws,
+        "zotero_x",
+        "task",
+        0,
+        &serde_json::json!({"owner":"A-task"}),
+    )
+    .is_err());
+    let kept = record(&f.store, &f.ws, "zotero_x", "bibliography").unwrap();
+    assert_eq!(kept.body["owner"], "A");
+    assert_eq!(kept.revision, 1);
+    assert!(record(&f.store, &other, "zotero_x", "bibliography").is_err());
+}

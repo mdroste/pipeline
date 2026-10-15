@@ -451,9 +451,17 @@ fn parser_sidecar_refresh_reuses_only_a_verified_pinned_runtime() {
     .unwrap();
 
     assert!(parser_runtime_reusable_for_sidecar_refresh(root.path()));
-    assert!(refresh_paddle_parser_sidecar_locked(root.path()).unwrap());
+    assert_eq!(
+        refresh_paddle_parser_sidecar_locked(root.path()).unwrap(),
+        SidecarRefresh::Refreshed
+    );
     assert!(verified_parser_sidecar_at(root.path()).is_some());
-    assert!(!refresh_paddle_parser_sidecar_locked(root.path()).unwrap());
+    // A current sidecar is reported as such; an install must not read this
+    // as "not reusable" and rebuild the healthy runtime.
+    assert_eq!(
+        refresh_paddle_parser_sidecar_locked(root.path()).unwrap(),
+        SidecarRefresh::AlreadyCurrent
+    );
     std::fs::write(version_root.join("packages.txt"), b"changed").unwrap();
     assert!(!parser_runtime_reusable_for_sidecar_refresh(root.path()));
 }
@@ -590,6 +598,11 @@ fn install_space_is_incremental_and_includes_staging_headroom() {
     assert_eq!(
         install_space_requirement("paddleocr-vl-parser", true, true, true).unwrap(),
         (InstallSpacePlan::ParserSidecarRefresh, 16)
+    );
+    // A missing base stack is downloaded first; the 16 MB plan cannot cover it.
+    assert_eq!(
+        install_space_requirement("paddleocr-vl-parser", false, true, true).unwrap(),
+        (InstallSpacePlan::ParserFreshStack, 4500)
     );
     assert!(check_install_space(2_200_000_000, add_on.0, add_on.1).is_ok());
     assert!(check_install_space(2_199_999_999, add_on.0, add_on.1).is_err());
@@ -803,4 +816,25 @@ fn dir_size_does_not_follow_symlinks() {
     std::os::unix::fs::symlink(outside.path(), root.path().join("escape")).unwrap();
     std::os::unix::fs::symlink(root.path(), root.path().join("cycle")).unwrap();
     assert_eq!(dir_size(root.path()), 10);
+}
+
+#[test]
+fn extraction_waits_for_a_detached_verification_to_release_the_engine_gate() {
+    let guard = acquire_engine_guard(false).unwrap();
+    assert!(engine_gate_busy_without_install());
+    assert!(acquire_engine_guard(false).is_err());
+    let holder = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        drop(guard);
+    });
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let lease = runtime
+        .block_on(acquire_waiting_on_detached_gate(
+            || acquire_engine_guard(false),
+            std::time::Duration::from_secs(5),
+        ))
+        .unwrap();
+    holder.join().unwrap();
+    drop(lease);
+    assert!(!engine_gate_busy_without_install());
 }

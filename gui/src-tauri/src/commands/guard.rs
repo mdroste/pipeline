@@ -12,6 +12,12 @@ pub(super) static CANCEL_SIGNAL: std::sync::OnceLock<tokio::sync::watch::Sender<
 pub(super) static PIPELINE_RUNNING: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// True while this process holds the pipeline guard. Run recovery consults it
+/// so a History refresh never rewrites the run this process is executing.
+pub fn pipeline_is_running() -> bool {
+    PIPELINE_RUNNING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 /// RAII guard that cleans up pipeline state on drop (including panics) and
 /// holds an OS-level lock so a GUI and CLI process cannot mutate shared run,
 /// cache, or retention state concurrently.
@@ -25,17 +31,7 @@ pub(super) fn acquire_pipeline_guard() -> Result<PipelineGuard, String> {
         return Err("A pipeline is already running".into());
     }
     let result = (|| {
-        let home = dirs::home_dir().ok_or("Cannot determine home directory")?;
-        let dir = home.join(".pipeline");
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| format!("Failed to create Pipeline data directory: {e}"))?;
-        let lock_file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(dir.join("run.lock"))
-            .map_err(|e| format!("Failed to open the Pipeline run lock: {e}"))?;
+        let lock_file = crate::runs::open_run_lock(&crate::runs::run_lock_path()?)?;
         lock_file
             .try_lock_exclusive()
             .map_err(|e| format!("Another Pipeline process is already running a job ({e})"))?;

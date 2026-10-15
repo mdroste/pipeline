@@ -13,6 +13,32 @@ pub use theory::*;
 #[cfg(test)]
 mod tests;
 
+/// Deterministic id for an imported object, scoped to the workspace so the
+/// same object imported into two projects yields two independent records.
+/// Builds up to 1.0.2 hashed the fingerprint alone; that legacy id is looked
+/// up in the same workspace so existing projects keep deduplicating against
+/// it instead of growing a second record.
+fn scoped_record(
+    store: &Store,
+    ws: &str,
+    prefix: &str,
+    kind: &str,
+    fingerprint: &str,
+) -> (String, Option<ProjectRecord>) {
+    let scoped = format!(
+        "{prefix}_{}",
+        hash(format!("{ws}\0{fingerprint}").as_bytes())
+    );
+    let legacy = format!("{prefix}_{}", hash(fingerprint.as_bytes()));
+    match record(store, ws, &scoped, kind)
+        .ok()
+        .or_else(|| record(store, ws, &legacy, kind).ok())
+    {
+        Some(old) => (old.id.clone(), Some(old)),
+        None => (scoped, None),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(
     tag = "action",

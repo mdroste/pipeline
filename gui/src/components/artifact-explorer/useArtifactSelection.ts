@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { artifactClient } from "../../lib/artifactClient";
 import type {
   ArtifactContent,
@@ -33,12 +33,17 @@ export default function useArtifactSelection({
   const [content, setContent] = useState<ArtifactContent | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [navigationOpen, setNavigationOpen] = useState(true);
+  // A selection request is consumed once per key and manifest. Without this
+  // every later navigation re-applied it, bouncing the user back to the
+  // requested artifact.
+  const appliedRequestKey = useRef<number | null>(null);
 
   useEffect(() => {
     let live = true;
     // Clear every run-scoped value before requesting the next manifest. This
     // also prevents the content effect from combining a new run ID with the
     // previous run's selection.
+    appliedRequestKey.current = null;
     setManifest(null);
     setManifestError(null);
     setSelected(deferInitialArtifact ? "" : "report.md");
@@ -135,6 +140,8 @@ export default function useArtifactSelection({
   );
   useEffect(() => {
     if (!manifest || !selectionRequest) return;
+    if (appliedRequestKey.current === selectionRequest.key) return;
+    appliedRequestKey.current = selectionRequest.key;
     let next = "";
     if (selectionRequest.relPath) {
       const indexedPage = indexedPageForPath(

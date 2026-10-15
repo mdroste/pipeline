@@ -311,3 +311,102 @@ it("never pairs an unfinished historical turn with a successor binding", async (
   expect(result.current.active).toBeNull();
   unmount();
 });
+
+it("restores the composer text when a dispatched send is rejected", async () => {
+  const { result, saved, unmount } = await draftFixture();
+  mocks.sendTurn.mockImplementation(async (r: any) => {
+    // The host records the text as the session draft before dispatch.
+    mocks.updateSession.getMockImplementation()!({
+      sessionId: r.sessionId,
+      draft: r.text,
+    });
+    throw new Error("project has a local job holding its write resources");
+  });
+  act(() => result.current.editDraft("my long question"));
+  await act(async () => {
+    await result.current.send();
+  });
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  expect(result.current.draft).toBe("my long question");
+  expect(result.current.pendingUser).toBeNull();
+  expect(mocks.updateSession).not.toHaveBeenCalledWith(
+    expect.objectContaining({ sessionId: "A", draft: "" }),
+  );
+  expect(saved().session.draft).toBe("my long question");
+  unmount();
+});
+
+it("finishes an automation-driven turn on the viewed thread instead of leaving a phantom bubble", async () => {
+  const { result, unmount } = await draftFixture({
+    activeBinding: { id: "binding", providerThreadId: "thread-A" },
+  });
+  mocks.reconcileSession.mockClear();
+  mocks.conversationSnapshot.mockClear();
+  await act(async () => {
+    for (const cb of mocks.listeners)
+      cb({
+        payload: {
+          epoch: 1,
+          kind: "turnStarted",
+          threadId: "thread-A",
+          turnId: "turn-X",
+        },
+      });
+  });
+  expect(result.current.active?.turnId).toBe("turn-X");
+  await act(async () => {
+    for (const cb of mocks.listeners)
+      cb({
+        payload: {
+          epoch: 1,
+          kind: "agentMessageDelta",
+          threadId: "thread-A",
+          turnId: "turn-X",
+          delta: "hi",
+        },
+      });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  });
+  expect(result.current.stream).toBe("hi");
+  await act(async () => {
+    for (const cb of mocks.listeners)
+      cb({
+        payload: {
+          epoch: 1,
+          kind: "turnCompleted",
+          threadId: "thread-A",
+          turnId: "turn-X",
+          status: "completed",
+        },
+      });
+  });
+  await waitFor(() => expect(result.current.active).toBeNull());
+  expect(result.current.stream).toBe("");
+  expect(mocks.reconcileSession).toHaveBeenCalledWith("A");
+  await waitFor(() => expect(mocks.conversationSnapshot).toHaveBeenCalled());
+  unmount();
+});
+
+it("releases a turn restored by hydration when its connection closes", async () => {
+  const { result, unmount } = await draftFixture({
+    activeBinding: { id: "binding", providerThreadId: "thread-A" },
+    turns: [
+      {
+        id: "turn",
+        bindingId: "binding",
+        providerTurnId: "turn-A",
+        terminalAt: null,
+        state: "inProgress",
+      },
+    ],
+  });
+  await waitFor(() => expect(result.current.active?.turnId).toBe("turn-A"));
+  mocks.reconcileSession.mockClear();
+  await act(async () => {
+    for (const cb of mocks.listeners)
+      cb({ payload: { epoch: 1, kind: "connectionClosed" } });
+  });
+  await waitFor(() => expect(result.current.active).toBeNull());
+  expect(mocks.reconcileSession).toHaveBeenCalledWith("A");
+  unmount();
+});

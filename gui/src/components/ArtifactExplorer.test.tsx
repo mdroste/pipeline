@@ -400,6 +400,83 @@ describe("ArtifactExplorer", () => {
     });
   });
 
+  it("applies a selection request once so the user can navigate away from it", async () => {
+    const user = userEvent.setup();
+    mockBackend({
+      "context/document.md": textContent("markdown", "# Readable document"),
+      "artifacts/01_technical.md": textContent(
+        "markdown",
+        "# Technical source",
+      ),
+    });
+    render(
+      <ArtifactExplorer
+        runId={manifest.run_id}
+        fallbackMarkdown=""
+        deferInitialArtifact
+        selectionRequest={{ key: 1, relPath: "context/document.md", line: 3 }}
+      />,
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Readable document" }),
+    ).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Technical" }));
+    expect(
+      await screen.findByRole("heading", { name: "Technical source" }),
+    ).toBeVisible();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(
+      screen.getByRole("heading", { name: "Technical source" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Readable document" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the next compact page after an evidence request opened an earlier one", async () => {
+    const user = userEvent.setup();
+    const pagedManifest = {
+      ...manifest,
+      page_artifacts: {
+        count: 3,
+        digit_width: 1,
+        extension: "jpg",
+        total_bytes: 1500,
+      },
+    };
+    const page = (n: number) => ({
+      kind: "image",
+      bytes: 500,
+      text: null,
+      base64: "aGVsbG8=",
+      truncated: false,
+      abs_path: `/runs/x/page-${n}.jpg`,
+    });
+    invoke.mockImplementation((cmd: string, args?: Record<string, unknown>) => {
+      if (cmd === "get_run_manifest") return Promise.resolve(pagedManifest);
+      if (cmd === "read_page_artifact")
+        return Promise.resolve(page(args?.page as number));
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    render(
+      <ArtifactExplorer
+        runId={manifest.run_id}
+        fallbackMarkdown=""
+        deferInitialArtifact
+        selectionRequest={{ key: 1, page: 2 }}
+      />,
+    );
+    expect(await screen.findByRole("img", { name: "Page 2" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByRole("img", { name: "Page 3" })).toBeVisible();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.getByRole("img", { name: "Page 3" })).toBeVisible();
+    expect(
+      screen.queryByRole("img", { name: "Page 2" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("jumps directly through a long compact page index without materializing page buttons", async () => {
     const user = userEvent.setup();
     const longManifest = {

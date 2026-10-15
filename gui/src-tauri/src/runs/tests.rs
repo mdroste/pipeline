@@ -933,3 +933,92 @@ fn recovery_requires_logical_receipts_and_atomically_overlays_final_waves() {
         assert!(checkpoints.join("0000_unit.json").exists());
     }
 }
+
+#[test]
+fn recovery_yields_to_the_run_lock_held_by_the_pipeline_guard() {
+    use fs2::FileExt as _;
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    let lock_path = temp.path().join("run.lock");
+    fs::create_dir_all(&runs).unwrap();
+    let mut writer = RunWriter::create_in(&runs, "abc123_live").unwrap();
+    writer
+        .add_text(DOCUMENT_TEXT_PATH, "Readable document", "document", "paper")
+        .unwrap();
+    let run_dir = writer.dir().to_path_buf();
+    std::mem::forget(writer);
+
+    // The same lock file the pipeline guard takes, held as the guard holds it.
+    let guard = open_run_lock(&lock_path).unwrap();
+    guard.try_lock_exclusive().unwrap();
+    assert_eq!(recover_resumable_runs_at(&runs, &lock_path).unwrap(), 0);
+    let manifest: RunManifest =
+        serde_json::from_str(&fs::read_to_string(run_dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest.status, "running");
+    assert!(!run_dir.join("report.json").exists());
+
+    fs2::FileExt::unlock(&guard).unwrap();
+    assert_eq!(recover_resumable_runs_at(&runs, &lock_path).unwrap(), 1);
+    let manifest: RunManifest =
+        serde_json::from_str(&fs::read_to_string(run_dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest.status, "interrupted");
+}
+
+#[test]
+fn trashed_runs_restore_through_symlinked_storage_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let real = temp.path().join("real");
+    fs::create_dir_all(real.join("runs")).unwrap();
+    fs::create_dir_all(real.join("trash/runs/abc123_run")).unwrap();
+    fs::write(real.join("trash/runs/abc123_run/manifest.json"), "{}").unwrap();
+    // The configured data folder reaches Trash through a link, as a
+    // symlinked folder (or a Windows verbatim prefix) does.
+    #[cfg(unix)]
+    let data = {
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        link
+    };
+    #[cfg(not(unix))]
+    let data = real.clone();
+    restore_trashed_run_at(&data.join("runs"), &data.join("trash/runs"), "abc123_run").unwrap();
+    assert!(real.join("runs/abc123_run/manifest.json").is_file());
+    assert!(!real.join("trash/runs/abc123_run").exists());
+    assert!(
+        restore_trashed_run_at(&data.join("runs"), &data.join("trash/runs"), "abc123_run").is_err()
+    );
+}
+
+#[test]
+fn captured_tree_registration_keeps_every_file_past_the_model_output_cap() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut writer = RunWriter::create_in(temp.path(), "captured-run").unwrap();
+    let tree = writer.dir().join("source-snapshot/tree");
+    fs::create_dir_all(&tree).unwrap();
+    for index in 0..501 {
+        fs::write(tree.join(format!("{index:04}.tex")), "x").unwrap();
+    }
+    assert_eq!(
+        writer
+            .register_captured_tree("source-snapshot", "source")
+            .unwrap(),
+        501
+    );
+    assert_eq!(fs::read_dir(&tree).unwrap().count(), 501);
+}
+
+#[test]
+fn model_written_programs_are_classified_as_executable_not_binary() {
+    for name in [
+        "payload.exe",
+        "summary.jar",
+        "report.pkg",
+        "x.dmg",
+        "run.bat",
+        "a.ps1",
+    ] {
+        assert_eq!(detect_kind(name, b""), "executable", "{name}");
+    }
+    assert_eq!(detect_kind("table.xlsx", b""), "binary");
+    assert_eq!(detect_kind("script.sh", b""), "code");
+}

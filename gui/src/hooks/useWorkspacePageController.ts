@@ -10,6 +10,7 @@ import useContainerWidth from "./useContainerWidth";
 import useWorkspaceEntry from "./useWorkspaceEntry";
 import {
   mergeSessionSnapshot,
+  newOperation,
   saveWorkspaceDraft,
 } from "../lib/workspaceSessionState";
 import useWorkspaceTranscript from "./useWorkspaceTranscript";
@@ -36,10 +37,6 @@ import type {
   Workspace,
   WorkspaceModel,
 } from "../lib/workbenchTypes";
-
-function newOperation(prefix: string) {
-  return `${prefix}-${crypto.randomUUID()}`;
-}
 
 export function useWorkspacePageController({
   entryTarget,
@@ -814,6 +811,7 @@ export function useWorkspacePageController({
     } catch {
       /* The host retains submission recovery. */
     }
+    const editRevisionAtSend = draftEditRevision.current; // see catch
     let dispatched = false;
     try {
       await selectionSaveRef.current;
@@ -876,6 +874,11 @@ export function useWorkspacePageController({
       submissionRef.current = null;
       if (sessionRef.current === sessionId) setPendingUser(null);
       await hydrate(sessionId);
+      if (
+        sessionRef.current === sessionId &&
+        draftEditRevision.current === editRevisionAtSend
+      )
+        editDraft(text);
     }
   };
 

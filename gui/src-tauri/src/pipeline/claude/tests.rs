@@ -419,3 +419,35 @@ fn live_artifact_monitor_rejects_special_files() {
         .unwrap_err()
         .contains("non-regular"));
 }
+
+#[test]
+fn forked_write_calls_keep_their_write_root_editable_and_lock_the_shared_workspace() {
+    // Fork mode plans from the shared warm-up workspace, so the task's write
+    // root arrives as an extra read root. Denying it would refuse every
+    // supporting-file write; the shared cwd must be denied instead.
+    let workspace = plan_cli_workspace(
+        Some("/tmp/shared"),
+        &["/Users/x/src", "/runs/r1/by-step/s1"],
+        None,
+        None,
+    )
+    .unwrap();
+    let denies = cli_deny_list(
+        &["Read", "Write"],
+        &workspace.read_dirs,
+        Some("/runs/r1/by-step/s1"),
+        Some("/tmp/shared"),
+    );
+    assert!(!denies
+        .iter()
+        .any(|d| d.starts_with("Edit(") && d.contains("/runs/r1/by-step/s1")));
+    assert!(denies
+        .iter()
+        .any(|d| d.starts_with("Edit(") && d.contains("/Users/x/src")));
+    assert!(denies
+        .iter()
+        .any(|d| d.starts_with("Edit(") && d.contains("/tmp/shared")));
+    // Read-only forks keep denying every write tool outright.
+    let read_only = cli_deny_list(&["Read"], &workspace.read_dirs, None, Some("/tmp/shared"));
+    assert!(read_only.iter().any(|d| d == "Edit"));
+}

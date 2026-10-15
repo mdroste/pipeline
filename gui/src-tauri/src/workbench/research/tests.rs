@@ -889,3 +889,159 @@ fn schema_13_custom_profiles_migrate_to_inheriting_the_native_default() {
     let migrated = Store::open_at(fixture.store.root_path()).unwrap();
     assert_eq!(find_preset(&migrated, None, &copy.id).unwrap(), copy);
 }
+
+#[cfg(unix)]
+#[test]
+fn launch_manifest_hashes_symlinked_zsh_startup_files() {
+    if !Path::new("/bin/zsh").is_file() {
+        return;
+    }
+    let temporary = tempfile::tempdir().unwrap();
+    let zdotdir = temporary.path().join("zdot");
+    fs::create_dir(&zdotdir).unwrap();
+    let real = zdotdir.join("zshrc.real");
+    fs::write(&real, "export PATH=$HOME/bin:$PATH\n").unwrap();
+    std::os::unix::fs::symlink(&real, zdotdir.join(".zshrc")).unwrap();
+    let cwd = temporary.path().join("work");
+    fs::create_dir(&cwd).unwrap();
+    let profile = ExecutionProfile {
+        id: "profile".into(),
+        workspace_id: "workspace".into(),
+        name: "zsh".into(),
+        adapter: "command".into(),
+        argv: vec!["/bin/zsh".into(), "-c".into(), "true".into()],
+        cwd: cwd.to_string_lossy().into_owned(),
+        environment: json!({"ZDOTDIR": zdotdir.to_string_lossy()}),
+        inputs: vec![],
+        timeout_seconds: 10,
+        outputs: vec![],
+        tested_at: None,
+        test_status: None,
+        revision: 1,
+    };
+    let launch = execution::launch_manifest(&profile).unwrap();
+    let (expected, _) = papers::hash_file(&real).unwrap();
+    let startup = launch["shellStartupFiles"].as_array().unwrap();
+    let zshrc = startup
+        .iter()
+        .find(|entry| entry["path"].as_str().unwrap().ends_with("/.zshrc"))
+        .unwrap();
+    assert_eq!(zshrc["hash"], expected);
+    assert_eq!(zshrc["path"], json!(zdotdir.join(".zshrc")));
+    assert_eq!(startup.len(), 4);
+}
+
+#[test]
+fn paper_search_excerpts_stay_bounded_on_single_line_documents() {
+    let fixture = fixture();
+    let paper_path = fixture.root.join("results.txt");
+    let mut line = String::new();
+    while line.len() < 1024 * 1024 {
+        line.push_str("coef=0.4213 ");
+    }
+    line.push('\n');
+    fs::write(&paper_path, &line).unwrap();
+    let paper = import_paper(
+        &fixture.store,
+        ImportPaperRequest {
+            workspace_id: fixture.workspace_id.clone(),
+            paper_id: None,
+            title: "Results".into(),
+            role: "other".into(),
+            path: paper_path.to_string_lossy().into_owned(),
+            operation_id: "results".into(),
+        },
+    )
+    .unwrap();
+    let hits = paper_search(
+        &fixture.store,
+        &fixture.workspace_id,
+        &paper.revision.unwrap().id,
+        "coef",
+        20,
+    )
+    .unwrap();
+    assert!(!hits.is_empty());
+    assert!(hits.iter().all(|hit| hit.excerpt.len() <= 160 + 4 + 160));
+    assert!(serde_json::to_vec(&hits).unwrap().len() < 64 * 1024);
+}
+
+fn bound_scope(fixture: &Fixture) -> (crate::orchestration::store::Scope, String) {
+    let binding = crate::workbench::tasks::binding(&fixture.store, &fixture.session_id).unwrap();
+    let scope = crate::orchestration::store::Scope {
+        session_id: Some(fixture.session_id.clone()),
+        workspace_id: binding.workspace_id.clone(),
+        session_cursor: Some(binding.cursor.clone()),
+        harness_fingerprint: Some(binding.harness_fingerprint.clone()),
+        runtime_root: Some(binding.runtime_root.clone()),
+        root_identity: Some(binding.root_identity.clone()),
+        ..Default::default()
+    };
+    let authority =
+        crate::workbench::missions::authority(&fixture.store, &fixture.session_id).unwrap();
+    (scope, authority)
+}
+
+#[test]
+fn a_source_conversation_draft_does_not_block_a_discovery_run() {
+    use crate::workbench::missions::{refresh_scope, refresh_source_scope};
+
+    let fixture = fixture();
+    let (scope, authority) = bound_scope(&fixture);
+    assert!(refresh_scope(&fixture.store, &scope, &authority).is_ok());
+    // An unsent draft blocks a mission (it submits there) but not a
+    // self-discovery run that only reads its source conversation.
+    let session = fixture
+        .store
+        .session_snapshot(&fixture.session_id)
+        .unwrap()
+        .session;
+    fixture
+        .store
+        .update_session(UpdateSessionRequest {
+            session_id: session.id.clone(),
+            expected_revision: session.revision,
+            operation_id: "draft".into(),
+            title: None,
+            draft: Some("a note I have not sent".into()),
+            overrides: None,
+            archived: None,
+            preset_id: None,
+            paper_id: None,
+            clear_paper: None,
+        })
+        .unwrap();
+    assert!(refresh_scope(&fixture.store, &scope, &authority).is_err());
+    assert!(refresh_source_scope(&fixture.store, &scope, &authority).is_ok());
+}
+
+#[test]
+fn retry_readopts_a_cursor_moved_by_a_steering_message() {
+    use crate::workbench::codex::NormalizedEvent;
+    use crate::workbench::missions::{readopt_scope, refresh_scope, refresh_source_scope};
+
+    let fixture = fixture();
+    let (scope, authority) = bound_scope(&fixture);
+    let bound = fixture
+        .store
+        .bind_session(&fixture.session_id, "codex-epoch-1", "thread-1")
+        .unwrap();
+    fixture
+        .store
+        .project_codex_event(
+            &bound.id,
+            &NormalizedEvent::TurnCompleted {
+                epoch: 1,
+                thread_id: "thread-1".into(),
+                turn_id: "turn-1".into(),
+                status: "completed".into(),
+                turn: json!({"id": "turn-1", "status": "completed", "items": []}),
+            },
+        )
+        .unwrap();
+    assert!(refresh_scope(&fixture.store, &scope, &authority).is_err());
+    assert!(refresh_source_scope(&fixture.store, &scope, &authority).is_err());
+    let adopted = readopt_scope(&fixture.store, &scope, &authority, true).unwrap();
+    assert_ne!(adopted.session_cursor, scope.session_cursor);
+    assert!(refresh_scope(&fixture.store, &adopted, &authority).is_ok());
+}

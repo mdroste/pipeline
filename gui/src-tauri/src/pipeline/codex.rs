@@ -486,18 +486,17 @@ async fn fork_codex_thread(thread_id: &str, spec: &CodexForkSpec<'_>) -> Result<
     validate_codex_fork(result, spec)
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn call_codex_inner(
-    app: &crate::emit::EventBus,
-    prompt: &str,
+/// Build the `codex exec` argument vector. Pure so the sandbox contract can
+/// be asserted without spawning the CLI. Returns the argv and whether the
+/// call runs in write mode.
+fn codex_exec_args(
     allowed_tools: &[&str],
     system_prompt: Option<&str>,
-    timeout_secs: u64,
-    label: &str,
-    cwd: Option<&str>,
     overrides: &LlmOverrides<'_>,
     session_mode: CodexSessionMode<'_>,
-) -> Result<CodexInvocation, String> {
+    schema_path: Option<&str>,
+    last_message_path: &str,
+) -> Result<(Vec<String>, bool), String> {
     let mut cmd_args: Vec<String> = vec!["exec".to_string()];
     if matches!(session_mode, CodexSessionMode::Resume(_)) {
         cmd_args.push("resume".to_string());
@@ -523,17 +522,7 @@ async fn call_codex_inner(
     // strict projection widens optional fields to nullable and the host
     // strips the nulls back out. Inexpressible (yet valid) schemas proceed
     // without a native constraint rather than triggering a provider 400.
-    let prepared_output_schema = overrides
-        .output_schema
-        .map(crate::pipeline::structured::prepare_codex_schema_file)
-        .transpose()?
-        .flatten();
-    append_codex_output_schema(
-        &mut cmd_args,
-        prepared_output_schema
-            .as_ref()
-            .map(|schema| schema.path.as_str()),
-    );
+    append_codex_output_schema(&mut cmd_args, schema_path);
 
     // Determine sandbox mode: workspace-write only when the step may write
     // AND we have an artifact dir to confine writes to (the caller sets the
@@ -548,12 +537,23 @@ async fn call_codex_inner(
     if matches!(session_mode, CodexSessionMode::New) {
         cmd_args.push("--sandbox".to_string());
         cmd_args.push(sandbox.to_string());
+    } else {
+        // `codex exec resume` has no --sandbox flag and does not restore the
+        // forked thread's sandbox: without an override the user's global
+        // ~/.codex/config.toml (often danger-full-access) would govern the
+        // resumed review call. Pin it through the documented config override.
+        cmd_args.push("-c".to_string());
+        cmd_args.push(format!("sandbox_mode=\"{sandbox}\""));
+        cmd_args.push("-c".to_string());
+        cmd_args.push("approval_policy=\"never\"".to_string());
     }
 
     if needs_write {
         // workspace-write also opens /tmp and $TMPDIR by default; close
         // them so a step can't touch another step's temp prompt files.
         // (Reads stay unrestricted — the sandbox governs writes only.)
+        cmd_args.push("-c".to_string());
+        cmd_args.push("sandbox_workspace_write.network_access=false".to_string());
         cmd_args.push("-c".to_string());
         cmd_args.push("sandbox_workspace_write.exclude_slash_tmp=true".to_string());
         cmd_args.push("-c".to_string());
@@ -602,17 +602,47 @@ async fn call_codex_inner(
     // JSONL contains progress/commentary messages as well as the terminal
     // response. Have Codex write the one terminal message separately so those
     // channels can never be flattened into a report.
+    cmd_args.push("--output-last-message".to_string());
+    cmd_args.push(last_message_path.to_string());
+    if let CodexSessionMode::Resume(id) = session_mode {
+        cmd_args.push(id.to_string());
+    }
+    cmd_args.push("-".to_string());
+    Ok((cmd_args, needs_write))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn call_codex_inner(
+    app: &crate::emit::EventBus,
+    prompt: &str,
+    allowed_tools: &[&str],
+    system_prompt: Option<&str>,
+    timeout_secs: u64,
+    label: &str,
+    cwd: Option<&str>,
+    overrides: &LlmOverrides<'_>,
+    session_mode: CodexSessionMode<'_>,
+) -> Result<CodexInvocation, String> {
+    let prepared_output_schema = overrides
+        .output_schema
+        .map(crate::pipeline::structured::prepare_codex_schema_file)
+        .transpose()?
+        .flatten();
     let last_message_dir = tempfile::Builder::new()
         .prefix("pipeline_codex_final_")
         .tempdir()
         .map_err(|error| format!("Failed to create Codex final-message directory: {error}"))?;
     let last_message_path = last_message_dir.path().join("final.txt");
-    cmd_args.push("--output-last-message".to_string());
-    cmd_args.push(last_message_path.to_string_lossy().replace('\\', "/"));
-    if let CodexSessionMode::Resume(id) = session_mode {
-        cmd_args.push(id.to_string());
-    }
-    cmd_args.push("-".to_string());
+    let (cmd_args, needs_write) = codex_exec_args(
+        allowed_tools,
+        system_prompt,
+        overrides,
+        session_mode,
+        prepared_output_schema
+            .as_ref()
+            .map(|schema| schema.path.as_str()),
+        &last_message_path.to_string_lossy().replace('\\', "/"),
+    )?;
 
     // Log the command (truncated)
     let display_args: String = cmd_args
@@ -903,6 +933,63 @@ async fn call_codex_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn pair(args: &[String], key: &str, value: &str) -> bool {
+        args.windows(2)
+            .any(|window| window[0] == key && window[1] == value)
+    }
+
+    #[test]
+    fn resumed_calls_pin_the_sandbox_through_config_overrides() {
+        let (read_only, writes) = codex_exec_args(
+            &["Read"],
+            None,
+            &LlmOverrides::default(),
+            CodexSessionMode::Resume("abc"),
+            None,
+            "/tmp/final.txt",
+        )
+        .unwrap();
+        assert!(!writes);
+        assert_eq!(&read_only[..2], ["exec", "resume"]);
+        assert!(pair(&read_only, "-c", "sandbox_mode=\"read-only\""));
+        assert!(pair(&read_only, "-c", "approval_policy=\"never\""));
+        assert!(!read_only.iter().any(|arg| arg == "--sandbox"));
+        assert_eq!(read_only[read_only.len() - 2..], ["abc", "-"]);
+
+        let overrides = LlmOverrides {
+            write_dir: Some("/runs/r1/artifacts"),
+            ..LlmOverrides::default()
+        };
+        let (writable, writes) = codex_exec_args(
+            &["Read", "Write"],
+            None,
+            &overrides,
+            CodexSessionMode::Resume("abc"),
+            None,
+            "/tmp/final.txt",
+        )
+        .unwrap();
+        assert!(writes);
+        assert!(pair(&writable, "-c", "sandbox_mode=\"workspace-write\""));
+        assert!(pair(
+            &writable,
+            "-c",
+            "sandbox_workspace_write.network_access=false"
+        ));
+
+        let (fresh, _) = codex_exec_args(
+            &["Read"],
+            None,
+            &LlmOverrides::default(),
+            CodexSessionMode::New,
+            None,
+            "/tmp/final.txt",
+        )
+        .unwrap();
+        assert!(pair(&fresh, "--sandbox", "read-only"));
+        assert!(!fresh.iter().any(|arg| arg.starts_with("sandbox_mode=")));
+    }
 
     #[test]
     fn write_mode_keeps_windows_artifact_directory_as_workspace() {

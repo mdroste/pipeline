@@ -259,3 +259,39 @@ fn interruption_errors_map_to_shell_interrupt_status() {
         "provider process was interrupted unexpectedly"
     ));
 }
+
+#[test]
+fn stdout_output_tolerates_a_closed_pipe() {
+    struct Gone;
+    impl std::io::Write for Gone {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    // Must return instead of panicking: the runtime ignores SIGPIPE, and a
+    // panic here would turn a finished run into exit status 101.
+    assert!(!emit_to(&mut Gone, "report"));
+    let mut captured = Vec::new();
+    assert!(emit_to(&mut captured, "report"));
+    assert_eq!(captured, b"report\n");
+}
+
+#[test]
+fn relative_cli_inputs_are_resolved_against_the_current_directory() {
+    let cwd = std::env::current_dir().unwrap();
+    let resolved = absolutize("paper.pdf").unwrap();
+    assert_eq!(Path::new(&resolved), cwd.join("paper.pdf"));
+    assert!(Path::new(&resolved).is_absolute());
+    // An already absolute path (in the host's own form) is returned unchanged.
+    let absolute = cwd.join("paper.pdf").to_string_lossy().into_owned();
+    assert_eq!(absolutize(&absolute).unwrap(), absolute);
+    let extra = absolutize_inputs(HashMap::from([(
+        "appendix".to_string(),
+        "./a.tex".to_string(),
+    )]))
+    .unwrap();
+    assert_eq!(Path::new(&extra["appendix"]), cwd.join("./a.tex"));
+}

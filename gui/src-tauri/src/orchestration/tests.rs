@@ -1118,3 +1118,116 @@ fn foreach_binds_each_input_once() {
 }
 
 mod coordinator;
+
+#[test]
+fn reserved_step_ids_are_rejected_before_they_can_shadow_decisions() {
+    let gate = |inner: Step| {
+        chain(vec![
+            step(
+                "gate",
+                Action::If {
+                    condition: Condition::Equals {
+                        left: Binding::Input {
+                            key: "answer".into(),
+                        },
+                        right: json!(true),
+                    },
+                    then_steps: vec![inner, delay("b")],
+                    else_steps: vec![],
+                },
+            ),
+            delay("c"),
+        ])
+    };
+    let nested_done = step(
+        "done",
+        Action::If {
+            condition: Condition::Equals {
+                left: Binding::Input {
+                    key: "answer".into(),
+                },
+                right: json!(true),
+            },
+            then_steps: vec![delay("a")],
+            else_steps: vec![],
+        },
+    );
+    assert!(definition::validate(&gate(nested_done)).is_err());
+    assert!(definition::validate(&gate(delay("enter"))).is_err());
+    assert!(definition::validate(&gate(delay("0"))).is_err());
+    assert_eq!(definition::validate(&gate(delay("inner"))), Ok(()));
+}
+
+#[tokio::test]
+async fn a_slot_blocked_task_records_its_wait_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::open(&temp.path().join("tasks")).unwrap();
+    let owner = std::fs::File::create(store.root.join("test-owner")).unwrap();
+    let coordinator = Arc::new(Coordinator {
+        store,
+        gate: tokio::sync::Mutex::new(()),
+        wake: Notify::new(),
+        active: Mutex::new(HashMap::new()),
+        stopping: AtomicBool::new(false),
+        background: AtomicBool::new(false),
+        _owner: owner,
+        app: None,
+    });
+    let run = coordinator
+        .store
+        .create(
+            "queued-op",
+            chain(vec![step(
+                "w",
+                Action::Workspace {
+                    prompt: "Inspect".into(),
+                    model: None,
+                    effort: None,
+                },
+            )]),
+            Scope::default(),
+            json!({}),
+            now(),
+            true,
+        )
+        .unwrap();
+    // Another Workspace step holds the only slot for the whole wait.
+    let (holder, _watch) = watch::channel(false);
+    coordinator
+        .active
+        .lock()
+        .unwrap()
+        .insert("other".into(), ("workspace".into(), holder));
+    let started = coordinator.store.get(&run.id).unwrap().revision;
+    for round in 0..3 {
+        if round > 0 {
+            // ready_ids selects by due_at <= now; the wait re-polls every 2 s.
+            coordinator
+                .store
+                .touch_due(&run.id, Some(now() - 1))
+                .unwrap();
+        }
+        coordinator.tick().await.unwrap();
+        let current = coordinator.store.get(&run.id).unwrap();
+        assert_eq!(current.state, "queued");
+        assert_eq!(
+            current.reason.as_deref(),
+            Some("Waiting for an execution slot")
+        );
+    }
+    let queued_events: i64 = coordinator
+        .store
+        .connection()
+        .unwrap()
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE run_id=?1 AND kind='queued'",
+            [&run.id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(queued_events, 1);
+    assert_eq!(
+        coordinator.store.get(&run.id).unwrap().revision,
+        started + 1
+    );
+}

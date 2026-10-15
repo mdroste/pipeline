@@ -135,7 +135,7 @@ pub fn wake_owner(s: &Store, task: &str) -> Result<bool> {
 
 /// A child and its budget reservation enter the same transaction. No orphan
 /// approved task can be launched between preparation and mission association.
-pub fn admit(s: &Store, m: &mut Mission, chain: Chain, scope: Scope) -> Result<TaskRun> {
+pub fn admit(s: &Store, m: &mut Mission, mut chain: Chain, scope: Scope) -> Result<TaskRun> {
     if m.state != "queued" || m.active_child.is_some() {
         return Err("Mission is not ready to dispatch".into());
     }
@@ -154,6 +154,15 @@ pub fn admit(s: &Store, m: &mut Mission, chain: Chain, scope: Scope) -> Result<T
     {
         return Err("Mission child must be one bounded action within its remaining time".into());
     }
+    // Rendered prompts quote researcher and source text that may itself
+    // contain '{{input:...}}' or '{{output:...}}'. Bind the prompt as one
+    // opaque input (as discovery does) so render_prompt substitutes it once
+    // and never re-parses its content.
+    let mut inputs = serde_json::json!({});
+    if let super::super::definition::Action::Workspace { prompt, .. } = &mut chain.steps[0].action {
+        inputs["missionPrompt"] =
+            serde_json::json!(std::mem::replace(prompt, "{{input:missionPrompt}}".into()));
+    }
     super::super::definition::validate(&chain)?;
     let time = now();
     let run = TaskRun {
@@ -165,7 +174,7 @@ pub fn admit(s: &Store, m: &mut Mission, chain: Chain, scope: Scope) -> Result<T
         reason: None,
         chain,
         scope,
-        inputs: serde_json::json!({}),
+        inputs,
         progress: Progress::default(),
         created_at: time,
         updated_at: time,
@@ -179,7 +188,12 @@ pub fn admit(s: &Store, m: &mut Mission, chain: Chain, scope: Scope) -> Result<T
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(err)?;
     let op = format!("mission-{}-{}", m.id, m.actions_reserved);
-    super::super::store::insert_run(&tx, &run, &op, &hash(&(&run.chain, &run.scope))?)?;
+    super::super::store::insert_run(
+        &tx,
+        &run,
+        &op,
+        &hash(&(&run.chain, &run.scope, &run.inputs))?,
+    )?;
     tx.execute(
         "INSERT INTO mission_children(task_id,mission_id,phase,round) VALUES(?1,?2,?3,?4)",
         params![

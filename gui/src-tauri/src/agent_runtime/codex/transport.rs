@@ -15,7 +15,11 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 const FRAME_LIMIT: usize = 8 * 1024 * 1024;
 const OUTBOUND_QUEUE_CAPACITY: usize = 64;
-const EVENT_QUEUE_CAPACITY: usize = 256;
+// Workspace coalesces streams, and a Review call may be inside a host tool
+// while sibling threads stream deltas; keep enough headroom that an
+// ordinary burst never lags a subscriber.
+const EVENT_QUEUE_CAPACITY: usize = 4096;
+const REQUEST_SINK_CAPACITY: usize = 256;
 const WRITE_QUEUE_TIMEOUT: Duration = Duration::from_secs(2);
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -97,6 +101,9 @@ struct Shared {
     epoch: u64,
     pending: Mutex<HashMap<u64, PendingReply>>,
     events: broadcast::Sender<NormalizedEvent>,
+    /// Lossless delivery of server requests for threads whose owner
+    /// registered a sink; the broadcast queue may drop them under lag.
+    request_sinks: Mutex<HashMap<String, mpsc::Sender<NormalizedEvent>>>,
     closed: AtomicBool,
     close_reason: Mutex<Option<RequestError>>,
     close_signal: watch::Sender<Option<RequestError>>,
@@ -129,6 +136,57 @@ impl Shared {
 
     fn emit(&self, event: NormalizedEvent) {
         let _ = self.events.send(event);
+    }
+
+    /// Deliver a server request to its thread's registered sink. Returns the
+    /// event back when no sink takes it, so it falls through to broadcast.
+    fn route_server_request(&self, event: NormalizedEvent) -> Option<NormalizedEvent> {
+        let NormalizedEvent::ServerRequest { params, .. } = &event else {
+            return Some(event);
+        };
+        let Some(thread_id) = params.get("threadId").and_then(Value::as_str) else {
+            return Some(event);
+        };
+        let sender = self
+            .request_sinks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(thread_id)
+            .cloned();
+        let Some(sender) = sender else {
+            return Some(event);
+        };
+        match sender.try_send(event) {
+            Ok(()) => None,
+            Err(mpsc::error::TrySendError::Full(event))
+            | Err(mpsc::error::TrySendError::Closed(event)) => Some(event),
+        }
+    }
+}
+
+/// Server requests for one thread, delivered in order and never dropped by
+/// event-queue lag. Dropping the sink returns the thread to broadcast delivery.
+pub struct ServerRequestSink {
+    shared: Arc<Shared>,
+    thread_id: String,
+    receiver: mpsc::Receiver<NormalizedEvent>,
+}
+
+impl ServerRequestSink {
+    /// The next server request for this thread; `None` only after the
+    /// transport is gone.
+    pub async fn recv(&mut self) -> Option<NormalizedEvent> {
+        self.receiver.recv().await
+    }
+}
+
+impl Drop for ServerRequestSink {
+    fn drop(&mut self) {
+        self.shared
+            .request_sinks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.thread_id);
     }
 }
 
@@ -163,6 +221,7 @@ impl AppServerClient {
             auth_requests: Arc::new(tokio::sync::Semaphore::new(1)),
             pending: Mutex::new(HashMap::new()),
             events,
+            request_sinks: Mutex::new(HashMap::new()),
             closed: AtomicBool::new(false),
             close_reason: Mutex::new(None),
             close_signal,
@@ -200,6 +259,23 @@ impl AppServerClient {
 
     pub fn subscribe(&self) -> broadcast::Receiver<NormalizedEvent> {
         self.shared.events.subscribe()
+    }
+
+    /// Register for lossless, ordered delivery of this thread's server
+    /// requests (tool calls, approvals). While the sink lives those requests
+    /// bypass the broadcast queue; the owner must still respond exactly once.
+    pub fn server_request_sink(&self, thread_id: &str) -> ServerRequestSink {
+        let (sender, receiver) = mpsc::channel(REQUEST_SINK_CAPACITY);
+        self.shared
+            .request_sinks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(thread_id.to_string(), sender);
+        ServerRequestSink {
+            shared: self.shared.clone(),
+            thread_id: thread_id.to_string(),
+            receiver,
+        }
     }
 
     pub fn is_closed(&self) -> bool {
@@ -593,12 +669,15 @@ async fn reader_loop<R>(
                     handle_auth_refresh(&shared, &outbound, id, params);
                     continue;
                 }
-                shared.emit(NormalizedEvent::ServerRequest {
+                let request = NormalizedEvent::ServerRequest {
                     epoch: shared.epoch,
                     request_id: id,
                     method,
                     params,
-                });
+                };
+                if let Some(request) = shared.route_server_request(request) {
+                    shared.emit(request);
+                }
             }
             Err(error) => {
                 shared.close(RequestError::transport(
@@ -856,6 +935,58 @@ mod tests {
                 .await
                 .unwrap();
             assert!(closed.message.contains("exceeded 128 bytes"));
+        });
+    }
+
+    #[test]
+    fn registered_request_sinks_keep_server_requests_that_lag_would_drop() {
+        runtime().block_on(async {
+            let (client_io, mut server_io) = tokio::io::duplex(1024 * 1024);
+            let (client_reader, client_writer) = tokio::io::split(client_io);
+            let client = AppServerClient::from_io(13, client_reader, client_writer);
+            let mut events = client.subscribe();
+            let mut sink = client.server_request_sink("thread-1");
+            write_json(
+                &mut server_io,
+                json!({"id":"tool-1","method":"item/tool/call","params":{"threadId":"thread-1","turnId":"turn-1","callId":"call-1","tool":"Read","arguments":{}}}),
+            )
+            .await;
+            for index in 0..(EVENT_QUEUE_CAPACITY + 40) {
+                write_json(
+                    &mut server_io,
+                    json!({"method":"simulator/progress","params":{"index":index}}),
+                )
+                .await;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            assert!(matches!(
+                events.recv().await,
+                Err(broadcast::error::RecvError::Lagged(_))
+            ));
+            match sink.recv().await.unwrap() {
+                NormalizedEvent::ServerRequest { request_id, .. } => {
+                    assert_eq!(request_id, json!("tool-1"))
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+            // Another thread's request still reaches broadcast subscribers, and
+            // dropping the sink returns the thread to broadcast delivery.
+            drop(sink);
+            write_json(
+                &mut server_io,
+                json!({"id":"tool-2","method":"item/tool/call","params":{"threadId":"thread-1","turnId":"turn-1","callId":"call-2","tool":"Read","arguments":{}}}),
+            )
+            .await;
+            loop {
+                match events.recv().await {
+                    Ok(NormalizedEvent::ServerRequest { request_id, .. }) => {
+                        assert_eq!(request_id, json!("tool-2"));
+                        break;
+                    }
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(error) => panic!("{error}"),
+                }
+            }
         });
     }
 

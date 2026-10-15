@@ -99,6 +99,19 @@ pub(super) fn update_task(
     task.status = status.into();
     put(store, ws, task_id, "task", expected, &task)
 }
+/// Remove the app-owned copy directory of a settled checkpoint. Only the
+/// copy backend is reclaimed (a Git worktree is a separate host operation);
+/// the path is re-validated against the recorded identity before deletion.
+pub(super) fn discard_copy(store: &Store, ws: &str, checkpoint_id: &str) -> WorkbenchResult<()> {
+    let r = record(store, ws, checkpoint_id, "checkpoint")?;
+    let c: Checkpoint = decode(&r)?;
+    if c.backend != "copy" {
+        return Ok(());
+    }
+    let task_root = task_root_path(store, ws, checkpoint_id, &c)?;
+    fs::remove_dir_all(&task_root).map_err(err)?;
+    Ok(())
+}
 pub(super) fn git(root: &Path, args: &[&str]) -> WorkbenchResult<Vec<u8>> {
     use std::process::{Command, Stdio};
     // This is a host operation explicitly selected by the user. Paths are argv,
@@ -244,6 +257,11 @@ pub(super) fn checkpoint(
     let mut total = 0;
     for path in paths {
         files::relative(&path)?;
+        if ignored(&path, &[]) {
+            return Err(WorkbenchError::invalid(
+                "This path is inside a build, cache or dependency folder that task capture excludes; choose another file",
+            ));
+        }
         if base.contains_key(&path) {
             return Err(WorkbenchError::invalid("Duplicate task path"));
         }
@@ -401,6 +419,20 @@ pub(super) fn capture_changes(
         let bytes = reader.read(&f.path)?;
         f.hash = Some(blob(store, ws, &bytes, checkpoint_id)?);
         proposed.insert(f.path.clone(), f);
+    }
+    // A captured base file that inventory skips (an ignored folder) must
+    // never read as deleted merely because it was skipped: re-read it from
+    // the task copy so acceptance cannot unlink the original.
+    for (path, entry) in &c.base {
+        if proposed.contains_key(path) || !ignored(path, &[]) {
+            continue;
+        }
+        if let Ok(bytes) = reader.read(path) {
+            let mut f = entry.clone();
+            f.size = bytes.len() as u64;
+            f.hash = Some(blob(store, ws, &bytes, checkpoint_id)?);
+            proposed.insert(path.clone(), f);
+        }
     }
     c.proposed = proposed;
     c.state = "review".into();

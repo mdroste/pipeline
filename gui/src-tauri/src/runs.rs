@@ -29,6 +29,7 @@ const MAX_DOCUMENT_BUNDLE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_IMAGE_BYTES: u64 = 10_000_000;
 const MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
 const MAX_MANIFEST_ARTIFACTS: usize = 5_000;
+
 const MAX_REPORT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ANNOTATION_BYTES: usize = 1_000_000;
 const MAX_SOURCE_EVIDENCE_FILES: usize = 200;
@@ -501,6 +502,10 @@ pub fn detect_kind(rel_path: &str, head: &[u8]) -> &'static str {
         "txt" | "log" => "text",
         "pdf" => "pdf",
         "zip" | "gz" | "xlsx" | "docx" | "pptx" | "dta" | "rds" | "parquet" => "binary",
+        // A model-written program must never be one click away from running
+        // with the researcher's privileges; the viewer reveals, never opens.
+        "exe" | "msi" | "bat" | "cmd" | "ps1" | "scr" | "com" | "jar" | "pkg" | "dmg" | "app"
+        | "command" | "appimage" | "deb" | "rpm" => "executable",
         _ => {
             if head.contains(&0) {
                 "binary"
@@ -623,7 +628,7 @@ impl RunWriter {
         Err("Could not allocate a unique run id".to_string())
     }
 
-    fn create_in(base: &Path, run_id: &str) -> Result<Self, String> {
+    pub(crate) fn create_in(base: &Path, run_id: &str) -> Result<Self, String> {
         validate_run_id(run_id)?;
         let dir = base.join(run_id);
         fs::create_dir(&dir).map_err(|e| format!("Failed to create run dir: {e}"))?;
@@ -893,105 +898,6 @@ impl RunWriter {
         Ok(())
     }
 
-    /// Register files under `subdir` (relative to the run dir) that aren't
-    /// already in the artifact index. Model-written supporting files land
-    /// on disk without going through `add_text`; this picks them up at the
-    /// end of the run. Symlinks are skipped, oversized files are skipped,
-    /// and the walk is capped defensively. Returns how many were added.
-    pub fn register_unlisted(&mut self, subdir: &str, group: &str) -> usize {
-        const MAX_UNLISTED: usize = 500;
-        const MAX_AGENT_RESPONSES: usize = 2_000;
-        const MAX_UNLISTED_BYTES: u64 = 50_000_000;
-        const MAX_TOTAL_UNLISTED_BYTES: u64 = 250_000_000;
-        let known: std::collections::HashSet<String> =
-            self.artifacts.iter().map(|a| a.rel_path.clone()).collect();
-        let mut added = 0usize;
-        let max_unlisted = if group == "agent_response" {
-            MAX_AGENT_RESPONSES
-        } else {
-            MAX_UNLISTED
-        };
-        let mut total_bytes = 0u64;
-        let mut stack = vec![self.dir.join(subdir)];
-        let mut walk = crate::safety::WalkBudget::new("Run artifact discovery");
-        while let Some(d) = stack.pop() {
-            let Ok(entries) = fs::read_dir(&d) else {
-                continue;
-            };
-            for entry in entries.flatten() {
-                if walk.entry().is_err() {
-                    return added;
-                }
-                let path = entry.path();
-                let Ok(ft) = entry.file_type() else { continue };
-                if ft.is_symlink() {
-                    continue;
-                }
-                if ft.is_dir() {
-                    if walk.directory().is_err() {
-                        return added;
-                    }
-                    stack.push(path);
-                    continue;
-                }
-                if !ft.is_file() {
-                    // A CLI model can create FIFOs/sockets on Unix. Never open
-                    // them during finalization; remove them from the run so a
-                    // later artifact read cannot block either.
-                    let _ = fs::remove_file(&path);
-                    continue;
-                }
-                let Ok(metadata) = entry.metadata() else {
-                    continue;
-                };
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::MetadataExt as _;
-                    if metadata.nlink() > 1 {
-                        let _ = fs::remove_file(&path);
-                        continue;
-                    }
-                }
-                if metadata.len() > MAX_UNLISTED_BYTES
-                    || total_bytes.saturating_add(metadata.len()) > MAX_TOTAL_UNLISTED_BYTES
-                {
-                    // These files were produced inside Pipeline's per-run
-                    // model sandbox. Remove runaway output rather than leave
-                    // an unindexed, unbounded disk leak behind.
-                    let _ = fs::remove_file(&path);
-                    continue;
-                }
-                let Ok(rel) = path.strip_prefix(&self.dir) else {
-                    continue;
-                };
-                let rel_str = rel.to_string_lossy().replace('\\', "/");
-                if known.contains(&rel_str) {
-                    continue;
-                }
-                if added >= max_unlisted {
-                    // Keep walking after the registration cap. Otherwise a
-                    // model can place unlimited unindexed files after the
-                    // first 500 and evade every byte quota.
-                    let _ = fs::remove_file(&path);
-                    continue;
-                }
-                let relative_label = rel_str
-                    .strip_prefix(&format!("{subdir}/"))
-                    .unwrap_or(&rel_str);
-                let label = if group == "agent_response" {
-                    agent_response_label(relative_label)
-                } else {
-                    relative_label.to_string()
-                };
-                if self.register_existing(&rel_str, &label, group).is_ok() {
-                    added += 1;
-                    total_bytes += metadata.len();
-                }
-            }
-        }
-        added
-    }
-
     /// Replace homogeneous per-page manifest entries with one compact index.
     /// Files stay in place because providers, re-runs, and the on-demand page
     /// reader address them directly.
@@ -1168,6 +1074,7 @@ mod artifacts;
 mod history;
 mod persistence;
 mod retention;
+mod unlisted;
 
 pub use artifacts::{
     read_artifact, read_page_artifact, read_pdf_artifact_bytes, read_pdf_artifact_page,
@@ -1178,6 +1085,7 @@ pub use history::{
     permanently_delete_trashed_run, recover_resumable_runs, restore_trashed_run, update_run_meta,
     TrashedRun,
 };
+pub use history::{open_run_lock, run_lock_path};
 pub use persistence::load_manifest;
 pub use retention::{
     disk_usage, preview_purge_runs_with_limits, purge_runs_with_expected_preview,
@@ -1196,7 +1104,10 @@ use history::manifest_is_foreign_but_valid;
 #[cfg(test)]
 use history::DELETE_TOMBSTONE;
 #[cfg(test)]
-use history::{recover_orphan_manifest, recover_resumable_run_dir, run_has_resume_files};
+use history::{
+    recover_orphan_manifest, recover_resumable_run_dir, recover_resumable_runs_at,
+    restore_trashed_run_at, run_has_resume_files,
+};
 #[cfg(test)]
 use retention::{retention_plan_from_state, validate_annotation_content};
 

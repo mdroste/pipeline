@@ -346,6 +346,9 @@ pub fn search(store: &Store, r: SearchRequest) -> WorkbenchResult<SearchPage> {
     let tokens = r
         .query
         .split_whitespace()
+        // A punctuation-only token ("&", "-", "=") tokenizes to an empty
+        // FTS5 phrase, and an empty phrase ANDed in matches nothing.
+        .filter(|s| s.chars().any(char::is_alphanumeric))
         .take(32)
         .map(|s| {
             let exact = format!("\"{}\"", s.replace('"', "\"\""));
@@ -360,6 +363,14 @@ pub fn search(store: &Store, r: SearchRequest) -> WorkbenchResult<SearchPage> {
             synonym.map_or(exact.clone(), |phrase| format!("({exact} OR \"{phrase}\")"))
         })
         .collect::<Vec<_>>();
+    if tokens.is_empty() {
+        return Ok(SearchPage {
+            hits: Vec::new(),
+            next_cursor: None,
+            index: state,
+            version: 1,
+        });
+    }
     let query = tokens.join(" AND ");
     let limit = r.limit.unwrap_or(20).clamp(1, 50);
     let c = store.connection()?;

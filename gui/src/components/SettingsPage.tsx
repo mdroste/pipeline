@@ -69,6 +69,13 @@ interface Props {
   dependencies?: DepsReport | null;
 }
 
+const STORED_KEY_LABELS: Record<string, string> = {
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  google: "Google",
+  local: "local-server",
+};
+
 export default function SettingsPage({
   onClose,
   onDirtyChange,
@@ -92,6 +99,8 @@ export default function SettingsPage({
     dirty,
     saveError,
     warnings,
+    undecryptableKeys,
+    discardStoredKey,
     retrySave,
     providerCatalogs,
   } = draft;
@@ -335,6 +344,17 @@ export default function SettingsPage({
                     Changing a setting will overwrite the current file with
                     these values.
                   </p>
+                  {undecryptableKeys.map((provider) => (
+                    <button
+                      key={provider}
+                      type="button"
+                      className="secondary"
+                      onClick={() => void discardStoredKey(provider)}
+                    >
+                      Discard stored {STORED_KEY_LABELS[provider] ?? provider}{" "}
+                      key
+                    </button>
+                  ))}
                 </div>
               )}
               <div className="settings-page-body">

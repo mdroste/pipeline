@@ -1095,10 +1095,9 @@ fn settings_path() -> Result<PathBuf, String> {
     Ok(dir.join("settings.json"))
 }
 
-/// Load settings with any warnings about fallback behavior.
-/// Warnings indicate the user's saved settings were partially or fully ignored.
-pub fn load_with_warnings() -> (Settings, Vec<String>) {
+fn load_with_warnings_inner() -> (Settings, Vec<String>, Vec<String>) {
     let mut warnings = Vec::new();
+    let mut undecryptable = Vec::new();
 
     let path = match settings_path() {
         Ok(p) => p,
@@ -1106,11 +1105,11 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
             warnings.push(format!(
                 "Could not locate settings file: {e}. Using defaults."
             ));
-            return (Settings::default(), warnings);
+            return (Settings::default(), warnings, undecryptable);
         }
     };
     if !path.exists() {
-        return (Settings::default(), warnings);
+        return (Settings::default(), warnings, undecryptable);
     }
     let content = match read_settings_file(&path) {
         Ok(c) => c,
@@ -1118,7 +1117,7 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
             warnings.push(format!(
                 "Could not read settings file: {e}. Using defaults."
             ));
-            return (Settings::default(), warnings);
+            return (Settings::default(), warnings, undecryptable);
         }
     };
     let mut settings: Settings = match serde_json::from_str(&content) {
@@ -1153,6 +1152,7 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
                     warnings.push(format!(
                         "Could not decrypt Anthropic API key: {e}. The key may need to be re-entered."
                     ));
+                    undecryptable.push("anthropic".to_string());
                     String::new()
                 });
             settings.openai_api_key = decrypt_string(&settings.openai_api_key, &key)
@@ -1160,6 +1160,7 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
                     warnings.push(format!(
                         "Could not decrypt OpenAI API key: {e}. The key may need to be re-entered."
                     ));
+                    undecryptable.push("openai".to_string());
                     String::new()
                 });
             settings.google_api_key = decrypt_string(&settings.google_api_key, &key)
@@ -1167,6 +1168,7 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
                     warnings.push(format!(
                         "Could not decrypt Google API key: {e}. The key may need to be re-entered."
                     ));
+                    undecryptable.push("google".to_string());
                     String::new()
                 });
             settings.local_api_key = decrypt_string(&settings.local_api_key, &key)
@@ -1174,6 +1176,7 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
                     warnings.push(format!(
                         "Could not decrypt local-server API key: {e}. The key may need to be re-entered."
                     ));
+                    undecryptable.push("local".to_string());
                     String::new()
                 });
         }
@@ -1188,7 +1191,7 @@ pub fn load_with_warnings() -> (Settings, Vec<String>) {
         }
     }
 
-    (settings, warnings)
+    (settings, warnings, undecryptable)
 }
 
 fn read_settings_file(path: &std::path::Path) -> Result<String, String> {
@@ -1339,6 +1342,12 @@ fn load_raw_settings_required(path: &std::path::Path) -> Result<Settings, String
 
 mod quarantine;
 use quarantine::quarantine_corrupt_file;
+mod recovery;
+#[cfg(test)]
+use recovery::discard_undecryptable_secret_at;
+pub use recovery::{
+    discard_undecryptable_secret, load_with_diagnostics, load_with_warnings, LoadDiagnostics,
+};
 
 static SETTINGS_WRITE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 

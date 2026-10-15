@@ -117,6 +117,23 @@ pub(crate) fn get_note(store: &Store, note_id: &str) -> WorkbenchResult<Research
     open_connection(store)?.query_row("SELECT id, workspace_id, paper_id, kind, body, state, origin, pinned, revision, created_at, updated_at FROM research_notes WHERE id = ?1", [note_id], note_from_row).optional().map_err(|error| WorkbenchError::storage("Failed to read research note", error))?.ok_or_else(|| WorkbenchError::invalid("Research note was not found"))
 }
 
+/// One note by id, regardless of state or list limits (exchange export).
+pub(crate) fn note(
+    store: &Store,
+    workspace_id: &str,
+    id: &str,
+) -> WorkbenchResult<Option<ResearchNote>> {
+    validate_id("workspace id", workspace_id)?;
+    open_connection(store)?
+        .query_row(
+            "SELECT id, workspace_id, paper_id, kind, body, state, origin, pinned, revision, created_at, updated_at FROM research_notes WHERE id = ?1 AND workspace_id = ?2",
+            params![id, workspace_id],
+            note_from_row,
+        )
+        .optional()
+        .map_err(|error| WorkbenchError::storage("Failed to read research note", error))
+}
+
 pub fn list_notes(
     store: &Store,
     workspace_id: &str,

@@ -190,6 +190,18 @@ fn latex_source_staging_copies_only_the_bounded_dependency_closure() {
     assert!(!staged_root.join("secret.tex").exists());
     assert!(!staged_root.join("_external/up1/unreferenced.tex").exists());
     assert_eq!(scoped.read_root.as_deref(), Some(staged_root.as_path()));
+    // The bundle looks figures up at the root by their authored name, so a
+    // graphicspath rewrite (figures/irf) must also answer to "irf".
+    assert_eq!(
+        captured_reference(&staged_root, &staged_root, "irf"),
+        Some(Some(
+            staged_root.join("figures/irf.png").canonicalize().unwrap()
+        ))
+    );
+    assert_eq!(
+        captured_reference(&staged_root, &staged_root, "missing"),
+        Some(None)
+    );
 }
 
 #[test]
@@ -944,4 +956,18 @@ fn fence_stripping() {
     let mixed = "prose\n```python\ncode\n```\nmore";
     assert_eq!(strip_markdown_fence(mixed), mixed);
     assert_eq!(strip_markdown_fence("plain"), "plain");
+}
+
+#[test]
+fn bare_latex_file_names_stage_from_the_current_directory() {
+    use super::latex::parent_or_current_dir;
+    assert_eq!(parent_or_current_dir(Path::new("main.tex")), Path::new("."));
+    assert_eq!(
+        parent_or_current_dir(Path::new("paper/main.tex")),
+        Path::new("paper")
+    );
+    assert_eq!(
+        parent_or_current_dir(Path::new("/abs/main.tex")),
+        Path::new("/abs")
+    );
 }

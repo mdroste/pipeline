@@ -65,7 +65,18 @@ fn isolated_roles_are_idempotent_private_and_revocable() {
         1
     );
     assert_eq!(tasks::session_choices(&store).unwrap().len(), 1);
+    let referee_root = runtime_root(&store, referee.session_id.as_ref().unwrap())
+        .unwrap()
+        .unwrap();
+    super::super::project::materialize_research_files(
+        &referee_root,
+        vec![("input.txt".into(), b"captured source".to_vec())],
+    )
+    .unwrap();
     revoke(&store, "portfolio").unwrap();
+    // Read-only role copies are reclaimed; the writer's paper root stays.
+    assert!(!referee_root.exists());
+    assert!(root.join("input.txt").is_file());
     assert!(runtime_root(&store, author_id).is_err());
     assert!(research::resolve_harness(&store, author_id).is_err());
     assert!(research::resolve_harness(&store, &session).is_ok());

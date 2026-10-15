@@ -5,6 +5,10 @@ pub(super) struct LatexReference {
     target: String,
     default_extensions: &'static [&'static str],
     recursive: bool,
+    /// The `\includegraphics` argument as written. The bundle looks figures
+    /// up at the project root by that name, so staging records a root-level
+    /// alias for graphicspath rewrites and chapter-file references.
+    alias: Option<String>,
 }
 
 pub(super) fn latex_without_comments(content: &str) -> String {
@@ -68,6 +72,8 @@ pub(super) fn latex_references(content: &str) -> Vec<LatexReference> {
                     target: target.to_string(),
                     default_extensions: extensions,
                     recursive,
+                    // Graphics keep their authored name for root lookups.
+                    alias: extensions.contains(&"png").then(|| target.to_string()),
                 })
             }));
         }
@@ -120,6 +126,7 @@ pub(super) fn latex_references(content: &str) -> Vec<LatexReference> {
                 ),
                 default_extensions: &["pdf", "png", "jpg", "jpeg", "webp", "eps", "svg"],
                 recursive: false,
+                alias: Some(target.to_string()),
             });
         }
     }
@@ -148,6 +155,7 @@ pub(super) fn latex_references(content: &str) -> Vec<LatexReference> {
             ),
             default_extensions: &["tex"],
             recursive: true,
+            alias: None,
         });
     }
     collect(
@@ -443,6 +451,16 @@ pub(super) fn stage_latex_project(
                         &reference.target,
                         mapped.strip_prefix(destination_root).unwrap().into(),
                     );
+                    if let Some(alias) = &reference.alias {
+                        // The bundle resolves \includegraphics names at the
+                        // project root; when two files reuse a bare name the
+                        // last staged wins, which matches tex_graphic_names.
+                        source_map.insert(
+                            Path::new(""),
+                            alias,
+                            mapped.strip_prefix(destination_root).unwrap().into(),
+                        );
+                    }
                     pending.push_back((path, reference.recursive));
                 }
                 None => {}
@@ -488,6 +506,15 @@ fn external_staging_destination(
     Err("A referenced LaTeX source escaped the project root".to_string())
 }
 
+/// `Path::parent` of a bare file name is `Some("")`, which canonicalizes to
+/// "Failed to resolve : No such file or directory"; treat it as the cwd.
+pub(super) fn parent_or_current_dir(selected: &Path) -> &Path {
+    selected
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
 pub(crate) fn stage_selected_source(
     selected: &Path,
     input_mode: &str,
@@ -530,7 +557,7 @@ pub(crate) fn stage_selected_source(
         let project_root = if selected.is_dir() {
             selected
         } else {
-            selected.parent().unwrap_or_else(|| Path::new("."))
+            parent_or_current_dir(selected)
         };
         stage_latex_project(&main_file, project_root, &destination_root)?;
         return Ok(ScopedSourceContext {

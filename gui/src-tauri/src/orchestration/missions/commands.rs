@@ -346,27 +346,9 @@ pub async fn mission_control(
                     .ok_or("Mission conversation missing")?;
                 let expected = m.authority_fingerprints[&session].clone();
                 let old = target.clone();
-                let actual = run_store(move |s| {
-                    if workspace::authority(&s, &session)? != expected {
-                        return Err(crate::workbench::store::WorkbenchError::conflict(
-                            "Mission authority changed; prepare a new mission",
-                        ));
-                    }
-                    let b = crate::workbench::tasks::binding(&s, &session)?;
-                    if Some(&b.root_identity) != old.root_identity.as_ref()
-                        || Some(&b.runtime_root) != old.runtime_root.as_ref()
-                    {
-                        return Err(crate::workbench::store::WorkbenchError::conflict(
-                            "Mission folder changed",
-                        ));
-                    }
-                    crate::workbench::tasks::validate_binding(&s, &b)?;
-                    Ok(b)
-                })
-                .await
-                .map_err(|e| e.message)?;
-                target.session_cursor = Some(actual.cursor);
-                target.harness_fingerprint = Some(actual.harness_fingerprint);
+                *target = run_store(move |s| workspace::readopt_scope(&s, &old, &expected, true))
+                    .await
+                    .map_err(|e| e.message)?;
                 m.active_child = None;
                 m.state = "queued".into();
                 m.due_at = Some(now());
@@ -380,8 +362,27 @@ pub async fn mission_control(
                     })
                     .await?;
             } else {
-                m.state = "queued".into();
+                // Attention without a child (stagnation, a scope failure during
+                // dispatch): the planner conversation may have received a
+                // steering message meanwhile, so re-adopt its cursor exactly as
+                // the active-child branch does, or every Retry fails again.
                 m.phase = Phase::Plan;
+                let session = m
+                    .planner_scope
+                    .session_id
+                    .clone()
+                    .ok_or("Mission conversation missing")?;
+                let expected = m
+                    .authority_fingerprints
+                    .get(&session)
+                    .cloned()
+                    .ok_or("Mission authority is missing")?;
+                let old = m.planner_scope.clone();
+                m.planner_scope =
+                    run_store(move |s| workspace::readopt_scope(&s, &old, &expected, true))
+                        .await
+                        .map_err(|e| e.message)?;
+                m.state = "queued".into();
                 m.due_at = Some(now());
                 m.reason = "Reconsidering the agenda within the remaining budget".into();
                 m.stagnant_rounds = 0;

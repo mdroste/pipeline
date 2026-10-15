@@ -254,6 +254,35 @@ pub async fn call_claude(
 /// and, under `--permission-mode acceptEdits`, silently auto-approved. So
 /// anything that must never run has to be denied explicitly. Deny rules outrank
 /// both allow rules and the permission mode.
+/// The deny list for one call. A forked call runs from the shared warm-up
+/// workspace, so its write root reaches the planner as a read root: it must
+/// not be denied (deny rules beat allow rules in Claude Code), while the shared
+/// workspace itself must never accept edits under acceptEdits.
+pub(super) fn cli_deny_list(
+    allowed_tools: &[&str],
+    read_dirs: &[String],
+    write_dir: Option<&str>,
+    shared_workspace: Option<&str>,
+) -> Vec<String> {
+    let write_root = write_dir.and_then(normalize_cli_root);
+    let deny_roots: Vec<String> = read_dirs
+        .iter()
+        .filter(|root| {
+            write_root
+                .as_deref()
+                .is_none_or(|write| !super::cli_workspace::same_or_descendant(write, root))
+        })
+        .cloned()
+        .collect();
+    let mut denies = cli_disallowed_tools(allowed_tools, &deny_roots, write_dir.is_some());
+    if write_dir.is_some() {
+        if let Some(shared) = shared_workspace.and_then(normalize_cli_root) {
+            denies.push(format!("Edit({}/**)", absolute_rule_path(&shared)));
+        }
+    }
+    denies
+}
+
 pub(super) fn cli_disallowed_tools(
     allowed_tools: &[&str],
     read_dirs: &[String],
@@ -450,10 +479,15 @@ async fn call_claude_inner(
         cmd_args.push(dir.clone());
     }
 
-    let denies = cli_disallowed_tools(
+    let shared_workspace = match &session_mode {
+        Some(ClaudeSessionMode::ResumeFork { workspace, .. }) => Some(*workspace),
+        _ => None,
+    };
+    let denies = cli_deny_list(
         allowed_tools,
         &workspace.read_dirs,
-        overrides.write_dir.is_some(),
+        overrides.write_dir,
+        shared_workspace,
     );
     if !denies.is_empty() {
         cmd_args.push("--disallowedTools".to_string());

@@ -267,6 +267,39 @@ pub async fn discovery_control(
                 .await?;
             }
         }
+        "retry" if p.run.state == "attention" => {
+            if p.run.deadline_at <= now() {
+                return Err("This automation's elapsed deadline has passed".into());
+            }
+            if let Some(id) = p.run.active_child.clone() {
+                let child = c.db(move |s| s.get(&id)).await?;
+                if child
+                    .progress
+                    .receipts
+                    .values()
+                    .any(|r| r.state == "running")
+                {
+                    return Err("The prior action has not stopped".into());
+                }
+            }
+            // Adopt the source conversation's current state; permissions,
+            // selected context and the folder still cannot change silently.
+            let source = p.run.source_scope.clone();
+            let expected = p.run.source_authority.clone();
+            p.run.source_scope =
+                run_store(move |s| research::readopt_scope(&s, &source, &expected, false))
+                    .await
+                    .map_err(|e| e.message)?;
+            p.run.active_child = None;
+            p.run.state = if p.run.phase == Phase::Select {
+                "awaitingSelection"
+            } else {
+                "running"
+            }
+            .into();
+            p.run.reason = "Retry authorized with the current conversation state".into();
+            p.run.due_at = Some(now());
+        }
         "stop" if !p.run.terminal() => {
             if let Some(id) = p.run.active_child.clone() {
                 super::super::missions::stop_child(&c, &id).await?;

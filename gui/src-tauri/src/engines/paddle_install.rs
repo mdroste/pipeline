@@ -174,7 +174,7 @@ pub(super) async fn install_paddle_full_parser(
 
     let parser_root = paddle_parser_root()?;
     match refresh_paddle_parser_sidecar_locked(&parser_root) {
-        Ok(true) => {
+        Ok(SidecarRefresh::Refreshed | SidecarRefresh::AlreadyCurrent) => {
             for phase in ["runtime", "packages", "models"] {
                 emit_phase(app, spec.id, phase, "done");
             }
@@ -190,7 +190,7 @@ pub(super) async fn install_paddle_full_parser(
             );
             return Ok(());
         }
-        Ok(false) => {}
+        Ok(SidecarRefresh::NotReusable) => {}
         Err(error) => log(
             app,
             format!("Parser sidecar refresh was unavailable; rebuilding the runtime ({error})"),

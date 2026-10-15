@@ -152,6 +152,19 @@ fn retain_source_at(
             .to_string_lossy()
             .replace('\\', "/")
     });
+    let rel = |tail: &str| {
+        if prefix.is_empty() {
+            tail.to_string()
+        } else {
+            format!("{prefix}/{tail}")
+        }
+    };
+    // Register before fingerprinting, and never destructively: the record
+    // must describe exactly what stays on disk or every rerun fails its
+    // integrity check.
+    if retained.source_path.is_some() {
+        writer.register_captured_tree(&rel("source-snapshot"), "source")?;
+    }
     let record = SourceRecord {
         path: relative,
         fingerprint: retained
@@ -161,14 +174,6 @@ fn retain_source_at(
             .transpose()?
             .unwrap_or_default(),
     };
-    let rel = |tail: &str| {
-        if prefix.is_empty() {
-            tail.to_string()
-        } else {
-            format!("{prefix}/{tail}")
-        }
-    };
-    writer.register_unlisted(&rel("source-snapshot"), "source");
     writer.add_text(
         &rel("context/source-snapshot.json"),
         "Captured source identity",
@@ -405,6 +410,61 @@ mod tests {
             restore_source(&parent, &temp.path().join("tampered-child"), true)
                 .unwrap_err()
                 .contains("integrity check")
+        );
+    }
+    #[test]
+    fn retained_source_keeps_large_files_and_round_trips_trees() {
+        let temp = tempfile::tempdir().unwrap();
+        let big = temp.path().join("scan.pdf");
+        std::fs::write(&big, vec![0u8; 51_000_000]).unwrap();
+        let mut writer = crate::runs::RunWriter::create_in(temp.path(), "big_run").unwrap();
+        retain_source(
+            &ScopedSourceContext {
+                source_path: Some(big.clone()),
+                read_root: None,
+            },
+            &mut writer,
+        )
+        .unwrap();
+        let run_dir = writer.dir().to_path_buf();
+        assert!(run_dir.join("source-snapshot/scan.pdf").is_file());
+        let restored = restore_source(&run_dir, &temp.path().join("big_child"), true).unwrap();
+        assert_eq!(
+            std::fs::metadata(restored.source_path.unwrap())
+                .unwrap()
+                .len(),
+            51_000_000
+        );
+
+        // A modest tree round-trips; the 500-entry registration cap is
+        // covered without per-file fsync cost in runs::tests.
+        let tree = temp.path().join("tree");
+        std::fs::create_dir_all(&tree).unwrap();
+        for index in 0..24 {
+            std::fs::write(tree.join(format!("{index:04}.tex")), "x").unwrap();
+        }
+        let mut writer = crate::runs::RunWriter::create_in(temp.path(), "tree_run").unwrap();
+        retain_source(
+            &ScopedSourceContext {
+                source_path: Some(tree.clone()),
+                read_root: Some(tree.clone()),
+            },
+            &mut writer,
+        )
+        .unwrap();
+        let run_dir = writer.dir().to_path_buf();
+        assert_eq!(
+            std::fs::read_dir(run_dir.join("source-snapshot/tree"))
+                .unwrap()
+                .count(),
+            24
+        );
+        let restored = restore_source(&run_dir, &temp.path().join("tree_child"), true).unwrap();
+        assert_eq!(
+            std::fs::read_dir(restored.source_path.unwrap())
+                .unwrap()
+                .count(),
+            24
         );
     }
     #[test]

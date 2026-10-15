@@ -34,7 +34,7 @@ fn import(store: &Store, path: &Path) -> WorkbenchResult<ArchiveReport> {
         },
     )
 }
-fn replace_entry(path: &Path, target: &str, replacement: &[u8]) {
+fn rewrite_entries(path: &Path, mut rewrite: impl FnMut(&str, Vec<u8>) -> Vec<u8>) {
     let mut archive = zip::ZipArchive::new(File::open(path).unwrap()).unwrap();
     let mut entries = Vec::new();
     for i in 0..archive.len() {
@@ -47,10 +47,205 @@ fn replace_entry(path: &Path, target: &str, replacement: &[u8]) {
     let mut zip = zip::ZipWriter::new(File::create(path).unwrap());
     for (name, bytes) in entries {
         zip.start_file(&name, SimpleFileOptions::default()).unwrap();
-        zip.write_all(if name == target { replacement } else { &bytes })
-            .unwrap();
+        zip.write_all(&rewrite(&name, bytes)).unwrap();
     }
     zip.finish().unwrap();
+}
+fn replace_entry(path: &Path, target: &str, replacement: &[u8]) {
+    rewrite_entries(path, |name, bytes| {
+        if name == target {
+            replacement.to_vec()
+        } else {
+            bytes
+        }
+    });
+}
+/// Patch the uncompressed size both headers declare for `name`, leaving the
+/// deflate stream (and its CRC) intact: the shape of a decompression bomb.
+fn declare_uncompressed_size(path: &Path, name: &str, size: u32) {
+    let mut bytes = fs::read(path).unwrap();
+    let mut patched = 0;
+    for (signature, size_offset, name_offset) in [
+        (0x0403_4b50u32, 22usize, 30usize),
+        (0x0201_4b50u32, 24usize, 46usize),
+    ] {
+        let mut at = 0;
+        while at + name_offset + name.len() <= bytes.len() {
+            if u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap()) == signature
+                && &bytes[at + name_offset..at + name_offset + name.len()] == name.as_bytes()
+            {
+                bytes[at + size_offset..at + size_offset + 4].copy_from_slice(&size.to_le_bytes());
+                patched += 1;
+            }
+            at += 1;
+        }
+    }
+    assert_eq!(patched, 2, "both zip headers for {name} must be patched");
+    fs::write(path, bytes).unwrap();
+}
+#[test]
+fn lying_entry_sizes_are_rejected_before_the_stream_is_expanded() {
+    let output = tempfile::tempdir().unwrap();
+    let path = output.path().join("bomb.pwrx");
+    let mut zip = zip::ZipWriter::new(File::create(&path).unwrap());
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    zip.start_file("manifest.json", options).unwrap();
+    let mut body = br#"{"format":""#.to_vec();
+    body.resize(16 * 1024 * 1024, b'a');
+    body.extend_from_slice(br#""}"#);
+    zip.write_all(&body).unwrap();
+    zip.start_file("database/research.sqlite3", options)
+        .unwrap();
+    zip.write_all(b"not a database").unwrap();
+    zip.finish().unwrap();
+    declare_uncompressed_size(&path, "manifest.json", 1024);
+
+    let request = ExportArchiveRequest {
+        path: path.to_string_lossy().into(),
+    };
+    let error = inspect_archive(request).unwrap_err();
+    assert!(error.message.contains("exceeds 4 MiB"), "{}", error.message);
+    let empty = tempfile::tempdir().unwrap();
+    let store = Store::open_at(empty.path()).unwrap();
+    let error = import(&store, &path).unwrap_err();
+    assert!(
+        error.message.contains("size does not match"),
+        "{}",
+        error.message
+    );
+}
+#[test]
+fn restore_rejects_blob_references_that_traverse_out_of_the_store() {
+    let (_root, source, _session) = fixture();
+    let research = tempfile::tempdir().unwrap();
+    let research_root = research.path().join("research-root");
+    fs::create_dir(&research_root).unwrap();
+    let workspace = source
+        .create_workspace(crate::workbench::store::CreateWorkspaceRequest {
+            name: "Research".into(),
+            root: Some(research_root.to_string_lossy().into_owned()),
+            operation_id: "create-workspace".into(),
+        })
+        .unwrap()
+        .record;
+    let paper_path = research_root.join("paper.tex");
+    fs::write(&paper_path, "Output rises with productivity.\n").unwrap();
+    let paper = crate::workbench::research::import_paper(
+        &source,
+        crate::workbench::research::ImportPaperRequest {
+            workspace_id: workspace.id.clone(),
+            paper_id: None,
+            title: "Paper".into(),
+            role: "manuscript".into(),
+            path: paper_path.to_string_lossy().into_owned(),
+            operation_id: "paper-one".into(),
+        },
+    )
+    .unwrap();
+    let revision = paper.revision.unwrap();
+    let text_name = Path::new(revision.text_reference.as_deref().unwrap())
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let output = tempfile::tempdir().unwrap();
+    let path = export(&source, output.path());
+
+    let archived_root = {
+        let mut archive = zip::ZipArchive::new(File::open(&path).unwrap()).unwrap();
+        let manifest: Value =
+            serde_json::from_reader(archive.by_name("manifest.json").unwrap()).unwrap();
+        manifest["workspaceRoots"][0].as_str().unwrap().to_string()
+    };
+    let import_into = |store: &Store| {
+        import_archive(
+            store,
+            ImportArchiveRequest {
+                path: path.to_string_lossy().into(),
+                root_mappings: BTreeMap::from([(archived_root.clone(), None)]),
+            },
+        )
+    };
+    let read = |store: &Store| {
+        crate::workbench::research::paper_read(
+            store,
+            crate::workbench::research::PaperReadRequest {
+                workspace_id: workspace.id.clone(),
+                revision_id: revision.id.clone(),
+                start: None,
+                length: None,
+            },
+        )
+    };
+
+    // Readers must not trust a stored reference that escapes blobs/.
+    let clean = tempfile::tempdir().unwrap();
+    fs::write(clean.path().join("outside.txt"), "private key material").unwrap();
+    let clean_store = Store::open_at(clean.path()).unwrap();
+    import_into(&clean_store).unwrap();
+    assert!(read(&clean_store).unwrap().text.contains("productivity"));
+    let clean_evil = clean
+        .path()
+        .join("blobs")
+        .join("..")
+        .join("outside.txt")
+        .to_string_lossy()
+        .into_owned();
+    clean_store
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE paper_revisions SET text_reference=?1",
+            [clean_evil.as_str()],
+        )
+        .unwrap();
+    let error = read(&clean_store).unwrap_err();
+    assert!(error.message.contains("escaped"), "{}", error.message);
+
+    // Restore must refuse the reference instead of keeping it.
+    let target = tempfile::tempdir().unwrap();
+    fs::write(target.path().join("outside.txt"), "private key material").unwrap();
+    let evil = target
+        .path()
+        .join("blobs")
+        .join("..")
+        .join("outside.txt")
+        .to_string_lossy()
+        .into_owned();
+    rewrite_entries(&path, |name, bytes| match name {
+        "manifest.json" => {
+            let mut manifest: Value = serde_json::from_slice(&bytes).unwrap();
+            for blob in manifest["blobs"].as_array_mut().unwrap() {
+                // Exports store portable `workspace://blobs/<name>` references.
+                if blob["originalReference"]
+                    .as_str()
+                    .is_some_and(|reference| reference.ends_with(&text_name))
+                {
+                    // A manifest reference below the evil path satisfies the
+                    // prefix check without rebasing the exact DB reference.
+                    blob["originalReference"] = Value::String(format!("{evil}/x"));
+                }
+            }
+            serde_json::to_vec(&manifest).unwrap()
+        }
+        "database/research.sqlite3" => {
+            let scratch = output.path().join("scratch.sqlite3");
+            fs::write(&scratch, bytes).unwrap();
+            let connection = Connection::open(&scratch).unwrap();
+            connection
+                .execute(
+                    "UPDATE paper_revisions SET text_reference=?1",
+                    [evil.as_str()],
+                )
+                .unwrap();
+            drop(connection);
+            fs::read(&scratch).unwrap()
+        }
+        _ => bytes,
+    });
+    let store = Store::open_at(target.path()).unwrap();
+    let error = import_into(&store).unwrap_err();
+    assert!(error.message.contains("traversal"), "{}", error.message);
 }
 #[test]
 fn restore_reconciles_unfinished_turns_and_discards_foreign_trash_authority() {
