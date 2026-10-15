@@ -889,3 +889,44 @@ fn schema_13_custom_profiles_migrate_to_inheriting_the_native_default() {
     let migrated = Store::open_at(fixture.store.root_path()).unwrap();
     assert_eq!(find_preset(&migrated, None, &copy.id).unwrap(), copy);
 }
+
+#[cfg(unix)]
+#[test]
+fn launch_manifest_hashes_symlinked_zsh_startup_files() {
+    if !Path::new("/bin/zsh").is_file() {
+        return;
+    }
+    let temporary = tempfile::tempdir().unwrap();
+    let zdotdir = temporary.path().join("zdot");
+    fs::create_dir(&zdotdir).unwrap();
+    let real = zdotdir.join("zshrc.real");
+    fs::write(&real, "export PATH=$HOME/bin:$PATH\n").unwrap();
+    std::os::unix::fs::symlink(&real, zdotdir.join(".zshrc")).unwrap();
+    let cwd = temporary.path().join("work");
+    fs::create_dir(&cwd).unwrap();
+    let profile = ExecutionProfile {
+        id: "profile".into(),
+        workspace_id: "workspace".into(),
+        name: "zsh".into(),
+        adapter: "command".into(),
+        argv: vec!["/bin/zsh".into(), "-c".into(), "true".into()],
+        cwd: cwd.to_string_lossy().into_owned(),
+        environment: json!({"ZDOTDIR": zdotdir.to_string_lossy()}),
+        inputs: vec![],
+        timeout_seconds: 10,
+        outputs: vec![],
+        tested_at: None,
+        test_status: None,
+        revision: 1,
+    };
+    let launch = execution::launch_manifest(&profile).unwrap();
+    let (expected, _) = papers::hash_file(&real).unwrap();
+    let startup = launch["shellStartupFiles"].as_array().unwrap();
+    let zshrc = startup
+        .iter()
+        .find(|entry| entry["path"].as_str().unwrap().ends_with("/.zshrc"))
+        .unwrap();
+    assert_eq!(zshrc["hash"], expected);
+    assert_eq!(zshrc["path"], json!(zdotdir.join(".zshrc")));
+    assert_eq!(startup.len(), 4);
+}

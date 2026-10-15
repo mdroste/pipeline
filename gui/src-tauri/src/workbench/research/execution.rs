@@ -1425,7 +1425,13 @@ pub(super) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Val
             .and_then(Path::parent)
             .map(|p| p.join("pyvenv.cfg"));
         if let Some(config) = config.filter(|p| p.is_file()) {
-            let (hash, size) = hash_file(&config)?;
+            // Host-owned configuration may be a symlink (dotfile managers);
+            // hash the resolved target, keeping the declared path in the
+            // manifest so existing authorizations keep their fingerprints.
+            let resolved = fs::canonicalize(&config).map_err(|e| {
+                WorkbenchError::storage("Failed to resolve Python environment configuration", e)
+            })?;
+            let (hash, size) = hash_file(&resolved)?;
             json!({"configuration":config,"hash":hash,"size":size})
         } else {
             Value::Null
@@ -1473,8 +1479,11 @@ pub(super) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Val
         {
             for name in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
                 let path = home.join(name);
-                startup.push(if path.exists() {
-                    let (hash, size) = hash_file(&path)?;
+                startup.push(if path.is_file() {
+                    let resolved = fs::canonicalize(&path).map_err(|e| {
+                        WorkbenchError::storage("Failed to resolve shell startup file", e)
+                    })?;
+                    let (hash, size) = hash_file(&resolved)?;
                     json!({"path":path,"hash":hash,"size":size})
                 } else {
                     json!({"path":path,"missing":true})
