@@ -488,6 +488,15 @@ fn external_staging_destination(
     Err("A referenced LaTeX source escaped the project root".to_string())
 }
 
+/// `Path::parent` of a bare file name is `Some("")`, which canonicalizes to
+/// "Failed to resolve : No such file or directory"; treat it as the cwd.
+pub(super) fn parent_or_current_dir(selected: &Path) -> &Path {
+    selected
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
 pub(crate) fn stage_selected_source(
     selected: &Path,
     input_mode: &str,
@@ -530,7 +539,7 @@ pub(crate) fn stage_selected_source(
         let project_root = if selected.is_dir() {
             selected
         } else {
-            selected.parent().unwrap_or_else(|| Path::new("."))
+            parent_or_current_dir(selected)
         };
         stage_latex_project(&main_file, project_root, &destination_root)?;
         return Ok(ScopedSourceContext {

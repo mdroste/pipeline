@@ -945,3 +945,17 @@ fn fence_stripping() {
     assert_eq!(strip_markdown_fence(mixed), mixed);
     assert_eq!(strip_markdown_fence("plain"), "plain");
 }
+
+#[test]
+fn bare_latex_file_names_stage_from_the_current_directory() {
+    use super::latex::parent_or_current_dir;
+    assert_eq!(parent_or_current_dir(Path::new("main.tex")), Path::new("."));
+    assert_eq!(
+        parent_or_current_dir(Path::new("paper/main.tex")),
+        Path::new("paper")
+    );
+    assert_eq!(
+        parent_or_current_dir(Path::new("/abs/main.tex")),
+        Path::new("/abs")
+    );
+}
