@@ -114,6 +114,11 @@ pub fn fingerprint(value: &Value) -> String {
                     "compiledArtifactId",
                     "entrypoint",
                     "paperId",
+                    // Rewritten by every import: evidence freshness and
+                    // unpackaged-output markers never describe content.
+                    "freshness",
+                    "staleReason",
+                    "unavailable",
                 ] {
                     o.remove(key);
                 }

@@ -349,3 +349,98 @@ fn corrupt_and_foreign_packages_are_rejected() {
     )
     .is_err());
 }
+
+#[test]
+fn reimporting_a_ledger_package_is_identical_not_conflicting() {
+    let (temp, store, ws, root) = fixture();
+    populate(&store, &ws, &root);
+    let revision = research::list_papers(&store, &ws).unwrap()[0]
+        .revision
+        .clone()
+        .unwrap();
+    let claim = research::propose_claim(
+        &store,
+        research::ProposeClaimRequest {
+            workspace_id: ws.clone(),
+            paper_id: None,
+            claim: "The effect is 0.13 log points".into(),
+            kind: "empirical".into(),
+            origin: "user".into(),
+            operation_id: "claim".into(),
+        },
+        false,
+    )
+    .unwrap();
+    research::propose_evidence(
+        &store,
+        research::ProposeEvidenceRequest {
+            workspace_id: ws.clone(),
+            claim_version_id: claim.version_id.clone(),
+            target_type: "paper_revision".into(),
+            target_id: revision.id.clone(),
+            locator: None,
+            relation: "supports".into(),
+            assessor: "user".into(),
+            operation_id: "evidence".into(),
+        },
+        false,
+    )
+    .unwrap();
+    let path = temp.path().join("ledger.pwex");
+    export_exchange(
+        &store,
+        ExportExchangeRequest {
+            workspace_id: ws.clone(),
+            path: path.to_string_lossy().into_owned(),
+            selection: ExchangeSelection {
+                include_ledger: true,
+                ..selection()
+            },
+        },
+    )
+    .unwrap();
+    let target = ExchangeTarget::NewWorkspace {
+        name: "Coauthor copy".into(),
+        root: None,
+    };
+    let report = import_exchange(
+        &store,
+        ImportExchangeRequest {
+            path: path.to_string_lossy().into_owned(),
+            target,
+            operation_id: "import-ledger-1".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(report.conflicts, 0);
+    let again = ExchangeTarget::ExistingWorkspace {
+        workspace_id: report.workspace_id.clone(),
+    };
+    let preview = preview_import(&store, &path.to_string_lossy(), &again).unwrap();
+    assert!(
+        preview.conflicts.is_empty(),
+        "{:?}",
+        preview
+            .conflicts
+            .iter()
+            .map(|c| (&c.kind, &c.outcome))
+            .collect::<Vec<_>>()
+    );
+    assert!(preview
+        .decisions
+        .iter()
+        .any(|d| d.kind == "evidence" && d.outcome == "identical"));
+    let report = import_exchange(
+        &store,
+        ImportExchangeRequest {
+            path: path.to_string_lossy().into_owned(),
+            target: again,
+            operation_id: "import-ledger-2".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(report.conflicts, 0);
+    assert!(list_conflicts(&store, &report.workspace_id)
+        .unwrap()
+        .is_empty());
+}
