@@ -262,7 +262,7 @@ fn main() {
             return;
         }
         ParseAction::Version => {
-            println!("pipeline-cli {}", env!("CARGO_PKG_VERSION"));
+            emit_stdout(&format!("pipeline-cli {}", env!("CARGO_PKG_VERSION")));
             return;
         }
         ParseAction::Execute(command) => command,
@@ -836,21 +836,21 @@ async fn cmd_check(args: CheckArgs) -> i32 {
     };
     if args.json {
         match serde_json::to_string_pretty(&plan) {
-            Ok(encoded) => println!("{encoded}"),
+            Ok(encoded) => emit_stdout(&format!("{encoded}")),
             Err(error) => {
                 eprintln!("Error: failed to encode dependency report: {error}");
                 return 1;
             }
         }
     } else {
-        println!("Workflow: {}", plan.profile_name);
-        println!("Fingerprint: {}", plan.workflow_fingerprint);
-        println!(
+        emit_stdout(&format!("Workflow: {}", plan.profile_name));
+        emit_stdout(&format!("Fingerprint: {}", plan.workflow_fingerprint));
+        emit_stdout(&format!(
             "Plan: {} stages, up to {} step units and {} provider attempts",
             plan.stages.len(),
             plan.budget.step_units_upper_bound,
             plan.budget.provider_attempts_upper_bound
-        );
+        ));
         let required = plan
             .readiness
             .deps
@@ -858,7 +858,9 @@ async fn cmd_check(args: CheckArgs) -> i32 {
             .filter(|dependency| dependency.required)
             .collect::<Vec<_>>();
         if required.is_empty() {
-            println!("No external dependencies are required for this run.");
+            emit_stdout(&format!(
+                "No external dependencies are required for this run."
+            ));
         }
         for dependency in required {
             let ready = pipeline_gui_lib::deps::dependency_ready(dependency);
@@ -868,24 +870,46 @@ async fn cmd_check(args: CheckArgs) -> i32 {
             } else {
                 String::new()
             };
-            println!("[{marker}] {}{detail}", dependency.name);
+            emit_stdout(&format!("[{marker}] {}{detail}", dependency.name));
             if !ready {
-                println!("  {}", dependency.hint);
+                emit_stdout(&format!("  {}", dependency.hint));
             }
         }
-        println!(
+        emit_stdout(&format!(
             "Dependency check: {}",
             if plan.readiness.ready {
                 "ready"
             } else {
                 "not ready"
             }
-        );
+        ));
     }
     if plan.readiness.ready {
         0
     } else {
         1
+    }
+}
+
+/// Write one line of report or JSON output. The Rust runtime ignores SIGPIPE,
+/// so `println!` panics (exit 101) when the reader of a pipe has gone away;
+/// stop printing quietly instead and let the exit code reflect the run.
+fn emit_stdout(text: &str) {
+    emit_to(&mut std::io::stdout().lock(), text);
+}
+
+fn emit_to(out: &mut impl std::io::Write, text: &str) -> bool {
+    match out
+        .write_all(text.as_bytes())
+        .and_then(|()| out.write_all(b"\n"))
+        .and_then(|()| out.flush())
+    {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => false,
+        Err(error) => {
+            eprintln!("Error: cannot write to stdout: {error}");
+            false
+        }
     }
 }
 
@@ -898,7 +922,7 @@ fn finish_single_run(value: &serde_json::Value, out: Option<&str>, force: bool) 
         }
     };
     match out {
-        Some("-") => println!("{markdown}"),
+        Some("-") => emit_stdout(&format!("{markdown}")),
         Some(path) => {
             if let Err(error) = write_report_file(Path::new(path), markdown, force) {
                 eprintln!("Error: {error}");
@@ -906,7 +930,7 @@ fn finish_single_run(value: &serde_json::Value, out: Option<&str>, force: bool) 
             }
             eprintln!("Wrote report to {path}");
         }
-        None => println!("{markdown}"),
+        None => emit_stdout(&format!("{markdown}")),
     }
     if let Some(run_id) = value.get("run_id").and_then(|id| id.as_str()) {
         eprintln!("Run: {run_id}");
@@ -1214,7 +1238,7 @@ fn cmd_workflow(args: WorkflowArgs) -> i32 {
         WorkflowArgs::Schema => {
             match serde_json::to_string_pretty(&pipeline_config::workflow_json_schema()) {
                 Ok(schema) => {
-                    println!("{schema}");
+                    emit_stdout(&format!("{schema}"));
                     0
                 }
                 Err(error) => {
@@ -1238,14 +1262,14 @@ fn cmd_workflow(args: WorkflowArgs) -> i32 {
                 Ok(workflow) => workflow,
                 Err(error) => {
                     if json {
-                        println!(
+                        emit_stdout(&format!(
                             "{}",
                             serde_json::to_string_pretty(&serde_json::json!({
                                 "valid": false,
                                 "error": error,
                             }))
                             .expect("workflow validation error is serializable")
-                        );
+                        ));
                     } else {
                         eprintln!("Error: {error}");
                     }
@@ -1254,18 +1278,18 @@ fn cmd_workflow(args: WorkflowArgs) -> i32 {
             };
             let summary = workflow_validation_summary(&workflow);
             if json {
-                println!(
+                emit_stdout(&format!(
                     "{}",
                     serde_json::to_string_pretty(&summary)
                         .expect("workflow validation summary is serializable")
-                );
+                ));
             } else {
-                println!(
+                emit_stdout(&format!(
                     "Valid workflow '{}' ({} steps, {})",
                     workflow.document.name,
                     workflow.document.config.steps.len(),
                     workflow.document.fingerprint
-                );
+                ));
             }
             0
         }
@@ -1274,14 +1298,14 @@ fn cmd_workflow(args: WorkflowArgs) -> i32 {
                 Ok(workflow) => workflow,
                 Err(error) => {
                     if json {
-                        println!(
+                        emit_stdout(&format!(
                             "{}",
                             serde_json::to_string_pretty(&serde_json::json!({
                                 "installed": false,
                                 "error": error,
                             }))
                             .expect("workflow install error is serializable")
-                        );
+                        ));
                     } else {
                         eprintln!("Error: {error}");
                     }
@@ -1292,14 +1316,14 @@ fn cmd_workflow(args: WorkflowArgs) -> i32 {
                 Ok(installed) => installed,
                 Err(error) => {
                     if json {
-                        println!(
+                        emit_stdout(&format!(
                             "{}",
                             serde_json::to_string_pretty(&serde_json::json!({
                                 "installed": false,
                                 "error": error,
                             }))
                             .expect("workflow install error is serializable")
-                        );
+                        ));
                     } else {
                         eprintln!("Error: {error}");
                     }
@@ -1307,7 +1331,7 @@ fn cmd_workflow(args: WorkflowArgs) -> i32 {
                 }
             };
             if json {
-                println!(
+                emit_stdout(&format!(
                     "{}",
                     serde_json::to_string_pretty(&serde_json::json!({
                         "installed": true,
@@ -1317,12 +1341,12 @@ fn cmd_workflow(args: WorkflowArgs) -> i32 {
                         "fingerprint": workflow.document.fingerprint,
                     }))
                     .expect("workflow install summary is serializable")
-                );
+                ));
             } else {
-                println!(
+                emit_stdout(&format!(
                     "Installed workflow '{}' as {}",
                     installed.name, installed.id
-                );
+                ));
             }
             0
         }
@@ -1333,7 +1357,7 @@ fn cmd_profiles(args: ProfilesArgs) -> i32 {
     match args {
         ProfilesArgs::Show { id } => match pipeline_config::export_profile_data(&id) {
             Ok(profile) => {
-                println!("{profile}");
+                emit_stdout(&format!("{profile}"));
                 0
             }
             Err(error) => {
@@ -1350,7 +1374,7 @@ fn cmd_profiles(args: ProfilesArgs) -> i32 {
             }
             Ok(profiles) if json => match serde_json::to_string_pretty(&profiles) {
                 Ok(encoded) => {
-                    println!("{encoded}");
+                    emit_stdout(&format!("{encoded}"));
                     0
                 }
                 Err(error) => {
@@ -1362,10 +1386,10 @@ fn cmd_profiles(args: ProfilesArgs) -> i32 {
                 let active = pipeline_config::get_active_profile_id();
                 for profile in profiles {
                     let marker = if profile.id == active { "*" } else { " " };
-                    println!(
+                    emit_stdout(&format!(
                         "{marker} {:22} {} ({} steps)",
                         profile.id, profile.name, profile.step_count
-                    );
+                    ));
                 }
                 0
             }
@@ -1437,7 +1461,7 @@ async fn cmd_engine_status(json: bool) -> i32 {
     };
     if json {
         match serde_json::to_string_pretty(&statuses) {
-            Ok(encoded) => println!("{encoded}"),
+            Ok(encoded) => emit_stdout(&format!("{encoded}")),
             Err(error) => {
                 eprintln!("Error: failed to encode engine status: {error}");
                 return 1;
@@ -1455,21 +1479,24 @@ async fn cmd_engine_status(json: bool) -> i32 {
         } else {
             "not installed"
         };
-        println!("{}: {state}", status.label);
-        println!("  id: {}", status.id);
+        emit_stdout(&format!("{}: {state}", status.label));
+        emit_stdout(&format!("  id: {}", status.id));
         if !status.version.is_empty() {
-            println!("  version: {}", status.version);
+            emit_stdout(&format!("  version: {}", status.version));
         }
         if !status.entry_path.is_empty() {
-            println!("  entry: {}", status.entry_path);
+            emit_stdout(&format!("  entry: {}", status.entry_path));
         }
-        println!(
+        emit_stdout(&format!(
             "  estimated download/install: {} MB / {} MB",
             status.est_download_mb, status.est_disk_mb
-        );
-        println!("  managed stack on disk: {} MB", status.managed_stack_mb);
+        ));
+        emit_stdout(&format!(
+            "  managed stack on disk: {} MB",
+            status.managed_stack_mb
+        ));
         if !status.unavailable_reason.is_empty() {
-            println!("  reason: {}", status.unavailable_reason);
+            emit_stdout(&format!("  reason: {}", status.unavailable_reason));
         }
     }
     0

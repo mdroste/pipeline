@@ -259,3 +259,22 @@ fn interruption_errors_map_to_shell_interrupt_status() {
         "provider process was interrupted unexpectedly"
     ));
 }
+
+#[test]
+fn stdout_output_tolerates_a_closed_pipe() {
+    struct Gone;
+    impl std::io::Write for Gone {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe))
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    // Must return instead of panicking: the runtime ignores SIGPIPE, and a
+    // panic here would turn a finished run into exit status 101.
+    assert!(!emit_to(&mut Gone, "report"));
+    let mut captured = Vec::new();
+    assert!(emit_to(&mut captured, "report"));
+    assert_eq!(captured, b"report\n");
+}
