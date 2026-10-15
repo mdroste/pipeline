@@ -791,13 +791,26 @@ async fn cmd_run(args: RunArgs) -> i32 {
             return 2;
         }
     };
+    let (input_path, extra_inputs) = match args
+        .input
+        .as_deref()
+        .map(absolutize)
+        .transpose()
+        .and_then(|input| absolutize_inputs(args.extra_inputs).map(|extra| (input, extra)))
+    {
+        Ok((input, extra)) => (input.unwrap_or_default(), extra),
+        Err(error) => {
+            eprintln!("Error: {error}");
+            return 2;
+        }
+    };
     let options = commands::HeadlessRunOptions {
         profile_id: args.profile_id,
         workflow,
-        input_path: args.input.unwrap_or_default(),
+        input_path,
         input_interpretation: args.input_interpretation,
         variables: args.variables,
-        extra_inputs: args.extra_inputs,
+        extra_inputs,
     };
     let bus: EventBus = Arc::new(CliEvents);
     match run_with_interrupt(bus, options, None).await {
@@ -819,13 +832,26 @@ async fn cmd_check(args: CheckArgs) -> i32 {
             return 2;
         }
     };
+    let (input_path, extra_inputs) = match args
+        .input
+        .as_deref()
+        .map(absolutize)
+        .transpose()
+        .and_then(|input| absolutize_inputs(args.extra_inputs).map(|extra| (input, extra)))
+    {
+        Ok((input, extra)) => (input.unwrap_or_default(), extra),
+        Err(error) => {
+            eprintln!("Error: {error}");
+            return 2;
+        }
+    };
     let options = commands::HeadlessRunOptions {
         profile_id: args.profile_id,
         workflow,
-        input_path: args.input.unwrap_or_default(),
+        input_path,
         input_interpretation: args.input_interpretation,
         variables: args.variables,
-        extra_inputs: args.extra_inputs,
+        extra_inputs,
     };
     let plan = match commands::check_headless_plan(&options).await {
         Ok(report) => report,
@@ -913,6 +939,25 @@ fn emit_to(out: &mut impl std::io::Write, text: &str) -> bool {
     }
 }
 
+/// Run manifests and automations treat input paths as absolute; resolve a
+/// relative CLI path against the current directory once, up front.
+fn absolutize(path: &str) -> Result<String, String> {
+    let candidate = Path::new(path);
+    if candidate.is_absolute() {
+        return Ok(path.to_string());
+    }
+    let cwd = std::env::current_dir()
+        .map_err(|error| format!("Cannot resolve the current directory: {error}"))?;
+    Ok(cwd.join(candidate).to_string_lossy().into_owned())
+}
+
+fn absolutize_inputs(inputs: HashMap<String, String>) -> Result<HashMap<String, String>, String> {
+    inputs
+        .into_iter()
+        .map(|(key, value)| absolutize(&value).map(|value| (key, value)))
+        .collect()
+}
+
 fn finish_single_run(value: &serde_json::Value, out: Option<&str>, force: bool) -> i32 {
     let markdown = match report_markdown(value) {
         Ok(markdown) => markdown,
@@ -995,7 +1040,12 @@ async fn cmd_batch(args: BatchArgs) -> i32 {
         }
     };
 
-    let files = match commands::scan_input_files(&args.input_dir) {
+    let files = match commands::scan_input_files(&args.input_dir).and_then(|files| {
+        files
+            .iter()
+            .map(|file| absolutize(file))
+            .collect::<Result<Vec<_>, _>>()
+    }) {
         Ok(files) if !files.is_empty() => files,
         Ok(_) => {
             eprintln!(
@@ -1018,6 +1068,13 @@ async fn cmd_batch(args: BatchArgs) -> i32 {
         }
     };
 
+    let extra_inputs = match absolutize_inputs(args.extra_inputs) {
+        Ok(extra) => extra,
+        Err(error) => {
+            eprintln!("Error: {error}");
+            return 2;
+        }
+    };
     let mut failures = 0;
     for (index, path) in files.iter().enumerate() {
         eprintln!("\n[{}/{}] {path}", index + 1, files.len());
@@ -1028,7 +1085,7 @@ async fn cmd_batch(args: BatchArgs) -> i32 {
             input_path: path.clone(),
             input_interpretation: Some("document".to_string()),
             variables: args.variables.clone(),
-            extra_inputs: args.extra_inputs.clone(),
+            extra_inputs: extra_inputs.clone(),
         };
         match run_with_interrupt(bus, options, Some(&snapshot)).await {
             Ok(value) => {

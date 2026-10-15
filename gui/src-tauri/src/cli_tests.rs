@@ -278,3 +278,18 @@ fn stdout_output_tolerates_a_closed_pipe() {
     assert!(emit_to(&mut captured, "report"));
     assert_eq!(captured, b"report\n");
 }
+
+#[test]
+fn relative_cli_inputs_are_resolved_against_the_current_directory() {
+    let cwd = std::env::current_dir().unwrap();
+    let resolved = absolutize("paper.pdf").unwrap();
+    assert_eq!(Path::new(&resolved), cwd.join("paper.pdf"));
+    assert!(Path::new(&resolved).is_absolute());
+    assert_eq!(absolutize("/abs/paper.pdf").unwrap(), "/abs/paper.pdf");
+    let extra = absolutize_inputs(HashMap::from([(
+        "appendix".to_string(),
+        "./a.tex".to_string(),
+    )]))
+    .unwrap();
+    assert_eq!(Path::new(&extra["appendix"]), cwd.join("./a.tex"));
+}
