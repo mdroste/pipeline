@@ -19,8 +19,10 @@ Fixes from the October 2026 pre-release audit
   500 files no longer fail their integrity check: captured source snapshots are
   never trimmed after they are fingerprinted.
 - Importing the same Zotero item or Review findings into a second project no
-  longer overwrites the first project's record; the second import reports a
-  conflict instead.
+  longer overwrites the first project's record. New imports get a record id
+  scoped to the project, so the second project receives its own record;
+  records created by 1.0.2 and earlier are still found under their old id, so
+  re-importing into an existing project does not duplicate them.
 - Research backups (`.pwrx`) and project packages (`.pwex`) reject entries
   whose declared size does not match their content, so a crafted archive can
   no longer fill the disk or exhaust memory during inspection or restore.

@@ -1,4 +1,5 @@
 use super::*;
+mod scoped_ids;
 static JOB_TEST_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[test]
 fn bibtex_preserves_nested_fields_and_duplicate_keys() {
