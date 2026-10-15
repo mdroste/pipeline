@@ -3,10 +3,10 @@
 This file records user-visible and release-integrity changes. Development before
 the first public release was not maintained as a stable release series.
 
-## Unreleased
+## 1.1.0 — 2026-10-15
 
-Fixes from the October 2026 pre-release audit (`docs/bug-triage-2026-10.md`,
-findings 1–13 held the release; findings 14–44 follow below).
+Fixes from the October 2026 pre-release audit (`docs/bug-triage-2026-10.md`):
+findings 1–13 held this release; findings 14–44 follow below.
 
 - A conversation message whose send is rejected after dispatch (for example
   while a project job holds its write resources) is restored to the composer
