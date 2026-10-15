@@ -737,3 +737,29 @@ fn lexical_abbreviations_reopen_the_original_phrase() {
             .contains("impulse response")
     );
 }
+
+#[test]
+fn punctuation_only_query_tokens_do_not_empty_the_search() {
+    let f = fixture();
+    research::create_note(
+        &f.store,
+        research::CreateNoteRequest {
+            workspace_id: f.ws.clone(),
+            paper_id: None,
+            kind: "decision".into(),
+            body: "Tariffs and welfare move together in the baseline".into(),
+            state: None,
+            origin: "user".into(),
+            pinned: false,
+            operation_id: "note-tariffs".into(),
+        },
+        false,
+    )
+    .unwrap();
+    finish_index(&f);
+    assert_eq!(find(&f, "tariffs & welfare").hits.len(), 1);
+    assert_eq!(find(&f, "tariffs - welfare").hits.len(), 1);
+    assert_eq!(find(&f, "tariffs = welfare").hits.len(), 1);
+    let empty = find(&f, "&");
+    assert!(empty.hits.is_empty() && empty.next_cursor.is_none());
+}
