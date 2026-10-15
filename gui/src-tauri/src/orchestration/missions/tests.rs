@@ -573,3 +573,20 @@ fn host_execution_findings_excerpt_long_instructions_so_adoption_succeeds() {
     assert!(finding.tested_domain.starts_with("xxxx"));
     assert!(finding.outcome.contains("completed"));
 }
+
+#[test]
+fn mission_prompts_are_bound_opaquely_so_binding_syntax_in_content_cannot_break_them() {
+    let (_temp, s, mut m) = fixture();
+    m.definition.background = "see {{input:document}} and {{output:nope}}".into();
+    let chain = child_chain(&m).unwrap();
+    let scope = m.planner_scope.clone();
+    let child = storage::admit(&s, &mut m, chain, scope).unwrap();
+    let Action::Workspace { prompt, .. } = &child.chain.steps[0].action else {
+        panic!("planner child is a Workspace action");
+    };
+    assert_eq!(prompt, "{{input:missionPrompt}}");
+    let rendered =
+        crate::orchestration::definition::render_prompt(prompt, &json!({}), &child.inputs).unwrap();
+    assert!(rendered.contains("{{input:document}}"));
+    assert!(rendered.contains("{{output:nope}}"));
+}
