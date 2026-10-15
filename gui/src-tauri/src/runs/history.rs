@@ -329,13 +329,35 @@ pub fn recover_resumable_runs() -> Result<usize, String> {
     if crate::commands::pipeline_is_running() {
         return Ok(0);
     }
-    recover_resumable_runs_at(&runs_dir()?, &super::run_lock_path()?)
+    recover_resumable_runs_at(&runs_dir()?, &run_lock_path()?)
+}
+
+/// The one OS-level lock shared by the pipeline guard, incomplete-run
+/// recovery, and pin release. It lives next to the active `runs/` directory so
+/// a custom data folder never splits the lock between two files.
+pub fn run_lock_path() -> Result<PathBuf, String> {
+    Ok(crate::storage::data_root()?.join("run.lock"))
+}
+
+/// Open (creating if needed) the shared run lock without locking it.
+pub fn open_run_lock(path: &Path) -> Result<fs::File, String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create Pipeline data directory: {e}"))?;
+    }
+    fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|e| format!("Failed to open the Pipeline run lock: {e}"))
 }
 
 /// Recovery over an explicit runs directory and lock file.
 pub(super) fn recover_resumable_runs_at(root: &Path, lock_path: &Path) -> Result<usize, String> {
     use fs2::FileExt as _;
-    let lock = super::open_run_lock(lock_path)
+    let lock = open_run_lock(lock_path)
         .map_err(|error| format!("Failed to open Pipeline recovery lock: {error}"))?;
     if lock.try_lock_exclusive().is_err() {
         return Ok(0);

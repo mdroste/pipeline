@@ -10,6 +10,7 @@ import useContainerWidth from "./useContainerWidth";
 import useWorkspaceEntry from "./useWorkspaceEntry";
 import {
   mergeSessionSnapshot,
+  newOperation,
   saveWorkspaceDraft,
 } from "../lib/workspaceSessionState";
 import useWorkspaceTranscript from "./useWorkspaceTranscript";
@@ -36,10 +37,6 @@ import type {
   Workspace,
   WorkspaceModel,
 } from "../lib/workbenchTypes";
-
-function newOperation(prefix: string) {
-  return `${prefix}-${crypto.randomUUID()}`;
-}
 
 export function useWorkspacePageController({
   entryTarget,
@@ -814,7 +811,7 @@ export function useWorkspacePageController({
     } catch {
       /* The host retains submission recovery. */
     }
-    const editRevisionAtSend = draftEditRevision.current;
+    const editRevisionAtSend = draftEditRevision.current; // see catch
     let dispatched = false;
     try {
       await selectionSaveRef.current;
@@ -877,21 +874,11 @@ export function useWorkspacePageController({
       submissionRef.current = null;
       if (sessionRef.current === sessionId) setPendingUser(null);
       await hydrate(sessionId);
-      // The host wrote the text as the session draft before dispatch. Put it
-      // back in the composer; otherwise the autosave effect persists "" and
-      // destroys the preserved draft.
       if (
         sessionRef.current === sessionId &&
         draftEditRevision.current === editRevisionAtSend
-      ) {
-        draftEditRevision.current += 1;
-        setDraft(text);
-        try {
-          localStorage.setItem(`pipeline.pendingDraft.${sessionId}`, text);
-        } catch {
-          /* The server draft remains authoritative. */
-        }
-      }
+      )
+        editDraft(text);
     }
   };
 

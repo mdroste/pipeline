@@ -21,6 +21,10 @@ export function mergeSessionSnapshot(
 }
 
 // The caller serializes this write with other session mutations.
+export function newOperation(prefix: string) {
+  return `${prefix}-${crypto.randomUUID()}`;
+}
+
 export async function saveWorkspaceDraft(
   selectedSession: string,
   text: string,

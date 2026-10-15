@@ -221,3 +221,6 @@ the API-key readiness record labeled Google API.
 - `commands/orchestration/pins.rs` reconciles settled failed Review pins against operation ownership.
 - `hooks/useWorkspaceRouteEntry.ts` invalidates superseded navigation loads while the controller owns draft persistence and selection.
 - `scripts/release/poppler-inventory.mjs` records actual bundled file hashes; `qualify-release.mjs` validates candidate-specific release evidence.
+- `runs/unlisted.rs` registers files that landed in a run directory without `add_text`: a destructive policy for model output and a non-destructive one for captured source snapshots. `runs/history.rs` owns the single run lock path shared by the pipeline guard, recovery, and pin release.
+- `workbench/release/archive.rs` owns the bounded zip-entry copy shared with `.pwex` import; `workbench/research/papers.rs` hashes host-owned files through their resolved targets for launch manifests.
+- `agent_runtime/codex/transport.rs` offers a lossless per-thread server-request sink that Review App Server calls register for the life of a call.

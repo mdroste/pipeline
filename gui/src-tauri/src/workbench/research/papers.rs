@@ -93,6 +93,19 @@ fn ensure_safe_regular_file(path: &Path) -> WorkbenchResult<u64> {
     Ok(metadata.len())
 }
 
+/// Hash a host-owned file through its resolved target (dotfile managers
+/// symlink shell startup files and environment configuration); the caller
+/// records the declared path so existing fingerprints are unchanged.
+pub(super) fn hash_resolved_file(
+    path: &Path,
+    label: &str,
+) -> WorkbenchResult<(PathBuf, String, u64)> {
+    let resolved = fs::canonicalize(path)
+        .map_err(|error| WorkbenchError::storage(&format!("Failed to resolve {label}"), error))?;
+    let (hash, size) = hash_file(&resolved)?;
+    Ok((resolved, hash, size))
+}
+
 pub(super) fn hash_file(path: &Path) -> WorkbenchResult<(String, u64)> {
     let size = ensure_safe_regular_file(path)?;
     let mut file = fs::File::open(path)

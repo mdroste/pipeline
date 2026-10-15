@@ -3,6 +3,49 @@
 This file records user-visible and release-integrity changes. Development before
 the first public release was not maintained as a stable release series.
 
+## Unreleased
+
+Fixes from the October 2026 pre-release audit
+([docs/bug-triage-2026-10.md](docs/bug-triage-2026-10.md), findings 1–13).
+
+- A conversation message whose send is rejected after dispatch (for example
+  while a project job holds its write resources) is restored to the composer
+  instead of being wiped from the composer, the local recovery copy, and the
+  saved draft.
+- With a custom data folder, opening History or a project page while a Review
+  runs no longer rewrites the active run as interrupted or lets it be deleted;
+  the guard, recovery, and pin release share one lock next to the run store.
+- Reruns and resumes of runs whose source is larger than 50 MB or has more than
+  500 files no longer fail their integrity check: captured source snapshots are
+  never trimmed after they are fingerprinted.
+- Importing the same Zotero item or Review findings into a second project no
+  longer overwrites the first project's record; the second import reports a
+  conflict instead.
+- Research backups (`.pwrx`) and project packages (`.pwex`) reject entries
+  whose declared size does not match their content, so a crafted archive can
+  no longer fill the disk or exhaust memory during inspection or restore.
+- Restoring a `.pwrx` rejects paper, source, or artifact references that point
+  outside the research store's immutable blob folder, and the paper readers
+  refuse such references.
+- Review steps that reuse a warmed Codex CLI thread (`codex exec resume`) now
+  pin their sandbox and approval policy explicitly instead of inheriting the
+  user's global Codex configuration.
+- A conversation reconnected under a new runtime connection keeps its
+  transcript order; reconciled items no longer come back shuffled.
+- Execution profiles that start `/bin/zsh` (including Stata) can be previewed,
+  authorized, and run when `~/.zshrc` or another startup file is a symlink
+  managed by a dotfile tool; `pyvenv.cfg` symlinks are handled the same way.
+- Restoring a run from Trash works on Windows default storage and on symlinked
+  data folders instead of failing with "Invalid trashed run id".
+- After opening a citation or evidence page in Sources, clicking another
+  artifact or page no longer bounces back to the requested one.
+- Parallel Review steps on the ChatGPT App Server recover when the shared event
+  stream lags during a host tool call instead of failing non-retryably and
+  interrupting their turn.
+- Saving or checkpointing a file inside a folder that task capture excludes
+  (`target`, `node_modules`, `.cache`, …) is refused instead of silently
+  deleting the original file on acceptance.
+
 ## 1.0.2 — 2026-10-08
 
 First stable release. Installers are published for macOS (Apple Silicon and

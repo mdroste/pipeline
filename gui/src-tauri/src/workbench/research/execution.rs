@@ -1425,13 +1425,7 @@ pub(super) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Val
             .and_then(Path::parent)
             .map(|p| p.join("pyvenv.cfg"));
         if let Some(config) = config.filter(|p| p.is_file()) {
-            // Host-owned configuration may be a symlink (dotfile managers);
-            // hash the resolved target, keeping the declared path in the
-            // manifest so existing authorizations keep their fingerprints.
-            let resolved = fs::canonicalize(&config).map_err(|e| {
-                WorkbenchError::storage("Failed to resolve Python environment configuration", e)
-            })?;
-            let (hash, size) = hash_file(&resolved)?;
+            let (_, hash, size) = hash_resolved_file(&config, "Python environment")?;
             json!({"configuration":config,"hash":hash,"size":size})
         } else {
             Value::Null
@@ -1461,9 +1455,7 @@ pub(super) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Val
             Path::new(&profile.cwd).join(path)
         };
         if path.is_file() {
-            let path = fs::canonicalize(path)
-                .map_err(|e| WorkbenchError::storage("Failed to resolve launch script", e))?;
-            let (hash, size) = hash_file(&path)?;
+            let (path, hash, size) = hash_resolved_file(&path, "launch script")?;
             launch_files.push(json!({"path":path,"hash":hash,"size":size}));
         }
     }
@@ -1480,10 +1472,7 @@ pub(super) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Val
             for name in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
                 let path = home.join(name);
                 startup.push(if path.is_file() {
-                    let resolved = fs::canonicalize(&path).map_err(|e| {
-                        WorkbenchError::storage("Failed to resolve shell startup file", e)
-                    })?;
-                    let (hash, size) = hash_file(&resolved)?;
+                    let (_, hash, size) = hash_resolved_file(&path, "shell startup file")?;
                     json!({"path":path,"hash":hash,"size":size})
                 } else {
                     json!({"path":path,"missing":true})

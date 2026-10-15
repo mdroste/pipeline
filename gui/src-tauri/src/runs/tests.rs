@@ -988,3 +988,21 @@ fn trashed_runs_restore_through_symlinked_storage_paths() {
         restore_trashed_run_at(&data.join("runs"), &data.join("trash/runs"), "abc123_run").is_err()
     );
 }
+
+#[test]
+fn captured_tree_registration_keeps_every_file_past_the_model_output_cap() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut writer = RunWriter::create_in(temp.path(), "captured-run").unwrap();
+    let tree = writer.dir().join("source-snapshot/tree");
+    fs::create_dir_all(&tree).unwrap();
+    for index in 0..501 {
+        fs::write(tree.join(format!("{index:04}.tex")), "x").unwrap();
+    }
+    assert_eq!(
+        writer
+            .register_captured_tree("source-snapshot", "source")
+            .unwrap(),
+        501
+    );
+    assert_eq!(fs::read_dir(&tree).unwrap().count(), 501);
+}

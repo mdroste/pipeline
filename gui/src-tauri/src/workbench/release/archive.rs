@@ -662,6 +662,25 @@ fn validate_database(connection: &Connection) -> WorkbenchResult<()> {
     Ok(())
 }
 
+/// Extract one entry. Deflate streams are bounded only by their compressed
+/// size, so cap the copy at the declared size (+1 so an honest entry still
+/// reaches EOF and its CRC check) and refuse entries whose header lies.
+/// Shared by .pwrx restore and .pwex import as archive mechanics only.
+pub(super) fn copy_entry(
+    entry: &mut zip::read::ZipFile<'_, File>,
+    output: &mut File,
+) -> WorkbenchResult<()> {
+    let declared = entry.size();
+    let copied = std::io::copy(&mut entry.take(declared + 1), output)
+        .map_err(|error| WorkbenchError::storage("Failed to extract archive entry", error))?;
+    if copied != declared {
+        return Err(WorkbenchError::invalid(
+            "Archive entry size does not match its header",
+        ));
+    }
+    Ok(())
+}
+
 pub fn import_archive(
     store: &Store,
     request: ImportArchiveRequest,
@@ -739,19 +758,7 @@ pub fn import_archive(
         }
         let mut output = File::create(&destination)
             .map_err(|error| WorkbenchError::storage("Failed to create import file", error))?;
-        // Deflate streams are bounded only by their compressed size; cap the
-        // copy at the declared size (+1 so an honest entry still reaches EOF
-        // and its CRC check) and refuse entries whose header lies.
-        let declared = entry.size();
-        let copied =
-            std::io::copy(&mut (&mut entry).take(declared + 1), &mut output).map_err(|error| {
-                WorkbenchError::storage("Failed to extract research archive", error)
-            })?;
-        if copied != declared {
-            return Err(WorkbenchError::invalid(
-                "Archive entry size does not match its header",
-            ));
-        }
+        copy_entry(&mut entry, &mut output)?;
     }
     let manifest: ArchiveManifest = serde_json::from_reader(
         File::open(temporary.path().join("manifest.json"))

@@ -413,7 +413,7 @@ mod tests {
         );
     }
     #[test]
-    fn retained_source_keeps_large_files_and_more_than_five_hundred_entries() {
+    fn retained_source_keeps_large_files_and_round_trips_trees() {
         let temp = tempfile::tempdir().unwrap();
         let big = temp.path().join("scan.pdf");
         std::fs::write(&big, vec![0u8; 51_000_000]).unwrap();
@@ -436,9 +436,11 @@ mod tests {
             51_000_000
         );
 
+        // A modest tree round-trips; the 500-entry registration cap is
+        // covered without per-file fsync cost in runs::tests.
         let tree = temp.path().join("tree");
         std::fs::create_dir_all(&tree).unwrap();
-        for index in 0..501 {
+        for index in 0..24 {
             std::fs::write(tree.join(format!("{index:04}.tex")), "x").unwrap();
         }
         let mut writer = crate::runs::RunWriter::create_in(temp.path(), "tree_run").unwrap();
@@ -455,14 +457,14 @@ mod tests {
             std::fs::read_dir(run_dir.join("source-snapshot/tree"))
                 .unwrap()
                 .count(),
-            501
+            24
         );
         let restored = restore_source(&run_dir, &temp.path().join("tree_child"), true).unwrap();
         assert_eq!(
             std::fs::read_dir(restored.source_path.unwrap())
                 .unwrap()
                 .count(),
-            501
+            24
         );
     }
     #[test]
