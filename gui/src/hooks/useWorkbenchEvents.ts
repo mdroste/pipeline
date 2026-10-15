@@ -201,6 +201,21 @@ export function useWorkbenchEvents({
         );
         if (owner?.epoch === payload.epoch)
           finishSubmission("connection closed");
+        else if (!owner && activeRef.current) {
+          // A turn adopted from hydration cannot finish once its connection
+          // is gone; leaving it active locks the composer until navigation.
+          activeRef.current = null;
+          setActive(null);
+          setStream("");
+          const selected = sessionRef.current;
+          // Hydrate only when reconciliation settled the turn: hydrating an
+          // unchanged snapshot would re-adopt the dead turn.
+          if (selected)
+            void workbenchClient
+              .reconcileSession(selected)
+              .then((changed) => (changed ? hydrate(selected) : undefined))
+              .catch(() => undefined);
+        }
         setRequests((old) =>
           old.filter((request) => request.epoch !== payload.epoch),
         );

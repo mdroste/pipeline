@@ -386,3 +386,27 @@ it("finishes an automation-driven turn on the viewed thread instead of leaving a
   await waitFor(() => expect(mocks.conversationSnapshot).toHaveBeenCalled());
   unmount();
 });
+
+it("releases a turn restored by hydration when its connection closes", async () => {
+  const { result, unmount } = await draftFixture({
+    activeBinding: { id: "binding", providerThreadId: "thread-A" },
+    turns: [
+      {
+        id: "turn",
+        bindingId: "binding",
+        providerTurnId: "turn-A",
+        terminalAt: null,
+        state: "inProgress",
+      },
+    ],
+  });
+  await waitFor(() => expect(result.current.active?.turnId).toBe("turn-A"));
+  mocks.reconcileSession.mockClear();
+  await act(async () => {
+    for (const cb of mocks.listeners)
+      cb({ payload: { epoch: 1, kind: "connectionClosed" } });
+  });
+  await waitFor(() => expect(result.current.active).toBeNull());
+  expect(mocks.reconcileSession).toHaveBeenCalledWith("A");
+  unmount();
+});
