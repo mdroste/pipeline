@@ -388,9 +388,18 @@ fn atomic_replace_runtime_file(path: &Path, bytes: &[u8]) -> Result<(), String> 
 /// Caller must hold the managed-engine guard. Each file replacement is atomic;
 /// if the process stops between the sidecar and manifest swaps, the next
 /// guarded resolution observes the digest mismatch and completes the refresh.
-pub(super) fn refresh_paddle_parser_sidecar_locked(root: &Path) -> Result<bool, String> {
+/// Outcome of a sidecar-only refresh. `AlreadyCurrent` must short-circuit an
+/// install: falling through would rebuild a healthy multi-GB runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SidecarRefresh {
+    NotReusable,
+    AlreadyCurrent,
+    Refreshed,
+}
+
+pub(super) fn refresh_paddle_parser_sidecar_locked(root: &Path) -> Result<SidecarRefresh, String> {
     if !parser_runtime_reusable_for_sidecar_refresh(root) {
-        return Ok(false);
+        return Ok(SidecarRefresh::NotReusable);
     }
     let version_root = root.join("versions").join(PADDLE_PARSER_RELEASE);
     let script = version_root.join("paddle_parser_sidecar.py");
@@ -410,7 +419,7 @@ pub(super) fn refresh_paddle_parser_sidecar_locked(root: &Path) -> Result<bool, 
             .and_then(serde_json::Value::as_str)
             == Some(expected_digest.as_str())
     {
-        return Ok(false);
+        return Ok(SidecarRefresh::AlreadyCurrent);
     }
 
     atomic_replace_runtime_file(&script, PADDLE_PARSER_SCRIPT.as_bytes())?;
@@ -424,7 +433,7 @@ pub(super) fn refresh_paddle_parser_sidecar_locked(root: &Path) -> Result<bool, 
     if verified_parser_sidecar_at(root).is_none() {
         return Err("The refreshed parser sidecar failed its integrity check".to_string());
     }
-    Ok(true)
+    Ok(SidecarRefresh::Refreshed)
 }
 
 /// Resolve the managed full parser and the native VLM stack it depends on.

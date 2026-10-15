@@ -371,7 +371,7 @@ fn install_space_requirement(
             InstallSpacePlan::BaseInstallOrRepair,
             PADDLE_BASE_INSTALLED_MB + PADDLE_BASE_STAGING_HEADROOM_MB,
         )),
-        "paddleocr-vl-parser" if lightweight_parser_refresh => Ok((
+        "paddleocr-vl-parser" if lightweight_parser_refresh && base_installed => Ok((
             InstallSpacePlan::ParserSidecarRefresh,
             PADDLE_SIDECAR_REFRESH_HEADROOM_MB,
         )),
