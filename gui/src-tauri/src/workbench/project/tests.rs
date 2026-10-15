@@ -1205,3 +1205,54 @@ fn conversation_file_links_stay_inside_the_session_runtime_root() {
     std::os::unix::fs::symlink(f.root.join("outside.pdf"), root.join("linked.pdf")).unwrap();
     assert!(read_conversation_file(&f.store, &session.id, "linked.pdf").is_err());
 }
+
+#[test]
+fn put_refuses_a_record_id_owned_by_another_workspace() {
+    let f = fixture();
+    let other = f
+        .store
+        .create_workspace(CreateWorkspaceRequest {
+            name: "Other".into(),
+            root: None,
+            operation_id: "other-ws".into(),
+        })
+        .unwrap()
+        .record
+        .id;
+    put(
+        &f.store,
+        &f.ws,
+        "zotero_x",
+        "bibliography",
+        0,
+        &serde_json::json!({"owner":"A"}),
+    )
+    .unwrap();
+    let error = put(
+        &f.store,
+        &other,
+        "zotero_x",
+        "bibliography",
+        0,
+        &serde_json::json!({"owner":"B"}),
+    )
+    .unwrap_err();
+    assert!(
+        error.message.contains("another project"),
+        "{}",
+        error.message
+    );
+    assert!(put(
+        &f.store,
+        &f.ws,
+        "zotero_x",
+        "task",
+        0,
+        &serde_json::json!({"owner":"A-task"}),
+    )
+    .is_err());
+    let kept = record(&f.store, &f.ws, "zotero_x", "bibliography").unwrap();
+    assert_eq!(kept.body["owner"], "A");
+    assert_eq!(kept.revision, 1);
+    assert!(record(&f.store, &other, "zotero_x", "bibliography").is_err());
+}
