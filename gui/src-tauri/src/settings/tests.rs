@@ -697,3 +697,32 @@ fn imported_bundle_settings_are_normalized_before_validation() {
     assert_eq!(normalized.antigravity_access_mode, "api");
     assert_ne!(normalized.preferred_provider, "gemini");
 }
+
+#[test]
+fn an_undecryptable_stored_key_can_be_discarded_but_a_readable_one_cannot() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("settings.json");
+    let key_a = [7u8; KEY_SIZE];
+    let key_b = [9u8; KEY_SIZE];
+    let stored = Settings {
+        google_api_key: encrypt_string("google-secret", &key_a).unwrap(),
+        ..Default::default()
+    };
+    fs::write(&path, serde_json::to_string_pretty(&stored).unwrap()).unwrap();
+
+    // The keyfile changed: the ciphertext is unreadable and may be discarded.
+    assert!(decrypt_string(&stored.google_api_key, &key_b).is_err());
+    assert_eq!(
+        discard_undecryptable_secret_at(&path, &key_b, "google"),
+        Ok(())
+    );
+    let reloaded: Settings = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(reloaded.google_api_key.is_empty());
+
+    // A readable key is never discarded through this path.
+    fs::write(&path, serde_json::to_string_pretty(&stored).unwrap()).unwrap();
+    assert!(discard_undecryptable_secret_at(&path, &key_a, "google").is_err());
+    assert!(discard_undecryptable_secret_at(&path, &key_b, "gemini").is_err());
+    let untouched: Settings = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(untouched.google_api_key, stored.google_api_key);
+}

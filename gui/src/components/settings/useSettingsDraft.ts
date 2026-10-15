@@ -16,6 +16,7 @@ export function useSettingsDraft(onSystemChange?: () => void) {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [undecryptableKeys, setUndecryptableKeys] = useState<string[]>([]);
   const settingsRef = useRef<Settings | null>(settings);
   const saveChainRef = useRef<Promise<void>>(Promise.resolve());
   const latestQueuedSnapshotRef = useRef<string | null>(null);
@@ -33,8 +34,12 @@ export function useSettingsDraft(onSystemChange?: () => void) {
     return () => clearTimeout(timer);
   }, [saved]);
 
-  useEffect(() => {
-    invoke<{ settings: Settings; warnings: string[] }>("get_settings")
+  const load = () =>
+    invoke<{
+      settings: Settings;
+      warnings: string[];
+      undecryptable_keys?: string[];
+    }>("get_settings")
       .then((resp) => {
         providerCatalogs.initialize(resp.settings);
         setSettings(resp.settings);
@@ -42,6 +47,7 @@ export function useSettingsDraft(onSystemChange?: () => void) {
         latestQueuedSnapshotRef.current = snapshot;
         setSavedSettingsSnapshot(snapshot);
         setWarnings(resp.warnings);
+        setUndecryptableKeys(resp.undecryptable_keys ?? []);
         setLoading(false);
       })
       .catch((e) => {
@@ -49,7 +55,21 @@ export function useSettingsDraft(onSystemChange?: () => void) {
         setLoadError(e instanceof Error ? e.message : String(e));
         setLoading(false);
       });
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // A stored key that no longer decrypts blocks every run and cannot be
+  // cleared by saving an empty field; discarding it is an explicit action.
+  const discardStoredKey = async (provider: string) => {
+    try {
+      await invoke("discard_undecryptable_secret", { provider });
+      await load();
+    } catch (cause) {
+      setSaveError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
 
   const enqueueSave = (settingsToSave: Settings, force = false) => {
     const savedSnapshot = JSON.stringify(settingsToSave);
@@ -113,6 +133,8 @@ export function useSettingsDraft(onSystemChange?: () => void) {
     dirty,
     saveError,
     warnings,
+    undecryptableKeys,
+    discardStoredKey,
     retrySave,
     providerCatalogs,
   };

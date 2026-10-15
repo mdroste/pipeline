@@ -54,6 +54,9 @@ pub async fn set_storage_directory(
 pub struct SettingsResponse {
     pub settings: crate::settings::Settings,
     pub warnings: Vec<String>,
+    /// Providers whose stored API key could not be decrypted; the Settings
+    /// page offers to discard those so runs can launch again.
+    pub undecryptable_keys: Vec<String>,
 }
 
 /// Opaque renderer-side marker for a credential that is already stored. The
@@ -109,11 +112,19 @@ fn materialize_settings(
 
 #[tauri::command]
 pub async fn get_settings() -> Result<SettingsResponse, String> {
-    let (settings, warnings) = crate::settings::load_with_warnings();
+    let (settings, diagnostics) = crate::settings::load_with_diagnostics();
     Ok(SettingsResponse {
         settings: redact_settings(settings),
-        warnings,
+        warnings: diagnostics.warnings,
+        undecryptable_keys: diagnostics.undecryptable_keys,
     })
+}
+
+/// Forget a stored API key that no longer decrypts (settings restored without
+/// the keyfile). A readable key is cleared from Settings instead.
+#[tauri::command]
+pub async fn discard_undecryptable_secret(provider: String) -> Result<(), String> {
+    crate::settings::discard_undecryptable_secret(&provider)
 }
 
 #[tauri::command]

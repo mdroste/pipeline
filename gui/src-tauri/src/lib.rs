@@ -353,6 +353,7 @@ pub fn run() {
             workbench::commands::workbench_codex_pending_requests,
             commands::config::get_settings,
             commands::config::save_settings,
+            commands::config::discard_undecryptable_secret,
             commands::config::get_model_catalog,
             commands::config::get_pipeline_config,
             commands::config::get_run_setup,
