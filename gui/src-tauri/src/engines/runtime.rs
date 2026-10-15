@@ -553,3 +553,31 @@ pub(super) fn dir_size(root: &Path) -> u64 {
 }
 
 // ── Status ──────────────────────────────────────────────────────────
+
+/// Acquire through `acquire`, waiting (up to `deadline`) while the engine gate
+/// is held by a detached runtime verification rather than an install. A
+/// cancelled extraction leaves its verification running until the content
+/// hash finishes; an immediate re-run must wait for that, not fail.
+pub(crate) async fn acquire_waiting_on_detached_gate<T: Send + 'static>(
+    acquire: impl Fn() -> Result<T, String> + Send + Sync + Clone + 'static,
+    deadline: std::time::Duration,
+) -> Result<T, String> {
+    let started = std::time::Instant::now();
+    loop {
+        let attempt = acquire.clone();
+        match tokio::task::spawn_blocking(attempt)
+            .await
+            .map_err(|error| format!("Engine gate task failed: {error}"))?
+        {
+            Ok(value) => return Ok(value),
+            Err(error)
+                if error.contains("already running")
+                    && super::installer_io::engine_gate_busy_without_install()
+                    && started.elapsed() < deadline =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}

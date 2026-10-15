@@ -123,6 +123,13 @@ pub(super) fn acquire_engine_guard(installing: bool) -> Result<InstallGuard, Str
     result
 }
 
+/// True while the gate is held by something other than an install: a
+/// detached runtime verification whose caller was cancelled, for example.
+/// Extraction may wait for that; installs keep their fail-fast semantics.
+pub(crate) fn engine_gate_busy_without_install() -> bool {
+    ENGINE_OPERATION_RUNNING.load(Ordering::SeqCst) && !INSTALL_RUNNING.load(Ordering::SeqCst)
+}
+
 pub(super) fn acquire_install_guard() -> Result<InstallGuard, String> {
     acquire_engine_guard(true)
 }

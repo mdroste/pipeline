@@ -804,3 +804,24 @@ fn dir_size_does_not_follow_symlinks() {
     std::os::unix::fs::symlink(root.path(), root.path().join("cycle")).unwrap();
     assert_eq!(dir_size(root.path()), 10);
 }
+
+#[test]
+fn extraction_waits_for_a_detached_verification_to_release_the_engine_gate() {
+    let guard = acquire_engine_guard(false).unwrap();
+    assert!(engine_gate_busy_without_install());
+    assert!(acquire_engine_guard(false).is_err());
+    let holder = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        drop(guard);
+    });
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let lease = runtime
+        .block_on(acquire_waiting_on_detached_gate(
+            || acquire_engine_guard(false),
+            std::time::Duration::from_secs(5),
+        ))
+        .unwrap();
+    holder.join().unwrap();
+    drop(lease);
+    assert!(!engine_gate_busy_without_install());
+}

@@ -18,11 +18,13 @@ pub(crate) async fn extract_paddle_full(
         "Verifying the PaddleOCR-VL runtime (the first use each session may take a while)…",
     );
     let (paths, engine_lease) = crate::commands::await_or_cancel(
-        tokio::task::spawn_blocking(crate::engines::paddle_full_parser_lease),
+        crate::engines::acquire_waiting_on_detached_gate(
+            crate::engines::paddle_full_parser_lease,
+            std::time::Duration::from_secs(120),
+        ),
         None,
     )
-    .await?
-    .map_err(|error| format!("PaddleOCR-VL runtime verification task failed: {error}"))??;
+    .await??;
     // Stage the PDF first: the pdftotext baseline and the parser sidecar read
     // the private copy, never the original path — a child reading the
     // original can be silently denied on macOS (TCC).
