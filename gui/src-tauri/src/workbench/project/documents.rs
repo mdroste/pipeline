@@ -91,7 +91,7 @@ pub fn read_document(
         end -= 1;
     }
     let page_count = if revision.input_kind == "pdf" && !text.is_empty() {
-        Some(text.matches('\u{000c}').count().max(1))
+        Some(pdf_page_count(&text))
     } else {
         None
     };
@@ -314,4 +314,26 @@ pub fn preview_working_file(
     let bytes = files::SafeRoot::open(&root)?.read(path)?;
     let digest = blob(store, ws, &bytes, "working_file_preview")?;
     preview_snapshot(store, ws, &digest)
+}
+
+/// pdftotext ends every page with U+000C; the retained text is trimmed, so a
+/// final form feed is absent and the last page must still be counted.
+fn pdf_page_count(text: &str) -> usize {
+    let breaks = text.matches('\u{000c}').count();
+    if text.ends_with('\u{000c}') {
+        breaks
+    } else {
+        breaks + 1
+    }
+    .max(1)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn page_count_includes_the_last_page_after_trimming() {
+        assert_eq!(super::pdf_page_count("p1\u{000c}p2\u{000c}p3"), 3);
+        assert_eq!(super::pdf_page_count("p1\u{000c}p2\u{000c}"), 2);
+        assert_eq!(super::pdf_page_count("single page"), 1);
+    }
 }
