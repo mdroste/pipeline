@@ -930,3 +930,38 @@ fn launch_manifest_hashes_symlinked_zsh_startup_files() {
     assert_eq!(zshrc["path"], json!(zdotdir.join(".zshrc")));
     assert_eq!(startup.len(), 4);
 }
+
+#[test]
+fn paper_search_excerpts_stay_bounded_on_single_line_documents() {
+    let fixture = fixture();
+    let paper_path = fixture.root.join("results.txt");
+    let mut line = String::new();
+    while line.len() < 1024 * 1024 {
+        line.push_str("coef=0.4213 ");
+    }
+    line.push('\n');
+    fs::write(&paper_path, &line).unwrap();
+    let paper = import_paper(
+        &fixture.store,
+        ImportPaperRequest {
+            workspace_id: fixture.workspace_id.clone(),
+            paper_id: None,
+            title: "Results".into(),
+            role: "other".into(),
+            path: paper_path.to_string_lossy().into_owned(),
+            operation_id: "results".into(),
+        },
+    )
+    .unwrap();
+    let hits = paper_search(
+        &fixture.store,
+        &fixture.workspace_id,
+        &paper.revision.unwrap().id,
+        "coef",
+        20,
+    )
+    .unwrap();
+    assert!(!hits.is_empty());
+    assert!(hits.iter().all(|hit| hit.excerpt.len() <= 160 + 4 + 160));
+    assert!(serde_json::to_vec(&hits).unwrap().len() < 64 * 1024);
+}

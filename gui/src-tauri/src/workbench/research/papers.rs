@@ -602,6 +602,9 @@ pub fn paper_read(store: &Store, request: PaperReadRequest) -> WorkbenchResult<P
     })
 }
 
+/// Upper bound on the excerpt bytes one search call returns.
+const MAX_SEARCH_EXCERPT_BYTES: usize = 64 * 1024;
+
 pub fn paper_search(
     store: &Store,
     workspace_id: &str,
@@ -613,21 +616,26 @@ pub fn paper_search(
     let (revision, text) = revision_text(store, workspace_id, revision_id)?;
     let haystack = text.to_ascii_lowercase();
     let needle = query.to_ascii_lowercase();
-    let mut hits = Vec::new();
+    let mut hits: Vec<PaperSearchHit> = Vec::new();
     let mut cursor = 0;
     let limit = limit.clamp(1, MAX_SEARCH_RESULTS);
+    let mut excerpt_bytes = 0usize;
     while hits.len() < limit {
+        // Tool results and receipts carry every excerpt; keep one call bounded.
+        if excerpt_bytes > MAX_SEARCH_EXCERPT_BYTES {
+            break;
+        }
         let Some(relative) = haystack[cursor..].find(&needle) else {
             break;
         };
         let start = cursor + relative;
         let end = start + needle.len();
-        let mut excerpt_start = text[..start]
-            .rfind('\n')
-            .map_or(start.saturating_sub(160), |value| value + 1);
-        let mut excerpt_end = text[end..]
-            .find('\n')
-            .map_or((end + 160).min(text.len()), |value| end + value);
+        // Clamp the window inside the line: a minified single-line file would
+        // otherwise return the whole line for every hit.
+        let line_start = text[..start].rfind('\n').map_or(0, |v| v + 1);
+        let line_end = text[end..].find('\n').map_or(text.len(), |v| end + v);
+        let mut excerpt_start = line_start.max(start.saturating_sub(160));
+        let mut excerpt_end = line_end.min(end + 160);
         while !text.is_char_boundary(excerpt_start) {
             excerpt_start += 1;
         }
@@ -636,6 +644,8 @@ pub fn paper_search(
         }
         let line = text[..start].bytes().filter(|byte| *byte == b'\n').count() + 1;
         let page_count = text[..start].bytes().filter(|byte| *byte == 0x0c).count();
+        let excerpt = text[excerpt_start..excerpt_end].trim().to_string();
+        excerpt_bytes += excerpt.len();
         hits.push(PaperSearchHit {
             revision_id: revision.id.clone(),
             content_hash: revision.content_hash.clone(),
@@ -643,7 +653,7 @@ pub fn paper_search(
             end,
             line,
             page: (revision.input_kind == "pdf").then_some(page_count + 1),
-            excerpt: text[excerpt_start..excerpt_end].trim().to_string(),
+            excerpt,
         });
         cursor = end;
     }
