@@ -552,3 +552,24 @@ fn mission_migration_preserves_existing_tasks_and_keeps_a_v1_backup() {
         1
     );
 }
+
+#[test]
+fn host_execution_findings_excerpt_long_instructions_so_adoption_succeeds() {
+    let candidate = Candidate {
+        id: "c1".into(),
+        goal_id: "g1".into(),
+        question: "Does the estimate survive clustering?".into(),
+        uncertainty: "High".into(),
+        rationale: "Standard errors are suspect".into(),
+        possible_outcomes: vec!["Yes".into(), "No".into()],
+        expected_cost: "small".into(),
+        instruction: "x".repeat(5000),
+        kind: InvestigationKind::Check,
+        capability_id: Some("check-1".into()),
+    };
+    let finding = host_finding(&candidate, "completed");
+    assert_eq!(validate::finding(&finding), Ok(()));
+    assert!(finding.tested_domain.len() <= 4000);
+    assert!(finding.tested_domain.starts_with("xxxx"));
+    assert!(finding.outcome.contains("completed"));
+}

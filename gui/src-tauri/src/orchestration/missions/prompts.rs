@@ -2,7 +2,7 @@ use super::super::store::{err, Result};
 use super::model::*;
 use serde_json::{json, Value};
 
-fn short(s: &str, n: usize) -> String {
+pub(super) fn short(s: &str, n: usize) -> String {
     if s.len() <= n {
         return s.into();
     }

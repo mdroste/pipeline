@@ -261,6 +261,31 @@ pub(crate) fn account(m: &mut Mission, child: &TaskRun) {
     };
     *target = child.scope.clone();
 }
+/// The finding synthesized for a Check/Experiment execution. Plan candidates
+/// allow 12 000-byte instructions while findings cap tested_domain at 4 000,
+/// so the instruction is excerpted; the full text stays in the round.
+fn host_finding(c: &Candidate, outcome: &str) -> Finding {
+    Finding {
+        summary: format!(
+            "Executed the selected check: {}",
+            prompts::short(&c.question, 3800)
+        ),
+        outcome: format!("Execution outcome: {outcome}"),
+        method: format!(
+            "Recorded {} execution",
+            if c.kind == InvestigationKind::Experiment {
+                "captured-plan"
+            } else {
+                "configured host"
+            }
+        ),
+        tested_domain: prompts::short(&c.instruction, 3800),
+        limitations: vec!["Process completion and scientific support are separate assessments. Dependency coverage is declared-only; host execution is not a conversation sandbox.".into()],
+        sources: Vec::new(),
+        files: Vec::new(),
+    }
+}
+
 pub(crate) fn child_chain(m: &Mission) -> Result<Chain> {
     let workspace = |prompt| Action::Workspace {
         prompt,
@@ -436,7 +461,10 @@ async fn consume(coordinator: &Coordinator, m: &mut Mission, child: &TaskRun) ->
             let finding = if c.kind == InvestigationKind::Workspace {
                 validate::response::<Finding>(&output)?
             } else {
-                Finding{summary:format!("Executed the selected check: {}",c.question),outcome:format!("Execution outcome: {}",output["receipt"]["outcome"].as_str().unwrap_or("unknown")),method:format!("Recorded {} execution",if c.kind==InvestigationKind::Experiment{"captured-plan"}else{"configured host"}),tested_domain:c.instruction.clone(),limitations:vec!["Process completion and scientific support are separate assessments. Dependency coverage is declared-only; host execution is not a conversation sandbox.".into()],sources:Vec::new(),files:Vec::new()}
+                host_finding(
+                    c,
+                    output["receipt"]["outcome"].as_str().unwrap_or("unknown"),
+                )
             };
             validate::finding(&finding)?;
             let ws = m.workspace_id.clone();
