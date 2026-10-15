@@ -127,3 +127,82 @@ fn artifact_fan_out_expands_bounded_elements_with_lineage() {
     let missing = build_units(&step, &settings, "", None, &bus).unwrap();
     assert!(missing.is_empty());
 }
+
+#[test]
+fn fan_out_collapse_assembles_a_contract_conformant_validation_artifact() {
+    use crate::pipeline::executor::checkpoints::OutputBudget;
+    use crate::pipeline::executor::findings::collapse_findings_fan_out;
+    use crate::pipeline::executor::outputs::effective_output_schema;
+    let taxonomy = crate::findings::CATEGORIES
+        .iter()
+        .map(|c| c.to_string())
+        .collect::<Vec<_>>();
+    let mut step = make_step("validate", Phase::Parallel);
+    step.output_schema = Some(serde_json::json!({
+        "type": "object",
+        crate::pipeline::structured::SCHEMA_REFERENCE_KEY: "findings-v2-validation",
+        crate::pipeline::structured::FINDINGS_TAXONOMY_KEY: taxonomy,
+        crate::pipeline::structured::PRESERVE_FINDINGS_KEY: "synthesis",
+    }));
+    step.for_each = Some(crate::pipeline_config::ForEach {
+        glob: String::new(),
+        max: 5,
+        artifact: Some(crate::pipeline_config::ForEachArtifact {
+            step: "synthesis".into(),
+            pointer: "/findings".into(),
+        }),
+    });
+    let finding = |id: &str, rank: u32| {
+        serde_json::json!({
+            "rank": rank, "id": id, "title": "T", "category": taxonomy[0],
+            "severity": "high", "confidence": "high", "verification_status": "unverified",
+            "reviewer_ids": ["r1"], "problem": "P", "consequence": "C",
+            "recommended_action": "A",
+            "evidence": [{"evidence_type": "document", "verification_status": "unverified", "description": "p. 3", "page": 3}]
+        })
+    };
+    let synthesis = StepOutput {
+        step_id: "synthesis".into(),
+        raw_text: serde_json::json!({"schema_version": 2, "taxonomy": taxonomy, "findings": [finding("a", 1), finding("b", 2)]}).to_string(),
+        structured_json: true,
+        ..Default::default()
+    };
+    let unit = |suffix: &str, id: &str| {
+        StepOutput {
+        step_id: format!("validate/{suffix}"),
+        raw_text: serde_json::json!({
+            "schema_version": 2, "taxonomy": taxonomy, "findings": [finding(id, 1)],
+            "validation_dispositions": [{"finding_id": id, "disposition": "retained", "reason": "Confirmed"}]
+        })
+        .to_string(),
+        structured_json: true,
+        ..Default::default()
+    }
+    };
+    let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+    let budget = std::sync::Arc::new(OutputBudget::fresh());
+    let outputs = collapse_findings_fan_out(
+        &bus,
+        &[&step],
+        &[synthesis],
+        vec![unit("item_001", "a"), unit("item_002", "b")],
+        &budget,
+    );
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(outputs[0].step_id, "validate");
+    let schema = effective_output_schema(&step).unwrap().unwrap();
+    crate::pipeline::structured::canonicalize(&schema, &outputs[0].raw_text).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&outputs[0].raw_text).unwrap();
+    let ranks = value["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["rank"].as_u64().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(ranks, [1, 2]);
+    assert_eq!(
+        value["validation_dispositions"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(value["schema_version"], 2);
+}

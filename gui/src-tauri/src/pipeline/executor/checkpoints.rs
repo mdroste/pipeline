@@ -7,6 +7,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 pub(super) struct OutputBudget(AtomicUsize);
 
 impl OutputBudget {
+    #[cfg(test)]
+    pub(super) fn fresh() -> Self {
+        Self(AtomicUsize::new(0))
+    }
+
     pub(super) fn reserve(&self, output: &StepOutput) -> Result<(), String> {
         let bytes = output.raw_text.len();
         let result = self

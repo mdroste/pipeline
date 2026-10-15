@@ -287,6 +287,7 @@ pub(super) fn collapse_findings_fan_out(
             });
 
         let mut combined = Vec::new();
+        let mut dispositions = Vec::new();
         let mut unvalidated = 0usize;
         for (index, element) in elements.iter().enumerate() {
             let key = format!("{}/{}", step.id, artifact_item_suffix(index));
@@ -303,19 +304,34 @@ pub(super) fn collapse_findings_fan_out(
                                 .is_some_and(|rest| rest.starts_with('/')))
                 })
                 .min_by(|a, b| a.step_id.cmp(&b.step_id));
-            let unit_findings = unit.and_then(|unit| {
-                serde_json::from_str::<serde_json::Value>(unit.raw_text.trim())
-                    .ok()?
-                    .get("findings")?
-                    .as_array()
-                    .cloned()
+            let unit_value = unit.and_then(|unit| {
+                serde_json::from_str::<serde_json::Value>(unit.raw_text.trim()).ok()
             });
+            let unit_findings = unit_value
+                .as_ref()
+                .and_then(|value| value.get("findings")?.as_array().cloned());
             match unit_findings {
-                Some(findings) => combined.extend(findings),
+                Some(findings) => {
+                    combined.extend(findings);
+                    // Carry each unit's validation ledger into the step product.
+                    if let Some(ledger) = unit_value
+                        .as_ref()
+                        .and_then(|value| value.get("validation_dispositions")?.as_array())
+                    {
+                        dispositions.extend(ledger.iter().cloned());
+                    }
+                }
                 None => {
                     if element.is_object() {
                         combined.push(element.clone());
                         unvalidated += 1;
+                        if let Some(id) = element.get("id").filter(|id| id.is_string()) {
+                            dispositions.push(serde_json::json!({
+                                "finding_id": id,
+                                "disposition": "deferred_manual_review",
+                                "reason": "fan-out unit produced no usable verdict"
+                            }));
+                        }
                     }
                 }
             }
@@ -330,7 +346,37 @@ pub(super) fn collapse_findings_fan_out(
                 )}),
             );
         }
-        let combined_value = serde_json::json!({ "findings": combined });
+        // Assemble the root the step's contract requires (schema_version,
+        // taxonomy, canonical ranks, and the ledger when the contract has one),
+        // so resumes and downstream consumers read a conformant artifact.
+        for (index, finding) in combined.iter_mut().enumerate() {
+            if let Some(object) = finding.as_object_mut() {
+                object.insert("rank".into(), serde_json::json!(index + 1));
+            }
+        }
+        let mut root = serde_json::Map::new();
+        root.insert(
+            "schema_version".into(),
+            serde_json::json!(crate::findings::FINDING_SCHEMA_VERSION),
+        );
+        root.insert(
+            "taxonomy".into(),
+            schema
+                .get(crate::pipeline::structured::FINDINGS_TAXONOMY_KEY)
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!(crate::findings::CATEGORIES)),
+        );
+        root.insert("findings".into(), serde_json::Value::Array(combined));
+        if schema
+            .get(crate::pipeline::structured::VALIDATION_LEDGER_KEY)
+            .is_some()
+        {
+            root.insert(
+                "validation_dispositions".into(),
+                serde_json::Value::Array(dispositions),
+            );
+        }
+        let combined_value = serde_json::Value::Object(root);
         let raw_text = match serde_json::to_string_pretty(&combined_value) {
             Ok(text) => text,
             Err(error) => {
@@ -347,6 +393,19 @@ pub(super) fn collapse_findings_fan_out(
             }
         };
 
+        if let Err(error) = crate::pipeline::structured::canonicalize(&schema, &raw_text) {
+            // Rejected products never become downstream context.
+            let _ = app.emit_event(
+                "pipeline:log",
+                serde_json::json!({ "line": format!(
+                    "WARNING: assembled fan-out findings for step '{}' do not satisfy its output contract ({error}); keeping per-unit outputs.",
+                    step.label
+                )}),
+            );
+            kept.extend(units);
+            outputs = kept;
+            continue;
+        }
         let mut assembled = StepOutput {
             step_id: step.id.clone(),
             step_label: step.label.clone(),
