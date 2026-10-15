@@ -201,7 +201,7 @@ fn path_depth(path: &str) -> usize {
     path.split('/').filter(|part| !part.is_empty()).count()
 }
 
-fn same_or_descendant(path: &str, root: &str) -> bool {
+pub(super) fn same_or_descendant(path: &str, root: &str) -> bool {
     let path = path_sort_key(path.trim_end_matches('/'));
     let root = path_sort_key(root.trim_end_matches('/'));
     path == root
