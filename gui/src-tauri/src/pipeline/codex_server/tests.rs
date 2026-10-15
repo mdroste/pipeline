@@ -20,6 +20,20 @@ async fn send(writer: &mut tokio::io::WriteHalf<tokio::io::DuplexStream>, value:
         .await
         .unwrap();
 }
+/// The next reply from the call, answering any thread/read reconciliation
+/// a lagged call issues meanwhile with a still-running turn.
+async fn receive_reply(
+    reader: &mut BufReader<tokio::io::ReadHalf<tokio::io::DuplexStream>>,
+    writer: &mut tokio::io::WriteHalf<tokio::io::DuplexStream>,
+) -> Value {
+    loop {
+        let frame = receive(reader).await;
+        if frame["method"] != "thread/read" {
+            return frame;
+        }
+        send(writer, json!({"id":frame["id"],"result":{"thread":{"id":"thread-1","turns":[{"id":"turn-1","status":"inProgress","items":[]}]}}})).await;
+    }
+}
 
 // Runs the production submission/event/host-tool code against a scripted
 // transport. No account, installed CLI, network or billable turn is used.
@@ -34,9 +48,19 @@ async fn scenario(mode: &'static str) {
         let (read, mut write) = tokio::io::split(server_io);
         let mut read = BufReader::new(read);
         let mut starts = 0;
+        let mut completed = false;
         loop {
             let request = receive(&mut read).await;
             let result = match request["method"].as_str().unwrap() {
+                "thread/read" => {
+                    assert_eq!(mode, "lagged", "only a lagged call reconciles");
+                    let turn = if completed {
+                        json!({"id":"turn-1","status":"completed","items":[{"id":"comment","type":"agentMessage","phase":"commentary","text":"Working"},{"id":"final","type":"agentMessage","phase":"final_answer","text":"Report"}]})
+                    } else {
+                        json!({"id":"turn-1","status":"inProgress","items":[]})
+                    };
+                    json!({"thread":{"id":"thread-1","turns":[turn]}})
+                }
                 "account/read" => {
                     json!({"account":{"type":"chatgpt","email":"fixture@example.invalid","planType":"plus"},"requiresOpenaiAuth":true})
                 }
@@ -61,6 +85,14 @@ async fn scenario(mode: &'static str) {
                     assert_eq!(starts, 1, "an accepted turn must never be submitted twice");
                     assert_eq!(request["params"]["effort"], "high");
                     assert_eq!(request["params"]["input"][0]["text"], "Review the fixture.");
+                    if mode == "lagged" {
+                        // Sibling reviewer threads stream far more deltas than the
+                        // shared event queue holds while this call is not draining
+                        // (it is still awaiting this turn/start reply).
+                        for index in 0..5_000 {
+                            send(&mut write, json!({"method":"item/agentMessage/delta","params":{"threadId":"other","turnId":"other","itemId":"other","delta":format!("token {index}")}})).await;
+                        }
+                    }
                     send(
                         &mut write,
                         json!({"id":request["id"],"result":{"turn":{"id":"turn-1"}}}),
@@ -76,10 +108,10 @@ async fn scenario(mode: &'static str) {
                     // and the handler never trusts another thread's final output.
                     let tool = json!({"id":"tool-1","method":"item/tool/call","params":{"threadId":"thread-1","turnId":"turn-1","callId":"call-1","tool":"Write","arguments":{"file_path":"note.txt","content":"Evidence"}}});
                     send(&mut write, tool.clone()).await;
-                    let first = receive(&mut read).await;
+                    let first = receive_reply(&mut read, &mut write).await;
                     assert_eq!(first["result"]["success"], true);
                     send(&mut write, tool).await;
-                    assert_eq!(receive(&mut read).await, first);
+                    assert_eq!(receive_reply(&mut read, &mut write).await, first);
                     send(&mut write, json!({"method":"item/completed","params":{"threadId":"other","turnId":"other","item":{"id":"foreign","type":"agentMessage","phase":"final_answer","text":"WRONG"}}})).await;
                     for (id, phase, text) in [
                         ("comment", "commentary", "Working"),
@@ -90,6 +122,7 @@ async fn scenario(mode: &'static str) {
                     for input in [50, 100] {
                         send(&mut write, json!({"method":"thread/tokenUsage/updated","params":{"threadId":"thread-1","turnId":"turn-1","tokenUsage":{"total":{"inputTokens":input,"outputTokens":20,"cachedInputTokens":10}}}})).await;
                     }
+                    completed = true;
                     send(&mut write, json!({"method":"turn/completed","params":{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed"}}})).await;
                     continue;
                 }
@@ -139,7 +172,7 @@ async fn scenario(mode: &'static str) {
     )
     .await;
     match mode {
-        "success" => {
+        "success" | "lagged" => {
             assert_eq!(result.unwrap().unwrap(), "Report");
             assert_eq!(
                 std::fs::read_to_string(output.path().join("note.txt")).unwrap(),
@@ -170,6 +203,13 @@ async fn scenario(mode: &'static str) {
     if mode == "success" {
         assert_eq!(record["output"], "Report");
         assert_eq!(record["usage"]["input_tokens"], 100);
+    } else if mode == "lagged" {
+        assert_eq!(record["output"], "Report");
+        assert!(
+            record["state"] == "completed" || record["state"] == "completed_reconciled",
+            "{}",
+            record["state"]
+        );
     } else {
         assert_eq!(record["state"], "outcome_unknown");
     }
@@ -186,4 +226,8 @@ async fn accepted_disconnect_is_durable_and_not_retryable() {
 #[tokio::test]
 async fn dropping_a_call_interrupts_its_exact_turn() {
     scenario("cancel").await;
+}
+#[tokio::test]
+async fn lagged_event_stream_reconciles_instead_of_failing_the_turn() {
+    scenario("lagged").await;
 }
