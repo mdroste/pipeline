@@ -285,7 +285,9 @@ fn relative_cli_inputs_are_resolved_against_the_current_directory() {
     let resolved = absolutize("paper.pdf").unwrap();
     assert_eq!(Path::new(&resolved), cwd.join("paper.pdf"));
     assert!(Path::new(&resolved).is_absolute());
-    assert_eq!(absolutize("/abs/paper.pdf").unwrap(), "/abs/paper.pdf");
+    // An already absolute path (in the host's own form) is returned unchanged.
+    let absolute = cwd.join("paper.pdf").to_string_lossy().into_owned();
+    assert_eq!(absolutize(&absolute).unwrap(), absolute);
     let extra = absolutize_inputs(HashMap::from([(
         "appendix".to_string(),
         "./a.tex".to_string(),
