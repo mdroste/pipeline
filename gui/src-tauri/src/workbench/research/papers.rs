@@ -547,7 +547,9 @@ fn revision_text(
         )
     })?;
     let path = PathBuf::from(reference);
-    if !path.starts_with(store.root_path().join("blobs")) {
+    // Immutable text lives directly under blobs/; a lexical prefix check would
+    // accept `<blobs>/../x` from a tampered archive.
+    if path.parent() != Some(store.root_path().join("blobs").as_path()) {
         return Err(WorkbenchError::invalid(
             "Paper text reference escaped Workspace storage",
         ));

@@ -1025,8 +1025,18 @@ pub fn import_archive(
             .map_err(|error| WorkbenchError::storage("Failed to decode imported paths", error))?;
         drop(statement);
         for reference in references {
-            if Path::new(&reference).starts_with(&blob_root) {
-                continue;
+            if let Ok(rest) = Path::new(&reference).strip_prefix(&blob_root) {
+                // Lexical prefix checks accept `<blobs>/../x`; only plain
+                // components may stay untouched.
+                if rest
+                    .components()
+                    .all(|component| matches!(component, Component::Normal(_)))
+                {
+                    continue;
+                }
+                return Err(WorkbenchError::invalid(
+                    "Imported blob reference contains traversal",
+                ));
             }
             let Some(suffix) = reference.strip_prefix(&manifest.original_blob_root) else {
                 return Err(WorkbenchError::invalid(

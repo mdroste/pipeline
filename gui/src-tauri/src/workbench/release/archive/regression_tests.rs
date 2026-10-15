@@ -115,6 +115,139 @@ fn lying_entry_sizes_are_rejected_before_the_stream_is_expanded() {
     );
 }
 #[test]
+fn restore_rejects_blob_references_that_traverse_out_of_the_store() {
+    let (_root, source, _session) = fixture();
+    let research = tempfile::tempdir().unwrap();
+    let research_root = research.path().join("research-root");
+    fs::create_dir(&research_root).unwrap();
+    let workspace = source
+        .create_workspace(crate::workbench::store::CreateWorkspaceRequest {
+            name: "Research".into(),
+            root: Some(research_root.to_string_lossy().into_owned()),
+            operation_id: "create-workspace".into(),
+        })
+        .unwrap()
+        .record;
+    let paper_path = research_root.join("paper.tex");
+    fs::write(&paper_path, "Output rises with productivity.\n").unwrap();
+    let paper = crate::workbench::research::import_paper(
+        &source,
+        crate::workbench::research::ImportPaperRequest {
+            workspace_id: workspace.id.clone(),
+            paper_id: None,
+            title: "Paper".into(),
+            role: "manuscript".into(),
+            path: paper_path.to_string_lossy().into_owned(),
+            operation_id: "paper-one".into(),
+        },
+    )
+    .unwrap();
+    let revision = paper.revision.unwrap();
+    let text_name = Path::new(revision.text_reference.as_deref().unwrap())
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let output = tempfile::tempdir().unwrap();
+    let path = export(&source, output.path());
+
+    let archived_root = {
+        let mut archive = zip::ZipArchive::new(File::open(&path).unwrap()).unwrap();
+        let manifest: Value =
+            serde_json::from_reader(archive.by_name("manifest.json").unwrap()).unwrap();
+        manifest["workspaceRoots"][0].as_str().unwrap().to_string()
+    };
+    let import_into = |store: &Store| {
+        import_archive(
+            store,
+            ImportArchiveRequest {
+                path: path.to_string_lossy().into(),
+                root_mappings: BTreeMap::from([(archived_root.clone(), None)]),
+            },
+        )
+    };
+    let read = |store: &Store| {
+        crate::workbench::research::paper_read(
+            store,
+            crate::workbench::research::PaperReadRequest {
+                workspace_id: workspace.id.clone(),
+                revision_id: revision.id.clone(),
+                start: None,
+                length: None,
+            },
+        )
+    };
+
+    // Readers must not trust a stored reference that escapes blobs/.
+    let clean = tempfile::tempdir().unwrap();
+    fs::write(clean.path().join("outside.txt"), "private key material").unwrap();
+    let clean_store = Store::open_at(clean.path()).unwrap();
+    import_into(&clean_store).unwrap();
+    assert!(read(&clean_store).unwrap().text.contains("productivity"));
+    let clean_evil = clean
+        .path()
+        .join("blobs")
+        .join("..")
+        .join("outside.txt")
+        .to_string_lossy()
+        .into_owned();
+    clean_store
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE paper_revisions SET text_reference=?1",
+            [clean_evil.as_str()],
+        )
+        .unwrap();
+    let error = read(&clean_store).unwrap_err();
+    assert!(error.message.contains("escaped"), "{}", error.message);
+
+    // Restore must refuse the reference instead of keeping it.
+    let target = tempfile::tempdir().unwrap();
+    fs::write(target.path().join("outside.txt"), "private key material").unwrap();
+    let evil = target
+        .path()
+        .join("blobs")
+        .join("..")
+        .join("outside.txt")
+        .to_string_lossy()
+        .into_owned();
+    rewrite_entries(&path, |name, bytes| match name {
+        "manifest.json" => {
+            let mut manifest: Value = serde_json::from_slice(&bytes).unwrap();
+            for blob in manifest["blobs"].as_array_mut().unwrap() {
+                // Exports store portable `workspace://blobs/<name>` references.
+                if blob["originalReference"]
+                    .as_str()
+                    .is_some_and(|reference| reference.ends_with(&text_name))
+                {
+                    // A manifest reference below the evil path satisfies the
+                    // prefix check without rebasing the exact DB reference.
+                    blob["originalReference"] = Value::String(format!("{evil}/x"));
+                }
+            }
+            serde_json::to_vec(&manifest).unwrap()
+        }
+        "database/research.sqlite3" => {
+            let scratch = output.path().join("scratch.sqlite3");
+            fs::write(&scratch, bytes).unwrap();
+            let connection = Connection::open(&scratch).unwrap();
+            connection
+                .execute(
+                    "UPDATE paper_revisions SET text_reference=?1",
+                    [evil.as_str()],
+                )
+                .unwrap();
+            drop(connection);
+            fs::read(&scratch).unwrap()
+        }
+        _ => bytes,
+    });
+    let store = Store::open_at(target.path()).unwrap();
+    let error = import_into(&store).unwrap_err();
+    assert!(error.message.contains("traversal"), "{}", error.message);
+}
+#[test]
 fn restore_reconciles_unfinished_turns_and_discards_foreign_trash_authority() {
     let (_root, source, session) = fixture();
     let external = tempfile::tempdir().unwrap();

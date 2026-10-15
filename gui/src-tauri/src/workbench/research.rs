@@ -526,7 +526,7 @@ fn context_for_session(
             );
             if let Some(reference) = paper.text_reference {
                 let path = PathBuf::from(reference);
-                if path.starts_with(store.root_path().join("blobs")) {
+                if path.parent() == Some(store.root_path().join("blobs").as_path()) {
                     if let Ok(text) = fs::read_to_string(path) {
                         section.push_str("\n\nSelected paper text:\n");
                         section.push_str(&text);
