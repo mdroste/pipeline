@@ -190,6 +190,18 @@ fn latex_source_staging_copies_only_the_bounded_dependency_closure() {
     assert!(!staged_root.join("secret.tex").exists());
     assert!(!staged_root.join("_external/up1/unreferenced.tex").exists());
     assert_eq!(scoped.read_root.as_deref(), Some(staged_root.as_path()));
+    // The bundle looks figures up at the root by their authored name, so a
+    // graphicspath rewrite (figures/irf) must also answer to "irf".
+    assert_eq!(
+        captured_reference(&staged_root, &staged_root, "irf"),
+        Some(Some(
+            staged_root.join("figures/irf.png").canonicalize().unwrap()
+        ))
+    );
+    assert_eq!(
+        captured_reference(&staged_root, &staged_root, "missing"),
+        Some(None)
+    );
 }
 
 #[test]
