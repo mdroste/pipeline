@@ -335,3 +335,54 @@ it("restores the composer text when a dispatched send is rejected", async () => 
   expect(saved().session.draft).toBe("my long question");
   unmount();
 });
+
+it("finishes an automation-driven turn on the viewed thread instead of leaving a phantom bubble", async () => {
+  const { result, unmount } = await draftFixture({
+    activeBinding: { id: "binding", providerThreadId: "thread-A" },
+  });
+  mocks.reconcileSession.mockClear();
+  mocks.conversationSnapshot.mockClear();
+  await act(async () => {
+    for (const cb of mocks.listeners)
+      cb({
+        payload: {
+          epoch: 1,
+          kind: "turnStarted",
+          threadId: "thread-A",
+          turnId: "turn-X",
+        },
+      });
+  });
+  expect(result.current.active?.turnId).toBe("turn-X");
+  await act(async () => {
+    for (const cb of mocks.listeners)
+      cb({
+        payload: {
+          epoch: 1,
+          kind: "agentMessageDelta",
+          threadId: "thread-A",
+          turnId: "turn-X",
+          delta: "hi",
+        },
+      });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  });
+  expect(result.current.stream).toBe("hi");
+  await act(async () => {
+    for (const cb of mocks.listeners)
+      cb({
+        payload: {
+          epoch: 1,
+          kind: "turnCompleted",
+          threadId: "thread-A",
+          turnId: "turn-X",
+          status: "completed",
+        },
+      });
+  });
+  await waitFor(() => expect(result.current.active).toBeNull());
+  expect(result.current.stream).toBe("");
+  expect(mocks.reconcileSession).toHaveBeenCalledWith("A");
+  await waitFor(() => expect(mocks.conversationSnapshot).toHaveBeenCalled());
+  unmount();
+});

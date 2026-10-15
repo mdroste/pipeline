@@ -206,6 +206,23 @@ export function useWorkbenchEvents({
         );
       }
 
+      // An automation may start a turn on the viewed conversation's thread;
+      // adopt it so its deltas end in a real message, not a frozen bubble.
+      if (
+        payload.kind === "turnStarted" &&
+        !owner &&
+        !activeRef.current &&
+        matchesThread(payload.threadId) &&
+        typeof payload.turnId === "string"
+      ) {
+        const turn = {
+          threadId: String(payload.threadId),
+          turnId: payload.turnId,
+        };
+        activeRef.current = turn;
+        setActive(turn);
+      }
+
       if (
         payload.kind === "sessionTitleUpdated" &&
         typeof payload.sessionId === "string"
@@ -272,7 +289,7 @@ export function useWorkbenchEvents({
         else if (
           !owner &&
           matchesThread(payload.threadId) &&
-          activeRef.current?.turnId === payload.turnId
+          (!activeRef.current || activeRef.current.turnId === payload.turnId)
         ) {
           activeRef.current = null;
           setActive(null);
