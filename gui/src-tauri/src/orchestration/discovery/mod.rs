@@ -31,6 +31,7 @@ fn notice_transition(previous: &str, state: &str) -> bool {
             state,
             "awaitingSelection"
                 | "waiting"
+                | "attention"
                 | "blocked"
                 | "exhausted"
                 | "failed"
@@ -79,16 +80,29 @@ pub(crate) async fn tick(c: &Arc<Coordinator>) -> Result<()> {
             let id = p.run.id.clone();
             p = c.db(move |s| storage::load(&s, &id)).await?;
             p.run.reason = e;
-            if let Some(id) = p.run.active_child.clone() {
-                super::missions::stop_child(c, &id).await?;
-                p.run.state = "stopping".into();
-                p.run.stop_outcome = Some("blocked".into());
-                p.run.due_at = Some(now() + 2);
+            let child = match p.run.active_child.clone() {
+                Some(id) => Some(c.db(move |s| s.get(&id)).await?),
+                None => None,
+            };
+            // Only an ambiguous submission (a receipt still running or
+            // unknown) is terminal; a scope drift or a failed child turn is
+            // recoverable through Retry.
+            let state = failure_state(child.as_ref());
+            if state == "blocked" {
+                if let Some(id) = p.run.active_child.clone() {
+                    super::missions::stop_child(c, &id).await?;
+                    p.run.state = "stopping".into();
+                    p.run.stop_outcome = Some("blocked".into());
+                    p.run.due_at = Some(now() + 2);
+                } else {
+                    p.run.state = "blocked".into();
+                    p.run.due_at = None;
+                }
             } else {
-                p.run.state = "blocked".into();
+                p.run.state = "attention".into();
                 p.run.due_at = None;
             }
-            save(c, &mut p, "blocked", None).await?;
+            save(c, &mut p, state, None).await?;
         }
         if p.run.terminal() {
             let id = p.run.id.clone();
@@ -99,6 +113,24 @@ pub(crate) async fn tick(c: &Arc<Coordinator>) -> Result<()> {
     }
     Ok(())
 }
+/// A failure while a child still has a running or unknown receipt is an
+/// ambiguous submission and terminal; otherwise the run needs attention and
+/// may be retried once the researcher has reviewed the conversation.
+fn failure_state(child: Option<&TaskRun>) -> &'static str {
+    let ambiguous = child.is_some_and(|child| {
+        child
+            .progress
+            .receipts
+            .values()
+            .any(|r| r.state == "running" || r.state == "unknown")
+    });
+    if ambiguous {
+        "blocked"
+    } else {
+        "attention"
+    }
+}
+
 fn account(p: &mut Portfolio, child: &TaskRun) {
     p.run.active_seconds = p.run.active_seconds.saturating_add(
         child
@@ -245,7 +277,7 @@ async fn advance(c: &Arc<Coordinator>, p: &mut Portfolio) -> Result<()> {
     let persistent = matches!(phase, Phase::Research { .. } | Phase::Draft { .. });
     let source = p.run.source_scope.clone();
     let expected = p.run.source_authority.clone();
-    run_store(move |s| research::refresh_scope(&s, &source, &expected))
+    run_store(move |s| research::refresh_source_scope(&s, &source, &expected))
         .await
         .map_err(|e| e.message)?;
     let scope = if let Some(index) = phase.paper().filter(|_| persistent) {

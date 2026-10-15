@@ -24,7 +24,7 @@ fn canonical_state(state: &str) -> &str {
         state
     }
 }
-fn compatible_cursor(expected: &str, actual: &str) -> bool {
+pub(crate) fn compatible_cursor(expected: &str, actual: &str) -> bool {
     if expected == actual {
         return true;
     }

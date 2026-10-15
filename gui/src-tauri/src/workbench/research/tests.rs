@@ -983,9 +983,42 @@ fn bound_scope(fixture: &Fixture) -> (crate::orchestration::store::Scope, String
 }
 
 #[test]
+fn a_source_conversation_draft_does_not_block_a_discovery_run() {
+    use crate::workbench::missions::{refresh_scope, refresh_source_scope};
+
+    let fixture = fixture();
+    let (scope, authority) = bound_scope(&fixture);
+    assert!(refresh_scope(&fixture.store, &scope, &authority).is_ok());
+    // An unsent draft blocks a mission (it submits there) but not a
+    // self-discovery run that only reads its source conversation.
+    let session = fixture
+        .store
+        .session_snapshot(&fixture.session_id)
+        .unwrap()
+        .session;
+    fixture
+        .store
+        .update_session(UpdateSessionRequest {
+            session_id: session.id.clone(),
+            expected_revision: session.revision,
+            operation_id: "draft".into(),
+            title: None,
+            draft: Some("a note I have not sent".into()),
+            overrides: None,
+            archived: None,
+            preset_id: None,
+            paper_id: None,
+            clear_paper: None,
+        })
+        .unwrap();
+    assert!(refresh_scope(&fixture.store, &scope, &authority).is_err());
+    assert!(refresh_source_scope(&fixture.store, &scope, &authority).is_ok());
+}
+
+#[test]
 fn retry_readopts_a_cursor_moved_by_a_steering_message() {
     use crate::workbench::codex::NormalizedEvent;
-    use crate::workbench::missions::{readopt_scope, refresh_scope};
+    use crate::workbench::missions::{readopt_scope, refresh_scope, refresh_source_scope};
 
     let fixture = fixture();
     let (scope, authority) = bound_scope(&fixture);
@@ -1007,6 +1040,7 @@ fn retry_readopts_a_cursor_moved_by_a_steering_message() {
         )
         .unwrap();
     assert!(refresh_scope(&fixture.store, &scope, &authority).is_err());
+    assert!(refresh_source_scope(&fixture.store, &scope, &authority).is_err());
     let adopted = readopt_scope(&fixture.store, &scope, &authority, true).unwrap();
     assert_ne!(adopted.session_cursor, scope.session_cursor);
     assert!(refresh_scope(&fixture.store, &adopted, &authority).is_ok());

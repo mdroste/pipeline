@@ -436,3 +436,62 @@ fn failed_record_adoption_rolls_back_to_the_last_durable_portfolio() {
     assert_eq!(restored.run.revision, committed);
     assert!(restored.papers[0].reason.is_empty());
 }
+
+#[test]
+fn only_an_ambiguous_submission_blocks_a_run_terminally() {
+    let temp = tempfile::tempdir().unwrap();
+    let s = store::Store::open(temp.path()).unwrap();
+    let mut p = fixture(Mode::Unsupervised, 50);
+    storage::create(&s, &p.run, "create", "f").unwrap();
+    let chain = Chain {
+        schema_version: 1,
+        name: "Managed test".into(),
+        description: String::new(),
+        limits: Limits {
+            max_actions: 1,
+            deadline_hours: 1,
+            action_timeout_secs: 30,
+        },
+        steps: vec![Step {
+            id: "action".into(),
+            label: "Test".into(),
+            action: Action::Workspace {
+                prompt: "Inspect".into(),
+                model: None,
+                effort: None,
+            },
+        }],
+    };
+    storage::admit(&s, &mut p, chain, store::Scope::default()).unwrap();
+    let mut child = s.get(p.run.active_child.as_ref().unwrap()).unwrap();
+    assert_eq!(failure_state(None), "attention");
+    assert_eq!(failure_state(Some(&child)), "attention");
+    let receipt = |state: &str| crate::orchestration::state::Receipt {
+        sequence: 1,
+        address: "action".into(),
+        step_id: "action".into(),
+        label: "Test".into(),
+        state: state.into(),
+        operation: store::id(),
+        started_at: now(),
+        finished_at: None,
+        wake_at: None,
+        output: None,
+        error: None,
+        child: None,
+    };
+    child
+        .progress
+        .receipts
+        .insert("action".into(), receipt("failed"));
+    assert_eq!(failure_state(Some(&child)), "attention");
+    child
+        .progress
+        .receipts
+        .insert("action".into(), receipt("running"));
+    assert_eq!(failure_state(Some(&child)), "blocked");
+    let mut run = p.run.clone();
+    run.state = "attention".into();
+    assert!(!run.terminal());
+    assert!(notice_transition("running", "attention"));
+}
