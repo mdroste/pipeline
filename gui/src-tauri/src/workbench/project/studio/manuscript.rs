@@ -81,8 +81,8 @@ pub(super) fn save_text(
     if current.content == content {
         return Ok(json!({"saved":true,"hash":current.hash,"changed":false}));
     }
-    let cp = if let Some(cp) = checkpoint_id {
-        cp.to_string()
+    let (cp, auto_task) = if let Some(cp) = checkpoint_id {
+        (cp.to_string(), None)
     } else {
         let task = tasks::create_task(
             store,
@@ -92,18 +92,20 @@ pub(super) fn save_text(
             vec![path.into()],
             vec!["Rebuild the accepted file combination".into()],
         )?;
-        tasks::checkpoint(store, ws, &task.id, vec![path.into()], "copy")?.id
+        let cp = tasks::checkpoint(store, ws, &task.id, vec![path.into()], "copy")?.id;
+        (cp, Some(task))
     };
     stage_text(store, ws, &cp, path, Some(expected_hash), content)?;
     let captured = tasks::capture_changes(store, ws, &cp)?;
-    let application = if checkpoint_id.is_none() {
-        Some(tasks::apply(
-            store,
-            ws,
-            &cp,
-            vec![path.into()],
-            captured.revision,
-        )?)
+    let application = if let Some(task) = auto_task {
+        let applied = tasks::apply(store, ws, &cp, vec![path.into()], captured.revision)?;
+        // A plain editor save is complete once applied: close the task it
+        // rode on and reclaim its copy, or every save leaves an open task in
+        // the overview and a directory under .pipeline-tasks. Undo still works
+        // from the retained blobs.
+        tasks::update_task(store, ws, &task.id, task.revision, "completed")?;
+        tasks::discard_copy(store, ws, &cp)?;
+        Some(applied)
     } else {
         None
     };

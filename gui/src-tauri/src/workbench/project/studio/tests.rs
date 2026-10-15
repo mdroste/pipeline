@@ -157,6 +157,20 @@ fn editor_saves_are_conflict_aware_reversible_and_task_scoped() {
         "accepted editor text"
     );
     let app = saved["application"]["id"].as_str().unwrap();
+    // A plain save leaves neither an open task nor a copy directory behind.
+    assert!(task_pages::page(&f.store, &f.ws, None, true)
+        .unwrap()
+        .records
+        .is_empty());
+    let copies = fs::read_dir(f.root.join(".pipeline-tasks"))
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                .count()
+        })
+        .unwrap_or(0);
+    assert_eq!(copies, 0);
     tasks::undo(&f.store, &f.ws, app).unwrap();
     assert_eq!(
         fs::read_to_string(f.root.join("main.tex")).unwrap(),
