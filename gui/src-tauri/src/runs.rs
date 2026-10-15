@@ -502,6 +502,10 @@ pub fn detect_kind(rel_path: &str, head: &[u8]) -> &'static str {
         "txt" | "log" => "text",
         "pdf" => "pdf",
         "zip" | "gz" | "xlsx" | "docx" | "pptx" | "dta" | "rds" | "parquet" => "binary",
+        // A model-written program must never be one click away from running
+        // with the researcher's privileges; the viewer reveals, never opens.
+        "exe" | "msi" | "bat" | "cmd" | "ps1" | "scr" | "com" | "jar" | "pkg" | "dmg" | "app"
+        | "command" | "appimage" | "deb" | "rpm" => "executable",
         _ => {
             if head.contains(&0) {
                 "binary"

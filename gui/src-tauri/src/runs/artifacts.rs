@@ -96,7 +96,7 @@ pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, St
                 abs_path,
             })
         }
-        "binary" | "pdf" => Ok(ArtifactContent {
+        "binary" | "executable" | "pdf" => Ok(ArtifactContent {
             kind: kind.into(),
             bytes: size,
             text: None,

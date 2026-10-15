@@ -1006,3 +1006,19 @@ fn captured_tree_registration_keeps_every_file_past_the_model_output_cap() {
     );
     assert_eq!(fs::read_dir(&tree).unwrap().count(), 501);
 }
+
+#[test]
+fn model_written_programs_are_classified_as_executable_not_binary() {
+    for name in [
+        "payload.exe",
+        "summary.jar",
+        "report.pkg",
+        "x.dmg",
+        "run.bat",
+        "a.ps1",
+    ] {
+        assert_eq!(detect_kind(name, b""), "executable", "{name}");
+    }
+    assert_eq!(detect_kind("table.xlsx", b""), "binary");
+    assert_eq!(detect_kind("script.sh", b""), "code");
+}
