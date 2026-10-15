@@ -256,15 +256,21 @@ fn validate_steps(steps: &[Step], depth: usize, ids: &mut BTreeSet<String>) -> R
         return Err("Chain nesting exceeds 8 levels".into());
     }
     for step in steps {
+        // `done` and `enter` are the synthetic decision keys walk() records at
+        // `{address}/done` and `{address}/{i}/enter`; purely numeric ids would
+        // collide with iteration prefixes. Rejecting them keeps saved decision
+        // keys stable for existing runs.
         if step.id.is_empty()
             || step.id.len() > 64
+            || matches!(step.id.as_str(), "done" | "enter")
+            || step.id.bytes().all(|b| b.is_ascii_digit())
             || !step
                 .id
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
             || !ids.insert(step.id.clone())
         {
-            return Err("Step IDs must be unique identifiers of at most 64 characters".into());
+            return Err("Step IDs must be unique identifiers of at most 64 characters and may not be 'done', 'enter' or purely numeric".into());
         }
         if ids.len() > MAX_STEPS || step.label.len() > 200 {
             return Err("Chain has too many steps or an invalid label".into());

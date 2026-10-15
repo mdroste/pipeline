@@ -1118,3 +1118,42 @@ fn foreach_binds_each_input_once() {
 }
 
 mod coordinator;
+
+#[test]
+fn reserved_step_ids_are_rejected_before_they_can_shadow_decisions() {
+    let gate = |inner: Step| {
+        chain(vec![
+            step(
+                "gate",
+                Action::If {
+                    condition: Condition::Equals {
+                        left: Binding::Input {
+                            key: "answer".into(),
+                        },
+                        right: json!(true),
+                    },
+                    then_steps: vec![inner, delay("b")],
+                    else_steps: vec![],
+                },
+            ),
+            delay("c"),
+        ])
+    };
+    let nested_done = step(
+        "done",
+        Action::If {
+            condition: Condition::Equals {
+                left: Binding::Input {
+                    key: "answer".into(),
+                },
+                right: json!(true),
+            },
+            then_steps: vec![delay("a")],
+            else_steps: vec![],
+        },
+    );
+    assert!(definition::validate(&gate(nested_done)).is_err());
+    assert!(definition::validate(&gate(delay("enter"))).is_err());
+    assert!(definition::validate(&gate(delay("0"))).is_err());
+    assert_eq!(definition::validate(&gate(delay("inner"))), Ok(()));
+}
