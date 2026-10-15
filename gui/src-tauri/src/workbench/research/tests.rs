@@ -965,3 +965,49 @@ fn paper_search_excerpts_stay_bounded_on_single_line_documents() {
     assert!(hits.iter().all(|hit| hit.excerpt.len() <= 160 + 4 + 160));
     assert!(serde_json::to_vec(&hits).unwrap().len() < 64 * 1024);
 }
+
+fn bound_scope(fixture: &Fixture) -> (crate::orchestration::store::Scope, String) {
+    let binding = crate::workbench::tasks::binding(&fixture.store, &fixture.session_id).unwrap();
+    let scope = crate::orchestration::store::Scope {
+        session_id: Some(fixture.session_id.clone()),
+        workspace_id: binding.workspace_id.clone(),
+        session_cursor: Some(binding.cursor.clone()),
+        harness_fingerprint: Some(binding.harness_fingerprint.clone()),
+        runtime_root: Some(binding.runtime_root.clone()),
+        root_identity: Some(binding.root_identity.clone()),
+        ..Default::default()
+    };
+    let authority =
+        crate::workbench::missions::authority(&fixture.store, &fixture.session_id).unwrap();
+    (scope, authority)
+}
+
+#[test]
+fn retry_readopts_a_cursor_moved_by_a_steering_message() {
+    use crate::workbench::codex::NormalizedEvent;
+    use crate::workbench::missions::{readopt_scope, refresh_scope};
+
+    let fixture = fixture();
+    let (scope, authority) = bound_scope(&fixture);
+    let bound = fixture
+        .store
+        .bind_session(&fixture.session_id, "codex-epoch-1", "thread-1")
+        .unwrap();
+    fixture
+        .store
+        .project_codex_event(
+            &bound.id,
+            &NormalizedEvent::TurnCompleted {
+                epoch: 1,
+                thread_id: "thread-1".into(),
+                turn_id: "turn-1".into(),
+                status: "completed".into(),
+                turn: json!({"id": "turn-1", "status": "completed", "items": []}),
+            },
+        )
+        .unwrap();
+    assert!(refresh_scope(&fixture.store, &scope, &authority).is_err());
+    let adopted = readopt_scope(&fixture.store, &scope, &authority, true).unwrap();
+    assert_ne!(adopted.session_cursor, scope.session_cursor);
+    assert!(refresh_scope(&fixture.store, &adopted, &authority).is_ok());
+}

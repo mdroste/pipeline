@@ -26,6 +26,41 @@ pub fn authority(store: &Store, session: &str) -> WorkbenchResult<String> {
     Ok(desk::hash(v.to_string().as_bytes()))
 }
 
+/// Re-adopt the conversation's current cursor and harness for an explicit
+/// retry. Permissions, selected context, the project and the folder may not
+/// have changed; `require_no_draft` additionally refuses an unsent draft
+/// (a mission submits to the conversation, discovery only reads it).
+pub fn readopt_scope(
+    store: &Store,
+    scope: &Scope,
+    fingerprint: &str,
+    require_no_draft: bool,
+) -> WorkbenchResult<Scope> {
+    let session = scope
+        .session_id
+        .as_deref()
+        .ok_or_else(|| WorkbenchError::invalid("Mission conversation is missing"))?;
+    if authority(store, session)? != fingerprint {
+        return Err(WorkbenchError::conflict(
+            "Mission authority changed; prepare a new mission",
+        ));
+    }
+    let actual = tasks::binding(store, session)?;
+    if Some(&actual.root_identity) != scope.root_identity.as_ref()
+        || Some(&actual.runtime_root) != scope.runtime_root.as_ref()
+        || actual.workspace_id != scope.workspace_id
+    {
+        return Err(WorkbenchError::conflict("Mission folder changed"));
+    }
+    if require_no_draft {
+        tasks::validate_binding(store, &actual)?;
+    }
+    let mut result = scope.clone();
+    result.session_cursor = Some(actual.cursor);
+    result.harness_fingerprint = Some(actual.harness_fingerprint);
+    Ok(result)
+}
+
 pub fn refresh_scope(store: &Store, scope: &Scope, fingerprint: &str) -> WorkbenchResult<Scope> {
     let session = scope
         .session_id
