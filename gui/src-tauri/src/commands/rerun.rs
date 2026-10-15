@@ -30,14 +30,17 @@ pub async fn rerun_run(
 
 pub(super) fn read_run_file(run_id: &str, rel: &str) -> Result<String, String> {
     crate::runs::validate_run_id(run_id)?;
+    read_run_file_in(&crate::runs::runs_dir()?.join(run_id), rel)
+}
+
+pub(super) fn read_run_file_in(run_dir: &std::path::Path, rel: &str) -> Result<String, String> {
     if rel.is_empty()
         || std::path::Path::new(rel).is_absolute()
         || rel.split(['/', '\\']).any(|part| part == "..")
     {
         return Err("Invalid run-relative path".to_string());
     }
-    let run_dir = crate::runs::runs_dir()?
-        .join(run_id)
+    let run_dir = run_dir
         .canonicalize()
         .map_err(|_| "Run not found".to_string())?;
     let path = run_dir
@@ -63,7 +66,11 @@ pub(super) fn read_run_file(run_id: &str, rel: &str) -> Result<String, String> {
 }
 
 pub(super) fn load_run_report(run_id: &str) -> Result<PipelineReport, String> {
-    let json = read_run_file(run_id, "report.json")
+    load_run_report_in(&crate::runs::runs_dir()?.join(run_id))
+}
+
+pub(super) fn load_run_report_in(run_dir: &std::path::Path) -> Result<PipelineReport, String> {
+    let json = read_run_file_in(run_dir, "report.json")
         .map_err(|_| "This run predates comparison support (no report.json).".to_string())?;
     let mut report: PipelineReport =
         serde_json::from_str(&json).map_err(|e| format!("Invalid report.json: {e}"))?;

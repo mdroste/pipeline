@@ -1,6 +1,8 @@
 //! Workflow-owned adapter for durable cross-mode tasks. No Workspace runtime state.
 use super::*;
 mod pins;
+#[cfg(test)]
+mod tests;
 pub use pins::{reconcile_failed_pins, release_abandoned_pin};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -91,9 +93,28 @@ pub fn recovered_result(run_id: &str) -> Result<Option<Value>, String> {
         pins::release_settled_failure(run_id)?;
         return Ok(None);
     }
-    Ok(Some(
-        json!({"run_id":run_id,"report":load_run_report(run_id)?,"markdown":read_run_file(run_id,"report.md")?,"extracted_text":read_run_file(run_id,"document.md")?}),
-    ))
+    let run_dir = crate::runs::runs_dir()?.join(run_id);
+    recovered_value(&run_dir, run_id, &manifest).map(Some)
+}
+
+/// The adoptable result of a finished run. The captured text is optional
+/// downstream and lives at the run's captured document path (never a
+/// root-level document.md), so a missing or oversized copy must not keep a
+/// completed Review from being reconciled.
+fn recovered_value(
+    run_dir: &std::path::Path,
+    run_id: &str,
+    manifest: &crate::runs::RunManifest,
+) -> Result<Value, String> {
+    let extracted_text = crate::runs::captured_document_rel_path(run_dir, manifest)
+        .ok()
+        .and_then(|rel| super::rerun::read_run_file_in(run_dir, rel).ok());
+    Ok(json!({
+        "run_id": run_id,
+        "report": super::rerun::load_run_report_in(run_dir)?,
+        "markdown": super::rerun::read_run_file_in(run_dir, "report.md")?,
+        "extracted_text": extracted_text,
+    }))
 }
 pub fn release_pin(run_id: &str) -> Result<(), String> {
     crate::runs::validate_run_id(run_id)?;
