@@ -747,8 +747,21 @@ pub fn list_trashed_runs() -> Result<Vec<TrashedRun>, String> {
 }
 
 pub fn restore_trashed_run(run_id: &str) -> Result<(), String> {
+    restore_trashed_run_at(&runs_dir()?, &trash_runs_dir()?, run_id)
+}
+
+pub(super) fn restore_trashed_run_at(
+    root: &Path,
+    trash: &Path,
+    run_id: &str,
+) -> Result<(), String> {
     validate_run_id(run_id)?;
-    let trash = trash_runs_dir()?;
+    // Compare canonical with canonical: the default data folder is never
+    // canonicalized, and on Windows (verbatim prefix) or through a symlinked
+    // folder the uncanonicalized Trash path never equals the resolved parent.
+    let trash = trash
+        .canonicalize()
+        .map_err(|error| format!("Cannot resolve run Trash: {error}"))?;
     let source = trash.join(run_id);
     let canonical = source
         .canonicalize()
@@ -756,7 +769,6 @@ pub fn restore_trashed_run(run_id: &str) -> Result<(), String> {
     if canonical.parent() != Some(trash.as_path()) || !canonical.is_dir() {
         return Err("Invalid trashed run id".to_string());
     }
-    let root = runs_dir()?;
     let destination = root.join(run_id);
     if destination.exists() {
         return Err("A run with this id already exists in History".to_string());
@@ -765,7 +777,7 @@ pub fn restore_trashed_run(run_id: &str) -> Result<(), String> {
         .map_err(|_| "Trashed run has no valid manifest".to_string())?;
     fs::rename(&canonical, &destination)
         .map_err(|error| format!("Failed to restore run from Trash: {error}"))?;
-    sync_directory(&root)?;
+    sync_directory(root)?;
     sync_directory(&trash)
 }
 

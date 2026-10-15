@@ -1293,7 +1293,7 @@ use history::DELETE_TOMBSTONE;
 #[cfg(test)]
 use history::{
     recover_orphan_manifest, recover_resumable_run_dir, recover_resumable_runs_at,
-    run_has_resume_files,
+    restore_trashed_run_at, run_has_resume_files,
 };
 #[cfg(test)]
 use retention::{retention_plan_from_state, validate_annotation_content};

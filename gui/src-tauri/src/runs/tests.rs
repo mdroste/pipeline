@@ -963,3 +963,28 @@ fn recovery_yields_to_the_run_lock_held_by_the_pipeline_guard() {
         serde_json::from_str(&fs::read_to_string(run_dir.join("manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest.status, "interrupted");
 }
+
+#[test]
+fn trashed_runs_restore_through_symlinked_storage_paths() {
+    let temp = tempfile::tempdir().unwrap();
+    let real = temp.path().join("real");
+    fs::create_dir_all(real.join("runs")).unwrap();
+    fs::create_dir_all(real.join("trash/runs/abc123_run")).unwrap();
+    fs::write(real.join("trash/runs/abc123_run/manifest.json"), "{}").unwrap();
+    // The configured data folder reaches Trash through a link, as a
+    // symlinked folder (or a Windows verbatim prefix) does.
+    #[cfg(unix)]
+    let data = {
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        link
+    };
+    #[cfg(not(unix))]
+    let data = real.clone();
+    restore_trashed_run_at(&data.join("runs"), &data.join("trash/runs"), "abc123_run").unwrap();
+    assert!(real.join("runs/abc123_run/manifest.json").is_file());
+    assert!(!real.join("trash/runs/abc123_run").exists());
+    assert!(
+        restore_trashed_run_at(&data.join("runs"), &data.join("trash/runs"), "abc123_run").is_err()
+    );
+}
