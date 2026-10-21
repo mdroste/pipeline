@@ -237,6 +237,11 @@ mod tests {
         let mut text = String::new();
         std::io::Read::read_to_string(&mut original, &mut text).unwrap();
         assert_eq!(text, "inside");
+        // Windows may refuse to rename an ancestor while descendant handles
+        // remain open. Their replacement check is complete; retain only the
+        // root handle for the independent root-replacement scenario below.
+        drop(original);
+        drop(parent);
         fs::rename(&root, temp.path().join("moved-project")).unwrap();
         junction(&root, &outside);
         assert_eq!(safe.read("moved/file.txt").unwrap(), b"inside");

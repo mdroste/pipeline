@@ -311,6 +311,12 @@ Research launch fingerprints now include the effective PATH and resolved prefix 
 
 ## Additional release gates to complete
 
+### CI follow-up
+
+The first [GitHub Actions run for the fixes](https://github.com/mdroste/pipeline/actions/runs/39673818507) passed the macOS native suite (1,030 library tests and 16 CLI tests). Windows exposed a regression-fixture error: after verifying that an open descendant still reads the original file, the test attempted to rename its ancestor while retaining the descendant file and directory handles. Windows rejected that rename with access denied. The fixture now closes those completed-scenario handles before testing root replacement, retaining the original root handle and all security assertions. Native CI must verify this correction; OneDrive and installed-artifact checks remain separate release gates.
+
+### Remaining qualification
+
 These are evidence gaps, not additional proven runtime bugs:
 
 1. **Complete the candidate qualification manifest.** `docs/releases/1.1.0-qualification.json` still has an empty commit and pending scenario/platform records. Fill it from the final candidate and actual installers, then run the documented qualifier. The current checked-in file is intentionally a template; its existence is not qualification evidence.
