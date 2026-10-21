@@ -26,28 +26,7 @@ pub mod settings;
 pub mod storage;
 pub mod updates;
 pub mod workbench;
-
-/// Probe a few candidate paths under the resource dir for the bundled
-/// `pdftoppm` binary.  Returns the directory that holds it.
-///
-/// Tauri places resources slightly differently per bundle target; the most
-/// common layouts are checked here so the runtime works on .app/.dmg, .msi,
-/// .deb/.rpm, and .AppImage without per-platform code.
-fn locate_bundled_poppler(app: &tauri::App) -> Option<std::path::PathBuf> {
-    use tauri::Manager;
-    let base = app.path().resource_dir().ok()?;
-    let bin = if cfg!(windows) {
-        "pdftoppm.exe"
-    } else {
-        "pdftoppm"
-    };
-    let candidates = [
-        base.join("resources").join("poppler"),
-        base.join("poppler"),
-        base.clone(),
-    ];
-    candidates.into_iter().find(|dir| dir.join(bin).is_file())
-}
+use tauri::Manager;
 
 /// Signal to a packaging smoke test that the native window loaded the
 /// frontend and completed a Tauri IPC round trip. In normal application runs
@@ -81,7 +60,7 @@ pub fn run() {
             // Pin storage before any recovery or background work opens a store.
             // Settings remains accessible if a configured drive is unavailable.
             let _ = storage::data_root();
-            env::set_bundled_poppler_dir(locate_bundled_poppler(app));
+            env::initialize_resources(app.path().resource_dir().ok());
             commands::cleanup_stale_print_exports();
             engines::schedule_stale_managed_engine_cleanup();
             let _ = runs::recover_resumable_runs();

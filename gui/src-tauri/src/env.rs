@@ -16,6 +16,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
+#[cfg(test)]
+mod resource_tests;
 
 /// Successful base-PATH resolution, cached for the app session. A failed
 /// probe is retried, but only after `PROBE_RETRY_INTERVAL`: each probe costs
@@ -30,9 +32,61 @@ const PROBE_RETRY_INTERVAL: Duration = Duration::from_secs(300);
 static BUNDLED_POPPLER_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
 
 /// Record the directory where bundled poppler binaries live for this build.
-/// Called once at startup from the Tauri setup hook.  Subsequent calls are no-ops.
+/// Called once at startup by both GUI and CLI. Subsequent calls are no-ops.
 pub fn set_bundled_poppler_dir(dir: Option<PathBuf>) {
     let _ = BUNDLED_POPPLER_DIR.set(dir);
+}
+
+/// Locate resources without requiring a Tauri window or the caller's cwd.
+/// The GUI supplies Tauri's resource directory; the CLI uses its executable.
+pub fn initialize_resources(resource_dir: Option<PathBuf>) {
+    let executable = std::env::current_exe()
+        .ok()
+        .map(|path| path.canonicalize().unwrap_or(path));
+    let bases = resource_bases(executable.as_deref(), std::env::consts::OS);
+    set_bundled_poppler_dir(find_poppler(
+        resource_dir.into_iter().chain(bases),
+        cfg!(windows),
+    ));
+}
+
+fn resource_bases(executable: Option<&Path>, platform: &str) -> Vec<PathBuf> {
+    let Some(directory) = executable.and_then(Path::parent) else {
+        return Vec::new();
+    };
+    let mut bases = Vec::new();
+    match platform {
+        "macos" => bases.push(directory.join("../Resources")),
+        // Tauri uses productName (not the Rust crate name) under usr/lib.
+        // current_exe is inside the mounted AppDir even when launched elsewhere.
+        "linux" => {
+            let config: serde_json::Value =
+                serde_json::from_str(include_str!("../tauri.conf.json"))
+                    .expect("the compiled Tauri configuration is valid JSON");
+            let product = config["productName"]
+                .as_str()
+                .unwrap_or(env!("CARGO_PKG_NAME"));
+            for library in [directory.join("../lib"), PathBuf::from("/usr/lib")] {
+                bases.push(library.join(product));
+                if product != env!("CARGO_PKG_NAME") {
+                    bases.push(library.join(env!("CARGO_PKG_NAME")));
+                }
+            }
+        }
+        _ => {}
+    }
+    // Windows installers and Tauri development builds copy resources here.
+    bases.push(directory.to_owned());
+    bases
+}
+
+fn find_poppler(bases: impl IntoIterator<Item = PathBuf>, windows: bool) -> Option<PathBuf> {
+    let bin = if windows { "pdftoppm.exe" } else { "pdftoppm" };
+    bases
+        .into_iter()
+        .flat_map(|base| [base.join("resources/poppler"), base.join("poppler"), base])
+        .find(|dir| dir.join(bin).is_file())
+        .and_then(|dir| dir.canonicalize().ok())
 }
 
 /// Return the bundled poppler directory if one was registered and `pdftoppm`

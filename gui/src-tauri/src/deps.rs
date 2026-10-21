@@ -99,7 +99,7 @@ mod command;
 
 pub use checks::check_snapshot;
 use command::{configure_probe_command, probe_resolved};
-pub(crate) use command::{find_on_path, resolve_command, ResolvedCommand};
+pub(crate) use command::{find_on_path, resolve_command, resolve_command_at, ResolvedCommand};
 
 #[cfg(test)]
 use checks::{

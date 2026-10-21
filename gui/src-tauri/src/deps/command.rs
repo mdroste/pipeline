@@ -32,6 +32,14 @@ impl ResolvedCommand {
         &self.discovered_path
     }
 
+    pub(crate) fn program(&self) -> &Path {
+        &self.program
+    }
+
+    pub(crate) fn prefix_args(&self) -> &[OsString] {
+        &self.prefix_args
+    }
+
     /// Resolve the native program before launching long-lived managed runtimes.
     ///
     /// Codex may re-exec its current binary as a sandbox helper. On macOS, a
@@ -341,6 +349,34 @@ pub(crate) fn resolve_command(name: &str) -> Option<ResolvedCommand> {
         .collect();
     let pathext = std::env::var_os("PATHEXT");
     resolve_command_in(name, &directories, cfg!(windows), pathext.as_deref())
+}
+
+/// Resolve using a caller's effective PATH and cwd without changing process-wide
+/// environment. Explicit paths retain their spelling (notably Python venvs).
+pub(crate) fn resolve_command_at(
+    name: &str,
+    path: &OsStr,
+    cwd: &Path,
+    windows: bool,
+    pathext: Option<&OsStr>,
+) -> Option<ResolvedCommand> {
+    let mut directories: Vec<PathBuf> = std::env::split_paths(path)
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| if p.is_absolute() { p } else { cwd.join(p) })
+        .collect();
+    let requested = Path::new(name);
+    if requested.is_absolute() || requested.components().count() > 1 {
+        let requested = if requested.is_absolute() {
+            requested.to_owned()
+        } else {
+            cwd.join(requested)
+        };
+        if directories.is_empty() {
+            directories.push(cwd.to_owned());
+        }
+        return resolve_command_in(requested.to_str()?, &directories, windows, pathext);
+    }
+    resolve_command_in(name, &directories, windows, pathext)
 }
 
 /// Find a launchable binary on PATH by scanning directories directly.

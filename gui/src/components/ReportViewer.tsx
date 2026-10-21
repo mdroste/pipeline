@@ -4,7 +4,10 @@ import React, { memo, useId, useMemo, useRef, useState } from "react";
 import { reportAnchorPlugin } from "../lib/reportAnchors";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { fileMarkdownComponents } from "./file-workspace/markdownComponents";
+import {
+  fileMarkdownComponents,
+  fileMarkdownUrlTransform,
+} from "./file-workspace/markdownComponents";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import remarkParse from "remark-parse";
@@ -433,6 +436,7 @@ const ReportMarkdown = memo(function ReportMarkdown({
             </div>
           )}
           <ReactMarkdown
+            urlTransform={fileMarkdownUrlTransform}
             remarkPlugins={
               fallback
                 ? [remarkGfm, remarkNavigationIds]

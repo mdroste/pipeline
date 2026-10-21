@@ -9,6 +9,7 @@ import "./validate-release-assets.test.mjs";
 import "./workflow-hardening.test.mjs";
 import "./npm-overrides.test.mjs";
 import "./paddle-parser-lock.test.mjs";
+import "./python.test.mjs";
 
 import "./draft-release.test.mjs";
 

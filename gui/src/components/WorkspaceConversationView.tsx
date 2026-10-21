@@ -9,7 +9,10 @@ import type { ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
-import { fileMarkdownComponents } from "./file-workspace/markdownComponents";
+import {
+  fileMarkdownComponents,
+  fileMarkdownUrlTransform,
+} from "./file-workspace/markdownComponents";
 import rehypeKatex from "rehype-katex";
 import WorkspaceMessageActions from "./WorkspaceMessageActions";
 import WorkspaceIcon from "./WorkspaceIcon";
@@ -90,6 +93,7 @@ interface Props {
   onDraft: (text: string) => void;
   onSend: () => void;
   onStop: () => void;
+  stopping?: boolean;
   onLatest: () => void;
   onEarlier: () => void;
   onNewer: () => void;
@@ -127,6 +131,7 @@ export default function WorkspaceConversationView({
   onDraft,
   onSend,
   onStop,
+  stopping = false,
   onLatest,
   onEarlier,
   onNewer,
@@ -280,6 +285,7 @@ export default function WorkspaceConversationView({
                 </div>
                 <div className="workspace-message-body">
                   <ReactMarkdown
+                    urlTransform={fileMarkdownUrlTransform}
                     remarkPlugins={[remarkGfm, remarkMath]}
                     rehypePlugins={[rehypeKatex]}
                     components={fileMarkdownComponents}
@@ -313,6 +319,7 @@ export default function WorkspaceConversationView({
               </div>
               <div className="workspace-message-body">
                 <ReactMarkdown
+                  urlTransform={fileMarkdownUrlTransform}
                   remarkPlugins={[remarkGfm, remarkMath]}
                   rehypePlugins={[rehypeKatex]}
                   components={fileMarkdownComponents}
@@ -408,11 +415,17 @@ export default function WorkspaceConversationView({
               >
                 <button
                   type="button"
-                  disabled={!active && (disabled || !draft.trim())}
+                  disabled={active ? stopping : disabled || !draft.trim()}
                   onClick={() => (active ? onStop() : onSend())}
                   className="workspace-send-button"
                   aria-label={
-                    active ? "Stop response" : submitting ? "Sending…" : "Send"
+                    active
+                      ? stopping
+                        ? "Stopping…"
+                        : "Stop response"
+                      : submitting
+                        ? "Sending…"
+                        : "Send"
                   }
                 >
                   <Icon

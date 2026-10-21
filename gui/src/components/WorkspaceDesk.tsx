@@ -42,6 +42,8 @@ export default function WorkspaceDesk({
   attentionCount = 0,
   active = false,
   onStop,
+  stopping = false,
+  feedback,
   navigationButtonRef,
   workspaceId,
   projectName,
@@ -65,6 +67,8 @@ export default function WorkspaceDesk({
   attentionCount?: number;
   active?: boolean;
   onStop?: () => void;
+  stopping?: boolean;
+  feedback?: ReactNode;
   workspaceId?: string | null;
   navigationButtonRef?: RefObject<HTMLButtonElement | null>;
   projectName?: string;
@@ -278,8 +282,9 @@ export default function WorkspaceDesk({
                 type="button"
                 className="workspace-desk-button"
                 onClick={onStop}
+                disabled={stopping}
               >
-                Stop response
+                {stopping ? "Stopping…" : "Stop response"}
               </button>
             )}
           </>
@@ -291,6 +296,7 @@ export default function WorkspaceDesk({
           </span>
         )}
       </div>
+      {feedback}
       <div className="workspace-desk-panes" data-layout={effective}>
         {project && (
           <div

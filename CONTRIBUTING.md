@@ -32,6 +32,12 @@ binaries, `.env` files, or machine-local agent settings.
 
 ## Tests
 
+Release contract tests require Python 3.11 or later. The launcher tries `python3`,
+then the Windows `py -3` launcher where applicable, then a verified `python`.
+Set `PYTHON` to an explicit interpreter executable path (including paths with
+spaces) to override discovery; do not include command-line arguments in it.
+This is a development/test prerequisite, not a dependency of the packaged app.
+
 Run checks proportionate to the change. Before requesting review for a
 release-relevant change, run:
 

@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { taskClient, taskTime, type Trigger } from "../../lib/taskClient";
+import {
+  localDateTime,
+  localDateTimeHint,
+  readLocalDateTime,
+} from "../../lib/localDateTime";
 
 const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-const localDate = (date: Date) =>
-  new Date(date.getTime() - date.getTimezoneOffset() * 60000)
-    .toISOString()
-    .slice(0, 16);
 export function Timing({
   value,
   onChange,
@@ -69,12 +70,14 @@ export function Timing({
             <input
               aria-label="Start date and time"
               type="datetime-local"
-              value={localDate(new Date(value.at * 1000))}
+              title={localDateTimeHint}
+              value={localDateTime(new Date(value.at * 1000))}
               onChange={(e) => {
-                if (e.target.value)
+                const at = readLocalDateTime(e.target);
+                if (at !== null)
                   onChange({
                     ...value,
-                    at: Math.floor(new Date(e.target.value).getTime() / 1000),
+                    at,
                   });
               }}
             />
@@ -115,14 +118,14 @@ export function Timing({
               <input
                 aria-label="First run"
                 type="datetime-local"
-                value={localDate(new Date(value.anchor * 1000))}
+                title={localDateTimeHint}
+                value={localDateTime(new Date(value.anchor * 1000))}
                 onChange={(e) => {
-                  if (e.target.value)
+                  const anchor = readLocalDateTime(e.target);
+                  if (anchor !== null)
                     onChange({
                       ...value,
-                      anchor: Math.floor(
-                        new Date(e.target.value).getTime() / 1000,
-                      ),
+                      anchor,
                     });
                 }}
               />

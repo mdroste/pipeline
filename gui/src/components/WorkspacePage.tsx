@@ -13,7 +13,6 @@ import WorkspaceConversationView from "./WorkspaceConversationView";
 import WorkspaceContextInspector from "./WorkspaceContextInspector";
 import WorkspaceContextTray from "./WorkspaceContextTray";
 import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
-import { workbenchClient } from "../lib/workbenchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import "./WorkspaceNavigation.css";
 import "./WorkspaceInspector.css";
@@ -134,6 +133,11 @@ export default function WorkspacePage({
     deleteSession,
     moveSession,
     exportCurrent,
+    stopCurrent,
+    stopping,
+    exporting,
+    actionError,
+    actionNotice,
     saveSelection,
     send,
     resolve,
@@ -503,15 +507,21 @@ export default function WorkspacePage({
         toolsDisabled={contextBusy || harnessEditor}
         attentionCount={visibleRequests.length}
         active={Boolean(active) || submitting}
-        onStop={
-          active
-            ? () => {
-                void workbenchClient.interruptTurn(
-                  active.threadId,
-                  active.turnId,
-                );
-              }
-            : undefined
+        onStop={active ? () => void stopCurrent() : undefined}
+        stopping={stopping}
+        feedback={
+          actionError ? (
+            <p
+              role="alert"
+              className="p-3 text-sm text-red-700 dark:text-red-300"
+            >
+              {actionError}
+            </p>
+          ) : actionNotice ? (
+            <p role="status" className="p-3 text-sm">
+              {actionNotice}
+            </p>
+          ) : null
         }
         assistantRequest={assistantRequest}
         projectRequest={projectRequest}
@@ -690,8 +700,11 @@ export default function WorkspacePage({
                 Activity & follow-ups
               </MenuItem>
               <MenuSeparator />
-              <MenuItem onSelect={() => void exportCurrent()}>
-                Export conversation
+              <MenuItem
+                disabled={exporting}
+                onSelect={() => void exportCurrent()}
+              >
+                {exporting ? "Exporting…" : "Export conversation"}
               </MenuItem>
               {snapshot && (
                 <MenuItem
@@ -897,17 +910,12 @@ export default function WorkspacePage({
               contextBusy
             }
             active={Boolean(active)}
+            stopping={stopping}
             submitting={submitting}
             contextBusy={contextBusy}
             onDraft={editDraft}
             onSend={() => void send()}
-            onStop={() => {
-              if (active)
-                void workbenchClient.interruptTurn(
-                  active.threadId,
-                  active.turnId,
-                );
-            }}
+            onStop={() => void stopCurrent()}
             onLatest={latest}
             onEarlier={() => void loadEarlier()}
             onNewer={() => setTranscriptPage((v) => Math.max(0, v - 1))}

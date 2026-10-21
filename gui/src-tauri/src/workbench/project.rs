@@ -610,17 +610,10 @@ pub(crate) fn task_capture(root: &Path, path: &Path) -> WorkbenchResult<Vec<(Str
 }
 fn ignored(path: &str, custom: &[String]) -> bool {
     path.split('/').any(|p| {
-        p.starts_with(".pipeline-apply-")
-            || [
-                ".git",
-                SCRATCH,
-                "node_modules",
-                "target",
-                ".venv",
-                "__pycache__",
-                ".cache",
-            ]
-            .contains(&p)
+        files::reserved_component(p)
+            || ["node_modules", "target", ".venv", "__pycache__", ".cache"]
+                .iter()
+                .any(|name| p.trim_end_matches(['.', ' ']).eq_ignore_ascii_case(name))
     }) || custom
         .iter()
         .any(|p| path == p || path.starts_with(&format!("{p}/")))

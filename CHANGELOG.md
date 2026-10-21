@@ -3,6 +3,24 @@
 This file records user-visible and release-integrity changes. Development before
 the first public release was not maintained as a stable release series.
 
+## Unreleased
+
+- Project file reads on Windows stay bound to opened directory handles and
+  reject junction escapes. Mixed-case Git/task metadata names and Windows
+  aliases can no longer bypass file access or capture exclusions.
+- The packaged CLI discovers bundled PDF tools on macOS, Windows, and Linux.
+  Research commands use the recovered desktop PATH consistently, resolve native
+  Windows executable extensions, and accept supported `.exe` LaTeX engines.
+- Project Markdown previews resolve absolute links and images within their
+  authorized folder, including canonical Windows paths. Captured documents
+  retain their immutable scope.
+- Automation deadline inputs use the target date's daylight-saving offset and
+  reject nonexistent local times.
+- Both conversation Stop controls and Export show failures, support retries,
+  and prevent duplicate pending requests. Successful exports show the destination.
+- Release tests discover a supported Python 3 interpreter and report missing
+  prerequisites clearly.
+
 ## 1.1.0 — 2026-10-15
 
 Fixes from the October 2026 pre-release audit (`docs/bug-triage-2026-10.md`):

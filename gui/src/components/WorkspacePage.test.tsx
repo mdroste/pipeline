@@ -34,6 +34,9 @@ const mocks = vi.hoisted(() => ({
   deleteSession: vi.fn(),
   generateSessionTitle: vi.fn(),
   sendTurn: vi.fn(),
+  interruptTurn: vi.fn(),
+  exportConversation: vi.fn(),
+  save: vi.fn(),
   listPapers: vi.fn(),
   effectiveHarness: vi.fn(),
   importPaper: vi.fn(),
@@ -53,7 +56,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: mocks.open,
-  save: vi.fn(),
+  save: mocks.save,
 }));
 const workspace: Workspace = {
   id: "project",
@@ -150,6 +153,115 @@ const mount = async () => {
   await screen.findByRole("heading", { name: "Policy discussion" });
   return view;
 };
+
+it.each(["chat", "project"])(
+  "reports a failed Stop from the %s view and allows retry without claiming cancellation",
+  async (surface) => {
+    snapshot.activeBinding = {
+      id: "binding",
+      sessionId: "conversation",
+      runtimeNamespace: "test",
+      providerThreadId: "thread",
+      incarnation: 1,
+      createdAt: "now",
+      retiredAt: null,
+      retirementReason: null,
+      harnessFingerprint: null,
+      instructionSources: [],
+    };
+    snapshot.turns = [
+      {
+        id: "turn-record",
+        bindingId: "binding",
+        clientSubmissionId: "submission",
+        providerTurnId: "turn",
+        state: "running",
+        error: null,
+        createdAt: "now",
+        updatedAt: "now",
+        terminalAt: null,
+      },
+    ];
+    if (surface === "project") {
+      localStorage.setItem("pipeline.workspace.workspaceId", workspace.id);
+      localStorage.setItem(
+        `pipeline.workspace.view.${workspace.id}`,
+        "project",
+      );
+      snapshot.workspace = workspace;
+      snapshot.session.workspaceId = workspace.id;
+    }
+    localStorage.setItem("pipeline.workspace.sessionId", "conversation");
+    mocks.interruptTurn.mockRejectedValueOnce(
+      new Error("Runtime disconnected"),
+    );
+    let finish!: () => void;
+    mocks.interruptTurn.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    render(<WorkspacePage onOpenSettings={vi.fn()} />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Stop response" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Runtime disconnected",
+    );
+    expect(screen.getByRole("alert")).toBeVisible();
+    expect(mocks.reconcileSession).toHaveBeenCalledWith("conversation");
+    expect(mocks.interruptTurn).toHaveBeenCalledWith("thread", "turn");
+    fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+    expect(screen.getByRole("button", { name: "Stopping…" })).toBeDisabled();
+    await act(async () => finish());
+    expect(screen.getByRole("button", { name: "Stop response" })).toBeEnabled();
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(mocks.interruptTurn).toHaveBeenCalledTimes(2);
+  },
+);
+
+it("handles export cancellation, dialog/write failure and a successful retry visibly", async () => {
+  await mount();
+  const exportConversation = () => {
+    fireEvent.click(screen.getByRole("button", { name: "Conversation menu" }));
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: "Export conversation" }),
+    );
+  };
+  mocks.save.mockResolvedValueOnce(null);
+  exportConversation();
+  await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1));
+  expect(mocks.exportConversation).not.toHaveBeenCalled();
+  expect(screen.queryByRole("alert")).toBeNull();
+  mocks.save.mockRejectedValueOnce(new Error("Dialog unavailable"));
+  exportConversation();
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Dialog unavailable",
+  );
+  mocks.save.mockResolvedValueOnce("/exports/conversation.md");
+  mocks.exportConversation.mockRejectedValueOnce(
+    new Error("Permission denied"),
+  );
+  exportConversation();
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("Permission denied"),
+  );
+  expect(
+    screen.getByRole("heading", { name: "Policy discussion" }),
+  ).toBeVisible();
+  mocks.save.mockResolvedValueOnce("/exports/retry.md");
+  mocks.exportConversation.mockResolvedValueOnce(undefined);
+  exportConversation();
+  expect(
+    await screen.findByText("Conversation exported to /exports/retry.md"),
+  ).toBeVisible();
+  expect(mocks.exportConversation).toHaveBeenLastCalledWith(
+    "conversation",
+    "/exports/retry.md",
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+});
 
 it("starts with navigation closed and preserves the draft while opening, pinning and closing it", async () => {
   await mount();

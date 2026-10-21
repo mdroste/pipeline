@@ -3,6 +3,11 @@
 // exact definition remains visible in the builder's advanced view.
 
 import { useState } from "react";
+import {
+  localDateTime,
+  localDateTimeHint,
+  readLocalDateTime,
+} from "../../lib/localDateTime";
 import type { Binding, Chain, Step } from "../../lib/taskClient";
 import {
   allStepIds,
@@ -241,16 +246,11 @@ function StepEditor({
           Wait until
           <input
             type="datetime-local"
-            value={new Date(
-              step.at * 1000 - new Date().getTimezoneOffset() * 60000,
-            )
-              .toISOString()
-              .slice(0, 16)}
+            title={localDateTimeHint}
+            value={localDateTime(new Date(step.at * 1000))}
             onChange={(event) => {
-              const at = Math.floor(
-                new Date(event.target.value).getTime() / 1000,
-              );
-              if (Number.isFinite(at)) set({ at });
+              const at = readLocalDateTime(event.target);
+              if (at !== null) set({ at });
             }}
           />
         </label>

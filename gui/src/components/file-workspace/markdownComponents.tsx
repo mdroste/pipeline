@@ -1,8 +1,14 @@
-import type { Components } from "react-markdown";
+import { defaultUrlTransform, type Components } from "react-markdown";
+import { isNativeFileLink } from "../../lib/fileLinks";
 import { Children, isValidElement } from "react";
 import SafeMarkdownLink from "../SafeMarkdownLink";
 import HighlightedCode from "./HighlightedCode";
 import { MarkdownImage } from "./FileNavigation";
+
+// Keep native drive/UNC paths until the scoped link/image components validate
+// them. ReactMarkdown otherwise treats a drive letter as an unsafe URL scheme.
+export const fileMarkdownUrlTransform = (url: string) =>
+  isNativeFileLink(url) ? url : defaultUrlTransform(url);
 
 export const fileMarkdownComponents: Components = {
   a: SafeMarkdownLink,

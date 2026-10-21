@@ -268,6 +268,7 @@ fn main() {
         ParseAction::Execute(command) => command,
     };
 
+    pipeline_gui_lib::env::initialize_resources(None);
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

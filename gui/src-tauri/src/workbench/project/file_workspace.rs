@@ -21,6 +21,8 @@ pub struct FilePreview {
     pub editable: bool,
     pub truncated: bool,
     pub external_path: Option<String>,
+    /// Authorized live/checkpoint root for resolving links. Captures have none.
+    pub scope_root: Option<String>,
 }
 pub(super) fn editable_source(path: &str) -> bool {
     let ext = Path::new(path)
@@ -94,7 +96,9 @@ pub fn read_workspace_file(
             "Choose a working copy or a captured revision",
         ));
     }
-    let (bytes, path, external_path, captured) = if let Some(revision_id) = &request.revision_id {
+    let (bytes, path, external_path, scope_root, captured) = if let Some(revision_id) =
+        &request.revision_id
+    {
         let revision = documents::revision(store, &request.workspace_id, revision_id)?;
         let storage: String = store.connection()?.query_row(
             "SELECT storage_reference FROM artifacts WHERE workspace_id=?1 AND content_hash=?2 ORDER BY created_at LIMIT 1",
@@ -153,7 +157,7 @@ pub fn read_workspace_file(
                 "Captured file content no longer matches its revision",
             ));
         }
-        (bytes, display_path, None, true)
+        (bytes, display_path, None, None, true)
     } else {
         files::relative(&request.path)?;
         let base = match &request.checkpoint_id {
@@ -162,9 +166,17 @@ pub fn read_workspace_file(
         };
         let bytes = files::SafeRoot::open(&base)?.read(&request.path)?;
         let external = base.join(&request.path).to_string_lossy().into_owned();
-        (bytes, request.path, Some(external), false)
+        (
+            bytes,
+            request.path,
+            Some(external),
+            Some(base.to_string_lossy().into_owned()),
+            false,
+        )
     };
-    Ok(preview_from_bytes(path, bytes, external_path, captured))
+    let mut preview = preview_from_bytes(path, bytes, external_path, captured);
+    preview.scope_root = scope_root;
+    Ok(preview)
 }
 
 fn preview_from_bytes(
@@ -209,6 +221,7 @@ fn preview_from_bytes(
         s
     });
     FilePreview {
+        scope_root: None,
         path,
         hash: hash(&bytes),
         bytes: bytes.len(),

@@ -8,6 +8,35 @@ use super::{
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
 
+#[test]
+fn caller_scoped_windows_resolution_supports_extensions_and_relative_path_entries() {
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("tools α space");
+    write_fixture(&directory.join("Python.EXE"), "native fixture");
+    write_fixture(
+        &directory.join("unsafe.cmd"),
+        "@echo arbitrary batch wrapper",
+    );
+    let path = std::env::join_paths([Path::new("tools α space")]).unwrap();
+    for name in [
+        "python".to_owned(),
+        "python.exe".to_owned(),
+        directory.join("Python.EXE").to_string_lossy().into_owned(),
+    ] {
+        let resolved = super::resolve_command_at(
+            &name,
+            &path,
+            temp.path(),
+            true,
+            Some(OsStr::new(".EXE;.CMD")),
+        )
+        .unwrap();
+        assert_windows_path_eq(resolved.program(), &directory.join("Python.EXE"));
+        assert!(resolved.prefix_args().is_empty());
+    }
+    assert!(super::resolve_command_at("unsafe", &path, temp.path(), true, None).is_none());
+}
+
 fn write_fixture(path: &Path, contents: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, contents).unwrap();

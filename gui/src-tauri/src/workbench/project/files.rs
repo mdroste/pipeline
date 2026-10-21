@@ -1,5 +1,13 @@
 //! Descriptor-relative reads and journalled, no-clobber replacement on Unix.
 use super::*;
+#[cfg(windows)]
+mod windows;
+
+/// Apply the same conservative policy on case-sensitive and insensitive volumes.
+pub(super) fn reserved_component(component: &str) -> bool {
+    let name = component.trim_end_matches(['.', ' ']).to_ascii_lowercase();
+    name == ".git" || name == SCRATCH || name.starts_with(".pipeline-apply-")
+}
 
 pub(super) fn relative(value: &str) -> WorkbenchResult<()> {
     let p = Path::new(value);
@@ -7,12 +15,15 @@ pub(super) fn relative(value: &str) -> WorkbenchResult<()> {
         || value.len() > 4096
         || value.contains('\\')
         || value.chars().any(char::is_control)
-        || value.split('/').any(|part| part.is_empty())
+        || value.split('/').any(|part| {
+            part.is_empty()
+                || part == "."
+                || part == ".."
+                || (cfg!(windows) && (part.ends_with(['.', ' ']) || part.contains(':')))
+        })
         || p.is_absolute()
         || p.components().any(|c| !matches!(c, Component::Normal(_)))
-        || value
-            .split('/')
-            .any(|c| c == ".git" || c == SCRATCH || c.starts_with(".pipeline-apply-"))
+        || value.split('/').any(reserved_component)
     {
         return Err(WorkbenchError::invalid(
             "Choose a normalized relative file path outside Git/task metadata",
@@ -34,8 +45,6 @@ pub(super) fn executable(metadata: &fs::Metadata) -> bool {
 }
 pub(super) struct SafeRoot {
     directory: fs::File,
-    #[cfg(not(unix))]
-    path: PathBuf,
 }
 impl SafeRoot {
     pub(super) fn open(root: &Path) -> WorkbenchResult<Self> {
@@ -49,25 +58,18 @@ impl SafeRoot {
                 .map_err(err)?;
             Ok(Self { directory })
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            // Windows opens a directory handle only with backup semantics.
-            #[cfg(windows)]
-            let directory = {
-                use std::os::windows::fs::OpenOptionsExt;
-                const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-                fs::OpenOptions::new()
-                    .read(true)
-                    .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-                    .open(root)
-                    .map_err(err)?
-            };
-            #[cfg(not(windows))]
-            let directory = fs::File::open(root).map_err(err)?;
             Ok(Self {
-                directory,
-                path: root.to_owned(),
+                directory: windows::open_root(root).map_err(err)?,
             })
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = root;
+            Err(WorkbenchError::invalid(
+                "Scoped file access is unsupported on this platform",
+            ))
         }
     }
     #[cfg(unix)]
@@ -151,11 +153,14 @@ impl SafeRoot {
             };
             Self::read_name(&directory, &name)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
             relative(path)?;
-            let path = self.path.join(path);
-            let mut f = crate::safety::open_regular_file(&path).map_err(err)?;
+            let mut f = match windows::open_relative(&self.directory, path) {
+                Ok(file) => file,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(e) => return Err(err(e)),
+            };
             let mut bytes = Vec::new();
             Read::by_ref(&mut f)
                 .take(MAX_FILE + 1)
@@ -165,6 +170,13 @@ impl SafeRoot {
                 return Err(WorkbenchError::invalid("File exceeds capture limit"));
             }
             Ok(Some(bytes))
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = path;
+            Err(WorkbenchError::invalid(
+                "Scoped file access is unsupported on this platform",
+            ))
         }
     }
     pub(super) fn executable(&self, path: &str) -> WorkbenchResult<bool> {

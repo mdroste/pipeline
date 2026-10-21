@@ -1,6 +1,28 @@
 //! Explicitly authorized host execution profiles, receipts, and validation.
 
 use super::*;
+mod launch;
+pub(super) use launch::launch_manifest;
+#[cfg(test)]
+mod platform_tests;
+
+fn latex_engine(program: &str, windows: bool) -> Option<String> {
+    let name = if windows {
+        program.rsplit(['/', '\\']).next()?.to_ascii_lowercase()
+    } else {
+        Path::new(program).file_name()?.to_str()?.to_owned()
+    };
+    let name = if windows {
+        name.strip_suffix(".exe").unwrap_or(&name)
+    } else {
+        &name
+    };
+    matches!(
+        name,
+        "latexmk" | "tectonic" | "pdflatex" | "xelatex" | "lualatex"
+    )
+    .then(|| name.to_owned())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -194,22 +216,16 @@ fn validate_profile_request(
             "Stata profiles on this Mac must invoke /bin/zsh -lic with an oldstata command",
         ));
     }
-    if request.adapter == "latex" {
-        let executable = Path::new(&request.argv[0])
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default();
-        if !matches!(
-            executable,
-            "latexmk" | "tectonic" | "pdflatex" | "xelatex" | "lualatex"
-        ) || request.argv.iter().any(|argument| {
-            (argument.contains("shell-escape") && argument != "-no-shell-escape")
-                || argument.contains("write18")
-        }) {
-            return Err(WorkbenchError::invalid(
-                "LaTeX profiles require a supported engine and cannot enable shell escape",
-            ));
-        }
+    if request.adapter == "latex"
+        && (latex_engine(&request.argv[0], cfg!(windows)).is_none()
+            || request.argv.iter().any(|argument| {
+                (argument.contains("shell-escape") && argument != "-no-shell-escape")
+                    || argument.contains("write18")
+            }))
+    {
+        return Err(WorkbenchError::invalid(
+            "LaTeX profiles require a supported engine and cannot enable shell escape",
+        ));
     }
     let connection = open_connection(store)?;
     let root: String = connection.query_row("SELECT root FROM workspaces WHERE id = ?1 AND root IS NOT NULL AND archived_at IS NULL", [&request.workspace_id], |row| row.get(0)).optional().map_err(|error| WorkbenchError::storage("Failed to inspect execution workspace", error))?.ok_or_else(|| WorkbenchError::invalid("Execution requires an active Workspace with a registered folder"))?;
@@ -232,15 +248,12 @@ fn profile_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ExecutionProfil
     let outputs: String = row.get(9)?;
     let adapter: String = row.get(3)?;
     let mut argv: Vec<String> = serde_json::from_str(&argv).unwrap_or_default();
-    if adapter == "latex" && !argv.first().is_some_and(|s| s.ends_with("tectonic")) {
+    let engine = argv.first().and_then(|s| latex_engine(s, cfg!(windows)));
+    if adapter == "latex" && engine.as_deref() != Some("tectonic") {
         if !argv.iter().any(|s| s == "-no-shell-escape") {
             argv.insert(1.min(argv.len()), "-no-shell-escape".into());
         }
-        if argv
-            .first()
-            .is_some_and(|s| Path::new(s).file_name().and_then(|s| s.to_str()) == Some("latexmk"))
-            && !argv.iter().any(|s| s == "-norc")
-        {
+        if engine.as_deref() == Some("latexmk") && !argv.iter().any(|s| s == "-norc") {
             argv.insert(1, "-norc".into());
         }
     }
@@ -427,6 +440,13 @@ pub(crate) fn run_profile_process(
         .as_str()
         .ok_or("Execution program was not resolved")?;
     let mut command = Command::new(program);
+    let prefix: Vec<&str> = launch["prefixArgs"]
+        .as_array()
+        .ok_or("Missing launch arguments")?
+        .iter()
+        .map(|v| v.as_str().ok_or("Invalid launch argument"))
+        .collect::<Result<_, _>>()?;
+    command.args(prefix);
     // Multicall tools such as pdflatex -> pdftex select behavior from argv[0].
     #[cfg(unix)]
     {
@@ -446,6 +466,10 @@ pub(crate) fn run_profile_process(
             }
         }
     }
+    command.env(
+        "PATH",
+        launch["path"].as_str().ok_or("Missing execution PATH")?,
+    );
     for secret in [
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
@@ -1382,107 +1406,6 @@ pub struct HostExecutionPreview {
     pub outputs: Vec<String>,
     pub authorized: bool,
     pub boundary: String,
-}
-
-pub(super) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Value> {
-    let requested = Path::new(&profile.argv[0]);
-    let executable = if requested.is_absolute() {
-        requested.to_path_buf()
-    } else if requested.components().count() > 1 {
-        Path::new(&profile.cwd).join(requested)
-    } else {
-        let path = profile
-            .environment
-            .get("PATH")
-            .and_then(Value::as_str)
-            .map(std::ffi::OsString::from)
-            .or_else(|| std::env::var_os("PATH"))
-            .unwrap_or_default();
-        std::env::split_paths(&path)
-            .map(|p| p.join(requested))
-            .find(|p| p.is_file())
-            .ok_or_else(|| {
-                WorkbenchError::invalid(
-                    "Execution program is missing. Install it or configure its absolute path.",
-                )
-            })?
-    };
-    // Preserve the invocation path: Python discovers a venv beside that path,
-    // and multicall binaries may also distinguish their aliases. Hash the target.
-    let invocation_path = if executable.is_absolute() {
-        executable
-    } else {
-        Path::new(&profile.cwd).join(executable)
-    };
-    let executable = fs::canonicalize(&invocation_path)
-        .map_err(|e| WorkbenchError::storage("Failed to resolve execution program", e))?;
-    let python_environment = if requested
-        .file_name()
-        .is_some_and(|s| s.to_string_lossy().starts_with("python"))
-    {
-        let config = invocation_path
-            .parent()
-            .and_then(Path::parent)
-            .map(|p| p.join("pyvenv.cfg"));
-        if let Some(config) = config.filter(|p| p.is_file()) {
-            let (_, hash, size) = hash_resolved_file(&config, "Python environment")?;
-            json!({"configuration":config,"hash":hash,"size":size})
-        } else {
-            Value::Null
-        }
-    } else {
-        Value::Null
-    };
-    let (hash, size) = hash_file(&executable)?;
-    let mut launch_files = Vec::new();
-    for argument in profile.argv.iter().skip(1) {
-        let path = Path::new(argument);
-        if !path
-            .extension()
-            .and_then(|s| s.to_str())
-            .is_some_and(|ext| {
-                [
-                    "sh", "bash", "zsh", "py", "r", "jl", "do", "pl", "rb", "tex",
-                ]
-                .contains(&ext.to_ascii_lowercase().as_str())
-            })
-        {
-            continue;
-        }
-        let path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            Path::new(&profile.cwd).join(path)
-        };
-        if path.is_file() {
-            let (path, hash, size) = hash_resolved_file(&path, "launch script")?;
-            launch_files.push(json!({"path":path,"hash":hash,"size":size}));
-        }
-    }
-    let mut startup = Vec::new();
-    if profile.argv[0] == "/bin/zsh" {
-        if let Some(home) = profile
-            .environment
-            .get("ZDOTDIR")
-            .and_then(Value::as_str)
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("ZDOTDIR").map(PathBuf::from))
-            .or_else(dirs::home_dir)
-        {
-            for name in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
-                let path = home.join(name);
-                startup.push(if path.is_file() {
-                    let (_, hash, size) = hash_resolved_file(&path, "shell startup file")?;
-                    json!({"path":path,"hash":hash,"size":size})
-                } else {
-                    json!({"path":path,"missing":true})
-                });
-            }
-        }
-    }
-    Ok(
-        json!({"executable":executable,"invocationPath":invocation_path,"pythonEnvironment":python_environment,"hash":hash,"size":size,"shellStartupFiles":startup,"launchFiles":launch_files,"coverage":"executable, directly referenced launch scripts, known shell startup files and declared inputs; shell-string and transitive dependencies require explicit input declarations"}),
-    )
 }
 
 pub fn preview_host_execution(

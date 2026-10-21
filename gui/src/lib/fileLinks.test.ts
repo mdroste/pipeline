@@ -1,6 +1,58 @@
 import { describe, expect, it } from "vitest";
 import { absoluteLocalFilePath, resolveFileLink } from "./fileLinks";
 describe("scoped file links", () => {
+  it("maps canonical Windows drive and UNC paths without changing nested targets", () => {
+    for (const root of ["C:\\Research α", "\\\\?\\C:\\Research α"]) {
+      for (const href of [
+        "C:/Research%20α/results.csv#L7",
+        "\\\\?\\C:\\Research%20α\\results.csv#L7",
+      ]) {
+        expect(resolveFileLink("notes/review.md", href, root)).toEqual({
+          path: "results.csv",
+          line: 7,
+        });
+      }
+    }
+    expect(
+      resolveFileLink("notes/review.md", "/project/results.csv", "/project"),
+    ).toEqual({ path: "results.csv" });
+    expect(
+      resolveFileLink("notes/review.md", "results.csv", "/project"),
+    ).toEqual({ path: "notes/results.csv" });
+    expect(
+      resolveFileLink(
+        "notes/review.md",
+        "\\\\server\\share\\project\\paper.pdf#page=2",
+        "\\\\?\\UNC\\server\\share\\project",
+      ),
+    ).toEqual({ path: "paper.pdf", page: 2 });
+    expect(absoluteLocalFilePath("\\\\?\\C:\\Research\\paper.pdf#page=2")).toBe(
+      "C:/Research/paper.pdf",
+    );
+  });
+  it("accepts a scoped UNC server with a DNS name", () => {
+    expect(
+      resolveFileLink(
+        "notes/review.md",
+        "\\\\server.example.org\\share\\project\\plot.png",
+        "\\\\?\\UNC\\server.example.org\\share\\project",
+      ),
+    ).toEqual({ path: "plot.png" });
+  });
+  it.each([
+    "\\\\?\\GLOBALROOT\\Device\\HarddiskVolume1\\file",
+    "\\\\.\\C:\\project\\file",
+    "\\\\other\\share\\file",
+    "C:/project/../secret",
+    "C:/project/.GiT/config",
+    "C:/project/.PIPELINE-TASKS./x",
+    "C:/project/file?query=1",
+    "C:/project/%00file",
+  ])("refuses unsafe Windows target %s", (href) => {
+    expect(
+      resolveFileLink("notes/review.md", href, "\\\\?\\C:\\project"),
+    ).toBeNull();
+  });
   it("resolves sibling assets and source/page/heading locations", () => {
     expect(
       resolveFileLink("reports/review.md", "../code/estimate.do#L12-L19"),

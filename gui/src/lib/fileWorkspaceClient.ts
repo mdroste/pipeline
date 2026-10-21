@@ -12,6 +12,7 @@ export interface FilePreview {
   editable: boolean;
   truncated: boolean;
   externalPath: string | null;
+  scopeRoot?: string | null;
 }
 export interface FileAdapter {
   id: string;

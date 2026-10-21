@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { save } from "@tauri-apps/plugin-dialog";
+import { useConversationActions } from "./useConversationActions";
 import useModalDialog from "./useModalDialog";
 import {
   useWorkbenchEvents,
@@ -729,16 +729,13 @@ export function useWorkspacePageController({
     }
   };
 
-  const exportCurrent = async () => {
-    const current = snapshotRef.current;
-    if (!current) return;
-    const path = await save({
-      defaultPath: `${current.session.title.replace(/[^a-z0-9_-]+/gi, "-") || "conversation"}.md`,
-      filters: [{ name: "Markdown", extensions: ["md"] }],
-    });
-    if (path)
-      await workbenchClient.exportConversation(current.session.id, path);
-  };
+  const conversationActions = useConversationActions({
+    sessionId,
+    sessionRef,
+    snapshotRef,
+    activeRef,
+    hydrate,
+  });
 
   const saveSelection = (nextModel: string, nextEffort: string) => {
     const selectedSession = sessionRef.current;
@@ -1164,7 +1161,7 @@ export function useWorkspacePageController({
     generateTitle,
     deleteSession,
     moveSession,
-    exportCurrent,
+    ...conversationActions,
     saveSelection,
     send,
     resolve,

@@ -420,7 +420,13 @@ export default function FileWorkspace({
       />
     );
     return (
-      <FileNavigationScope value={{ ...navigation, path: file.path }}>
+      <FileNavigationScope
+        value={{
+          ...navigation,
+          path: file.path,
+          root: file.scopeRoot ?? undefined,
+        }}
+      >
         <div className="file-pane" tabIndex={0}>
           <div className="file-toolbar">
             <strong className="mr-auto break-all">
