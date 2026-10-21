@@ -4,7 +4,7 @@
 
 Reviewed Pipeline **1.1.0**, commit **`2a9236af65f09c8ed1a3a207720b26c5cd0a279c`**, with particular attention to macOS, Windows, Linux, filesystem boundaries, executable discovery, packaged resources, and user-visible failure handling. The checkout was clean before this review. Implementation and regression-test results are now recorded alongside the original audit evidence below. Original line numbers refer to the audited commit.
 
-**Implementation status: all 11 findings have fixes and regression coverage in this checkout, starting with the three release blockers.** Native Windows behavior and installed-artifact qualification are still required before release. Cross-target compilation and synthetic resource layouts do not certify Windows junction/cloud behavior or a shipped installer's PDF workflow.
+**Implementation status: all 11 findings have fixes and regression coverage in this checkout, starting with the three release blockers.** GitHub Actions now passes on Linux, macOS, and Windows. OneDrive hydration and installed-artifact qualification are still required before release; deterministic source tests and synthetic resource layouts do not certify a shipped installer's PDF workflow.
 
 The October 14 report in `docs/bug-triage-2026-10.md` predates substantial fixes already present in this checkout. Its findings 1–44 are not simply repeated here. Finding 11 below is an explicitly identified carryover from that report, now addressed here.
 
@@ -12,10 +12,10 @@ Severity convention: **P1** = release blocker for an affected advertised feature
 
 | # | Priority | Affected platform(s) | Finding | Current status |
 | --- | --- | --- | --- | --- |
-| 1 | P1 | Windows | Project reads escape through ancestor junctions | Fixed; cross-target checks pass; native run pending |
+| 1 | P1 | Windows | Project reads escape through ancestor junctions | Fixed; Windows native regressions pass |
 | 2 | P1 | Case-insensitive macOS; Windows | Metadata case aliases bypass exclusions | Fixed; public API regressions pass |
 | 3 | P1 | Packaged CLI, all platforms | Bundled Poppler is never initialized | Fixed; resource/process regressions pass; installer checks pending |
-| 4 | P2 | Windows | Research lookup omits executable extensions | Fixed; portable regression passes; native test added |
+| 4 | P2 | Windows | Research lookup omits executable extensions | Fixed; portable and native Windows regressions pass |
 | 5 | P2 | Windows | LaTeX validation rejects `.exe` engines | Fixed; classifier/profile regressions pass |
 | 6 | P2 | macOS, Linux | Research ignores recovered desktop PATH | Fixed; isolated-process regression passes |
 | 7 | P2 | Windows | Canonical paths break Markdown links/images | Fixed; resolver/rendering regressions pass |
@@ -28,11 +28,11 @@ Severity convention: **P1** = release blocker for an affected advertised feature
 
 ### 1. Windows project-file reads follow ancestor junctions outside the authorized root
 
-**Priority:** P1. **Status:** fixed in source; Windows execution/OneDrive qualification pending.
+**Priority:** P1. **Status:** fixed; Windows native regressions pass; OneDrive qualification pending.
 
 **Resolution.** Windows `SafeRoot` now opens one component at a time relative to retained native directory handles using `NtCreateFile`. It refuses junctions, symlinks, and unknown reparse providers, checks resolved long names against reserved metadata (including DOS aliases), and reads from the opened file. Cloud files are reopened through their verified handle for hydration, with a final-path check. Missing files now produce the same optional-read result as Unix. The implementation follows the [Windows handle-relative open contract](https://learn.microsoft.com/en-us/windows/win32/api/winternl/nf-winternl-ntcreatefile).
 
-**Validation.** Added Windows regressions for outside/inside junction refusal, directory/root replacement after opening handles, missing and ordinary files, and the public project/conversation readers. The actual Windows module and its tests successfully type-check for `x86_64-pc-windows-gnu` using a temporary standalone harness on macOS. This is not a native Windows execution result; junction and cloud-provider behavior still require the Windows release gate.
+**Validation.** Added Windows regressions for outside/inside junction refusal, directory/root replacement after opening handles, missing and ordinary files, and the public project/conversation readers. The actual Windows module and its tests successfully type-check for `x86_64-pc-windows-gnu` using a temporary standalone harness on macOS. That initial check was followed by successful native execution on `windows-2022`, including junction refusal, retained-parent/root replacement, and public file readers. The CI fixture correction is recorded below; cloud-provider behavior still requires manual qualification.
 
 **Locations:** `gui/src-tauri/src/workbench/project/files.rs:154–167`; `gui/src-tauri/src/safety.rs:162–218`; `gui/src-tauri/src/workbench/project/file_workspace.rs:157–165` and `:265–284`.
 
@@ -93,11 +93,11 @@ No real repository metadata was used in this reproduction. Windows uses the same
 
 ### 4. Windows research command lookup does not resolve normal executable extensions
 
-**Priority:** P2. **Status:** fixed; portable resolver regression passed; native Windows execution pending.
+**Priority:** P2. **Status:** fixed; portable resolver and native Windows execution regressions passed.
 
 **Resolution.** Research profiles now share the executable resolver with provider commands, using an explicit PATH and profile cwd. Windows extension search, spaced/Unicode paths, and safe shim argument handling are retained; arbitrary batch wrappers remain rejected. The manifest fingerprints the actual executable, prefix launch scripts, and effective PATH/PATHEXT, and execution consumes those resolved arguments.
 
-**Validation.** Portable Windows-resolution fixtures passed for extensionless/explicit `.exe`, case variants, Unicode/spaces, relative PATH entries, and rejected batch wrappers. A Windows-only preview-to-execution test is included for native CI.
+**Validation.** Portable Windows-resolution fixtures passed for extensionless/explicit `.exe`, case variants, Unicode/spaces, relative PATH entries, and rejected batch wrappers. The Windows-only preview-to-execution test passed on `windows-2022`.
 
 **Locations:** `gui/src-tauri/src/workbench/research/execution.rs:1387–1408`; default manuscript commands are constructed in `gui/src-tauri/src/workbench/project/studio/manuscript.rs:170–194`.
 
@@ -287,7 +287,7 @@ The audit host was **macOS 27.0, arm64**, using **Node 24.20.0**, **Cargo/Rust t
 
 Rust's locked dependencies were fetched after the initial network-restricted attempt could not resolve the registry. Frontend tests/build used the pre-existing `node_modules` tree, not a fresh `npm ci`; for example, the running Vitest identified itself as 4.1.10 while the manifest requests 4.1.11. These results are useful local checks, not certification of a clean locked frontend install. The native test results above are reported as separate runs rather than claiming a single uninterrupted all-targets pass.
 
-The audit did not call live model providers, operate on real research data, publish issues, change application implementation, or run Windows/Linux installers. Temporary reproduction source was removed after use. Native Windows behavior in findings 1, 4, 5, and 7 still needs the specified platform tests. No claim is made that every source file or every possible release defect was exhaustively reviewed.
+The audit did not call live model providers, operate on real research data, publish issues, change application implementation, or run Windows/Linux installers. Temporary reproduction source was removed after use. The original audit left native Windows checks pending; the follow-up CI results below now cover the deterministic Windows regressions. No claim is made that every source file or every possible release defect was exhaustively reviewed.
 
 ## Fix verification — October 21, 2026
 
@@ -309,13 +309,20 @@ The native suite needed filesystem access for its existing engine-lock test; rel
 
 Research launch fingerprints now include the effective PATH and resolved prefix arguments. Existing authorizations may require preview and explicit authorization again; this is intentional so the newly resolved command/environment is the one the user approves.
 
+## CI follow-up — October 21, 2026
+
+The first [GitHub Actions run for the fixes](https://github.com/mdroste/pipeline/actions/runs/39673818507) passed the macOS native suite (1,030 library tests and 16 CLI tests). Windows exposed a regression-fixture error: after verifying that an open descendant still reads the original file, the test attempted to rename its ancestor while retaining the descendant file and directory handles. Windows rejected that rename with access denied. The fixture now closes those completed-scenario handles before testing root replacement, retaining the original root handle and all security assertions. The corrected commit, `900d8eccf51396261d38e9e90d6981a6f876c21a`, passed all three jobs in the [follow-up CI run](https://github.com/mdroste/pipeline/actions/runs/39674971858). The Windows retained-root regression, public junction-reader checks, and extensionless preview/execution test all passed. OneDrive and installed-artifact checks remain separate release gates.
+
+| CI check | Result |
+| --- | --- |
+| Linux (`ubuntu-22.04`) | 1,030 Rust library tests and 16 CLI tests passed; 6 ignored |
+| macOS (`macos-15`) | 1,030 Rust library tests and 16 CLI tests passed; 11 ignored |
+| Windows (`windows-2022`) | 959 Rust library tests and 16 CLI tests passed; 4 ignored |
+| Frontend, pinned Node 24.18.0 | 116 files / 848 tests passed; production build passed |
+| Release contracts, explicit CI Python | 67 tests passed |
+| Strict Rust lint, formatting, source budget, documentation links | Passed |
+
 ## Additional release gates to complete
-
-### CI follow-up
-
-The first [GitHub Actions run for the fixes](https://github.com/mdroste/pipeline/actions/runs/39673818507) passed the macOS native suite (1,030 library tests and 16 CLI tests). Windows exposed a regression-fixture error: after verifying that an open descendant still reads the original file, the test attempted to rename its ancestor while retaining the descendant file and directory handles. Windows rejected that rename with access denied. The fixture now closes those completed-scenario handles before testing root replacement, retaining the original root handle and all security assertions. Native CI must verify this correction; OneDrive and installed-artifact checks remain separate release gates.
-
-### Remaining qualification
 
 These are evidence gaps, not additional proven runtime bugs:
 
@@ -323,6 +330,6 @@ These are evidence gaps, not additional proven runtime bugs:
 2. **Exercise installed artifacts on all four advertised targets.** Test macOS ARM and Intel, Windows, and Linux AppImage on clean supported systems. Include first launch, upgrade/data preservation, bundled PDF extraction through both GUI and CLI, and Windows WebView2 setup. The release workflow builds packages but does not launch them.
 3. **Cover the platform cases behind these findings.** Use macOS case-insensitive storage and GUI launch; Windows ordinary, extended, spaced, Unicode, and junction-containing paths; and Linux desktop launch with a minimal inherited PATH. Include unavailable/custom storage drives without altering real user stores.
 4. **Run the live qualification scenarios that deterministic tests cannot establish.** Authentication, native model/tool permissions, provider failure recovery, cancellation, and packaged crash recovery remain separate checks. Review the 11 ignored native tests and the existing qualification documents when deciding which require final-candidate evidence.
-5. **Complete final artifact/toolchain checks.** Clean-install source checks are recorded above. Run CI on the final candidate with its exact pinned toolchain, then finish dependency advisory review, signing/notarization acceptance, and bundled-component notice verification.
+5. **Complete final artifact/toolchain checks.** Clean-install source checks are recorded above. CI passed with the pinned toolchain for the corrected source commit above. Repeat it if candidate code changes, and finish dependency advisory review, signing/notarization acceptance, and bundled-component notice verification.
 
 All itemized code fixes are implemented. The remaining gates above qualify the actual release candidate and installed packages; passing local source tests is not a substitute for them.
