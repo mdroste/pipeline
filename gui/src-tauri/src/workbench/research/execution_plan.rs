@@ -384,19 +384,3 @@ pub(crate) fn stage(
     };
     Ok((profile, authorization, manifest))
 }
-pub(crate) fn record_test(store: &Store, id: &str, outcome: &str) -> WorkbenchResult<()> {
-    open_connection(store)?
-        .execute(
-            "UPDATE execution_plan_state SET test_status=?2 WHERE plan_id=?1",
-            params![
-                id,
-                if outcome == "completed" {
-                    "passed"
-                } else {
-                    "failed"
-                }
-            ],
-        )
-        .map_err(|e| WorkbenchError::storage("Plan test status", e))?;
-    Ok(())
-}

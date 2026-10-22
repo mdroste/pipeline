@@ -590,3 +590,24 @@ fn mission_prompts_are_bound_opaquely_so_binding_syntax_in_content_cannot_break_
     assert!(rendered.contains("{{input:document}}"));
     assert!(rendered.contains("{{output:nope}}"));
 }
+
+#[test]
+fn failed_computation_cannot_complete_mission_with_goal_left_open() {
+    let (_temp, _, mut m) = fixture();
+    apply_plan(&mut m, plan(), "planner").unwrap();
+    m.rounds[0]
+        .evidence
+        .insert("r1-execution".into(), json!({"result":{"passed":false}}));
+    let mut c = challenge();
+    c.goal_resolved = false;
+    c.methods.clear();
+    c.criteria[0].evidence_ids = vec!["r1-execution".into()];
+    assert!(apply_challenge(&mut m, c.clone(), "challenge").is_err());
+    assert_ne!(m.state, "completed");
+    m.rounds[0]
+        .evidence
+        .insert("r1-memo".into(), json!({"kind":"artifact"}));
+    c.criteria[0].evidence_ids.push("r1-memo".into());
+    apply_challenge(&mut m, c, "challenge").unwrap();
+    assert_eq!(m.state, "completed");
+}

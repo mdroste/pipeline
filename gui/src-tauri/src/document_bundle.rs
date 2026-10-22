@@ -597,6 +597,7 @@ fn add_markdown_nodes(bundle: &mut DocumentBundle, text: &str, method: &str) {
 
 mod adapters;
 mod bundle;
+mod docx_xml;
 mod paddle;
 
 use adapters::{

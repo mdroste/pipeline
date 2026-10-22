@@ -7,6 +7,14 @@ use std::path::Path;
 /// Write one line of report or JSON output. The Rust runtime ignores SIGPIPE,
 /// so `println!` panics (exit 101) when the reader of a pipe has gone away;
 /// stop printing quietly instead and let the exit code reflect the run.
+static STDOUT_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(super) fn output_exit_code(code: i32) -> i32 {
+    if code == 0 && STDOUT_FAILED.load(std::sync::atomic::Ordering::Relaxed) {
+        1
+    } else {
+        code
+    }
+}
 pub(super) fn emit_stdout(text: &str) {
     emit_to(&mut std::io::stdout().lock(), text);
 }
@@ -20,6 +28,7 @@ pub(super) fn emit_to(out: &mut impl std::io::Write, text: &str) -> bool {
         Ok(()) => true,
         Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => false,
         Err(error) => {
+            STDOUT_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
             eprintln!("Error: cannot write to stdout: {error}");
             false
         }
@@ -74,7 +83,7 @@ pub(super) fn finish_single_run(value: &serde_json::Value, out: Option<&str>, fo
         eprintln!("{failed} step(s) failed");
         1
     } else {
-        0
+        output_exit_code(0)
     }
 }
 

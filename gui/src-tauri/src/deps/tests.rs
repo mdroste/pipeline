@@ -747,3 +747,27 @@ fn local_ipv6_urls_use_standard_authority_parsing() {
         Some(("[::1]".into(), 11434))
     );
 }
+
+#[test]
+fn generated_markdown_does_not_require_pdf_extraction() {
+    let mut config = crate::pipeline_config::PipelineConfig {
+        steps: Vec::new(),
+        merge: Default::default(),
+        outputs: Default::default(),
+        context_cache: Default::default(),
+        use_orientation: false,
+        orientation_prompt: String::new(),
+        orientation_schema: None,
+        extraction: Default::default(),
+        parallel_context_template: String::new(),
+        variables: Vec::new(),
+    };
+    config.extraction.input_mode = "document".into();
+    for extension in ["md", "markdown", "txt"] {
+        assert!(!pdf_extraction_may_run(
+            &config,
+            Some(&format!("/captured/draft.{extension}")),
+            None
+        ));
+    }
+}

@@ -70,6 +70,17 @@ pub fn handle_dynamic_tool_call(store: &Store, params: &Value) -> WorkbenchResul
             "Dynamic tool is not enabled by this conversation's immutable harness",
         ));
     }
+    if tool == "workbench_source_read"
+        && !search::source_permitted(
+            store,
+            &workspace_id,
+            required_argument(&arguments, "sourceVersionId")?,
+        )?
+    {
+        return Err(WorkbenchError::invalid(
+            "This source is excluded from research context and search",
+        ));
+    }
     let existing: Option<(String, Option<String>, Option<String>)> = connection.query_row("SELECT state, result_json, error_json FROM tool_receipts WHERE binding_id = ?1 AND provider_turn_id = ?2 AND call_id = ?3", params![binding_id, turn_id, call_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional().map_err(|error| WorkbenchError::storage("Failed to inspect dynamic tool receipt", error))?;
     if let Some((state, result, error)) = existing {
         return match (state.as_str(), result, error) {

@@ -989,30 +989,14 @@ pub(crate) fn finalize_execution(
     let observed = observed_dependencies(&profile);
     let validation = json!({"observedDependencies":observed,"adapter":validation,"stdoutTruncated":output.stdout_truncated,"stderrTruncated":output.stderr_truncated,"executionBoundary":"explicitly_authorized_host","executionContainment":"host_access","capturedInputIdentity":manifest["snapshotConsistency"],"planId":request.plan_id,"authorizationFingerprint":authorization.fingerprint,"authorizedLaunch":authorization.launch,"dependencyCoverage":"declared_only","inputsChanged":inputs_changed,"unchangedPreexistingOutputs":stale_outputs,"stataWrapperReturnedAfterStop":output.wrapper_completed_after_stop,"processStarted":output.process_started,"stataCleanupRequired":profile.adapter=="stata" && output.process_started && outcome!="completed" && !output.wrapper_completed_after_stop});
     let ended = now();
-    open_connection(store)?.execute("UPDATE execution_jobs SET finalization_json=?2 WHERE execution_id=?1", params![execution_id,json!({"outcome":outcome,"endedAt":ended,"exitStatus":output.status,"stdout":stdout,"stderr":stderr,"outputs":outputs,"validation":validation,"testOnly":request.test_only,"profileId":profile.id,"profileRevision":profile.revision}).to_string()]).map_err(|e|WorkbenchError::storage("Failed to journal adopted execution",e))?;
-    open_connection(store)?.execute("UPDATE research_executions SET outcome=?2, ended_at=?3, exit_status=?4, stdout_text=?5, stderr_text=?6, output_manifest_json=?7, validation_json=?8 WHERE id=?1", params![execution_id, outcome, ended, output.status, stdout, stderr, serde_json::to_string(&outputs).unwrap_or_default(), serde_json::to_string(&validation).unwrap_or_default()]).map_err(|error| WorkbenchError::storage("Failed to complete research execution receipt", error))?;
-    if request.test_only && request.plan_id.is_some() {
-        super::execution_plan::record_test(store, request.plan_id.as_deref().unwrap(), &outcome)?;
-    }
-    if request.test_only && request.plan_id.is_none() {
-        open_connection(store)?
-            .execute(
-                "UPDATE execution_profiles SET tested_at=?2, test_status=?3 WHERE id=?1 AND revision=?4",
-                params![
-                    profile.id,
-                    ended,
-                    if outcome == "completed" {
-                        "passed"
-                    } else {
-                        "failed"
-                    },
-                    profile.revision
-                ],
-            )
-            .map_err(|error| {
-                WorkbenchError::storage("Failed to record execution profile test", error)
-            })?;
-    }
+    let journal = json!({"outcome":outcome,"endedAt":ended,"exitStatus":output.status,"stdout":stdout,"stderr":stderr,"outputs":outputs,"validation":validation,"testOnly":request.test_only,"profileId":profile.id,"profileRevision":profile.revision});
+    open_connection(store)?
+        .execute(
+            "UPDATE execution_jobs SET finalization_json=?2 WHERE execution_id=?1",
+            params![execution_id, journal.to_string()],
+        )
+        .map_err(|e| WorkbenchError::storage("Failed to journal adopted execution", e))?;
+    super::execution_finalization::apply(store, &execution_id, &journal)?;
     get_execution(store, &execution_id)
 }
 

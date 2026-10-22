@@ -328,10 +328,7 @@ pub fn reconcile_job(store: &Store, ws: &str, id: &str) -> WorkbenchResult<Resea
             }
         }
     }
-    open_connection(store)?.execute("UPDATE research_executions SET outcome=?2,ended_at=?3,exit_status=?4,stdout_text=?5,stderr_text=?6,output_manifest_json=?7,validation_json=?8 WHERE id=?1",params![id,v["outcome"].as_str(),v["endedAt"].as_str(),v["exitStatus"].as_i64(),v["stdout"].as_str(),v["stderr"].as_str(),v["outputs"].to_string(),v["validation"].to_string()]).map_err(|e|WorkbenchError::storage("Failed to reconcile adopted outputs",e))?;
-    if v["testOnly"] == true {
-        open_connection(store)?.execute("UPDATE execution_profiles SET tested_at=?2,test_status=?3 WHERE id=?1 AND revision=?4",params![v["profileId"].as_str(),v["endedAt"].as_str(),if v["outcome"] == "completed" {"passed"} else {"failed"},v["profileRevision"].as_i64()]).map_err(|e|WorkbenchError::storage("Failed to reconcile profile test",e))?;
-    }
+    super::execution_finalization::apply(store, id, &v)?;
     get_execution(store, id)
 }
 pub async fn shutdown() {

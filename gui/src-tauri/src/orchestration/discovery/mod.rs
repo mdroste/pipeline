@@ -157,6 +157,29 @@ fn account(p: &mut Portfolio, child: &TaskRun) {
     p.run.active_child = None;
     p.run.active_scope = None;
 }
+// Persist recovered failures before the outer error handler reloads the child
+// to distinguish a known terminal failure from an ambiguous submission.
+async fn recover_child(c: &Coordinator, child: &TaskRun) -> Result<TaskRun> {
+    let mut recovered = child.clone();
+    c.recover_results(&mut recovered).await?;
+    if recovered.progress.receipts.iter().any(|(key, receipt)| {
+        receipt.state == "failed"
+            && child
+                .progress
+                .receipts
+                .get(key)
+                .is_some_and(|old| old.state == "unknown")
+    }) {
+        c.save(
+            &mut recovered,
+            "reconciledFailure",
+            "Recovered a terminal action failure without replaying it",
+        )
+        .await?;
+    }
+    Ok(recovered)
+}
+
 async fn advance(c: &Arc<Coordinator>, p: &mut Portfolio) -> Result<()> {
     if p.run.terminal() {
         return Ok(());
@@ -185,8 +208,7 @@ async fn advance(c: &Arc<Coordinator>, p: &mut Portfolio) -> Result<()> {
             }
             if child.state != "finished" {
                 // A lost acknowledgement can contain completed work. Reconcile, never resubmit.
-                let mut recovered = child.clone();
-                c.recover_results(&mut recovered).await?;
+                let mut recovered = recover_child(c, &child).await?;
                 if recovered
                     .progress
                     .receipts

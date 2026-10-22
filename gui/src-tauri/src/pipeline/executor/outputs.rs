@@ -125,6 +125,7 @@ pub(super) fn enforce_merge_output_schemas(
     app: &crate::emit::EventBus,
     steps: &[&StepConfig],
     unit_outputs: &[StepOutput],
+    upstream_outputs: &[StepOutput],
     merged: &mut [StepOutput],
 ) {
     for output in merged {
@@ -138,22 +139,87 @@ pub(super) fn enforce_merge_output_schemas(
         else {
             continue;
         };
-        let Some(schema) = steps
-            .iter()
-            .find(|step| {
-                step.id == output.step_id
-                    || output
-                        .step_id
-                        .strip_prefix(&step.id)
-                        .is_some_and(|rest| rest.starts_with('/'))
-            })
-            .and_then(|step| effective_output_schema(step).ok().flatten())
-        else {
+        let Some(step) = steps.iter().find(|step| {
+            step.id == output.step_id
+                || output
+                    .step_id
+                    .strip_prefix(&step.id)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        }) else {
             continue;
         };
-        let reason = if output.calls.iter().any(|call| call.role == "merge") {
-            match crate::pipeline::structured::check(&schema, &output.raw_text) {
-                Ok(()) => continue,
+        let Some(schema) = effective_output_schema(step).ok().flatten() else {
+            continue;
+        };
+        let lineage =
+            super::findings::preserved_finding_ids(&step.id, Some(&schema), upstream_outputs)
+                .and_then(|expected| {
+                    let Some(mut expected) = expected else {
+                        return Ok(None);
+                    };
+                    if let Some(source) = step
+                        .for_each
+                        .as_ref()
+                        .and_then(|f| f.artifact.as_ref())
+                        .filter(|source| {
+                            schema
+                                .get(crate::pipeline::structured::PRESERVE_FINDINGS_KEY)
+                                .and_then(serde_json::Value::as_str)
+                                == Some(source.step.as_str())
+                        })
+                    {
+                        let index = output
+                            .step_id
+                            .strip_prefix(&format!("{}/item_", step.id))
+                            .and_then(|suffix| suffix.parse::<usize>().ok())
+                            .and_then(|n| n.checked_sub(1))
+                            .ok_or("Merge group has no original fan-out item identity")?;
+                        let text = upstream_outputs
+                            .iter()
+                            .rev()
+                            .find(|item| {
+                                !item.skipped
+                                    && item.step_id.split('/').next() == Some(source.step.as_str())
+                            })
+                            .ok_or("Original fan-out source is unavailable")?;
+                        let value: serde_json::Value =
+                            serde_json::from_str(&text.raw_text).map_err(|e| e.to_string())?;
+                        let elements = if source.pointer.is_empty() {
+                            &value
+                        } else {
+                            value
+                                .pointer(&source.pointer)
+                                .ok_or("Original fan-out pointer is unavailable")?
+                        };
+                        let element = elements
+                            .as_array()
+                            .and_then(|items| items.get(index))
+                            .ok_or("Merge group is outside the source findings")?;
+                        expected = super::findings::finding_lineage(
+                            &serde_json::json!({"findings":[element]}).to_string(),
+                        )
+                        .ok_or("Original fan-out item has no finding identity")?;
+                    }
+                    Ok(Some(expected))
+                });
+        let reason = if output
+            .calls
+            .iter()
+            .any(|call| matches!(call.role.as_str(), "merge" | "usage_limit_fallback_merge"))
+            && !output.calls.iter().any(|call| call.role == "failed_merge")
+        {
+            let checked = lineage.and_then(|expected| match expected {
+                Some(expected) => {
+                    super::findings::validate_preserved_output(&schema, &expected, &output.raw_text)
+                }
+                None => crate::pipeline::structured::check(&schema, &output.raw_text)
+                    .map(|()| output.raw_text.clone()),
+            });
+            match checked {
+                Ok(text) => {
+                    output.raw_text = text;
+                    continue;
+                }
                 Err(reason) => reason,
             }
         } else {
@@ -178,7 +244,7 @@ pub(super) fn enforce_merge_output_schemas(
         output.model_source = first_unit.model_source.clone();
         output.model_catalog_updated_at = first_unit.model_catalog_updated_at.clone();
         for call in &mut output.calls {
-            if call.role == "merge" {
+            if matches!(call.role.as_str(), "merge" | "usage_limit_fallback_merge") {
                 call.role = "failed_merge".to_string();
             }
         }

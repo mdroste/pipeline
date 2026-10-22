@@ -5,6 +5,32 @@ the first public release was not maintained as a stable release series.
 
 ## Unreleased
 
+## 1.1.1 — 2026-10-22
+
+- Workspace permission requests display their full access scope, working
+  directory, and turn duration. Failed approvals refresh pending requests and
+  prevent duplicate decisions. Late chat creation respects newer navigation;
+  discarding an unreadable key preserves unsaved settings edits.
+- Reviews accept bounded UTF-8 Markdown and text, including immutable drafts
+  produced by research automations. Prompt replacements are expanded once, so
+  quoted placeholders cannot disclose other run inputs or variables.
+- Validation fan-out preserves findings beyond its dispatch cap. Merge acceptance
+  enforces the original finding lineage and disposition ledger, and successful
+  quota-fallback merges retain their results.
+- Experiment cancellation synchronizes with attempt staging. Execution recovery
+  atomically certifies the captured plan or live profile that was actually tested.
+  Replication capsules retain executable file metadata without granting execution.
+- Excluded sources cannot reach model tools through new reads or cached receipts.
+  Failed computations cannot establish mission completion. Known failed automation
+  turns remain available for explicit retry instead of being classified as unknown.
+- App Server shutdown and permission responses have bounded queue waits; timed-out
+  and cancelled requests release pending state. CLI output write failures return a
+  failing exit status, while broken pipes remain quiet.
+- LaTeX extraction expands supported whitespace, subfile, and import references.
+  Figure associations require matching label or page evidence. DOCX extraction
+  preserves tabs, breaks, numeric entities, and complete namespaced equations;
+  oversized equations are omitted with a note instead of truncated into invalid XML.
+
 - Project file reads on Windows stay bound to opened directory handles and
   reject junction escapes. Mixed-case Git/task metadata names and Windows
   aliases can no longer bypass file access or capture exclusions.

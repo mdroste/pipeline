@@ -971,3 +971,45 @@ fn bare_latex_file_names_stage_from_the_current_directory() {
         Path::new("/abs")
     );
 }
+
+#[test]
+fn latex_expands_whitespace_subfile_and_import_in_source_order() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    fs::create_dir(root.join("chapters")).unwrap();
+    fs::write(root.join("one.tex"), "FIRST").unwrap();
+    fs::write(root.join("two.tex"), "SECOND").unwrap();
+    fs::write(root.join("chapters/three.tex"), "THIRD \\input {four}").unwrap();
+    fs::write(root.join("chapters/four.tex"), "FOURTH").unwrap();
+    let main = root.join("main.tex");
+    fs::write(
+        &main,
+        "\\input {one}\n\\subfile\n{two}\n\\import {chapters/}{three}",
+    )
+    .unwrap();
+    let mut warnings = vec![];
+    let text = extract_latex(&main, &root, &mut warnings).unwrap();
+    assert!(text.contains("FIRST\nSECOND\nTHIRD FOURTH"), "{text}");
+    assert!(warnings.is_empty(), "{warnings:?}");
+}
+
+#[tokio::test]
+async fn markdown_document_extraction_preserves_bytes_and_bundle() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("paper.md");
+    let text = "# Research paper\n\nA result with α and **evidence**.\n";
+    fs::write(&path, text).unwrap();
+    let app: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+    let extracted = extract(
+        &app,
+        path.to_str().unwrap(),
+        &crate::pipeline_config::ExtractionConfig::default(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(extracted.text, text);
+    assert_eq!(extracted.paper_hash, content_hash(text.as_bytes()));
+    let bundle = crate::document_bundle::build(&extracted, temp.path()).unwrap();
+    assert_eq!(bundle.bundle.source_kind, "text");
+    assert!(!bundle.bundle.nodes.is_empty());
+}

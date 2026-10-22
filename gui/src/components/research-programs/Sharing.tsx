@@ -415,6 +415,12 @@ export default function Sharing(props: DeskProps) {
               value={inspected.preview.manifest}
               label="Incoming inert material"
             />
+            <p className="text-sm text-neutral-500">
+              Executable file flags are restored when binding, without granting
+              permission to run. Older capsules without these flags use
+              nonexecutable files; ask the sender to re-export if helpers need
+              executable permissions.
+            </p>
             <button
               className={button}
               disabled={p.busy}

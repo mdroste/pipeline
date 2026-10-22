@@ -1,3 +1,5 @@
+import useWorkspaceSessionList from "./useWorkspaceSessionList";
+import useWorkspaceRequestResolution from "./useWorkspaceRequestResolution";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConversationActions } from "./useConversationActions";
 import useModalDialog from "./useModalDialog";
@@ -154,6 +156,9 @@ export function useWorkspacePageController({
   const [moving, setMoving] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const navigationGeneration = useRef(0);
+  const workspaceRef = useRef(workspaceId);
+  workspaceRef.current = workspaceId;
   const sessionRef = useRef(sessionId);
   const snapshotRef = useRef(snapshot);
   const submissionRef = useRef<PendingSubmission | null>(null);
@@ -212,33 +217,12 @@ export function useWorkspacePageController({
     },
     [persistDraft],
   );
-  const loadSessions = useCallback(
-    async (selectedWorkspace: string | null, archived = showArchived) => {
-      const sequence = ++sessionListSequence.current;
-      const response = await workbenchClient.listSessions(
-        selectedWorkspace,
-        archived,
-      );
-      if (sequence !== sessionListSequence.current) return;
-      let remembered: string | null = null;
-      try {
-        remembered = localStorage.getItem(
-          `pipeline.workspace.lastSession.${selectedWorkspace ?? "unfiled"}`,
-        );
-      } catch {
-        /* Optional navigation state. */
-      }
-      setSessions(response.sessions);
-      setSessionId((current) =>
-        response.sessions.some((session) => session.id === current)
-          ? current
-          : (response.sessions.find((session) => session.id === remembered)
-              ?.id ??
-            response.sessions[0]?.id ??
-            null),
-      );
-    },
-    [showArchived],
+  const loadSessions = useWorkspaceSessionList(
+    workspaceRef,
+    sessionListSequence,
+    setSessions,
+    setSessionId,
+    showArchived,
   );
 
   const hydrate = useCallback(async (selectedSession = sessionRef.current) => {
@@ -503,7 +487,9 @@ export function useWorkspacePageController({
   const selectProject = useCallback(
     async (id: string | null) => {
       if (contextBusyRef.current || harnessEditor) return;
+      const generation = ++navigationGeneration.current;
       await saveCurrentDraft();
+      if (generation !== navigationGeneration.current) return;
       if (id !== workspaceId) {
         setSnapshot(null);
         setSessionId(null);
@@ -521,7 +507,9 @@ export function useWorkspacePageController({
   const selectSession = useCallback(
     async (id: string) => {
       if (contextBusyRef.current || harnessEditor) return;
+      const generation = ++navigationGeneration.current;
       await saveCurrentDraft();
+      if (generation !== navigationGeneration.current) return;
       if (id !== sessionId) {
         setSnapshot(null);
         setDraft("");
@@ -535,13 +523,25 @@ export function useWorkspacePageController({
 
   const createSession = async () => {
     if (contextBusyRef.current || harnessEditor) return;
+    const generation = ++navigationGeneration.current;
     await saveCurrentDraft();
+    if (generation !== navigationGeneration.current) return;
     const created = await workbenchClient.createSession({
       workspaceId,
       title: "New conversation",
       operationId: newOperation("create-session"),
     });
+    if (
+      generation !== navigationGeneration.current ||
+      workspaceId !== workspaceRef.current
+    )
+      return;
     await loadSessions(workspaceId);
+    if (
+      generation !== navigationGeneration.current ||
+      workspaceId !== workspaceRef.current
+    )
+      return;
     setSnapshot(null);
     setDraft("");
     setSessionId(created.record.id);
@@ -559,6 +559,7 @@ export function useWorkspacePageController({
   };
 
   const projectCreated = async (created: Workspace) => {
+    ++navigationGeneration.current;
     await saveCurrentDraft().catch(() => undefined);
     setWorkspaces((old) => [
       created,
@@ -576,7 +577,9 @@ export function useWorkspacePageController({
   const openResearchConversation = useCallback(
     async (text: string, checkpoint?: string, contextItems?: ContextItem[]) => {
       if (!workspaceId) return;
+      const generation = ++navigationGeneration.current;
       await saveCurrentDraft();
+      if (generation !== navigationGeneration.current) return;
       let session: WorkbenchSession;
       if (checkpoint) {
         const { projectClient } = await import("../lib/projectClient");
@@ -599,6 +602,11 @@ export function useWorkspacePageController({
           })
         ).record;
       }
+      if (
+        generation !== navigationGeneration.current ||
+        workspaceId !== workspaceRef.current
+      )
+        return;
       await loadSessions(workspaceId);
       if (contextItems?.length)
         await deskClient.saveContext(
@@ -606,6 +614,11 @@ export function useWorkspacePageController({
           { revision: 0, items: [] },
           contextItems,
         );
+      if (
+        generation !== navigationGeneration.current ||
+        workspaceId !== workspaceRef.current
+      )
+        return;
       setSessionId(session.id);
       setSurface("project");
       setAssistantRequest((value) => value + 1);
@@ -879,27 +892,7 @@ export function useWorkspacePageController({
     }
   };
 
-  const resolve = async (
-    event: WorkbenchEvent,
-    result?: Record<string, unknown>,
-  ) => {
-    if (event.requestId === undefined || !event.method) return;
-    setRequests((old) =>
-      old.filter(
-        (item) =>
-          item.requestId !== event.requestId || item.epoch !== event.epoch,
-      ),
-    );
-    await workbenchClient
-      .resolveServerRequest({
-        epoch: event.epoch,
-        requestId: event.requestId,
-        method: event.method,
-        result: result ?? null,
-        declineMessage: result ? null : "The user declined this request",
-      })
-      .catch((cause) => setError(workbenchErrorMessage(cause)));
-  };
+  const resolve = useWorkspaceRequestResolution(setRequests, setError);
 
   const {
     allRenderedItems,
@@ -961,11 +954,12 @@ export function useWorkspacePageController({
     entryRequest,
     entryTarget,
     async (target, current) => {
+      const generation = ++navigationGeneration.current;
       await saveCurrentDraft();
       const selected = target.sessionId
         ? await workbenchClient.sessionSnapshot(target.sessionId)
         : null;
-      if (!current()) return;
+      if (!current() || generation !== navigationGeneration.current) return;
       const project = selected
         ? selected.session.workspaceId
         : target.projectId;

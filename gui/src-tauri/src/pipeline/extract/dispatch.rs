@@ -171,6 +171,32 @@ pub async fn extract(
             })
         } else if ext_eq(&path, "pdf") {
             extract_pdf_native(&native_app, &path, &blocking_method)
+        } else if ["md", "markdown", "txt"]
+            .iter()
+            .any(|ext| ext_eq(&path, ext))
+        {
+            use std::io::Read as _;
+            let file = crate::safety::open_regular_file(&path)?;
+            let mut bytes = Vec::new();
+            file.take(crate::safety::MAX_RUNTIME_CONTEXT_BYTES as u64 + 1)
+                .read_to_end(&mut bytes)
+                .map_err(|e| format!("Cannot read document: {e}"))?;
+            if bytes.len() > crate::safety::MAX_RUNTIME_CONTEXT_BYTES {
+                return Err("Text document exceeds the 8 MiB extraction limit".into());
+            }
+            let hash = content_hash(&bytes);
+            let text = String::from_utf8(bytes)
+                .map_err(|e| format!("Text document must be UTF-8: {e}"))?;
+            if text.trim().is_empty() || text.contains('\0') {
+                return Err("Text document is empty or contains binary NUL bytes".into());
+            }
+            Ok(ExtractionResult {
+                text,
+                method: "text".into(),
+                source_path: path.to_string_lossy().into_owned(),
+                paper_hash: hash,
+                quality_notes: vec![],
+            })
         } else if ext_eq(&path, "docx") {
             extract_docx(&path)
         } else {

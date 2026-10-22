@@ -748,3 +748,39 @@ fn docx_appends_substantive_footnotes_and_endnotes() {
     assert!(!text.contains("sep"), "separator stubs are not notes");
     assert!(!text.contains("## Endnotes"));
 }
+
+#[test]
+fn asset_links_require_label_or_page_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let extraction = ExtractionResult {
+        text: "# Test".into(),
+        method: "text".into(),
+        source_path: "paper.md".into(),
+        paper_hash: "fixture".into(),
+        quality_notes: vec![],
+    };
+    let mut bundle = build(&extraction, temp.path()).unwrap().bundle;
+    for number in 1..=4 {
+        bundle.assets.push(DocumentAsset {
+            id: format!("asset-{number}"),
+            kind: "figure".into(),
+            label: format!("Figure {number}"),
+            rel_path: format!("{number}.png"),
+            media_type: "image/png".into(),
+            page: None,
+            width: None,
+            height: None,
+            provenance: DocumentProvenance {
+                origin_id: "fixture".into(),
+                method: "fixture".into(),
+                confidence: None,
+            },
+        });
+    }
+    assert_eq!(closest_assets(&bundle, "figure", None, "4"), ["asset-4"]);
+    assert!(closest_assets(&bundle, "figure", None, "40").is_empty());
+    for asset in &mut bundle.assets {
+        asset.label = "Unlabelled image".into();
+    }
+    assert!(closest_assets(&bundle, "figure", None, "4").is_empty());
+}

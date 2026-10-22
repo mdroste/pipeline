@@ -663,7 +663,7 @@ fn expand_latex_includes(
     stack: &mut Vec<PathBuf>,
 ) -> Result<String, String> {
     let parent = path.parent().unwrap_or(Path::new("."));
-    let re = Regex::new(r"\\(?:input|include)\{([^}]+)\}").expect("LaTeX include regex is invalid");
+    let re = Regex::new(r"\\(?:input|include|subfile)\s*\{([^}]+)\}|\\(?:import|subimport|inputfrom|includefrom)\s*\{([^}]+)\}\s*\{([^}]+)\}").expect("LaTeX include regex is invalid");
 
     let mut result = String::new();
     let mut last_end = 0;
@@ -679,7 +679,12 @@ fn expand_latex_includes(
         }
         result.push_str(&content[last_end..full_match.start()]);
 
-        let include_name = &cap[1];
+        let include_name = if let Some(name) = cap.get(1) {
+            name.as_str().trim().to_string()
+        } else {
+            format!("{}/{}", cap[2].trim().trim_end_matches('/'), cap[3].trim())
+        };
+        let include_name = include_name.as_str();
         let mut include_path = parent.join(include_name);
         if include_path.extension().is_none() {
             include_path.set_extension("tex");

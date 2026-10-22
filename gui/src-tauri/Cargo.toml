@@ -1,6 +1,6 @@
 [package]
 name = "pipeline-gui"
-version = "1.1.0"
+version = "1.1.1"
 description = "Desktop agent orchestration suite for academic research and review"
 homepage = "https://github.com/mdroste/pipeline"
 repository = "https://github.com/mdroste/pipeline"
@@ -49,6 +49,7 @@ dirs = "6"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10.4"
 regex = "1"
+quick-xml = "0.41"
 sha2 = "0.10"
 pulldown-cmark = "0.13"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }

@@ -25,6 +25,20 @@ pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 type PendingReply = oneshot::Sender<Result<Value, RequestError>>;
 
+// Also runs when the caller drops a request future while queued or waiting.
+struct PendingGuard<'a> {
+    pending: &'a Mutex<HashMap<u64, PendingReply>>,
+    id: u64,
+}
+impl Drop for PendingGuard<'_> {
+    fn drop(&mut self) {
+        self.pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.id);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RequestError {
@@ -338,6 +352,10 @@ impl AppServerClient {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(id, sender);
+        let _pending = PendingGuard {
+            pending: &self.shared.pending,
+            id,
+        };
         if tokio::time::timeout(
             WRITE_QUEUE_TIMEOUT,
             self.outbound.send(Outbound::Frame(bytes)),
@@ -410,10 +428,13 @@ impl AppServerClient {
             }),
         };
         let bytes = encode_frame(&value)?;
-        self.outbound
-            .send(Outbound::Frame(bytes))
-            .await
-            .map_err(|_| RequestError::transport("App Server writer stopped", true))
+        tokio::time::timeout(
+            WRITE_QUEUE_TIMEOUT,
+            self.outbound.send(Outbound::Frame(bytes)),
+        )
+        .await
+        .map_err(|_| RequestError::transport("App Server write queue is backpressured", true))?
+        .map_err(|_| RequestError::transport("App Server writer stopped", true))
     }
 
     pub async fn close_writer(&self) -> Result<(), RequestError> {
@@ -421,17 +442,17 @@ impl AppServerClient {
             return Ok(());
         }
         let (sender, receiver) = oneshot::channel();
-        self.outbound
-            .send(Outbound::Close(sender))
-            .await
-            .map_err(|_| RequestError::transport("App Server writer stopped", true))?;
-        tokio::time::timeout(Duration::from_secs(2), receiver)
-            .await
-            .map_err(|_| RequestError::transport("Timed out closing App Server stdin", true))?
-            .map_err(|_| {
+        tokio::time::timeout(WRITE_QUEUE_TIMEOUT, async {
+            self.outbound
+                .send(Outbound::Close(sender))
+                .await
+                .map_err(|_| RequestError::transport("App Server writer stopped", true))?;
+            receiver.await.map_err(|_| {
                 RequestError::transport("App Server close acknowledgement dropped", true)
-            })?;
-        Ok(())
+            })
+        })
+        .await
+        .map_err(|_| RequestError::transport("Timed out closing App Server stdin", true))?
     }
 
     pub async fn wait_closed(&self) -> RequestError {
@@ -1008,5 +1029,42 @@ mod tests {
             let error = events.recv().await.unwrap_err();
             assert!(matches!(error, broadcast::error::RecvError::Lagged(skipped) if skipped > 0));
         });
+    }
+}
+
+#[cfg(test)]
+mod backpressure_tests {
+    use super::*;
+    #[tokio::test]
+    async fn full_queue_bounds_close_and_response_and_cleans_requests() {
+        let (io, _stalled_peer) = tokio::io::duplex(1);
+        let (read, write) = tokio::io::split(io);
+        let client = AppServerClient::from_io(1, read, write);
+        client
+            .outbound
+            .send(Outbound::Frame(vec![0; 8]))
+            .await
+            .unwrap();
+        tokio::task::yield_now().await;
+        while client
+            .outbound
+            .try_send(Outbound::Frame(vec![0; 8]))
+            .is_ok()
+        {}
+        let close = client.close_writer();
+        let response = client.respond_to_server_request(json!(1), Ok(json!({})));
+        let request = client.request("fixture", json!({}), Duration::from_secs(1));
+        let (close, response, request) = tokio::time::timeout(Duration::from_secs(4), async {
+            tokio::join!(close, response, request)
+        })
+        .await
+        .expect("All writes must be bounded");
+        assert!(close.is_err() && response.is_err() && request.is_err());
+        assert!(client.shared.pending.lock().unwrap().is_empty());
+        let request = client.request("fixture", json!({}), Duration::from_secs(60));
+        assert!(tokio::time::timeout(Duration::from_millis(10), request)
+            .await
+            .is_err());
+        assert!(client.shared.pending.lock().unwrap().is_empty());
     }
 }

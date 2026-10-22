@@ -212,9 +212,14 @@ pub(super) fn check_validation_dispositions(
                     ));
                 }
             }
-            "rejected_false_positive"
-            | "unverified_missing_evidence"
-            | "deferred_manual_review" => {
+            "deferred_manual_review" => {
+                if let Some(output) = output {
+                    if normalized_finding_hash(output)? != input.before_hash {
+                        return Err(format!("Deferred finding '{id}' must remain unchanged"));
+                    }
+                }
+            }
+            "rejected_false_positive" | "unverified_missing_evidence" => {
                 if output.is_some() {
                     return Err(format!(
                         "finding '{id}' is marked {disposition} but still appears in findings"
@@ -272,8 +277,11 @@ pub(super) fn collapse_findings_fan_out(
         else {
             continue;
         };
+        // The dispatch cap limits model work, never the preserved source ledger.
+        let mut complete_source = for_each.clone();
+        complete_source.max = u32::MAX;
         let Ok(elements) =
-            artifact_fan_out_elements(step, source, for_each, Some(&source_text), app)
+            artifact_fan_out_elements(step, source, &complete_source, Some(&source_text), app)
         else {
             continue;
         };
@@ -304,8 +312,12 @@ pub(super) fn collapse_findings_fan_out(
                                 .is_some_and(|rest| rest.starts_with('/')))
                 })
                 .min_by(|a, b| a.step_id.cmp(&b.step_id));
+            let baseline = serde_json::json!({"findings":[element]});
+            let lineage = finding_lineage(&baseline.to_string()).unwrap_or_default();
             let unit_value = unit.and_then(|unit| {
-                serde_json::from_str::<serde_json::Value>(unit.raw_text.trim()).ok()
+                validate_preserved_output(&schema, &lineage, &unit.raw_text)
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
             });
             let unit_findings = unit_value
                 .as_ref()
@@ -393,7 +405,13 @@ pub(super) fn collapse_findings_fan_out(
             }
         };
 
-        if let Err(error) = crate::pipeline::structured::canonicalize(&schema, &raw_text) {
+        let baseline = serde_json::json!({"findings": elements});
+        let checked = validate_preserved_output(
+            &schema,
+            &finding_lineage(&baseline.to_string()).unwrap_or_default(),
+            &raw_text,
+        );
+        if let Err(error) = &checked {
             // Rejected products never become downstream context.
             let _ = app.emit_event(
                 "pipeline:log",
@@ -406,6 +424,7 @@ pub(super) fn collapse_findings_fan_out(
             outputs = kept;
             continue;
         }
+        let raw_text = checked.expect("checked assembled findings");
         let mut assembled = StepOutput {
             step_id: step.id.clone(),
             step_label: step.label.clone(),
@@ -465,4 +484,22 @@ pub(super) fn collapse_findings_fan_out(
         outputs = kept;
     }
     outputs
+}
+
+/// Apply the same host-owned invariants at every replacement boundary.
+pub(super) fn validate_preserved_output(
+    schema: &serde_json::Value,
+    expected: &[PreservedFinding],
+    text: &str,
+) -> Result<String, String> {
+    let canonical = crate::pipeline::structured::canonicalize(schema, text)?;
+    check_finding_lineage(expected, &canonical)?;
+    if schema
+        .get(crate::pipeline::structured::VALIDATION_LEDGER_KEY)
+        .is_some()
+    {
+        check_validation_dispositions(expected, &canonical)
+    } else {
+        Ok(canonical)
+    }
 }

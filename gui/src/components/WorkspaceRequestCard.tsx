@@ -7,8 +7,20 @@ export default function RequestCard({
   onResolve,
 }: {
   event: WorkbenchEvent;
-  onResolve: (event: WorkbenchEvent, result?: Record<string, unknown>) => void;
+  onResolve: (
+    event: WorkbenchEvent,
+    result?: Record<string, unknown>,
+  ) => void | Promise<void>;
 }) {
+  const [resolving, setResolving] = useState(false);
+  const resolve = async (result?: Record<string, unknown>) => {
+    setResolving(true);
+    try {
+      await onResolve(event, result);
+    } finally {
+      setResolving(false);
+    }
+  };
   const params = event.params ?? {};
   const questions = Array.isArray(params.questions)
     ? (params.questions as Array<Record<string, unknown>>)
@@ -33,6 +45,16 @@ export default function RequestCard({
               "Review this request before continuing.",
           )}
         </p>
+      )}
+      {isPermission && (
+        <div className="mt-2 space-y-2">
+          <p>Duration: this turn</p>
+          <p>Working directory: {String(params.cwd ?? "Not specified")}</p>
+          <p>Requested permissions (including all paths and network access):</p>
+          <pre className="whitespace-pre-wrap break-all rounded border p-2">
+            {JSON.stringify(params.permissions ?? {}, null, 2)}
+          </pre>
+        </div>
       )}
       {questions.map((question) => {
         const id = String(question.id ?? "question");
@@ -78,9 +100,10 @@ export default function RequestCard({
       <div className="mt-3 flex gap-2">
         <button
           type="button"
+          disabled={resolving}
           onClick={() => {
             if (isQuestion) {
-              onResolve(event, {
+              void resolve({
                 answers: Object.fromEntries(
                   Object.entries(answers).map(([id, answer]) => [
                     id,
@@ -89,25 +112,30 @@ export default function RequestCard({
                 ),
               });
             } else if (isPermission) {
-              onResolve(event, {
+              void resolve({
                 permissions: params.permissions as Record<string, unknown>,
                 scope: "turn",
               });
             } else {
-              onResolve(event, { decision: "accept" });
+              void resolve({ decision: "accept" });
             }
           }}
           className="rounded bg-amber-900 px-3 py-1.5 font-medium text-white dark:bg-amber-100 dark:text-amber-950"
         >
-          {isQuestion ? "Submit" : "Allow once"}
+          {isQuestion
+            ? "Submit"
+            : isPermission
+              ? "Allow for this turn"
+              : "Allow once"}
         </button>
         <button
           type="button"
+          disabled={resolving}
           onClick={() => {
-            if (isQuestion) onResolve(event);
+            if (isQuestion) void resolve();
             else if (isPermission)
-              onResolve(event, { permissions: {}, scope: "turn" });
-            else onResolve(event, { decision: "decline" });
+              void resolve({ permissions: {}, scope: "turn" });
+            else void resolve({ decision: "decline" });
           }}
           className="rounded border border-amber-400 px-3 py-1.5"
         >

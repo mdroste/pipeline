@@ -966,6 +966,7 @@ pub(crate) use sources::source_by_id;
 use tools::{provider_identifier, tool_response};
 
 mod execution;
+mod execution_finalization;
 pub mod execution_plan;
 pub mod jobs;
 pub use execution::*;

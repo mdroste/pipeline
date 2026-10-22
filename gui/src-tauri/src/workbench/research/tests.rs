@@ -1045,3 +1045,57 @@ fn retry_readopts_a_cursor_moved_by_a_steering_message() {
     assert_ne!(adopted.session_cursor, scope.session_cursor);
     assert!(refresh_scope(&fixture.store, &adopted, &authority).is_ok());
 }
+
+#[test]
+fn excluded_sources_are_blocked_before_new_reads_and_receipt_replay() {
+    let f = fixture();
+    select_preset(&f, "research_assistant", "inspect");
+    f.store
+        .bind_session(&f.session_id, "runtime", "thread")
+        .unwrap();
+    let path = f.root.join("source.txt");
+    fs::write(&path, "Retained research text").unwrap();
+    let source = import_source(
+        &f.store,
+        ImportSourceRequest {
+            workspace_id: f.workspace_id.clone(),
+            title: "Fixture source".into(),
+            citation_key: None,
+            identifiers: json!({}),
+            version_label: None,
+            path: Some(path.to_string_lossy().into_owned()),
+            locator: None,
+            access_state: "full".into(),
+            acquired_via: "local_file".into(),
+            operation_id: "source".into(),
+        },
+    )
+    .unwrap()
+    .source;
+    let call = json!({"threadId":"thread","turnId":"turn","callId":"call","tool":"workbench_source_read","arguments":{"sourceVersionId":source.version_id}});
+    assert_eq!(
+        handle_dynamic_tool_call(&f.store, &call).unwrap()["success"],
+        true
+    );
+    crate::workbench::desk::insert(
+        &f.store,
+        &f.workspace_id,
+        "acquisition",
+        "Excluded",
+        json!({"sourceVersionId":source.version_id,"state":"excluded"}),
+        None,
+        "exclude",
+    )
+    .unwrap();
+    assert!(handle_dynamic_tool_call(&f.store, &call).is_err());
+    let mut fresh = call;
+    fresh["callId"] = json!("fresh");
+    assert!(handle_dynamic_tool_call(&f.store, &fresh).is_err());
+    // Explicit historical/manual reads remain available to the researcher.
+    assert!(
+        source_read(&f.store, &f.workspace_id, &source.version_id, 0, 100)
+            .unwrap()
+            .text
+            .contains("Retained")
+    );
+}

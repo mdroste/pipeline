@@ -258,12 +258,12 @@ fn main() {
 
     let command = match action {
         ParseAction::Help(help) => {
-            print!("{help}");
-            return;
+            emit_stdout(help.trim_end_matches('\n'));
+            std::process::exit(output_exit_code(0));
         }
         ParseAction::Version => {
             emit_stdout(&format!("pipeline-cli {}", env!("CARGO_PKG_VERSION")));
-            return;
+            std::process::exit(output_exit_code(0));
         }
         ParseAction::Execute(command) => command,
     };
@@ -284,7 +284,7 @@ fn main() {
         pipeline_gui_lib::pipeline::codex_server::shutdown().await;
         code
     });
-    std::process::exit(code);
+    std::process::exit(output_exit_code(code));
 }
 
 fn parse_cli(args: &[String]) -> Result<ParseAction, String> {

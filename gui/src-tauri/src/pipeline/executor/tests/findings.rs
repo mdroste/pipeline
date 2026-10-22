@@ -184,7 +184,7 @@ fn fan_out_collapse_assembles_a_contract_conformant_validation_artifact() {
     let outputs = collapse_findings_fan_out(
         &bus,
         &[&step],
-        &[synthesis],
+        std::slice::from_ref(&synthesis),
         vec![unit("item_001", "a"), unit("item_002", "b")],
         &budget,
     );
@@ -205,4 +205,52 @@ fn fan_out_collapse_assembles_a_contract_conformant_validation_artifact() {
         2
     );
     assert_eq!(value["schema_version"], 2);
+    step.for_each.as_mut().unwrap().max = 1;
+    let capped = collapse_findings_fan_out(
+        &bus,
+        &[&step],
+        &[synthesis],
+        vec![unit("item_001", "a")],
+        &std::sync::Arc::new(OutputBudget::fresh()),
+    );
+    let value: serde_json::Value = serde_json::from_str(&capped[0].raw_text).unwrap();
+    assert_eq!(value["findings"][1]["id"], "b");
+    assert_eq!(
+        value["validation_dispositions"][1]["disposition"],
+        "deferred_manual_review"
+    );
+    assert!(value["validation_dispositions"][1]["before_hash"]
+        .as_str()
+        .unwrap()
+        .starts_with("sha256:"));
+}
+
+#[test]
+fn capped_fan_out_keeps_undispatched_source_findings() {
+    use crate::pipeline::executor::{
+        checkpoints::OutputBudget, findings::collapse_findings_fan_out,
+    };
+    let mut step = make_step("verify", Phase::Parallel);
+    step.output_schema = Some(
+        serde_json::json!({"type":"object", crate::pipeline::structured::PRESERVE_FINDINGS_KEY:"source"}),
+    );
+    step.for_each = Some(crate::pipeline_config::ForEach {
+        glob: String::new(),
+        max: 1,
+        artifact: Some(crate::pipeline_config::ForEachArtifact {
+            step: "source".into(),
+            pointer: "/findings".into(),
+        }),
+    });
+    let source = findings_output("source", r#"{"findings":[{"id":"a"},{"id":"b"}]}"#);
+    let unit = findings_output("verify/item_001", r#"{"findings":[{"id":"a"}]}"#);
+    let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+    let result = collapse_findings_fan_out(
+        &bus,
+        &[&step],
+        &[source],
+        vec![unit],
+        &std::sync::Arc::new(OutputBudget::default()),
+    );
+    assert_eq!(finding_ids(&result[0].raw_text).unwrap(), ["a", "b"]);
 }

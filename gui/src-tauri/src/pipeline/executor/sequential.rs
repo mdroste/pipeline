@@ -4,8 +4,8 @@ use super::findings::preserved_finding_ids;
 use super::outputs::{effective_output_schema, step_output};
 use super::paths::step_write_dir;
 use super::prompts::{
-    append_evidence_retrieval_guidance, append_shared_context_note, expand_template,
-    output_format_block, specialist_context_outputs, substitute_run_context, tools_with_write,
+    append_evidence_retrieval_guidance, append_shared_context_note, expand_template_with_context,
+    output_format_block, specialist_context_outputs, tools_with_write,
 };
 use super::step_call::{execute_step_call, StepCallRequest};
 use crate::models::StepOutput;
@@ -43,7 +43,7 @@ pub(super) async fn run_sequential_step(
         preserved_finding_ids(&step.id, output_schema.as_ref(), &artifacts.prior_outputs)?;
 
     let prior_outputs = specialist_context_outputs(&artifacts.prior_outputs, specialist_steps);
-    let base_prompt = expand_template(
+    let base_prompt = expand_template_with_context(
         &step.prompt,
         &artifacts.orientation_path,
         survey_hint,
@@ -51,9 +51,9 @@ pub(super) async fn run_sequential_step(
         &artifacts.paper_text_path,
         &artifacts.document_bundle_path,
         &artifacts.source_path,
+        variables,
+        &artifacts.extra_inputs,
     )?;
-
-    let base_prompt = substitute_run_context(&base_prompt, variables, &artifacts.extra_inputs)?;
     let task_write_dir = step_write_dir(write_dir, &step.id)?;
     let tools = tools_with_write(
         &step.tools,

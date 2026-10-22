@@ -19,6 +19,8 @@ pub struct Input {
     pub path: String,
     pub hash: String,
     pub included: bool,
+    #[serde(default)]
+    pub executable: bool,
     pub external_requirement: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +230,7 @@ fn assemble(store: &Store, r: &Export) -> WorkbenchResult<(Manifest, BTreeMap<St
                 path: f.path.clone(),
                 hash: f.hash.clone(),
                 included,
+                executable: f.executable,
                 external_requirement: s.external_requirements.get(&f.path).cloned(),
             });
         }
@@ -507,7 +510,7 @@ pub fn bind(store: &Store, r: Bind) -> WorkbenchResult<Value> {
                     input.path
                 )));
             }
-            files.push((input.path.clone(), bytes));
+            files.push((input.path.clone(), bytes, input.executable));
         }
     }
     if !missing.is_empty() {
@@ -517,8 +520,8 @@ pub fn bind(store: &Store, r: Bind) -> WorkbenchResult<Value> {
     }
     let identity = desk::hash(format!("{}:{}", r.workspace_id, r.operation_id).as_bytes());
     let dir = project::program_directory(store, &r.workspace_id, &identity)?;
-    for (path, bytes) in files {
-        project::write_program_input(&dir, &path, &bytes)?;
+    for (path, bytes, executable) in files {
+        project::write_program_input_with_mode(&dir, &path, &bytes, executable)?;
     }
     let mut argv = vec![local.argv[0].clone()];
     argv.extend(p.arguments.clone());

@@ -6,8 +6,8 @@ use super::checkpoints::{checkpoint_outputs, OutputBudget};
 use super::outputs::{effective_output_schema, step_output};
 use super::paths::step_write_dir;
 use super::prompts::{
-    append_evidence_retrieval_guidance, append_shared_context_note, build_parallel_prompt,
-    output_format_block, substitute_run_context, tools_with_write,
+    append_evidence_retrieval_guidance, append_shared_context_note,
+    build_parallel_prompt_with_context, output_format_block, tools_with_write,
 };
 use super::step_call::{cancellation_error, execute_step_call, StepCallRequest};
 use super::units::build_units;
@@ -187,7 +187,7 @@ pub(super) async fn run_parallel_wave(
                 &report_nonce,
                 output_schema.as_ref(),
             );
-            let mut prompt = build_parallel_prompt(
+            let mut prompt = build_parallel_prompt_with_context(
                 step,
                 if resolved.includes_survey {
                     paper_type
@@ -206,21 +206,15 @@ pub(super) async fn run_parallel_wave(
                 context_template,
                 &output_format,
                 resolved.artifact_root.as_deref(),
+                variables,
+                &resolved.extra_inputs,
+                &item_path,
             )?;
             crate::safety::push_str_limited(
                 &mut prompt,
                 &format!("\n\n{}", resolved.manifest),
                 crate::safety::MAX_EXPANDED_PROMPT_BYTES,
                 "Parallel artifact context",
-            )?;
-            let prompt = substitute_run_context(&prompt, variables, &resolved.extra_inputs)?;
-            // Fan-out: bind {item} to this unit's file (empty otherwise).
-            let prompt = crate::safety::replace_all_limited(
-                &prompt,
-                "{item}",
-                &item_path,
-                crate::safety::MAX_EXPANDED_PROMPT_BYTES,
-                "Parallel prompt",
             )?;
             let prompt = if shared_context.is_some() {
                 append_shared_context_note(

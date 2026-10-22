@@ -926,7 +926,7 @@ export default function WorkspacePage({
               <RequestCard
                 key={String(request.requestId)}
                 event={request}
-                onResolve={(event, result) => void resolve(event, result)}
+                onResolve={resolve}
               />
             ))}
             contextTray={

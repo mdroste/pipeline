@@ -544,11 +544,13 @@ pub(super) fn validate_primary_input_selection(
                 .is_some_and(|extension| {
                     matches!(
                         extension.to_ascii_lowercase().as_str(),
-                        "pdf" | "tex" | "docx"
+                        "pdf" | "tex" | "docx" | "md" | "markdown" | "txt"
                     )
                 });
             if !supported {
-                return Err("A document input must be a PDF, TeX, or DOCX file".to_string());
+                return Err(
+                    "A document input must be a PDF, TeX, DOCX, Markdown, or text file".to_string(),
+                );
             }
         }
         "latex_project" => {
@@ -653,10 +655,13 @@ pub(super) fn validate_named_input_paths(
                     .and_then(|extension| extension.to_str())
                     .map(str::to_ascii_lowercase)
                     .unwrap_or_default();
-                let supported = matches!(extension.as_str(), "pdf" | "tex" | "docx");
+                let supported = matches!(
+                    extension.as_str(),
+                    "pdf" | "tex" | "docx" | "md" | "markdown" | "txt"
+                );
                 if !supported {
                     return Err(format!(
-                        "Named input '{label}' must be a PDF, TeX, or DOCX document"
+                        "Named input '{label}' must be a PDF, TeX, DOCX, Markdown, or text document"
                     ));
                 }
                 if !slot.extensions.is_empty() && !slot.extensions.contains(&extension) {

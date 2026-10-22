@@ -495,3 +495,75 @@ fn only_an_ambiguous_submission_blocks_a_run_terminally() {
     assert!(!run.terminal());
     assert!(notice_transition("running", "attention"));
 }
+
+#[tokio::test]
+async fn recovered_failure_is_durable_before_discovery_classifies_it() {
+    use std::sync::{atomic::AtomicBool, Mutex};
+    let temp = tempfile::tempdir().unwrap();
+    let store = store::Store::open(temp.path()).unwrap();
+    let c = Coordinator {
+        store,
+        gate: tokio::sync::Mutex::new(()),
+        wake: tokio::sync::Notify::new(),
+        active: Mutex::new(std::collections::HashMap::new()),
+        stopping: AtomicBool::new(false),
+        background: AtomicBool::new(false),
+        _owner: std::fs::File::create(temp.path().join("owner.lock")).unwrap(),
+        app: None,
+    };
+    let chain = Chain {
+        schema_version: 1,
+        name: "Recovery".into(),
+        description: String::new(),
+        limits: Limits::default(),
+        steps: vec![Step {
+            id: "action".into(),
+            label: "Action".into(),
+            action: Action::Delay { seconds: 1 },
+        }],
+    };
+    let mut child = c
+        .store
+        .create(
+            "recovered-failure",
+            chain,
+            store::Scope::default(),
+            json!({}),
+            now(),
+            true,
+        )
+        .unwrap();
+    child.state = "attention".into();
+    let operation = store::id();
+    child.progress.receipts.insert(
+        "action".into(),
+        crate::orchestration::state::Receipt {
+            sequence: 1,
+            address: "action".into(),
+            step_id: "action".into(),
+            label: "Action".into(),
+            state: "unknown".into(),
+            operation: operation.clone(),
+            started_at: now(),
+            finished_at: None,
+            wake_at: None,
+            output: None,
+            error: None,
+            child: None,
+        },
+    );
+    c.save(&mut child, "fixture", "fixture").await.unwrap();
+    adapters::atomic_json(
+        &c.store
+            .root
+            .join("actions")
+            .join(operation)
+            .join("result.json"),
+        &json!({"state":"failed"}),
+    )
+    .unwrap();
+    recover_child(&c, &child).await.unwrap();
+    let stored = c.store.get(&child.id).unwrap();
+    assert_eq!(stored.progress.receipts["action"].state, "failed");
+    assert_eq!(failure_state(Some(&stored)), "attention");
+}

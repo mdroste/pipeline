@@ -221,8 +221,7 @@ pub(super) fn build_artifact_units(
     Ok(units)
 }
 
-/// The bounded element list an artifact fan-out expands over. Also used at
-/// reassembly time, so both sides of a fan-out agree on order and cap.
+/// The bounded dispatch list. Reassembly must instead read the complete source list.
 pub(super) fn artifact_fan_out_elements(
     step: &StepConfig,
     source: &crate::pipeline_config::ForEachArtifact,

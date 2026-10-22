@@ -994,6 +994,15 @@ pub(crate) fn write_program_input(
     path: &str,
     bytes: &[u8],
 ) -> WorkbenchResult<()> {
+    write_program_input_with_mode(directory, path, bytes, false)
+}
+
+pub(crate) fn write_program_input_with_mode(
+    directory: &Path,
+    path: &str,
+    bytes: &[u8],
+    executable: bool,
+) -> WorkbenchResult<()> {
     let root = files::SafeRoot::open(directory)?;
     if let Some(old) = root.optional_read(path)? {
         if old == bytes {
@@ -1004,6 +1013,6 @@ pub(crate) fn write_program_input(
         ));
     }
     let claim = id("input")?;
-    root.replace(path, None, false, Some(bytes), false, &claim)?;
+    root.replace(path, None, false, Some(bytes), executable, &claim)?;
     root.clear_claim(path, &claim)
 }

@@ -525,6 +525,17 @@ impl Coordinator {
         }
         receipt.finished_at = Some(now());
         match result {
+            Ok(value) if adapters::terminal_failure(&value) => {
+                let message = format!("Workspace turn {}", value["state"]);
+                receipt.state = "failed".into();
+                receipt.output = Some(adapters::output_preview(&value));
+                receipt.error = Some(message.clone());
+                if !["cancelled", "cancelling"].contains(&run.state.as_str()) {
+                    run.state = "attention".into();
+                    run.reason = Some(message.clone());
+                }
+                self.save(&mut run, "attention", &message).await?;
+            }
             Ok(value) => {
                 receipt.state = "completed".into();
                 receipt.output = Some(adapters::output_preview(&value));
@@ -639,7 +650,7 @@ impl Coordinator {
                     .await
                     .map_err(|e| e.message)?
                     {
-                        if value["state"] == "completed" {
+                        if value["state"] == "completed" || adapters::terminal_failure(&value) {
                             result = Some(value);
                         }
                     }
@@ -667,6 +678,12 @@ impl Coordinator {
                 }
                 if let Some(fingerprint) = value.get("harnessFingerprint").and_then(Value::as_str) {
                     run.scope.harness_fingerprint = Some(fingerprint.into());
+                }
+                if adapters::terminal_failure(&value) {
+                    receipt.state = "failed".into();
+                    receipt.error = Some(format!("Workspace turn {}", value["state"]));
+                    receipt.finished_at = Some(now());
+                    continue;
                 }
                 receipt.output = Some(adapters::output_preview(&value));
                 receipt.state = "completed".into();

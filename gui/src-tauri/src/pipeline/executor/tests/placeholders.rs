@@ -261,3 +261,38 @@ fn step_ref_empty_id() {
     let result = expand_template("{step:}", "", "", &prior, "p", "", "s").unwrap();
     assert!(result.contains("(empty step reference)"));
 }
+
+#[test]
+fn runtime_placeholders_in_inserted_values_are_opaque() {
+    use crate::pipeline::executor::prompts::expand_template_with_context;
+    let vars = std::collections::HashMap::from([
+        ("secret".into(), "secret-value".into()),
+        ("literal".into(), "{input:private}".into()),
+    ]);
+    let inputs = std::collections::HashMap::from([("private".into(), "/private/input".into())]);
+    let prior = vec![StepOutput {
+        step_id: "first".into(),
+        raw_text: "{var:secret} {input:private}".into(),
+        ..Default::default()
+    }];
+    let prompt = expand_template_with_context(
+        "{last_output} {var:literal} {var:secret}",
+        "",
+        "",
+        &prior,
+        "",
+        "",
+        "",
+        &vars,
+        &inputs,
+    )
+    .unwrap();
+    assert_eq!(
+        prompt,
+        "{var:secret} {input:private} {input:private} secret-value"
+    );
+    assert_eq!(
+        substitute_run_context("{var:literal}", &vars, &inputs).unwrap(),
+        "{input:private}"
+    );
+}

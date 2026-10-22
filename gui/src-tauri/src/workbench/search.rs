@@ -111,17 +111,18 @@ fn source_text(
     let more = start + text.len() < source.body.len();
     Ok((text, more))
 }
+pub(crate) fn source_permitted(store: &Store, ws: &str, version: &str) -> WorkbenchResult<bool> {
+    let excluded: bool = store.connection()?.query_row("SELECT EXISTS(SELECT 1 FROM desk_records a WHERE workspace_id=?1 AND kind='acquisition' AND json_extract(body_json,'$.sourceVersionId')=?2 AND json_extract(body_json,'$.state')='excluded' AND NOT EXISTS(SELECT 1 FROM desk_records n WHERE n.supersedes=a.id))",params![ws,version],|r|r.get(0)).map_err(err)?;
+    Ok(!excluded)
+}
 fn permitted(store: &Store, ws: &str, source: &Source) -> WorkbenchResult<bool> {
     if source.object.kind == "note"
         && super::project::excluded_notes(store, ws)?.contains(&source.object.id)
     {
         return Ok(false);
     }
-    if source.object.kind == "source" {
-        let excluded:bool=store.connection()?.query_row("SELECT EXISTS(SELECT 1 FROM desk_records a WHERE workspace_id=?1 AND kind='acquisition' AND json_extract(body_json,'$.sourceVersionId')=?2 AND json_extract(body_json,'$.state')='excluded' AND NOT EXISTS(SELECT 1 FROM desk_records n WHERE n.supersedes=a.id))",params![ws,source.object.id],|r|r.get(0)).map_err(err)?;
-        if excluded {
-            return Ok(false);
-        }
+    if source.object.kind == "source" && !source_permitted(store, ws, &source.object.id)? {
+        return Ok(false);
     }
     if source.object.kind == "dataset" && !super::data::policy(store, ws)?.dictionary {
         return Ok(false);

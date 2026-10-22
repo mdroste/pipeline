@@ -64,8 +64,21 @@ export function useSettingsDraft(onSystemChange?: () => void) {
   // cleared by saving an empty field; discarding it is an explicit action.
   const discardStoredKey = async (provider: string) => {
     try {
-      await invoke("discard_undecryptable_secret", { provider });
-      await load();
+      // Share the save queue, but refresh diagnostics only. Reloading the
+      // complete settings object would overwrite edits made during this request.
+      const operation = saveChainRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          await invoke("discard_undecryptable_secret", { provider });
+          const response = await invoke<{
+            warnings: string[];
+            undecryptable_keys?: string[];
+          }>("get_settings");
+          setWarnings(response.warnings);
+          setUndecryptableKeys(response.undecryptable_keys ?? []);
+        });
+      saveChainRef.current = operation.catch(() => undefined);
+      await operation;
     } catch (cause) {
       setSaveError(cause instanceof Error ? cause.message : String(cause));
     }

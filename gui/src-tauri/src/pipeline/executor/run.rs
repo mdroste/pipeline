@@ -343,7 +343,13 @@ pub async fn execute_steps(
                     .await
                     {
                         Ok(mut merged) => {
-                            enforce_merge_output_schemas(app, &to_run, &wave_outputs, &mut merged);
+                            enforce_merge_output_schemas(
+                                app,
+                                &to_run,
+                                &wave_outputs,
+                                &all_outputs,
+                                &mut merged,
+                            );
                             // `merged` holds clones of already-reserved
                             // pass-through outputs plus newly synthesized
                             // per-group merge reports; only the latter are new

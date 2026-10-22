@@ -3,6 +3,25 @@ use crate::workbench::research::{
     self,
     execution_plan::{self, ExecutionPlan},
 };
+// Serialize staging and controls per family so cancellation sees and stops
+// every attempt published by an in-flight tick before it returns.
+fn family_gate(store: &Store, id: &str) -> std::sync::Arc<std::sync::Mutex<()>> {
+    use std::sync::{Arc, Mutex, OnceLock, Weak};
+    type Gates = std::collections::HashMap<(std::path::PathBuf, String), Weak<Mutex<()>>>;
+    static GATES: OnceLock<Mutex<Gates>> = OnceLock::new();
+    let mut gates = GATES
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    gates.retain(|_, value| value.strong_count() > 0);
+    let key = (store.root_path().to_path_buf(), id.to_string());
+    if let Some(gate) = gates.get(&key).and_then(Weak::upgrade) {
+        return gate;
+    }
+    let gate = Arc::new(Mutex::new(()));
+    gates.insert(key, Arc::downgrade(&gate));
+    gate
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Factor {
@@ -236,6 +255,8 @@ pub fn control(
     action: &str,
     fingerprint: &str,
 ) -> WorkbenchResult<Value> {
+    let gate = family_gate(store, id);
+    let _guard = gate.lock().unwrap_or_else(|e| e.into_inner());
     let (record, plan): (_, ExperimentPlan) = load(store, ws, id, "experiment_plan")?;
     if record.content_hash != fingerprint {
         return Err(WorkbenchError::conflict(
@@ -313,6 +334,8 @@ fn reconcile(store: &Store, ws: &str, id: &str) -> WorkbenchResult<()> {
 }
 /// Bounded serial producer. It never holds the database gate over a process wait.
 pub fn tick(store: &Store, ws: &str, id: &str) -> WorkbenchResult<()> {
+    let gate = family_gate(store, id);
+    let _guard = gate.lock().unwrap_or_else(|e| e.into_inner());
     let current = status(store, ws, id)?;
     let state = current["run"]["state"].as_str().unwrap_or("");
     if !["running", "paused", "cancelled"].contains(&state) {

@@ -346,7 +346,7 @@ pub async fn execute(
                 .await
                 .map_err(|e| e.message)?;
             let (thread, turn) = if let Some(previous) = previous {
-                if previous["state"] == "completed" {
+                if previous["state"] == "completed" || terminal_failure(&previous) {
                     atomic_json(&journal, &previous)?;
                     return Ok(previous);
                 }
@@ -402,12 +402,11 @@ pub async fn execute(
                     .await
                     .map_err(|e| e.message)?
                 {
-                    match value["state"].as_str() {
-                        Some("completed") => break value,
-                        Some("failed" | "interrupted" | "cancelled") => {
-                            return Err(format!("Workspace turn {}", value["state"]))
-                        }
-                        _ => {}
+                    if matches!(
+                        value["state"].as_str(),
+                        Some("completed" | "failed" | "interrupted" | "cancelled")
+                    ) {
+                        break value;
                     }
                 }
                 if let Some(question) =
@@ -728,4 +727,12 @@ pub fn output_preview(value: &Value) -> Value {
         }
     }
     compact(value, 0)
+}
+
+/// A retained terminal receipt is distinct from an ambiguous submission error.
+pub(super) fn terminal_failure(value: &Value) -> bool {
+    matches!(
+        value["state"].as_str(),
+        Some("failed" | "interrupted" | "cancelled")
+    )
 }

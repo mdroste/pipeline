@@ -1,7 +1,8 @@
 use super::artifact_context::{normalized_path, resolve_artifact_context, ArtifactRuntime};
 use super::checkpoints::OutputBudget;
 use super::findings::{
-    check_finding_lineage, check_validation_dispositions, finding_lineage, preserved_finding_ids,
+    check_finding_lineage, check_validation_dispositions, finding_ids, finding_lineage,
+    preserved_finding_ids,
 };
 use super::outputs::enforce_merge_output_schemas;
 use super::outputs::step_output;

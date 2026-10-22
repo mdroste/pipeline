@@ -12,7 +12,7 @@ fn non_conforming_merge_falls_back_to_first_unit_output() {
     ];
     let mut merged = vec![merge_output("A narrative merge, not issues JSON.")];
     let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-    enforce_merge_output_schemas(&bus, &[&step], &units, &mut merged);
+    enforce_merge_output_schemas(&bus, &[&step], &units, &[], &mut merged);
     assert_eq!(merged[0].raw_text, "{\"issues\": []}");
     assert_eq!(merged[0].agent, "claude");
     assert!(merged[0].calls.iter().any(|c| c.role == "failed_merge"));
@@ -35,7 +35,7 @@ fn banner_fallback_for_schema_step_is_replaced_by_first_unit() {
     banner.calls[1].role = "failed_merge".into();
     let mut merged = vec![banner];
     let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-    enforce_merge_output_schemas(&bus, &[&step], &units, &mut merged);
+    enforce_merge_output_schemas(&bus, &[&step], &units, &[], &mut merged);
     assert_eq!(merged[0].raw_text, "{\"issues\": []}");
     assert_eq!(merged[0].agent, "claude");
 }
@@ -59,7 +59,7 @@ fn conforming_merge_and_schemaless_step_are_untouched() {
     plain_merge.step_id = "p".into();
     let mut merged = vec![merge_output("{\"issues\": [1, 2]}"), plain_merge];
     let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-    enforce_merge_output_schemas(&bus, &[&schema_step, &plain_step], &units, &mut merged);
+    enforce_merge_output_schemas(&bus, &[&schema_step, &plain_step], &units, &[], &mut merged);
     assert_eq!(merged[0].raw_text, "{\"issues\": [1, 2]}");
     assert!(merged[0].calls.iter().any(|c| c.role == "merge"));
     assert_eq!(merged[1].raw_text, "Narrative merge of a schemaless step.");
@@ -191,4 +191,39 @@ fn fallback_records_partition_usage_without_changing_effective_provenance() {
     );
     assert_eq!(records[0].tool_calls, primary_usage.tool_calls);
     assert_eq!(records[1].tool_calls, fallback_usage.tool_calls);
+}
+
+#[test]
+fn successful_fallback_merge_is_retained_and_lineage_is_enforced() {
+    let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+    let mut step = make_step("s", Phase::Parallel);
+    step.output_schema = Some(
+        serde_json::json!({"type":"object", "required":["findings"], crate::pipeline::structured::PRESERVE_FINDINGS_KEY:"source"}),
+    );
+    let upstream = vec![findings_output(
+        "source",
+        r#"{"findings":[{"id":"a"},{"id":"b"}]}"#,
+    )];
+    let units = vec![schema_unit(
+        "claude",
+        r#"{"findings":[{"id":"a"},{"id":"b"}]}"#,
+    )];
+    let mut valid = merge_output(r#"{"findings":[{"id":"b"}]}"#);
+    valid.calls[1].role = "usage_limit_fallback_merge".into();
+    let mut merged = vec![valid];
+    enforce_merge_output_schemas(&bus, &[&step], &units, &upstream, &mut merged);
+    assert_eq!(finding_ids(&merged[0].raw_text).unwrap(), ["b"]);
+    assert!(merged[0]
+        .calls
+        .iter()
+        .any(|c| c.role == "usage_limit_fallback_merge"));
+    for invalid in [
+        r#"{"findings":[{"id":"invented"}]}"#,
+        r#"{"findings":[{"id":"b"},{"id":"a"}]}"#,
+    ] {
+        let mut merged = vec![merge_output(invalid)];
+        enforce_merge_output_schemas(&bus, &[&step], &units, &upstream, &mut merged);
+        assert_eq!(merged[0].raw_text, units[0].raw_text);
+        assert!(merged[0].calls.iter().any(|c| c.role == "failed_merge"));
+    }
 }

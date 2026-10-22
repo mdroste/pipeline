@@ -125,7 +125,7 @@ fn explicit_input_interpretation_separates_container_from_meaning() {
 fn named_input_validation_matches_backend_extraction_contract() {
     let root = tempfile::tempdir().unwrap();
     let document = root.path().join("APPENDIX.PDF");
-    let unsupported = root.path().join("notes.txt");
+    let unsupported = root.path().join("notes.xlsx");
     std::fs::write(&document, b"fixture").unwrap();
     std::fs::write(&unsupported, b"fixture").unwrap();
     let folder = root.path().join("sources");
@@ -306,4 +306,16 @@ fn engine_installer_children_are_not_in_the_run_scoped_kill_list() {
         .unwrap_or_else(|e| e.into_inner())
         .contains(&run_pid));
     unregister_child_pid(run_pid);
+}
+
+#[test]
+fn native_text_documents_pass_review_handoff_validation() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut config = empty_test_config();
+    config.extraction.input_mode = "document".into();
+    for extension in ["md", "markdown", "txt"] {
+        let path = temp.path().join(format!("generated.{extension}"));
+        std::fs::write(&path, "# Generated draft\n\nEvidence.").unwrap();
+        validate_primary_input_selection(&config, path.to_str(), Some("document")).unwrap();
+    }
 }

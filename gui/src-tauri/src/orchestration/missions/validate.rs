@@ -305,6 +305,20 @@ pub fn challenge(m: &Mission, c: &Challenge) -> Result<()> {
         if a.evidence_ids.len() > 32 || a.evidence_ids.iter().any(|id| !evidence.contains(id)) {
             return Err("Challenge cites evidence that the host did not retain".into());
         }
+        if a.status == CriterionStatus::Met
+            && c.outcome != Outcome::Infeasible
+            && a.evidence_ids.iter().all(|id| {
+                m.rounds.iter().any(|round| {
+                    id == &format!("r{}-execution", round.number)
+                        && round
+                            .evidence
+                            .get(id)
+                            .is_some_and(|e| e["result"]["passed"] != true)
+                })
+            })
+        {
+            return Err("A failed or unknown computation cannot establish a met criterion".into());
+        }
         if a.status == CriterionStatus::Met && a.evidence_ids.is_empty() {
             return Err("A met criterion requires retained evidence".into());
         }

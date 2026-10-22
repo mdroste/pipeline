@@ -22,30 +22,36 @@ pub(super) fn closest_assets(
     page: Option<u32>,
     number: &str,
 ) -> Vec<String> {
-    let needle = format!("{kind} {number}").to_ascii_lowercase();
-    let mut matched: Vec<String> = bundle
+    let label = Regex::new(&format!(
+        r"(?i)\b{}\s+{}(?:\b|$)",
+        regex::escape(kind),
+        regex::escape(number)
+    ))
+    .unwrap();
+    let mut matches: Vec<_> = bundle
         .assets
         .iter()
-        .filter(|asset| {
-            asset.kind == kind
-                || asset.label.to_ascii_lowercase().contains(&needle)
-                || page.is_some_and(|page| asset.page == Some(page))
+        .filter_map(|asset| {
+            let rank = if !number.is_empty() && label.is_match(&asset.label) {
+                0
+            } else if page.is_some() && asset.page == page && asset.kind == kind {
+                1
+            } else if page.is_some() && asset.page == page && asset.kind == "page" {
+                2
+            } else {
+                return None;
+            };
+            Some((rank, asset.id.clone()))
         })
-        .map(|asset| asset.id.clone())
         .collect();
-    if matched.is_empty() {
-        if let Some(page) = page {
-            if let Some(asset) = bundle
-                .assets
-                .iter()
-                .find(|asset| asset.kind == "page" && asset.page == Some(page))
-            {
-                matched.push(asset.id.clone());
-            }
-        }
-    }
-    matched.truncate(3);
-    matched
+    matches.sort_by_key(|(rank, _)| *rank);
+    let best = matches.first().map(|(rank, _)| *rank);
+    matches
+        .into_iter()
+        .filter(|(rank, _)| Some(*rank) == best)
+        .take(3)
+        .map(|(_, id)| id)
+        .collect()
 }
 
 pub(super) fn add_tex_nodes(bundle: &mut DocumentBundle, source: &str, method: &str) {
@@ -237,22 +243,8 @@ pub(super) fn copy_tex_assets(
     Ok(added)
 }
 
-fn xml_decode(text: &str) -> String {
-    text.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
-}
-
 pub(super) fn xml_text(fragment: &str) -> String {
-    let text_re = Regex::new(r"(?s)<(?:w|m):t(?:\s[^>]*)?>(.*?)</(?:w|m):t>").unwrap();
-    text_re
-        .captures_iter(fragment)
-        .filter_map(|capture| capture.get(1))
-        .map(|value| xml_decode(value.as_str()))
-        .collect::<Vec<_>>()
-        .join("")
+    super::docx_xml::text(fragment)
 }
 
 pub(super) fn read_docx_entry_limited(
@@ -448,19 +440,10 @@ pub(super) fn parse_docx(path: &Path) -> Result<ParsedDocx, String> {
         }
     }
 
-    let math_re = Regex::new(r"(?s)<m:oMath(?:Para)?(?:\s[^>]*)?>.*?</m:oMath(?:Para)?>").unwrap();
-    let equations = math_re
-        .find_iter(&xml)
-        .take(1_000)
-        .map(|value| {
-            let raw = value.as_str();
-            let mut end = raw.len().min(MAX_REPRESENTATION_BYTES);
-            while !raw.is_char_boundary(end) {
-                end = end.saturating_sub(1);
-            }
-            raw[..end].to_string()
-        })
-        .collect();
+    let (equations, omitted) = super::docx_xml::equations(&xml, MAX_REPRESENTATION_BYTES, 1_000)?;
+    if omitted > 0 {
+        markdown.push_str(&format!("\n> Extraction note: {omitted} equations exceeded the representation limits and were omitted.\n"));
+    }
     Ok(ParsedDocx {
         markdown,
         tables,

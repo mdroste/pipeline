@@ -137,6 +137,7 @@ pub(super) fn tools_with_write(
 
 /// Build the prompt for a parallel step (referee-style).
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(super) fn build_parallel_prompt(
     step: &StepConfig,
     paper_type: &str,
@@ -148,6 +149,38 @@ pub(super) fn build_parallel_prompt(
     template: &str,
     output_format: &str,
     artifact_root: Option<&str>,
+) -> Result<String, String> {
+    build_parallel_prompt_with_context(
+        step,
+        paper_type,
+        orientation_path,
+        survey_hint,
+        paper_text_path,
+        document_bundle_path,
+        source_path,
+        template,
+        output_format,
+        artifact_root,
+        &Default::default(),
+        &Default::default(),
+        "{item}",
+    )
+}
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_parallel_prompt_with_context(
+    step: &StepConfig,
+    paper_type: &str,
+    orientation_path: &str,
+    survey_hint: &str,
+    paper_text_path: &str,
+    document_bundle_path: &str,
+    source_path: &str,
+    template: &str,
+    output_format: &str,
+    artifact_root: Option<&str>,
+    vars: &std::collections::HashMap<String, String>,
+    inputs: &std::collections::HashMap<String, String>,
+    item: &str,
 ) -> Result<String, String> {
     let normalized_path = paper_text_path.replace('\\', "/");
     let normalized_source = source_path.replace('\\', "/");
@@ -199,43 +232,33 @@ pub(super) fn build_parallel_prompt(
     };
 
     let limit = crate::safety::MAX_EXPANDED_PROMPT_BYTES;
-    let mut expanded = template.to_string();
-    for (needle, value) in [
-        ("{step_prompt}", step.prompt.as_str()),
+    let replacements = [
         ("{paper_type}", paper_type),
         ("{orientation}", orientation_block.as_str()),
         ("{paper_path}", normalized_path.as_str()),
         ("{input_path}", normalized_path.as_str()),
         ("{document_bundle}", normalized_bundle.as_str()),
         ("{figure_hint}", figure_hint.as_str()),
-    ] {
-        expanded =
-            crate::safety::replace_all_limited(&expanded, needle, value, limit, "Parallel prompt")?;
-    }
-
-    // Custom templates created before `{output_format}` existed still need
-    // the current nonce contract. Append it when there is no placeholder so a
-    // stale static marker instruction cannot bypass validation.
-    if expanded.contains("{output_format}") {
-        crate::safety::replace_all_limited(
-            &expanded,
-            "{output_format}",
-            output_format,
-            limit,
-            "Parallel prompt",
-        )
-    } else if output_format.is_empty() {
-        Ok(expanded)
-    } else {
+        ("{item}", item),
+        ("{output_format}", output_format),
+    ];
+    // Both authored templates may contain placeholders. Each is expanded once;
+    // values inserted into either template are never interpreted as templates.
+    let step_prompt = interpolate(&step.prompt, &replacements, vars, inputs)?;
+    let mut outer = replacements.to_vec();
+    outer.push(("{step_prompt}", &step_prompt));
+    let mut expanded = interpolate(template, &outer, vars, inputs)?;
+    if !template.contains("{output_format}") && !output_format.is_empty() {
         crate::safety::push_str_limited(&mut expanded, "\n\n", limit, "Parallel prompt")?;
         crate::safety::push_str_limited(&mut expanded, output_format, limit, "Parallel prompt")?;
-        Ok(expanded)
     }
+    Ok(expanded)
 }
 
 // ── Sequential execution ────────────────────────────────────────────
 
 /// Expand template placeholders in a sequential step's prompt.
+#[cfg(test)]
 pub(super) fn expand_template(
     template: &str,
     orientation_path: &str,
@@ -244,6 +267,31 @@ pub(super) fn expand_template(
     paper_text_path: &str,
     document_bundle_path: &str,
     source_path: &str,
+) -> Result<String, String> {
+    expand_template_with_context(
+        template,
+        orientation_path,
+        survey_hint,
+        prior_outputs,
+        paper_text_path,
+        document_bundle_path,
+        source_path,
+        &Default::default(),
+        &Default::default(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn expand_template_with_context(
+    template: &str,
+    orientation_path: &str,
+    survey_hint: &str,
+    prior_outputs: &[StepOutput],
+    paper_text_path: &str,
+    document_bundle_path: &str,
+    source_path: &str,
+    vars: &std::collections::HashMap<String, String>,
+    inputs: &std::collections::HashMap<String, String>,
 ) -> Result<String, String> {
     let orientation_ref = if orientation_path.is_empty() {
         String::new()
@@ -327,6 +375,9 @@ pub(super) fn expand_template(
             let id = after_open[..end_rel].trim();
             append_step_ref(&mut out, id, prior_outputs, limit)?;
             rest = &after_open[end_rel + 1..];
+        } else if let Some((consumed, value)) = runtime_placeholder(candidate, vars, inputs) {
+            crate::safety::push_str_limited(&mut out, &value, limit, "Sequential prompt")?;
+            rest = &candidate[consumed..];
         } else {
             crate::safety::push_str_limited(&mut out, "{", limit, "Sequential prompt")?;
             rest = &candidate[1..];
@@ -431,6 +482,7 @@ pub(super) fn append_step_ref(
 /// value that was not supplied remains visible rather than silently becoming
 /// an empty string; undeclared placeholders are rejected during workflow
 /// validation. `needle` includes the trailing colon, e.g. "{var:".
+#[cfg(test)]
 pub(super) fn substitute_placeholders(
     text: &str,
     needle: &str,
@@ -466,13 +518,13 @@ pub(super) fn substitute_placeholders(
 
 /// Apply both run-time substitutions to a prompt: `{var:key}` (values) and
 /// `{input:key}` (paths to extra named inputs' extracted text).
+#[cfg(test)]
 pub(super) fn substitute_run_context(
     text: &str,
     vars: &std::collections::HashMap<String, String>,
     inputs: &std::collections::HashMap<String, String>,
 ) -> Result<String, String> {
-    let t = substitute_placeholders(text, "{var:", vars)?;
-    substitute_placeholders(&t, "{input:", inputs)
+    interpolate(text, &[], vars, inputs)
 }
 
 /// Replace specialist-schema JSON artifacts with their deterministic readable
@@ -500,4 +552,53 @@ pub(super) fn specialist_context_outputs(
             output.clone()
         })
         .collect()
+}
+
+fn runtime_placeholder(
+    candidate: &str,
+    vars: &std::collections::HashMap<String, String>,
+    inputs: &std::collections::HashMap<String, String>,
+) -> Option<(usize, String)> {
+    for (prefix, map) in [("{var:", vars), ("{input:", inputs)] {
+        if let Some(after) = candidate.strip_prefix(prefix) {
+            let end = after.find('}')?;
+            let key = after[..end].trim();
+            return Some((
+                prefix.len() + end + 1,
+                map.get(key)
+                    .cloned()
+                    .unwrap_or_else(|| format!("(optional value '{key}' not supplied)")),
+            ));
+        }
+    }
+    None
+}
+fn interpolate(
+    template: &str,
+    replacements: &[(&str, &str)],
+    vars: &std::collections::HashMap<String, String>,
+    inputs: &std::collections::HashMap<String, String>,
+) -> Result<String, String> {
+    let mut out = String::new();
+    let mut rest = template;
+    let limit = crate::safety::MAX_EXPANDED_PROMPT_BYTES;
+    while let Some(start) = rest.find('{') {
+        crate::safety::push_str_limited(&mut out, &rest[..start], limit, "Run prompt")?;
+        let candidate = &rest[start..];
+        if let Some((needle, value)) = replacements
+            .iter()
+            .find(|(needle, _)| candidate.starts_with(needle))
+        {
+            crate::safety::push_str_limited(&mut out, value, limit, "Run prompt")?;
+            rest = &candidate[needle.len()..];
+        } else if let Some((consumed, value)) = runtime_placeholder(candidate, vars, inputs) {
+            crate::safety::push_str_limited(&mut out, &value, limit, "Run prompt")?;
+            rest = &candidate[consumed..];
+        } else {
+            crate::safety::push_str_limited(&mut out, "{", limit, "Run prompt")?;
+            rest = &candidate[1..];
+        }
+    }
+    crate::safety::push_str_limited(&mut out, rest, limit, "Run prompt")?;
+    Ok(out)
 }

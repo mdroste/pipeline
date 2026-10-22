@@ -294,3 +294,45 @@ async fn abandonment_is_recoverable_from_stop_and_retry_records() {
     m.store.save(&mut run, "stop", "stopped").unwrap();
     assert!(m.store.abandoned_operations().unwrap().contains(&operation));
 }
+
+#[tokio::test]
+async fn terminal_workspace_failure_is_retryable_and_recoverable() {
+    let (_temp, m) = coordinator_fixture();
+    let mut run = m
+        .store
+        .create(
+            "failure",
+            chain(vec![delay("step")]),
+            Scope::default(),
+            json!({}),
+            now(),
+            true,
+        )
+        .unwrap();
+    let Advance::Ready(ready) = state::advance(&run.chain, &mut run.progress, &run.inputs) else {
+        panic!()
+    };
+    done(&mut run.progress, &ready[0], json!({}));
+    run.progress.receipts.get_mut("step").unwrap().state = "running".into();
+    m.save(&mut run, "fixture", "fixture").await.unwrap();
+    m.complete(&run.id, "step", Ok(json!({"state":"failed"})))
+        .await
+        .unwrap();
+    let run = m.store.get(&run.id).unwrap();
+    assert_eq!(run.progress.receipts["step"].state, "failed");
+    assert_eq!(run.state, "attention");
+    let mut recovered = run.clone();
+    let receipt = recovered.progress.receipts.get_mut("step").unwrap();
+    receipt.state = "unknown".into();
+    adapters::atomic_json(
+        &m.store
+            .root
+            .join("actions")
+            .join(&receipt.operation)
+            .join("result.json"),
+        &json!({"state":"interrupted"}),
+    )
+    .unwrap();
+    m.recover_results(&mut recovered).await.unwrap();
+    assert_eq!(recovered.progress.receipts["step"].state, "failed");
+}
