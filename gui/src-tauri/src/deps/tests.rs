@@ -334,7 +334,9 @@ fn pdf_dependencies_follow_the_effective_extractor() {
     let full =
         pdf_dependency_requirements(&settings, Some(&config), Some("/papers/paper.pdf"), None);
     assert!(full.extraction);
-    assert!(!full.pdftotext);
+    // The Full Parser refuses to run without the pdftotext page map, so
+    // preflight must flag a missing pdftotext before the run starts.
+    assert!(full.pdftotext);
     assert!(!full.pdftoppm);
     assert!(full.paddle_full);
     assert!(full.configuration_ready);

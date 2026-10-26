@@ -273,9 +273,10 @@ pub(super) fn pdf_dependency_requirements(
     let method = effective_pdf_extractor(settings, config);
     PdfDependencyRequirements {
         extraction,
-        // LLM extraction treats the pdftotext page map as a mandatory
-        // completeness check rather than a best-effort enhancement.
-        pdftotext: extraction && matches!(method, "llm" | "pdftotext"),
+        // LLM and PaddleOCR-VL extraction treat the pdftotext page map as a
+        // mandatory page cap and completeness check rather than a
+        // best-effort enhancement.
+        pdftotext: extraction && matches!(method, "llm" | "paddleocr-vl-full" | "pdftotext"),
         pdftoppm: false,
         paddle_full: extraction && method == "paddleocr-vl-full",
         configuration_ready: !extraction
@@ -570,12 +571,13 @@ fn check_all_for(
                 .unwrap_or_default(),
             required: pdf_requirements.pdftotext,
             hint: if pdftotext_path.is_some() {
-                "PDF text extraction and LLM completeness verification. Bundled with Pipeline."
+                "PDF text extraction and LLM / PaddleOCR-VL completeness verification. \
+                 Bundled with Pipeline."
                     .into()
             } else if pdf_requirements.pdftotext {
                 format!("{install_hint} — required by the selected PDF extraction workflow.")
             } else {
-                format!("{install_hint} — enables pdftotext and LLM PDF extraction.")
+                format!("{install_hint} — enables pdftotext, LLM, and PaddleOCR-VL PDF extraction.")
             },
             help_url: None,
             authenticated: None,
