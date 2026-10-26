@@ -34,15 +34,16 @@ pub(crate) async fn extract_paddle_full(
         .map_err(|error| format!("Failed to create private PDF input directory: {error}"))?;
     let source = path.to_path_buf();
     let input_root = staging_input.path().to_path_buf();
-    let staged_pdf = tokio::task::spawn_blocking(move || stage_pdf_input(&source, &input_root))
-        .await
-        .map_err(|error| format!("PDF staging task failed: {error}"))??;
+    let staged_pdf =
+        crate::run_scope::spawn_blocking(move || stage_pdf_input(&source, &input_root))
+            .await
+            .map_err(|error| format!("PDF staging task failed: {error}"))??;
     // The baseline both verifies parser completeness and enforces the page
     // cap, so it is required: without it a corrupt or encrypted PDF could
     // enter the sidecar unbounded and unverified.
     let baseline = {
         let pdf = staged_pdf.clone();
-        tokio::task::spawn_blocking(move || pdftotext_page_metrics(&pdf))
+        crate::run_scope::spawn_blocking(move || pdftotext_page_metrics(&pdf))
             .await
             .map_err(|error| format!("pdftotext baseline task failed: {error}"))?
     }
@@ -128,7 +129,7 @@ pub(crate) async fn extract_paddle_full(
             )
         })?;
     let sidecar_lease = engine_lease.clone();
-    let sidecar = tokio::task::spawn_blocking(move || {
+    let sidecar = crate::run_scope::spawn_blocking(move || {
         let _lease = sidecar_lease;
         run_paddle_full_sidecar(
             &parser_paths,

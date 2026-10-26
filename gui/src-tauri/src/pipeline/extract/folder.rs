@@ -218,7 +218,7 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
 /// checks the global cancellation flag between entries and read chunks.
 pub async fn ingest_folder_async(root: &str) -> Result<ExtractionResult, String> {
     let root = root.to_string();
-    tokio::task::spawn_blocking(move || ingest_folder(&root))
+    crate::run_scope::spawn_blocking(move || ingest_folder(&root))
         .await
         .map_err(|e| format!("Folder ingestion task failed: {e}"))?
 }

@@ -679,6 +679,39 @@ export interface BatchJob {
   profile_snapshot_id?: string;
 }
 
+export type QueuedRunStatus =
+  "queued" | "running" | "done" | "failed" | "cancelled";
+
+/** One review in the run queue (`runs:queue`, `list_run_queue`). */
+export interface QueuedRun {
+  key: string;
+  kind: "review" | "rerun";
+  label: string;
+  inputPath: string;
+  profileName: string;
+  status: QueuedRunStatus;
+  /** Latest runtime stage kind and label while running. */
+  stage: string | null;
+  stageLabel: string | null;
+  /** Why a queued review cannot start yet beyond waiting its turn. */
+  waiting: string | null;
+  queuedAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  runId: string | null;
+  error: string | null;
+  /** Finished, but one or more steps failed. */
+  partial: boolean;
+  /** The full result is still held by the queue (recent runs only). */
+  resultAvailable: boolean;
+}
+
+export interface RunQueueSnapshot {
+  /** Reviews that may run at the same time. */
+  limit: number;
+  runs: QueuedRun[];
+}
+
 export interface PipelineResult {
   report: PipelineReport;
   markdown: string;
@@ -755,6 +788,8 @@ export interface Settings {
   verbose_logging: boolean;
   step_timeout_secs: number;
   max_retries: number;
+  /** Queued reviews started at the same time (1–4). */
+  max_concurrent_reviews: number;
   /** Add an LLM revision reconciliation when a matching prior run exists. */
   auto_revision_reconciliation: boolean;
   /** Max past runs to keep on disk; 0 = keep all. */

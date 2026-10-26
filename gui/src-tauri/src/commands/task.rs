@@ -5,6 +5,7 @@ use super::*;
 /// invocation or CLI waiter from detaching a run that still holds the global
 /// pipeline lock and child processes.
 pub(super) struct PipelineTask {
+    scope: std::sync::Arc<crate::run_scope::RunScope>,
     handle: Option<tokio::task::JoinHandle<std::result::Result<serde_json::Value, String>>>,
 }
 
@@ -16,24 +17,32 @@ pub(super) struct PipelineRequest {
     pub(super) variables: std::collections::HashMap<String, String>,
     pub(super) extra_inputs: std::collections::HashMap<String, String>,
     pub(super) snapshot: Option<RunSnapshot>,
-    /// Cancel epoch captured at command entry, before preflight; the run
-    /// task re-asserts cancellation if it advanced in the interim.
-    pub(super) preflight_cancel_epoch: u64,
 }
 
 impl PipelineTask {
+    /// Run `future` as its own task inside `scope`, which owns the run's
+    /// cancellation state and child processes.
     pub(super) fn spawn_future(
+        scope: std::sync::Arc<crate::run_scope::RunScope>,
         future: impl std::future::Future<Output = std::result::Result<serde_json::Value, String>>
             + Send
             + 'static,
     ) -> Self {
         Self {
-            handle: Some(tokio::spawn(future)),
+            handle: Some(tokio::spawn(crate::run_scope::scoped(
+                scope.clone(),
+                future,
+            ))),
+            scope,
         }
     }
 
-    pub(super) fn spawn(guard: PipelineGuard, request: PipelineRequest) -> Self {
-        Self::spawn_future(async move {
+    pub(super) fn spawn(
+        scope: std::sync::Arc<crate::run_scope::RunScope>,
+        guard: PipelineGuard,
+        request: PipelineRequest,
+    ) -> Self {
+        Self::spawn_future(scope, async move {
             let _guard = guard;
             run_pipeline_inner_with_snapshot(
                 &request.bus,
@@ -43,7 +52,6 @@ impl PipelineTask {
                 request.variables,
                 request.extra_inputs,
                 request.snapshot,
-                request.preflight_cancel_epoch,
             )
             .await
         })
@@ -71,9 +79,7 @@ impl PipelineTask {
 impl Drop for PipelineTask {
     fn drop(&mut self) {
         if let Some(handle) = self.handle.take() {
-            CANCEL_FLAG.store(true, std::sync::atomic::Ordering::Release);
-            signal_cancellation();
-            kill_all_children();
+            self.scope.cancel();
             handle.abort();
         }
     }

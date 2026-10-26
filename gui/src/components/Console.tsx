@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import type {
   LlmRequestDetails,
   LogEntry,
+  TokenTotals,
   UsageState,
 } from "../hooks/usePipeline";
 
@@ -74,15 +75,15 @@ function fmtCount(n: number): string {
   return n.toLocaleString();
 }
 
-function freshInputTokens(usage: UsageState["total"]): number {
+function freshInputTokens(usage: TokenTotals): number {
   return Math.max(0, usage.input - usage.cached - usage.cacheWrite);
 }
 
-function hasTokenUsage(usage: UsageState["total"]): boolean {
+function hasTokenUsage(usage: TokenTotals): boolean {
   return usage.input + usage.output > 0;
 }
 
-function usageDescription(usage: UsageState["total"]): string {
+function usageDescription(usage: TokenTotals): string {
   const fresh = freshInputTokens(usage);
   return [
     `Token usage: ${fmtCount(usage.input)} logical input tokens equals ${fmtCount(fresh)} fresh input tokens plus ${fmtCount(usage.cached)} cache-read tokens plus ${fmtCount(usage.cacheWrite)} cache-write tokens; ${fmtCount(usage.output)} output tokens.`,
@@ -94,6 +95,35 @@ function usageDescription(usage: UsageState["total"]): string {
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+function fmtDuration(secs: number): string {
+  if (secs >= 3600 && secs % 3600 === 0) return `${secs / 3600} h`;
+  if (secs >= 60 && secs % 60 === 0) return `${secs / 60} min`;
+  return `${fmtCount(secs)} s`;
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+// Backend session labels read "Step: Technical [Section 2 · Codex]" or
+// "Merge: Technical". The picker drops the "Step:" boilerplate, flattens the
+// bracketed unit, and names the agent only when the label does not already.
+function sessionName(label: string, request?: LlmRequestDetails): string {
+  const merge = /^Merge:\s*/.test(label);
+  let name = label
+    .replace(/^(Step|Merge):\s*/, "")
+    .replace(/\s*\[([^\]]+)\]/g, " · $1");
+  if (merge) name = `Merge · ${name}`;
+  if (request) {
+    const lower = name.toLowerCase();
+    const named = [request.provider, request.provider_label].some((value) =>
+      lower.includes(value.toLowerCase()),
+    );
+    if (!named) name += ` · ${capitalize(request.provider)}`;
+  }
+  return name;
 }
 
 function requestText(request: LlmRequestDetails): string {
@@ -120,181 +150,317 @@ function requestText(request: LlmRequestDetails): string {
 function TruncatedPreviewBadge({ truncated }: { truncated?: boolean }) {
   if (!truncated) return null;
   return (
-    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
+    <span className="rounded bg-amber-100 px-1.5 py-px text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
       Preview truncated
     </span>
   );
 }
 
+/** Logical input split into fresh, cache-read, and cache-write tokens, with a
+ *  proportional bar. Cache traffic is a subset of input, never additional. */
+function TokenUsage({ usage, label }: { usage: TokenTotals; label: string }) {
+  const fresh = freshInputTokens(usage);
+  const parts = [
+    {
+      name: "fresh",
+      value: fresh,
+      bar: "bg-gray-400 dark:bg-gray-500",
+      text: "text-gray-700 dark:text-gray-300",
+    },
+    {
+      name: "cache read",
+      value: usage.cached,
+      bar: "bg-emerald-500 dark:bg-emerald-500",
+      text: "text-emerald-700 dark:text-emerald-400",
+    },
+    {
+      name: "cache write",
+      value: usage.cacheWrite,
+      bar: "bg-blue-500 dark:bg-blue-400",
+      text: "text-blue-700 dark:text-blue-400",
+    },
+  ].filter((part) => part.value > 0);
+  const description = usageDescription(usage);
+  return (
+    <div
+      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 tabular-nums"
+      aria-label={description}
+      title={description}
+      tabIndex={0}
+    >
+      <span className="text-gray-500 dark:text-gray-400">{label}</span>
+      <span className="text-gray-800 dark:text-gray-200">
+        <span className="font-medium">{fmtTokens(usage.input)}</span> input
+      </span>
+      {usage.input > 0 && (
+        <span
+          aria-hidden
+          className="flex h-1.5 w-20 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-800"
+        >
+          {parts.map((part) => (
+            <span
+              key={part.name}
+              className={part.bar}
+              style={{ width: `${(part.value / usage.input) * 100}%` }}
+            />
+          ))}
+        </span>
+      )}
+      {parts.map((part) => (
+        <span key={part.name} className={part.text}>
+          {fmtTokens(part.value)} {part.name}
+        </span>
+      ))}
+      <span className="text-gray-800 dark:text-gray-200">
+        → <span className="font-medium">{fmtTokens(usage.output)}</span> output
+      </span>
+    </div>
+  );
+}
+
+function Fact({
+  label,
+  title,
+  children,
+}: {
+  label: string;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="min-w-0 max-w-full">
+      <dt className="text-gray-500 dark:text-gray-400">{label}</dt>
+      <dd className="truncate text-gray-800 dark:text-gray-200" title={title}>
+        {children}
+      </dd>
+    </div>
+  );
+}
+
+type RequestPanel = "prompt" | "paths" | null;
+
+function PanelToggle({
+  open,
+  onClick,
+  children,
+}: {
+  open: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-expanded={open}
+      className={`flex items-center gap-1.5 rounded-md px-2 py-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 ${
+        open
+          ? "bg-white text-gray-900 shadow-sm ring-1 ring-gray-200 dark:bg-gray-800 dark:text-gray-100 dark:ring-gray-700"
+          : "text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+      }`}
+    >
+      <svg
+        aria-hidden
+        viewBox="0 0 12 12"
+        className={`h-2.5 w-2.5 transition-transform ${open ? "rotate-90" : ""}`}
+      >
+        <path
+          d="M4 2.5 7.5 6 4 9.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        />
+      </svg>
+      {children}
+    </button>
+  );
+}
+
+function PromptSection({
+  title,
+  truncated,
+  text,
+}: {
+  title: string;
+  truncated?: boolean;
+  text: string;
+}) {
+  return (
+    <section>
+      <div className="mb-1 flex items-center gap-2 text-gray-500 dark:text-gray-400">
+        <span>{title}</span>
+        <TruncatedPreviewBadge truncated={truncated} />
+      </div>
+      <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-md bg-white px-2.5 py-2 font-mono leading-relaxed text-gray-700 ring-1 ring-gray-200 dark:bg-gray-950 dark:text-gray-300 dark:ring-gray-800">
+        {text}
+      </pre>
+    </section>
+  );
+}
+
 function RequestDetails({
   request,
+  usage,
   copyText,
 }: {
   request: LlmRequestDetails;
+  usage?: TokenTotals;
   copyText: (text: string) => Promise<boolean>;
 }) {
-  const [showPrompt, setShowPrompt] = useState(false);
-  const toolText = request.tools.length > 0 ? request.tools.join(", ") : "None";
-  const transport = request.transport === "api" ? "Direct API" : "CLI";
-  const outputLimit =
-    request.max_output_tokens == null
-      ? "provider default"
-      : `${fmtCount(request.max_output_tokens)} max output tokens`;
-  const access = [
-    request.pdf_attached ? "PDF attached" : null,
+  const [panel, setPanel] = useState<RequestPanel>(null);
+  const toggle = (next: Exclude<RequestPanel, null>) =>
+    setPanel((current) => (current === next ? null : next));
+  const transport = request.transport === "api" ? "API" : "CLI";
+  const tools = request.tools.length > 0 ? request.tools.join(", ") : "None";
+  const context = [
+    request.pdf_attached ? "PDF" : null,
     request.shared_context
-      ? `shared context (${fmtCount(request.shared_context_chars)} chars)`
+      ? `${fmtTokens(request.shared_context_chars)} chars shared`
       : null,
-    request.write_enabled ? "artifact writes enabled" : "read-only",
+    request.write_enabled ? "Writes artifacts" : "Read-only",
   ]
     .filter(Boolean)
     .join(" · ");
-  const hasTruncatedPreview =
+  const paths = [
+    request.working_directory
+      ? { label: "Working directory", path: request.working_directory }
+      : null,
+    ...request.read_directories.map((path) => ({ label: "Read", path })),
+    request.write_directory
+      ? { label: "Write", path: request.write_directory }
+      : null,
+  ].filter((entry): entry is { label: string; path: string } => entry != null);
+  const hasTruncatedPreview = Boolean(
     request.prompt_truncated ||
     request.system_prompt_truncated ||
-    request.shared_context_truncated;
+    request.shared_context_truncated,
+  );
 
   return (
-    <div className="mb-2 rounded-lg border border-gray-200 bg-gray-50 text-gray-700 shadow-sm dark:border-gray-800 dark:bg-gray-900/70 dark:text-gray-300 dark:shadow-none">
-      <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 px-3 py-2 text-xs">
-        <span className="text-gray-500 dark:text-gray-400">Provider</span>
-        <span>
-          {request.provider_label} ({request.provider}) · {transport}
-          {request.local_endpoint ? ` · ${request.local_endpoint}` : ""}
-        </span>
-        <span className="text-gray-500 dark:text-gray-400">Model</span>
-        <span>
-          {request.model}{" "}
-          <span className="text-gray-500 dark:text-gray-400">
-            ({request.model_policy})
-          </span>
-        </span>
-        <span className="text-gray-500 dark:text-gray-400">Settings</span>
-        <span>
-          effort {request.effort} · tools {toolText} · timeout{" "}
-          {fmtCount(request.timeout_secs)}s · {outputLimit}
-        </span>
-        <span className="text-gray-500 dark:text-gray-400">Context</span>
-        <span>{access}</span>
-      </div>
-
-      <div className="border-t border-gray-200 dark:border-gray-800">
-        <button
-          onClick={() => setShowPrompt((value) => !value)}
-          className="flex w-full cursor-pointer select-none items-center gap-2 px-3 py-1.5 text-left
-                     text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900
-                     focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-400
-                     dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+    <section
+      aria-label="Request details"
+      className="mb-2 overflow-hidden rounded-lg border border-gray-200 bg-gray-50 font-sans text-xs text-gray-700 dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-300"
+    >
+      <dl className="flex flex-wrap gap-x-6 gap-y-2 px-3 py-2.5">
+        <Fact
+          label="Provider"
+          title={`${request.provider_label} (${request.provider}) via ${request.transport === "api" ? "direct API" : "CLI"}${request.local_endpoint ? ` at ${request.local_endpoint}` : ""}`}
         >
-          <span>
-            {showPrompt ? "Hide" : "View"} prompt (
-            {fmtCount(request.prompt_chars)} task characters)
+          {request.provider_label}{" "}
+          <span className="text-gray-500 dark:text-gray-400">
+            · {transport}
           </span>
-          {!showPrompt && (
-            <TruncatedPreviewBadge truncated={Boolean(hasTruncatedPreview)} />
+        </Fact>
+        <Fact
+          label="Model"
+          title={`${request.model} (${request.model_policy})`}
+        >
+          <span className="font-mono">{request.model}</span>{" "}
+          <span className="text-gray-500 dark:text-gray-400">
+            · {request.model_policy}
+          </span>
+        </Fact>
+        <Fact label="Effort">{request.effort}</Fact>
+        <Fact label="Tools" title={tools}>
+          {tools}
+        </Fact>
+        <Fact
+          label="Limits"
+          title={`Timeout ${fmtCount(request.timeout_secs)} seconds; ${
+            request.max_output_tokens == null
+              ? "provider default output limit"
+              : `${fmtCount(request.max_output_tokens)} max output tokens`
+          }`}
+        >
+          {fmtDuration(request.timeout_secs)} ·{" "}
+          {request.max_output_tokens == null
+            ? "default output"
+            : `${fmtTokens(request.max_output_tokens)} output`}
+        </Fact>
+        <Fact label="Context" title={context}>
+          {context}
+        </Fact>
+      </dl>
+
+      {usage && hasTokenUsage(usage) && (
+        <div className="border-t border-gray-200 px-3 py-2 dark:border-gray-800">
+          <TokenUsage usage={usage} label="Tokens" />
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-1 border-t border-gray-200 px-1.5 py-1 dark:border-gray-800">
+        <PanelToggle open={panel === "prompt"} onClick={() => toggle("prompt")}>
+          Prompt
+          <span className="tabular-nums text-gray-500 dark:text-gray-400">
+            {fmtCount(request.prompt_chars)} chars
+          </span>
+          {panel !== "prompt" && (
+            <TruncatedPreviewBadge truncated={hasTruncatedPreview} />
           )}
-        </button>
-        {showPrompt && (
-          <div className="border-t border-gray-200 px-3 py-2 dark:border-gray-800">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-gray-500 dark:text-gray-400">
-                System, shared context, and task prompt are shown separately in
-                dispatch order.
-                {hasTruncatedPreview &&
-                  " Long fields are shortened; Copy prompt copies only the visible text."}
-              </span>
-              <button
-                onClick={() => void copyText(requestText(request))}
-                className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100"
-              >
-                Copy prompt
-              </button>
-            </div>
-            {request.system_prompt && (
-              <section className="mb-3">
-                <div className="mb-1 flex items-center gap-2 text-gray-500 dark:text-gray-400">
-                  <span>
-                    System prompt
-                    {request.system_prompt_chars !== undefined
-                      ? ` (${fmtCount(request.system_prompt_chars)} characters)`
-                      : ""}
-                  </span>
-                  <TruncatedPreviewBadge
-                    truncated={request.system_prompt_truncated}
-                  />
-                </div>
-                <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300">
-                  {request.system_prompt}
-                </pre>
-              </section>
-            )}
-            {request.shared_context && (
-              <section className="mb-3">
-                <div className="mb-1 flex items-center gap-2 text-gray-500 dark:text-gray-400">
-                  <span>
-                    Shared context ({fmtCount(request.shared_context_chars)}{" "}
-                    characters)
-                  </span>
-                  <TruncatedPreviewBadge
-                    truncated={request.shared_context_truncated}
-                  />
-                </div>
-                <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300">
-                  {request.shared_context}
-                </pre>
-              </section>
-            )}
-            <section>
-              <div className="mb-1 flex items-center gap-2 text-gray-500 dark:text-gray-400">
-                <span>
-                  Task prompt ({fmtCount(request.prompt_chars)} characters)
-                </span>
-                <TruncatedPreviewBadge truncated={request.prompt_truncated} />
-              </div>
-              <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300">
-                {request.prompt}
-              </pre>
-            </section>
-          </div>
+        </PanelToggle>
+        {paths.length > 0 && (
+          <PanelToggle open={panel === "paths"} onClick={() => toggle("paths")}>
+            Execution paths
+            <span className="tabular-nums text-gray-500 dark:text-gray-400">
+              {paths.length}
+            </span>
+          </PanelToggle>
+        )}
+        {panel === "prompt" && (
+          <button
+            onClick={() => void copyText(requestText(request))}
+            className="ml-auto rounded-md px-2 py-1 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+          >
+            Copy prompt
+          </button>
         )}
       </div>
 
-      {(request.working_directory ||
-        request.read_directories.length > 0 ||
-        request.write_directory) && (
-        <details className="border-t border-gray-200 dark:border-gray-800">
-          <summary className="cursor-pointer select-none px-3 py-1.5 text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-400 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200">
-            View execution paths
-          </summary>
-          <div className="border-t border-gray-200 px-3 py-2 text-gray-600 dark:border-gray-800 dark:text-gray-400">
-            {request.working_directory && (
-              <div>
-                <span className="text-gray-500 dark:text-gray-400">
-                  Working directory:{" "}
-                </span>
-                {request.working_directory}
-              </div>
-            )}
-            {request.read_directories.map((path) => (
-              <div key={path}>
-                <span className="text-gray-500 dark:text-gray-400">
-                  Read root:{" "}
-                </span>
-                {path}
-              </div>
-            ))}
-            {request.write_directory && (
-              <div>
-                <span className="text-gray-500 dark:text-gray-400">
-                  Write root:{" "}
-                </span>
-                {request.write_directory}
-              </div>
-            )}
-          </div>
-        </details>
+      {panel === "prompt" && (
+        <div className="space-y-3 border-t border-gray-200 px-3 py-2.5 dark:border-gray-800">
+          <p className="text-gray-500 dark:text-gray-400">
+            Shown in dispatch order.
+            {hasTruncatedPreview &&
+              " Long fields are shortened; Copy prompt copies only the visible text."}
+          </p>
+          {request.system_prompt && (
+            <PromptSection
+              title={`System prompt${
+                request.system_prompt_chars !== undefined
+                  ? ` (${fmtCount(request.system_prompt_chars)} characters)`
+                  : ""
+              }`}
+              truncated={request.system_prompt_truncated}
+              text={request.system_prompt}
+            />
+          )}
+          {request.shared_context && (
+            <PromptSection
+              title={`Shared context (${fmtCount(request.shared_context_chars)} characters)`}
+              truncated={request.shared_context_truncated}
+              text={request.shared_context}
+            />
+          )}
+          <PromptSection
+            title={`Task prompt (${fmtCount(request.prompt_chars)} characters)`}
+            truncated={request.prompt_truncated}
+            text={request.prompt}
+          />
+        </div>
       )}
-    </div>
+
+      {panel === "paths" && (
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 border-t border-gray-200 px-3 py-2.5 dark:border-gray-800">
+          {paths.map(({ label, path }) => (
+            <div key={`${label}:${path}`} className="contents">
+              <dt className="text-gray-500 dark:text-gray-400">{label}</dt>
+              <dd className="break-all font-mono text-gray-700 dark:text-gray-300">
+                {path}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </section>
   );
 }
 
@@ -428,6 +594,16 @@ export default function Console({ logs, usage, active = true }: Props) {
     activeSession === "master"
       ? undefined
       : sessions.find((session) => session.id === activeSession)?.request;
+  const activeUsage =
+    activeSession === "master" ? undefined : usage.bySession[activeSession];
+  // Run totals sit above the master log; a selected call's usage lives in its
+  // request card, or in the same strip when the call reported no request.
+  const stripUsage =
+    activeSession === "master"
+      ? usage.total
+      : activeRequest
+        ? undefined
+        : activeUsage;
 
   const needle = search.trim().toLowerCase();
   const visibleLogs = useMemo(() => {
@@ -556,19 +732,32 @@ export default function Console({ logs, usage, active = true }: Props) {
           <div className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 bg-transparent transition-colors group-hover:bg-blue-400 group-focus:bg-blue-400 group-active:bg-blue-500" />
         </div>
       )}
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-gray-200 bg-gray-50 px-4 py-1.5 font-mono text-xs text-gray-600 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-gray-200 bg-gray-50 px-3 py-1.5 text-xs text-gray-600 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <button
             onClick={() => setOpen(!open)}
-            className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-sm transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:hover:text-gray-200"
+            aria-expanded={open}
+            className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 rounded-sm font-medium text-gray-700 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-gray-300 dark:hover:text-gray-100"
           >
-            <span>{open ? "▼" : "▲"}</span>
+            <svg
+              aria-hidden
+              viewBox="0 0 12 12"
+              className={`h-2.5 w-2.5 transition-transform ${open ? "rotate-90" : ""}`}
+            >
+              <path
+                d="M4 2.5 7.5 6 4 9.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              />
+            </svg>
             <span>
               {active ? "Active run console" : "Completed run console"}
             </span>
           </button>
           {sessions.length > 0 && (
             <select
+              aria-label="Console session"
               value={
                 activeSession === "master" ? "master" : String(activeSession)
               }
@@ -583,34 +772,27 @@ export default function Console({ logs, usage, active = true }: Props) {
                   scrollRef.current?.scrollTo?.({ top: 0 });
                 }
               }}
-              className="min-w-40 max-w-[22rem] flex-1 cursor-pointer rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-gray-400 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-300"
-              title="Show a single headless session's log, or all of them"
+              className="w-48 max-w-full cursor-pointer truncate rounded-md border border-gray-300 bg-white py-0.5 pl-1.5 pr-6 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-gray-400 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-300"
+              title={
+                activeSession === "master"
+                  ? "Show a single model call's log, or all of them"
+                  : sessions.find((s) => s.id === activeSession)?.label
+              }
             >
-              <option value="master">All sessions</option>
-              {sessions.map((s) => {
-                const u = usage.bySession[s.id];
-                const cacheRead = u?.cached
-                  ? ` + ${fmtTokens(u.cached)} cache read`
-                  : "";
-                const cacheWrite = u?.cacheWrite
-                  ? ` + ${fmtTokens(u.cacheWrite)} cache write`
-                  : "";
-                const tok = u
-                  ? ` · ${fmtTokens(u.input)} logical input = ${fmtTokens(freshInputTokens(u))} fresh${cacheRead}${cacheWrite} → ${fmtTokens(u.output)} output`
-                  : "";
-                const request = s.request
-                  ? ` · ${s.request.provider_label} ${s.request.transport.toUpperCase()} · ${s.request.model}`
-                  : "";
-                return (
-                  <option key={s.id} value={String(s.id)}>
-                    {(s.hasError ? "✕ " : "") +
-                      s.label +
-                      request +
-                      ` (${s.count})` +
-                      tok}
-                  </option>
-                );
-              })}
+              <option value="master">All sessions ({sessions.length})</option>
+              {sessions.map((s) => (
+                <option
+                  key={s.id}
+                  value={String(s.id)}
+                  title={
+                    s.request
+                      ? `${s.label} · ${s.request.provider_label} ${s.request.transport.toUpperCase()} · ${s.request.model}`
+                      : s.label
+                  }
+                >
+                  {(s.hasError ? "✕ " : "") + sessionName(s.label, s.request)}
+                </option>
+              ))}
             </select>
           )}
           {open && (
@@ -620,16 +802,16 @@ export default function Console({ logs, usage, active = true }: Props) {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search…"
-                className="w-28 rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-700 transition-all placeholder:text-gray-400 focus:w-40 focus:outline-none focus:ring-1 focus:ring-gray-400 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-300 dark:placeholder:text-gray-600 dark:focus:ring-gray-500"
+                className="w-24 rounded-md border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-700 transition-all placeholder:text-gray-400 focus:w-40 focus:outline-none focus:ring-1 focus:ring-gray-400 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-300 dark:placeholder:text-gray-600 dark:focus:ring-gray-500"
               />
               {/* Level filter chips */}
-              <div className="flex items-center gap-0.5 shrink-0">
+              <div className="flex shrink-0 items-center gap-0.5">
                 {(["all", "warn", "error"] as LevelFilter[]).map((lv) => (
                   <button
                     key={lv}
                     onClick={() => setLevel(lv)}
                     aria-pressed={level === lv}
-                    className={`px-1.5 py-0.5 rounded text-xs transition-colors ${
+                    className={`rounded px-1.5 py-0.5 text-xs transition-colors ${
                       level === lv
                         ? "bg-gray-700 text-white dark:bg-gray-600 dark:text-gray-100"
                         : "text-gray-500 hover:bg-gray-200 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-200"
@@ -650,32 +832,14 @@ export default function Console({ logs, usage, active = true }: Props) {
           )}
         </div>
 
-        <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2">
-          {hasTokenUsage(usage.total) && (
+        <div className="ml-auto flex shrink-0 items-center justify-end gap-2 tabular-nums">
+          {!open && hasTokenUsage(usage.total) && (
             <span
               className="text-gray-500 dark:text-gray-400"
-              aria-label={usageDescription(usage.total)}
               title={usageDescription(usage.total)}
-              tabIndex={0}
             >
-              {fmtTokens(usage.total.input)} logical input ={" "}
-              <span className="text-gray-600 dark:text-gray-300">
-                {fmtTokens(freshInputTokens(usage.total))} fresh
-              </span>
-              {usage.total.cached > 0 && (
-                <span className="text-emerald-600 dark:text-green-500">
-                  {" "}
-                  + {fmtTokens(usage.total.cached)} cache read
-                </span>
-              )}
-              {usage.total.cacheWrite > 0 && (
-                <span className="text-blue-600 dark:text-blue-400">
-                  {" "}
-                  + {fmtTokens(usage.total.cacheWrite)} cache write
-                </span>
-              )}
-              {" · "}
-              {fmtTokens(usage.total.output)} output
+              {fmtTokens(usage.total.input)} → {fmtTokens(usage.total.output)}{" "}
+              tokens
             </span>
           )}
           {errorCount > 0 && (
@@ -693,7 +857,7 @@ export default function Console({ logs, usage, active = true }: Props) {
               onClick={() => setShowTimestamps((v) => !v)}
               aria-label="Show console timestamps"
               aria-pressed={showTimestamps}
-              className={`cursor-pointer rounded border border-gray-300 px-1.5 py-0.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 dark:border-gray-700 ${
+              className={`cursor-pointer rounded-md border border-gray-300 px-1.5 py-0.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 dark:border-gray-700 ${
                 showTimestamps
                   ? "bg-gray-700 text-white dark:bg-gray-600 dark:text-gray-100"
                   : "bg-white text-gray-600 hover:bg-gray-100 hover:text-gray-900 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100"
@@ -706,7 +870,7 @@ export default function Console({ logs, usage, active = true }: Props) {
           <button
             onClick={copyAll}
             disabled={visibleLogs.length === 0}
-            className="cursor-pointer rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 disabled:cursor-default disabled:opacity-40 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+            className="cursor-pointer rounded-md border border-gray-300 bg-white px-1.5 py-0.5 text-xs text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-400 disabled:cursor-default disabled:opacity-40 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100"
             title={
               activeSession === "master"
                 ? "Copy all shown lines"
@@ -717,6 +881,15 @@ export default function Console({ logs, usage, active = true }: Props) {
           </button>
         </div>
       </div>
+
+      {open && stripUsage && hasTokenUsage(stripUsage) && (
+        <div className="shrink-0 border-b border-gray-200 px-3 py-1.5 text-xs dark:border-gray-800">
+          <TokenUsage
+            usage={stripUsage}
+            label={activeSession === "master" ? "Run total" : "Tokens"}
+          />
+        </div>
+      )}
 
       {copyError && (
         <div
@@ -731,12 +904,13 @@ export default function Console({ logs, usage, active = true }: Props) {
         <div
           ref={scrollRef}
           onScroll={onScroll}
-          className="flex-1 overflow-auto px-4 py-2 min-h-0 relative"
+          className="relative min-h-0 flex-1 overflow-auto px-3 py-2"
         >
           {activeRequest && (
             <RequestDetails
               key={String(activeSession)}
               request={activeRequest}
+              usage={activeUsage}
               copyText={copyText}
             />
           )}

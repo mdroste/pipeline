@@ -242,7 +242,7 @@ describe("Console", () => {
       /50,000 logical input tokens equals 2,000 fresh input tokens plus 40,000 cache-read tokens plus 8,000 cache-write tokens/,
     );
     expect(summary).toHaveTextContent(
-      "50k logical input = 2k fresh + 40k cache read + 8k cache write · 2k output",
+      "Run total50k input2k fresh40k cache read8k cache write→ 2k output",
     );
     expect(summary.getAttribute("title")).toContain(
       "Cache reads and cache writes are subsets of logical input, not additional tokens.",
@@ -294,25 +294,25 @@ describe("Console", () => {
     );
 
     await user.selectOptions(screen.getByRole("combobox"), "7");
-    expect(
-      screen.getByText(/Anthropic \(claude\) · Direct API/),
-    ).toBeInTheDocument();
-    expect(screen.getAllByText(/claude-sonnet-4-6/)).not.toHaveLength(0);
-    expect(
-      screen.getByText(/effort high · tools Read · timeout 600s/),
-    ).toBeInTheDocument();
+    const details = screen.getByRole("region", { name: "Request details" });
+    expect(details).toHaveTextContent("ProviderAnthropic · API");
+    expect(details).toHaveTextContent("Modelclaude-sonnet-4-6 · Balanced");
+    expect(details).toHaveTextContent("Efforthigh");
+    expect(details).toHaveTextContent("ToolsRead");
+    expect(details).toHaveTextContent("Limits10 min · 32k output");
+    expect(details).toHaveTextContent("ContextPDF · Read-only");
     expect(
       screen.queryByText("Transcribe the attached paper."),
     ).not.toBeInTheDocument();
 
-    await user.click(screen.getByText(/View prompt/));
+    await user.click(screen.getByRole("button", { name: /Prompt/ }));
     expect(screen.getByText("Return Markdown.")).toBeInTheDocument();
     expect(
       screen.getByText("Transcribe the attached paper."),
     ).toBeInTheDocument();
   });
 
-  it("shows a CLI provider and transport without repeating CLI", () => {
+  it("shows a CLI provider and transport without repeating CLI", async () => {
     const cliRequest: LlmRequestDetails = {
       ...REQUEST,
       provider: "codex",
@@ -365,19 +365,66 @@ describe("Console", () => {
     );
 
     const selector = screen.getByRole("combobox");
-    expect(selector).toHaveTextContent("Technical · Codex CLI · gpt-5.6");
-    expect(selector).not.toHaveTextContent("CLI CLI");
-    expect(selector).toHaveTextContent(
-      "50k logical input = 2k fresh + 40k cache read + 8k cache write → 2k output",
-    );
-    expect(selector).not.toHaveTextContent("reported tool calls");
-    expect(selector).not.toHaveTextContent("reported model round trips");
+    expect(selector).toHaveTextContent("Technical · Codex");
+    expect(selector).not.toHaveTextContent("gpt-5.6");
+    expect(selector).not.toHaveTextContent("logical input");
     const summary = screen.getByLabelText(/50,000 logical input tokens/);
     expect(summary.getAttribute("title")).not.toContain("tool calls");
     expect(summary.getAttribute("title")).not.toContain("model round trips");
+
+    await userEvent.setup().selectOptions(selector, "8");
+    const details = screen.getByRole("region", { name: "Request details" });
+    expect(details).toHaveTextContent("ProviderCodex · CLI");
+    expect(details).not.toHaveTextContent("CLI CLI");
+    expect(details).toHaveTextContent(
+      "Tokens50k input2k fresh40k cache read8k cache write→ 2k output",
+    );
     expect(
       screen.queryByRole("button", { name: "Save" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("names sessions by step, unit, and agent without boilerplate", () => {
+    const codex: LlmRequestDetails = {
+      ...REQUEST,
+      provider: "codex",
+      provider_label: "Codex",
+    };
+    const claudeCode: LlmRequestDetails = {
+      ...REQUEST,
+      provider: "claude",
+      provider_label: "Claude Code",
+      transport: "cli",
+    };
+    const session = (
+      id: number,
+      label: string,
+      request: LlmRequestDetails,
+      level = "info",
+    ): LogEntry => ({ ...log("LLM request", level, id), label, request });
+    render(
+      <Console
+        logs={[
+          session(1, "Step: Orientation", claudeCode),
+          session(2, "Step: Technical [Section 2 · Codex]", codex),
+          session(3, "Merge: Technical", claudeCode),
+          session(4, "LLM PDF extraction", REQUEST),
+          session(5, "Step: Synthesis · usage-limit fallback", codex, "error"),
+        ]}
+        usage={EMPTY_USAGE}
+      />,
+    );
+
+    expect(
+      screen.getAllByRole("option").map((option) => option.textContent),
+    ).toEqual([
+      "All sessions (5)",
+      "Orientation · Claude",
+      "Technical · Section 2 · Codex",
+      "Merge · Technical · Claude",
+      "LLM PDF extraction · Claude",
+      "✕ Synthesis · usage-limit fallback · Codex",
+    ]);
   });
 
   it("labels bounded request fields when their previews are truncated", async () => {
@@ -409,7 +456,7 @@ describe("Console", () => {
 
     await user.selectOptions(screen.getByRole("combobox"), "9");
     expect(screen.getByText("Preview truncated")).toBeVisible();
-    await user.click(screen.getByText(/View prompt/));
+    await user.click(screen.getByRole("button", { name: /Prompt/ }));
 
     expect(screen.getAllByText("Preview truncated")).toHaveLength(3);
     expect(screen.getByText("System prompt (24,000 characters)")).toBeVisible();

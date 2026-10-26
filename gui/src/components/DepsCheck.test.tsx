@@ -37,8 +37,8 @@ describe("DepsCheck", () => {
       />,
     );
     const models = screen.getByRole("region", { name: "Model access" });
-    expect(within(models).getByText("Reviews ChatGPT")).toBeVisible();
-    expect(within(models).getByText("signed in")).toBeVisible();
+    expect(within(models).getByText("ChatGPT")).toBeVisible();
+    expect(within(models).getByText("Subscription")).toBeVisible();
     expect(within(models).getByText("Ready")).toBeVisible();
   });
 
@@ -60,15 +60,17 @@ describe("DepsCheck", () => {
     );
     const models = screen.getByRole("region", { name: "Model access" });
     expect(within(models).getByText("Needs attention")).toBeVisible();
-    expect(within(models).getByText("set up")).toHaveClass("text-red-700");
-    expect(within(models).getByText("alternative")).toHaveClass(
-      "text-gray-600",
+    expect(within(models).getByText("Not connected")).toHaveClass(
+      "text-red-700",
     );
+    expect(within(models).getByText("Not set up")).toHaveClass("text-gray-500");
     expect(
       within(models).getByText(
-        "Reviews ChatGPT connection is in use by another Pipeline process",
+        "ChatGPT connection is in use by another Pipeline process",
       ),
     ).toBeVisible();
+    // An unused provider that is not set up needs no remedy.
+    expect(within(models).queryByText(/install it/)).not.toBeInTheDocument();
   });
 
   it("includes hidden required blockers in their section and shows their remedy", () => {
@@ -95,7 +97,9 @@ describe("DepsCheck", () => {
     const models = screen.getByRole("region", { name: "Model access" });
     const pdf = screen.getByRole("region", { name: "PDF parsing" });
     expect(within(models).getByText("Needs attention")).toBeVisible();
-    expect(within(models).getByText("Start the local server.")).toBeVisible();
+    expect(
+      within(models).getByText("Local model:").parentElement,
+    ).toHaveTextContent("Local model: Start the local server.");
     expect(within(pdf).getByText("Needs attention")).toBeVisible();
     expect(
       within(pdf).getByText("Choose a supported extractor."),
@@ -149,9 +153,9 @@ describe("DepsCheck", () => {
       screen.getByRole("region", { name: "PDF parsing" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Each provider selected by this workflow must be ready/),
+      screen.getByText(/needs a subscription or API\s+key/),
     ).toBeInTheDocument();
-    expect(screen.getByText("signed in")).toBeInTheDocument();
+    expect(screen.getByText("Subscription")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
@@ -169,7 +173,7 @@ describe("DepsCheck", () => {
       ],
     };
     render(<DepsCheck report={report} onDismiss={() => {}} />);
-    expect(screen.getByText("set up")).toBeInTheDocument();
+    expect(screen.getByText("Not set up")).toBeInTheDocument();
     expect(
       screen.getByText(/Check the required model connections/),
     ).toBeInTheDocument();
@@ -200,7 +204,7 @@ describe("DepsCheck", () => {
     render(<DepsCheck report={report} onDismiss={() => {}} />);
     const models = screen.getByRole("region", { name: "Model access" });
     expect(within(models).getByText("Ready")).toBeInTheDocument();
-    expect(within(models).getAllByText("alternative")).toHaveLength(2);
+    expect(within(models).getAllByText("Not set up")).toHaveLength(2);
     expect(
       screen.queryByText(/Check the required model connections/),
     ).not.toBeInTheDocument();
@@ -229,7 +233,7 @@ describe("DepsCheck", () => {
         onOpenPdfSettings={onOpenPdfSettings}
       />,
     );
-    const label = screen.getByText("highly recommended (for PDFs)");
+    const label = screen.getByText("highly recommended");
     expect(label).toHaveClass("text-red-700");
     expect(screen.queryByText("required")).not.toBeInTheDocument();
     expect(
@@ -256,7 +260,7 @@ describe("DepsCheck", () => {
       ],
     };
     render(<DepsCheck report={report} onDismiss={() => {}} />);
-    expect(screen.getByText("not signed in")).toBeInTheDocument();
+    expect(screen.getByText("Not signed in")).toBeInTheDocument();
     expect(
       screen.getByText(/Check the required model connections/),
     ).toBeInTheDocument();
@@ -277,8 +281,8 @@ describe("DepsCheck", () => {
       ],
     };
     render(<DepsCheck report={report} onDismiss={() => {}} />);
-    expect(screen.getByText("sign-in not verified")).toBeInTheDocument();
-    expect(screen.queryByText("not signed in")).not.toBeInTheDocument();
+    expect(screen.getByText("Sign-in not verified")).toBeInTheDocument();
+    expect(screen.queryByText("Not signed in")).not.toBeInTheDocument();
     expect(screen.getByText(hint)).toBeInTheDocument();
     expect(
       screen.getByText(/Check the required model connections/),
@@ -304,10 +308,11 @@ describe("DepsCheck", () => {
     };
     render(<DepsCheck report={report} onDismiss={() => {}} />);
     const models = screen.getByRole("region", { name: "Model access" });
-    expect(within(models).getByText("Google API")).toBeInTheDocument();
+    expect(within(models).getByText("Gemini")).toBeInTheDocument();
+    expect(within(models).getByText("API key")).toBeInTheDocument();
     expect(within(models).getByText("Ready")).toBeInTheDocument();
     expect(
-      screen.queryByText(/not signed in|sign-in not verified/),
+      screen.queryByText(/not signed in|sign-in not verified/i),
     ).not.toBeInTheDocument();
   });
 
@@ -323,8 +328,8 @@ describe("DepsCheck", () => {
       ],
     };
     render(<DepsCheck report={report} onDismiss={() => {}} />);
-    expect(screen.getByText("Claude CLI")).toBeInTheDocument();
-    expect(screen.queryByText("Local LLM server")).not.toBeInTheDocument();
+    expect(screen.getByText("Claude")).toBeInTheDocument();
+    expect(screen.queryByText("Local model")).not.toBeInTheDocument();
     expect(
       screen.queryByText("PDF extractor configuration"),
     ).not.toBeInTheDocument();
@@ -364,13 +369,14 @@ describe("DepsCheck", () => {
         dep({
           authenticated: true,
           cli_auth_status: "signed_out",
+          version: "direct API",
           hint: "API key configured — CLI not required.",
         }),
       ],
     };
     render(<DepsCheck report={report} onDismiss={() => {}} />);
-    expect(screen.getByText("API key configured")).toBeInTheDocument();
-    expect(screen.queryByText("not signed in")).not.toBeInTheDocument();
+    expect(screen.getByText("API key")).toBeInTheDocument();
+    expect(screen.queryByText("Not signed in")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 

@@ -749,7 +749,7 @@ async fn run_with_interrupt(
         Some(result) => result,
         None => {
             eprintln!("Interrupt received; cancelling the active run…");
-            let _ = commands::cancel_pipeline().await;
+            let _ = commands::cancel_pipeline(None).await;
             match tokio::time::timeout(std::time::Duration::from_secs(15), run.as_mut()).await {
                 Ok(_) => Err("Pipeline cancelled by interrupt".to_string()),
                 Err(_) => Err(

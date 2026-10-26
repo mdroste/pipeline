@@ -294,17 +294,13 @@ fn engine_installer_children_are_not_in_the_run_scoped_kill_list() {
     let engine_pid = u32::MAX - 1;
     let run_pid = u32::MAX - 2;
     register_engine_child_pid(engine_pid);
-    assert!(!lifecycle::CHILD_PIDS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .contains(&engine_pid));
+    assert!(!crate::run_scope::all()
+        .iter()
+        .any(|scope| scope.has_child(engine_pid)));
     unregister_engine_child_pid(engine_pid);
 
     register_child_pid(run_pid);
-    assert!(lifecycle::CHILD_PIDS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .contains(&run_pid));
+    assert!(crate::run_scope::current().has_child(run_pid));
     unregister_child_pid(run_pid);
 }
 

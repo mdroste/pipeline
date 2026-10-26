@@ -350,6 +350,29 @@ export function WorkflowSection({
             </span>
           </div>
         </Field>
+
+        <Field
+          label="Simultaneous Reviews"
+          help="How many queued reviews run at the same time. Each review makes its own provider calls, so a higher limit clears the queue sooner but uses provider capacity faster."
+        >
+          <select
+            id="max-concurrent-reviews"
+            aria-label="Simultaneous Reviews"
+            value={settings.max_concurrent_reviews ?? 2}
+            onChange={(e) =>
+              setSettings({
+                ...settings,
+                max_concurrent_reviews: parseInt(e.target.value, 10),
+              })
+            }
+            className={selectClass}
+          >
+            <option value={1}>1 (one at a time)</option>
+            <option value={2}>2 (default)</option>
+            <option value={3}>3</option>
+            <option value={4}>4</option>
+          </select>
+        </Field>
       </div>
     </>
   );

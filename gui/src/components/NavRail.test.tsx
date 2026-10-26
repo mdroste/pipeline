@@ -3,12 +3,30 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import NavRail, { NAV_RAIL_WIDTH } from "./NavRail";
+import { ReviewRunBeacon } from "./ReviewRunList";
+import { queuedRun } from "../test/queuedRunFixture";
+import type { QueuedRun } from "../lib/types";
+
+// Times relative to now so the rail's relative labels are stable.
+function run(
+  key: string,
+  status: QueuedRun["status"],
+  extra: Partial<QueuedRun> = {},
+): QueuedRun {
+  const now = Date.now();
+  const finished = status !== "running" && status !== "queued";
+  return queuedRun(key, status, {
+    stage: status === "running" ? "dispatching" : null,
+    startedAt: status === "queued" ? null : now - 125_000,
+    finishedAt: finished ? now - 30_000 : null,
+    ...extra,
+  });
+}
 
 function renderRail(overrides: Partial<ComponentProps<typeof NavRail>> = {}) {
   const props: ComponentProps<typeof NavRail> = {
     activePage: "home",
     hasCurrentRun: false,
-    runInProgress: false,
     isMac: false,
     dependenciesReady: true,
     dependenciesLoading: false,
@@ -106,29 +124,82 @@ describe("NavRail", () => {
     ).toHaveAttribute("aria-current", "page");
   });
 
-  it("locks new reviews without adding a current-run destination", () => {
+  it("keeps New review available and lists every queued, running, and finished review", async () => {
+    const user = userEvent.setup();
+    const onOpenRun = vi.fn();
+    const onCancelRun = vi.fn();
+    const onDismissRuns = vi.fn();
+    const runs = [
+      run("finished", "done"),
+      run("waiting", "queued"),
+      run("active", "running"),
+      run("broken", "failed", { error: "provider exploded" }),
+    ];
     renderRail({
       activePage: "main",
       hasCurrentRun: true,
-      runInProgress: true,
+      runs,
+      runLimit: 1,
+      activeRunKey: "active",
+      unseenRuns: new Set(["finished"]),
+      onOpenRun,
+      onCancelRun,
+      onDismissRuns,
     });
 
-    expect(screen.getByRole("button", { name: "New review" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New review" })).toBeEnabled();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "1 of 1 running · 1 queued",
+    );
+    const list = within(
+      screen.getByRole("list", {
+        name: "Reviews in progress and recently finished",
+      }),
+    );
+    const rows = list.getAllByRole("listitem");
+    // Running first, then queued, then finished.
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringMatching(/^active\.pdfReviewing · 2:0\d/),
+      "waiting.pdfQueued · next",
+      expect.stringMatching(
+        /^finished\.pdfReport ready · just now · not opened yet/,
+      ),
+      "broken.pdfFailed",
+    ]);
+    const activeRow = list.getByRole("button", { name: /^active\.pdf/ });
+    expect(activeRow).toHaveAttribute("aria-current", "page");
     expect(
       screen.getByRole("button", { name: "Review history" }),
-    ).toHaveAttribute("aria-current", "page");
+    ).not.toHaveAttribute("aria-current");
+
+    await user.click(list.getByRole("button", { name: /^finished\.pdf/ }));
+    expect(onOpenRun).toHaveBeenCalledWith("finished");
+    await user.click(
+      list.getByRole("button", { name: "Cancel review of active.pdf" }),
+    );
+    expect(onCancelRun).toHaveBeenCalledWith(runs[2]);
+    await user.click(
+      list.getByRole("button", { name: "Remove waiting.pdf from the queue" }),
+    );
+    expect(onCancelRun).toHaveBeenCalledWith(runs[1]);
+    await user.click(list.getByRole("button", { name: "Dismiss broken.pdf" }));
+    expect(onDismissRuns).toHaveBeenCalledWith("broken");
+    await user.click(
+      screen.getByRole("button", { name: "Clear finished (2)" }),
+    );
+    expect(onDismissRuns).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("shows no run list until a review is queued", () => {
+    renderRail({ onOpenRun: vi.fn() });
     expect(
-      screen.queryByRole("button", { name: /Current run/ }),
-    ).not.toBeInTheDocument();
+      screen.queryByRole("list", { name: /Reviews in progress/ }),
+    ).toBeNull();
   });
 
   it("marks history active for a batch without adding a batch destination", () => {
-    renderRail({
-      activePage: "batch",
-      runInProgress: true,
-    });
+    renderRail({ activePage: "batch" });
 
-    expect(screen.getByRole("button", { name: "New review" })).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Review history" }),
     ).toHaveAttribute("aria-current", "page");
@@ -158,5 +229,43 @@ describe("NavRail", () => {
     await user.click(divider);
     await user.keyboard("{ArrowRight}");
     expect(props.onResize).toHaveBeenCalledWith(224);
+  });
+});
+
+describe("ReviewRunBeacon", () => {
+  it("summarizes active and finished reviews and reveals the list", async () => {
+    const user = userEvent.setup();
+    const onReveal = vi.fn();
+    const { rerender } = render(
+      <ReviewRunBeacon
+        runs={[run("a", "running"), run("b", "running"), run("c", "queued")]}
+        unseen={new Set()}
+        onReveal={onReveal}
+      />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^2 reviews running, 1 queued/ }),
+    );
+    expect(onReveal).toHaveBeenCalledOnce();
+
+    rerender(
+      <ReviewRunBeacon
+        runs={[run("d", "done")]}
+        unseen={new Set(["d"])}
+        onReveal={onReveal}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /^1 review finished/ }),
+    ).toBeVisible();
+
+    rerender(
+      <ReviewRunBeacon
+        runs={[run("d", "done")]}
+        unseen={new Set()}
+        onReveal={onReveal}
+      />,
+    );
+    expect(screen.queryByRole("button")).toBeNull();
   });
 });

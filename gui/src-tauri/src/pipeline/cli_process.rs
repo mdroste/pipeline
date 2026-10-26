@@ -42,7 +42,7 @@ pub fn capture_stderr(
     app: crate::emit::EventBus,
     session: Option<super::logging::LogSession>,
 ) -> JoinHandle<Vec<String>> {
-    tokio::spawn(super::logging::with_session_opt(session, async move {
+    crate::run_scope::spawn(super::logging::with_session_opt(session, async move {
         let mut tail = VecDeque::new();
         if let Some(stderr) = stderr {
             let mut reader = BufReader::new(stderr);
@@ -73,7 +73,7 @@ pub fn capture_text_stdout(
     app: crate::emit::EventBus,
     session: Option<super::logging::LogSession>,
 ) -> JoinHandle<(String, bool)> {
-    tokio::spawn(super::logging::with_session_opt(session, async move {
+    crate::run_scope::spawn(super::logging::with_session_opt(session, async move {
         let mut collected = String::new();
         let mut overflowed = false;
         let mut captured_lines = 0usize;

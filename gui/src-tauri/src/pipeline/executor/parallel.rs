@@ -71,7 +71,7 @@ pub(super) async fn run_parallel_wave(
                     .map(|output| output.raw_text.clone())
             });
         let units = crate::commands::await_or_cancel(
-            tokio::task::spawn_blocking(move || {
+            crate::run_scope::spawn_blocking(move || {
                 build_units(
                     &step_owned,
                     &settings_owned,

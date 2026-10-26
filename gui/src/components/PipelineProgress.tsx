@@ -11,8 +11,12 @@ import type {
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
 
 interface Props {
+  /** The queued review this progress belongs to; scopes pass cancellation. */
+  runKey?: string | null;
   state: PipelineState;
   runStartedAt?: number | null;
+  /** When the run ended; stops the overall clock for a finished run. */
+  runEndedAt?: number | null;
   passTimes?: Record<string, PassTiming>;
   plan?: ExecutionPlanStage[];
   stageHistory?: RuntimeStage[];
@@ -333,10 +337,12 @@ function PassStatusIcon({ status }: { status: PassStatus }) {
 }
 
 export default function PipelineProgress({
+  runKey,
   state,
   plan,
   stageHistory = [],
   runStartedAt,
+  runEndedAt,
   passTimes,
   reviewRouting,
 }: Props) {
@@ -355,7 +361,9 @@ export default function PipelineProgress({
   }, [running]);
 
   const runElapsed =
-    runStartedAt != null ? fmtElapsed(now - runStartedAt) : null;
+    runStartedAt != null
+      ? fmtElapsed((runEndedAt ?? now) - runStartedAt)
+      : null;
 
   // Elapsed time for one pass: end−start if finished, else now−start if active.
   const passElapsed = (name: string): string | null => {
@@ -682,6 +690,7 @@ export default function PipelineProgress({
                               onClick={() =>
                                 invoke("cancel_pass", {
                                   passKey: subitem.passKey,
+                                  runKey: runKey ?? null,
                                 }).catch(() => {})
                               }
                               aria-label={`Cancel ${subitem.label}`}

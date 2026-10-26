@@ -17,6 +17,7 @@ export default function HomePage({
   projectsLoading,
   hasCurrentReview,
   reviewRunning,
+  runningReviews = reviewRunning ? 1 : 0,
   onAssistant,
   onNewProject,
   onOpenProject,
@@ -28,6 +29,8 @@ export default function HomePage({
   projectsLoading: boolean;
   hasCurrentReview: boolean;
   reviewRunning: boolean;
+  /** Reviews running right now (several can run at once). */
+  runningReviews?: number;
   onAssistant: () => void;
   onNewProject: () => void;
   onOpenProject: (projectId: string) => void;
@@ -50,11 +53,13 @@ export default function HomePage({
       title: "Review a paper",
       description:
         "Run a structured, reproducible review with evidence and durable outputs.",
-      label: reviewRunning ? "Continue review" : "New review",
+      // Reviews run side by side, so this always sets up a new one; the
+      // banner above returns to running reviews.
+      label: "New review",
       icon: "review" as const,
       accent:
         "from-violet-500/15 via-violet-500/5 to-transparent text-violet-700 dark:text-violet-300",
-      onClick: reviewRunning ? onContinueReview : onNewReview,
+      onClick: onNewReview,
     },
     {
       title: "Automate research",
@@ -82,12 +87,16 @@ export default function HomePage({
             />
             <span className="min-w-0 flex-1">
               <span className="block text-sm font-semibold">
-                {reviewRunning
-                  ? "A review is running"
-                  : "Your latest review is ready"}
+                {runningReviews > 1
+                  ? `${runningReviews} reviews are running`
+                  : reviewRunning
+                    ? "A review is running"
+                    : "Your latest review is ready"}
               </span>
               <span className="mt-0.5 block text-xs text-gray-500 dark:text-neutral-400">
-                Open the current review
+                {runningReviews > 1
+                  ? "Open the earliest; the sidebar lists the rest"
+                  : "Open the current review"}
               </span>
             </span>
             <Icon

@@ -261,8 +261,6 @@ use retry::{format_api_error, send_with_status_retry};
 #[cfg(test)]
 use execution::{enforce_media_budget, execute_read_assets_batch, execute_read_text_batch};
 #[cfg(test)]
-use models::{WRITE_BYTES, WRITE_COUNT};
-#[cfg(test)]
 use retry::transient_api_status;
 
 pub(crate) use execution::{execute_native_tool, ToolBudget};

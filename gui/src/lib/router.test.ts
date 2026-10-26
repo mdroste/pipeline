@@ -17,6 +17,7 @@ it("serializes and parses every destination round-trip", () => {
   const routes: AppRoute[] = [
     { page: "home" },
     { page: "main" },
+    { page: "main", runKey: "run-1730000000000-3" },
     { page: "project-index" },
     { page: "workspace" },
     {
@@ -47,6 +48,10 @@ it("serializes and parses every destination round-trip", () => {
       route,
     );
   }
+  expect(serializeRoute({ page: "main", runKey: "run-1" })).toBe(
+    "#/reviews/run/run-1",
+  );
+  expect(parseRoute("#/reviews/run")).toEqual({ page: "main" });
   expect(parseRoute("#/nowhere")).toBeNull();
   expect(parseRoute("")).toBeNull();
   expect(parseRoute("#/help?section=bogus")).toEqual({ page: "help" });

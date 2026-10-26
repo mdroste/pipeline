@@ -6,8 +6,11 @@ import type {
 import type {
   BatchJob,
   PipelineConfig,
+  PipelineResult,
   ProfileSummary,
+  QueuedRun,
   RunParallelOverrides,
+  RunQueueSnapshot,
 } from "./types";
 
 export interface ExecutionPlanRequest {
@@ -28,6 +31,16 @@ export interface StartBatchRequest {
   runParallelOverrides?: RunParallelOverrides;
 }
 
+export interface EnqueueRunRequest {
+  paperPath: string;
+  inputInterpretation: string | null;
+  diff: boolean;
+  variables: Record<string, string> | null;
+  extraInputs: Record<string, string> | null;
+  expectedProfileSnapshotId: string;
+  runParallelOverrides?: RunParallelOverrides;
+}
+
 /** Typed boundary for application-shell commands owned by the pipeline runtime. */
 export const appClient = {
   markSmokeReady: () => invoke<boolean>("mark_smoke_ready"),
@@ -40,4 +53,20 @@ export const appClient = {
   inputFiles: (dir: string) => invoke<string[]>("list_input_files", { dir }),
   startBatch: (request: StartBatchRequest) =>
     invoke<void>("start_batch", { ...request }),
+  runQueue: () => invoke<RunQueueSnapshot>("list_run_queue"),
+  enqueueRun: (request: EnqueueRunRequest) =>
+    invoke<QueuedRun>("enqueue_run", { ...request }),
+  enqueueBatch: (request: StartBatchRequest) =>
+    invoke<QueuedRun[]>("enqueue_batch", { ...request }),
+  enqueueRerun: (runId: string, onlyFailed: boolean, fromStep?: string) =>
+    invoke<QueuedRun>("enqueue_rerun", {
+      runId,
+      fromStep: fromStep ?? null,
+      onlyFailed,
+    }),
+  queuedRunResult: (key: string) =>
+    invoke<PipelineResult | null>("get_queued_run_result", { key }),
+  cancelRun: (runKey: string) => invoke<void>("cancel_pipeline", { runKey }),
+  dismissRuns: (key?: string) =>
+    invoke<void>("dismiss_queued_runs", { key: key ?? null }),
 };

@@ -1,5 +1,7 @@
-import { type ReactNode } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import ResizeHandle from "./ResizeHandle";
+import ReviewRunList, { ReviewRunBeacon } from "./ReviewRunList";
+import type { QueuedRun } from "../lib/types";
 import { Icon, type IconName } from "../ui/icons";
 import Badge from "../ui/Badge";
 import type { AppPage } from "../lib/router";
@@ -19,7 +21,15 @@ export interface RecentProject {
 interface Props {
   activePage: AppPage;
   hasCurrentRun: boolean;
-  runInProgress: boolean;
+  /** Reviews in the run queue, the concurrency limit, and the one on screen. */
+  runs?: QueuedRun[];
+  runLimit?: number;
+  activeRunKey?: string | null;
+  unseenRuns?: ReadonlySet<string>;
+  onOpenRun?: (key: string) => void;
+  onCancelRun?: (run: QueuedRun) => void;
+  onDismissRuns?: (key?: string) => void;
+  onConfigureRuns?: () => void;
   workspaceActive?: boolean;
   workspaceAttention?: boolean;
   tasksAttention?: boolean;
@@ -100,10 +110,20 @@ function SectionHeading({ id, children }: { id: string; children: ReactNode }) {
   );
 }
 
+const NO_RUNS: QueuedRun[] = [];
+const NONE_UNSEEN: ReadonlySet<string> = new Set();
+
 export default function NavRail({
   activePage,
   hasCurrentRun,
-  runInProgress,
+  runs = NO_RUNS,
+  runLimit = 1,
+  activeRunKey = null,
+  unseenRuns = NONE_UNSEEN,
+  onOpenRun,
+  onCancelRun,
+  onDismissRuns,
+  onConfigureRuns,
   workspaceActive = false,
   workspaceAttention = false,
   tasksAttention = false,
@@ -121,6 +141,25 @@ export default function NavRail({
   onDependencies,
   onActivity,
 }: Props) {
+  // The run list sits low in a scrolling rail; while it is out of view a
+  // pinned beacon keeps active reviews visible and scrolls back to them.
+  const navRef = useRef<HTMLElement>(null);
+  const runListRef = useRef<HTMLDivElement>(null);
+  const [runListVisible, setRunListVisible] = useState(true);
+  const hasRunList = Boolean(onOpenRun);
+  useEffect(() => {
+    const target = runListRef.current;
+    if (!target || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(
+      ([entry]) =>
+        setRunListVisible(
+          entry.isIntersecting && entry.intersectionRatio > 0.2,
+        ),
+      { root: navRef.current, threshold: [0, 0.2, 0.5, 1] },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasRunList]);
   return (
     <aside
       style={{ width }}
@@ -138,6 +177,7 @@ export default function NavRail({
       </div>
 
       <nav
+        ref={navRef}
         aria-label="Primary"
         className="min-h-0 overflow-y-auto pb-4 space-y-1 [scrollbar-width:thin]"
       >
@@ -232,22 +272,17 @@ export default function NavRail({
             <RailButton
               action
               active={activePage === "main" && !hasCurrentRun}
-              disabled={runInProgress}
               icon="new"
               label="New review"
               onClick={onNewRun}
               title={
-                runInProgress
-                  ? "A review is already running"
+                runs.some((run) => run.status === "running")
+                  ? "Set up another review; it runs alongside or after the current ones"
                   : "Start a new review"
               }
             />
             <RailButton
-              active={
-                activePage === "history" ||
-                activePage === "batch" ||
-                (activePage === "main" && hasCurrentRun)
-              }
+              active={activePage === "history" || activePage === "batch"}
               icon="history"
               label="Review history"
               onClick={() => onNavigate("history")}
@@ -259,11 +294,39 @@ export default function NavRail({
               onClick={() => onNavigate("pipeline")}
               title="Design review steps, prompts, and templates"
             />
+            {/* After the fixed destinations, so a long queue never moves them. */}
+            {onOpenRun && (
+              <div ref={runListRef} className="scroll-mb-4">
+                <ReviewRunList
+                  runs={runs}
+                  limit={runLimit}
+                  activeRunKey={activePage === "main" ? activeRunKey : null}
+                  unseen={unseenRuns}
+                  onOpen={onOpenRun}
+                  onCancel={(run) => onCancelRun?.(run)}
+                  onDismiss={(key) => onDismissRuns?.(key)}
+                  onConfigure={onConfigureRuns}
+                />
+              </div>
+            )}
           </div>
         </section>
       </nav>
 
       <div className="mt-auto shrink-0 space-y-1 border-t border-gray-200/80 pt-3 dark:border-neutral-800">
+        {onOpenRun && !runListVisible && (
+          <ReviewRunBeacon
+            runs={runs}
+            unseen={unseenRuns}
+            onReveal={() => {
+              const list = runListRef.current;
+              list?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+              list
+                ?.querySelector<HTMLButtonElement>("li button")
+                ?.focus({ preventScroll: true });
+            }}
+          />
+        )}
         {onActivity && (
           <RailButton
             active={activePage === "activity"}

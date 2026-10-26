@@ -174,7 +174,9 @@ impl CallTask {
     fn spawn(request: OwnedRequest) -> Self {
         let pass_key = request.pass_key.clone();
         Self {
-            handle: Some(tokio::spawn(async move { execute_inner(request).await })),
+            handle: Some(crate::run_scope::spawn(async move {
+                execute_inner(request).await
+            })),
             pass_key,
             started: Instant::now(),
         }
@@ -186,7 +188,7 @@ impl CallTask {
         future: impl Future<Output = Result> + Send + 'static,
     ) -> Self {
         Self {
-            handle: Some(tokio::spawn(future)),
+            handle: Some(crate::run_scope::spawn(future)),
             pass_key: pass_key.into(),
             started: Instant::now(),
         }

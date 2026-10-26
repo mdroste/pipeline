@@ -23,7 +23,11 @@ export type WorkspaceSurface = "chat" | "project";
 
 export type AppRoute =
   | { page: "home" }
-  | { page: "main" }
+  | {
+      page: "main";
+      /** A queued, running, or finished review; omitted = new review setup. */
+      runKey?: string;
+    }
   | { page: "project-index" }
   | {
       page: "workspace";
@@ -92,14 +96,24 @@ const PAGE_TO_PATH: Record<AppPage, string> = {
   activity: "/activity",
 };
 
-const PATH_TO_PAGE = new Map<string, AppPage>(
-  Object.entries(PAGE_TO_PATH).map(([page, path]) => [path, page as AppPage]),
-);
+/** One review in the run queue (`main` with a run key). */
+const RUN_PATH = "/reviews/run";
+
+const PATH_TO_PAGE = new Map<string, AppPage>([
+  ...Object.entries(PAGE_TO_PATH).map(
+    ([page, path]) => [path, page as AppPage] as const,
+  ),
+  [RUN_PATH, "main"],
+]);
 
 export function serializeRoute(route: AppRoute): string {
   let path = PAGE_TO_PATH[route.page];
   const query = new URLSearchParams();
   switch (route.page) {
+    case "main":
+      if (route.runKey)
+        path = `${RUN_PATH}/${encodeURIComponent(route.runKey)}`;
+      break;
     case "workspace":
       if (route.projectId) path += `/${encodeURIComponent(route.projectId)}`;
       if (route.destination) query.set("dest", route.destination);
@@ -149,6 +163,8 @@ export function parseRoute(
       return null;
     }
     switch (page) {
+      case "main":
+        return rest[0] ? { page, runKey: rest[0] } : { page };
       case "workspace":
         return {
           page,

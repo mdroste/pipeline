@@ -38,6 +38,9 @@ pub(super) fn settings_for_snapshot_fingerprint(
     use sha2::{Digest as _, Sha256};
 
     let mut fingerprint_settings = settings.clone();
+    // Queue scheduling is not part of what a run executes; changing it must
+    // not invalidate prepared launches.
+    fingerprint_settings.max_concurrent_reviews = 0;
     for (label, secret) in [
         ("anthropic", &mut fingerprint_settings.anthropic_api_key),
         ("openai", &mut fingerprint_settings.openai_api_key),
@@ -386,7 +389,7 @@ pub(super) async fn check_snapshot_dependencies(
     let extra_inputs = extra_inputs.clone();
     let native_codex =
         settings.codex_backend == "app_server" && settings.model_transport("codex") == "cli";
-    let mut report = tokio::task::spawn_blocking(move || {
+    let mut report = crate::run_scope::spawn_blocking(move || {
         crate::deps::check_snapshot(settings, config, diff, input_path, extra_inputs)
     })
     .await

@@ -13,13 +13,15 @@ type Dependency = DepsReport["deps"][number];
 type DependencyGroup = "models" | "pdf";
 type StatusTone = "success" | "warning" | "danger" | "neutral";
 
-const PROVIDER_DEPENDENCIES = new Set([
-  "Claude CLI",
-  "Codex CLI",
-  "Workflow ChatGPT",
-  "Google API",
-  "Local LLM server",
-]);
+// Provider rows are named for the model family, whichever access mode the
+// report checked; Settings → Providers uses the same names.
+const PROVIDER_LABELS: Record<string, string> = {
+  "Claude CLI": "Claude",
+  "Codex CLI": "ChatGPT",
+  "Workflow ChatGPT": "ChatGPT",
+  "Google API": "Gemini",
+  "Local LLM server": "Local model",
+};
 
 const BUNDLED_PDF_DEPENDENCIES = new Set(["pdftoppm", "pdftotext"]);
 
@@ -31,36 +33,39 @@ const HIDDEN_DEPENDENCIES = new Set([
 
 const TONE_STYLES: Record<
   StatusTone,
-  { row: string; icon: string; badge: string }
+  { row: string; icon: string; badge: string; text: string }
 > = {
   success: {
     row: "bg-emerald-50/70 dark:bg-emerald-950/20",
     icon: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
     badge:
       "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
+    text: "text-emerald-700 dark:text-emerald-300",
   },
   warning: {
     row: "bg-amber-50/70 dark:bg-amber-950/20",
     icon: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-400",
     badge: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
+    text: "text-amber-700 dark:text-amber-300",
   },
   danger: {
     row: "bg-red-50/80 dark:bg-red-950/25",
     icon: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-400",
     badge: "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300",
+    text: "text-red-700 dark:text-red-300",
   },
   neutral: {
     row: "bg-gray-50/80 dark:bg-gray-800/45",
     icon: "bg-gray-200/70 text-gray-500 dark:bg-gray-800 dark:text-gray-400",
     badge: "bg-gray-200/70 text-gray-600 dark:bg-gray-800 dark:text-gray-300",
+    text: "text-gray-500 dark:text-gray-400",
   },
 };
 
-const isProviderDependency = (dep: Dependency) =>
-  PROVIDER_DEPENDENCIES.has(dep.name);
+const isProviderDependency = (dep: Dependency) => dep.name in PROVIDER_LABELS;
 
-const hasConfiguredApiKey = (dep: Dependency) =>
-  dep.authenticated === true && /API key configured/i.test(dep.hint);
+// API-mode providers report "direct API" in place of a CLI version.
+const usesApiKey = (dep: Dependency) => dep.version === "direct API";
 
 const dependencyAvailable = (dep: Dependency) => {
   if (!dep.found) return false;
@@ -70,12 +75,6 @@ const dependencyAvailable = (dep: Dependency) => {
   if (dep.cli_auth_status === "unknown") return false;
   return true;
 };
-
-const hasAuthWarning = (dep: Dependency) =>
-  dep.authenticated !== true &&
-  (dep.cli_auth_status === "signed_out" || dep.cli_auth_status === "unknown");
-
-const shouldShowHint = (dep: Dependency) => Boolean(dep.hint);
 
 const openSetupGuide = (
   event: React.MouseEvent<HTMLAnchorElement>,
@@ -89,15 +88,19 @@ const openSetupGuide = (
 
 const missingDependencyLabel = (dep: Dependency) => {
   if (dep.required && /paddleocr-vl/i.test(dep.name)) {
-    return "highly recommended (for PDFs)";
+    return "highly recommended";
   }
   return dep.required ? "required" : "optional";
 };
 
+/** Version and path stay available as a tooltip for troubleshooting. */
+const diagnostics = (dep: Dependency) =>
+  [dep.version !== "direct API" && dep.version, dep.path]
+    .filter(Boolean)
+    .join(" · ") || undefined;
+
 function dependencyTone(dep: Dependency, group: DependencyGroup): StatusTone {
-  if (dependencyAvailable(dep)) {
-    return hasAuthWarning(dep) ? "warning" : "success";
-  }
+  if (dependencyAvailable(dep)) return "success";
   if (group === "models") return dep.required ? "danger" : "neutral";
   return dep.required ? "danger" : "warning";
 }
@@ -168,110 +171,127 @@ function StatusIcon({ tone }: { tone: StatusTone }) {
   );
 }
 
-function authLabel(dep: Dependency) {
-  if (hasConfiguredApiKey(dep)) return "API key configured";
-  if (dep.name === "Workflow ChatGPT" && dep.authenticated) return "signed in";
-  if (dep.cli_auth_status === "signed_in") return "signed in";
-  if (dep.cli_auth_status === "signed_out") return "not signed in";
-  if (dep.cli_auth_status === "unknown") return "sign-in not verified";
-  return null;
+function providerStatus(dep: Dependency) {
+  const local = dep.name === "Local LLM server";
+  if (dependencyAvailable(dep)) {
+    return local ? "Running" : usesApiKey(dep) ? "API key" : "Subscription";
+  }
+  if (usesApiKey(dep)) return "No API key";
+  if (dep.cli_auth_status === "signed_out") return "Not signed in";
+  if (dep.cli_auth_status === "unknown") return "Sign-in not verified";
+  if (local) return "Not running";
+  return dep.found ? "Not connected" : "Not set up";
 }
 
-function DependencyRow({
+const linkClass =
+  "font-medium underline underline-offset-2 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:hover:text-gray-100";
+
+function DependencyHint({
   dep,
-  group,
   onOpenPdfSettings,
 }: {
   dep: Dependency;
-  group: DependencyGroup;
   onOpenPdfSettings?: () => void;
 }) {
-  const available = dependencyAvailable(dep);
-  const tone = dependencyTone(dep, group);
-  const styles = TONE_STYLES[tone];
-  const status = authLabel(dep);
-  const unavailableAlternative =
-    group === "models" && !dep.required && !available;
-  const badge = available
-    ? status
-    : dep.found && status
-      ? status
-      : unavailableAlternative
-        ? "alternative"
-        : group === "models"
-          ? "set up"
-          : missingDependencyLabel(dep);
   const pdfSettingsLabel = "Settings → Reviews → PDF Extraction";
   // Older dependency reports use the previous Settings navigation labels.
   const hint = dep.hint
     .replace(/Settings → (?:Workflows → )?PDF Extraction/g, pdfSettingsLabel)
-    .replaceAll("Workflow ChatGPT", "Reviews ChatGPT");
+    .replaceAll("Workflow ChatGPT", "ChatGPT");
   const pdfSettingsIndex = hint.indexOf(pdfSettingsLabel);
   const linksToPdfSettings =
-    !available &&
     /paddleocr-vl/i.test(dep.name) &&
     pdfSettingsIndex >= 0 &&
     Boolean(onOpenPdfSettings);
 
   return (
-    <div className={`flex items-start gap-3 px-3 py-2.5 text-sm ${styles.row}`}>
+    <>
+      {linksToPdfSettings ? (
+        <>
+          {hint.slice(0, pdfSettingsIndex)}
+          <a
+            href="#paddleocr-local-engine"
+            onClick={(event) => {
+              event.preventDefault();
+              onOpenPdfSettings?.();
+            }}
+            className={linkClass}
+          >
+            {pdfSettingsLabel}
+          </a>
+          {hint.slice(pdfSettingsIndex + pdfSettingsLabel.length)}
+        </>
+      ) : (
+        hint
+      )}
+      {dep.help_url && (
+        <>
+          {" "}
+          <a
+            href={dep.help_url}
+            onClick={(event) => openSetupGuide(event, dep.help_url!)}
+            className={linkClass}
+          >
+            Official installation guide
+          </a>
+          .
+        </>
+      )}
+    </>
+  );
+}
+
+function ProviderTile({ dep }: { dep: Dependency }) {
+  const tone = dependencyTone(dep, "models");
+  return (
+    <li
+      title={diagnostics(dep)}
+      className={`flex items-center gap-2.5 rounded-lg px-3 py-2 ${TONE_STYLES[tone].row}`}
+    >
+      <StatusIcon tone={tone} />
+      <div className="min-w-0">
+        <p className="text-sm font-medium leading-5 text-gray-900 dark:text-gray-100">
+          {PROVIDER_LABELS[dep.name]}
+        </p>
+        <p className={`truncate text-xs leading-4 ${TONE_STYLES[tone].text}`}>
+          {providerStatus(dep)}
+        </p>
+      </div>
+    </li>
+  );
+}
+
+function DependencyRow({
+  dep,
+  onOpenPdfSettings,
+}: {
+  dep: Dependency;
+  onOpenPdfSettings?: () => void;
+}) {
+  const available = dependencyAvailable(dep);
+  const tone = dependencyTone(dep, "pdf");
+  const styles = TONE_STYLES[tone];
+
+  return (
+    <div
+      title={diagnostics(dep)}
+      className={`flex items-start gap-3 px-3 py-2.5 text-sm ${styles.row}`}
+    >
       <StatusIcon tone={tone} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span className="font-medium text-gray-900 dark:text-gray-100">
-            {dep.name === "Workflow ChatGPT" ? "Reviews ChatGPT" : dep.name}
+            {dep.name}
           </span>
-          {dep.found && dep.version && dep.version !== "direct API" && (
-            <span className="max-w-40 truncate text-xs text-gray-500 dark:text-gray-400">
-              {dep.version}
-            </span>
-          )}
-          {badge && (
-            <span
-              className={`rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 ${styles.badge}`}
-            >
-              {badge}
-            </span>
-          )}
+          <span
+            className={`rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 ${styles.badge}`}
+          >
+            {available ? "installed" : missingDependencyLabel(dep)}
+          </span>
         </div>
-        {shouldShowHint(dep) && !available && (
+        {dep.hint && !available && (
           <p className="mt-1 text-xs leading-5 text-gray-600 dark:text-gray-300">
-            {linksToPdfSettings ? (
-              <>
-                {hint.slice(0, pdfSettingsIndex)}
-                <a
-                  href="#paddleocr-local-engine"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    onOpenPdfSettings?.();
-                  }}
-                  className="font-medium underline underline-offset-2 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:hover:text-gray-100"
-                >
-                  {pdfSettingsLabel}
-                </a>
-                {hint.slice(pdfSettingsIndex + pdfSettingsLabel.length)}
-              </>
-            ) : (
-              hint
-            )}
-            {dep.help_url && (
-              <>
-                {" "}
-                <a
-                  href={dep.help_url}
-                  onClick={(event) => openSetupGuide(event, dep.help_url!)}
-                  className="font-medium underline underline-offset-2 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:hover:text-gray-100"
-                >
-                  Official installation guide
-                </a>
-                .
-              </>
-            )}
-          </p>
-        )}
-        {dep.found && dep.path && (
-          <p className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
-            {dep.path}
+            <DependencyHint dep={dep} onOpenPdfSettings={onOpenPdfSettings} />
           </p>
         )}
       </div>
@@ -310,6 +330,11 @@ export default function DepsCheck({
     (dep.required &&
       !dependencyAvailable(dep) &&
       !BUNDLED_PDF_DEPENDENCIES.has(dep.name));
+  const visibleProviders = providerDeps.filter(visible);
+  // Unused providers that are not set up need no remedy here.
+  const providerProblems = visibleProviders.filter(
+    (dep) => dep.required && !dependencyAvailable(dep) && dep.hint,
+  );
   const modelAccessReady = providerDeps.every(
     (dep) => !dep.required || dependencyAvailable(dep),
   );
@@ -376,23 +401,37 @@ export default function DepsCheck({
                 >
                   Model access
                 </h3>
-                <p className="mt-0.5 max-w-md text-xs leading-5 text-gray-600 dark:text-gray-300">
-                  Each provider selected by this workflow must be ready. ChatGPT
-                  uses the Reviews connection selected in Settings → Providers;
-                  Workspace has its own sign-in.
+                <p className="mt-0.5 text-xs leading-5 text-gray-600 dark:text-gray-300">
+                  Each provider this workflow uses needs a subscription or API
+                  key.
                 </p>
               </div>
               <SectionStatus ready={modelAccessReady} />
             </div>
-            <div className="divide-y divide-gray-200/80 dark:divide-gray-700/80">
-              {providerDeps.filter(visible).map((dep) => (
-                <DependencyRow
-                  key={dep.name}
-                  dep={dep}
-                  group="models"
-                  onOpenPdfSettings={onOpenPdfSettings}
-                />
-              ))}
+            <div className="p-3">
+              <ul className="grid grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] gap-2">
+                {visibleProviders.map((dep) => (
+                  <ProviderTile key={dep.name} dep={dep} />
+                ))}
+              </ul>
+              {providerProblems.map((dep) => {
+                const label = PROVIDER_LABELS[dep.name];
+                return (
+                  <p
+                    key={dep.name}
+                    className="mt-2 text-xs leading-5 text-gray-600 dark:text-gray-300"
+                  >
+                    {!dep.hint.includes(label) && (
+                      <>
+                        <span className="font-medium text-gray-900 dark:text-gray-100">
+                          {label}:
+                        </span>{" "}
+                      </>
+                    )}
+                    <DependencyHint dep={dep} />
+                  </p>
+                );
+              })}
             </div>
           </section>
 
@@ -408,9 +447,8 @@ export default function DepsCheck({
                 >
                   PDF parsing
                 </h3>
-                <p className="mt-0.5 max-w-md text-xs leading-5 text-gray-600 dark:text-gray-300">
-                  Text extraction, page rendering, and document structure tools
-                  for PDF workflows.
+                <p className="mt-0.5 text-xs leading-5 text-gray-600 dark:text-gray-300">
+                  Tools for reading PDF inputs.
                 </p>
               </div>
               <SectionStatus ready={pdfReady} />
@@ -420,7 +458,6 @@ export default function DepsCheck({
                 <DependencyRow
                   key={dep.name}
                   dep={dep}
-                  group="pdf"
                   onOpenPdfSettings={onOpenPdfSettings}
                 />
               ))}

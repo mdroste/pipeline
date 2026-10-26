@@ -2,25 +2,27 @@ use super::*;
 
 // --- Batch queue ---
 
-/// Start a batch: run each input path through the pipeline sequentially with
-/// the active profile and (optionally) shared variable values. Returns
-/// immediately; progress arrives via `batch:progress` events and
-/// `get_batch_status`. Fails if any run (single or batch) is already active.
-#[tauri::command]
-pub async fn start_batch(
-    app: AppHandle,
+/// A validated batch: the input paths and the snapshot every job shares.
+pub(super) struct BatchLaunch {
+    pub(super) paths: Vec<String>,
+    pub(super) variables: std::collections::HashMap<String, String>,
+    pub(super) extra_inputs: std::collections::HashMap<String, String>,
+    pub(super) snapshot: RunSnapshot,
+}
+
+/// Capture and validate the complete run definition once for every document.
+/// Later profile, provider, or prompt edits apply only to a subsequent batch.
+pub(super) async fn prepare_batch_launch(
     paths: Vec<String>,
     variables: Option<std::collections::HashMap<String, String>>,
     extra_inputs: Option<std::collections::HashMap<String, String>>,
     expected_profile_config_snapshot_id: Option<String>,
     run_parallel_overrides: Option<RunParallelOverrides>,
-) -> Result<(), String> {
+) -> Result<BatchLaunch, String> {
     let paths: Vec<String> = paths.into_iter().filter(|p| !p.trim().is_empty()).collect();
     if paths.is_empty() {
         return Err("No inputs to run".into());
     }
-    // Capture and validate the complete run definition once. Later profile,
-    // provider, or prompt edits apply only to a subsequent batch.
     let snapshot = load_run_snapshot()?;
     let expected_profile_config_snapshot_id = expected_profile_config_snapshot_id
         .as_deref()
@@ -65,6 +67,40 @@ pub async fn start_batch(
     .await?;
     require_snapshot_dependencies(&dependencies)?;
     let snapshot = bind_runtime_snapshot(snapshot, &vars, &inputs)?;
+    Ok(BatchLaunch {
+        paths,
+        variables: vars,
+        extra_inputs: inputs,
+        snapshot,
+    })
+}
+
+/// Start a batch: run each input path through the pipeline sequentially with
+/// the active profile and (optionally) shared variable values. Returns
+/// immediately; progress arrives via `batch:progress` events and
+/// `get_batch_status`. Fails if any run (single or batch) is already active.
+#[tauri::command]
+pub async fn start_batch(
+    app: AppHandle,
+    paths: Vec<String>,
+    variables: Option<std::collections::HashMap<String, String>>,
+    extra_inputs: Option<std::collections::HashMap<String, String>>,
+    expected_profile_config_snapshot_id: Option<String>,
+    run_parallel_overrides: Option<RunParallelOverrides>,
+) -> Result<(), String> {
+    let BatchLaunch {
+        paths,
+        variables: vars,
+        extra_inputs: inputs,
+        snapshot,
+    } = prepare_batch_launch(
+        paths,
+        variables,
+        extra_inputs,
+        expected_profile_config_snapshot_id,
+        run_parallel_overrides,
+    )
+    .await?;
     let guard = acquire_pipeline_guard()?;
     let batch_profile_id = snapshot.settings.active_profile.clone();
     let batch_snapshot_id = snapshot.fingerprint.clone();
@@ -96,12 +132,16 @@ pub async fn start_batch(
     );
     emit_batch(&bus);
 
-    tauri::async_runtime::spawn(async move {
-        // RAII guard clears PIPELINE_RUNNING and per-run state even on panic.
+    // Every job runs in the batch's scope, so `cancel_batch` reaches the job
+    // in flight and the cancellation persists for any job that is starting.
+    let run = crate::run_scope::ActiveScope::begin(BATCH_SCOPE_KEY);
+    let scope = run.scope().clone();
+    tauri::async_runtime::spawn(crate::run_scope::scoped(scope, async move {
+        let _run = run;
+        // RAII guard releases the run lock and per-run state even on panic.
         let _guard = guard;
         // Clear the batch-stop flag on every exit path (normal, error, panic)
-        // so it can never leak into a later foreground run, whose
-        // begin_run_state now honors it to close the batch-cancel start race.
+        // so it can never leak into a later batch.
         struct BatchCancelReset;
         impl Drop for BatchCancelReset {
             fn drop(&mut self) {
@@ -126,10 +166,6 @@ pub async fn start_batch(
                 vars.clone(),
                 inputs.clone(),
                 Some(snapshot.clone()),
-                // Batch cancellation is covered by the BATCH_CANCEL re-assert
-                // inside the run; capture the epoch at dispatch so the
-                // foreground-cancel check stays inert for batch jobs.
-                current_cancel_epoch(),
             )
             .await;
             let secs = started.elapsed().as_secs();
@@ -162,7 +198,7 @@ pub async fn start_batch(
             emit_batch(&bus);
         }
         let _ = bus.emit_event("batch:done", serde_json::Value::Null);
-    });
+    }));
 
     Ok(())
 }
@@ -193,11 +229,13 @@ pub async fn get_batch_status() -> Result<Vec<BatchJob>, String> {
 #[tauri::command]
 pub async fn cancel_batch() -> Result<(), String> {
     BATCH_CANCEL.store(true, std::sync::atomic::Ordering::Release);
-    CANCEL_FLAG.store(true, std::sync::atomic::Ordering::Release);
-    signal_cancellation();
-    kill_all_children();
+    if let Some(scope) = crate::run_scope::find(BATCH_SCOPE_KEY) {
+        scope.cancel();
+    }
     Ok(())
 }
+
+const BATCH_SCOPE_KEY: &str = "batch";
 
 /// Input files (PDF/LaTeX/Word) directly under `dir`, non-recursive and sorted;
 /// hidden files skipped. Used by "queue this folder".

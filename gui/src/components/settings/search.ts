@@ -238,6 +238,13 @@ export function settingsSearchEntries(
   );
   add(
     "workflow",
+    "max-concurrent-reviews",
+    "Simultaneous Reviews",
+    "Reviews that run at once, queue, concurrency, parallel reviews",
+    s.max_concurrent_reviews ?? 2,
+  );
+  add(
+    "workflow",
     "workflow-extraction",
     "PDF Extraction",
     "OCR, document reading, extraction method, PaddleOCR, pdftotext",

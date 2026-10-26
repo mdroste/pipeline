@@ -131,7 +131,10 @@ pub async fn discard_undecryptable_secret(provider: String) -> Result<(), String
 pub async fn save_settings(settings: crate::settings::Settings) -> Result<(), String> {
     let persisted = crate::settings::load_persisted();
     let settings = materialize_settings(settings, &persisted);
-    crate::settings::save_preserving_active(&settings)
+    crate::settings::save_preserving_active(&settings)?;
+    // A raised review concurrency limit starts waiting reviews now.
+    super::run_queue::settings_changed();
+    Ok(())
 }
 
 /// Discover models for the provider's currently active transport. Settings are

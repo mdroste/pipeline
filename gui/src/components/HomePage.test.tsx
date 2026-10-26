@@ -78,3 +78,19 @@ it("keeps an active review easy to resume from Home", async () => {
   await user.click(screen.getByRole("button", { name: /A review is running/ }));
   expect(props.onContinueReview).toHaveBeenCalledOnce();
 });
+
+it("counts concurrent reviews and still offers a new one", async () => {
+  const user = userEvent.setup();
+  const props = renderHome({
+    hasCurrentReview: true,
+    reviewRunning: true,
+    runningReviews: 3,
+  });
+
+  expect(
+    screen.getByRole("button", { name: /3 reviews are running/ }),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: /New review/ }));
+  expect(props.onNewReview).toHaveBeenCalledOnce();
+  expect(props.onContinueReview).not.toHaveBeenCalled();
+});

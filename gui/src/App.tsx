@@ -2,8 +2,8 @@ import { useAppAppearance } from "./hooks/useAppAppearance";
 import { useAppNotifications } from "./hooks/useAppNotifications";
 import { useAppController } from "./hooks/useAppController";
 import ProviderLimitBanner from "./components/ProviderLimitBanner";
-import { lazy, Suspense } from "react";
-import PipelineProgress from "./components/PipelineProgress";
+import { lazy, Suspense, useMemo } from "react";
+import ReviewRunView from "./components/ReviewRunView";
 import DepsCheck from "./components/DepsCheck";
 import Console from "./components/Console";
 import VariablePrompt from "./components/VariablePrompt";
@@ -15,7 +15,8 @@ import RunPlanPreview from "./components/RunPlanPreview";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { isMac } from "./lib/platform";
 import { router } from "./lib/router";
-import { notify } from "./components/DialogService";
+import { confirmDialog, notify } from "./components/DialogService";
+import type { QueuedRun } from "./lib/types";
 
 const SettingsPage = lazy(() => import("./components/SettingsPage"));
 const HomePage = lazy(() => import("./components/HomePage"));
@@ -127,18 +128,72 @@ function App() {
     registerWorkspaceSave,
     setProjectsDirty,
     state,
-    setActiveRunPlan,
-    rerunPipeline,
+    runQueue,
+    selectedRun,
+    seenRuns,
+    runningReviews,
+    continueRunKey,
+    openRun,
+    rerunReview,
+    dismissRuns,
+    cancelRun,
     activeRunPlan,
     stageHistory,
     runStartedAt,
     passTimes,
     reviewRouting,
-    cancel,
     logs,
     usage,
   } = useAppController();
-  useAppNotifications(state);
+  useAppNotifications(runQueue.runs);
+  // Finished reviews not opened since they finished get a marker in the rail.
+  const unseenRuns = useMemo(
+    () =>
+      new Set(
+        runQueue.runs
+          .filter(
+            (run) =>
+              (run.status === "done" || run.status === "failed") &&
+              !seenRuns.has(run.key),
+          )
+          .map((run) => run.key),
+      ),
+    [runQueue.runs, seenRuns],
+  );
+  const runActivity = {
+    running: runningReviews,
+    queued: runQueue.runs.filter((run) => run.status === "queued").length,
+    limit: runQueue.limit,
+  };
+  const runSlotsFull =
+    runActivity.running + runActivity.queued >= runActivity.limit;
+  const cancelReview = async (run: QueuedRun) => {
+    if (
+      run.status === "running" &&
+      !(await confirmDialog(
+        `Cancel the review of ${run.label}? Completed steps stay in Review history and can be resumed.`,
+        {
+          title: "Cancel review?",
+          confirmLabel: "Cancel review",
+          cancelLabel: "Keep running",
+          destructive: true,
+        },
+      ))
+    )
+      return;
+    await cancelRun(run.key).catch((error: unknown) =>
+      notify(
+        `The review could not be cancelled: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    );
+  };
+  const dismissReviews = (key?: string) => {
+    void dismissRuns(key).catch((error: unknown) =>
+      notify(
+        `The list could not be updated: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    );
+  };
 
   return (
     <div
@@ -182,6 +237,7 @@ function App() {
           config={runPreview.config}
           inputPath={runPreview.snapshot.paperPath}
           batchCount={runPreview.batchPaths?.length ?? 1}
+          queued={runSlotsFull}
           onCancel={() => setRunPreview(null)}
           onRun={() => void startPreparedLaunch()}
         />
@@ -243,7 +299,20 @@ function App() {
           tasksAttention={tasksAttention}
           activePage={page}
           hasCurrentRun={hasCurrentRun}
-          runInProgress={isRunning}
+          runs={runQueue.runs}
+          runLimit={runQueue.limit}
+          activeRunKey={selectedRun?.key ?? null}
+          unseenRuns={unseenRuns}
+          onOpenRun={(key) => void openRun(key)}
+          onCancelRun={(run) => void cancelReview(run)}
+          onDismissRuns={dismissReviews}
+          onConfigureRuns={() =>
+            void router.navigate({
+              page: "settings",
+              section: "workflow",
+              targetId: "max-concurrent-reviews",
+            })
+          }
           workspaceActive={workspaceActive}
           workspaceAttention={workspaceAttention}
           isMac={isMac}
@@ -286,6 +355,7 @@ function App() {
             parallelOverrides={parallelOverrides}
             selectionKey={selectionKey}
             width={runSetupWidth}
+            runActivity={runActivity}
             onConfigureWorkflow={() => void handleNavigate("pipeline")}
             onGenerate={handleGenerate}
             onPaperPathChange={(path) => {
@@ -336,14 +406,17 @@ function App() {
                 <HomePage
                   projects={recentProjects}
                   projectsLoading={projectsLoading}
-                  hasCurrentReview={hasCurrentRun || batchActive}
+                  hasCurrentReview={continueRunKey !== null || batchActive}
                   reviewRunning={isRunning}
+                  runningReviews={runningReviews}
                   onAssistant={() => void openWorkspace("chat")}
                   onNewProject={() => void createWorkspaceProject()}
                   onOpenProject={(id) => void openWorkspaceProject(id)}
                   onNewReview={() => void handleNewRun()}
                   onContinueReview={() =>
-                    setPage(batchActive && !hasCurrentRun ? "batch" : "main")
+                    continueRunKey
+                      ? void openRun(continueRunKey)
+                      : setPage(batchActive ? "batch" : "main")
                   }
                   onNavigate={(next) => void handleNavigate(next)}
                 />
@@ -420,21 +493,9 @@ function App() {
                   showClose={false}
                   initialRunId={historyRunId}
                   initialSourceSelection={historySourceSelection}
-                  runInProgress={isRunning}
-                  onRerun={(runId, onlyFailed) => {
-                    if (isRunning) {
-                      // rerunPipeline resets the live progress/log state before
-                      // the backend guard rejects the second run, so starting it
-                      // here would trash the active run's UI.
-                      notify(
-                        "A report is already being generated. Wait for it to finish or cancel it first.",
-                      );
-                      return;
-                    }
-                    setPage("main");
-                    setActiveRunPlan(null);
-                    rerunPipeline(runId, { onlyFailed });
-                  }}
+                  onRerun={(runId, onlyFailed) =>
+                    void rerunReview(runId, onlyFailed)
+                  }
                 />
               ) : page === "projects" ? (
                 <ProjectsPage
@@ -474,74 +535,48 @@ function App() {
                     report={state.report}
                     extractedText={state.extractedText}
                     durationSecs={
-                      runStartedAt ? (Date.now() - runStartedAt) / 1000 : null
+                      selectedRun?.startedAt && selectedRun.finishedAt
+                        ? (selectedRun.finishedAt - selectedRun.startedAt) /
+                          1000
+                        : null
                     }
                   />
                 </ErrorBoundary>
-              ) : state.kind === "idle" ? (
+              ) : hasCurrentRun ? (
+                <ReviewRunView
+                  run={selectedRun}
+                  runs={runQueue.runs}
+                  limit={runQueue.limit}
+                  state={state}
+                  plan={activeRunPlan}
+                  stageHistory={stageHistory}
+                  runStartedAt={runStartedAt}
+                  passTimes={passTimes}
+                  reviewRouting={reviewRouting}
+                  onCancel={() => selectedRun && void cancelReview(selectedRun)}
+                  onNewReview={() => void handleNewRun()}
+                  onOpenHistory={(runId) =>
+                    void openHistoryRun(runId ?? "", null)
+                  }
+                />
+              ) : (
                 <RunPlanPreview
                   refreshKey={configVersion}
                   inputMode={inputMode}
                   hasInput={!!paperPath}
                   onOpenDesigner={() => void handleNavigate("pipeline")}
                 />
-              ) : (
-                <div className="flex h-full items-center justify-center px-8 py-12">
-                  <div className="w-full max-w-sm">
-                    <PipelineProgress
-                      state={state}
-                      plan={activeRunPlan ?? undefined}
-                      stageHistory={stageHistory}
-                      runStartedAt={runStartedAt}
-                      passTimes={passTimes}
-                      reviewRouting={reviewRouting}
-                    />
-                    {state.kind === "error" ? (
-                      <div className="mt-6">
-                        <div
-                          role="alert"
-                          className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm leading-5 text-red-700
-                                   dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
-                        >
-                          {state.message}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={handleNewRun}
-                          className="mt-3 w-full rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700
-                                   transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2
-                                   focus-visible:ring-gray-400 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
-                        >
-                          Start a new report
-                        </button>
-                      </div>
-                    ) : (
-                      <>
-                        <p className="mt-6 text-center text-xs leading-relaxed text-gray-500 dark:text-neutral-400">
-                          This may take 15–60 minutes depending on
-                          <br />
-                          paper length, number of agents, and LLM load.
-                        </p>
-                        <button
-                          type="button"
-                          onClick={cancel}
-                          className="mx-auto mt-4 block rounded-lg px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors
-                                   hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2
-                                   focus-visible:ring-red-300 dark:text-neutral-400 dark:hover:bg-red-950/40 dark:hover:text-red-400"
-                        >
-                          Cancel report
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
               )}
             </Suspense>
           </div>
 
           {/* The log dock belongs to the run view, not to every destination. */}
           {page === "main" && logs.length > 0 && (
-            <Console logs={logs} usage={usage} active={isRunning} />
+            <Console
+              logs={logs}
+              usage={usage}
+              active={selectedRun?.status === "running"}
+            />
           )}
         </main>
       </div>

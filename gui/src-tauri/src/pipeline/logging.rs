@@ -153,38 +153,23 @@ pub fn current_pass() -> Option<String> {
 
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 
-/// Run-wide token total. Reset at the start of each run; every `emit_usage`
-/// call adds to it, so the manifest can record the whole run's usage (steps
-/// plus orientation, merge, extraction — everything, not just the steps).
-static RUN_USAGE: Mutex<CallUsage> = Mutex::new(CallUsage {
-    input_tokens: 0,
-    output_tokens: 0,
-    cached_input_tokens: 0,
-    cache_write_input_tokens: 0,
-    provider_attempts: 0,
-    model_round_trips: 0,
-    tool_calls: crate::models::ToolCallCounts::ZERO,
-});
-
-/// A file the console log is mirrored to for the duration of a run. `emit`
-/// appends every line here (timestamped) in addition to sending the event, so
-/// the run directory keeps a persistent transcript. Set after the run dir is
-/// created, cleared when the run ends.
-static LOG_SINK: Mutex<Option<std::fs::File>> = Mutex::new(None);
-
 /// Reset the run-wide token total. Call once at the start of a run.
 pub fn reset_run_usage() {
-    *RUN_USAGE.lock().unwrap_or_else(|e| e.into_inner()) = CallUsage::default();
+    crate::run_scope::current().reset_usage();
 }
 
 /// The run-wide token total accumulated since the last `reset_run_usage`.
+/// Every `emit_usage` call adds to it, so the manifest records the whole run's
+/// usage (steps plus orientation, merge, extraction — everything).
 pub fn run_usage() -> CallUsage {
-    *RUN_USAGE.lock().unwrap_or_else(|e| e.into_inner())
+    crate::run_scope::current().usage()
 }
 
-/// Direct the console transcript to `file` (or `None` to stop mirroring).
+/// Direct the run's console transcript to `file` (or `None` to stop
+/// mirroring). `emit` appends every line here (timestamped) in addition to
+/// sending the event, so the run directory keeps a persistent transcript.
 pub fn set_log_sink(file: Option<std::fs::File>) {
-    *LOG_SINK.lock().unwrap_or_else(|e| e.into_inner()) = file;
+    crate::run_scope::current().set_log_sink(file);
 }
 
 /// Run `fut` while accumulating the token usage of every `call_llm` it makes,
@@ -257,10 +242,7 @@ fn record_usage(usage: CallUsage) {
             .unwrap_or_else(|e| e.into_inner())
             .add_usage(usage);
     });
-    RUN_USAGE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .add_usage(usage);
+    crate::run_scope::current().add_usage(usage);
 }
 
 /// Record one provider invocation before dispatch. Keeping this separate from
@@ -448,8 +430,7 @@ pub fn emit_request(app: &crate::emit::EventBus, line: String, request: serde_js
 /// Append one line to the on-disk transcript, if mirroring is active. Best
 /// effort: a write failure is dropped silently so logging never breaks a run.
 fn write_to_sink(line: &str, level: &str, session: Option<u64>, label: Option<&str>) {
-    let mut guard = LOG_SINK.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(file) = guard.as_mut() {
+    crate::run_scope::current().with_log_sink(|file| {
         let ts = chrono::Local::now().format("%H:%M:%S");
         let tag = match (session, label) {
             (Some(id), Some(l)) => format!(" [{id}:{l}]"),
@@ -457,7 +438,7 @@ fn write_to_sink(line: &str, level: &str, session: Option<u64>, label: Option<&s
             _ => String::new(),
         };
         let _ = writeln!(file, "[{ts}] [{level}]{tag} {line}");
-    }
+    });
 }
 
 #[cfg(test)]
@@ -498,8 +479,8 @@ mod tests {
     }
 
     // These assert the task-local per-call accumulator, which is isolated per
-    // test task. The RUN_USAGE global is deliberately not asserted here because
-    // tests run in parallel and share it. (tokio's `macros` feature isn't
+    // test task. The run-wide total is deliberately not asserted here because
+    // tests run in parallel and share the fallback run scope. (tokio's `macros` feature isn't
     // enabled, so we drive the futures on a small current-thread runtime.)
     fn block_on<F: Future>(fut: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread()

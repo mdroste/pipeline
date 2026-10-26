@@ -18,9 +18,10 @@ pub async fn rerun_run(
     only_failed: bool,
 ) -> Result<serde_json::Value, String> {
     crate::runs::recover_resumable_runs()?;
-    let guard = acquire_pipeline_guard()?;
+    let guard = acquire_run_slot()?;
+    let run = crate::run_scope::ActiveScope::begin(super::run_queue::next_run_key());
     let bus = crate::emit::from_app(app);
-    PipelineTask::spawn_future(async move {
+    PipelineTask::spawn_future(run.scope().clone(), async move {
         let _guard = guard;
         rerun_run_inner(&bus, &run_id, from_step, only_failed).await
     })

@@ -96,19 +96,20 @@ pub(super) async fn supervise_artifact_writes(
             // after completion so a last-millisecond oversized or special file
             // cannot bypass the live quota.
             let path = directory.clone();
-            let final_check = tokio::task::spawn_blocking(move || check_live_artifact_quota(&path))
-                .await
-                .map_err(|e| format!("Artifact monitor failed: {e}"))?;
+            let final_check =
+                crate::run_scope::spawn_blocking(move || check_live_artifact_quota(&path))
+                    .await
+                    .map_err(|e| format!("Artifact monitor failed: {e}"))?;
             final_check?;
             return result;
         }
         let path = directory.clone();
-        let check = tokio::task::spawn_blocking(move || check_live_artifact_quota(&path))
+        let check = crate::run_scope::spawn_blocking(move || check_live_artifact_quota(&path))
             .await
             .map_err(|e| format!("Artifact monitor failed: {e}"))?;
         if let Err(error) = check {
             if let Some(key) = &pass_key {
-                let _ = crate::commands::cancel_pass(key.clone()).await;
+                let _ = crate::commands::cancel_pass(key.clone(), None).await;
             } else {
                 crate::commands::kill_all_children();
             }

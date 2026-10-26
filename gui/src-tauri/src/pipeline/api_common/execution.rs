@@ -109,7 +109,7 @@ where
     F: FnOnce() -> Result<T, String> + Send + 'static,
 {
     let pass_key = crate::pipeline::logging::current_pass();
-    let task = tokio::task::spawn_blocking(operation);
+    let task = crate::run_scope::spawn_blocking(operation);
     match tokio::time::timeout(TOOL_IO_TIMEOUT, await_or_cancel(task, pass_key.as_deref())).await {
         Ok(Ok(joined)) => joined.map_err(|e| format!("File tool task failed: {e}"))?,
         Ok(Err(cancelled)) => Err(cancelled),

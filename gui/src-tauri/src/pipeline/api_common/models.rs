@@ -227,27 +227,27 @@ impl ToolAccess {
     }
 }
 
-/// Write calls consumed this run, reset when a run workspace is created.
-pub(super) static WRITE_COUNT: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-pub(super) static WRITE_BYTES: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
-
+/// Write calls and bytes consumed by one run, counted in its run scope and
+/// reset when the run workspace is created.
 struct WriteReservation {
+    scope: std::sync::Arc<crate::run_scope::RunScope>,
     bytes: usize,
     committed: bool,
 }
 
 impl WriteReservation {
     fn reserve(bytes: usize) -> Result<Self, String> {
-        WRITE_COUNT
+        let scope = crate::run_scope::current();
+        scope
+            .write_count
             .fetch_update(
                 std::sync::atomic::Ordering::SeqCst,
                 std::sync::atomic::Ordering::SeqCst,
                 |used| (used < MAX_WRITES_PER_RUN).then_some(used + 1),
             )
             .map_err(|_| format!("Write limit reached ({MAX_WRITES_PER_RUN} files per run)"))?;
-        if WRITE_BYTES
+        if scope
+            .write_bytes
             .fetch_update(
                 std::sync::atomic::Ordering::SeqCst,
                 std::sync::atomic::Ordering::SeqCst,
@@ -258,7 +258,7 @@ impl WriteReservation {
             )
             .is_err()
         {
-            let _ = WRITE_COUNT.fetch_update(
+            let _ = scope.write_count.fetch_update(
                 std::sync::atomic::Ordering::SeqCst,
                 std::sync::atomic::Ordering::SeqCst,
                 |used| Some(used.saturating_sub(1)),
@@ -269,6 +269,7 @@ impl WriteReservation {
             ));
         }
         Ok(Self {
+            scope,
             bytes,
             committed: false,
         })
@@ -282,12 +283,12 @@ impl WriteReservation {
 impl Drop for WriteReservation {
     fn drop(&mut self) {
         if !self.committed {
-            let _ = WRITE_COUNT.fetch_update(
+            let _ = self.scope.write_count.fetch_update(
                 std::sync::atomic::Ordering::SeqCst,
                 std::sync::atomic::Ordering::SeqCst,
                 |used| Some(used.saturating_sub(1)),
             );
-            let _ = WRITE_BYTES.fetch_update(
+            let _ = self.scope.write_bytes.fetch_update(
                 std::sync::atomic::Ordering::SeqCst,
                 std::sync::atomic::Ordering::SeqCst,
                 |used| Some(used.saturating_sub(self.bytes)),
@@ -299,8 +300,7 @@ impl Drop for WriteReservation {
 /// Reset the run-wide aggregate write quota. Filesystem authority itself is
 /// per call in [`ToolAccess`].
 pub fn reset_write_budget() {
-    WRITE_COUNT.store(0, std::sync::atomic::Ordering::SeqCst);
-    WRITE_BYTES.store(0, std::sync::atomic::Ordering::SeqCst);
+    crate::run_scope::current().reset_write_budget();
 }
 
 /// Validate and perform a Write tool call. The destination must resolve

@@ -188,7 +188,7 @@ pub async fn capture(
     let (bounded, truncated) = bounded_text(text);
     let bytes = bounded.as_bytes().to_vec();
     let write_path = pending_path.clone();
-    tokio::task::spawn_blocking(move || {
+    crate::run_scope::spawn_blocking(move || {
         reserve_journal_bytes(&directory, bytes.len())?;
         if let Err(error) = write_atomic(&write_path, &bytes) {
             release_journal_bytes(&directory, bytes.len());
@@ -231,7 +231,7 @@ impl CapturedAttempt {
             .chars()
             .take(1_000)
             .collect::<String>();
-        tokio::task::spawn_blocking(move || {
+        crate::run_scope::spawn_blocking(move || {
             let raw = std::fs::read(&pending_path)
                 .map_err(|error| format!("Failed to reopen captured response: {error}"))?;
             let mut header = format!(

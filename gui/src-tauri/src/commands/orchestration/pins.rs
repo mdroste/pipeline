@@ -50,7 +50,7 @@ pub(super) fn release_settled_failure(id: &str) -> Result<(), String> {
     reconcile(
         &crate::runs::runs_dir()?.join(id),
         &manifest.status,
-        active.as_deref(),
+        active.as_ref().map(|(operation, _)| operation.as_str()),
         None,
     )
 }
@@ -82,7 +82,7 @@ pub fn release_abandoned_pin(id: &str, operation: &str) -> Result<(), String> {
     reconcile(
         &root.join(id),
         &manifest.status,
-        active.as_deref(),
+        active.as_ref().map(|(operation, _)| operation.as_str()),
         Some(operation),
     )
 }

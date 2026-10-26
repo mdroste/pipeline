@@ -20,6 +20,7 @@ pub mod pipeline_config;
 pub mod process;
 pub mod projects;
 pub mod prompts;
+pub mod run_scope;
 pub mod runs;
 pub mod safety;
 pub mod settings;
@@ -155,6 +156,13 @@ pub fn run() {
             commands::batch::list_input_files,
             // Resume / partial re-run
             commands::rerun::rerun_run,
+            // Review run queue (several reviews at once)
+            commands::run_queue::enqueue_run,
+            commands::run_queue::enqueue_batch,
+            commands::run_queue::enqueue_rerun,
+            commands::run_queue::list_run_queue,
+            commands::run_queue::get_queued_run_result,
+            commands::run_queue::dismiss_queued_runs,
             // Annotations
             commands::artifacts::get_annotations,
             commands::artifacts::save_annotations,

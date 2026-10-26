@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from "react";
 interface ConfirmOptions {
   title?: string;
   confirmLabel?: string;
+  /** Label for the dismiss button when "Cancel" would be ambiguous. */
+  cancelLabel?: string;
   destructive?: boolean;
 }
 
@@ -119,7 +121,7 @@ export default function DialogService({
                 onClick={() => finish(false)}
                 className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium dark:border-gray-700"
               >
-                Cancel
+                {request.cancelLabel || "Cancel"}
               </button>
               <button
                 type="button"

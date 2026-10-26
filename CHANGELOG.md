@@ -5,6 +5,16 @@ the first public release was not maintained as a stable release series.
 
 ## Unreleased
 
+- Reviews queue instead of blocking: start as many as needed, and up to
+  Settings → Reviews → Simultaneous Reviews (default 2, at most 4) run at once.
+  The sidebar lists running, queued, and recently finished reviews with their
+  stage and elapsed time; each row returns to that review, and a footer beacon
+  keeps active reviews in view from any page. Several documents selected in New
+  review are queued as separate reviews, and History re-runs queue the same way.
+- Each run owns its cancellation, child processes, console transcript, token
+  totals, settings snapshot, and write quota, so cancelling one review never
+  stops another. Batches, automations, and history purges still run alone.
+
 ## 1.1.1 — 2026-10-22
 
 - Workspace permission requests display their full access scope, working

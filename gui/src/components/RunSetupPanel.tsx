@@ -24,6 +24,8 @@ interface Props {
   parallelOverrides: RunParallelOverrides | null;
   selectionKey: number;
   width: number;
+  /** Reviews already queued or running, and how many may run at once. */
+  runActivity?: { running: number; queued: number; limit: number };
   onConfigureWorkflow: () => void;
   onGenerate: () => void;
   onPaperPathChange: (path: string | null) => void;
@@ -49,6 +51,7 @@ export default function RunSetupPanel({
   parallelOverrides,
   selectionKey,
   width,
+  runActivity,
   onConfigureWorkflow,
   onGenerate,
   onPaperPathChange,
@@ -189,6 +192,20 @@ export default function RunSetupPanel({
               </div>
             </div>
           )}
+          {runActivity && runActivity.running + runActivity.queued > 0 && (
+            <p
+              role="status"
+              className="mb-2 text-xs leading-5 text-gray-500 dark:text-gray-400"
+            >
+              {runActivity.running} running
+              {runActivity.queued > 0
+                ? `, ${runActivity.queued} queued`
+                : ""}.{" "}
+              {runActivity.running + runActivity.queued >= runActivity.limit
+                ? "This review waits for a free slot."
+                : "This review starts right away."}
+            </p>
+          )}
           <button
             type="button"
             onClick={onGenerate}
@@ -205,7 +222,11 @@ export default function RunSetupPanel({
                 ? "Loading workflow…"
                 : !listenersReady
                   ? "Preparing event stream…"
-                  : "Start review"}
+                  : runActivity &&
+                      runActivity.running + runActivity.queued >=
+                        runActivity.limit
+                    ? "Queue review"
+                    : "Start review"}
             {!configLoading && !preparingRun && listenersReady && (
               <svg
                 aria-hidden="true"

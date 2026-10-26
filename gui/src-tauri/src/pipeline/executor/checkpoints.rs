@@ -44,7 +44,7 @@ pub(super) async fn checkpoint_output(
     let directory = std::path::PathBuf::from(write_dir).join("checkpoints");
     let destination = directory.join(format!("{ordinal:04}_{}.json", step_slug(&output.step_id)));
     let output = output.clone();
-    tokio::task::spawn_blocking(move || {
+    crate::run_scope::spawn_blocking(move || {
         use std::io::Write as _;
         std::fs::create_dir_all(&directory)
             .map_err(|error| format!("Failed to create checkpoint directory: {error}"))?;
@@ -105,7 +105,7 @@ pub(super) async fn checkpoint_wave(
     };
     let directory = std::path::PathBuf::from(root).join("checkpoints");
     let outputs = outputs.to_vec();
-    tokio::task::spawn_blocking(move || {
+    crate::run_scope::spawn_blocking(move || {
         use std::io::Write as _;
         std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
         let destination = directory.join(format!(
@@ -140,7 +140,7 @@ pub(super) async fn checkpoint_failure(
     let directory = std::path::PathBuf::from(write_dir).join("checkpoints");
     let destination = directory.join(format!("failure_{}.json", step_slug(&failure.step_id)));
     let failure = failure.clone();
-    tokio::task::spawn_blocking(move || {
+    crate::run_scope::spawn_blocking(move || {
         use std::io::Write as _;
         std::fs::create_dir_all(&directory)
             .map_err(|error| format!("Failed to create checkpoint directory: {error}"))?;

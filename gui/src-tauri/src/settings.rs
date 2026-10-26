@@ -280,6 +280,10 @@ pub struct Settings {
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
 
+    /// Queued reviews started at the same time; the queue clamps it to 1–4.
+    #[serde(default = "default_max_concurrent_reviews")]
+    pub max_concurrent_reviews: u32,
+
     /// Automatically compare a completed run with the newest prior run for
     /// the same input path or content hash. Disabled by default because it
     /// adds a niche, potentially costly LLM reconciliation call.
@@ -476,6 +480,10 @@ fn default_max_retries() -> u32 {
     1
 }
 
+fn default_max_concurrent_reviews() -> u32 {
+    2
+}
+
 fn default_max_saved_run_bytes() -> u64 {
     0
 }
@@ -537,6 +545,7 @@ impl Default for Settings {
             verbose_logging: false,
             step_timeout_secs: 1200,
             max_retries: 1,
+            max_concurrent_reviews: default_max_concurrent_reviews(),
             auto_revision_reconciliation: false,
             max_saved_runs: 0,
             max_saved_run_bytes: default_max_saved_run_bytes(),
@@ -1257,37 +1266,31 @@ pub(crate) fn validate_local_base_url(value: &str) -> Result<reqwest::Url, Strin
     Ok(url)
 }
 
-/// Load settings, discarding any warnings. Used by non-UI callers
-/// (pipeline execution, etc.) where fallback to defaults is fine.
-static RUN_SETTINGS: std::sync::Mutex<Option<(u64, Settings)>> = std::sync::Mutex::new(None);
-static RUN_SETTINGS_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
+/// Releases a run's frozen settings snapshot when the run ends.
 pub struct RunSettingsGuard {
+    scope: std::sync::Arc<crate::run_scope::RunScope>,
     token: u64,
 }
 
 impl Drop for RunSettingsGuard {
     fn drop(&mut self) {
-        let mut snapshot = RUN_SETTINGS.lock().unwrap_or_else(|e| e.into_inner());
-        if snapshot.as_ref().map(|(token, _)| *token) == Some(self.token) {
-            *snapshot = None;
-        }
+        self.scope.release_settings(self.token);
     }
 }
 
+/// Freeze `settings` for the run executing on this task.
 pub fn freeze_for_run(settings: Settings) -> RunSettingsGuard {
-    use std::sync::atomic::Ordering;
-    let token = RUN_SETTINGS_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    *RUN_SETTINGS.lock().unwrap_or_else(|e| e.into_inner()) = Some((token, settings));
-    RunSettingsGuard { token }
+    let scope = crate::run_scope::current();
+    let token = scope.freeze_settings(settings);
+    RunSettingsGuard { scope, token }
 }
 
+/// Load settings, discarding any warnings. Inside a run this is the run's
+/// immutable snapshot; other callers (where fallback to defaults is fine) read
+/// the persisted file.
 pub fn load() -> Settings {
-    RUN_SETTINGS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .as_ref()
-        .map(|(_, settings)| settings.clone())
+    crate::run_scope::current()
+        .frozen_settings()
         .unwrap_or_else(|| load_with_warnings().0)
 }
 

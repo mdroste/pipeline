@@ -288,12 +288,25 @@ const modelCatalog = {
   roles: [],
 };
 
+// ?deps=attention shows a report with model and PDF blockers.
+const depsAttention = params.get("deps") === "attention";
 const depsReport = {
-  ready: true,
+  ready: !depsAttention,
   deps: [
-    { name: "claude", found: true, version: "2.1.14", path: "/usr/local/bin/claude", required: false, hint: "", authenticated: true, cli_auth_status: "signed_in" },
-    { name: "codex", found: true, version: "0.153.4", path: "/usr/local/bin/codex", required: false, hint: "", authenticated: true, cli_auth_status: "signed_in" },
-    { name: "poppler", found: true, version: "24.04", path: "(bundled)", required: true, hint: "" },
+    depsAttention
+      ? { name: "Claude CLI", found: true, version: "2.1.14", path: "/usr/local/bin/claude", required: true, hint: "Claude CLI is installed but not signed in. Run `claude auth login` to authenticate.", authenticated: false, cli_auth_status: "signed_out" }
+      : { name: "Claude CLI", found: true, version: "2.1.14", path: "/usr/local/bin/claude", required: true, hint: "", authenticated: true, cli_auth_status: "signed_in" },
+    { name: "Workflow ChatGPT", found: true, version: "0.153.4", path: "/usr/local/bin/codex", required: true, hint: "", authenticated: true },
+    depsAttention
+      ? { name: "Google API", found: true, version: "direct API", path: "", required: false, hint: "API key configured.", authenticated: true }
+      : { name: "Google API", found: false, version: "direct API", path: "", required: false, hint: "Add a Google AI API key in Settings → Providers → Google.", authenticated: false },
+    { name: "pdftoppm", found: true, version: "bundled", path: "/Applications/Pipeline.app/Contents/Resources/poppler/pdftoppm", required: true, hint: "" },
+    { name: "pdftotext", found: true, version: "bundled", path: "/Applications/Pipeline.app/Contents/Resources/poppler/pdftotext", required: true, hint: "" },
+    depsAttention
+      ? { name: "PaddleOCR-VL Full Parser", found: false, version: "", path: "", required: true, hint: "Install from Settings → PDF Extraction, or run `pipeline-cli engines install paddle` from a source build." }
+      : { name: "PaddleOCR-VL Full Parser", found: true, version: "managed 2026.09.2", path: "/Users/mike/Library/Application Support/com.pipeline.app/engines/paddle/run.py", required: true, hint: "Managed PaddleOCR layout client, recognition runtime, and models are installed." },
+    { name: "PDF extractor configuration", found: true, version: "paddleocr-vl-full", path: "", required: true, hint: "The selected PDF extraction method is supported." },
+    { name: "Local LLM server", found: false, version: "", path: "", required: false, hint: "" },
   ],
 };
 

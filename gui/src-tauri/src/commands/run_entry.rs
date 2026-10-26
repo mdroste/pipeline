@@ -92,6 +92,44 @@ pub(super) fn complete_run(
     }))
 }
 
+/// Validate one foreground launch and bind its immutable snapshot: runtime
+/// values, the selected input, the plan fingerprint the user reviewed, and the
+/// exact dependency set. Shared by immediate and queued launches.
+pub(super) async fn prepare_foreground_launch(
+    paper_path: &str,
+    input_interpretation: Option<&str>,
+    diff: bool,
+    variables: &std::collections::HashMap<String, String>,
+    extra_inputs: &std::collections::HashMap<String, String>,
+    expected_profile_snapshot_id: Option<&str>,
+    run_parallel_overrides: Option<&RunParallelOverrides>,
+) -> Result<RunSnapshot, String> {
+    let _ = crate::runs::recover_resumable_runs();
+    crate::safety::validate_runtime_context(variables, "Run variables")?;
+    crate::safety::validate_runtime_context(extra_inputs, "Named input paths")?;
+    let snapshot = bind_parallel_overrides(load_run_snapshot()?, run_parallel_overrides)?;
+    validate_runtime_bindings(&snapshot.config, variables, extra_inputs, true)?;
+    validate_primary_input_selection(&snapshot.config, Some(paper_path), input_interpretation)?;
+    validate_named_input_paths(&snapshot.config, extra_inputs, true)?;
+    let snapshot = bind_runtime_snapshot(snapshot, variables, extra_inputs)?;
+    let snapshot = bind_foreground_launch(snapshot, paper_path, input_interpretation, diff)?;
+    let expected_profile_snapshot_id = expected_profile_snapshot_id
+        .filter(|expected| !expected.is_empty())
+        .ok_or(
+            "Run setup has not been prepared. Review the execution plan before launching the run.",
+        )?;
+    if expected_profile_snapshot_id != snapshot.fingerprint {
+        return Err(
+            "The active profile or run options changed after the execution plan was prepared. Review the updated plan and run again."
+                .to_string(),
+        );
+    }
+    let dependencies =
+        check_snapshot_dependencies(&snapshot, diff, Some(paper_path), extra_inputs).await?;
+    require_snapshot_dependencies(&dependencies)?;
+    Ok(snapshot)
+}
+
 // Tauri exposes these launch fields as separate command arguments to keep the
 // frontend IPC contract explicit and backwards-compatible.
 #[allow(clippy::too_many_arguments)]
@@ -106,44 +144,25 @@ pub async fn run_pipeline(
     expected_profile_snapshot_id: Option<String>,
     run_parallel_overrides: Option<RunParallelOverrides>,
 ) -> Result<serde_json::Value, String> {
-    // Captured before preflight so a cancel click during the probes below is
-    // re-asserted by the run task rather than erased by its flag reset.
-    let preflight_cancel_epoch = current_cancel_epoch();
-    // Prevent concurrent pipeline runs from corrupting shared state
-    let _ = crate::runs::recover_resumable_runs();
+    // Registered before preflight so a cancel click during the probes below
+    // is recorded in this run's scope and honored once the task starts.
+    let run = crate::run_scope::ActiveScope::begin(super::run_queue::next_run_key());
     let variables = variables.unwrap_or_default();
     let extra_inputs = extra_inputs.unwrap_or_default();
-    crate::safety::validate_runtime_context(&variables, "Run variables")?;
-    crate::safety::validate_runtime_context(&extra_inputs, "Named input paths")?;
-    let snapshot = bind_parallel_overrides(load_run_snapshot()?, run_parallel_overrides.as_ref())?;
-    validate_runtime_bindings(&snapshot.config, &variables, &extra_inputs, true)?;
-    validate_primary_input_selection(
-        &snapshot.config,
-        Some(&paper_path),
+    let snapshot = prepare_foreground_launch(
+        &paper_path,
         input_interpretation.as_deref(),
-    )?;
-    validate_named_input_paths(&snapshot.config, &extra_inputs, true)?;
-    let snapshot = bind_runtime_snapshot(snapshot, &variables, &extra_inputs)?;
-    let snapshot =
-        bind_foreground_launch(snapshot, &paper_path, input_interpretation.as_deref(), diff)?;
-    let expected_profile_snapshot_id = expected_profile_snapshot_id
-        .as_deref()
-        .filter(|expected| !expected.is_empty())
-        .ok_or(
-            "Run setup has not been prepared. Review the execution plan before launching the run.",
-        )?;
-    if expected_profile_snapshot_id != snapshot.fingerprint {
-        return Err(
-            "The active profile or run options changed after the execution plan was prepared. Review the updated plan and run again."
-                .to_string(),
-        );
-    }
-    let dependencies =
-        check_snapshot_dependencies(&snapshot, diff, Some(&paper_path), &extra_inputs).await?;
-    require_snapshot_dependencies(&dependencies)?;
-    let guard = acquire_pipeline_guard()?;
+        diff,
+        &variables,
+        &extra_inputs,
+        expected_profile_snapshot_id.as_deref(),
+        run_parallel_overrides.as_ref(),
+    )
+    .await?;
+    let guard = acquire_run_slot()?;
     let bus = crate::emit::from_app(app);
     PipelineTask::spawn(
+        run.scope().clone(),
         guard,
         PipelineRequest {
             bus,
@@ -153,7 +172,6 @@ pub async fn run_pipeline(
             variables,
             extra_inputs,
             snapshot: Some(snapshot),
-            preflight_cancel_epoch,
         },
     )
     .join()
@@ -336,15 +354,16 @@ pub async fn run_headless_batch_item(
     options: HeadlessRunOptions,
     batch: Option<&HeadlessBatchSnapshot>,
 ) -> Result<serde_json::Value, String> {
-    let preflight_cancel_epoch = current_cancel_epoch();
+    let run = crate::run_scope::ActiveScope::begin(super::run_queue::next_run_key());
     let _ = crate::runs::recover_resumable_runs();
     let (snapshot, dependencies) = match batch {
         Some(batch) => prepare_headless_snapshot(&options, batch.0.clone()).await?,
         None => prepare_headless_run(&options).await?,
     };
     require_snapshot_dependencies(&dependencies)?;
-    let guard = acquire_pipeline_guard()?;
+    let guard = acquire_run_slot()?;
     PipelineTask::spawn(
+        run.scope().clone(),
         guard,
         PipelineRequest {
             bus,
@@ -354,7 +373,6 @@ pub async fn run_headless_batch_item(
             variables: options.variables,
             extra_inputs: options.extra_inputs,
             snapshot: Some(snapshot),
-            preflight_cancel_epoch,
         },
     )
     .join()

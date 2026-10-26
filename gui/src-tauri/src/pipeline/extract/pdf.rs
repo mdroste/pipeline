@@ -1135,16 +1135,17 @@ pub(super) async fn extract_llm(
         .map_err(|error| format!("Failed to create private PDF input directory: {error}"))?;
     let source = path.to_path_buf();
     let input_root = provider_input.path().to_path_buf();
-    let staged_path = tokio::task::spawn_blocking(move || stage_pdf_input(&source, &input_root))
-        .await
-        .map_err(|error| format!("PDF staging task failed: {error}"))??;
+    let staged_path =
+        crate::run_scope::spawn_blocking(move || stage_pdf_input(&source, &input_root))
+            .await
+            .map_err(|error| format!("PDF staging task failed: {error}"))??;
 
     // Completeness baseline (poppler is bundled so this is normally
     // available; the error carries pdftotext's own diagnosis, e.g. an
     // encrypted PDF's "Incorrect password").
     let baseline = {
         let p = staged_path.clone();
-        tokio::task::spawn_blocking(move || pdftotext_page_baseline(&p))
+        crate::run_scope::spawn_blocking(move || pdftotext_page_baseline(&p))
             .await
             .map_err(|error| format!("pdftotext baseline task failed: {error}"))?
     }

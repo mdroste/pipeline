@@ -19,7 +19,7 @@ import {
   type RunProfileSnapshot,
 } from "../lib/appRunPreparation";
 import { NAV_RAIL_WIDTH, type AppPage } from "../components/NavRail";
-import { usePipeline } from "./usePipeline";
+import { usePipeline, type PipelineState } from "./usePipeline";
 import usePersistentPanelWidth from "./usePersistentPanelWidth";
 import {
   readThemePreference,
@@ -36,7 +36,8 @@ import type {
 } from "../lib/types";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
 import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
-import { confirmDialog } from "../components/DialogService";
+import { confirmDialog, notify } from "../components/DialogService";
+import { EMPTY_USAGE } from "../lib/runViews";
 import type { SettingsSection } from "../components/SettingsPage";
 import type { ReviewHandoff, WorkbenchEvent } from "../lib/workbenchTypes";
 import { startupRoute } from "../lib/appPreferences";
@@ -45,21 +46,19 @@ import { appClient } from "../lib/appClient";
 import useRecentProjects from "./useRecentProjects";
 import type { WorkspaceDestination } from "../lib/workspaceNavigation";
 
+const IDLE: PipelineState = { kind: "idle" };
+
 export function useAppController() {
   const {
-    state,
-    logs,
-    usage,
-    startPipeline,
-    rerunPipeline,
-    cancel,
-    reset,
+    queue: runQueue,
+    views: runViews,
     listenersReady,
-    runStartedAt,
-    passTimes,
-    stageHistory,
-    reviewRouting,
-    providerLimitNotices = [],
+    setupError: runEventsError,
+    enqueue,
+    enqueueBatch,
+    enqueueRerun,
+    cancel: cancelRun,
+    dismiss: dismissRuns,
   } = usePipeline();
   const [paperPath, setPaperPath] = useState<string | null>(null);
   const [inputSelection, setInputSelection] =
@@ -269,6 +268,23 @@ export function useAppController() {
     route.page === "settings" ? route.targetId : undefined;
   const helpInitialSection = route.page === "help" ? route.section : undefined;
   const historyRunId = route.page === "history" ? (route.runId ?? null) : null;
+  // The review on screen: `main` with a run key is one queued, running, or
+  // finished review; without one it is the new-review setup.
+  const selectedRunKey = route.page === "main" ? (route.runKey ?? null) : null;
+  const selectedRun =
+    runQueue.runs.find((run) => run.key === selectedRunKey) ?? null;
+  const selectedView = selectedRunKey ? runViews[selectedRunKey] : undefined;
+  const state = selectedView?.state ?? IDLE;
+  // Finished reviews the user has not opened since they finished.
+  const [seenRuns, setSeenRuns] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    if (!selectedRun || seenRuns.has(selectedRun.key)) return;
+    if (["done", "failed", "cancelled"].includes(selectedRun.status))
+      setSeenRuns((seen) => new Set(seen).add(selectedRun.key));
+  }, [selectedRun, seenRuns]);
+  const [runPlans, setRunPlans] = useState<
+    Record<string, ExecutionPlanStage[]>
+  >({});
   const { recentProjects, projectsLoading } = useRecentProjects(page);
   const [workspaceEntry, setWorkspaceEntry] = useState<{
     surface: "chat" | "project";
@@ -337,9 +353,6 @@ export function useAppController() {
   // the pre-run options modal.
   const [pendingRun, setPendingRun] = useState<PendingRun | null>(null);
   const [runPreview, setRunPreview] = useState<PreparedLaunch | null>(null);
-  const [activeRunPlan, setActiveRunPlan] = useState<
-    ExecutionPlanStage[] | null
-  >(null);
   const launchActive = useRef(false);
   const selectedInputRef = useRef({ inputMode, paperPath, inputSelection });
   selectedInputRef.current = { inputMode, paperPath, inputSelection };
@@ -655,11 +668,30 @@ export function useAppController() {
     [inputMode],
   );
 
-  const foregroundRunActive =
-    state.kind !== "idle" && state.kind !== "done" && state.kind !== "error";
-  const isRunning = foregroundRunActive || batchActive;
-  const hasCurrentRun = state.kind !== "idle";
-  const showRunSetup = page === "main" && state.kind === "idle";
+  useEffect(() => {
+    if (runEventsError) setRunConfigError(runEventsError);
+  }, [runEventsError]);
+  const activeRuns = runQueue.runs.filter(
+    (run) => run.status === "queued" || run.status === "running",
+  );
+  const runningReviews = activeRuns.filter(
+    (run) => run.status === "running",
+  ).length;
+  const isRunning = activeRuns.length > 0 || batchActive;
+  const hasCurrentRun = selectedRunKey !== null;
+  const showRunSetup = page === "main" && selectedRunKey === null;
+  // Home's "continue" target: a running review, else the next queued one,
+  // else the newest finished one not yet opened.
+  const continueRunKey =
+    activeRuns.find((run) => run.status === "running")?.key ??
+    activeRuns[0]?.key ??
+    [...runQueue.runs]
+      .reverse()
+      .find((run) => run.status === "done" && !seenRuns.has(run.key))?.key ??
+    null;
+  const openRun = useCallback(async (runKey: string) => {
+    await router.navigate({ page: "main", runKey });
+  }, []);
 
   const launch = async (
     snapshot: PendingRun,
@@ -766,39 +798,44 @@ export function useAppController() {
     setRunPreview(null);
     setPreparingRun(true);
     try {
-      if (prepared.batchPaths) {
-        await appClient.startBatch({
-          paths: prepared.batchPaths,
-          variables: prepared.variables ?? null,
-          extraInputs: prepared.extraInputs ?? null,
-          expectedProfileConfigSnapshotId:
-            prepared.plan.profileConfigSnapshotId,
-          ...(prepared.parallelOverrides
-            ? { runParallelOverrides: prepared.parallelOverrides }
-            : {}),
-        });
-        setBatchActive(true);
-        setPage("batch");
-        return;
-      }
-      setPage("main");
-      setActiveRunPlan(prepared.plan.stages);
-      const launchArgs = [
-        prepared.snapshot.paperPath,
-        prepared.snapshot.inputSelection?.interpretation,
-        false,
-        prepared.variables,
-        prepared.extraInputs,
-        prepared.plan.profileSnapshotId,
-      ] as const;
-      if (prepared.parallelOverrides) {
-        void startPipeline(...launchArgs, prepared.parallelOverrides);
-      } else {
-        void startPipeline(...launchArgs);
-      }
+      const overrides = prepared.parallelOverrides
+        ? { runParallelOverrides: prepared.parallelOverrides }
+        : {};
+      // Every document becomes its own queued review; they start as slots
+      // free up and each stays reachable from the sidebar.
+      const queued = prepared.batchPaths
+        ? await enqueueBatch({
+            paths: prepared.batchPaths,
+            variables: prepared.variables ?? null,
+            extraInputs: prepared.extraInputs ?? null,
+            expectedProfileConfigSnapshotId:
+              prepared.plan.profileConfigSnapshotId,
+            ...overrides,
+          })
+        : [
+            await enqueue({
+              paperPath: prepared.snapshot.paperPath,
+              inputInterpretation:
+                prepared.snapshot.inputSelection?.interpretation ?? null,
+              diff: false,
+              variables: prepared.variables ?? null,
+              extraInputs: prepared.extraInputs ?? null,
+              expectedProfileSnapshotId: prepared.plan.profileSnapshotId,
+              ...overrides,
+            }),
+          ];
+      setRunPlans((plans) => {
+        const next = { ...plans };
+        for (const run of queued) next[run.key] = prepared.plan.stages;
+        return next;
+      });
+      // Open the new review unless the user moved on while it was queued.
+      const current = router.route;
+      if (queued[0] && current.page === "main" && !current.runKey)
+        router.apply({ page: "main", runKey: queued[0].key });
     } catch (error) {
       setRunConfigError(
-        `The report could not be started: ${error instanceof Error ? error.message : String(error)}`,
+        `The review could not be queued: ${error instanceof Error ? error.message : String(error)}`,
       );
     } finally {
       launchActive.current = false;
@@ -846,13 +883,6 @@ export function useAppController() {
   };
 
   const handleWorkspaceReviewHandoff = async (handoff: ReviewHandoff) => {
-    if (isRunning) {
-      setRunConfigError(
-        "A Review run is already active. The Workspace conversation remains usable; open this handoff after the Review run finishes.",
-      );
-      setPage("main");
-      return;
-    }
     const selection: PrimaryInputSelection = {
       paths: [handoff.stagedPath],
       interpretation: handoff.inputInterpretation,
@@ -884,16 +914,25 @@ export function useAppController() {
 
   const handleNewRun = async () => {
     if (!(await router.navigate({ page: "main" }))) return;
-    if (isRunning) return;
-    reset();
     setPaperPath(null);
     setInputSelection(null);
     setRunPreview(null);
     setHistorySourceSelection(null);
     setPendingRun(null);
     setParallelOverrides(null);
-    setActiveRunPlan(null);
     setSelectionKey((key) => key + 1);
+  };
+
+  /** Queue a re-run of a past run and open it. */
+  const rerunReview = async (runId: string, onlyFailed: boolean) => {
+    try {
+      const run = await enqueueRerun(runId, { onlyFailed });
+      await openRun(run.key);
+    } catch (error) {
+      notify(
+        `The re-run could not be queued: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   };
 
   const handleNavigate = async (nextPage: AppPage) => {
@@ -1001,12 +1040,16 @@ export function useAppController() {
   };
 
   const openActivityReview = async (id: string) => {
-    const current = "runId" in state && state.runId === id;
+    const queued = runQueue.runs.find(
+      (run) => run.runId === id && run.resultAvailable,
+    );
     const allowed = await router.navigate(
-      current ? { page: "main" } : { page: "history", runId: id },
+      queued
+        ? { page: "main", runKey: queued.key }
+        : { page: "history", runId: id },
     );
     if (!allowed) return;
-    if (!current) setHistorySourceSelection(null);
+    if (!queued) setHistorySourceSelection(null);
   };
 
   const [showDeps, setShowDeps] = useState(false);
@@ -1078,7 +1121,7 @@ export function useAppController() {
     handleGenerate,
     loadRunSetup,
     setRunSetupWidth,
-    providerLimitNotices,
+    providerLimitNotices: selectedView?.providerLimitNotices ?? [],
     batchActive,
     createWorkspaceProject,
     setPage,
@@ -1113,15 +1156,21 @@ export function useAppController() {
     registerWorkspaceSave,
     setProjectsDirty,
     state,
-    setActiveRunPlan,
-    rerunPipeline,
-    activeRunPlan,
-    stageHistory,
-    runStartedAt,
-    passTimes,
-    reviewRouting,
-    cancel,
-    logs,
-    usage,
+    runQueue,
+    selectedRun,
+    seenRuns,
+    runningReviews,
+    continueRunKey,
+    openRun,
+    rerunReview,
+    dismissRuns,
+    cancelRun,
+    activeRunPlan: selectedRunKey ? (runPlans[selectedRunKey] ?? null) : null,
+    stageHistory: selectedView?.stageHistory ?? [],
+    runStartedAt: selectedView?.runStartedAt ?? null,
+    passTimes: selectedView?.passTimes ?? {},
+    reviewRouting: selectedView?.reviewRouting ?? null,
+    logs: selectedView?.logs ?? [],
+    usage: selectedView?.usage ?? EMPTY_USAGE,
   };
 }

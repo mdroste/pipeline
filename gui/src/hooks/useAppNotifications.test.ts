@@ -1,6 +1,9 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import type { PipelineState } from "./usePipeline";
+import type { QueuedRun } from "../lib/types";
+import { queuedRun as fixture } from "../test/queuedRunFixture";
+const queuedRun = (status: QueuedRun["status"], key = "run-a") =>
+  fixture(key, status);
 import { useAppNotifications } from "./useAppNotifications";
 const handlers = vi.hoisted(
   () => new Map<string, (event: { payload: unknown }) => void>(),
@@ -26,7 +29,7 @@ beforeEach(() => {
 const emit = (name: string, payload: unknown) =>
   act(() => handlers.get(name)!({ payload }));
 it("listens at the shell, deduplicates repeated notices, and releases listeners", async () => {
-  const view = renderHook(() => useAppNotifications({ kind: "idle" }));
+  const view = renderHook(() => useAppNotifications([]));
   emit("tasks:notice", { id: "task", state: "finished" });
   emit("tasks:notice", { id: "task", state: "finished" });
   expect(deliverNotice).toHaveBeenCalledTimes(1);
@@ -38,7 +41,7 @@ it("listens at the shell, deduplicates repeated notices, and releases listeners"
   await waitFor(() => expect(off).toHaveBeenCalledTimes(7));
 });
 it("classifies failed batches as failures and ignores cancelled batches", () => {
-  renderHook(() => useAppNotifications({ kind: "idle" }));
+  renderHook(() => useAppNotifications([]));
   emit("batch:progress", [{ status: "failed" }, { status: "done" }]);
   emit("batch:done", null);
   expect(deliverNotice).toHaveBeenLastCalledWith(
@@ -52,22 +55,48 @@ it("classifies failed batches as failures and ignores cancelled batches", () => 
   emit("batch:done", null);
   expect(deliverNotice).not.toHaveBeenCalled();
 });
-it("notifies on a Review terminal transition without replaying old state", () => {
-  const initial = { kind: "extracting" } as PipelineState;
+it("notifies once per Review that finishes, naming it, without replaying old state", () => {
   const view = renderHook(
-    ({ state }: { state: PipelineState }) => useAppNotifications(state),
-    { initialProps: { state: initial } },
+    ({ runs }: { runs: QueuedRun[] }) => useAppNotifications(runs),
+    {
+      initialProps: {
+        runs: [queuedRun("running"), queuedRun("done", "already-done")],
+      },
+    },
   );
-  view.rerender({ state: { kind: "error", message: "failed call" } });
+  expect(deliverNotice).not.toHaveBeenCalled();
+  view.rerender({
+    runs: [queuedRun("failed"), queuedRun("done", "already-done")],
+  });
   expect(deliverNotice).toHaveBeenCalledWith(
-    expect.objectContaining({ kind: "failure", title: "Review failed" }),
+    expect.objectContaining({
+      kind: "failure",
+      title: "Review failed",
+      body: expect.stringContaining("run-a.pdf"),
+    }),
   );
-  view.rerender({ state: { kind: "error", message: "failed call" } });
+  view.rerender({
+    runs: [queuedRun("failed"), queuedRun("done", "already-done")],
+  });
   expect(deliverNotice).toHaveBeenCalledTimes(1);
+  view.rerender({
+    runs: [queuedRun("running", "run-b"), queuedRun("queued", "run-c")],
+  });
+  view.rerender({
+    runs: [queuedRun("done", "run-b"), queuedRun("cancelled", "run-c")],
+  });
+  expect(deliverNotice).toHaveBeenCalledTimes(2);
+  expect(deliverNotice).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      kind: "completion",
+      title: "Review complete",
+      body: "run-b.pdf is ready to read.",
+    }),
+  );
 });
 
 it("delivers discovery selection and completion while its page is unmounted", () => {
-  renderHook(() => useAppNotifications({ kind: "idle" }));
+  renderHook(() => useAppNotifications([]));
   emit("discovery:notice", {
     id: "portfolio",
     state: "awaitingSelection",

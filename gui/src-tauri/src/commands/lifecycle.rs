@@ -1,29 +1,31 @@
-use super::*;
-
 /// Per-run cleanup. A batch holds `PipelineGuard` across several jobs, so each
 /// job must close its own log sink and API read/write windows on every return
 /// path, including extraction or provider failures.
-pub(super) struct RunStateGuard;
+pub(super) struct RunStateGuard {
+    scope: std::sync::Arc<crate::run_scope::RunScope>,
+}
 
+/// Reset per-job state in the current run scope. Cancellation is not reset: a
+/// run scope stays cancelled once cancelled, so a stop that lands before the
+/// job starts cannot be erased here.
 pub(super) fn begin_run_state() -> RunStateGuard {
-    CANCEL_FLAG.store(false, std::sync::atomic::Ordering::Release);
-    reset_pass_cancels();
-    crate::pipeline::logging::reset_run_usage();
-    crate::pipeline::logging::set_log_sink(None);
-    crate::pipeline::api_common::reset_write_budget();
-    RunStateGuard
+    let scope = crate::run_scope::current();
+    if scope.is_fallback() {
+        scope.reset_cancel();
+    }
+    scope.reset_pass_cancels();
+    scope.reset_usage();
+    scope.set_log_sink(None);
+    scope.reset_write_budget();
+    RunStateGuard { scope }
 }
 
 impl Drop for RunStateGuard {
     fn drop(&mut self) {
-        crate::pipeline::logging::set_log_sink(None);
-        reset_pass_cancels();
+        self.scope.set_log_sink(None);
+        self.scope.reset_pass_cancels();
     }
 }
-
-/// PIDs of active child processes (provider and extraction subprocesses).
-/// Populated by `register_child_pid`, cleared by `unregister_child_pid`.
-pub(super) static CHILD_PIDS: std::sync::Mutex<Vec<u32>> = std::sync::Mutex::new(Vec::new());
 
 #[cfg(windows)]
 pub(super) static CHILD_JOBS: std::sync::Mutex<Vec<(u32, usize)>> =
@@ -180,31 +182,10 @@ pub(crate) fn unregister_process_job(pid: u32) {
 #[cfg(not(windows))]
 pub(crate) fn unregister_process_job(_pid: u32) {}
 
-/// (pass key, pid) for per-pass cancellation. A pass key is the step key
-/// ("technical/claude") the executor tags each `call_llm` with.
-pub(super) static PASS_PIDS: std::sync::Mutex<Vec<(String, u32)>> =
-    std::sync::Mutex::new(Vec::new());
-/// Pass keys the user asked to cancel this run. Checked by the executor's retry
-/// loop so a cancelled pass fails instead of retrying.
-pub(super) static CANCELLED_PASSES: std::sync::Mutex<Vec<String>> =
-    std::sync::Mutex::new(Vec::new());
-
-/// Whether a specific pass was cancelled by the user.
+/// Whether a specific pass (step key, e.g. "technical/claude") of the current
+/// run was cancelled by the user.
 pub fn is_pass_cancelled(pass_key: &str) -> bool {
-    CANCELLED_PASSES
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .any(|k| k == pass_key)
-}
-
-/// Clear per-pass cancellation state (called at run start/end).
-pub(super) fn reset_pass_cancels() {
-    CANCELLED_PASSES
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clear();
-    PASS_PIDS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    crate::run_scope::current().is_pass_cancelled(pass_key)
 }
 
 // ── Batch queue (1.3.1) ─────────────────────────────────────────────
@@ -267,8 +248,9 @@ pub(super) fn emit_batch(app: &crate::emit::EventBus) {
     );
 }
 
+/// Whether the run executing on this task was cancelled.
 pub fn is_cancelled() -> bool {
-    CANCEL_FLAG.load(std::sync::atomic::Ordering::Acquire)
+    crate::run_scope::current().is_cancelled()
 }
 
 /// Recognize only the cancellation errors Pipeline itself creates. Provider
@@ -287,29 +269,13 @@ pub fn is_pipeline_cancellation_error(error: &str) -> bool {
         })
 }
 
-pub(super) fn cancellation_signal() -> &'static tokio::sync::watch::Sender<u64> {
-    CANCEL_SIGNAL.get_or_init(|| tokio::sync::watch::channel(0).0)
-}
-
-pub(super) fn signal_cancellation() {
-    let epoch = CANCEL_EPOCH.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
-    cancellation_signal().send_replace(epoch);
-}
-
-/// Snapshot of the cancellation epoch, captured at run-command entry and
-/// compared after `begin_run_state` so a cancel that lands during the launch
-/// command's preflight (dependency probes, resumable-run recovery) is
-/// re-asserted instead of being erased by the flag reset.
-pub(super) fn current_cancel_epoch() -> u64 {
-    CANCEL_EPOCH.load(std::sync::atomic::Ordering::Acquire)
-}
-
 /// Resolve when the current run or the supplied pass is cancelled. A watch
 /// channel avoids lost wakeups if cancellation races with request dispatch.
 pub async fn wait_for_cancellation(pass_key: Option<&str>) {
-    let mut signal = cancellation_signal().subscribe();
+    let scope = crate::run_scope::current();
+    let mut signal = scope.subscribe();
     loop {
-        if is_cancelled() || pass_key.is_some_and(is_pass_cancelled) {
+        if scope.is_cancelled() || pass_key.is_some_and(|key| scope.is_pass_cancelled(key)) {
             return;
         }
         if signal.changed().await.is_err() {
@@ -351,41 +317,19 @@ pub fn register_child_pid(pid: u32) {
     if pid == 0 {
         return;
     }
-    CHILD_PIDS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .push(pid);
     register_process_job(pid);
-    if let Some(pass) = crate::pipeline::logging::current_pass() {
-        PASS_PIDS
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push((pass.clone(), pid));
-        // Close the race where cancel_pass observes no PID immediately before
-        // this child is registered. A cancelled pass may never acquire a new
-        // live subprocess after the cancellation decision has committed.
-        if is_pass_cancelled(&pass) {
-            kill_process(pid);
-        }
-    }
+    crate::run_scope::current().register_child(pid, crate::pipeline::logging::current_pass());
 }
 
 /// Unregister a child process PID after it exits.
 pub fn unregister_child_pid(pid: u32) {
-    CHILD_PIDS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .retain(|&p| p != pid);
-    PASS_PIDS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .retain(|(_, p)| *p != pid);
+    crate::run_scope::forget_child_everywhere(pid);
     unregister_process_job(pid);
 }
 
 /// Register a managed-engine installer child for Windows job-object tracking
 /// only. Installs run outside any pipeline run and own their kill path
-/// (`engines::cancel_install`); they must never enter `CHILD_PIDS`, where the
+/// (`engines::cancel_install`); they must never enter a run scope, where the
 /// end or cancellation of an unrelated run would SIGKILL a half-finished
 /// multi-gigabyte install mid-download.
 pub(crate) fn register_engine_child_pid(pid: u32) {
@@ -416,21 +360,33 @@ pub(crate) fn unregister_independent_child_pid(pid: u32) {
 }
 
 /// Force-stop an independently owned process tree. It is deliberately absent
-/// from `CHILD_PIDS`, so ordinary Pipeline cancellation cannot reach it.
+/// from every run scope, so ordinary Pipeline cancellation cannot reach it.
 pub(crate) fn kill_independent_process(pid: u32) {
     kill_process(pid);
 }
 
 /// Cancel one pass: mark it cancelled (so it won't retry) and kill its
-/// subprocesses. Other passes in the wave keep running.
+/// subprocesses. Other passes in the wave keep running. `run_key` names the
+/// run; without it the pass is cancelled in the calling run, or, from outside
+/// any run, in every active run (pass keys repeat across runs).
 #[tauri::command]
-pub async fn cancel_pass(pass_key: String) -> Result<(), String> {
-    CANCELLED_PASSES
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .push(pass_key.clone());
-    signal_cancellation();
-    kill_pass_children(&pass_key);
+pub async fn cancel_pass(pass_key: String, run_key: Option<String>) -> Result<(), String> {
+    let targets = match run_key {
+        Some(key) => {
+            vec![crate::run_scope::find(&key).ok_or("That review is no longer running")?]
+        }
+        None => {
+            let current = crate::run_scope::current();
+            if current.is_fallback() {
+                crate::run_scope::all()
+            } else {
+                vec![current]
+            }
+        }
+    };
+    for scope in targets {
+        scope.cancel_pass(&pass_key);
+    }
     Ok(())
 }
 
@@ -438,24 +394,12 @@ pub async fn cancel_pass(pass_key: String) -> Result<(), String> {
 /// user-cancelled. Used when the whole logical provider call reaches its
 /// deadline, so retry policy can still decide what happens next.
 pub(crate) fn kill_pass_children(pass_key: &str) {
-    let pids: Vec<u32> = PASS_PIDS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .filter(|(k, _)| k == pass_key)
-        .map(|(_, p)| *p)
-        .collect();
-    for pid in &pids {
-        kill_process(*pid);
-    }
+    crate::run_scope::current().kill_pass_children(pass_key);
 }
 
-/// Kill all registered child processes.
+/// Kill every registered child process of the current run.
 pub(crate) fn kill_all_children() {
-    let pids = std::mem::take(&mut *CHILD_PIDS.lock().unwrap_or_else(|e| e.into_inner()));
-    for pid in pids {
-        kill_process(pid);
-    }
+    crate::run_scope::current().kill_children();
 }
 
 pub(crate) fn kill_process(pid: u32) {

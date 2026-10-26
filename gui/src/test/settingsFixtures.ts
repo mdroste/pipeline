@@ -30,6 +30,7 @@ export function makeSettings(): Settings {
     verbose_logging: false,
     step_timeout_secs: 1200,
     max_retries: 1,
+    max_concurrent_reviews: 2,
     auto_revision_reconciliation: false,
     max_saved_runs: 0,
     max_saved_run_bytes: 5_000_000_000,

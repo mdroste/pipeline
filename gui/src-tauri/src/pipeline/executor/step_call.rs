@@ -49,7 +49,7 @@ pub(super) async fn ingest_report_file(
 ) -> Option<String> {
     let directory = write_dir.map(str::to_string);
     let relative = report_rel.to_string();
-    tokio::task::spawn_blocking(move || {
+    crate::run_scope::spawn_blocking(move || {
         ingest_report_file_blocking(directory.as_deref(), &relative)
     })
     .await

@@ -11,27 +11,11 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     provided_vars: std::collections::HashMap<String, String>,
     provided_inputs: std::collections::HashMap<String, String>,
     snapshot: Option<RunSnapshot>,
-    preflight_cancel_epoch: u64,
 ) -> Result<serde_json::Value, String> {
+    // A stop that landed before this point (during launch preflight, or while
+    // queued) is already recorded in the run scope, which begin_run_state never
+    // clears, so the run aborts at its first cancellation checkpoint.
     let _run_state = begin_run_state();
-    // A batch "stop" that landed between the batch loop's pre-check and this
-    // reset would otherwise be erased by begin_run_state, letting this job run
-    // to completion after the user cancelled. Re-assert it so the job aborts at
-    // its first cancellation checkpoint. BATCH_CANCEL is false outside an active
-    // batch (reset at batch start and end), so foreground runs are unaffected.
-    if BATCH_CANCEL.load(std::sync::atomic::Ordering::Acquire) {
-        CANCEL_FLAG.store(true, std::sync::atomic::Ordering::Release);
-        signal_cancellation();
-    }
-    // The same race exists for a foreground "Cancel report" click: the launch
-    // command spends seconds in preflight (dependency probes, resumable-run
-    // recovery) before this task resets CANCEL_FLAG above. The caller captures
-    // the cancel epoch at command entry; if it advanced since, the user
-    // cancelled this launch — re-assert instead of silently erasing the click.
-    if current_cancel_epoch() != preflight_cancel_epoch {
-        CANCEL_FLAG.store(true, std::sync::atomic::Ordering::Release);
-        signal_cancellation();
-    }
     let pipeline_start = std::time::Instant::now();
     // One immutable settings/profile snapshot defines the entire run. UI
     // edits made while providers are working take effect only on the next run.
@@ -269,7 +253,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     if input_mode == "document" {
         if let (Some(pdf), Some(w)) = (visual_pdf, run_writer.as_mut()) {
             let out_dir = w.dir().join("artifacts").join("pages");
-            let rendered = tokio::task::spawn_blocking(move || {
+            let rendered = crate::run_scope::spawn_blocking(move || {
                 crate::pipeline::extract::render_pdf_pages(
                     &pdf,
                     &out_dir,

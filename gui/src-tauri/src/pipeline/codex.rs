@@ -677,7 +677,7 @@ async fn call_codex_inner(
         .take()
         .ok_or("Codex process did not expose stdin")?;
     let prompt_bytes = prompt.as_bytes().to_vec();
-    let stdin_task = tokio::spawn(async move {
+    let stdin_task = crate::run_scope::spawn(async move {
         prompt_stdin
             .write_all(&prompt_bytes)
             .await
@@ -700,7 +700,7 @@ async fn call_codex_inner(
     let stdout = child.stdout.take();
     let app_stdout = app.clone();
     let label_clone = label.to_string();
-    let stdout_task = tokio::spawn(super::logging::with_session_opt(sess, async move {
+    let stdout_task = crate::run_scope::spawn(super::logging::with_session_opt(sess, async move {
         let mut last_agent_text = String::new();
         let mut total_input_tokens: u64 = 0;
         let mut total_output_tokens: u64 = 0;

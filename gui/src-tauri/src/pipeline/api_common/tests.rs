@@ -518,7 +518,9 @@ fn in_flight_future_is_interrupted_by_pass_cancellation() {
         .unwrap()
         .block_on(async {
             let key = "api-common-cancellation-test";
-            crate::commands::cancel_pass(key.to_string()).await.unwrap();
+            crate::commands::cancel_pass(key.to_string(), None)
+                .await
+                .unwrap();
             let result = tokio::time::timeout(
                 std::time::Duration::from_millis(100),
                 await_or_cancel(std::future::pending::<()>(), Some(key)),
@@ -564,6 +566,13 @@ fn disk_reader_rejects_fifo_without_blocking() {
 
 #[test]
 fn write_tool_confinement() {
+    // Own run scope: the write quota is per run, and parallel tests share the
+    // fallback scope.
+    let run = crate::run_scope::ActiveScope::begin("write-tool-confinement-test");
+    crate::run_scope::enter_blocking(run.scope().clone(), write_tool_confinement_in_scope);
+}
+
+fn write_tool_confinement_in_scope() {
     let dir = tempfile::tempdir().unwrap();
     reset_write_budget();
     let root = dir.path().to_string_lossy().to_string();
@@ -621,8 +630,15 @@ fn write_tool_confinement() {
     }
 
     // Rejected writes do not consume either quota.
-    assert_eq!(WRITE_COUNT.load(std::sync::atomic::Ordering::SeqCst), 2);
-    assert_eq!(WRITE_BYTES.load(std::sync::atomic::Ordering::SeqCst), 5);
+    let scope = crate::run_scope::current();
+    assert_eq!(
+        scope.write_count.load(std::sync::atomic::Ordering::SeqCst),
+        2
+    );
+    assert_eq!(
+        scope.write_bytes.load(std::sync::atomic::Ordering::SeqCst),
+        5
+    );
 
     // Disabled state rejects everything.
     assert!(write_file_for_tool(&ToolAccess::default(), "steps/report.md", "x").is_err());

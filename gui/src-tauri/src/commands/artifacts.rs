@@ -59,7 +59,7 @@ pub async fn reconcile_runs(
     run_b: String,
 ) -> Result<String, String> {
     let _guard = acquire_pipeline_guard()?;
-    CANCEL_FLAG.store(false, std::sync::atomic::Ordering::Release);
+    crate::run_scope::current().reset_cancel();
 
     let report_a = load_run_report(&run_a)?;
     let report_b = load_run_report(&run_b)?;
@@ -279,7 +279,7 @@ pub async fn draft_calibration(app: AppHandle) -> Result<serde_json::Value, Stri
         .ok_or("This profile has no sequential (synthesis) step to calibrate.")?;
 
     let _guard = acquire_pipeline_guard()?;
-    CANCEL_FLAG.store(false, std::sync::atomic::Ordering::Release);
+    crate::run_scope::current().reset_cancel();
 
     let list = rejected.join("\n");
     let prompt = format!(
@@ -320,12 +320,22 @@ pub async fn save_annotations(run_id: String, content: String) -> Result<(), Str
     crate::runs::write_annotations(&run_id, &content)
 }
 
+/// Cancel one review (`run_key`), or, without a key, every queued and running
+/// review plus any other active run (the CLI interrupt path).
 #[tauri::command]
-pub async fn cancel_pipeline() -> Result<(), String> {
-    CANCEL_FLAG.store(true, std::sync::atomic::Ordering::Release);
-    signal_cancellation();
-    kill_all_children();
-    Ok(())
+pub async fn cancel_pipeline(run_key: Option<String>) -> Result<(), String> {
+    match run_key {
+        Some(key) => super::run_queue::cancel(&key),
+        None => {
+            super::run_queue::cancel_all();
+            for scope in crate::run_scope::all() {
+                if !scope.is_fallback() {
+                    scope.cancel();
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 #[tauri::command]

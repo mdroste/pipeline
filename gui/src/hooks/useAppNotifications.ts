@@ -1,8 +1,7 @@
 import { useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { WorkbenchEvent } from "../lib/workbenchTypes";
-import type { PipelineState } from "./usePipeline";
-import type { BatchJob } from "../lib/types";
+import type { BatchJob, QueuedRun } from "../lib/types";
 import {
   automationNotice,
   deliverNotice,
@@ -11,9 +10,9 @@ import {
 } from "../lib/appNotifications";
 
 /** Subscribe at the shell, so navigating away from a feature doesn't mute it. */
-export function useAppNotifications(state: PipelineState) {
+export function useAppNotifications(runs: QueuedRun[]) {
   const seen = useRef(new Map<string, number>());
-  const previousRun = useRef(state.kind);
+  const previousStatus = useRef(new Map<string, QueuedRun["status"]>());
   const deliver = (notice: AppNotice | null) => {
     if (!notice) return;
     const now = Date.now();
@@ -23,29 +22,34 @@ export function useAppNotifications(state: PipelineState) {
       seen.current.delete(seen.current.keys().next().value!);
     void deliverNotice(notice);
   };
+  // Announce each review that finishes while this window watches it. A
+  // review first seen already finished (after a reload) is not announced.
   useEffect(() => {
-    const previous = previousRun.current;
-    previousRun.current = state.kind;
-    if (previous === state.kind || previous === "idle") return;
-    if (state.kind === "done")
-      deliver({
-        id: `review:${state.runId ?? Date.now()}`,
-        kind: state.report.failed_steps?.length ? "failure" : "completion",
-        title: state.report.failed_steps?.length
-          ? "Review finished with errors"
-          : "Review complete",
-        body: state.report.failed_steps?.length
-          ? "Open the report to inspect the failed steps."
-          : "Your report is ready to read.",
-      });
-    if (state.kind === "error" && !/cancelled|canceled/i.test(state.message))
-      deliver({
-        id: `review-error:${Date.now()}`,
-        kind: "failure",
-        title: "Review failed",
-        body: "Open Reviews to inspect the error.",
-      });
-  }, [state]);
+    const previous = previousStatus.current;
+    previousStatus.current = new Map(runs.map((run) => [run.key, run.status]));
+    for (const run of runs) {
+      const before = previous.get(run.key);
+      if (before !== "queued" && before !== "running") continue;
+      if (run.status === "done")
+        deliver({
+          id: `review:${run.key}`,
+          kind: run.partial ? "failure" : "completion",
+          title: run.partial
+            ? "Review finished with errors"
+            : "Review complete",
+          body: run.partial
+            ? `${run.label}: open the report to inspect the failed steps.`
+            : `${run.label} is ready to read.`,
+        });
+      if (run.status === "failed")
+        deliver({
+          id: `review-error:${run.key}`,
+          kind: "failure",
+          title: "Review failed",
+          body: `${run.label}: open it from Reviews to inspect the error.`,
+        });
+    }
+  }, [runs]);
   useEffect(() => {
     let live = true;
     let jobs: BatchJob[] = [];

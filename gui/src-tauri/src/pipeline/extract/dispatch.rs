@@ -56,7 +56,7 @@ pub async fn extract(
         if let Some(pdf) = pdf_path {
             let hash = {
                 let pdf_for_hash = pdf.clone();
-                tokio::task::spawn_blocking(move || compute_hash(&pdf_for_hash))
+                crate::run_scope::spawn_blocking(move || compute_hash(&pdf_for_hash))
                     .await
                     .map_err(|error| format!("Hash computation failed: {error}"))??
             };
@@ -85,7 +85,7 @@ pub async fn extract(
         if let Some(pdf) = pdf_path {
             let hash = {
                 let p = pdf.clone();
-                tokio::task::spawn_blocking(move || compute_hash(&p))
+                crate::run_scope::spawn_blocking(move || compute_hash(&p))
                     .await
                     .map_err(|e| format!("Hash computation failed: {e}"))??
             };
@@ -107,7 +107,7 @@ pub async fn extract(
     let native_app = app.clone();
 
     // Non-LLM paths: run blocking I/O on a separate thread
-    let native_result = tokio::task::spawn_blocking(move || {
+    let native_result = crate::run_scope::spawn_blocking(move || {
         if path.is_dir() {
             if let Some(tex_path) = find_main_tex(&path) {
                 // Must be canonical: extract_latex compares it against canonicalized

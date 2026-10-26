@@ -17,9 +17,11 @@ pub struct PinnedReview {
     pub settings: crate::settings::Settings,
     pub catalog_revision: String,
 }
-static OWNER: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+/// The automation operation that owns the running Review, with its run scope.
+type ReviewOwner = (String, std::sync::Arc<crate::run_scope::RunScope>);
+static OWNER: OnceLock<Mutex<Option<ReviewOwner>>> = OnceLock::new();
 tokio::task_local! {static OPERATION:String;}
-fn owner() -> &'static Mutex<Option<String>> {
+fn owner() -> &'static Mutex<Option<ReviewOwner>> {
     OWNER.get_or_init(Mutex::default)
 }
 struct OwnerGuard;
@@ -56,17 +58,17 @@ pub fn pin(profile_id: &str) -> Result<PinnedReview, String> {
     })
 }
 pub fn available() -> bool {
-    !PIPELINE_RUNNING.load(std::sync::atomic::Ordering::Acquire)
+    !pipeline_is_running()
 }
 pub fn cancel(operation: &str) -> bool {
     let owned = owner().lock().unwrap_or_else(|e| e.into_inner());
-    if owned.as_deref() != Some(operation) {
-        return false;
+    match owned.as_ref() {
+        Some((owner, scope)) if owner == operation => {
+            scope.cancel();
+            true
+        }
+        _ => false,
     }
-    CANCEL_FLAG.store(true, std::sync::atomic::Ordering::Release);
-    signal_cancellation();
-    kill_all_children();
-    true
 }
 pub(super) fn mark_run(dir: &std::path::Path) -> Result<(), String> {
     if let Ok(operation) = OPERATION.try_with(Clone::clone) {
@@ -197,10 +199,11 @@ pub async fn execute(
             e
         }
     })?;
-    *owner().lock().unwrap_or_else(|e| e.into_inner()) = Some(operation.clone());
+    let run = crate::run_scope::ActiveScope::begin(super::run_queue::next_run_key());
+    *owner().lock().unwrap_or_else(|e| e.into_inner()) =
+        Some((operation.clone(), run.scope().clone()));
     let owned = OwnerGuard;
-    let epoch = current_cancel_epoch();
-    PipelineTask::spawn_future(async move {
+    PipelineTask::spawn_future(run.scope().clone(), async move {
         let _guard = guard;
         let _owned = owned;
         let result = OPERATION
@@ -214,7 +217,6 @@ pub async fn execute(
                     vars,
                     extra,
                     Some(snapshot),
-                    epoch,
                 ),
             )
             .await;

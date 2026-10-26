@@ -20,6 +20,7 @@ mod reuse_artifacts;
 mod run;
 mod run_context;
 pub(crate) mod run_entry;
+pub(crate) mod run_queue;
 mod run_storage;
 mod task;
 
@@ -49,6 +50,7 @@ use profile_import::*;
 use run::*;
 use run_context::*;
 use run_entry::*;
+pub use run_queue::{QueuedRun, RunQueueSnapshot};
 use run_storage::*;
 use task::*;
 

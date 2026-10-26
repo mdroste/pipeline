@@ -4,10 +4,16 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { router } from "./lib/router";
+import { queuedRun } from "./test/queuedRunFixture";
 
 const saveCollection = vi.hoisted(() => vi.fn());
 const invoke = vi.hoisted(() => vi.fn());
-const startPipeline = vi.hoisted(() => vi.fn());
+const runQueue = vi.hoisted(() => ({
+  limit: 2,
+  runs: [] as ReturnType<typeof queuedRun>[],
+}));
+const enqueue = vi.hoisted(() => vi.fn());
+const enqueueBatch = vi.hoisted(() => vi.fn());
 const onCloseRequested = vi.hoisted(() => vi.fn());
 const setWindowTheme = vi.hoisted(() => vi.fn());
 const listen = vi.hoisted(() => vi.fn());
@@ -59,16 +65,15 @@ vi.mock("@tauri-apps/plugin-shell", () => ({ open: vi.fn() }));
 vi.mock("./components/DialogService", () => ({ confirmDialog, notify }));
 vi.mock("./hooks/usePipeline", () => ({
   usePipeline: () => ({
-    state: { kind: "idle" },
-    logs: [],
-    usage: { total: {}, bySession: {} },
-    startPipeline,
-    rerunPipeline: vi.fn(),
-    cancel: vi.fn(),
-    reset: vi.fn(),
+    queue: { limit: runQueue.limit, runs: [...runQueue.runs] },
+    views: {},
     listenersReady: true,
-    runStartedAt: null,
-    passTimes: {},
+    setupError: null,
+    enqueue,
+    enqueueBatch,
+    enqueueRerun: vi.fn(),
+    cancel: vi.fn(),
+    dismiss: vi.fn(),
   }),
 }));
 vi.mock("./lib/platform", () => ({ isMac: false }));
@@ -274,7 +279,13 @@ describe("App run options", () => {
     confirmDialog.mockReset();
     notify.mockReset();
     listen.mockResolvedValue(vi.fn());
-    startPipeline.mockReset();
+    runQueue.runs = [];
+    const add = (path: string) => {
+      const key = (path.split("/").pop() ?? path).replace(/\.\w+$/, "");
+      return runQueue.runs[runQueue.runs.push(queuedRun(key)) - 1];
+    };
+    enqueue.mockReset().mockImplementation(async (r) => add(r.paperPath));
+    enqueueBatch.mockReset().mockImplementation(async (r) => r.paths.map(add));
     onCloseRequested.mockReset();
     onCloseRequested.mockResolvedValue(vi.fn());
     setWindowTheme.mockReset();
@@ -389,7 +400,7 @@ describe("App run options", () => {
     ready = true;
     await user.click(screen.getByRole("button", { name: "Setup needed" }));
     expect(await screen.findByRole("button", { name: "Close" })).toBeVisible();
-    expect(screen.getByText("signed in")).toBeVisible();
+    expect(screen.getByText("Subscription")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Setup needed" }),
     ).not.toBeInTheDocument();
@@ -463,7 +474,7 @@ describe("App run options", () => {
     expect(
       await screen.findByRole("dialog", { name: "Review the execution plan" }),
     ).toBeVisible();
-    expect(startPipeline).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Generate report" }));
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("get_execution_plan", {
@@ -474,16 +485,24 @@ describe("App run options", () => {
         paperPath: "/tmp/test-paper.pdf",
         inputInterpretation: "document",
       });
-      expect(startPipeline).toHaveBeenLastCalledWith(
-        "/tmp/test-paper.pdf",
-        "document",
-        false,
-        undefined,
-        undefined,
-        "snapshot-test",
-      );
-      expect(startPipeline).toHaveBeenCalledTimes(1);
+      expect(enqueue).toHaveBeenLastCalledWith({
+        paperPath: "/tmp/test-paper.pdf",
+        inputInterpretation: "document",
+        diff: false,
+        variables: null,
+        extraInputs: null,
+        expectedProfileSnapshotId: "snapshot-test",
+      });
+      expect(enqueue).toHaveBeenCalledTimes(1);
     });
+    expect(
+      await screen.findByRole("heading", { name: "test-paper.pdf is queued" }),
+    ).toBeVisible();
+    expect(router.route).toEqual({ page: "main", runKey: "test-paper" });
+    expect(
+      screen.getByRole("button", { name: /^test-paper\.pdf/ }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "New review" })).toBeEnabled();
   });
 
   it("keeps batch selection in New run instead of the left navigation", async () => {
@@ -555,26 +574,27 @@ describe("App run options", () => {
     );
     await user.click(screen.getByRole("button", { name: "Start review" }));
     expect(await screen.findByText(/2 documents · document/)).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Generate report" }));
+    await user.click(screen.getByRole("button", { name: "Queue 2 reviews" }));
 
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("start_batch", {
+      expect(enqueueBatch).toHaveBeenCalledWith({
         paths: ["/tmp/a.pdf", "/tmp/b.pdf"],
         variables: null,
         extraInputs: null,
         expectedProfileConfigSnapshotId: "config-test",
       }),
     );
-    expect(await screen.findByText("Batch workspace · no setup")).toBeVisible();
-    await openTools(user);
-    expect(screen.getByRole("button", { name: "New review" })).toBeDisabled();
+    // Each document is its own queued review in the rail; the first opens.
     expect(
-      screen.queryByRole("button", { name: /Current batch/ }),
-    ).not.toBeInTheDocument();
+      await screen.findByRole("heading", { name: "a.pdf is queued" }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: /^b\.pdf/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: "New review" })).toBeEnabled();
+    expect(invoke).not.toHaveBeenCalledWith("start_batch", expect.anything());
 
     await user.click(screen.getByRole("button", { name: "Review history" }));
     expect(await screen.findByText("History workspace")).toBeVisible();
-    expect(startPipeline).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
   });
 
   it("defers exact DOCX readiness checks until the user reviews the report", async () => {
@@ -647,13 +667,12 @@ describe("App run options", () => {
     await user.click(screen.getByRole("button", { name: "Generate report" }));
 
     await waitFor(() =>
-      expect(startPipeline).toHaveBeenCalledWith(
-        "/tmp/test-paper.docx",
-        "document",
-        false,
-        undefined,
-        undefined,
-        "doc-runtime",
+      expect(enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paperPath: "/tmp/test-paper.docx",
+          inputInterpretation: "document",
+          expectedProfileSnapshotId: "doc-runtime",
+        }),
       ),
     );
     expect(
@@ -935,7 +954,7 @@ describe("App run options", () => {
     expect(
       screen.getByText(/Check the required model connections/),
     ).toBeVisible();
-    expect(startPipeline).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
     expect(checks).toBe(2);
   });
 
@@ -977,7 +996,7 @@ describe("App run options", () => {
     expect(
       (await screen.findAllByText(/active profile changed/)).length,
     ).toBeGreaterThan(0);
-    expect(startPipeline).not.toHaveBeenCalled();
+    expect(enqueue).not.toHaveBeenCalled();
   });
 
   it("shows run setup only in the new-review workspace", async () => {
