@@ -16,7 +16,7 @@ remains a saved dependency graph; code and storage names are unchanged.
 
 This page is the current implementation map. The older WB milestone plan is
 retained as historical context in
-[`../../notes/workbench_plan.md`](../../notes/workbench_plan.md). Canonical
+`reviews/workbench_plan.md` (local only). Canonical
 repository-wide architecture remains in [`../../CLAUDE.md`](../../CLAUDE.md).
 
 ## Product boundary

@@ -162,7 +162,7 @@ never released: a complete set of installers could not be packaged from them.
 
 - Patch rustls and affected frontend test-tool dependency versions. Remaining
   upstream WebdriverIO advisories and release qualification gaps are tracked in
-  [the October 2 audit](ASTRA_PIPELINE_OCT2.md).
+  the October 2 audit (`reviews/ASTRA_PIPELINE_OCT2.md`, local only).
 
 - Research backups now include app-owned conversation working files in `.pwrx`
   format 2. This build can still restore format-1 backups; older builds cannot

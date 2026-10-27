@@ -2,7 +2,7 @@
 
 Implementation status: default subscription connection, September 7, 2026;
 live and packaged release qualification remains incomplete. This is the Codex
-implementation of [MIGRATE_SDK.md](../MIGRATE_SDK.md). Claude continues to use
+implementation of the SDK migration plan (`reviews/MIGRATE_SDK.md`, local only). Claude continues to use
 its existing CLI/API adapters. Existing installations migrate the former
 legacy Codex default to App Server. Legacy CLI remains an explicit advanced
 compatibility option.
