@@ -215,6 +215,9 @@ more extractors. The next work should preserve that contract:
    appendix numbering.
 6. Add measured quality metrics (page coverage, unmatched captions, orphan
    assets, OCR confidence) and surface them in the same viewer.
+7. Supply deterministic structural nodes to orientation and join its
+   annotations by node ID rather than by kind and number. This is part of the
+   proposal in [orientation-routing-design.md](orientation-routing-design.md).
 
 The core rule is that future extraction engines produce or enrich the same
 bundle. Downstream review steps and the Artifact Explorer must not acquire
