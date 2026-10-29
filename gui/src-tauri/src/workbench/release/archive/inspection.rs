@@ -48,7 +48,12 @@ pub fn inspect_archive(request: ExportArchiveRequest) -> WorkbenchResult<Archive
         let entry = archive
             .by_index(index)
             .map_err(|error| WorkbenchError::invalid(format!("Invalid archive entry: {error}")))?;
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map_err(|error| {
+                WorkbenchError::invalid(format!("Invalid archive entry name: {error}"))
+            })?
+            .into_owned();
         if !safe_archive_name(&name)
             || entry.is_dir()
             || entry

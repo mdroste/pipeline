@@ -657,7 +657,14 @@ pub(super) fn unpack_uv_archive(
             let mut entry = archive
                 .by_index(index)
                 .map_err(|error| format!("Invalid uv zip entry: {error}"))?;
-            if entry.name().replace('\\', "/").rsplit('/').next() != Some("uv.exe") {
+            if entry
+                .name()
+                .map_err(|error| format!("Invalid uv zip entry name: {error}"))?
+                .replace('\\', "/")
+                .rsplit('/')
+                .next()
+                != Some("uv.exe")
+            {
                 continue;
             }
             if entry.size() > MAX_UV_EXTRACTED_BYTES {

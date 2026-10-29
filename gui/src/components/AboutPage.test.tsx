@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AboutPage from "./AboutPage";
+import { version as appVersion } from "../../package.json";
 import {
   FLAPPY_HIGH_SCORE_KEY,
   persistFlappyHighScore,
@@ -18,8 +19,15 @@ describe("AboutPage", () => {
   beforeEach(() => {
     localStorage.clear();
     getVersion.mockReset();
-    getVersion.mockResolvedValue("0.9.0");
+    getVersion.mockResolvedValue(appVersion);
     openUrl.mockReset();
+  });
+
+  it("shows the current application version", async () => {
+    render(<AboutPage onClose={() => {}} />);
+    expect(
+      await screen.findByText(`Pipeline v${appVersion}`),
+    ).toBeInTheDocument();
   });
 
   it("opens the game after the full Konami code and requires a pilot choice", async () => {

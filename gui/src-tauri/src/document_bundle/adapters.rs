@@ -489,14 +489,17 @@ pub(super) fn copy_docx_media_with_limits(
         let mut entry = archive
             .by_index(index)
             .map_err(|error| format!("Failed to inspect DOCX media: {error}"))?;
-        let name = entry.name().to_string();
+        let name = entry
+            .name()
+            .map_err(|error| format!("Invalid DOCX media name: {error}"))?
+            .into_owned();
         if !name.starts_with("word/media/") || entry.is_dir() {
             continue;
         }
         if entry.size() > max_entry_bytes {
             return Err(format!(
                 "DOCX media entry '{}' exceeds the {max_entry_bytes} byte decompressed safety limit",
-                entry.name()
+                name
             ));
         }
         let Some(file_name) = Path::new(&name)

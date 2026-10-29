@@ -640,7 +640,10 @@ fn rewrite_package<R: Read + std::io::Seek>(
     for index in 0..archive.len() {
         let (name, modified) = {
             let entry = archive.by_index_raw(index).map_err(failed)?;
-            (entry.name().to_string(), entry.last_modified())
+            (
+                entry.name().map_err(failed)?.into_owned(),
+                entry.last_modified(),
+            )
         };
         if let Some((_, content)) = replacements.iter().find(|(part, _)| *part == name) {
             let options = match modified {

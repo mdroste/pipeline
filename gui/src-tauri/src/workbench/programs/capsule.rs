@@ -351,7 +351,12 @@ fn read(path: &str) -> WorkbenchResult<(Manifest, BTreeMap<String, Vec<u8>>)> {
     let mut total = 0;
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(err)?;
-        let name = entry.name().to_owned();
+        let name = entry
+            .name()
+            .map_err(|error| {
+                WorkbenchError::invalid(format!("Invalid capsule entry name: {error}"))
+            })?
+            .into_owned();
         relative(&name)?;
         if !(name == "manifest.json" || name == "README.md" || name.starts_with("blobs/"))
             || entry.is_dir()
