@@ -1,633 +1,379 @@
 # Changelog
 
-Changes to features, fixes, and releases are listed below. Development before
-the first public release was not tracked as a stable release series.
+Changes in each Pipeline release, newest first. Development before the first
+public release was not tracked as a stable release series.
 
 ## Unreleased
 
-- Reviews now check every quoted passage against the extracted document or the
-  cited source file. Each piece of evidence is labeled **Quote found**,
-  **Partial match**, **Quote not found**, or **Not checkable**, and the quality
-  summary counts them. A found quote shows the passage exists where cited, not
-  that the comment is correct. Details are saved as
-  `products/evidence_verification.json`.
-- Workflows can include **Pipeline checks**, steps that Pipeline runs itself
-  without a model call. **Reference check** finds the bibliography and reports
-  undefined citation keys, duplicates, and malformed DOIs; with lookups turned
-  on it checks each reference against Crossref for missing records, mismatched
-  details, other versions, retractions, expressions of concern, and
-  corrections. **Replication package check** reads a package folder against
-  data-editor requirements without running it. New gallery templates
-  **Reference Check** and **Replication Package Readiness** use them. Portable
-  workflow JSON gains `kind` and `analyzer` step fields; older versions reject
-  such workflows instead of running them.
-- The Review preview shows a rough range of model calls, tokens, and API
-  list-price cost. **Settings → Reviews → Review limits** sets a per-Review
-  cost, call, or time limit; when one is reached, running steps finish, later
-  steps are recorded as stopped, and the partial report is saved.
-  `pipeline-cli run` and `batch` accept `--max-cost`, `--max-calls`, and
-  `--max-minutes`, and `check` prints the estimate.
-- Reviews can be exported as one offline HTML file, as a new Word document, as
-  a copy of the reviewed `.docx` with each finding as a Word comment on the
-  passage it quotes, or as a copy of the reviewed PDF with each quoted passage
-  highlighted and a note attached. Comments and highlights are added only to
-  the unchanged reviewed file, and findings that cannot be placed are listed
-  separately.
+### Added
+
+- Reviews check every quoted passage against your document or the cited source
+  file and label it **Quote found**, **Partial match**, **Quote not found**, or
+  **Not checkable**. The quality summary counts each label. **Quote found**
+  means the passage is where the comment says; whether the comment is right is
+  still your call.
+- The review designer can add **Pipeline checks**, steps Pipeline runs itself
+  without a model. **Reference check** reports undefined citation keys,
+  duplicates, and malformed DOIs. With lookups on, it checks each reference in
+  Crossref for missing records, mismatched details, other versions,
+  retractions, expressions of concern, and corrections. **Replication package
+  check** reads a package folder against data-editor requirements without
+  running it. The gallery templates **Reference Check** and **Replication
+  Package Readiness** use these checks, and older versions of Pipeline refuse
+  workflow files that contain them.
+- The review preview estimates model calls, tokens, and cost at API list
+  prices. **Settings → Reviews → Review limits** caps cost, calls, or time per
+  review. At a limit, running steps finish, later steps are marked stopped, and
+  the partial report is saved. The CLI's `run` and `batch` accept `--max-cost`,
+  `--max-calls`, and `--max-minutes`, and `check` prints the estimate.
+- Export a review as an offline HTML file or a Word document. You can also
+  export a copy of the reviewed `.docx` or PDF with each finding added as a
+  comment or highlight on the passage it quotes. The original file is
+  unchanged, and findings that can't be placed are listed separately.
 - Local checks can run Stata do-files with an installed Stata on macOS,
-  Windows, and Linux; a shell alias such as `stata` still works as a custom
-  launcher. New R, Python, Julia, Jupyter notebook, and Quarto or R Markdown
-  check types validate their arguments, leave notebooks unchanged, and record
-  the runtime version and lockfile hashes with each run. **Detect installed
-  tools** finds Stata, R, Python, Julia, Quarto, Jupyter, and MATLAB without
-  installing or starting licensed software.
-- Data & samples imports Stata `.dta` files (Stata 8 and later) and Excel
-  `.xlsx` worksheets with variable labels, value labels, formats, and Stata
-  extended missing values as separate codes. Stata files up to 2 GiB can be
-  catalogued without keeping a copy. New keyless downloads from DBnomics
-  (IMF, OECD, Eurostat, ECB, central banks, and more) and the World Bank record
-  each dataset's licence, required notice, and suggested citation.
-- A **Get started** guide opens on a fresh installation: choose what you work
-  with, see which model connections are ready, check this computer for Stata,
-  R, Python, Jupyter, Julia, Quarto, and MATLAB, and pick a first step. Reopen
-  it from Home or **Settings → General → Guided setup**; it changes no
-  settings. An **Example Review** shows sample findings on a fictional paper,
-  with severity, categories, cited evidence, and quote checks, without calling
-  a model or adding to Review history.
-- FRED data now shows the notice the FRED® API Terms of Use require, with a
-  link to the terms. An optional **Crossref contact email** in the Acquisition
-  inbox sends your own address with literature lookups; Pipeline never uses a
-  shared address.
+  Windows, and Linux, and a shell alias such as `stata` still works. New check
+  types for R, Python, Julia, Jupyter notebooks, and Quarto or R Markdown
+  record the runtime version and lockfile hashes and leave notebooks unchanged.
+  **Detect installed tools** finds Stata, R, Python, Julia, Quarto, Jupyter,
+  and MATLAB without installing anything or starting licensed software.
+- **Data & samples** imports Stata `.dta` files (Stata 8 and later) and Excel
+  `.xlsx` worksheets with their variable labels, value labels, and formats.
+  Stata extended missing values stay separate codes, and Stata files up to 2 GB
+  can be catalogued without keeping a copy.
+- New downloads from DBnomics (IMF, OECD, Eurostat, ECB, central banks, and
+  more) and the World Bank need no key and record each dataset's license,
+  required notice, and suggested citation. FRED data shows the notice its API
+  terms require, with a link to the terms.
+- A **Get started** guide opens on a new installation. It shows which model
+  connections are ready, checks this computer for Stata, R, Python, Jupyter,
+  Julia, Quarto, and MATLAB, and suggests a first step for your kind of work.
+  It changes no settings; reopen it from Home or **Settings → General → Guided
+  setup**.
+- **See an example Review** shows sample findings, evidence, and quote checks
+  on a fictional paper, without calling a model or adding to review history.
+- An optional **Crossref contact email** in the **Reading inbox** sends your
+  own address with literature lookups, never a shared one.
+- New built-in **Slide Review** (`slide-review`) uses Paper Review's reviewers
+  on a slide deck exported as PDF and cites slides by page number. **Paper
+  Review** also recognizes a deck and applies the same guidance.
+- Project conversations can use **Claude Code** with your own Claude
+  subscription, chosen per conversation in the **Model and thinking** picker.
+  Existing conversations stay on ChatGPT. The picker shows your latest Claude
+  usage, and new Claude conversations are titled automatically.
+- Claude can use the project context, the research tools you turned on, and
+  the project's files. Edits need the **Allow edits** access mode. On macOS and Linux
+  it can run shell commands in a sandbox that reads the project but can't
+  change it or reach the network.
+- On Windows, you can accept file edits and create task copies in a project.
 
-- Pipeline now checks for a newer version about once a day while it runs, not
-  only at startup. The update banner's **Download** button opens the installer
-  for your computer. A new **Check for updates automatically** setting under
-  **Advanced & About** turns the checks off. When GitHub limits requests from a
-  shared network, Pipeline waits as long as GitHub asks before trying again.
+### Changed
 
-- Rewritten README and public guides explain setup, reviews, projects, and
-  automations in plain language. Privacy and security documentation now reflects
-  the shared ChatGPT sign-in, recoverable Trash, and current release checks.
-
-- Interface labels, help text, and messages use clearer, more direct language
-  throughout Workspace, Reviews, automations, and settings. Saved configurations
-  and application behavior are unchanged.
-- Built-in reviews are renamed. Automatic Paper Review (Full) is now **Paper
-  Review** (`auto-paper-review`), and Automatic Paper Review (Quick) is now
-  **Paper Review (Fast)** (`auto-paper-review-fast`). Existing copies, edits
-  included, move to the new IDs on first launch; a customized name is kept.
-  Saved automations and CLI scripts that name `auto-review` or
+- Automatic Paper Review (Full) is now **Paper Review** (`auto-paper-review`),
+  and Automatic Paper Review (Quick) is now **Paper Review (Fast)**
+  (`auto-paper-review-fast`). Your copies and edits move over on first launch
+  and keep any custom name. Automations and scripts that use `auto-review` or
   `auto-review-quick` keep working.
-- New built-in **Slide Review** (`slide-review`) reviews a slide deck exported
-  as PDF with Paper Review's reviewers. Every step receives slide-deck guidance
-  and cites slides by page number. Paper Review can also recognize a deck and
-  apply the same guidance.
-- In the Review designer, "Restore adaptive router prompt & schema" restores
-  the open built-in's own router. Paper Review (Fast) previously lost its
-  two-method limit; Slide Review keeps its slide-deck setup.
-- Reviews queue instead of blocking: start as many as needed, and up to
-  Settings → Reviews → Simultaneous Reviews (default 2, at most 4) run at once.
-  The sidebar lists running, queued, and recently finished reviews with their
-  stage and elapsed time; each row returns to that review, and a footer beacon
-  keeps active reviews in view from any page. Several documents selected in New
-  review are queued as separate reviews, and History re-runs queue the same way.
-- Each run owns its cancellation, child processes, console transcript, token
-  totals, settings snapshot, and write quota, so cancelling one review never
-  stops another. Batches, automations, and history purges still run alone.
-- Project conversations can use Claude Code with your own Claude subscription:
-  choose **Claude Code** in the conversation's model-and-thinking picker. The
-  choice is saved per conversation, and existing conversations stay on ChatGPT.
-  Claude works with the selected project context, enabled research tools, and
-  scoped project file tools; file edits require Edit access. On macOS and
-  Linux, Claude can run shell commands in Claude Code's sandbox, which can
-  read the project but cannot change it or reach the network. New Claude
-  conversations are titled automatically, and the model picker shows the
-  latest Claude usage report.
-- Claude subscription calls in Reviews and conversations first confirm a
-  first-party Claude subscription sign-in, once per Review and before each
-  conversation turn. They remove inherited API credentials
-  and helpers and never fall back to a saved API key; API mode remains a
-  separate, explicit Review choice.
-- The Review designer's workflow graph stacks ready stages from top to bottom,
-  frames parallel stages together, and wraps wide stages onto new rows instead
-  of scrolling sideways.
+- Reviews queue instead of blocking. **Settings → Reviews → Simultaneous
+  Reviews** sets how many run at once (default 2, at most 4). The sidebar lists
+  running, queued, and recent reviews with their stage and elapsed time, and a
+  footer indicator shows active reviews from any page.
+- Selecting several documents in **New review**, or re-running from
+  **History**, queues one review each. Each review keeps its own log and token
+  totals, and cancelling one never stops another. Batches, automations, and
+  history purges still run alone.
+- Pipeline checks for updates about once a day while it runs, not only at
+  startup, and the banner's **Download** button opens the installer for your
+  computer. Turn this off with **Check for updates automatically** in
+  **Settings → Advanced & About**. If GitHub limits a shared network, Pipeline
+  waits as long as GitHub asks.
+- The review designer's workflow graph runs top to bottom, frames parallel
+  stages together, and wraps wide stages onto new rows.
+- Labels, help text, and messages are clearer throughout the app. Saved
+  settings and behavior are unchanged.
+- The README and public guides are rewritten in plain language. The privacy
+  and security pages cover the shared ChatGPT sign-in, the recoverable Trash,
+  and current release checks.
+
+### Fixed
+
+- In the review designer, **Restore adaptive router prompt & schema** restores
+  the open built-in's own version. It no longer removes **Paper Review
+  (Fast)**'s limit of two method reviewers, and **Slide Review** keeps its
+  slide-deck setup.
+
+### Security
+
+- Before Claude subscription calls, Pipeline confirms that Claude Code is
+  signed in to a Claude subscription: once per review and before each
+  conversation turn. These calls ignore API keys inherited from your
+  environment and never fall back to a saved API key. API mode stays a separate
+  choice for reviews.
 
 ## 1.1.1 — 2026-10-22
 
-- Workspace permission requests display their full access scope, working
-  directory, and turn duration. Failed approvals refresh pending requests and
-  prevent duplicate decisions. Late chat creation respects newer navigation;
-  discarding an unreadable key preserves unsaved settings edits.
-- Reviews accept bounded UTF-8 Markdown and text, including immutable drafts
-  produced by research automations. Prompt replacements are expanded once, so
-  quoted placeholders cannot disclose other run inputs or variables.
-- Validation fan-out preserves findings beyond its dispatch cap. Merge acceptance
-  enforces the original finding lineage and disposition ledger, and successful
-  quota-fallback merges retain their results.
-- Experiment cancellation synchronizes with attempt staging. Execution recovery
-  atomically certifies the captured plan or live profile that was actually tested.
-  Replication capsules retain executable file metadata without granting execution.
-- Excluded sources cannot reach model tools through new reads or cached receipts.
-  Failed computations cannot establish mission completion. Known failed automation
-  turns remain available for explicit retry instead of being classified as unknown.
-- App Server shutdown and permission responses have bounded queue waits; timed-out
-  and cancelled requests release pending state. CLI output write failures return a
-  failing exit status, while broken pipes remain quiet.
-- LaTeX extraction expands supported whitespace, subfile, and import references.
-  Figure associations require matching label or page evidence. DOCX extraction
-  preserves tabs, breaks, numeric entities, and complete namespaced equations;
-  oversized equations are omitted with a note instead of truncated into invalid XML.
+### Added
 
-- Project file reads on Windows stay bound to opened directory handles and
-  reject junction escapes. Mixed-case Git/task metadata names and Windows
-  aliases can no longer bypass file access or capture exclusions.
-- The packaged CLI discovers bundled PDF tools on macOS, Windows, and Linux.
-  Research commands use the recovered desktop PATH consistently, resolve native
-  Windows executable extensions, and accept supported `.exe` LaTeX engines.
-- Project Markdown previews resolve absolute links and images within their
-  authorized folder, including canonical Windows paths. Captured documents
-  retain their immutable scope.
-- Automation deadline inputs use the target date's daylight-saving offset and
-  reject nonexistent local times.
-- Both conversation Stop controls and Export show failures, support retries,
-  and prevent duplicate pending requests. Successful exports show the destination.
-- Release tests discover a supported Python 3 interpreter and report missing
-  prerequisites clearly.
+- Reviews accept Markdown and plain-text files, including drafts written by
+  research automations.
+
+### Changed
+
+- Permission requests in conversations show the full access requested, the
+  working folder, and how long the permission lasts.
+
+### Fixed
+
+- Failed approvals refresh pending requests and can't be answered twice.
+  Discarding an unreadable API key keeps unsaved settings, and a late new
+  conversation no longer overrides where you navigated.
+- Feedback validation keeps findings past its call limit. Merges keep every
+  original finding and its decision, even after a usage-limit fallback.
+- Cancelling an experiment as it starts works reliably, and recovery records
+  the exact plan or settings that were tested. Replication packages keep
+  executable permissions without letting files run.
+- A failed computation can't complete a research automation, and a failed
+  automation turn can be retried instead of being marked unknown.
+- Conversations no longer hang on shutdown or while answering a permission
+  request. `pipeline-cli` exits with an error when it can't write its output,
+  but stays quiet when the output pipe closes.
+- LaTeX extraction follows `\subfile`, `\import`, and includes with extra
+  spaces, and attaches figures only when a label or page matches. Word
+  extraction keeps tabs, breaks, special characters, and whole equations, and
+  notes any equation too large to keep.
+- The installed `pipeline-cli` finds its bundled PDF tools. Research commands
+  find programs on your PATH consistently, including Windows `.exe` LaTeX
+  engines.
+- Project Markdown previews show images and follow absolute links within the
+  project folder, including on Windows.
+- Automation deadlines use the chosen date's daylight-saving offset and reject
+  local times that don't exist.
+- Both conversation **Stop** controls and **Export conversation** report
+  failures and allow a retry. A finished export shows where it was saved.
+
+### Security
+
+- Prompt placeholders are filled once, so placeholder text quoted in a document
+  can't reveal other inputs or variables.
+- Excluded sources stay hidden from the assistant's tools, including cached
+  reads.
+- On Windows, project file reads can't escape the opened folder through
+  junctions. Mixed-case names and Windows path aliases can't bypass file-access
+  rules or excluded folders.
 
 ## 1.1.0 — 2026-10-15
 
-Fixes from the October 2026 pre-release audit:
-findings 1–13 held this release; findings 14–44 follow below.
+### Changed
 
-- A conversation message whose send is rejected after dispatch (for example
-  while a project job holds its write resources) is restored to the composer
-  instead of being wiped from the composer, the local recovery copy, and the
-  saved draft.
-- With a custom data folder, opening History or a project page while a Review
-  runs no longer rewrites the active run as interrupted or lets it be deleted;
-  the guard, recovery, and pin release share one lock next to the run store.
-- Reruns and resumes of runs whose source is larger than 50 MB or has more than
-  500 files no longer fail their integrity check: captured source snapshots are
-  never trimmed after they are fingerprinted.
-- Importing the same Zotero item or Review findings into a second project no
-  longer overwrites the first project's record. New imports get a record id
-  scoped to the project, so the second project receives its own record;
-  records created by 1.0.2 and earlier are still found under their old id, so
-  re-importing into an existing project does not duplicate them.
+- Automation step IDs can't be `done`, `enter`, or a plain number, which caused
+  steps to be skipped. Upgraded installations get the current Grant Review
+  suite.
+
+### Fixed
+
+- A message rejected after sending returns to the composer instead of being
+  erased. Reconnected conversations keep their message order, keep up with
+  automation turns, and unlock the composer when the connection drops.
+- With a custom data folder, opening History or a project during a review no
+  longer marks it interrupted or lets it be deleted. Restoring a review from
+  Trash works on Windows default storage and symlinked data folders.
+- Re-running or resuming a review whose source is over 50 MB or 500 files no
+  longer fails its integrity check.
+- Parallel review steps on ChatGPT recover when the connection lags during a
+  tool call. Steps that continue a Claude CLI session can write supporting
+  files again.
+- Quality reports count only real retries, so steps that succeed first time
+  aren't labeled degraded.
+- An invalid built-in workflow no longer blocks every launch, and resetting it
+  repairs it. Settings backups from 0.9.x import again, and an API key that
+  can't be decrypted can be discarded in Settings.
+- Staged LaTeX projects keep figures found through `\graphicspath` or in
+  chapter files.
+- Cancelling PaddleOCR-VL verification no longer blocks the next run, and
+  reinstalling a current parser no longer rebuilds it.
+- Importing the same Zotero item or findings into a second project no longer
+  overwrites the first project's record. Items imported by 1.0.2 and earlier
+  aren't duplicated on re-import.
+- Commands that start `/bin/zsh`, including Stata, work when `~/.zshrc` or
+  `pyvenv.cfg` is a symlink.
+- Saving a file in a folder that task capture skips, such as `node_modules`, is
+  refused instead of deleting the original on acceptance.
+- In Sources, clicking another page after opening a citation no longer jumps
+  back.
+- Research discovery runs ask for attention and offer **Retry** instead of
+  stopping as blocked when a conversation or setting changes or one turn fails.
+- Research automation retries work after you steer the planner. Long check
+  instructions and `{{input:…}}` text in research content no longer block
+  results.
+- A review that finished while its automation lost track of it can be
+  reconciled instead of re-run. Automations waiting for a slot log the wait
+  once, not every two seconds.
+- The manuscript reader counts the last PDF page, and plain editor saves no
+  longer leave a task and a copy folder behind.
+- Project packages (`.pwex`) re-import without false evidence conflicts and
+  include every selected note and retired claim.
+- Paper and project search handle single-line files and punctuation-only query
+  words.
+- `pipeline-cli` exits cleanly on a closed pipe, accepts a bare `.tex` name,
+  and resolves relative input paths so the app can file those runs under a
+  project.
+
+### Security
+
 - Research backups (`.pwrx`) and project packages (`.pwex`) reject entries
-  whose declared size does not match their content, so a crafted archive can
-  no longer fill the disk or exhaust memory during inspection or restore.
-- Restoring a `.pwrx` rejects paper, source, or artifact references that point
-  outside the research store's immutable blob folder, and the paper readers
-  refuse such references.
-- Review steps that reuse a warmed Codex CLI thread (`codex exec resume`) now
-  pin their sandbox and approval policy explicitly instead of inheriting the
-  user's global Codex configuration.
-- A conversation reconnected under a new runtime connection keeps its
-  transcript order; reconciled items no longer come back shuffled.
-- Execution profiles that start `/bin/zsh` (including Stata) can be previewed,
-  authorized, and run when `~/.zshrc` or another startup file is a symlink
-  managed by a dotfile tool; `pyvenv.cfg` symlinks are handled the same way.
-- Restoring a run from Trash works on Windows default storage and on symlinked
-  data folders instead of failing with "Invalid trashed run id".
-- After opening a citation or evidence page in Sources, clicking another
-  artifact or page no longer bounces back to the requested one.
-- Parallel Review steps on the ChatGPT App Server recover when the shared event
-  stream lags during a host tool call instead of failing non-retryably and
-  interrupting their turn.
-- Saving or checkpointing a file inside a folder that task capture excludes
-  (`target`, `node_modules`, `.cache`, …) is refused instead of silently
-  deleting the original file on acceptance.
-
-Further fixes from the same audit (findings 14–44):
-
-- Self-discovery runs no longer end as "blocked" because the source
-  conversation gained a draft or a message, a setting changed, or one child
-  turn failed; they ask for attention and offer Retry. Finished runs reclaim
-  the input copies of their read-only reviewer roles.
-- Review steps that reuse a warmed Claude CLI session can write their
-  supporting files again; the shared workspace itself stays read-only.
-- The artifact viewer no longer offers to launch a program written during a
-  run (exe, jar, pkg, dmg, …).
-- `pipeline-cli` exits cleanly when its output pipe closes early, resolves
-  relative `--input`, `--input-dir` and `--extra-input` paths so the app can
-  file those runs under a project, and accepts a bare `.tex` file name.
-- A Review finished while its automation receipt was unknown can be
-  reconciled instead of being re-run.
-- Staged LaTeX projects keep figures referenced through `\graphicspath` or
-  from chapter files in the document bundle.
-- Cancelling a run during PaddleOCR-VL verification no longer makes the next
-  run fail with "operation already running"; installing over a current parser
-  no longer rebuilds its runtime.
-- Mission Retry works after a steering message to the planner conversation,
-  long check instructions no longer make results impossible to adopt, and
-  mission prompts tolerate `{{input:…}}` text in research content.
-- Automations waiting for an execution slot record the wait once instead of
-  every two seconds.
-- Automation step ids may not be `done`, `enter`, or purely numeric; such ids
-  collided with internal bookkeeping and skipped steps.
-- Quality reports count only real schema retries, so multi-agent and fan-out
-  steps that succeed first try are no longer labelled degraded, and fan-out
-  findings steps produce a conformant product that keeps the validation ledger.
-- Built-in workflows that no longer pass validation no longer block every
-  launch; upgraded installs receive the typed Grant Review suite; "Reset to
-  defaults" repairs an invalid built-in; settings backups from 0.9.x import
-  again; and a stored API key that cannot be decrypted can be discarded from
-  Settings so runs can launch.
-- The manuscript reader counts the last PDF page, so it can be recorded as
-  inspected; plain editor saves no longer leave an open task and a copy
-  directory behind.
-- Project packages (`.pwex`) re-import without spurious evidence conflicts,
-  include every selected note or retired claim, and no longer abort when a
-  retired claim is re-imported.
-- Paper search excerpts and project search tolerate single-line files and
-  punctuation-only query words.
-- A conversation keeps up with automation-driven turns on its thread and
-  unlocks its composer when the runtime connection drops.
+  whose stated size doesn't match, so a crafted file can't fill the disk or
+  memory. Restores reject references outside the research store.
+- Steps that continue a Codex CLI session set their own sandbox and approval
+  policy instead of inheriting your global Codex settings.
+- The file viewer no longer offers to open programs written during a review,
+  such as `.exe` or `.dmg` files.
 
 ## 1.0.2 — 2026-10-08
 
-First stable release. Installers are published for macOS (Apple Silicon and
-Intel), Windows x86-64, and Linux x86-64. The `v1.0.0` and `v1.0.1` tags were
-never released: a complete set of installers could not be packaged from them.
+First stable release, with installers for macOS (Apple Silicon and Intel),
+Windows x86-64, and Linux x86-64. The `v1.0.0` and `v1.0.1` tags were never
+released because a complete set of installers couldn't be built from them.
 
-- The development-only protocol probes are Cargo examples and are no longer
-  packaged with the application.
+### Added
 
-- On Windows, conversations can now read project files, and research backups
-  written on Windows pass their own integrity check.
+- Projects, where you work in ChatGPT conversations alongside your reviews.
+  Conversations have streamed replies, approvals, saved drafts, recovery after a crash, and model,
+  effort, and usage controls.
+- Optional research tools for papers and sources, local LaTeX and Stata runs,
+  results, research notes, and claims with evidence you confirm. Project tools
+  cover manuscript builds, referee responses, experiments, literature, and a
+  **Theory** panel that keeps numerical checks separate from proofs.
+- Project packages (`.pwex`) share chosen research items with a coauthor,
+  without conversations, credentials, or command settings, and show conflicts
+  on import. Research backups (`.pwrx`) restore a whole store.
+- A storage report previews cleanup you can undo. A project can export a draft
+  workflow or send a fixed copy of a paper to a new review.
+- **Agent profiles** are searchable built-in and custom profiles with editable
+  system prompts and tools, plus writing, code review, and economics research
+  starters. A profile can add to or replace Codex's base prompt.
+- Projects in a Git repository show the branch, uncommitted work, recent
+  commits, and commits waiting on the remote. Pipeline fetches with your own
+  credentials only when you ask, and never commits, merges, or pushes.
+- LaTeX extraction reads files the project references up to three folders
+  above the selection, such as `\input{../output/numbers.tex}`, and notes each
+  one.
 
-- Patch rustls and affected frontend test-tool dependency versions. Remaining
-  upstream WebdriverIO advisories and release qualification gaps are tracked in
-  the October 2 audit.
+### Changed
 
-- Research backups now include app-owned conversation working files in `.pwrx`
-  format 2. This build can still restore format-1 backups; older builds cannot
-  read format 2. External project folders, Review/Automation stores, Trash and
-  credentials are excluded. Imported trash journals are discarded and unfinished
-  conversation turns are retained as interrupted history.
-- Background conversation titles use their own native process. Workflow drafts
-  survive recovery-cache failures, and same-page project/automation navigation
-  saves or guards unsaved work and rejects superseded loads. Malformed route
-  encoding and unreadable saved navigation fall back without breaking startup.
-- Automation control evaluation and retained context are bounded independently
-  of model actions. Settled failed/cancelled Review pins are reconciled. Host
-  writes finish before their invocation releases ownership.
-- Local macOS source builds may be unsigned. Official builds still require
-  signing; bundled Poppler inventories and candidate qualification checks make
-  release evidence explicit.
+- Reviews and conversations share one ChatGPT sign-in and model list. Existing
+  sign-ins move over when that's unambiguous, you choose between conflicting
+  accounts in Settings, and account changes wait for active work.
+- The composer is rebuilt. One picker sets model and thinking and shows your
+  remaining usage, Send and Stop share a button, and the **+** menu adds files,
+  a project document, or an automation. Attached sources appear as chips with
+  roles such as "Main paper".
+- **Projects** opens a searchable index with pins, recent activity, and links
+  to conversations. A new project can start with a conversation, and Home opens
+  straight to its action cards.
+- Project overviews report the paper's state: version, last build, open and
+  regressed findings, numbers and claims that no longer match results, pending
+  decisions, and changes since your last visit. Setup controls and an optional
+  target date are in **Project settings**.
+- Settings has seven searchable categories and separate conversation and
+  review connections. New preferences cover text size, editor wrapping,
+  spacing, message shortcuts, startup, and notifications with optional sound.
+- Auto Paper Review is the default and replaces Paper Review (Full) and Paper
+  Review (Quick). Retired profiles and your edits are archived in
+  `~/.pipeline/profiles/.retired-builtins/`, and their step prompts stay in
+  the workflow editor.
+- Research backups (`.pwrx` format 2) include conversation working files, and
+  older versions can't read them. Backups leave out external project folders,
+  review and automation history, Trash, and credentials.
+- Google models run only through the Gemini API with a Google API key.
+  Workflows that name `gemini` must switch to `antigravity`, and the `pro`,
+  `flash`, and `flash-lite` aliases no longer work.
+- macOS builds from source can be unsigned for local use. Official releases
+  are signed.
 
-- The conversation composer is rebuilt. Model and thinking are one picker that
-  shows your ChatGPT account, remaining usage, what each model is for, and the
-  thinking levels it supports. The message field grows as you type, and Send
-  and Stop are one button. The "+" menu now only adds things to a message:
-  files, a project document, or an automation. Files can be dropped onto the
-  conversation. Attached sources appear as chips with plain-language roles
-  such as "Main paper" and "Referee report". Menus, the project switcher, and
-  tooltips share one themed style, and dark mode uses one background across
-  the project and chat panes.
+### Fixed
 
-- Project overviews now report the state of the paper instead of listing
-  conversations and notes: the current version, last build, outstanding and
-  regressed review findings, numbers and claims that no longer match their
-  results, progress through review comments, and what changed since your last
-  visit. Sections with nothing to report are hidden and every row has one
-  action. The resume card recalls your last request and any unsent draft, a
-  brief can be drafted from the paper, and Project settings has one optional
-  target date. Projects with only conversations open directly on the latest
-  conversation.
+- On Windows, conversations can read project files, and Windows backups pass
+  their integrity check.
+- Opened from the Dock or a desktop launcher on macOS and Linux, Pipeline finds
+  command-line tools more reliably, including with fish, csh, tcsh, nushell,
+  and shells that print startup messages.
+- A provider CLI that crashes or runs out of memory is reported as a retryable
+  failure, not "Pipeline cancelled".
+- One unreadable file no longer stops a folder input, and folders with
+  multi-gigabyte data files run.
+- PDF extraction works despite denied macOS folder permissions, reports
+  encrypted PDFs, retries failed chunks, accepts PDFs up to 256 MB, and opens
+  OneDrive placeholders on Windows. Provider limits (100 pages or 24 MB) are
+  stated up front.
+- Steps fall back to ordinary calls when shared context or a shared Claude
+  session is unavailable, instead of failing the review.
+- Auto Paper Review rejects a folder chosen as a source tree and resumes after
+  the reviewer count changes. The results view no longer crashes when a
+  paper's authors are missing.
+- The dependency check requires every provider a workflow uses.
+- Finished parallel steps are saved as each completes, and retention can't
+  delete a just-finished review. Windows builds support long paths.
+- LaTeX extraction skips commented-out and circular `\input{}` lines and notes
+  unreadable includes instead of dropping chapters.
+- A PaddleOCR-VL install survives an unrelated review finishing or being
+  cancelled.
+- Workflow drafts survive a damaged recovery cache, and moving between projects
+  or automations protects unsaved work.
 
-- Projects whose folder is a Git repository show its branch, uncommitted work,
-  recent commits, and commits waiting on the remote, with links for GitHub
-  repositories. Checking the remote runs `git fetch` with your own Git
-  credentials only when you ask; Pipeline never commits, merges, or pushes.
+### Security
 
-- Home now starts directly with its action cards and current review, with
-  introductory headings and helper copy removed.
-
-- Settings connection cards now omit redundant provider descriptions, account
-  explanations, and scope badges, and the save-status note is shorter.
-
-- Conversations and Reviews now share one ChatGPT sign-in, model catalog, and
-  account controls. Existing managed sign-ins migrate automatically when
-  unambiguous; conflicting accounts can be selected in Settings. Account changes
-  wait for active work in both modes while histories and permissions stay separate.
-
-- Projects now opens a searchable index with pins, recent research activity, and
-  direct conversation resume links. Project overviews show editable research
-  briefs, pending decisions, and recent work; setup controls move to Project
-  settings. New projects can begin with a conversation before adding a paper or
-  folder, and leaving Workspace saves the current conversation draft.
-
-- Removed the deprecated Antigravity CLI adapter, model discovery, authentication
-  probes and installation hints. Google remains API-only and is labeled Google API
-  in readiness checks; older provider IDs and saved settings still load.
-
-- Settings now has seven searchable categories, compact Review model stages,
-  visible separate conversation and Review connections, explicit API-key saving,
-  and validated retention inputs. New device preferences control interface and
-  report text size, source-editor text and wrapping, spacing, message shortcuts,
-  startup restoration, and completion/failure/attention notifications with optional
-  desktop delivery and sound. Backups and cleanup are under Data & Storage;
-  diagnostics and version information are under Advanced & About.
-
-- Workspace Agent profiles now provide searchable built-in and custom profiles,
-  blank creation and duplication for one project or all Workspaces, explicit
-  system-prompt and tool editing, and Writing, Code review, and Economics research
-  starters. Profiles can inherit Codex or replace its native base prompt, with
-  supplemental instructions kept separate. Codex default stays read-only, with
-  model templates and additional sections viewable from local runtime caches,
-  including source/version information and explicit cache limitations.
-
-- Pipeline now presents two complementary agent-orchestration modes for
-  academic research. The new Workspace is a persistent ChatGPT client with
-  independent workspaces and conversations, isolated managed ChatGPT sign-in,
-  visible model/effort and quota controls, streamed responses, approvals,
-  durable drafts, and crash reconciliation. Its optional modular research
-  harness adds editable presets and recipes, immutable papers and sources,
-  bounded research tools, configured local LaTeX/Stata execution, structured
-  results, research memory, claims/evidence with explicit human confirmation,
-  and performance/evaluation records. Project Research tools add manuscript
-  editing/builds, referee responses, experiments, result links, literature, and
-  a Theory panel whose typed check receipts keep numerical evidence distinct
-  from proofs and whose derivation promotion is a reviewable change set.
-  Selective `.pwex` project exchange packages carry chosen research objects
-  and their dependencies to a coauthor without conversations, credentials,
-  or executable settings, import into a nonempty store with reviewable
-  conflicts, and sit beside a storage report with previewed, restorable
-  pruning and a Workflow-draft export for the Workflows page.
-  Whole-store `.pwrx` archives use bounded
-  inspection and explicit root remapping, and an optional immutable paper
-  handoff enters the existing Workflow launch preview without sharing runtime,
-  credentials, settings, or cancellation. Workflows remain the deterministic
-  graph engine for repeatable research and review tasks. Authenticated,
-  real-tool, packaged-app, and cross-platform Workspace qualification remains a
-  release gate.
-- A comprehensive default-workflow audit produced a batch of reliability
-  fixes across platforms and input types:
-  - GUI launches on macOS/Linux now resolve the login-shell PATH robustly:
-    rc-file banners no longer corrupt it (the probe reads `printenv PATH` and
-    takes the last output line), fish/csh/tcsh/nushell users get a working
-    probe, a transient probe failure is retried instead of being cached for
-    the whole session, and system `/opt/...` entries no longer suppress
-    resolution on Linux. Command lookup also skips non-executable files that
-    would shadow a real CLI later on PATH.
-  - A provider CLI killed by a signal Pipeline did not send (out-of-memory
-    kills, crashes) is now reported as a retryable provider failure instead
-    of "Pipeline cancelled", so normal retry policy applies.
-  - Folder inputs: one unreadable or concurrently deleted file no longer
-    aborts the run (it is fingerprinted by name/size with a quality note),
-    and folders with multi-gigabyte data files now run — the fingerprint
-    hashes at most 1 MB per file plus name, size, and mtime instead of
-    reading up to 2 GB of content and failing beyond it.
-  - PDF extraction: helper processes (pdftotext, pdftoppm, the Paddle
-    sidecar) and provider CLIs now read a staged private copy instead of the
-    original path, so a previously denied macOS folder permission cannot
-    silently break extraction; a failed pdftotext run surfaces its own error
-    (an encrypted PDF now says so); one failed chunk call feeds the targeted
-    retry pass instead of aborting the run; direct-API extraction fails fast
-    with the actual constraint when a PDF exceeds Anthropic/OpenAI attachment
-    limits (100 pages / 24 MB); oversized PDFs get a PDF-specific staging
-    message and a 256 MB budget instead of the LaTeX 32 MB error; and
-    Windows OneDrive Files-On-Demand placeholders are re-opened so they
-    hydrate instead of failing the first read.
-  - Shared-context reuse degrades to ordinary self-contained calls when the
-    shared prefix cannot be assembled (for example an extracted text between
-    the 8 MB shared-context cap and the 10 MB LaTeX cap) instead of failing
-    the run; a cancelled Codex warm-up no longer disables context reuse for
-    the rest of the run.
-  - Auto Paper Review: selecting a folder as a browsable source tree is
-    rejected up front with guidance (the router and reviewers would otherwise
-    treat the file inventory as the paper); the orientation editor now offers
-    a "Restore adaptive router prompt" action instead of survey-insert
-    buttons that silently broke the workflow's required review plan; changing
-    the exact adaptive-agent count no longer breaks resuming earlier runs;
-    and disabling all three core reviews is caught before the orientation
-    call instead of after it.
-  - Orientation surveys: a small JSON object echoed in prose can no longer
-    hijack the survey — the largest valid non-empty object wins, and an
-    empty-object response now retries instead of producing a blank survey.
-  - The finished-run view no longer crashes the app when a paper-shaped
-    survey omits its metadata or authors (seen with schema-less profiles and
-    older saved runs); the report workspace is also isolated behind its own
-    error boundary.
-  - Dependency preflight now requires every provider the active workflow
-    actually dispatches to, so an unrelated available provider (for example a
-    local server) can no longer mask a missing required CLI until mid-run.
-  - Completed parallel analyses are checkpointed as each finishes, so a crash
-    later in the wave no longer loses them; byte-based run retention can no
-    longer delete the run that just completed; merged multi-agent outputs no
-    longer double-count against the run output budget (and an over-budget
-    merge falls back to the unmerged analyses); a Sequential step listing
-    several agents now logs that only the first runs; the one-run Parallel
-    agent override is correctly included in the plan/launch fingerprint; and
-    Windows builds are long-path aware.
-  - LaTeX extraction no longer expands commented-out `\input{}` lines, and an
-    include that exists but cannot be read (encoding, size) leaves a quality
-    note instead of silently dropping the chapter.
-- Auto Paper Review is now the default workflow, and the Paper Review (Full)
-  and Paper Review (Quick) built-ins were retired: Auto's adaptive specialist
-  routing covers what both provided. On existing installations the retired
-  profiles (including any customizations) are archived under
-  `~/.pipeline/profiles/.retired-builtins/` rather than deleted, and an active
-  selection pointing at one of them switches to Auto Paper Review once. Their
-  step prompts (contribution, technical correctness, empirical strategy,
-  internal consistency, exposition, consolidation, feedback validation) remain
-  shipped defaults available from the workflow editor, and the freed profile
-  IDs can be reused by custom workflows. Deleting a custom profile now falls
-  back to Auto Paper Review, and "Reset to defaults" restores the matching
-  stock definition for the remaining built-ins.
-- A PaddleOCR-VL Full Parser install no longer dies silently when a pipeline
-  run finishes or is cancelled while the install is downloading or
-  provisioning. Installer subprocesses were tracked in the same kill list as
-  run subprocesses, so the end of an unrelated run terminated the installer
-  mid-flight and rolled the install back; the parser then appeared unusable
-  until the app was restarted and the install repeated. Installer processes
-  now have engine-scoped tracking (cancel from Settings still works, and
-  Windows still terminates the full installer process tree), and a failed
-  cleanup of the previous install's backup is logged instead of ignored.
-- LaTeX extraction now reads files a project explicitly references just
-  outside the selected directory (for example
-  `\input{../output/estimates/numbers.tex}` from a `draft/dev` selection).
-  Referenced files are accepted only when they are regular files of the
-  expected type within three directory levels above the selection; each
-  external read is recorded as a quality note, and everything else stays
-  blocked. Staged source views copy those files under `_external/` so
-  reviewer steps that read the source tree see the same content. Circular
-  `\input{}` chains are now skipped precisely (with one note) instead of
-  expanding to the depth limit, and repeated identical extraction warnings
-  are recorded once instead of once per occurrence.
-- A Claude CLI shared-context run no longer fails outright when the warmed
-  session cannot be forked (stderr like "No conversation found with session
-  ID"). The first affected step now marks the shared session unavailable and
-  every remaining step automatically uses a self-contained call; other fork
-  failures retry the one call self-contained without disabling sharing. A
-  cancelled warm-up is no longer cached as a permanent session failure.
-- Retired the Gemini CLI transport. The provider ID remains `antigravity` in
-  workflows and persisted settings for compatibility, but Google dispatch is
-  now always through the direct Gemini API and requires `google_api_key`;
-  legacy Subscription selections normalize to API mode and dependency checks
-  never probe or invoke `agy`. The sandboxed Antigravity CLI implementation
-  remains dormant and test-covered rather than user-selectable. Profiles
-  naming the older `gemini` agent must switch to `antigravity`, stale `gemini`
-  settings are dropped on load, and the legacy `pro`/`flash`/`flash-lite`
-  aliases no longer resolve.
+- Updated rustls and several development dependencies to patched versions.
 
 ## 0.9.0 — 2026-08-10
 
-- A PaddleOCR-VL Full Parser installed by an older app build now keeps working
-  after the app updates. Extraction verifies the managed runtime against its
-  own install-time manifest digests and integrity inventory instead of the
-  current binary's provisioning constants, and refreshes a stale bundled
-  sidecar in place when that pinned runtime verifies. Previously a
-  provisioning-metadata change (such as the pinned qualification mirror in
-  `runtime-lock.json`) made runs fail with "not installed" while Settings
-  still reported the parser as installed. The parser release name remains the
-  compatibility contract, and tampered or corrupted files still fail closed.
-- Added Paper Review (Auto), which validates one orientation/router call and
-  selects one or two subject/subfield reviewers plus one to four method
-  reviewers from a host-owned catalog covering 29 disciplines, 257 subject
-  roles, and 115 method roles in 15 method families. Its saved workflow
-  remains a five-step skeleton; Rust assembles only the selected specialists
-  for each seven-to-eleven-step run.
-  The plan is visible in progress and saved orientation artifacts, and
-  unselected specialists never become workflow steps or consume model calls.
-  The New Run workflow summary links to a searchable catalog browser grouped
-  by discipline and method family, with separate subject and method views.
-  The Workflow Editor now shows one combined Orientation & Classification
-  stage followed by read-only adaptive slots instead of expanding the
-  specialist catalog into saved steps.
-  Method families give each group of related roles an explicit broad-fallback
-  entry, so the router prefers the most specific fitting reviewer under one
-  generic rule. The orientation call also classifies the document's genre —
-  replication, comment or reply, survey article, data descriptor, methods or
-  tool paper, registered report, null results, case report, or research
-  software paper, defaulting to an ordinary research article — and every
-  reviewer receives the matching host-owned genre context, so a comment is
-  not faulted for lacking a free-standing contribution and a null-result
-  paper is not faulted for the null itself. Each materialized specialist
-  prompt also begins with the router's validated selection reason, quoted as
-  bounded, untrusted context, so every reviewer starts from the claim that
-  triggered its selection. The new subject coverage adds a neuroscience
-  discipline and deeper AI, astronomy, climate, demography, and metascience
-  subfields; new method coverage spans modern causal designs, AI-era
-  evaluation, health and laboratory research, and a
-  reproducibility-and-integrity family that can recompute reported
-  statistics, flag figure inconsistencies, spot-check citations, and audit
-  replication packages. The orientation prompt and schema that earlier stock
-  installs wrote to disk are pinned verbatim for migration fingerprinting, so
-  untouched stock Auto profiles keep upgrading in place while the live
-  catalog evolves. Every selected subject and method report is a direct input to
-  the Consolidate Feedback step alongside the three universal reviews, which
-  merges them into up to forty ordered comments; a Validate Feedback step then
-  re-checks each consolidated comment against the paper, repairs details that
-  are easy to fix, and removes comments that do not validate, returning the
-  same format the report viewer indexes. Web search is enabled by default on
-  every Auto review step, including materialized specialists. Untouched
-  28- and 29-step Auto Review development profiles and untouched four-step
-  skeletons migrate to the validated five-step skeleton, including installs
-  where an earlier migration marker was recorded before compaction; a
-  configured adaptive-agent count is preserved and customized workflows are
-  left exactly as edited.
-  The pre-launch execution review now shows the bounded adaptive groups in the
-  timeline and artifact-access table, including their direct inputs to Auto
-  synthesis, without truncating step and count summaries. During a live run,
-  the parallel wave now reserves an Adaptive agents row until orientation
-  resolves it into the selected subject and method specialists.
-- Added Projects for grouping related saved runs and revisions without moving
-  or deleting the underlying run artifacts. Projects now include a persistent,
-  report-neutral issue ledger with conservative cross-run matching, lifecycle
-  decisions and notes, regression tracking, provenance/evidence history,
-  filters, manual duplicate merging, and Markdown export.
-- Added an explicit Run preview before launch, showing the execution timeline,
-  provider and artifact access, declared tools, and bounded model work units.
-- Added evidence references to structured issue cards, with page and artifact
-  links into the run's Sources view and citations in accepted-issue exports.
-- Added a Workflow Gallery with editable templates for revision responses,
+### Added
+
+- **Paper Review (Auto)** reads the paper, picks one or two subject reviewers
+  and up to four method reviewers from a catalog covering 29 disciplines, and
+  checks every combined comment against the paper. It also identifies the kind
+  of paper, such as a replication or null result, so reviewers judge it on its
+  own terms.
+- Projects group related runs and revisions, with an issue list that tracks
+  issues, decisions, and regressions across runs and exports to Markdown.
+- A run preview shows the timeline, provider and file access, and expected
+  model work before launch.
+- Issue cards link their evidence to pages and files in the run.
+- A Workflow Gallery offers editable templates for revision responses,
   literature positioning, thesis chapters, and rubric-based review.
-- Modernized the source-build CLI with transient workflow selection, dependency
-  checks for concrete PDF inputs, and managed Paddle bundle status,
-  installation, repair, and confirmed uninstallation commands.
-- Consolidated local OCR extraction on PaddleOCR-VL Full Parser. The former
-  direct Q8/fast extractor is no longer offered; saved settings and workflows
-  that selected it migrate automatically to Full Parser. Installation and
-  dependency status now present the parser and its recognition runtime as one
-  managed engine.
+- Settings and workflows warn about unsaved changes, and deleting stored data
+  previews what will be removed.
+- Supported-platform and maintenance policies, contribution guidelines, and
+  issue forms.
 
-### Security and privacy
+### Changed
 
-- Restricted model-visible source access to a private view of the selected
-  document. LaTeX projects now expose only a bounded in-project dependency
-  closure rather than the surrounding folder.
-- Re-runs and resumed runs now revalidate saved runtime inputs and the current
-  profile's run budget before contacting a model.
-- Limited request details sent to the application console to UTF-8-safe 16 KiB
-  previews, bounding the amount of prompt or paper content copied into the
-  WebView.
-- Updated and constrained the frontend build and test dependency tree to
-  eliminate all findings from the full npm production-and-development audit.
-- Added a pre-run data-sharing notice, detailed privacy documentation, and a
+- Local OCR uses PaddleOCR-VL Full Parser only, and settings that chose the
+  fast Q8 extractor switch automatically.
+- The source-build CLI can pick a workflow per run and install, repair, or
+  uninstall the PaddleOCR bundle.
+- Update checks offer stable releases only. The main window has a minimum
+  size, and the Windows installer includes WebView2 and refuses downgrades.
+
+### Fixed
+
+- A PaddleOCR-VL parser installed by an older version keeps working after an
+  update.
+- Unsupported inputs fail before the run, and readiness checks include the
+  exact PDF tools each extraction method needs.
+- Stopping a folder watch shows at once. Readable text is kept when a provider
+  can't accept a large structured bundle.
+- Saved-run export is complete and all-or-nothing, with a new destination each
+  time.
+- Math renders offline, PDF printing waits for fonts, and saves handle edits
+  made during a save.
+
+### Security
+
+- Models see only a private copy of the selected document, and LaTeX projects
+  expose only the files the document uses.
+- Re-runs recheck saved inputs and the run budget before contacting a model.
+  The app console shows at most 16 KB of each request.
+- Added a data-sharing notice before each run, privacy documentation, and a
   private vulnerability-reporting policy.
-
-### Reliability and output quality
-
-- Made execution planning and launch validation agree on explicit document,
-  folder, and no-input modes; concrete named inputs now fail early when their
-  path kind or format is unsupported.
-- Made readiness account for PDF named inputs and the exact Poppler or managed
-  PaddleOCR-VL components required by the selected extraction method.
-- Made folder-watch stop transitions visible immediately while retaining the
-  completed-job history.
-- Preserved readable document text when provider limits prevent inclusion of a
-  large structured bundle, and stopped duplicating native Paddle blocks with
-  inferred Markdown structure.
-- Made saved-run export complete and atomic, with a unique destination for each
-  export. The legacy core-file export is now clearly labeled and refuses to
-  overwrite an existing destination.
-- Bundled KaTeX styling and fonts locally. PDF print output now embeds its
-  rendering resources offline and waits for fonts before printing.
-- Added safe Markdown links throughout reports, issues, and comparisons.
-- Added unsaved-change protection for settings and workflows, including
-  navigation and window-close confirmation.
-- Made settings and workflow saves robust to edits that occur while a save is
-  still in progress.
-- Added exact purge previews and explicit confirmation before deleting stored
-  data.
-
-### Release integrity
-
-- Retained and now tests the `com.pipeline.report` application identifier used
-  by v1.0.0 so signed upgrades keep one stable application identity.
-- Defined a stable-only update channel: prereleases are neither offered by the
-  in-app release check nor accepted by the public release workflow.
-- Added tested minimum main-window dimensions to keep the desktop layout usable.
-- Public Windows builds now require Authenticode signing and timestamping.
-- The Windows installer embeds WebView2 for self-contained first installation
-  and rejects application downgrades.
-- Public releases now require a cryptographically verified annotated Git tag.
-- Release Actions are pinned to reviewed commits and run with job-scoped
-  permissions in a protected environment.
-- Every installer receives a SHA-256 record and GitHub build-provenance
-  attestation; a final job verifies the complete draft release.
-- Release and pull-request builds now use the same exact Node and Rust
-  toolchains, locked Cargo resolution, and pinned runner families.
-- Separate artifact and build-input SBOMs bind each installer to its dependency
-  and native provenance records; the final draft gate scans all platform inputs
-  and attests the complete evidence set.
-- Windows Poppler provenance now attributes every shipped DLL/executable hash
-  to an exact conda-forge package version, build, and independently verified
-  source-archive payload.
-- Linux release inputs use a dated Ubuntu archive snapshot, and CI launches the
-  AppImage through its public FUSE entry point.
-- Offline notices now include a machine-readable license-evidence inventory.
-- Pinned Grype/Syft validation now round-trips every native SBOM identity before
-  vulnerability scanning, preventing silently unscannable package records.
-
-### Documentation
-
-- Added a repeatable public-release checklist, including signing and
-  third-party legal review gates.
-- Added explicit supported-platform and maintenance policies, contribution
-  guidance, structured issue forms, dependency automation, and repository-wide
-  ownership rules.
-- Removed machine-local agent permission settings from version control and
-  documented the actual copyright holder established by repository history.
+- Updated frontend dependencies to clear every npm audit finding.
+- Each installer is built from a verified tag and comes with a SHA-256
+  checksum, a GitHub build attestation, and software bills of materials.
