@@ -1,221 +1,235 @@
 # Reviews
 
-A Review runs a set of AI assessments and saves the resulting report, source
-material, and individual responses. Start from **Home → New review**. You do
-not need to create a project first.
+A review asks several AI reviewers to assess a document, then combines and
+checks their comments. Pipeline saves the report, each reviewer's response,
+and the source material. Start from **Home → New review**. You don't need a
+project.
 
 ## Choose an input
 
-The desktop file picker accepts PDF, DOCX, and `.tex` documents. You can also
-select a LaTeX project folder. The review engine accepts UTF-8 Markdown and
-plain text through the CLI and automation snapshots; these formats are not yet
-listed in the desktop review picker. Custom workflows can read a source folder,
-request additional documents, or run without a primary document.
+Choose a PDF, a Word `.docx` file, a `.tex` file, or a LaTeX project folder.
+Older `.doc` files aren't supported, so save them as `.docx` first. The
+[command line](cli.md) also accepts Markdown and plain text.
 
-Use LaTeX source when you have it: Pipeline reads the text and equations
-directly and follows supported references to included files. A PDF requires
-extraction, which can lose information. For slides, export the deck as PDF
-and choose **Slide Review**.
+Use LaTeX source when you have it. Pipeline reads the text and equations
+directly and follows `\input` and `\include` to other files. If a compiled PDF
+sits beside the source, with the same name as the main file or named
+`paper.pdf`, `main.pdf`, or `manuscript.pdf`, Pipeline uses it for page
+images.
+
+A PDF has to be converted to text first, which can lose equations, tables, or
+reading order. See [PDF extraction](#pdf-extraction). For slides, export the
+deck as PDF and choose **Slide Review**.
 
 ## Choose a review
 
 | Review | What it does |
 | --- | --- |
-| Paper Review | Assesses the argument, presentation, and contribution, adds subject and method specialists, combines their comments, and checks them against the paper |
-| Paper Review (Fast) | Uses fewer specialists and omits the separate contribution-and-literature assessment |
-| Slide Review | Assesses a PDF deck's argument, figures, readability, and slide order, with comments that cite slide numbers |
+| Paper Review | Assesses the argument, presentation, and contribution. Adds subject and method specialists, combines their comments, and checks them against the paper |
+| Paper Review (Fast) | Uses fewer specialists and skips the separate contribution-and-literature assessment |
+| Slide Review | Assesses a deck's argument, figures, readability, and slide order. Comments cite slide numbers |
 | Grant Proposal Review | Assesses aims, feasibility, readability for the panel, and consistency, then combines the comments |
 
-Paper Review first identifies the field, methods, and document type. It then
-selects one or two subject specialists and one to four method specialists
-from the [reviewer catalog](auto-review-catalog.md). Alongside the three
-core assessments, consolidation, and validation, this produces seven to eleven
-review steps. The Fast version uses six to eight. These counts exclude the
-initial classification call and any retries or additional calls within a step.
+The gallery also has **Revision Response Check**, **Literature Positioning
+Scan**, **Thesis Chapter Review**, **Rubric-Based Review**, **Reference
+Check**, and **Replication Package Readiness**. Each template lists the inputs
+it needs.
 
-The review gallery also offers **Revision Response Check**, **Literature
-Positioning Scan**, **Thesis Chapter Review**, and **Rubric-Based Review**.
-Read each template's description and required inputs before adding it.
+### How Paper Review picks reviewers
+
+Paper Review first reads the document to identify its field, methods, and
+type. It then runs:
+
+- three core assessments: argument, presentation, and contribution;
+- one or two subject specialists, such as labor economics or number theory;
+- one to four method specialists, such as difference-in-differences or
+  formal proofs;
+- a step that combines all reports into up to 40 comments; and
+- a final step that checks each comment against the paper, fixes small
+  errors, and removes comments the paper doesn't support.
+
+That makes 7 to 11 review steps. Paper Review (Fast) uses up to two method
+specialists and runs 6 to 8 steps. Slide Review picks reviewers the same way,
+with instructions for slide decks.
+
+Every reviewer is told what kind of document it's reading. A comment or reply
+isn't faulted for lacking a new contribution, and a null result isn't faulted
+for being null. The document types are research articles, replications,
+comments and replies, surveys, data descriptors, methods and software papers,
+registered reports, null results, case reports, and slide decks.
+
+To see every specialist, open a review in the designer and choose **Browse
+catalog** in the **Auto-filled from orientation** slots. The reviewers chosen
+for your document appear as separate steps when the run starts.
+
+### Try the example review
+
+**See an example Review** on Home shows sample findings on a fictional paper
+excerpt, with severity, categories, cited evidence, and quote checks. It
+doesn't call a model, and it isn't saved to your review history.
 
 ## PDF extraction
 
-Open **Settings → Reviews** to choose the default extraction method. A review
-can override that default.
+Choose the default method in **Settings → Reviews**. You can change it for a
+single review.
 
 | Method | How it works | What to consider |
 | --- | --- | --- |
-| Poppler (`pdftotext`) | Uses the bundled PDF tools to extract text locally | No installation needed; equations, tables, and reading order may be incomplete |
-| Model extraction | Uses the selected model connection to extract the document | Requires a working provider connection and Poppler; the material the model can inspect depends on the connection |
-| PaddleOCR-VL Full Parser | Uses an optional local parser to extract text, layout, formulas, tables, and figure regions | Install it from Settings; it downloads model weights and its own runtime and needs several gigabytes of disk space |
+| Poppler (`pdftotext`) | Extracts text on your computer with the bundled PDF tools | Nothing to install. Equations, tables, and reading order may be incomplete |
+| Model extraction | Sends the document to the model connection you selected | Needs a working connection. The document leaves your computer |
+| PaddleOCR-VL Full Parser | Extracts text, layout, formulas, tables, and figures on your computer | Install it from Settings. It needs several GB of disk space |
 
-With the default setting, Pipeline uses the Full Parser if it is installed
-and model extraction otherwise. An explicitly selected method stays selected.
-If extraction fails its checks, Pipeline stops the review and reports the
-problem. It does not switch methods automatically.
+By default, Pipeline uses the Full Parser if it's installed and model
+extraction otherwise. If extraction fails, the review stops and shows the
+error. Pipeline always uses the method you chose.
 
-Model extraction can send document content to a remote provider. Poppler and
-the Full Parser process the document locally, although the subsequent review
-still sends material to the provider you select.
+Local extraction keeps the PDF on your computer during extraction. The review
+itself still sends material to the provider you chose.
 
-After a run, inspect **Sources** to check the extracted text, page images,
-figures, and warnings. If equations or tables are missing, use the source
-files or change the extraction method before rerunning the review.
+After a run, open **Sources** to check the extracted text, page images,
+figures, and warnings. If equations or tables are missing, use the LaTeX
+source or another extraction method and run the review again.
 
-## Models, parallel reviews, and usage
+## Run several reviews
 
-Choose a provider and model in Settings or in the review designer. Reviews
-support ChatGPT and Claude subscriptions, direct OpenAI, Anthropic, and Google
-APIs, and OpenAI-compatible model servers. Different steps can use different
-providers.
+Choose a provider and model in Settings or in the review designer. Different
+steps can use different providers. See [Connections](connections.md) for the
+options.
 
-Independent review steps can run at the same time. Each sees the inputs and
-prior outputs assigned to it. The final consolidation step receives the
-selected reviewer reports. The preview shows these dependencies and access
-settings before execution.
+Steps that don't depend on each other run at the same time. The run preview
+shows each step's inputs before anything starts.
 
-You can queue several reviews. **Settings → Reviews → Simultaneous Reviews**
-controls how many run at once: the default is two and the maximum is four.
-The sidebar shows running and queued reviews. Stopping one review does not
-stop the others. Batches and automation-owned reviews run separately from
-this queue.
+You can queue reviews. **Settings → Reviews → Simultaneous Reviews** sets how
+many run at once: two by default, four at most. The sidebar lists running and
+queued reviews. Stopping one review leaves the others running.
 
-Provider limits may delay calls even when Pipeline has a free slot. Cost
-figures use API list-price estimates. For subscription calls, they are a
-comparison measure rather than a bill from Pipeline.
+## Estimated use and limits
 
-### Estimated use and limits
-
-The run preview shows a rough range of model calls, tokens, and, for direct
-API connections, API list-price cost. The range comes from the input's size
-(page count for PDFs) and the planned steps; retries, tool reads, and the
-specialists Paper Review selects change actual use.
+The run preview shows a rough range of model calls and tokens. For API
+connections, it also shows the cost at the provider's list price. The
+estimate comes from the document's length and the planned steps. Retries and
+the specialists Paper Review picks change the actual use.
 
 **Settings → Reviews → Review limits** sets a cost, call, or time limit for
-each Review; 0 means no limit. Pipeline checks the limits before it starts each
-group of steps. Steps already running finish, steps not yet started are
-listed as stopped at the limit, and the completed results are saved as a
-partial report. The cost limit counts only direct API connections at list
-prices. Subscription calls count toward the call and time limits. The preview
-warns when the high end of the estimate is above a limit.
+each review. Enter 0 for no limit. When a review reaches a limit:
 
-Web search depends on the connection. The Anthropic and Google API adapters
-support it; OpenAI Chat Completions and local-server connections do not.
-Check the selected provider's available tools when configuring a step.
+- steps already running finish;
+- the remaining steps are marked as stopped at the limit; and
+- the results so far are saved as a partial report.
+
+The cost limit counts API connections at list prices. Subscription calls count
+toward the call and time limits. The preview warns you when the estimate could
+pass a limit.
 
 ## Read and use the results
 
-The report combines the reviewers' comments. Individual responses and the
-source material remain available so you can trace a comment back to its
-inputs. When a review produces structured findings, Pipeline also shows them
-as individual issues that you can accept, reject, or annotate.
+The report combines the reviewers' comments. You can open each reviewer's
+response and the source material to see where a comment came from. When a
+review produces findings, you can accept, reject, or annotate each one.
 
-Compare runs to see how the reports changed. A project can track findings
-across drafts; a finding remains open until it is resolved explicitly, even
-if a later review omits it.
+Compare runs to see how the reports changed. In a project, a finding stays
+open across drafts until you resolve it, even if a later review doesn't
+repeat it.
 
-Every run saves its report, extracted material, intermediate responses,
-settings, logs, and usage under the research data folder's `runs/` directory.
-The default is `~/.pipeline/runs/`. Export a report when you want a separate
-copy. Deleting a run moves it to Trash, where it can be restored until you
-permanently delete it.
+Each run is saved in the `runs/` folder of your
+[research data folder](settings.md#research-data-folder), `~/.pipeline/runs/`
+by default:
+
+| File | Contents |
+| --- | --- |
+| `report.md` | The combined review |
+| `context/document.md` | The text Pipeline extracted from your document |
+| `artifacts/pages/` | Page images, up to 300 pages |
+| `manifest.json` | The settings, models, and usage for the run |
+
+Each reviewer's response is saved in the run too. Open it from the report.
+
+Deleting a run moves it to Trash. You can restore it until you empty Trash.
 
 ### Share the results with coauthors
 
-The report's **Export** menu offers formats that open without Pipeline. Each
-one is a new file in a location you choose. Pipeline never changes the saved
-run or your manuscript.
+The report's **Export** menu creates files that open without Pipeline. Your
+saved run and your manuscript stay as they are.
 
-| Format | What it contains | Limits |
+| Format | What it contains | Notes |
 | --- | --- | --- |
-| **Export as HTML** | One file with the report, each finding's severity, confidence, and category, the quoted evidence with its location and check result, and filters by severity, category, and evidence status | Opens offline in any browser and loads nothing from the internet. Equations appear as LaTeX source. Images in model output are replaced by their descriptions |
-| **Export as Word** | A new `.docx` with the report, the findings, the quoted evidence, and the recorded limitations | Works for any input. Formatting is simple: headings, lists, quotations, and tables |
-| **Word with comments on the original** | A copy of the reviewed `.docx` in which each finding is a Word comment on the passage it quotes. Findings whose quotations cannot be found are listed in one comment on the first paragraph | Available when the reviewed file is a `.docx`. Only the body text is searched; quotations in footnotes, text boxes, or headers are listed in the summary comment instead |
-| **PDF with highlights** | A copy of the reviewed PDF with each quoted passage highlighted and a note attached. Findings whose quotations cannot be found become a note on the cited page | Available when the reviewed file is a PDF. Scanned PDFs without a text layer receive notes only. Highlights are added as a revision appended to the file, so the original content and any signatures are unchanged |
+| **Export as HTML** | One file with the report, each finding's severity, confidence, category, and quoted evidence, plus filters | Opens offline in any browser. Equations appear as LaTeX source |
+| **Export as Word** | A new `.docx` with the report, findings, and quoted evidence | Works for any input. Simple formatting |
+| **Word with comments on the original** | A copy of your `.docx` with each finding as a Word comment on the passage it quotes | For `.docx` inputs. Quotes in footnotes, text boxes, or headers are listed in one comment at the start |
+| **PDF with highlights** | A copy of your PDF with each quoted passage highlighted and a note attached | For PDF inputs. Scanned PDFs get notes only. Highlights are added as a new revision, so the original content and any signatures are left untouched |
 
-Quotations are matched after ignoring differences in spacing, letter case,
-curly and straight quotation marks, dash styles, soft hyphens, and line-break
-hyphenation. A quotation shorter than about a dozen letters is not placed,
-because it could match the wrong passage. When a finding cites one page but
-its quotation appears on another, the highlight goes where the text is and the
-note says so.
+Pipeline matches quotes while ignoring differences in spacing, letter case,
+quote marks, dashes, and hyphenation. It skips quotes shorter than about a
+dozen letters, which could match the wrong passage. If a quote is on a
+different page from the one cited, the highlight goes where the text is and
+the note says so.
 
-Each piece of evidence carries Pipeline's check result, using the labels in
-[How Pipeline checks quotes](#how-pipeline-checks-quotes): **Quote found**,
-**Quote found (formatting differs)**, **Partial match**, **Quote not found**,
-**Not checkable**, or **Not checked** for runs made before quotes were checked.
-Comments and highlights show this label; it is not a judgment on whether the
-finding is correct.
-
-Pipeline adds comments and highlights only to the exact version of the
-manuscript that was reviewed. If the file has been edited or moved since the
-run, export the report as Word or HTML instead, or run the review again.
-Exported files contain quotations from your manuscript and model-written text;
-share them accordingly.
+Comments and highlights go on the exact file that was reviewed. If you've
+edited or moved it since, export as Word or HTML instead, or run the review
+again. Exported files contain quotes from your manuscript and model-written
+text.
 
 ## How Pipeline checks quotes
 
-After each Review, Pipeline looks for every quoted passage in the extracted
-document, or in the cited source file for a folder input. Each piece of
-evidence is labeled:
+After each review, Pipeline looks for every quoted passage in the extracted
+document, or in the cited file for a folder input. Each piece of evidence gets
+a label:
 
 | Label | Meaning |
 | --- | --- |
-| Quote found | The text is at the cited page, passage, or file, ignoring line breaks. Exports add "(formatting differs)" when it matched only after ignoring punctuation style, letter case, hyphenation, LaTeX markup, or an ellipsis |
-| Partial match | The text is elsewhere in the document, the cited passage does not exist, or only a close paraphrase was found |
-| Quote not found | The text is not in the extracted document. Check the source before relying on the comment |
-| Not checkable | There is no quote, the evidence cites an outside source, or the cited file was not saved with the run |
+| Quote found | The text is where the comment says. Exports add "(formatting differs)" when it matched only after ignoring punctuation, case, hyphenation, LaTeX markup, or an ellipsis |
+| Partial match | The text is somewhere else in the document, or only a close paraphrase was found |
+| Quote not found | The text isn't in the extracted document. Check the source before relying on the comment |
+| Not checkable | There's no quote, the evidence cites an outside source, or the cited file wasn't saved with the run |
 
-A found quote shows that the passage exists where the comment says. It does
-not show that the comment is correct. Extraction problems, such as a PDF with
-lost equations, can prevent a real quote from being found. The run saves the
-details as `products/evidence_verification.json`, and the quality summary
-counts each label.
+Reviews run before quote checks existed show **Not checked**.
+
+**Quote found** means the quoted text is in your document where the comment
+says. Whether the comment is right is still your call. A PDF that lost its
+equations during extraction can make a real quote look missing. The details
+are saved in the run as `products/evidence_verification.json`.
 
 ## Pipeline checks
 
-A workflow can include checks that Pipeline runs itself, without a model call.
-Add one from the designer with **Add step → Pipeline check**, or start from a
-gallery template:
+A workflow can include checks that Pipeline runs itself, without a model. In
+the designer, choose **+ Add step**, then **Pipeline check**. Or start from the
+**Reference Check** or **Replication Package Readiness** template.
 
 | Check | What it does | Network |
 | --- | --- | --- |
-| Reference check | Finds the bibliography (the `.bib` files beside a LaTeX source, or the references section of a PDF or Word file) and reports undefined citation keys, duplicate entries, and malformed DOIs. With lookups on, it checks each reference against Crossref: found, details that do not match, another version (for example a working paper later published), retracted or withdrawn, expression of concern, or corrected | Off unless you turn on lookups for the step |
-| Replication package check | Reads a package folder and checks README sections against the Social Science Data Editors template, a main script, absolute or backslash paths, package installation, random seeds, files read by code but missing, exported tables and figures, very large files, and a license. It does not run the code | None |
+| Reference check | Finds the bibliography and reports undefined citation keys, duplicate entries, and malformed DOIs. With lookups on, it checks each reference against Crossref: found, mismatched details, another version (such as a working paper later published), retracted, expression of concern, or corrected | Only when you turn on lookups |
+| Replication package check | Reads a package folder and checks the README against the Social Science Data Editors template. Also checks for a main script, absolute paths, package installation, random seeds, missing files, exported tables and figures, very large files, and a license. It doesn't run the code | None |
 
-The **Reference Check** and **Replication Package Readiness** templates pair
-each check with a model step that explains the problems the check found. A
-check's own results become the Review's findings. A reference that Crossref
-cannot find may be a book, report, or dataset outside Crossref, or have errors
-in its details; it is not evidence that the work does not exist. With lookups
-on, the preview names the service and what is sent: each reference's text as
-written in the bibliography, and no other manuscript text. Lookups are paced
-to Crossref's public limits, about one reference per second.
+The templates pair each check with a model step that explains the problems
+found. A reference Crossref can't find may be a book, report, or dataset
+outside Crossref, or it may have errors in its details.
+
+With lookups on, the preview shows what's sent: the text of each reference as
+written in your bibliography, and nothing else from the manuscript. Lookups
+run about one reference per second, within Crossref's public limits.
 
 ## Customize a review
 
 The designer lets you edit prompts, choose providers and models, set reasoning
-effort, enable supported tools, and choose which inputs each step can read.
-A saved review definition is called a **workflow**. Workflows can include
-conditional steps, structured JSON responses, and repeated steps over selected
-files.
+effort, turn on tools, and choose what each step can read. A saved review
+definition is called a **workflow**. Workflows can include conditional steps,
+structured responses, and steps that repeat over a set of files.
 
-Export a workflow as JSON to share it or keep a copy. Import from a file or
-URL to add one. The definition contains the steps and settings, but not your
-API keys. Inspect an imported workflow's prompts, providers, tools, and file
-access before running it.
+Export a workflow as JSON to share it. Import one from a file or URL. A
+workflow contains steps and settings, never API keys. Before you run an
+imported workflow, check its prompts, providers, tools, and file access.
 
-For batches, workflow validation, and scripts, use the
-[command-line guide](cli/README.md).
+For batches, workflow files, and scripting, see the
+[command-line guide](cli.md).
 
-## When a review cannot finish
+## When a review can't finish
 
-| Problem | Next step |
+| Problem | What to do |
 | --- | --- |
-| Provider is unavailable | Open **Settings → Connections** and check the selected account or API key |
-| PDF extraction fails | Read the extraction error; install or repair the selected parser, choose another method, or use LaTeX source |
-| Input exceeds the model's context window | Use a smaller document or reduce the context assigned to that step |
-| Calls are queued or rate-limited | Check the provider's account limits and reduce concurrency if needed |
-| Run is interrupted | Open its saved run and inspect completed steps and the reported recovery options before starting another run |
+| The provider is unavailable | Open **Settings → Connections** and check the account or API key |
+| PDF extraction fails | Read the error. Repair or install the parser, choose another method, or use LaTeX source |
+| The document is too long for the model | Use a shorter document, or give the step less context |
+| Calls are queued or rate-limited | Check your provider's limits and run fewer reviews at once |
+| The run was interrupted | Open the saved run, check which steps finished, and use the recovery options it offers |
 
-For bug reports, include the version, provider, extraction method, and a short
-error excerpt. See [Support](../SUPPORT.md) for reporting instructions.
+To report a bug, see [Support](../SUPPORT.md).

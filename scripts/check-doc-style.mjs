@@ -16,7 +16,24 @@ const files = explicit.length
   ? explicit
   : execFileSync(
       "rg",
-      ["--files", "-g", "*.md", "-g", "!prompts/**", "-g", "!.agents/**", "-g", "!docs/workbench/protocol/**"],
+      [
+        "--files",
+        "-g",
+        "*.md",
+        "-g",
+        "!prompts/**",
+        "-g",
+        "prompts/auto_review/catalog/README.md",
+        "-g",
+        "!.agents/**",
+        "-g",
+        "!docs/workbench/protocol/**",
+        // Local agent guides are gitignored and not published.
+        "-g",
+        "!CLAUDE.md",
+        "-g",
+        "!AGENTS.md",
+      ],
       { cwd: repository, encoding: "utf8" },
     )
       .split(/\r?\n/)

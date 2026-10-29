@@ -1,130 +1,149 @@
-# Release process
+# Releasing
 
-Build a release by manually starting [release.yml](.github/workflows/release.yml)
-on a signed, annotated version tag. Pushing a tag alone does not start packaging.
-The workflow creates a draft release. Review it before publishing.
+A release is built by starting [release.yml](.github/workflows/release.yml) by
+hand on a signed, annotated version tag. Pushing a tag doesn't start the
+build. The workflow creates a draft release, which you review and publish
+yourself.
 
 ## Repository setup
 
-Configure a `release` GitHub environment with a required reviewer and restrictions
-to protected `v*` tags. Protect those tags against replacement. macOS builds use
-these environment secrets: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
-`APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, and `APPLE_TEAM_ID`.
-The tag signing key must be recognized by GitHub.
+- Create a `release` GitHub environment with a required reviewer, limited to
+  protected `v*` tags. Protect those tags from being replaced.
+- Add these secrets to the environment for macOS signing:
+  `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
+  `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, and
+  `APPLE_TEAM_ID`.
+- Register your tag signing key with GitHub.
 
-Windows installers are intentionally unsigned. No Windows signing secret is
-required by the current workflow. Windows bundles embed the silent WebView2
-bootstrapper; installation needs a network connection when Evergreen WebView2
-is missing. Tauri blocks installer downgrades. macOS requires version 15.0 or
-later; Linux packaging uses Ubuntu 22.04 and produces an AppImage.
+Windows installers aren't signed, so they need no secret. They include the
+WebView2 bootstrapper, which downloads WebView2 during installation if it's
+missing. Tauri blocks installing an older version over a newer one. macOS
+builds require macOS 15 or later. Linux builds run on Ubuntu 22.04 and
+produce an AppImage.
 
 ## Prepare and build
 
-1. Choose a reviewed commit and a stable `X.Y.Z` version newer than every other
-   stable tag. Update `gui/package.json`, `gui/package-lock.json`,
-   `gui/src-tauri/Cargo.toml`, and `gui/src-tauri/Cargo.lock` together. Preserve
-   the application identifier `com.pipeline.report`.
-2. Update [CHANGELOG.md](CHANGELOG.md), relevant user documentation and notices.
-   Run the checks in [CONTRIBUTING.md](CONTRIBUTING.md), including the production
-   frontend build, release tests, Rust all-target tests, formatting and strict
-   Clippy. Review dependency advisories separately when preparing a candidate.
-3. Create and push a signed annotated tag for that exact commit:
+1. Choose a reviewed commit and a stable `X.Y.Z` version newer than every
+   earlier stable tag. Update the version in `gui/package.json`,
+   `gui/package-lock.json`, `gui/src-tauri/Cargo.toml`, and
+   `gui/src-tauri/Cargo.lock` together. Keep the app identifier
+   `com.pipeline.report`.
+2. Update the [changelog](CHANGELOG.md), the guides, and the notices. Run
+   every check in [Contributing](CONTRIBUTING.md), and review dependency
+   advisories.
+3. Create and push a signed, annotated tag for that commit:
 
    ```bash
    git tag -s vX.Y.Z -m "Pipeline vX.Y.Z"
    git push origin vX.Y.Z
    ```
-4. Dispatch **Release** on that tag. Choose `all` for a complete candidate, or
-   a specific platform to build a missing installer. The default is macOS ARM.
 
-The reusable quality workflow runs frontend tests, formatting, source-size and
-link checks, a production build, release-contract tests, Rust formatting and
-strict Clippy, plus native all-target tests on Linux, macOS and Windows. These
-checks also run automatically on pushes to `main` and pull requests.
+4. Start **Release** on that tag. Choose `all` for a full release, or one
+   platform to rebuild a missing installer. The default is macOS on Apple
+   Silicon.
 
-After quality succeeds, one coordinator fetches full tag history, checks version
-identity, and asks GitHub to verify the annotated tag signature. The signed tag
-must point to the workflow's commit. The coordinator creates or reuses a draft
-and rejects an already published release before packaging begins.
+The workflow first runs the same quality checks as every pull request:
+frontend tests, formatting, size and link checks, a production build,
+release tests, Clippy, and native tests on Linux, macOS, and Windows.
 
-The selected matrix jobs bundle Poppler, build installers, and sign/notarize
-macOS. Each uploads an installer and its SHA-256 sidecar. Existing assets are
-never overwritten: an identical retry is accepted, while different bytes
-require a new version. A final job downloads and verifies **all four** installers
-and their checksums. A platform-only dispatch therefore leaves an incomplete
-draft and fails completeness until the other platforms have been built.
+It then checks that the version matches, that GitHub verifies the tag
+signature, and that the tag points at the workflow's commit. It creates a
+draft, or reuses one, and stops if that release is already published.
 
-## Packaged resources and evidence
+Each platform job bundles Poppler, builds the installer, signs and notarizes
+it on macOS, and uploads it with a SHA-256 checksum file. An asset that's
+already uploaded is never replaced. A retry with identical bytes passes, and
+different bytes need a new version. A final job downloads all four
+installers and checks their checksums, so a single-platform run fails this
+step until every platform is built.
 
-macOS copies the available Homebrew Poppler tools and the libraries they need.
-Linux copies the runner's installed APT utilities and selected native libraries.
-Windows downloads the locked provider archive and verifies its archive hash.
-Platform caches may reuse that bundled tree only after `BUNDLE_INVENTORY.json`
-hashes match every file. Cache keys include the bundler, lock and inventory
-code; no partial-key fallback is used. Notices preparation regenerates the
-observed version and file inventory after macOS signing.
-The build prepares the three configured notice files and packages them alongside
-Poppler resources. See [bundle-poppler.sh](scripts/release/bundle-poppler.sh) and
-[Tauri configuration](gui/src-tauri/tauri.conf.json) for the actual inputs.
+## Packaged resources
 
-The active workflow produces four installers and four checksum files. It does
-not produce software bills of materials, build attestations, a complete record
-of native-library sources, Windows signatures, automated vulnerability scans,
-or results from launching the packaged applications. Other release utilities
-are available for separate checks. Runner packages and signing services can
-change the output, so rebuilding the same source may produce different
-installer bytes.
+`npm run prepare:release-resources` fills two ignored folders before Tauri
+builds:
 
-## Review and publish
+- `gui/src-tauri/resources/notices/` gets Pipeline's license, the
+  [third-party notice](THIRD_PARTY_LICENSES.md), and a short versioned
+  notice. Tauri bundles only these three files.
+- `gui/src-tauri/resources/poppler/` gets `pdftoppm`, `pdftotext`, the
+  libraries they load, Poppler's data, and its license files.
+  - macOS uses Homebrew's Poppler, moves its library paths into the app
+    bundle, and signs the binaries before Tauri builds and notarizes the DMG.
+  - Linux uses the runner's Ubuntu packages and the shared libraries the
+    AppImage needs.
+  - Windows downloads the archive pinned in
+    `scripts/release/poppler-lock.json` and checks its hash.
 
-Maintain [the candidate evidence manifest](docs/releases/1.1.0-qualification.json)
-with the exact final commit, tool/provider versions, expected/observed outcomes,
-platforms, and SHA-256 hashes for the evidence and installer files. Keep
-sanitized evidence and installers beside a completed copy of that manifest,
-then run:
+`resources/poppler/BUNDLE_INVENTORY.json` records the Poppler version and the
+hash of every bundled file. The release cache reuses a bundled Poppler folder
+only when every hash matches. See
+[bundle-poppler.sh](scripts/release/bundle-poppler.sh) and the
+[Tauri configuration](gui/src-tauri/tauri.conf.json) for the exact inputs.
+
+The release produces four installers and four checksum files. It doesn't
+produce a software bill of materials, build attestations, or Windows
+signatures. Runner images and signing services change over time, so
+rebuilding the same source can produce different bytes.
+
+## Manual checks before publishing
+
+Automated tests and no-model probes cover only part of what a release needs.
+Before you publish, test the candidate by hand:
+
+- Install it on clean machines for each platform. Check upgrading from the
+  previous release with existing data, WebView2 setup on Windows, the
+  AppImage on a Linux machine with FUSE 2, and that macOS accepts the
+  signature and notarization.
+- Sign in to each provider and run real conversations and reviews, including
+  tool calls and approvals.
+- Run the 20 tasks in
+  [`research-evaluation-v1.json`](docs/workbench/research-evaluation-v1.json)
+  with the same files, model, and effort in each conversation mode. Have a
+  researcher score correctness and traceability.
+- Measure startup, first message, streaming, long conversations,
+  cancellation, and idle CPU and memory on each platform.
+- Stop a running Stata job and confirm its processes are cleaned up.
+- Quit the packaged app at each point in the crash and recovery table in
+  [Architecture](docs/architecture.md#crash-and-recovery), and confirm it
+  recovers.
+- Check that the third-party notices cover what's actually bundled, and that
+  GPL source obligations for Poppler are met. The Windows Poppler archive
+  doesn't include a license file for every library, so add any missing
+  notices.
+
+Record the results in an evidence file based on
+[`docs/releases/1.1.0-qualification.json`](docs/releases/1.1.0-qualification.json),
+with the final commit, tool and provider versions, platforms, outcomes, and
+the hashes of the evidence and installers. Then run:
 
 ```bash
 node scripts/release/qualify-release.mjs /absolute/path/evidence.json <candidate-commit>
 ```
 
-The command fails on missing/pending scenarios, a different commit, or changed
-files. Run this check before publication. Fill in the currently pending
-observations from actual candidate testing. The manifest requires all four advertised
-platforms; changing that scope also requires updating the support policy and
-release checks.
+It fails if a scenario is missing or pending, the commit differs, or a file
+changed. The evidence must cover all four platforms. Dropping a platform also
+means updating [Support](SUPPORT.md) and the release checks.
 
-Before manually publishing the draft, verify its tag/commit, quality and
-completeness conclusions, installer checksums, release notes, and intended
-platform support. Install and exercise the candidate on representative clean
-machines, including upgrade/data preservation and Windows WebView2 setup.
-For Linux, exercise the AppImage directly on a machine with FUSE 2. Verify macOS
-signature/notarization acceptance on a clean machine.
+## Publish
 
-Complete the applicable provider and packaged-app checks in
-[release-qualification.md](docs/workbench/release-qualification.md). Use real
-provider calls and packaged apps to check tool behavior, crash recovery, and
-operating-system permissions. Unit tests and connection probes cover only part
-of that behavior. Review third-party notices and distribution obligations
-against the actual bundled components.
-
-Leave a failing candidate unpublished. For changes to existing installer bytes,
-bump the version and create a new signed tag. Published assets and tags remain
-immutable. This workflow has no automatic publication step.
+Before you publish the draft, confirm its tag and commit, the quality and
+completeness results, the checksums, the release notes, and the platforms.
+If a candidate fails, leave it unpublished, bump the version, and tag again.
+Published tags and assets never change.
 
 ## Updating tools
 
-Keep `gui/.nvmrc`, `rust-toolchain.toml`, and both workflow toolchain versions aligned.
-Third-party Actions are pinned to immutable commit SHAs; update a pin only after
-reviewing the upstream change and rerunning release-contract tests. Changes to
-Poppler packaging require explicit review of the active bundling script and
-locked inputs. Verify what the active script checks; unused utilities do not
-affect its output.
+Keep `gui/.nvmrc`, `rust-toolchain.toml`, and the toolchain versions in both
+workflows in step. Third-party Actions are pinned to commit SHAs. Update a pin
+only after reviewing the upstream change, then rerun the release tests.
+Changes to Poppler packaging need a careful review of the bundling script and
+its pinned inputs.
 
 ## Local unsigned macOS builds
 
-The pre-bundle CLI signing hook skips signing when `APPLE_SIGNING_IDENTITY` is
-unset for a local source build. Official CI sets `PIPELINE_OFFICIAL_RELEASE=1`
-and requires that identity. Signed builds select the explicit
-`PIPELINE_CLI_BINARY`, the configured target triple, or the default
-`target/release/pipeline-cli`; `CARGO_TARGET_DIR` is respected. A missing selected
-binary fails instead of signing unrelated stale target directories.
+When `APPLE_SIGNING_IDENTITY` isn't set, the pre-bundle step skips signing the
+CLI, so local builds work without a certificate. Official builds set
+`PIPELINE_OFFICIAL_RELEASE=1` and require the identity. A signed build signs
+`PIPELINE_CLI_BINARY` if set, otherwise the CLI for the configured target, or
+`target/release/pipeline-cli`. It respects `CARGO_TARGET_DIR`, and fails if the
+selected binary is missing.

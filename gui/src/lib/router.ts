@@ -78,8 +78,8 @@ export function isAppPage(value: unknown): value is AppPage {
   );
 }
 
-// Hash paths use product vocabulary; internal page ids stay compatibility
-// names (see docs/tasks.md on naming contracts).
+// Hash paths use product vocabulary; internal page ids keep their older names
+// (see "Names in the app and in the code" in docs/architecture.md).
 const PAGE_TO_PATH: Record<AppPage, string> = {
   home: "/home",
   main: "/reviews/new",

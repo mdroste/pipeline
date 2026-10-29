@@ -1,78 +1,63 @@
 # Third-party software notices
 
-Pipeline uses the [MIT License](LICENSE). Its installers also include Rust and
-JavaScript dependencies and Poppler PDF tools. Those components retain their
-own licenses, described below and in the accompanying license files.
+Pipeline is released under the [MIT License](LICENSE). Its installers also
+contain Rust and JavaScript libraries and the Poppler PDF tools, which keep
+their own licenses as described below.
 
-Every installer contains this notice, Pipeline's MIT license, and the Poppler
-license text supplied with that platform's Poppler distribution. The GitHub
-release page publishes the platform installers themselves.
+Every installer includes this notice, Pipeline's MIT license, and the Poppler
+license text that came with that platform's Poppler build.
 
 ## Bundled Poppler
 
-Pipeline invokes `pdftoppm` and `pdftotext` as separate programs. Poppler is
-licensed under GPL terms; consult the license text bundled beside these tools.
+Pipeline runs Poppler's `pdftoppm` and `pdftotext` as separate programs.
+Poppler is licensed under the GPL. Its license text is bundled beside these
+tools.
 
-The build uses the installed Homebrew Poppler distribution on macOS and
-the installed Ubuntu packages on Linux. These inputs are not pinned to an exact
-formula commit or APT snapshot. Windows uses the archive URL and SHA-256 in
-`scripts/release/poppler-lock.json`; the build verifies that archive before
-copying its tools and dependency DLLs. It does not independently match each DLL
-to a conda package archive.
+| Platform | Source of the bundled tools |
+| --- | --- |
+| macOS | The Homebrew Poppler installed on the build machine |
+| Linux | The Ubuntu Poppler packages installed on the build machine |
+| Windows | The archive pinned by URL and SHA-256 in `scripts/release/poppler-lock.json`, including its libraries |
 
-`resources/poppler/BUNDLE_INVENTORY.json` records the observed tool version and
-SHA-256 of every file in the bundled Poppler tree. The build verifies cached
-resources before use and regenerates the inventory after macOS signing. This
-inventory is not a full dependency SBOM or evidence of exact source provenance.
-The bundling script determines which checks run. Additional lock and source
-records in the repository are available for maintainer review.
+The macOS and Linux builds aren't pinned to an exact Homebrew formula or
+Ubuntu package snapshot. `resources/poppler/BUNDLE_INVENTORY.json` in each
+build records the Poppler version and the SHA-256 of every bundled file.
 
-Upstream source and distribution records are available from the
-[Poppler project](https://poppler.freedesktop.org/),
-[Homebrew formula repository](https://github.com/Homebrew/homebrew-core),
-[Ubuntu source archive](https://launchpad.net/ubuntu/+source/poppler), and
-[Windows distribution](https://github.com/oschwartz10612/poppler-windows).
-Source archives are not embedded in the installed application.
+Source code for Poppler and its distributions is available from:
 
-Before public release, the maintainer must review all bundled components,
-their licenses and notices, and the required source distribution or offer
-under [Releasing](RELEASING.md). Upstream links and file hashes alone do not establish that
-this requirement is satisfied. The Windows provider ZIP does not include a
-separate license file for every dependency; any additional notices must be
-supplied as part of that review.
+- the [Poppler project](https://poppler.freedesktop.org/);
+- the [Homebrew formula repository](https://github.com/Homebrew/homebrew-core);
+- the [Ubuntu source archive](https://launchpad.net/ubuntu/+source/poppler); and
+- the [Windows distribution](https://github.com/oschwartz10612/poppler-windows).
 
-## Rust and JavaScript dependencies
+The installed app doesn't include these source archives.
 
-The application links Rust crates and ships a compiled JavaScript frontend.
-Their exact versions and package checksums are locked in `Cargo.lock` and
-`package-lock.json`; their upstream license declarations remain the governing
-terms. PDF highlight export uses the `lopdf` crate (MIT); its added
-dependencies are MIT or Apache-2.0 licensed, and `unicode-normalization` also
-carries the Unicode-3.0 data license.
+## Rust and JavaScript libraries
 
-## Optional managed extraction engines
+The app includes compiled Rust crates and a compiled JavaScript interface.
+`Cargo.lock` and `package-lock.json` record their exact versions and
+checksums. Each library's own license applies. PDF highlight export uses the
+`lopdf` crate (MIT). Its dependencies use the MIT or Apache-2.0 licenses, and
+`unicode-normalization` also carries the Unicode-3.0 data license.
 
-These components are not bundled in Pipeline installers. They are downloaded
-only after the user selects Install in Settings, are stored under
-`~/.pipeline/`, and can be removed there:
+## Optional PDF parser
 
-- PaddlePaddle's PaddleOCR-VL 1.6 GGUF model and vision projector are licensed
-  under Apache-2.0. Pipeline pins model revision
-  `511b09642bb324401f15f97cc23bc67e8f0a291d` and verifies both files with
-  SHA-256 before activation.
-- The managed Paddle engine downloads a pinned `llama.cpp` b9637 platform
-  runtime, licensed under MIT, from the project's official GitHub release and
-  verifies the release asset's published SHA-256.
-- The optional PaddleOCR-VL Full Parser downloads checksum-pinned uv 0.11.26
-  (MIT OR Apache-2.0), verified CPython 3.12.13 (Python Software Foundation
-  License), and platform-specific wheel locks rooted at `paddleocr==3.7.0` and
-  `paddlepaddle==3.2.1` (Apache-2.0). Every Python artifact URL and SHA-256 is
-  fixed in a committed PEP 751 lock. PP-DocLayoutV3 is installed from a fixed
-  Paddle model artifact under Apache-2.0 and verified with a release-owned
-  SHA-256 before local initialization. These components are stored in a private
-  version directory and removed with the Full Parser. Its runtime and wheel
-  locks remain in the source repository.
+These components aren't in the installer. Pipeline downloads them only when
+you choose **Install** in Settings, stores them in `~/.pipeline/`, and removes
+them when you uninstall the parser.
 
-Operating-system frameworks (for example WebView2, WebKit, and macOS system
-frameworks) are not redistributed in Pipeline's resource bundle and are not
-listed as bundled components here.
+| Component | Version | License |
+| --- | --- | --- |
+| PaddleOCR-VL 1.6 GGUF model and vision projector | Model revision `511b09642bb324401f15f97cc23bc67e8f0a291d` | Apache-2.0 |
+| `llama.cpp` runtime, from the project's GitHub releases | b9637 | MIT |
+| uv | 0.11.26 | MIT or Apache-2.0 |
+| CPython | 3.12.13 | Python Software Foundation License |
+| `paddleocr` and `paddlepaddle`, with their locked dependencies | 3.7.0 and 3.2.1 | Apache-2.0 |
+| PP-DocLayoutV3 layout model | Fixed Paddle model artifact | Apache-2.0 |
+
+Pipeline checks the SHA-256 of every download before using it. The Python
+packages are pinned by URL and hash in a PEP 751 lock file in this
+repository.
+
+Operating-system components, such as WebView2, WebKit, and macOS frameworks,
+aren't redistributed with Pipeline.

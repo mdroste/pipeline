@@ -25,7 +25,7 @@ if (options.help) {
 
 const root = resolve(options.root ?? repository);
 const policy = JSON.parse(readFileSync(resolve(repository, "scripts/source-size-policy.json"), "utf8"));
-const baselinePath = resolve(options.baseline ?? resolve(repository, "docs/refactoring/source-size-baseline.json"));
+const baselinePath = resolve(options.baseline ?? resolve(repository, "scripts/source-size-baseline.json"));
 let baseline = { files: {} };
 try { baseline = JSON.parse(readFileSync(baselinePath, "utf8")); }
 catch (error) { if (error.code !== "ENOENT" || options.baseline) throw error; }

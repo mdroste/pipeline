@@ -1,148 +1,140 @@
 # Privacy and data flow
 
-Pipeline stores research on your computer and sends material to the AI
-providers you choose. It has no Pipeline account, cloud storage service,
-analytics, or application telemetry. Provider accounts and local model servers
-have their own data policies.
+Pipeline stores your research on your computer and sends material to the AI
+providers you choose. There's no Pipeline account, cloud storage, analytics,
+or telemetry. Provider accounts and local model servers have their own data
+policies.
 
 ## What Pipeline stores
 
-Research data goes under `~/.pipeline/` by default. You can choose another
-[research data folder](docs/storage.md) in Settings.
+Your research is stored in `~/.pipeline/` unless you choose another
+[research data folder](docs/settings.md#research-data-folder).
 
 | Data | Examples |
 | --- | --- |
-| Reviews | Input copies or extracted text, page images, figures, model responses, reports, annotations, logs, and usage |
-| Projects and conversations | Messages, drafts, imported papers, sources, notes, claims, evidence, and saved command results |
-| Automations | Definitions, schedules, progress, results, and activity history |
-| Device settings | Preferences, API keys, provider sign-ins, installed parsers, model weights, and caches |
+| Reviews | Copies or extracted text of your documents, page images, figures, model responses, reports, annotations, logs, and usage |
+| Projects and conversations | Messages, drafts, imported papers, sources, notes, claims, evidence, and command results |
+| Automations | Definitions, schedules, progress, results, and history |
+| Device settings | Preferences, API keys, provider sign-ins, installed parsers, model files, and caches |
 
 Reports, documents, conversations, logs, and exports are **not encrypted by
-Pipeline**. Saved API keys are encrypted with AES-GCM; the encryption key is
-stored separately under the same operating-system account. Protect that
-account and its files: someone with access to both files can recover the keys.
+Pipeline**. Saved API keys are encrypted with AES-GCM, and the encryption key
+is stored separately under the same computer account. Anyone who can read
+both files can recover your keys, so protect that account and its files.
 
-Changing the research folder moves none of the existing files. Device
-settings, credentials, provider session files, managed tools, and disposable
-caches stay under the local `~/.pipeline/` directory.
+Device settings, sign-ins, installed tools, and caches always stay in
+`~/.pipeline/` on this computer, even if you choose another research data
+folder.
 
 ## What reaches an AI provider
 
 ### Conversations
 
-A conversation uses ChatGPT or your Claude Code subscription. Depending on
-the task and enabled tools, it can send:
+A conversation uses ChatGPT or your Claude subscription. Depending on the task
+and the tools you allow, it can send:
 
 - your messages and recent conversation history;
-- assistant instructions and selected project notes or evidence;
+- assistant instructions and the project notes or evidence you select;
 - document excerpts, page images, and file contents read by an allowed tool;
-- tool requests and results, including local command output; and
-- responses to approval requests or questions, plus model and usage metadata.
+- tool requests and results, including output from local commands; and
+- your answers to approval requests and questions.
 
-Importing a paper into a project does not by itself send the paper to a model.
-Material is sent when selected as context or returned by a tool. Local command
-outputs may therefore reach a provider later, even if the command itself ran
-without network access.
+A paper you import into a project goes to a model only when you select it as
+context or an allowed tool reads it. Output from a local command can reach a
+provider later in the same way, even if the command itself ran offline.
 
-ChatGPT conversations and subscription Reviews share a Pipeline-managed
-account stored under `~/.pipeline/providers/chatgpt/`. Their native session
-history is stored separately. Claude Code manages its own subscription
-sign-in; Pipeline does not import its subscription credentials.
+ChatGPT conversations and ChatGPT reviews share one sign-in, stored in
+`~/.pipeline/providers/chatgpt/`. Claude Code keeps its own sign-in. Pipeline
+checks that you're signed in but never copies your Claude credentials.
 
 ### Reviews and extraction
 
-A Review sends each step's prompt, assigned document material, selected prior
-responses, and tool results to that step's provider. Inspect the run preview
-to see the provider and permitted inputs. A custom workflow may use several
-providers in the same run.
+Each review step sends its prompt, the document material assigned to it,
+earlier responses it depends on, and tool results to that step's provider.
+The run preview shows the provider and inputs for each step. A custom
+workflow can use several providers in one run.
 
-API connections send requests to the configured OpenAI, Anthropic, Google,
-or OpenAI-compatible endpoint. Subscription connections use the installed
-Codex or Claude Code tool. The advanced legacy Codex connection uses the
-terminal's account. Pipeline cannot change a provider's retention or training
-policies.
+API connections send requests to the OpenAI, Anthropic, Google, or custom
+endpoint you set up. Subscription connections go through the Codex or Claude
+Code tool on your computer. The advanced legacy Codex connection uses your
+terminal's Codex account instead of Pipeline's sign-in. Pipeline can't change
+a provider's retention or training policies.
 
-Poppler and the optional PaddleOCR-VL Full Parser extract PDFs locally.
-**Model extraction uses the selected model connection and can send document
-content to a remote provider.** Choosing local extraction does not make a
-subsequent remote Review local.
+Poppler and the optional PaddleOCR-VL Full Parser extract PDFs on your
+computer. **Model extraction sends the document to the model connection you
+selected.** A review after local extraction still sends material to your
+review provider.
 
-An OpenAI-compatible connection sends data to its configured URL. The label
-“local model” does not ensure that the server runs on your computer.
+A custom model server receives data at the URL you entered. It runs on your
+computer only if that URL points to your computer.
 
 ### Automations
 
-Automations use the same conversation, Review, and local-command connections.
-Starting one permits its configured steps to run with the material and tools
-shown in its preparation screen. Scheduled work can send requests while
-Pipeline runs in the background.
+Automations use the same connections as conversations, reviews, and local
+commands. Starting one lets its steps use the material and tools shown in its
+preview. Scheduled automations can send requests while Pipeline runs in the
+background.
 
 ## Other network activity
 
-Pipeline may also:
+Pipeline also connects to the internet to:
 
-- check GitHub Releases for a newer version about once a day, which you can
-  turn off in Settings. GitHub receives your network address and app version,
+- check GitHub for a newer version about once a day, which you can turn off
+  in Settings. GitHub receives your network address and app version, and
   nothing about your research;
-- complete provider sign-in and retrieve available models or account limits;
-- use web search when supported and enabled;
-- query Crossref when literature search or a saved literature check is enabled,
-  or when a Review's reference check has lookups turned on (it sends each
-  reference's text as written in the bibliography);
-- download the optional PDF parser and model weights when you choose Install;
-- fetch a workflow from a URL you choose to import; and
-- fetch repository updates when you choose **Check GitHub** or **Check host**
-  for an attached project.
+- sign in to providers and fetch available models and account limits;
+- run web searches, when the connection supports them and you turn them on;
+- look up papers on Crossref, when you use literature search or turn on
+  lookups in a reference check. Lookups send the reference text as written in
+  your bibliography. If you add a Crossref contact email in the **Reading
+  inbox**, it's sent with each lookup, as Crossref asks;
+- download data from FRED, DBnomics, or the World Bank when you ask for it;
+- download the optional PDF parser and its model files when you choose
+  Install;
+- fetch a workflow from a URL you import; and
+- fetch updates for an attached Git repository when you choose **Check
+  GitHub**.
 
-Search queries can contain terms from your research. Project Git checks use
-your Git credentials and download repository updates; they do not commit,
-merge, or push your working files. Local commands can contact other services
-when you enable network access for them.
+Search queries can contain terms from your research. Git checks use your own
+Git credentials and download updates only. Pipeline never commits, merges, or
+pushes. Local commands can contact other services if you allow network access
+for them.
 
 ## Exports and sharing
 
-Exported files are ordinary files at the location you choose. Anyone who
-receives them can read their contents.
+Exports are ordinary files saved where you choose. Anyone who gets a copy can
+read it. Backups, project packages, and replication capsules never include
+credentials or permission to run commands. Report and transcript exports
+contain what you select, which may include unpublished research.
 
-- A research backup (`.pwrx`) includes the research database, retained documents,
-  conversations, and app-owned conversation files. It excludes credentials,
-  native provider session homes, external project folders, and the separate
-  Review and Automation stores.
-- A project package (`.pwex`) includes selected research and referenced items.
-  It excludes conversations, credentials, raw datasets, and execution settings.
-- A replication capsule (`.pwrc`) can include selected scripts and data, along
-  with instructions and expected results. Its preview lists included and
-  missing inputs. It excludes credentials and execution permissions.
-- Report and transcript exports include the content you select. They may
-  contain unpublished research or private conversation text.
-
-Check the export preview before sharing. Backups and packages are not
-continuous synchronization between computers.
+See [Back up and share](docs/projects.md#back-up-and-share) for what each
+format includes. Check the export preview before you share a file.
 
 ## Retention and deletion
 
-Deleting a Review moves it and its saved files to recoverable Trash. Permanent
-deletion removes the trashed copy. Archiving a project or conversation hides it
-without erasing its records. Storage cleanup also previews what it will move
-to Trash before you apply it.
+Deleting a review moves it and its files to Trash, where you can restore it.
+Emptying Trash deletes it permanently. Archiving a project or conversation
+hides it without deleting anything. Storage cleanup shows what it will move to
+Trash before you confirm.
 
-Uninstalling Pipeline leaves its data behind. To remove all local Pipeline
-data, quit the app, preserve anything you need, and delete `~/.pipeline/` and
-any custom research data folder you used. Exports and original files outside
-those folders remain where you saved them. Provider tools may also retain
-their own account or session files.
+Uninstalling Pipeline leaves your data in place. To remove all of it, quit
+Pipeline, keep copies of anything you need, and delete `~/.pipeline/` and any
+other research data folder you used. Exports and your own files stay where you
+saved them. Provider tools may keep their own account and session files.
 
-Review connection records under `~/.pipeline/providers/workflows/attempts/`
-can contain prompts, responses, paths, and usage. They are separate from
-ordinary report exports and run deletion; include them when assessing or
-removing local copies of research.
+Pipeline keeps a record of each ChatGPT review call in
+`~/.pipeline/providers/workflows/attempts/`, so it can recover results after
+an interruption. These records can contain prompts, responses, file paths,
+and usage. They
+aren't part of report exports, and deleting a run doesn't remove them, so
+include them when you clean up copies of your research.
 
-Deleting local files does not delete material already sent to a provider,
-search service, or custom endpoint. Use that service's account controls for
-retention and deletion. Before processing restricted material, check your
-institution's rules and the selected provider account's terms.
+Deleting local files doesn't delete material already sent to a provider,
+search service, or custom server. Use that service's account controls. Before
+you process restricted material, check your institution's rules and your
+provider's terms.
 
 ## Reporting a problem
 
 Remove confidential research and credentials from public bug reports. Report
-security vulnerabilities privately using [the security policy](SECURITY.md).
+security problems privately, as described in [Security](SECURITY.md).

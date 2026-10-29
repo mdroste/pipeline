@@ -41,12 +41,10 @@ Thumbs.db
 # Bundled poppler binaries — populated per-platform by CI, not committed
 /gui/src-tauri/resources/poppler/*
 !/gui/src-tauri/resources/poppler/.gitkeep
-!/gui/src-tauri/resources/poppler/README.md
 
 # Package notices are generated before Tauri builds; no complete SBOM is produced.
 /gui/src-tauri/resources/notices/*
 !/gui/src-tauri/resources/notices/.gitkeep
-!/gui/src-tauri/resources/notices/README.md
 
 # Local environment / secrets
 .env

@@ -1,11 +1,51 @@
-# Versioned result exporters
+# Result exporters
 
-These helpers produce `research-results-v1` for **Analyses → Experiments**. Import only an adopted output from a successful execution. Pipeline attaches the execution ID and exact artifact locator itself; the exporter does not choose provenance. Missing uncertainty is JSON `null`, never zero. Python, R, and Julia support declared convergence and diagnostics in the retained export artifact; these declarations are not automatic validation.
+These helpers write your analysis results in the `research-results-v1` format,
+which Pipeline imports under **Analyze → Experiments** with **Import
+research-results-v1 / v2**. There's one helper each for Python, R, Julia, and
+Stata. `research-results-v1.example.json` shows a complete file.
 
-Declare the helper, analysis script, data, and dependency lockfiles as profile inputs. Use relative script paths. **Analyses → Captured execution** captures those inputs, records a declared toolchain version and executable hash, and writes `pipeline-parameters.json` into every new run directory. `PIPELINE_PARAMETERS_FILE` names that file; `PIPELINE_RANDOM_SEED` carries an optional seed. The script must actually read and apply those values. A seed alone does not promise deterministic computation.
+## Use a helper
 
-Python uses only the standard library. R needs `jsonlite`; Julia needs `JSON3` recorded in its environment. These helpers do not install packages. The Stata helper is a scalar export program; run it through the Stata launcher configured in your execution profile and finish the do-file with `exit, clear`. R, Julia, and Stata helpers require qualification with the researcher's installed toolchain before release claims.
+1. Call the helper at the end of your analysis script to write the results
+   file.
+2. In **Analyze → Saved analysis plans**, list the helper, your script, your
+   data, and your lockfiles as inputs. Give scripts as paths relative to the
+   project folder.
+3. Run the plan. Pipeline writes `pipeline-parameters.json` into each new run
+   folder and sets `PIPELINE_PARAMETERS_FILE` to its path. If you set a random
+   seed, it's in `PIPELINE_RANDOM_SEED`. Your script has to read these values
+   for them to take effect.
+4. Import the results file from a run that finished successfully. Pipeline
+   records which run and file the results came from.
 
-Raw data is excluded from selective `.pwex` project exchange. `.pwrx` is a private whole-store recovery backup and contains captured local data; it is not a coauthor sharing format. Dataset dictionary and summary policy applies to curated search/context services. Arbitrary host commands still have host access.
+Write a missing standard error or interval as `null`, not `0`. The Python, R,
+and Julia helpers can also record convergence and diagnostics that you
+declare. Pipeline shows these as your declarations and doesn't check them.
 
-For metadata-only data registration, `dataset-version-v1.example.json` shows the accepted dictionary shape. Replace its example hash, external version reference, dimensions, variable definitions and acquisition details with your exporter's actual declarations. Paste it into **Data & samples → Import an exporter dictionary**. Pipeline marks external diagnostics as declarations and does not read the external dataset.
+## Requirements
+
+- Python uses only the standard library.
+- R needs `jsonlite`.
+- Julia needs `JSON3` in the project environment.
+- Stata: run the helper through the Stata launcher in **Analyze → Command
+  settings**, and end the do-file with `exit, clear`.
+
+The helpers don't install packages. Test the R, Julia, and Stata helpers with
+your own installation before you rely on them.
+
+## Register a dataset without importing it
+
+`dataset-version-v1.example.json` shows the format for describing a dataset
+Pipeline doesn't read, such as one stored elsewhere. Replace the example
+hash, version reference, dimensions, variables, and source details with your
+own, then paste it into **Analyze → Data & samples → Import a data
+dictionary**.
+
+## Sharing
+
+A project package (`.pwex`) includes raw data only if you turn on **Allow raw
+data in sharing packages** under **Analyze → Data & samples**. A research
+backup (`.pwrx`) is a private copy of your whole library, including captured
+data, so don't use it to share with coauthors. See
+[Back up and share](../../docs/projects.md#back-up-and-share).
