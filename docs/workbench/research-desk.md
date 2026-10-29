@@ -1,6 +1,6 @@
-# Research desk — NF-01 through NF-06
+# Research desk
 
-Implemented September 7, 2026 against the current Workspace architecture. This is the implementation and usage guide for their bounded first slices. It supplements [project-surface.md](project-surface.md), [research-studio.md](research-studio.md), and [release-qualification.md](release-qualification.md). It is not a packaged-release qualification record.
+The research desk covers reading and conversation context, local search, decisions and change impact, source acquisition, captured data and samples, and captured execution. This is the implementation and usage guide for those features. It supplements [project-surface.md](project-surface.md), [research-studio.md](research-studio.md), and [release-qualification.md](release-qualification.md). It is not a packaged-release qualification record.
 
 ## Find the features
 
@@ -8,18 +8,18 @@ Open a Workspace project, then **Open project**. The project stays beside its co
 
 | Feature | Project destination | What is available |
 |---|---|---|
-| NF-01 | Every desk destination | Persistent document/object pane, assistant, exact-source context tray, pinned comparison, remembered revision and layout |
-| NF-02 | Library → Search & collections | Local project search, kind filters, exact excerpts, pagination, saved reading collections, rebuild status |
-| NF-03 | Activity → Decisions & impact | Decisions with rationale/alternatives/supersession, explicit dependencies, explainable impact, session handoff draft |
-| NF-04 | Library → Acquisition inbox | Crossref DOI/bibliographic discovery, selected metadata/abstract import, explicit PDF acquisition, local PDF import, reading status |
-| NF-05 | Analyze → Data & samples | Captured CSV/TSV, dictionary and missingness, versioned samples, exporter metadata, per-project data access, FRED/ALFRED vintage capture |
-| NF-06 | Analyze → Captured execution | Capture configured inputs, inspect and authorize exact plan, test, replay in a fresh directory, retained execution receipts |
+| Reading and context | Every desk destination | Persistent document/object pane, assistant, exact-source context tray, pinned comparison, remembered revision and layout |
+| Search and collections | Library → Search & collections | Local project search, kind filters, exact excerpts, pagination, saved reading collections, rebuild status |
+| Decisions and impact | Activity → Decisions & impact | Decisions with rationale/alternatives/supersession, explicit dependencies, explainable impact, session handoff draft |
+| Acquisition | Library → Acquisition inbox | Crossref DOI/bibliographic discovery, selected metadata/abstract import, explicit PDF acquisition, local PDF import, reading status |
+| Data and samples | Analyze → Data & samples | Captured CSV/TSV, dictionary and missingness, versioned samples, exporter metadata, per-project data access, FRED/ALFRED vintage capture |
+| Captured execution | Analyze → Captured execution | Capture configured inputs, inspect and authorize exact plan, test, replay in a fresh directory, retained execution receipts |
 
 Analyze also contains Experiments, Result links, and Theory. Write contains Manuscript, Responses, and Edits & acceptance. Automate exposes action items, recurring checks, and revision automations. Activity contains research notes, claims and evidence, and decisions. Literature notes retains the existing BibTeX, source assessments, and Zotero metadata adapter.
 
 Workspace and Workflows continue to own separate stores, credentials, process lifecycles, cancellation and writable runtime state. None of these features turns a Workspace recipe or captured execution plan into a Workflow. Existing immutable Review handoffs remain explicit.
 
-## NF-01: durable reading and explicit conversation context
+## Durable reading and explicit conversation context
 
 `WorkspaceConversationView.tsx` extracts transcript/composer rendering from `WorkspacePage.tsx`. The page still owns streaming, server requests, Stop, draft persistence and the bounded 200-message transcript window. Research panels remain lazy loaded.
 
@@ -35,7 +35,7 @@ Layout is optional local UI state under `pipeline.desk.<workspaceId>`: subpage, 
 
 Markdown is registered with the document reader's highlighter. Unknown grammars fall back to plain text. Reader error boundaries contain failures to the affected pane and provide Retry.
 
-## NF-02: local search and reading collections
+## Local search and reading collections
 
 The rebuildable projection is SQLite FTS5 with Unicode tokenization. It covers immutable paper/source versions, citation identifiers, retained note revisions, project record revisions, finalized conversation messages, execution receipts, structured results, claims and artifact metadata. Collections, decisions, dataset dictionaries and sample declarations are also searchable. Inventory snapshots, execution-plan internals and raw dataset bytes are excluded.
 
@@ -55,7 +55,7 @@ The scoped dynamic tools are:
 
 These use the existing active Workspace binding, tool catalog, durable tool receipts and per-turn call budget. They expose no network acquisition or host execution grant. Native App Server web search remains independently unavailable under the existing compatibility policy.
 
-## NF-03: decisions and change impact
+## Decisions and change impact
 
 Decisions retain a statement, rationale, alternatives, exact assumption references, state and optional superseded decision. Each also creates an ordinary `ResearchNote`, preserving existing context and note-history behavior. An accepted superseding decision retires the earlier accepted note. Rejected decisions remain searchable with their rationale; creating a proposal does not accept it. Operation reuse with changed content is rejected.
 
@@ -67,7 +67,7 @@ Impact statuses distinguish `input_changed`, `check_failed`, `passage_moved`, `s
 
 **Draft session handoff** creates a retained inventory of proposed notes, open work, produced outputs and the context a fresh conversation would receive. The researcher accepts individual proposed notes using existing note acceptance. This is a host-generated draft inventory; it makes no model call and does not silently turn a summary into accepted memory.
 
-## NF-04: acquisition with honest source access
+## Acquisition with honest source access
 
 Enable acquisition explicitly for the project in **Library → Acquisition inbox**. The default is off. This setting belongs to Workspace and is independent of Workflow networking, command networking and model web search.
 
@@ -79,9 +79,9 @@ The original PDF is retained as an immutable source artifact. Existing determini
 
 The inbox tracks new lookup results, metadata-only imported items, ready-to-read sources, read items, excluded items and failures. State changes create superseding receipts. Excluding a source removes its version from curated search and context; it does not destroy the retained source.
 
-The existing Zotero metadata preview remains under Literature notes. Selected attachments, remote-library credentials, collection refresh and automatic working-paper/published-version reconciliation require separate adapters and qualification; this implementation does not write Zotero's database or merge versions automatically.
+The existing Zotero metadata preview remains under Literature notes. Selected attachments, remote-library credentials, collection refresh and automatic working-paper/published-version reconciliation require separate adapters and qualification; Pipeline does not write Zotero's database or merge versions automatically.
 
-## NF-05: captured data, declared samples and sharing policy
+## Captured data, declared samples and sharing policy
 
 CSV/TSV import captures immutable bytes and a SHA-256. It supports UTF-8/BOM, quoted fields, escaped quotes, embedded newlines and CRLF. Imports refuse ragged rows, invalid quoting and oversized inputs rather than silently dropping cells. Limits are 32 MiB, one million data rows, 2,000 columns, two million cells and 1 MiB per field.
 
@@ -104,7 +104,7 @@ Selective `.pwex` still has its existing object-selection contract; there is no 
 
 FRED/ALFRED capture accepts a series ID, an exact vintage date and a transient API key. Requests set both `realtime_start` and `realtime_end` to the requested vintage and retain the response's real-time bounds, observation dates, series units/frequency, `lin` transformation and retrieval date. Requests refuse incomplete results beyond 100,000 observations. The key is used in memory for the request and is omitted from records and error messages. See the official [series metadata](https://fred.stlouisfed.org/docs/api/fred/series.html), [observations](https://fred.stlouisfed.org/docs/api/fred/series_observations.html), and [real-time period](https://fred.stlouisfed.org/docs/api/fred/realtime_period.html) contracts.
 
-## NF-06: capture, authorize, test and replay
+## Capture, authorize, test and replay
 
 1. Configure an existing execution profile with an attached project folder, installed executable, relative script paths, declared inputs, expected outputs and timeout. Declare the script, helpers, data and package lockfiles.
 2. In **Captured execution**, choose the profile and optional exact datasets/sample. Supply JSON parameters, optional seed and a declared toolchain/environment description.
@@ -122,7 +122,7 @@ Receipts and the captured-job inspector keep three separate claims. The legacy a
 - **Dependency coverage:** `declared_only`. Bounded TeX `.fls` recorder paths are retained as observed dependencies, not proof of complete closure.
 - **Containment:** `host_access`. Fresh cwd and copied inputs do not restrict access to undeclared host files, installed packages or networking. Toolchain versions are researcher declarations plus host executable identity, not a provisioned environment.
 
-Ordinary result adoption still requires a successful execution and validated expected outputs. Failed exits, cancellation and unknown outcomes keep their existing distinct receipts. The helper examples serialize `research-results-v1` coefficients, uncertainty, sample/specification identity and declared diagnostics; they never infer authoritative coefficients from logs. Python uses the standard library, R requires `jsonlite`, Julia requires `JSON3`, and Stata's scalar helper must run through the mandated `oldstata` wrapper on this Mac. No Stata executable or diagnostic was invoked during this implementation.
+Ordinary result adoption still requires a successful execution and validated expected outputs. Failed exits, cancellation and unknown outcomes keep their existing distinct receipts. The helper examples serialize `research-results-v1` coefficients, uncertainty, sample/specification identity and declared diagnostics; they never infer authoritative coefficients from logs. Python uses the standard library, R requires `jsonlite`, Julia requires `JSON3`, and Stata's scalar helper runs through the Stata launcher configured in the execution profile.
 
 ## Storage, recovery and implementation map
 

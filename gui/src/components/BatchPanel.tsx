@@ -212,7 +212,7 @@ export default function BatchPanel({
       });
       if ((setup.configuredInputMode || setup.inputMode) === "none") {
         throw new Error(
-          "The active workflow no longer accepts primary inputs. Refresh the setup.",
+          "This review design no longer accepts files or folders. Refresh the setup.",
         );
       }
       if (!setup.readiness.ready) {
@@ -407,8 +407,7 @@ export default function BatchPanel({
           Batch reports
         </h2>
         <span className="text-xs text-gray-500 dark:text-gray-400">
-          Generates one report per input, one at a time, using the active
-          workflow.
+          Review each document in turn using the selected review design.
         </span>
         {showClose && (
           <button
@@ -456,8 +455,8 @@ export default function BatchPanel({
               This workflow does not accept batch inputs.
             </p>
             <p className="mt-1 text-xs leading-5">
-              Switch to a workflow with a document or folder primary input
-              before queuing files.
+              Choose a review design that accepts documents or folders, then add
+              files.
             </p>
           </div>
         )}
@@ -470,7 +469,7 @@ export default function BatchPanel({
                 Shared report options
               </h3>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                These values are captured once and supplied to every batch job.
+                Use these options for every review in the batch.
               </p>
               {variables.map((spec) => {
                 const id = `batch-variable-${spec.key}`;
@@ -621,7 +620,7 @@ export default function BatchPanel({
           <div>
             {batchSnapshot && (
               <p className="mb-2 break-all rounded bg-gray-50 px-3 py-2 text-[11px] text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
-                Captured profile{" "}
+                Saved review design{" "}
                 <span className="font-mono">
                   {batchSnapshot.profile_id || "unknown"}
                 </span>

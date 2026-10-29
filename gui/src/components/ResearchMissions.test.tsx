@@ -124,7 +124,7 @@ it("prepares an inspect-only mission and shows its concrete scope before start",
     await screen.findByRole("button", { name: "+ New research automation" }),
   );
   const prepare = await screen.findByRole("button", {
-    name: "Prepare research automation →",
+    name: "Preview research automation →",
   });
   await waitFor(() => expect(prepare).toBeEnabled());
   expect(
@@ -163,14 +163,14 @@ it("keeps a recoverable mission draft after preparation fails", async () => {
   );
   await waitFor(() =>
     expect(
-      screen.getByRole("button", { name: "Prepare research automation →" }),
+      screen.getByRole("button", { name: "Preview research automation →" }),
     ).toBeEnabled(),
   );
   fireEvent.change(screen.getByLabelText("Automation name"), {
     target: { value: "Test the extension" },
   });
   fireEvent.click(
-    screen.getByRole("button", { name: "Prepare research automation →" }),
+    screen.getByRole("button", { name: "Preview research automation →" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Captured inputs changed",
@@ -196,7 +196,7 @@ it("passes selected computations and monitors as bounded explicit policy", async
   );
   await waitFor(() =>
     expect(
-      screen.getByRole("button", { name: "Prepare research automation →" }),
+      screen.getByRole("button", { name: "Preview research automation →" }),
     ).toBeEnabled(),
   );
   fireEvent.click(screen.getByText("Computation and project changes"));
@@ -204,7 +204,7 @@ it("passes selected computations and monitors as bounded explicit policy", async
   fireEvent.click(screen.getByLabelText(/Elasticity grid/));
   fireEvent.click(screen.getByLabelText("Accepted data"));
   fireEvent.click(
-    screen.getByRole("button", { name: "Prepare research automation →" }),
+    screen.getByRole("button", { name: "Preview research automation →" }),
   );
   await waitFor(() =>
     expect(mocks.invoke).toHaveBeenCalledWith(
@@ -244,7 +244,7 @@ it("does not allow host computations through an isolated task conversation", asy
   );
   await waitFor(() =>
     expect(
-      screen.getByRole("button", { name: "Prepare research automation →" }),
+      screen.getByRole("button", { name: "Preview research automation →" }),
     ).toBeEnabled(),
   );
   fireEvent.click(screen.getByText("Computation and project changes"));
@@ -311,14 +311,18 @@ it("offers reconciliation without automatically retrying an uncertain action", a
     />,
   );
   expect(
-    screen.getByRole("button", { name: "Reconcile recorded results" }),
+    screen.getByRole("button", {
+      name: "Check saved results and update status",
+    }),
   ).toBeEnabled();
   expect(mocks.invoke).not.toHaveBeenCalledWith(
     "mission_control",
     expect.anything(),
   );
   fireEvent.click(
-    screen.getByRole("button", { name: "Reconcile recorded results" }),
+    screen.getByRole("button", {
+      name: "Check saved results and update status",
+    }),
   );
   await waitFor(() =>
     expect(mocks.invoke).toHaveBeenCalledWith("mission_control", {

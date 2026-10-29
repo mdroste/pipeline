@@ -25,14 +25,14 @@ it("finds tools across sections and opens the keyboard selection without sending
   ).toEqual(["ManuscriptWrite", "FilesLibrary"]);
   const search = screen.getByRole("combobox", { name: "Find a project view" });
   await waitFor(() => expect(search).toHaveFocus());
-  fireEvent.change(search, { target: { value: "execution" } });
+  fireEvent.change(search, { target: { value: "research" } });
   const options = screen.getAllByRole("option");
   expect(options).toHaveLength(2);
   expect(options[0]).toHaveAttribute("aria-selected", "true");
   fireEvent.keyDown(search, { key: "ArrowDown" });
   expect(options[1]).toHaveAttribute("aria-selected", "true");
   fireEvent.keyDown(search, { key: "Enter" });
-  expect(choose).toHaveBeenCalledWith("execution");
+  expect(choose).toHaveBeenCalledWith("memory");
   expect(close).toHaveBeenCalledOnce();
 });
 

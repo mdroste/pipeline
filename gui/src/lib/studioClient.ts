@@ -480,7 +480,7 @@ export const studioClient = {
       response.outcome === "unknown"
     )
       throw new Error(
-        "Operation outcome is unknown. Refresh and inspect its records before retrying.",
+        "Pipeline could not confirm whether this finished. Refresh and check the saved records before trying again.",
       );
     return response as T;
   },
@@ -639,12 +639,3 @@ export const resultRef = (r: ResearchResultV1): ResultRef => ({
   executionId: r.sourceExecutionId,
   resultId: r.resultId,
 });
-export function proseForDiff(text: string): string {
-  return text
-    .replace(/(?<!\\)%[^\n]*/g, "")
-    .replace(/\\(?:label|cite\w*|ref)\{[^}]*\}/g, "")
-    .replace(/\\(?:textbf|textit|emph|section|subsection)\{([^{}]*)\}/g, "$1")
-    .replace(/\s+/g, " ")
-    .replace(/([.!?])\s/g, "$1\n")
-    .trim();
-}

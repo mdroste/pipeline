@@ -1,6 +1,7 @@
 //! Bounded host-tool execution for direct API providers.
 
 use super::*;
+use base64::{engine::general_purpose::STANDARD, Engine};
 
 #[derive(Default)]
 pub(crate) struct ToolBudget {

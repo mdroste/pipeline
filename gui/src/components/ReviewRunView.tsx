@@ -6,7 +6,7 @@ import type {
   PipelineState,
   ReviewRoutingSummary,
   RuntimeStage,
-} from "../hooks/usePipeline";
+} from "../lib/reviewRuntimeTypes";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
 import type { QueuedRun } from "../lib/types";
 import { queuedExplanation } from "../lib/reviewRuns";
@@ -168,7 +168,7 @@ export default function ReviewRunView({
           <p className="mt-6 text-center text-xs leading-relaxed text-gray-500 dark:text-neutral-400">
             This may take 15–60 minutes depending on
             <br />
-            paper length, number of agents, and LLM load.
+            paper length, number of reviewers, and provider response times.
             <br />
             It keeps running if you leave this page.
           </p>

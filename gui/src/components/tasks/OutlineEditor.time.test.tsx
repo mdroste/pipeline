@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import OutlineEditor from "./OutlineEditor";
-import { template } from "../../lib/taskClient";
+import { template } from "../../lib/taskTemplates";
 
 it("displays the deadline using its own offset instead of today's DST offset", () => {
   vi.useFakeTimers();

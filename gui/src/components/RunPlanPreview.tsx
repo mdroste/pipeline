@@ -88,10 +88,8 @@ export default function RunPlanPreview({
           adaptiveAgentRange={adaptiveAgentRange(config)}
           selectedId={null}
           onSelect={onOpenDesigner}
+          hint="Select any stage to open it in the Review designer."
         />
-        <p className="mt-4 text-center text-xs text-gray-500 dark:text-gray-400">
-          Select any stage to open it in the Review designer.
-        </p>
       </div>
     </div>
   );

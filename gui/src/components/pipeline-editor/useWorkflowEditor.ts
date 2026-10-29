@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 
 import type { PipelineConfig } from "../../lib/types";
+import { DEFAULT_PROFILE_ID } from "../../lib/autoReview";
 
 import { type WaveSelection } from "../WaveDiagram";
 
@@ -21,7 +22,8 @@ export function useWorkflowEditor(onDirtyChange?: (dirty: boolean) => void) {
   const [schemaDraftValid, setSchemaDraftValid] = useState(true);
   const [schemaEditorEpoch, setSchemaEditorEpoch] = useState(0);
   const [editing, setEditing] = useState<EditingMode>(null);
-  const [activeProfile, setActiveProfile] = useState<string>("auto-review");
+  const [activeProfile, setActiveProfile] =
+    useState<string>(DEFAULT_PROFILE_ID);
   const [, setHistoryVersion] = useState(0);
   const configRef = useRef<PipelineConfig | null>(config);
   const activeProfileRef = useRef(activeProfile);

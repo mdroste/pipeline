@@ -7,7 +7,7 @@ import {
   type ContextItem,
   type ImpactReport,
 } from "../../lib/deskClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { researchClient } from "../../lib/workbench/researchClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { projectClient } from "../../lib/projectClient";
 import type { ResearchNote } from "../../lib/workbenchTypes";
@@ -82,7 +82,7 @@ export default function Decisions({
           className={input}
           value={rationale}
           onChange={(e) => setRationale(e.target.value)}
-          placeholder="Reason, evidence, and unresolved qualifications"
+          placeholder="Explain the decision, its evidence, and any remaining concerns."
         />
         <textarea
           aria-label="Decision alternatives"
@@ -160,10 +160,10 @@ export default function Decisions({
         ))}
       </section>
       <section className={card}>
-        <h2 className="font-semibold">Declare a dependency</h2>
+        <h2 className="font-semibold">Link a result to its input</h2>
         <p className={muted}>
-          Choose exact objects from conversation sources. The first is an input
-          to the second.
+          Choose two sources from the conversation. The second depends on the
+          first.
         </p>
         <button
           className={button}
@@ -254,12 +254,13 @@ export default function Decisions({
             )
           }
         >
-          Draft handoff from retained work
+          Draft a summary of saved work
         </button>
         {handoff && (
           <>
             <p className={muted}>
-              Draft inventory. Each proposed decision still requires acceptance.
+              Review and accept each proposed decision before adding it to the
+              project.
             </p>
             {proposals.map((n) => (
               <div className="rounded border p-3" key={n.id}>
@@ -269,7 +270,7 @@ export default function Decisions({
                   disabled={busy}
                   onClick={() =>
                     void run(async () => {
-                      await workbenchClient.updateNote({
+                      await researchClient.updateNote({
                         noteId: n.id,
                         expectedRevision: n.revision,
                         state: "accepted",
@@ -299,7 +300,7 @@ export default function Decisions({
           </>
         )}
         <details>
-          <summary>Fresh conversation context preview</summary>
+          <summary>Preview sources for a new conversation</summary>
           <pre className="whitespace-pre-wrap text-xs">{context}</pre>
         </details>
       </section>

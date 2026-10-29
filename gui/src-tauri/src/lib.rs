@@ -331,6 +331,7 @@ pub fn run() {
             workbench::commands::workbench_codex_login_cancel,
             workbench::commands::workbench_codex_logout,
             workbench::commands::workbench_codex_model_catalog,
+            workbench::claude::transport::workbench_claude_model_catalog,
             workbench::commands::workbench_codex_validate_model_selection,
             workbench::commands::workbench_codex_rate_limits,
             workbench::commands::workbench_codex_send_turn,
@@ -404,6 +405,7 @@ pub fn run() {
         .run(|_, event| {
             if matches!(event, tauri::RunEvent::Exit) {
                 tauri::async_runtime::block_on(orchestration::shutdown());
+                tauri::async_runtime::block_on(workbench::claude::shutdown());
                 tauri::async_runtime::block_on(workbench::research::jobs::shutdown());
                 tauri::async_runtime::block_on(pipeline::codex_server::shutdown());
                 tauri::async_runtime::block_on(agent_runtime::codex::chatgpt::shutdown());

@@ -80,11 +80,11 @@ export default function Detail({
   return (
     <section
       className="task-detail discovery-detail"
-      aria-label="Self-discovery progress"
+      aria-label="Research discovery progress"
     >
       <div className="task-section-heading">
         <h2>{discoveryNames[run.definition.mode]}</h2>
-        <button aria-label="Close self-discovery details" onClick={onClose}>
+        <button aria-label="Close research discovery details" onClick={onClose}>
           ×
         </button>
       </div>
@@ -247,7 +247,7 @@ export default function Detail({
               <p>{c.proposal.question}</p>
               <p>{c.proposal.contribution}</p>
               <details>
-                <summary>Research design and adversarial assessments</summary>
+                <summary>Research design and critical reviews</summary>
                 <p>
                   <strong>Method:</strong> {c.proposal.method}
                 </p>
@@ -262,7 +262,7 @@ export default function Detail({
                 <p>
                   <strong>Related work:</strong>{" "}
                   {c.proposal.relatedWork.join("; ") ||
-                    "Not established from inspected sources"}
+                    "The sources reviewed do not establish this."}
                 </p>
                 <p>
                   <strong>Risks:</strong> {c.proposal.risks.join("; ")}
@@ -381,7 +381,7 @@ export default function Detail({
                 Version {current.version} · {current.hash} ·{" "}
                 {current.reviews.length
                   ? `${current.reviews.length} adversarial reviews`
-                  : "Not adversarially reviewed"}
+                  : "Not yet critically reviewed"}
               </p>
               <ResearchReaderBoundary>
                 <Suspense fallback={<p>Opening paper…</p>}>

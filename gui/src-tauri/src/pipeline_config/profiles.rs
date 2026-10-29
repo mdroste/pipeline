@@ -10,6 +10,7 @@ pub fn save(config: &PipelineConfig) -> Result<(), String> {
 pub fn save_for(profile_id: &str, config: &PipelineConfig) -> Result<(), String> {
     let _lock = lock_profile_mutations()?;
     validate_profile_id(profile_id)?;
+    let profile_id = resolve_renamed_profile_id(&profiles_dir()?, profile_id);
     validate_profile_steps(&config.steps)?;
     validate_enabled_sequential_step(&config.steps)?;
     let name = load_profile(profile_id)?.name;
@@ -18,7 +19,7 @@ pub fn save_for(profile_id: &str, config: &PipelineConfig) -> Result<(), String>
 }
 
 /// Reset active profile to defaults: the matching stock definition for a
-/// built-in, otherwise the default Automatic Paper Review (Full) pipeline.
+/// built-in, otherwise the default Paper Review pipeline.
 /// The stock definition is written without re-reading the existing file, so
 /// a profile that no longer passes validation can still be reset.
 pub fn reset_defaults() -> Result<PipelineConfig, String> {
@@ -32,9 +33,10 @@ pub(super) fn reset_defaults_at(profiles: &Path, id: &str) -> Result<PipelineCon
     validate_profile_id(id)?;
     let path = profiles.join(format!("{id}.json"));
     let stock: ProfileData = match id {
-        "auto-review" => auto_review_profile(),
-        "auto-review-quick" => quick_auto_review_profile(),
-        "grant-review" => grant_review_profile(),
+        PAPER_REVIEW_ID => auto_review_profile(),
+        PAPER_REVIEW_FAST_ID => quick_auto_review_profile(),
+        SLIDE_REVIEW_ID => slide_review_profile(),
+        GRANT_REVIEW_ID => grant_review_profile(),
         _ => {
             // Keep the custom profile's display name, read leniently.
             let name = read_profile_file(&path)
@@ -146,9 +148,9 @@ pub fn delete_profile(id: &str) -> Result<(), String> {
         return Err(format!("Profile '{id}' does not exist"));
     }
     delete_profile_file_transactionally(&path, || {
-        // If this was the active profile, switch back to auto-review. The
+        // If this was the active profile, switch back to Paper Review. The
         // profile file remains recoverable until this settings write commits.
-        crate::settings::replace_active_profile_if(id, "auto-review").map(|_| ())
+        crate::settings::replace_active_profile_if(id, PAPER_REVIEW_ID).map(|_| ())
     })
 }
 

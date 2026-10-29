@@ -5,7 +5,7 @@ import {
   type BindingCoverage,
   type NumericBinding,
 } from "../../lib/studioClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { executionClient } from "../../lib/workbench/executionClient";
 import type { ResearchResultV1 } from "../../lib/workbenchTypes";
 import {
   button,
@@ -49,7 +49,7 @@ export default function Bindings({
     let disposed = false;
     void Promise.all([
       studioClient.coverage(workspaceId),
-      workbenchClient.listStructuredResults(workspaceId),
+      executionClient.listStructuredResults(workspaceId),
     ])
       .then(([c, r]) => {
         if (!disposed) {
@@ -75,9 +75,9 @@ export default function Bindings({
       <section className={panel}>
         <h2 className="font-semibold">Headline-result coverage</h2>
         <p className="text-xs text-gray-500">
-          Links retain exact manuscript passages and historical output
-          identities. Freshness checks only declared dependencies. An unlinked
-          claim has unknown result coverage.
+          Link manuscript passages to saved results. Pipeline checks for changes
+          in the inputs you list. Claims without links have no tracked
+          supporting result.
         </p>
         <button
           className={button}
@@ -143,8 +143,8 @@ export default function Bindings({
         </div>
         {!coverage.length && (
           <p className="text-sm">
-            No numeric bindings yet. Select a manuscript passage in Documents,
-            then bind its reported value below.
+            No values are linked yet. Select a passage in Documents, then link
+            its reported value to a result below.
           </p>
         )}
       </section>
@@ -249,8 +249,7 @@ export default function Bindings({
               checked={binding.confirmed}
               onChange={(e) => set("confirmed", e.target.checked)}
             />
-            I confirm this quantity belongs to this exact, unambiguous printed
-            occurrence
+            This value corresponds to the selected number in the manuscript.
           </label>
           <button
             className={button}
@@ -301,12 +300,12 @@ export default function Bindings({
             </>
           ) : (
             <p className="text-sm text-gray-500">
-              Choose a coverage item to trace its result, execution and declared
-              dependencies.
+              Choose a linked claim to see its result, analysis run, and listed
+              inputs.
             </p>
           )}
           <h3 className="pt-4 text-sm font-semibold">
-            Generate a reviewed TeX value macro
+            Create a TeX macro from this value
           </h3>
           <p className="text-xs">
             Uses the selected result’s estimate. The file is staged in a task
@@ -349,7 +348,7 @@ export default function Bindings({
                   ],
                 });
                 setNotice(
-                  "Macro staged. Review and accept its captured task in Changes.",
+                  "The macro is ready in the working copy. Review and accept it in Review edits.",
                 );
                 await onRefresh();
               })

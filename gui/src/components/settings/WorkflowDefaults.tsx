@@ -57,7 +57,7 @@ export function ModelDefaultsSection({
                   catalogs={catalogs}
                   providers={PROVIDERS}
                   label="Orientation map"
-                  help="Select one default model to use for processing inputs and classifying adaptive workflow steps."
+                  help="Choose the default model for reading inputs and selecting specialist reviewers."
                   onChange={(next) =>
                     setSettings({
                       ...settings,
@@ -200,9 +200,9 @@ export function ModelDefaultsSection({
                     Continue after an account usage limit
                   </span>
                   <span className="mt-0.5 block text-xs leading-5 text-gray-500 dark:text-neutral-400">
-                    If a subscription window, API quota, or credit balance is
-                    exhausted, try one configured fallback provider. Temporary
-                    throttling keeps its normal retry policy.
+                    If your provider reaches a usage or credit limit, retry the
+                    call with the backup provider you choose. Temporary rate
+                    limits still use the normal retry settings.
                   </span>
                 </span>
               </label>
@@ -220,7 +220,7 @@ export function ModelDefaultsSection({
                     catalogs={catalogs}
                     providers={PROVIDERS}
                     label="Fallback agent"
-                    help="Used once for the affected call, including orientation, workflow, and merge calls."
+                    help="Try the backup provider once for the affected call, including input assessment, review steps, and combining results."
                     onChange={(next) =>
                       setSettings({
                         ...settings,
@@ -278,7 +278,7 @@ export function WorkflowSection({
     <>
       <SectionHeader
         title="Execution"
-        description="Control concurrency, time limits, and retry behavior across model calls."
+        description="Set how many model calls can run at once, how long they can take, and how often to retry."
       />
       <div className="space-y-5">
         <Field label="Maximum Concurrent Agents">

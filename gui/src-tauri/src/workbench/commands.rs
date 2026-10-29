@@ -92,6 +92,26 @@ fn complete_active_turn(epoch: u64, thread_id: &str, turn_id: &str) {
     }
 }
 
+pub(crate) fn accept_claude_turn(epoch: u64, thread: &str, turn: &str) {
+    let mut state = active_turn_state()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    state.epoch = Some(epoch);
+    state.thread_id = Some(thread.into());
+    state.turn_id = Some(turn.into());
+}
+
+pub(crate) fn finish_claude_turn(epoch: u64, thread: &str, turn: &str) {
+    complete_active_turn(epoch, thread, turn);
+}
+
+pub(crate) fn turn_setup_in_progress() -> bool {
+    active_turn_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .setup_in_progress
+}
+
 fn close_active_connection(epoch: u64) {
     let mut state = active_turn_state()
         .lock()
@@ -363,6 +383,14 @@ pub async fn workbench_generate_session_title(
     app: tauri::AppHandle,
     session_id: String,
 ) -> Result<String, RuntimeCommandError> {
+    let selected_session = session_id.clone();
+    if run_store(move |store| {
+        super::claude::selected(&store.session_snapshot(&selected_session)?.session.overrides)
+    })
+    .await?
+    {
+        return Err(super::claude::error("Automatic titles are unavailable for Claude conversations. Rename the conversation from its menu."));
+    }
     let supervisor = super::codex::supervisor_manager().connect().await?;
     ensure_event_bridge(app.clone(), supervisor.clone());
     generate_session_title(&app, &supervisor, session_id, true)

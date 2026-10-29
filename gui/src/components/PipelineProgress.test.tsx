@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import PipelineProgress from "./PipelineProgress";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
-import type { RuntimeStage } from "../hooks/usePipeline";
+import type { RuntimeStage } from "../lib/reviewRuntimeTypes";
 
 const autoReviewPlan: ExecutionPlanStage[] = [
   {

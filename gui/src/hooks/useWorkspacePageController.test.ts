@@ -14,7 +14,11 @@ const mocks = vi.hoisted(() => ({
   sendTurn: vi.fn(),
   listeners: [] as any[],
 }));
-vi.mock("../lib/workbenchClient", () => ({ workbenchClient: mocks }));
+vi.mock("../lib/workbench/workspaceClient", () => ({ workspaceClient: mocks }));
+vi.mock("../lib/workbench/conversationClient", () => ({
+  conversationClient: mocks,
+}));
+vi.mock("../lib/workbench/runtimeClient", () => ({ runtimeClient: mocks }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (_: string, cb: any) => {
     mocks.listeners.push(cb);
@@ -85,15 +89,19 @@ it.each(
       return { record: snaps[r.sessionId].session, sequence: 2 };
     });
     const { result } = renderHook(() => useWorkspacePageController({}));
-    await waitFor(() => expect(result.current.snapshot?.session.id).toBe("A"));
-    act(() => result.current.editDraft("A original question"));
+    await waitFor(() =>
+      expect(result.current.conversation.snapshot?.session.id).toBe("A"),
+    );
+    act(() => result.current.persistence.editDraft("A original question"));
     let sending!: Promise<void>;
     await act(async () => {
-      sending = result.current.send();
+      sending = result.current.conversation.send();
       if (!beforeAck) await sending;
     });
-    await act(async () => await result.current.selectSession("B"));
-    await waitFor(() => expect(result.current.snapshot?.session.id).toBe("B"));
+    await act(async () => await result.current.navigation.selectSession("B"));
+    await waitFor(() =>
+      expect(result.current.conversation.snapshot?.session.id).toBe("B"),
+    );
     await act(async () => {
       for (const cb of mocks.listeners)
         cb({
@@ -106,8 +114,8 @@ it.each(
           },
         });
     });
-    expect(result.current.stream).toBe("");
-    expect(result.current.draft).toBe("B important draft");
+    expect(result.current.conversation.stream).toBe("");
+    expect(result.current.persistence.draft).toBe("B important draft");
     await act(async () => {
       for (const cb of mocks.listeners)
         cb({
@@ -128,8 +136,10 @@ it.each(
         acknowledge(acknowledgement);
         await sending;
       });
-    await waitFor(() => expect(result.current.pendingUser).toBe(null));
-    expect.soft(result.current.draft).toBe("B important draft");
+    await waitFor(() =>
+      expect(result.current.conversation.pendingUser).toBe(null),
+    );
+    expect.soft(result.current.persistence.draft).toBe("B important draft");
     if (status !== "completed")
       await waitFor(() =>
         expect(snaps.A.session.draft).toBe("A original question"),
@@ -186,7 +196,7 @@ async function draftFixture(initial: Record<string, unknown> = {}) {
   });
   const hook = renderHook(() => useWorkspacePageController({}));
   await waitFor(() =>
-    expect(hook.result.current.snapshot?.session.id).toBe("A"),
+    expect(hook.result.current.conversation.snapshot?.session.id).toBe("A"),
   );
   return { ...hook, saved: () => saved };
 }
@@ -202,11 +212,11 @@ it("preserves a newly saved draft when an older hydration returns, including the
   );
   let loading!: Promise<void>;
   act(() => {
-    loading = result.current.hydrate();
+    loading = result.current.conversation.hydrate();
   });
-  act(() => result.current.editDraft("important fresh draft"));
+  act(() => result.current.persistence.editDraft("important fresh draft"));
   await act(async () => {
-    await result.current.saveCurrentDraft();
+    await result.current.persistence.saveCurrentDraft();
   });
   expect(saved().session.draft).toBe("important fresh draft");
   expect(localStorage.getItem("pipeline.pendingDraft.A")).toBeNull();
@@ -214,10 +224,10 @@ it("preserves a newly saved draft when an older hydration returns, including the
     resolve(old);
     await loading;
   });
-  expect(result.current.draft).toBe("important fresh draft");
-  expect(result.current.snapshot?.session.revision).toBe(2);
+  expect(result.current.persistence.draft).toBe("important fresh draft");
+  expect(result.current.conversation.snapshot?.session.revision).toBe(2);
   await act(async () => {
-    await result.current.saveCurrentDraft();
+    await result.current.persistence.saveCurrentDraft();
   });
   expect(saved().session.draft).toBe("important fresh draft");
   unmount();
@@ -242,8 +252,8 @@ it("ignores a superseded same-session hydration", async () => {
   let a!: Promise<void>;
   let b!: Promise<void>;
   act(() => {
-    a = result.current.hydrate();
-    b = result.current.hydrate();
+    a = result.current.conversation.hydrate();
+    b = result.current.conversation.hydrate();
   });
   const newer = {
     ...saved(),
@@ -258,7 +268,7 @@ it("ignores a superseded same-session hydration", async () => {
     first(saved());
     await a;
   });
-  expect(result.current.snapshot?.session.title).toBe("new title");
+  expect(result.current.conversation.snapshot?.session.title).toBe("new title");
   unmount();
 });
 
@@ -275,16 +285,18 @@ it("clears a restored active turn when reconciliation confirms it ended", async 
       },
     ],
   });
-  await waitFor(() => expect(result.current.active?.turnId).toBe("turn"));
+  await waitFor(() =>
+    expect(result.current.conversation.active?.turnId).toBe("turn"),
+  );
   mocks.conversationSnapshot.mockResolvedValueOnce({
     ...saved(),
     turns: [{ ...saved().turns[0], terminalAt: "now", state: "completed" }],
     sequence: 2,
   });
   await act(async () => {
-    await result.current.hydrate();
+    await result.current.conversation.hydrate();
   });
-  expect(result.current.active).toBeNull();
+  expect(result.current.conversation.active).toBeNull();
   unmount();
 });
 
@@ -308,7 +320,7 @@ it("never pairs an unfinished historical turn with a successor binding", async (
       },
     ],
   });
-  expect(result.current.active).toBeNull();
+  expect(result.current.conversation.active).toBeNull();
   unmount();
 });
 
@@ -322,13 +334,13 @@ it("restores the composer text when a dispatched send is rejected", async () => 
     });
     throw new Error("project has a local job holding its write resources");
   });
-  act(() => result.current.editDraft("my long question"));
+  act(() => result.current.persistence.editDraft("my long question"));
   await act(async () => {
-    await result.current.send();
+    await result.current.conversation.send();
   });
   await new Promise((resolve) => setTimeout(resolve, 600));
-  expect(result.current.draft).toBe("my long question");
-  expect(result.current.pendingUser).toBeNull();
+  expect(result.current.persistence.draft).toBe("my long question");
+  expect(result.current.conversation.pendingUser).toBeNull();
   expect(mocks.updateSession).not.toHaveBeenCalledWith(
     expect.objectContaining({ sessionId: "A", draft: "" }),
   );
@@ -353,7 +365,7 @@ it("finishes an automation-driven turn on the viewed thread instead of leaving a
         },
       });
   });
-  expect(result.current.active?.turnId).toBe("turn-X");
+  expect(result.current.conversation.active?.turnId).toBe("turn-X");
   await act(async () => {
     for (const cb of mocks.listeners)
       cb({
@@ -367,7 +379,7 @@ it("finishes an automation-driven turn on the viewed thread instead of leaving a
       });
     await new Promise((resolve) => setTimeout(resolve, 80));
   });
-  expect(result.current.stream).toBe("hi");
+  expect(result.current.conversation.stream).toBe("hi");
   await act(async () => {
     for (const cb of mocks.listeners)
       cb({
@@ -380,8 +392,8 @@ it("finishes an automation-driven turn on the viewed thread instead of leaving a
         },
       });
   });
-  await waitFor(() => expect(result.current.active).toBeNull());
-  expect(result.current.stream).toBe("");
+  await waitFor(() => expect(result.current.conversation.active).toBeNull());
+  expect(result.current.conversation.stream).toBe("");
   expect(mocks.reconcileSession).toHaveBeenCalledWith("A");
   await waitFor(() => expect(mocks.conversationSnapshot).toHaveBeenCalled());
   unmount();
@@ -400,13 +412,128 @@ it("releases a turn restored by hydration when its connection closes", async () 
       },
     ],
   });
-  await waitFor(() => expect(result.current.active?.turnId).toBe("turn-A"));
+  await waitFor(() =>
+    expect(result.current.conversation.active?.turnId).toBe("turn-A"),
+  );
   mocks.reconcileSession.mockClear();
   await act(async () => {
     for (const cb of mocks.listeners)
       cb({ payload: { epoch: 1, kind: "connectionClosed" } });
   });
-  await waitFor(() => expect(result.current.active).toBeNull());
+  await waitFor(() => expect(result.current.conversation.active).toBeNull());
   expect(mocks.reconcileSession).toHaveBeenCalledWith("A");
+  unmount();
+});
+
+it("serializes model selection and the current draft through the same revision lane", async () => {
+  const { result, saved, unmount } = await draftFixture();
+  const update = mocks.updateSession.getMockImplementation()!;
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  mocks.updateSession.mockImplementationOnce(async (request: any) => {
+    await blocked;
+    return update(request);
+  });
+  act(() =>
+    result.current.persistence.saveSelection("chosen-model", "high", "claude"),
+  );
+  await waitFor(() => expect(mocks.updateSession).toHaveBeenCalledTimes(1));
+  act(() => result.current.persistence.editDraft("saved after selection"));
+  let saving!: Promise<void>;
+  let completed = false;
+  await act(async () => {
+    saving = result.current.persistence.saveCurrentDraft().then(() => {
+      completed = true;
+    });
+  });
+  expect(completed).toBe(false);
+  expect(mocks.updateSession).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    release();
+    await saving;
+  });
+  expect(mocks.updateSession).toHaveBeenNthCalledWith(
+    1,
+    expect.objectContaining({
+      expectedRevision: 1,
+      overrides: { runtime: "claude", model: "chosen-model", effort: "high" },
+    }),
+  );
+  expect(mocks.updateSession).toHaveBeenNthCalledWith(
+    2,
+    expect.objectContaining({
+      expectedRevision: 2,
+      draft: "saved after selection",
+    }),
+  );
+  expect(saved().session.draft).toBe("saved after selection");
+  expect(saved().session.overrides.model).toBe("chosen-model");
+  unmount();
+});
+
+it("does not dispatch when the selection save barrier failed and restores the draft", async () => {
+  const { result, unmount } = await draftFixture();
+  mocks.sendTurn.mockReset();
+  mocks.updateSession.mockRejectedValueOnce(
+    new Error("selection revision conflict"),
+  );
+  act(() => result.current.persistence.saveSelection("chosen-model", "high"));
+  await waitFor(() =>
+    expect(result.current.feedback.error).toContain(
+      "Model selection could not be saved",
+    ),
+  );
+  act(() => result.current.persistence.editDraft("keep this unsent question"));
+  await act(async () => {
+    await result.current.conversation.send();
+  });
+  expect(mocks.sendTurn).not.toHaveBeenCalled();
+  expect(result.current.persistence.draft).toBe("keep this unsent question");
+  expect(localStorage.getItem("pipeline.pendingDraft.A")).toBe(
+    "keep this unsent question",
+  );
+  expect(result.current.conversation.pendingUser).toBeNull();
+  expect(result.current.conversation.submitting).toBe(false);
+  expect(result.current.feedback.error).toContain(
+    "Message not sent because its settings or draft could not be saved",
+  );
+  unmount();
+});
+
+it("preserves a newer composer edit after an ambiguously dispatched send fails without resending", async () => {
+  const { result, unmount } = await draftFixture();
+  let reject!: (error: Error) => void;
+  mocks.sendTurn.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, fail) => {
+        reject = fail;
+      }),
+  );
+  act(() => result.current.persistence.editDraft("first question"));
+  let sending!: Promise<void>;
+  await act(async () => {
+    sending = result.current.conversation.send();
+  });
+  await waitFor(() => expect(mocks.sendTurn).toHaveBeenCalledTimes(1));
+  act(() =>
+    result.current.persistence.editDraft("new question typed while waiting"),
+  );
+  await act(async () => {
+    reject(new Error("acknowledgement lost"));
+    await sending;
+  });
+  expect(mocks.sendTurn).toHaveBeenCalledTimes(1);
+  expect(result.current.persistence.draft).toBe(
+    "new question typed while waiting",
+  );
+  expect(localStorage.getItem("pipeline.pendingDraft.A")).toBe(
+    "new question typed while waiting",
+  );
+  expect(result.current.conversation.pendingUser).toBeNull();
+  expect(result.current.feedback.error).toContain(
+    "will not be retried automatically",
+  );
   unmount();
 });

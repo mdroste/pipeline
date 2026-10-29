@@ -288,8 +288,7 @@ function AddStepDialog({
             id={descriptionId}
             className="mt-1 text-xs text-gray-500 dark:text-gray-400"
           >
-            Design a new step or add a configurable agent from the adaptive
-            review suite.
+            Create a step or add a subject or methods specialist.
           </p>
           <div
             role="tablist"
@@ -494,7 +493,7 @@ function AddStepDialog({
                     value="parallel"
                     checked={phase === "parallel"}
                     title="Independently"
-                    description="Run alongside other ready steps. It cannot consume their output."
+                    description="Run at the same time as other ready steps. This step cannot read their results."
                     onChange={() => choosePhase("parallel")}
                   />
                   <ChoiceCard
@@ -502,7 +501,7 @@ function AddStepDialog({
                     value="sequential"
                     checked={phase === "sequential"}
                     title="After earlier steps"
-                    description="May wait for and read reports or files produced upstream."
+                    description="Can wait for earlier steps and read their reports or files."
                     onChange={() => choosePhase("sequential")}
                   />
                 </div>
@@ -583,10 +582,8 @@ function AddStepDialog({
 
               {mode === "blank" && (
                 <p className="rounded-lg bg-gray-50 p-3 text-xs leading-relaxed text-gray-600 dark:bg-gray-800 dark:text-gray-400">
-                  A starter prompt and the standard context for the selected
-                  phase will be added. The new step opens immediately so you can
-                  configure its prompt, inputs, execution rules, models, and
-                  agents.
+                  Start with a suggested prompt and inputs. Then edit the step’s
+                  instructions, conditions, and models.
                 </p>
               )}
             </div>
@@ -605,7 +602,7 @@ function AddStepDialog({
           <div className="flex items-center justify-between gap-3">
             <p className="text-[11px] text-gray-500 dark:text-gray-400">
               {mode === "adaptive"
-                ? "This adds an editable snapshot. Workflow changes never alter the adaptive suite default."
+                ? "Add a copy you can edit for this review design. The original specialist stays unchanged."
                 : "All choices remain editable after creation."}
             </p>
             <div className="flex shrink-0 gap-2">

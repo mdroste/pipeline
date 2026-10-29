@@ -1,3 +1,4 @@
+pub mod analyzers;
 pub mod api_anthropic;
 pub mod api_common;
 pub mod api_google;

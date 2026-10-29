@@ -18,7 +18,10 @@ vi.mock("@tauri-apps/api/core", () => ({
     loginInProgress: false,
   }),
 }));
-vi.mock("../lib/workbenchClient", () => ({ workbenchClient: mocks }));
+vi.mock("../lib/workbench/conversationClient", () => ({
+  conversationClient: mocks,
+}));
+vi.mock("../lib/workbench/runtimeClient", () => ({ runtimeClient: mocks }));
 vi.mock("../lib/projectClient", () => ({
   projectClient: { capabilities: mocks.capabilities },
 }));

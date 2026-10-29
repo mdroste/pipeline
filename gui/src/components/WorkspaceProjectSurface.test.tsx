@@ -7,7 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceProjectSurface from "./WorkspaceProjectSurface";
-import type { ProjectHome } from "../lib/projectClient";
+import { makeProjectHome as home } from "../test/projectSurfaceFixtures";
 import type { WorkbenchSession } from "../lib/workbenchTypes";
 const mocks = vi.hoisted(() => ({
   home: vi.fn(),
@@ -18,68 +18,10 @@ vi.mock("../lib/projectClient", async (original) => ({
   ...(await original<typeof import("../lib/projectClient")>()),
   projectClient: mocks,
 }));
-vi.mock("../lib/workbenchClient", () => ({
-  workbenchClient: { getWorkspace: mocks.getWorkspace },
+vi.mock("../lib/workbench/workspaceClient", () => ({
+  workspaceClient: { getWorkspace: mocks.getWorkspace },
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
-function home(): ProjectHome {
-  return {
-    settings: {
-      id: "home",
-      workspaceId: "workspace",
-      kind: "home",
-      revision: 4,
-      updatedAt: "now",
-      body: {
-        manuscriptRevisionId: null,
-        baselineExecutionId: null,
-        briefNoteIds: [],
-        excludedNoteIds: [],
-        ignoredPaths: [],
-        layout: "reading",
-      },
-    },
-    notes: [],
-    noteHistory: [],
-    tasks: [],
-    anchors: [],
-    papers: [],
-    executions: [],
-    ledger: {
-      claims: [],
-      evidence: [],
-      staleClaims: [],
-      unsupportedAcceptedClaims: [],
-    },
-    inventory: {
-      id: "inventory",
-      workspaceId: "workspace",
-      kind: "inventory",
-      revision: 1,
-      updatedAt: "now",
-      body: {
-        rootIdentity: "root",
-        capturedAt: "now",
-        complete: true,
-        warnings: [],
-        files: [
-          {
-            path: "paper.tex",
-            hash: "hash",
-            size: 20,
-            executable: false,
-            status: "current",
-          },
-        ],
-      },
-    },
-    changes: [],
-    applications: [],
-    workingCopyStatus: "Refresh files",
-    fileAcceptance: true,
-    contextPreview: "Reference results run: not selected.",
-  };
-}
 const openTask = {
   id: "task",
   workspaceId: "workspace",

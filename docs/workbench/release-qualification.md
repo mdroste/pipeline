@@ -36,9 +36,9 @@ requires a release run.
 
 These live gates are not replaced by simulator or unit-test results.
 
-## PI-00–PI-03 local observations (September 6, 2026)
+## Project surface local observations (September 6, 2026)
 
-The [machine-readable evidence record](project-surface-qualification.json)
+The [machine-readable evidence record](../releases/project-surface-qualification.json)
 contains sanitized outcomes. [Fixture sources](fixtures/project-surface/) and
 ignored real-tool tests in `workbench/project/tests.rs` make the narrow checks
 repeatable. They are supplementary evidence for this release record, not a
@@ -69,39 +69,39 @@ File acceptance is disabled on Windows. Linux shares the Unix implementation
 but remains unqualified. No authenticated model turn was made for these local
 checks, and no installer was produced or tested.
 
-## PI-04–PI-09 local observations (September 6–7, 2026)
+## Research studio local observations (September 6–7, 2026)
 
-The [Research Studio evidence record](research-studio-qualification.json)
+The [Research Studio evidence record](../releases/research-studio-qualification.json)
 contains the narrower feature evidence. These checks cover bounded local paths;
 they do not qualify authenticated model calls, arbitrary build scripts,
 packaged crash recovery, or another platform.
 
-| Package | Observed | Remaining qualification |
+| Feature | Observed | Remaining qualification |
 |---|---|---|
-| PI-04 | Development Tauri GUI registered a disposable folder, retained an editor draft across tabs, saved through the recoverable path, configured a multi-file TeX build, displayed warning diagnostics and the exact retained PDF, mapped a source location with SyncTeX, and recorded page 1 as inspected. The ignored Rust fixture passed the multi-file LaTeX/SyncTeX path. | Packaged/WebView2/WebKitGTK, scanned/large PDFs, custom build scripts, abrupt death and cross-platform runs |
-| PI-05 | Deterministic tests cover versioned finding imports, report paragraph spans, response flags/export, disagreement fields and focused-review coverage. | Authenticated end-to-end review and researcher-scored usefulness |
-| PI-06 | All-target Rust tests pass; queue tests cover two slots, workspace conflict rejection, bounded logs, cancellation, changed queued inputs, unknown/adoption recovery. The development GUI completed a detached build and displayed its retained receipt. The cooperative oldstata fixture passed earlier. | Forced wrapper termination, packaged exit, sleep/OS kill and Windows/Linux |
-| PI-07 | Deterministic tests cover host-bound imports, v2 IRF validation, uncertainty/units/specification compatibility and baseline preservation. Python exporter is syntactically valid; Stata exporter now formats leading-zero decimals but its live rerun is pending the host usage-limit gate. | Broader qualified toolchains and researcher-scored comparisons |
-| PI-08 | Deterministic tests cover exact bindings, rounding/sign/unit drift, changed declared inputs and unrelated-input isolation. | Larger coverage budgets and selected research claims only; unlinked claims remain unknown |
-| PI-09 | Development GUI imported duplicate BibTeX keys as distinct working/published records. Deterministic tests cover raw spans, notes, exact abstract/full-text support and version relationships. Official Zotero local API documentation was checked; the local endpoint was unavailable. | Live Zotero collection preview/import and any online acquisition capability |
+| Manuscripts and builds | Development Tauri GUI registered a disposable folder, retained an editor draft across tabs, saved through the recoverable path, configured a multi-file TeX build, displayed warning diagnostics and the exact retained PDF, mapped a source location with SyncTeX, and recorded page 1 as inspected. The ignored Rust fixture passed the multi-file LaTeX/SyncTeX path. | Packaged/WebView2/WebKitGTK, scanned/large PDFs, custom build scripts, abrupt death and cross-platform runs |
+| Findings and response letters | Deterministic tests cover versioned finding imports, report paragraph spans, response flags/export, disagreement fields and focused-review coverage. | Authenticated end-to-end review and researcher-scored usefulness |
+| Local jobs | All-target Rust tests pass; queue tests cover two slots, workspace conflict rejection, bounded logs, cancellation, changed queued inputs, unknown/adoption recovery. The development GUI completed a detached build and displayed its retained receipt. The cooperative oldstata fixture passed earlier. | Forced wrapper termination, packaged exit, sleep/OS kill and Windows/Linux |
+| Experiments and results | Deterministic tests cover host-bound imports, v2 IRF validation, uncertainty/units/specification compatibility and baseline preservation. Python exporter is syntactically valid; Stata exporter now formats leading-zero decimals but its live rerun is pending the host usage-limit gate. | Broader qualified toolchains and researcher-scored comparisons |
+| Manuscript numeric bindings | Deterministic tests cover exact bindings, rounding/sign/unit drift, changed declared inputs and unrelated-input isolation. | Larger coverage budgets and selected research claims only; unlinked claims remain unknown |
+| Literature and Zotero | Development GUI imported duplicate BibTeX keys as distinct working/published records. Deterministic tests cover raw spans, notes, exact abstract/full-text support and version relationships. Official Zotero local API documentation was checked; the local endpoint was unavailable. | Live Zotero collection preview/import and any online acquisition capability |
 
 The failed first Stata-exporter probe was a fixture defect (a leading-dot
 decimal), corrected in the checked-in exporter. It is not counted as a passed
 Stata result-export qualification until the required wrapper can be run again.
 
-## PI-10 local observations (September 7, 2026)
+## Theory notes local observations (September 7, 2026)
 
-| Package | Observed | Remaining qualification |
+| Feature | Observed | Remaining qualification |
 |---|---|---|
-| PI-10 | Deterministic tests cover: a proof sketch with unresolved steps cannot be supported; an abandoned approach requires a reason and appears with its assumptions in the automatic project context while its derivation prose does not; numerical checks require a tested domain and cannot claim generality, heuristics and model assessments cannot establish a statement, and the host scope/label distinguish general, instance-only and refuting-instance evidence; promotion stages derivation prose into an isolated task copy with an assumptions header, leaves the working file untouched and records the promotion on the note; directions reject score fields and convert into a task only after a discriminating test is stated. Migration 8 keeps the history trigger and rejects unknown kinds. Frontend tests cover the disabled generality claim for numerical methods, the abandonment reason, side-by-side proposition/proof opening and direction conversion. | Native GUI walk-through of the Theory panel, authenticated model reads of theory records through catalog version 4, researcher-scored usefulness of the recipes, and the same packaged/cross-platform gates as PI-04–PI-09 |
+| Theory notes, checks and directions | Deterministic tests cover: a proof sketch with unresolved steps cannot be supported; an abandoned approach requires a reason and appears with its assumptions in the automatic project context while its derivation prose does not; numerical checks require a tested domain and cannot claim generality, heuristics and model assessments cannot establish a statement, and the host scope/label distinguish general, instance-only and refuting-instance evidence; promotion stages derivation prose into an isolated task copy with an assumptions header, leaves the working file untouched and records the promotion on the note; directions reject score fields and convert into a task only after a discriminating test is stated. Migration 8 keeps the history trigger and rejects unknown kinds. Frontend tests cover the disabled generality claim for numerical methods, the abandonment reason, side-by-side proposition/proof opening and direction conversion. | Native GUI walk-through of the Theory panel, authenticated model reads of theory records through catalog version 4, researcher-scored usefulness of the recipes, and the same packaged/cross-platform gates as the research studio |
 
-## PI-11 and PI-12 (authoring half) local observations (September 7, 2026)
+## Project exchange and Workflow drafts local observations (September 7, 2026)
 
-| Package | Observed | Remaining qualification |
+| Feature | Observed | Remaining qualification |
 |---|---|---|
-| PI-11 | Deterministic tests cover: export closes anchors, papers, and notes from a task selection, writes a readable README and per-object JSON, excludes sessions and Codex state, and refuses a destination inside private storage; a tampered blob and a foreign file are rejected; import into a nonempty store remaps IDs into a new Workspace, resolves anchor→revision references, copies paper text, imports no conversations, is idempotent on reimport, records a conflict when a note diverges while keeping the local body, resolves it either way, and registers retained blobs; prune never moves referenced evidence, previews first, journals moves, restores, and empties on request. Frontend tests cover selection without conversations, default new-Workspace import target, conflict resolution, prune preview before apply, and draft saving. | Round trip between two machines, large-package performance, native GUI walk-through, and the packaged/cross-platform gates shared with earlier packages |
-| PI-12 (authoring) | Draft validates through the portable workflow parser, adds a consolidation step, excludes incomplete steps, and lists execution/build steps as unsupported prerequisites. | Import of a saved draft through the Workflows page in the native GUI and a fixture run reproducing a selected supported process |
-| PI-12 (concurrency) | Not implemented; the one-active-turn invariant is unchanged. | Requires a separate protocol/lifecycle design, compatibility-record update, and live qualification before any change |
+| Project exchange and storage | Deterministic tests cover: export closes anchors, papers, and notes from a task selection, writes a readable README and per-object JSON, excludes sessions and Codex state, and refuses a destination inside private storage; a tampered blob and a foreign file are rejected; import into a nonempty store remaps IDs into a new Workspace, resolves anchor→revision references, copies paper text, imports no conversations, is idempotent on reimport, records a conflict when a note diverges while keeping the local body, resolves it either way, and registers retained blobs; prune never moves referenced evidence, previews first, journals moves, restores, and empties on request. Frontend tests cover selection without conversations, default new-Workspace import target, conflict resolution, prune preview before apply, and draft saving. | Round trip between two machines, large-package performance, native GUI walk-through, and the packaged/cross-platform gates shared with earlier packages |
+| Workflow drafts from Workspace | Draft validates through the portable workflow parser, adds a consolidation step, excludes incomplete steps, and lists execution/build steps as unsupported prerequisites. | Import of a saved draft through the Workflows page in the native GUI and a fixture run reproducing a selected supported process |
+| Concurrent Workspace turns | Not implemented; the one-active-turn invariant is unchanged. | Requires a separate protocol/lifecycle design, compatibility-record update, and live qualification before any change |
 
 
 ## September 20 audit remediation
@@ -122,3 +122,18 @@ The candidate evidence manifest is [1.1.0-qualification.json](../releases/1.1.0-
 Its live and packaged rows remain pending. Run the validator described in
 [RELEASING.md](../../RELEASING.md) against the final candidate commit and actual
 installer bytes. Passing source tests does not fill these rows.
+
+## Claude subscription adapter — October 24, 2026
+
+The optional project conversation provider now uses unmodified `claude -p` with
+subscription-only authentication and host-scoped MCP tools. On macOS arm64,
+Claude Code 2.1.232 passed the initial production no-model handshake; the final
+version-reporting authenticated model/MCP probe passed on 2.1.310 with a planted
+invalid parent API key. Deterministic Rust
+and frontend checks cover routing, scope, file-edit guards and recovery.
+
+This qualifies the CLI transport and its billing boundary for the recorded
+configuration. It does not qualify a packaged GUI release, full real-project
+workflows, other CLI versions or other operating systems. See
+[Claude Code](../claude-code.md) for commands, evidence, capability limits and
+policy sources. Existing Codex qualification remains independent.

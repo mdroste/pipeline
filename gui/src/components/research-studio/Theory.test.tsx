@@ -110,14 +110,20 @@ it("never lets a numerical check claim generality and requires its domain", asyn
   );
   render(<Theory {...props()} />);
   fireEvent.click(await screen.findByText("Edit / checks"));
-  const generality = screen.getByLabelText("Claims generality");
+  const generality = screen.getByLabelText(
+    "Applies to all cases under the stated assumptions",
+  );
   fireEvent.click(generality);
   expect(generality).toBeChecked();
   fireEvent.change(screen.getByLabelText("Method"), {
     target: { value: "numerical_verification" },
   });
-  expect(screen.getByLabelText("Claims generality")).toBeDisabled();
-  expect(screen.getByLabelText("Claims generality")).not.toBeChecked();
+  expect(
+    screen.getByLabelText("Applies to all cases under the stated assumptions"),
+  ).toBeDisabled();
+  expect(
+    screen.getByLabelText("Applies to all cases under the stated assumptions"),
+  ).not.toBeChecked();
   expect(
     screen.getByLabelText(
       "Domain of tested instances (required for numerical checks)",
@@ -174,7 +180,7 @@ it("asks for a reason when abandoning and retains unresolved steps on save", asy
   fireEvent.change(screen.getByLabelText("Unresolved steps"), {
     target: { value: "Continuity\n\nCompactness " },
   });
-  fireEvent.change(screen.getByLabelText("Status (your disposition)"), {
+  fireEvent.change(screen.getByLabelText("Your assessment"), {
     target: { value: "abandoned" },
   });
   fireEvent.change(

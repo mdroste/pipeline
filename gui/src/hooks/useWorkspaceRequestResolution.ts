@@ -1,5 +1,5 @@
 import { useRef, type Dispatch, type SetStateAction } from "react";
-import { workbenchClient } from "../lib/workbenchClient";
+import { runtimeClient } from "../lib/workbench/runtimeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type { WorkbenchEvent } from "../lib/workbenchTypes";
 
@@ -20,12 +20,12 @@ export default function useWorkspaceRequestResolution(
       // An earlier acknowledgement may have been lost. Confirm that the
       // original request is still pending before permitting another decision.
       if (uncertain.current.has(key)) {
-        const pending = await workbenchClient.pendingRequests();
+        const pending = await runtimeClient.pendingRequests();
         setRequests(pending);
         uncertain.current.delete(key);
         if (!pending.some(matches)) return;
       }
-      await workbenchClient.resolveServerRequest({
+      await runtimeClient.resolveServerRequest({
         epoch: event.epoch,
         requestId: event.requestId,
         method: event.method,
@@ -37,7 +37,7 @@ export default function useWorkspaceRequestResolution(
       uncertain.current.add(key);
       setError(workbenchErrorMessage(cause));
       try {
-        const pending = await workbenchClient.pendingRequests();
+        const pending = await runtimeClient.pendingRequests();
         setRequests(pending);
         uncertain.current.delete(key);
       } catch {

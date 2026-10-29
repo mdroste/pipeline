@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Json, Scope, TaskEvent } from "./taskClient";
+import type { Json, Scope, TaskEvent } from "./taskTypes";
 import type { OpenResearchObject } from "./deskClient";
 
 export type MissionMode =

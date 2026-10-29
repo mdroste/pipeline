@@ -8,8 +8,8 @@ export default function useRecentProjects(page: AppPage) {
     if (!["home", "workspace", "project-index"].includes(page)) return;
     let live = true;
     setProjectsLoading(true);
-    void import("../lib/workbenchClient")
-      .then(({ workbenchClient }) => workbenchClient.listWorkspaces(false))
+    void import("../lib/workbench/workspaceClient")
+      .then(({ workspaceClient }) => workspaceClient.listWorkspaces(false))
       .then(({ workspaces }) => {
         if (live)
           setRecentProjects(

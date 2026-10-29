@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => ({
   importPaper: vi.fn(),
   open: vi.fn(),
 }));
-vi.mock("../lib/workbenchClient", () => ({ workbenchClient: mocks }));
+vi.mock("../lib/workbench/workspaceClient", () => ({ workspaceClient: mocks }));
+vi.mock("../lib/workbench/researchClient", () => ({ researchClient: mocks }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.open }));
 const record = {
   id: "ws",

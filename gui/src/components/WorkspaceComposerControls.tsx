@@ -4,7 +4,7 @@ import SegmentedControl from "../ui/SegmentedControl";
 import Skeleton from "../ui/Skeleton";
 import { Icon } from "../ui/icons";
 import { moveFocusInList } from "../ui/listKeys";
-import { workbenchClient } from "../lib/workbenchClient";
+import { runtimeClient } from "../lib/workbench/runtimeClient";
 import type {
   WorkspaceAccountState,
   WorkspaceModel,
@@ -31,8 +31,8 @@ export interface AccountSummary {
 /** Read on demand when the picker opens; either part may be unavailable. */
 export async function loadAccountSummary(): Promise<AccountSummary> {
   const [account, limits] = await Promise.all([
-    workbenchClient.accountState().catch(() => null),
-    workbenchClient.rateLimits().catch(() => null),
+    runtimeClient.accountState().catch(() => null),
+    runtimeClient.rateLimits().catch(() => null),
   ]);
   return { account, limits };
 }
@@ -84,6 +84,8 @@ export default function WorkspaceComposerControls({
   disabled,
   onChange,
   loadAccount,
+  runtime = "codex",
+  onRuntimeChange,
 }: {
   models: WorkspaceModel[];
   model: string;
@@ -91,6 +93,8 @@ export default function WorkspaceComposerControls({
   disabled: boolean;
   onChange: (model: string, effort: string) => void;
   loadAccount?: () => Promise<AccountSummary>;
+  runtime?: "codex" | "claude";
+  onRuntimeChange?: (runtime: "codex" | "claude") => void;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -99,7 +103,7 @@ export default function WorkspaceComposerControls({
     "idle",
   );
   useEffect(() => {
-    if (!open || !loadAccount) return;
+    if (!open || !loadAccount || runtime === "claude") return;
     let live = true;
     setSummaryState((state) => (state === "done" ? state : "loading"));
     void loadAccount()
@@ -113,7 +117,7 @@ export default function WorkspaceComposerControls({
     return () => {
       live = false;
     };
-  }, [open, loadAccount]);
+  }, [open, loadAccount, runtime]);
 
   // Automatic may also include connection defaults; do not infer an effective
   // model from the catalog's isDefault flag when the connection has overrides.
@@ -125,6 +129,7 @@ export default function WorkspaceComposerControls({
     !supported.some((item) => item.reasoningEffort === effort);
   const shownEffort = effort || selected?.defaultReasoningEffort || "";
   const chip = [
+    runtime === "claude" ? "Claude" : "ChatGPT",
     model ? (selected?.displayName ?? model) : "Auto",
     shownEffort ? effortLabel(shownEffort) : null,
   ]
@@ -228,25 +233,49 @@ export default function WorkspaceComposerControls({
         align="start"
         width={320}
       >
-        {loadAccount && (summaryState === "loading" || account || usage) && (
-          <div className="border-b border-line px-3 py-2.5">
-            <div className="text-ui-meta font-medium text-ink-muted">
-              ChatGPT account
-            </div>
-            {summaryState === "loading" && !summary ? (
-              <Skeleton label="Loading account" lines={1} className="mt-2" />
-            ) : (
-              <>
-                {account && <div className="mt-0.5 truncate">{account}</div>}
-                {usage && (
-                  <div className="mt-0.5 text-ui-meta text-ink-muted">
-                    {usage}
-                  </div>
-                )}
-              </>
+        {onRuntimeChange && (
+          <div className="border-b border-line p-3">
+            <SegmentedControl
+              label="Conversation provider"
+              value={runtime}
+              disabled={disabled}
+              options={[
+                { value: "codex", label: "ChatGPT" },
+                { value: "claude", label: "Claude Code" },
+              ]}
+              onChange={(value) => onRuntimeChange(value as "codex" | "claude")}
+            />
+            {runtime === "claude" && (
+              <p className="mt-2 text-ui-meta text-ink-muted">
+                Uses your Claude Code subscription sign-in. Project files and
+                enabled research tools are available; commands require a
+                configured execution profile. Remaining usage and automatic
+                titles are unavailable.
+              </p>
             )}
           </div>
         )}
+        {runtime === "codex" &&
+          loadAccount &&
+          (summaryState === "loading" || account || usage) && (
+            <div className="border-b border-line px-3 py-2.5">
+              <div className="text-ui-meta font-medium text-ink-muted">
+                ChatGPT account
+              </div>
+              {summaryState === "loading" && !summary ? (
+                <Skeleton label="Loading account" lines={1} className="mt-2" />
+              ) : (
+                <>
+                  {account && <div className="mt-0.5 truncate">{account}</div>}
+                  {usage && (
+                    <div className="mt-0.5 text-ui-meta text-ink-muted">
+                      {usage}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         {disabled && (
           <p
             role="note"
@@ -270,7 +299,7 @@ export default function WorkspaceComposerControls({
           {option(
             "",
             "Automatic",
-            "Uses the default model from your ChatGPT connection.",
+            `Uses the default model from your ${runtime === "claude" ? "Claude Code" : "ChatGPT"} connection.`,
           )}
           {unknownModel &&
             option(model, model, "No longer offered. Choose another model.", {

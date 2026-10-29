@@ -300,7 +300,7 @@ export function WorkflowNavigator({
             <div className="sticky top-0 z-[1] border-b border-gray-100 bg-white px-4 py-3 dark:border-gray-800 dark:bg-gray-900">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-300">
-                  Artifact contracts
+                  Output formats
                 </span>
                 <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
                   {config.steps.filter((step) => !!step.output_schema).length +
@@ -407,7 +407,7 @@ export function WorkflowNavigator({
                 Input &amp; extraction
               </span>
               <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
-                Choose the input type and PDF extraction method
+                Input type and PDF extraction
               </span>
             </button>
             <button
@@ -431,8 +431,8 @@ export function WorkflowNavigator({
               </span>
               <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
                 {autoReview
-                  ? "Build the paper map and select its review plan in one LLM call"
-                  : "Survey the input before review steps run"}
+                  ? "Maps the paper and picks reviewers"
+                  : "Maps the input before review"}
               </span>
             </button>
 

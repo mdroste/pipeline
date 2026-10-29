@@ -52,7 +52,7 @@ export default function HomePage({
     {
       title: "Review a paper",
       description:
-        "Run a structured, reproducible review with evidence and durable outputs.",
+        "Review a paper and save the findings, supporting evidence, and report.",
       // Reviews run side by side, so this always sets up a new one; the
       // banner above returns to running reviews.
       label: "New review",
@@ -64,7 +64,7 @@ export default function HomePage({
     {
       title: "Automate research",
       description:
-        "Continue research, reviews, waits, and decisions on a schedule or over several rounds.",
+        "Schedule research and reviews, repeat them as needed, and pause for your input.",
       label: "Open automations",
       icon: "tasks" as const,
       accent:

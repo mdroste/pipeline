@@ -39,6 +39,9 @@ pub struct RunScope {
     settings: Mutex<Option<(u64, Settings)>>,
     pub(crate) write_count: AtomicUsize,
     pub(crate) write_bytes: AtomicUsize,
+    /// The Claude Code executable whose subscription sign-in this run verified
+    /// on its first Claude call. Later calls in the run reuse it.
+    claude_subscription: tokio::sync::OnceCell<crate::deps::ResolvedCommand>,
 }
 
 tokio::task_local! {
@@ -164,6 +167,7 @@ impl RunScope {
             settings: Mutex::new(None),
             write_count: AtomicUsize::new(0),
             write_bytes: AtomicUsize::new(0),
+            claude_subscription: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -320,6 +324,16 @@ impl RunScope {
     pub fn reset_write_budget(&self) {
         self.write_count.store(0, Ordering::SeqCst);
         self.write_bytes.store(0, Ordering::SeqCst);
+    }
+
+    // --- Provider sign-in ---
+
+    /// Only meaningful on a run scope: the shared fallback is reused across
+    /// operations, so callers must not cache a verification there.
+    pub(crate) fn claude_subscription(
+        &self,
+    ) -> &tokio::sync::OnceCell<crate::deps::ResolvedCommand> {
+        &self.claude_subscription
     }
 }
 

@@ -6,7 +6,7 @@ import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 export interface ConversationEntry {
   id: string;
   text: string;
-  role: "You" | "ChatGPT";
+  role: "You" | "ChatGPT" | "Claude";
 }
 const PAGE_SIZE = 100;
 
@@ -38,7 +38,10 @@ export default function WorkspaceConversationOutline({
         .map((entry, index) => ({ ...entry, number: index + 1 }))
         .filter(
           (entry) =>
-            (role === "all" || entry.role === role) &&
+            (role === "all" ||
+              (role === "assistant"
+                ? entry.role !== "You"
+                : entry.role === role)) &&
             entry.text
               .toLocaleLowerCase()
               .includes(query.trim().toLocaleLowerCase()),
@@ -102,7 +105,7 @@ export default function WorkspaceConversationOutline({
         >
           <option value="all">Prompts and responses</option>
           <option value="You">Prompts only</option>
-          <option value="ChatGPT">Responses only</option>
+          <option value="assistant">Responses only</option>
         </select>
         <p role="status" className="text-xs text-gray-500">
           {matches.length} {matches.length === 1 ? "message" : "messages"}

@@ -2,14 +2,14 @@
 // one user-facing name and one sentence form; the outline editor, previews,
 // and run detail all render from here so internal kind ids never reach copy.
 
-import type { Binding, Chain, Condition, Step } from "../../lib/taskClient";
+import type { Binding, Chain, Condition, Step } from "../../lib/taskTypes";
 
 export const STEP_KIND_LABELS: Record<Step["kind"], string> = {
   workspace: "Ask the assistant",
   review: "Run a review",
   snapshot: "Save a version",
   check: "Run a check",
-  capturedCheck: "Run a captured check",
+  capturedCheck: "Run a saved analysis plan",
   literatureLookup: "Look up literature",
   deliver: "Deliver a result",
   input: "Wait for me",

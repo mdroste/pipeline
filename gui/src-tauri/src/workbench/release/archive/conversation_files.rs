@@ -1,5 +1,12 @@
 //! Version-two archive payload for app-owned conversation working files.
-use super::*;
+use super::format::{BlobManifest, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES, MAX_ENTRY_BYTES};
+use super::{hash_reader, safe_archive_name};
+use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
+use rusqlite::Connection;
+use std::collections::HashSet;
+use std::fs::{self, File};
+use std::io::Read;
+use std::path::{Path, PathBuf};
 
 fn io(error: std::io::Error) -> WorkbenchError {
     WorkbenchError::storage("Conversation file archive failed", error)

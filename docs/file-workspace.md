@@ -1,10 +1,67 @@
-# File workspace
+# Files and PDFs
 
-The shared file workspace connects source editing, Markdown, PDFs and revision
-review. The presentation components are shared; Workspace files use Workspace
-services and Workflow artifacts remain read-only in their owning run.
+Open **Library → Files** in a project to browse its attached folder. You can
+read source files, edit supported text files, preview Markdown, and open PDFs
+beside the source. Review outputs open in the same viewer as read-only files.
 
-## Locations and navigation
+## Open and navigate
+
+- Press **Command/Ctrl+P** to find a file or enter its relative path.
+- Use tabs, back and forward, or two panes to move between files.
+- Follow a file link in a conversation or report to open its source line,
+  Markdown heading, or PDF page when available.
+- In a Review's **Sources**, choose **Open in file tabs** to browse saved files.
+- Use the open or reveal action to open a file outside Pipeline or find it in
+  your system's file browser.
+
+Links can open files inside the project or saved Review. Files outside that
+location, or files missing from an imported snapshot, are unavailable through
+those links.
+
+## Edit text
+
+The editor supports search and replace, line numbers, folding, multiple
+selections, indentation, and wrapping. It recognizes LaTeX, BibTeX, Stata,
+Python, R, Julia, MATLAB, Markdown, and other common languages. Markdown has
+source, preview, and split views. LaTeX completion suggests known labels and
+bibliography keys.
+
+Press **Command/Ctrl+S** to save. Drafts survive tab changes and closing a tab.
+If another editor changes the file, Pipeline checks for that change before
+saving so an older draft cannot silently overwrite it. Source editing is
+currently available on macOS and Linux; Windows supports reading files.
+
+Use **Write → Review edits** to review proposed changes. For an existing text
+file, you can accept selected changes. File additions, deletions, and executable
+changes are accepted as whole files. Saved Review outputs and earlier document
+versions remain read-only.
+
+## Read and compare PDFs
+
+The PDF reader provides text selection, search, an outline, thumbnails, zoom,
+rotation, and page navigation. Imported papers support saved quotations and
+page-region annotations tied to the version you read.
+
+In the manuscript editor, open the build PDF beside its source. If that build
+has SyncTeX information, double-click a point in the PDF to find the matching
+source. Pipeline indicates when the working source has changed since the build.
+
+PDF comparison can synchronize page, zoom, and rotation between versions, or
+let you navigate independently. Its changed-page view compares pages with the
+same number; inserting a page can therefore affect the comparisons that follow.
+
+## Limits
+
+Interactive file reads and PDFs are limited to 32 MiB, editable text to 2 MiB,
+and interactive PDFs to 5,000 pages. Review text previews have separate size
+limits. If the interactive PDF reader fails, available page images can still
+be inspected.
+
+## Developer reference
+
+The following sections describe file access, editing, and rendering contracts.
+
+### Locations and navigation
 
 - Workspace → project → Library → **Files** opens the attached folder's files.
   Quick open accepts a filtered inventory entry or a normalized relative path.
@@ -38,7 +95,7 @@ remain in `data-source-anchor` for file navigation; saved source text and export
 identities are unchanged. Contents text, active links and keyboard focus use
 theme-specific semantic colors.
 
-## Editing and revision review
+### Editing and revision review
 
 `SourceEditor` uses CodeMirror 6 with line numbers, search/replace, indentation,
 bracket matching, folding, multiple selections, go-to-line, line wrapping,
@@ -67,7 +124,7 @@ current working file's hash. File additions/deletions and executable changes kee
 using whole-file acceptance. Source and simplified-prose comparisons remain
 separate.
 
-## PDFs and manuscript navigation
+### PDFs and manuscript navigation
 
 `PdfReader` uses the PDF.js compatibility build, with its worker, CMaps, fonts,
 image resources and codecs bundled for offline development and packaging.
@@ -104,7 +161,7 @@ Interactive PDFs stop at 5,000 pages; the outline is bounded to 2,000 entries an
 12 nesting levels, and thumbnails load 12 at a time. Plain chat does not load
 CodeMirror or PDF.js until their owning file surfaces open.
 
-## Implementation and verification
+### Implementation and verification
 
 Frontend: `gui/src/components/file-workspace/`, `fileLanguages.ts`, `fileLinks.ts`,
 `fileDiff.ts`, `fileWorkspaceClient.ts`, and `pdfAssets.ts`. `pdfAssetsPlugin.ts`

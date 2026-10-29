@@ -1,16 +1,18 @@
 // Compact pipeline shape visualization rendered above the step list.
 //
-// Layout: vertical stack of dependency-ready waves, top-to-bottom.
-// Within a parallel wave, branches flow horizontally and wrap to additional
-// rows when they exceed the sidebar width — so the diagram grows downward,
-// never sideways. A single thin vertical line between waves communicates
-// "these are the next ready calls". Clicking any node selects the
-// corresponding step in the editor.
+// Layout: vertical stack of dependency-ready waves, top-to-bottom, on a
+// dotted canvas. Every stage is a card. A parallel wave sits in a labelled
+// frame that splits into equal columns as it widens and wraps to additional
+// rows otherwise — so the diagram grows downward, never sideways. An arrow
+// between waves communicates "these are the next ready calls". Clicking any
+// node selects the corresponding step in the editor.
 
+import { Fragment, useId } from "react";
 import { computeWaves } from "../lib/pipelineHelpers";
 import type { StepConfig, MergeConfig } from "../lib/types";
 import { adaptiveAgentCountLabel } from "../lib/autoReview";
 import type { AdaptiveAgentRange } from "../lib/autoReview";
+import "./WaveDiagram.css";
 
 export type WaveSelection =
   | string
@@ -28,6 +30,8 @@ interface Props {
   adaptiveAgentRange?: AdaptiveAgentRange;
   selectedId: WaveSelection | null;
   onSelect: (id: WaveSelection) => void;
+  /** Instruction shown under the canvas; callers tailor it to what a click does. */
+  hint?: string;
 }
 
 export default function WaveDiagram({
@@ -38,6 +42,7 @@ export default function WaveDiagram({
   adaptiveAgentRange,
   selectedId,
   onSelect,
+  hint = "Select a stage to inspect or edit it.",
 }: Props) {
   const waves = computeWaves(steps, false);
   const noEnabledSteps = waves.length === 0;
@@ -85,86 +90,76 @@ export default function WaveDiagram({
   }
 
   return (
-    <div className="px-4 py-4 bg-gray-50/40 dark:bg-gray-900/30">
-      <div className="mb-4">
-        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-          Workflow overview
-        </h3>
-        <p className="mt-1 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
-          {adaptiveReview
-            ? `${enabledSteps.length} saved steps plus ${adaptiveAgentCountLabel(adaptiveAgentCount, adaptiveAgentRange)} auto-selected specialists in ${waves.length} execution ${waves.length === 1 ? "wave" : "waves"}.`
-            : `${enabledSteps.length} enabled ${enabledSteps.length === 1 ? "step" : "steps"} in ${waves.length} execution ${waves.length === 1 ? "wave" : "waves"}; up to ${providerCalls} provider ${providerCalls === 1 ? "call" : "calls"} before retries.`}
-        </p>
-      </div>
-      <div
-        className="mb-3 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-gray-500 dark:text-gray-400"
-        aria-label="Overview legend"
-      >
-        <span>
-          <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-blue-200 dark:bg-blue-800" />
-          Parallel
-        </span>
-        <span>
-          <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-orange-200 dark:bg-orange-800" />
-          Sequential
-        </span>
-        <span>
-          <span className="mr-1 inline-block h-2 w-2 rounded-sm bg-amber-200 dark:bg-amber-800" />
-          Merge
-        </span>
-      </div>
-      {noEnabledSteps && (
-        <div className="px-1 pb-2 text-[10px] text-gray-600 dark:text-gray-400 italic">
-          No enabled review steps — toggle one on below.
+    <div className="px-4 py-4">
+      <div className="overflow-hidden rounded-ui-lg border border-line bg-surface">
+        <div className="border-b border-line px-4 py-3">
+          <h3 className="text-sm font-semibold text-ink">Workflow overview</h3>
+          <p className="mt-0.5 text-ui-meta text-ink-muted">
+            {adaptiveReview
+              ? `${enabledSteps.length} saved steps plus ${adaptiveAgentCountLabel(adaptiveAgentCount, adaptiveAgentRange)} auto-selected specialists in ${waves.length} execution ${waves.length === 1 ? "wave" : "waves"}.`
+              : `${enabledSteps.length} enabled ${enabledSteps.length === 1 ? "step" : "steps"} in ${waves.length} execution ${waves.length === 1 ? "wave" : "waves"}; up to ${providerCalls} provider ${providerCalls === 1 ? "call" : "calls"} before retries.`}
+          </p>
         </div>
-      )}
-      <div className="flex flex-col items-stretch gap-0">
-        {rows.map((row, i) => (
-          <div key={i} className="flex flex-col items-stretch">
-            {row.kind === "extract" && (
-              <PreprocessRow
-                label="Extract"
-                selected={selectedId === "extraction"}
-                onClick={() => onSelect("extraction")}
-              />
-            )}
-            {row.kind === "orient" && (
-              <PreprocessRow
-                label={adaptiveReview ? "Orient + classify" : "Orient"}
-                selected={selectedId === "orientation"}
-                onClick={() => onSelect("orientation")}
-              />
-            )}
-            {row.kind === "parallel" && (
-              <ParallelRow
-                steps={row.steps}
-                adaptive={row.adaptive}
-                adaptiveAgentCount={adaptiveAgentCount}
-                adaptiveAgentRange={adaptiveAgentRange}
-                selectedId={selectedId}
-                onSelect={onSelect}
-              />
-            )}
-            {row.kind === "sequential" && (
-              <SequentialRow
-                step={row.step}
-                selected={selectedId === row.step.id}
-                onClick={() => onSelect(row.step.id)}
-              />
-            )}
-            {row.kind === "merge" && (
-              <MergeRow
-                selected={selectedId === "merge"}
-                onClick={() => onSelect("merge")}
-              />
-            )}
-            {i < rows.length - 1 && <Connector />}
-          </div>
-        ))}
+        <div className="wave-canvas flex flex-col items-center px-4 py-6">
+          {rows.map((row, i) => (
+            <Fragment key={i}>
+              {i > 0 && <Connector />}
+              {row.kind === "extract" && (
+                <Node
+                  kind="extract"
+                  label="Extract"
+                  selected={selectedId === "extraction"}
+                  onClick={() => onSelect("extraction")}
+                />
+              )}
+              {row.kind === "orient" && (
+                <Node
+                  kind="orient"
+                  label={adaptiveReview ? "Orient + classify" : "Orient"}
+                  detail={adaptiveReview ? "Selects specialists" : undefined}
+                  selected={selectedId === "orientation"}
+                  onClick={() => onSelect("orientation")}
+                />
+              )}
+              {row.kind === "parallel" && (
+                <ParallelRow
+                  steps={row.steps}
+                  adaptive={row.adaptive}
+                  adaptiveAgentCount={adaptiveAgentCount}
+                  adaptiveAgentRange={adaptiveAgentRange}
+                  selectedId={selectedId}
+                  onSelect={onSelect}
+                />
+              )}
+              {row.kind === "sequential" && (
+                <StepNode
+                  step={row.step}
+                  selected={selectedId === row.step.id}
+                  onClick={() => onSelect(row.step.id)}
+                />
+              )}
+              {row.kind === "merge" && (
+                <Node
+                  kind="merge"
+                  label="Merge"
+                  detail="Combines agent replies"
+                  selected={selectedId === "merge"}
+                  onClick={() => onSelect("merge")}
+                />
+              )}
+            </Fragment>
+          ))}
+          {noEnabledSteps && (
+            <>
+              <Connector />
+              <p className="w-52 max-w-full rounded-ui-md border border-dashed border-line-strong bg-surface px-3 py-2 text-center text-ui-meta text-ink-muted">
+                No enabled review steps. Turn one on to add it here.
+              </p>
+            </>
+          )}
+        </div>
       </div>
-      <p className="mt-4 text-center text-[10px] text-gray-500 dark:text-gray-400">
-        Select a stage to inspect or edit it.
-      </p>
+      <p className="mt-3 text-center text-ui-meta text-ink-muted">{hint}</p>
     </div>
   );
 }
@@ -191,156 +186,209 @@ function ParallelRow({
   if (steps.length === 1 && !adaptive) {
     const s = steps[0];
     return (
-      <SequentialRow
+      <StepNode
         step={s}
         selected={selectedId === s.id}
         onClick={() => onSelect(s.id)}
-        variant="parallel"
       />
     );
   }
+  const count = adaptiveAgentCountLabel(adaptiveAgentCount, adaptiveAgentRange);
   return (
-    <div className="flex flex-wrap gap-1 justify-center">
-      {steps.map((s) => (
-        <Node
-          key={s.id}
-          label={s.label}
-          selected={selectedId === s.id}
-          variant="parallel"
-          onClick={() => onSelect(s.id)}
-        />
-      ))}
-      {adaptive && (
-        <Node
-          label={`Adaptive agents (${adaptiveAgentCountLabel(adaptiveAgentCount, adaptiveAgentRange)})`}
-          selected={selectedId === "auto_adaptive_agents"}
-          variant="adaptive"
-          onClick={() => onSelect("auto_adaptive_agents")}
-        />
-      )}
+    <div
+      role="group"
+      aria-label="Parallel steps"
+      className="wave-parallel relative w-full rounded-ui-lg border border-dashed border-line-strong px-3 pb-3 pt-5"
+    >
+      <span className="absolute -top-2 left-3 inline-flex items-center gap-1 rounded-full border border-line bg-surface px-2 text-ui-meta font-medium text-ink-muted">
+        <StageIcon kind="fork" />
+        In parallel
+      </span>
+      <div className="wave-parallel-cards">
+        {steps.map((s) => (
+          <StepNode
+            key={s.id}
+            step={s}
+            selected={selectedId === s.id}
+            onClick={() => onSelect(s.id)}
+            inGroup
+          />
+        ))}
+        {adaptive && (
+          <Node
+            kind="adaptive"
+            inGroup
+            label="Adaptive agents"
+            accessibleLabel={`Adaptive agents (${count})`}
+            detail={`${count} auto-selected`}
+            selected={selectedId === "auto_adaptive_agents"}
+            onClick={() => onSelect("auto_adaptive_agents")}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
-function SequentialRow({
+function StepNode({
   step,
   selected,
   onClick,
-  variant = "sequential",
+  inGroup,
 }: {
   step: StepConfig;
   selected: boolean;
   onClick: () => void;
-  variant?: "sequential" | "parallel";
+  inGroup?: boolean;
 }) {
   return (
-    <div className="flex justify-center">
-      <Node
-        label={step.label}
-        selected={selected}
-        variant={variant}
-        onClick={onClick}
-        wide
-      />
-    </div>
+    <Node
+      kind="step"
+      label={step.label}
+      detail={stepDetail(step)}
+      selected={selected}
+      onClick={onClick}
+      inGroup={inGroup}
+    />
   );
 }
 
-function MergeRow({
-  selected,
-  onClick,
-}: {
-  selected: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <div className="flex justify-center">
-      <Node
-        label="Merge"
-        selected={selected}
-        variant="merge"
-        onClick={onClick}
-      />
-    </div>
-  );
-}
-
-function PreprocessRow({
-  label,
-  selected,
-  onClick,
-}: {
-  label: string;
-  selected: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <div className="flex justify-center">
-      <Node
-        label={label}
-        selected={selected}
-        variant="preprocess"
-        onClick={onClick}
-      />
-    </div>
-  );
+/** Short card subtitle: only what changes how many calls the step makes. */
+function stepDetail(step: StepConfig): string | undefined {
+  const parts: string[] = [];
+  const agents = step.agents?.length ?? 0;
+  if (agents > 1) parts.push(`${agents} agents`);
+  if (step.for_each) parts.push(`Up to ${step.for_each.max} items`);
+  if (step.run_if) parts.push("Conditional");
+  return parts.length ? parts.join(" · ") : undefined;
 }
 
 // ── Atoms ───────────────────────────────────────────────────────────
 
+type NodeKind = "extract" | "orient" | "step" | "adaptive" | "merge";
+
 function Node({
+  kind,
   label,
+  accessibleLabel,
+  detail,
   selected,
-  variant,
-  wide,
   onClick,
+  inGroup,
 }: {
+  kind: NodeKind;
   label: string;
+  /** Overrides the button name when the visible label omits a detail. */
+  accessibleLabel?: string;
+  detail?: string;
   selected: boolean;
-  variant: "parallel" | "adaptive" | "sequential" | "merge" | "preprocess";
-  wide?: boolean;
   onClick: () => void;
+  /** Parallel-frame cards take their width from the frame's columns. */
+  inGroup?: boolean;
 }) {
-  // Use min-w-0 + flex-1 friendliness so wrapping works cleanly. `wide`
-  // makes a single-row pill stretch a bit so the layout feels intentional
-  // rather than orphaned in the center of the panel.
-  const base =
-    "rounded-md border text-[10px] font-medium truncate transition-colors text-left cursor-pointer";
-  const sizing = wide
-    ? "px-2.5 py-1 max-w-[260px] min-w-[120px] text-center"
-    : "px-2 py-1 max-w-[140px]";
-  const palette = (() => {
-    if (selected) return "bg-blue-700 text-white border-blue-700";
-    switch (variant) {
-      case "parallel":
-        return "bg-blue-50 dark:bg-blue-950/40 border-blue-200 dark:border-blue-900 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-950";
-      case "adaptive":
-        return "border-dashed bg-indigo-50 dark:bg-indigo-950/30 border-indigo-300 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-950/50";
-      case "sequential":
-        return "bg-orange-50 dark:bg-orange-950/40 border-orange-200 dark:border-orange-900 text-orange-700 dark:text-orange-300 hover:bg-orange-100 dark:hover:bg-orange-950";
-      case "merge":
-        return "bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-900 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-950";
-      case "preprocess":
-        return "bg-gray-50 dark:bg-gray-800 border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700";
-    }
-  })();
+  const detailId = useId();
+  // Standalone cards share one width so the spine stays straight; max-w-full
+  // lets the narrowest sidebar shrink them instead of overflowing.
+  const width = inGroup ? "" : "w-52 max-w-full";
+  const border = selected
+    ? "border-accent ring-2 ring-accent-soft"
+    : kind === "adaptive"
+      ? "border-dashed border-line-strong hover:border-ink-muted"
+      : "border-line hover:border-line-strong";
   return (
     <button
+      type="button"
       onClick={onClick}
-      title={label}
-      className={`${base} ${sizing} ${palette}`}
+      title={accessibleLabel ?? label}
+      aria-label={accessibleLabel ?? label}
+      aria-describedby={detail ? detailId : undefined}
+      className={`${width} flex cursor-pointer items-center gap-2 rounded-ui-md border bg-raised px-2.5 py-2 text-left shadow-ui-1 transition hover:shadow-ui-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${border}`}
     >
-      {label}
+      <span
+        className={`grid h-6 w-6 shrink-0 place-items-center rounded-ui-sm transition-colors ${
+          selected ? "bg-accent-soft text-accent" : "bg-sunken text-ink-muted"
+        }`}
+      >
+        <StageIcon kind={kind} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="line-clamp-2 break-words text-ui-label font-medium text-ink">
+          {label}
+        </span>
+        {detail && (
+          <span
+            id={detailId}
+            className="block truncate text-ui-meta text-ink-muted"
+          >
+            {detail}
+          </span>
+        )}
+      </span>
     </button>
   );
 }
 
 function Connector() {
-  // 12px tall vertical line, centered. Thin enough to feel like a hint
-  // rather than a tied-together-with-string aesthetic.
+  // Short arrow between waves, centered on the canvas. Drawn from muted ink
+  // rather than the border token so it stands apart from the dot grid.
   return (
-    <div className="flex justify-center" aria-hidden="true">
-      <div className="w-px h-3 bg-gray-300 dark:bg-gray-600" />
-    </div>
+    <svg
+      aria-hidden="true"
+      className="shrink-0 text-ink-muted"
+      width="12"
+      height="24"
+      viewBox="0 0 12 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeOpacity="0.55"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M6 0v22" />
+      <path d="m2.5 18.5 3.5 3.5 3.5-3.5" />
+    </svg>
+  );
+}
+
+function StageIcon({ kind }: { kind: NodeKind | "fork" }) {
+  const paths: Record<NodeKind | "fork", string[]> = {
+    // Page with text lines.
+    extract: [
+      "M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z",
+      "M14 3v5h5",
+      "M9 13h6M9 17h4",
+    ],
+    // Compass.
+    orient: ["M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z", "m15.5 8.5-2 5-5 2 2-5z"],
+    // Speech bubble: one model call.
+    step: ["M4 5h16v11H9l-5 4z", "M8 9h8M8 12h5"],
+    // Four-point sparkle.
+    adaptive: [
+      "M12 3c.6 4.6 2.4 6.4 7 7-4.6.6-6.4 2.4-7 7-.6-4.6-2.4-6.4-7-7 4.6-.6 6.4-2.4 7-7z",
+      "M19 16v4M17 18h4",
+    ],
+    // Two branches joining into one.
+    merge: ["M6 3v4a6 6 0 0 0 12 0V3", "M12 13v8"],
+    // One line splitting into two.
+    fork: ["M12 3v8", "M6 21v-4a6 6 0 0 1 12 0v4"],
+  };
+  const size = kind === "fork" ? 12 : 14;
+  return (
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {paths[kind].map((d) => (
+        <path key={d} d={d} />
+      ))}
+    </svg>
   );
 }

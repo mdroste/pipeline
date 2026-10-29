@@ -7,9 +7,9 @@ import {
   type SetStateAction,
 } from "react";
 import type { ConversationSnapshot } from "../lib/workbenchTypes";
-import { workbenchClient } from "../lib/workbenchClient";
+import { conversationClient } from "../lib/workbench/conversationClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import { isMessage } from "../components/WorkspaceConversationView";
+import { isMessage } from "../lib/workspaceTranscript";
 
 export default function useWorkspaceTranscript(
   snapshot: ConversationSnapshot | null,
@@ -50,7 +50,7 @@ export default function useWorkspaceTranscript(
     loading.current = true;
     setLoadingEarlier(true);
     try {
-      const page = await workbenchClient.transcriptPage(session, before);
+      const page = await conversationClient.transcriptPage(session, before);
       // Refresh/navigation invalidates the page request even within the same session.
       if (
         current.current?.session.id !== session ||

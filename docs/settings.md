@@ -1,74 +1,95 @@
 # Settings
 
-Settings opens on General. The sidebar has seven categories; search matches
-labels, descriptions, and synonyms, shows current values where loaded, and
-opens the matching control, including controls inside collapsed Review stages
-and parser options. Existing Workspace sign-in, API-key, model, extraction,
-engine-install, and storage links retain their destinations.
+Open **Settings** to change connections, model defaults, appearance, storage,
+and notifications. Search by a setting's name or purpose to jump to its control.
 
-## Inventory and ownership
+| Section | What you can change |
+| --- | --- |
+| General | Theme, text size, spacing, editor font and wrapping, and startup page |
+| Connections | ChatGPT sign-in, Claude subscription or API access, other API keys, and local model servers |
+| Conversations | Send shortcut and automatic conversation titles |
+| Reviews | Models and reasoning defaults, parallel calls, simultaneous reviews, timeouts, retries, and PDF extraction |
+| Data & Storage | Research data folder, storage usage, retention, cleanup, backups, and Trash |
+| Notifications | Completion, failure, and attention notices; desktop delivery and sound |
+| Advanced & About | Logging, research tools and diagnostics, app version, and update checks |
 
-| Category | Preferences and actions | Persistence and effective time |
-| --- | --- | --- |
-| General | System/light/dark appearance; interface size; report reading size; comfortable/compact spacing; source-editor font and wrapping; startup destination | Device webview preferences; immediate, except startup on next launch |
-| Connections | Claude subscription/API, separate OpenAI conversation and Review sign-ins, Google API, compatible server endpoint/model/key, connection checks | Review settings/credentials and conversation account stores remain separate; ordinary Review fields autosave, API keys require Save |
-| Conversations | Enter or Command/Ctrl+Enter to send; automatic titles, title model and reasoning | Send shortcut is device presentation state; title preferences use the existing Workspace command and private store |
-| Reviews | Orientation, parallel, merge and sequential defaults; quota fallback; preferred provider; concurrency; timeout; retries; extraction method and parser options; revision comparison | Existing Review settings and field names; subsequent runs use saved defaults and retain workflow overrides |
-| Data & Storage | Research directory; report-count/size retention; cleanup preview; extraction-cache reuse; research archive, restore, usage and Trash | Existing storage, Review and Workspace commands; directory selection requires restart and does not move files |
-| Notifications | Completion, failure, attention, focus suppression, optional sound and desktop delivery | Device preferences; applied to subsequent events while Pipeline runs |
-| Advanced & About | Verbose logging; research capabilities and diagnostics; installed version; manual update check | Existing owners; compatibility connection selection remains with the relevant connection and is searchable |
+## Save changes
 
-Device presentation preferences use the versioned `pipeline.ui.preferences`
-local-storage record. Theme retains its existing key. Missing or malformed
-preferences use defaults; numeric presentation values are bounded. A failed
-write leaves the current preference unchanged and displays a local error.
-These preferences are not embedded in Review snapshots, credentials, archives,
-or conversation runtime configuration.
+Most settings save automatically. **API keys require Save**; Cancel discards
+an unfinished key edit. Save status appears beside the settings you changed.
+Pipeline prompts before leaving a section with unfinished edits or an operation
+in progress.
 
-Default interface/report scale is 100%, editor text is 13px, wrapping is off,
-spacing is comfortable, Enter sends, and startup restores the last project or
-conversation. Review setup opens from Home after restart. Visiting Settings
-does not replace the remembered research destination. The source editor and
-report reader can override their defaults for the current view.
+Review defaults apply to later runs. A saved workflow can override them, and
+changing settings does not change a run that has already started. Changing the
+research data folder requires a restart and does not move existing files.
 
-Review autosave retains the serialized immutable-snapshot queue. API-key drafts
-stay in their field until Save; Cancel discards the draft. Search leaves the
-current section mounted so it cannot erase unfinished input. Leaving a section
-with an unfinished credential, numeric edit, or independent operation is guarded.
-Conversation-title writes are serialized and only the newest result updates the
-form. Save feedback appears at the relevant section; pending operations aggregate
-only for navigation and never share writable stores.
+ChatGPT conversations and subscription Reviews use the same managed account.
+API keys are separate. See [ChatGPT](chatgpt-account.md) and
+[Claude Code](claude-code.md) for connection details.
 
-Retention numbers commit on blur or Enter only when valid. An empty field is an
-unfinished edit, not unlimited retention. Escape restores the saved number.
-Explicit 0 means unlimited. **Review cleanup…** retains the existing exact preview
-and confirmation token before moving reports to recoverable Trash.
+## Appearance and keyboard
+
+The defaults are system theme, 100% interface and report text size, comfortable
+spacing, and a 13-pixel editor font with wrapping off. You can also adjust the
+current editor or report view without changing its default.
+
+Enter sends a message by default. Choose Command+Enter on macOS or Ctrl+Enter
+on Windows and Linux if you prefer a separate send shortcut.
+
+Pipeline normally restores the last project or conversation at startup.
+Opening Settings does not replace that remembered destination.
+
+## Storage and cleanup
+
+Choose a [research data folder](storage.md) under **Data & Storage**. Use the
+storage report to inspect disk use before changing retention or cleaning up.
+
+Retention limits save when you press Enter or leave a valid number field.
+Enter `0` for no limit; an empty field is an unfinished edit. Escape restores
+the saved value.
+
+**Review cleanup…** previews the reports that will move to recoverable Trash.
+Confirm the preview to apply it. Restore items from Trash or permanently
+delete them when you no longer need them.
 
 ## Notifications
 
-The shell adapts Review terminal state, Workspace turn/request events, task and
-mission notices, research attention events, and batch completion into three
-notification categories. Cancelled/stopped work is not reported as a failure;
-partial Reviews and batches with failed jobs use failure notifications. Duplicate
-notices are coalesced briefly, with bounded memory. Listeners are released when
-the shell unmounts. Existing task/mission dock alerts no longer bypass preferences.
+In-app notices for completion, failure, and required attention are on by
+default. Desktop notifications and sound are off. Enable desktop delivery to
+request permission from your operating system. You can also suppress notices
+while Pipeline has focus.
 
-Completion, failure and attention are on by default for in-app notices; desktop
-delivery and sound are off. Focus suppression is opt-in. Direct responses to
-user actions, such as a failed Save, remain visible regardless of outcome
-notification preferences. Notification text uses generic outcome descriptions
-and does not include manuscript content, prompts, account identifiers, or errors
-containing local paths.
+**Test completion notification** uses your current category and focus settings.
+Errors from actions such as saving remain visible even if notifications are
+off. Notification text omits manuscript content, prompts, account details,
+and private file paths.
 
-Desktop delivery uses the official
-[Tauri notification plugin](https://v2.tauri.app/plugin/notification/), with only
-permission-check, permission-request and notification-send capabilities enabled.
-Only the explicit Desktop notifications control requests OS permission. Denial
-leaves the preference off; background events never prompt. Test completion
-notification respects the same category and focus controls. Sound uses a short
-in-app tone; browser audio activation and system notification policy still apply.
-Pipeline must remain running, including in its existing background mode; these
-preferences do not introduce an OS scheduler or wake a sleeping computer.
+Notifications and scheduled work require Pipeline to remain running. Closing
+the window can leave it running if **Keep running when the window closes** is
+enabled. These settings do not wake a sleeping computer.
+
+## Implementation notes
+
+Device presentation settings use the versioned `pipeline.ui.preferences`
+local-storage record; theme uses its existing key. Invalid values use defaults.
+These settings are excluded from Review snapshots, credentials, research
+archives, and conversation runtime configuration.
+
+Review autosave serializes snapshots. API-key drafts remain local to their
+fields until Save, and search preserves the mounted section and its drafts.
+Conversation-title saves are serialized; only the newest response updates the
+form. Storage changes use their own commands so a delayed Review-settings save
+cannot overwrite them.
+
+Notification handlers combine Review, conversation, automation, and research
+events into completion, failure, and attention categories. They deduplicate
+nearby events and release listeners on unmount. Stopped work is not a failure;
+partial Reviews and batches with failed items use the failure category.
+
+Desktop delivery uses the Tauri notification plugin. Only the explicit control
+requests OS permission. Sound uses an in-app tone and remains subject to
+browser audio activation and system policy.
 
 ## Validation — 2026-09-09
 

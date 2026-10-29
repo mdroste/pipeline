@@ -79,8 +79,8 @@ function ModelOverrides({
       {open && (
         <div className="mt-2 space-y-2 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
           <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-relaxed">
-            A missing override follows the active provider's current default.
-            You can instead use a stable role or pin an exact discovered model.
+            Use the provider’s default model, choose a model role, or select a
+            specific model.
           </p>
           {providers.map((provider) => {
             const key = `${provider}:${transportFor(provider)}`;

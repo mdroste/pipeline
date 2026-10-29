@@ -1,11 +1,8 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import {
-  taskClient,
-  stateLabel,
-  type TaskProposal,
-  type TaskSummary,
-} from "../lib/taskClient";
+import { taskClient } from "../lib/taskClient";
+import { stateLabel } from "../lib/taskPresentation";
+import { type TaskProposal, type TaskSummary } from "../lib/taskTypes";
 import "./TasksPage.css";
 export default function WorkspaceTaskCards({
   sessionId,
@@ -56,7 +53,7 @@ export default function WorkspaceTaskCards({
     };
   }, [sessionId]);
   return tasks.length || proposals.length || error ? (
-    <div className="workspace-task-cards" aria-label="Conversation task chains">
+    <div className="workspace-task-cards" aria-label="Conversation automations">
       {error && <p role="alert">{error}</p>}
       {proposals.map((p) => (
         <button

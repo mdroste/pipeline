@@ -209,7 +209,7 @@ fn preview_from_bytes(
     };
     let truncated = text.as_ref().is_some_and(|s| s.len() > 2 * 1024 * 1024);
     let editable =
-        cfg!(unix) && !captured && !truncated && text.is_some() && editable_source(&path);
+        files::REPLACEMENT && !captured && !truncated && text.is_some() && editable_source(&path);
     let text = text.map(|mut s| {
         if truncated {
             let mut end = 2 * 1024 * 1024;

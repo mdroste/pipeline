@@ -434,7 +434,7 @@ pub async fn get_orientation_defaults(name: String) -> Result<OrientationDefault
     Ok(OrientationDefaults { prompt, schema })
 }
 
-/// Compact Automatic Paper Review router template. Runtime expands its catalog
+/// Compact Paper Review router template. Runtime expands its catalog
 /// placeholders from the live manifest catalog.
 #[tauri::command]
 pub async fn get_auto_review_orientation_prompt() -> Result<String, String> {
@@ -450,15 +450,16 @@ pub struct AutoReviewOrientationDefaults {
 
 /// The router template and its compact catalog-backed orientation contract.
 /// The editor restores both together; catalog rows are injected only at run
-/// time and never stored in the profile prompt.
+/// time and never stored in the profile prompt. A built-in adaptive profile
+/// gets its own stock pair; any other or omitted profile gets Paper Review's.
 /// (`get_auto_review_orientation_prompt` above remains for compatibility.)
 #[tauri::command]
-pub async fn get_auto_review_orientation_defaults() -> Result<AutoReviewOrientationDefaults, String>
-{
-    Ok(AutoReviewOrientationDefaults {
-        prompt: crate::auto_review::orientation_prompt(),
-        schema: crate::auto_review::orientation_schema(),
-    })
+pub async fn get_auto_review_orientation_defaults(
+    profile_id: Option<String>,
+) -> Result<AutoReviewOrientationDefaults, String> {
+    let (prompt, schema) =
+        pipeline_config::adaptive_orientation_defaults(profile_id.as_deref().unwrap_or_default());
+    Ok(AutoReviewOrientationDefaults { prompt, schema })
 }
 
 /// The canonical published-findings contract, served from the binary so the

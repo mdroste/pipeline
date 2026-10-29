@@ -39,7 +39,7 @@ export function ExtractionSection({
       qualityClass:
         "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300",
       description:
-        "Highest expected fidelity. Layout-aware extraction preserves reading order, structured blocks, title hierarchy, formula metadata, and cross-page tables.",
+        "Designed to preserve reading order, headings, equations, and tables, including tables that span pages.",
     },
     {
       value: "llm",
@@ -65,7 +65,7 @@ export function ExtractionSection({
     <>
       <SectionHeader
         title="PDF Extraction"
-        description="Choose how PDFs become readable input. LaTeX source is always extracted natively."
+        description="Choose how Pipeline reads PDFs. LaTeX files are read directly."
       />
 
       <div className="space-y-4">
@@ -263,7 +263,7 @@ export function ExtractionSection({
 
                 <Field
                   label="Page retries"
-                  help="Suspicious layout-aware pages are retried before the Full Parser records an extraction failure."
+                  help="The parser retries pages with possible extraction errors before reporting a failure."
                 >
                   <select
                     aria-label="PaddleOCR-VL page retries"
@@ -309,12 +309,12 @@ export function ExtractionSection({
             <div className="pl-1 border-l-2 border-gray-200 dark:border-neutral-700 ml-1">
               <SubsectionHeader
                 label="Full parser structure"
-                help="These options are included in the Full Parser cache fingerprint, so changing one creates a distinct cached result."
+                help="Changing these options creates a new saved extraction result."
               />
               <div className="space-y-3 pl-4">
                 <Toggle
                   label="Layout detection and reading order"
-                  description="Run PP-DocLayoutV3 before recognition and retain semantic regions, coordinates, and reading order."
+                  description="Use PP-DocLayoutV3 to identify page sections, their positions, and reading order before reading the text."
                   checked={settings.paddle_full_layout_detection}
                   onChange={(v) =>
                     setSettings({
@@ -344,7 +344,7 @@ export function ExtractionSection({
                 </Field>
                 <Toggle
                   label="Layout NMS"
-                  description="Suppress overlapping layout detections before region recognition."
+                  description="Remove duplicate overlapping regions before reading their text."
                   checked={settings.paddle_full_layout_nms}
                   onChange={(v) =>
                     setSettings({ ...settings, paddle_full_layout_nms: v })
@@ -393,7 +393,7 @@ export function ExtractionSection({
                 />
                 <Toggle
                   label="Format block content"
-                  description="Retain block-level Markdown for tables, formulas, lists, and other semantic regions."
+                  description="Save tables, equations, lists, and other page sections as separate Markdown blocks."
                   checked={settings.paddle_full_format_block_content}
                   onChange={(v) =>
                     setSettings({
@@ -404,7 +404,7 @@ export function ExtractionSection({
                 />
                 <Toggle
                   label="Merge tables across pages"
-                  description="Reconstruct a continuing table as one logical table when page boundaries divide it."
+                  description="Join tables that continue onto the next page."
                   checked={settings.paddle_full_merge_tables}
                   onChange={(v) =>
                     setSettings({ ...settings, paddle_full_merge_tables: v })
@@ -412,7 +412,7 @@ export function ExtractionSection({
                 />
                 <Toggle
                   label="Relevel titles"
-                  description="Reconstruct a consistent multi-level heading hierarchy across the document."
+                  description="Identify heading levels consistently throughout the document."
                   checked={settings.paddle_full_relevel_titles}
                   onChange={(v) =>
                     setSettings({
@@ -423,7 +423,7 @@ export function ExtractionSection({
                 />
                 <Toggle
                   label="Retain formula numbers"
-                  description="Keep equation numbers in the Markdown and structured formula evidence."
+                  description="Keep equation numbers in the extracted text and equation records."
                   checked={settings.paddle_full_show_formula_numbers}
                   onChange={(v) =>
                     setSettings({
@@ -439,7 +439,7 @@ export function ExtractionSection({
 
         <Field
           label="Extraction time budget"
-          help="Applies to the complete extraction stage, including retries. An incomplete document fails before orientation instead of silently continuing."
+          help="Set the time limit for reading the entire document, including retries. Pipeline stops the review if extraction is incomplete."
         >
           <select
             aria-label="PDF extraction time budget"

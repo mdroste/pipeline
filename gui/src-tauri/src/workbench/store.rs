@@ -1,7 +1,7 @@
 //! Versioned local persistence for Workbench-owned research state.
 
 use fs2::FileExt as _;
-use rusqlite::{params, Connection, OptionalExtension as _, Row, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension as _, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 #[cfg(not(unix))]
@@ -18,6 +18,29 @@ const MAX_OVERRIDES_BYTES: usize = 256_000;
 const MAX_SESSIONS_PER_LIST: usize = 500;
 const MAX_WORKSPACES_PER_LIST: usize = 500;
 const MAX_PROJECTED_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
+
+mod journal;
+mod projection;
+mod records;
+mod schema;
+
+use journal::{change_sequence, current_sequence, ensure_operation_unused, insert_change};
+use projection::{required_json_string, upsert_projected_item, upsert_projected_turn};
+use records::{
+    load_active_binding, load_binding, load_session, load_workspace, read_session_row,
+    read_workspace_row,
+};
+pub use records::{
+    ClearWorkspaceRootRequest, ConversationSnapshot, ConversationTurn, CreateSessionRequest,
+    CreateWorkspaceRequest, DeleteSessionRequest, MoveSessionRequest, Mutation, ReconcileResult,
+    RegisterWorkspaceRootRequest, SessionBinding, SessionList, SessionSnapshot, TranscriptItem,
+    UpdateSessionRequest, UpdateWorkspaceRequest, WorkbenchSession, Workspace, WorkspaceList,
+};
+pub(super) use schema::migrate;
+use schema::{
+    configure_connection, configure_database, configure_timeout, database_has_objects,
+    schema_version,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -88,207 +111,6 @@ pub struct Store {
     database: PathBuf,
     backups: PathBuf,
     codex_home: PathBuf,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct Workspace {
-    pub id: String,
-    pub name: String,
-    pub root: Option<String>,
-    pub root_identity: Option<String>,
-    pub settings_revision: i64,
-    pub revision: i64,
-    pub archived_at: Option<String>,
-    pub missing_root_at: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkbenchSession {
-    pub id: String,
-    pub workspace_id: Option<String>,
-    pub paper_id: Option<String>,
-    pub title: String,
-    pub preset_id: Option<String>,
-    pub overrides: Value,
-    pub draft: String,
-    pub revision: i64,
-    pub archived_at: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Mutation<T> {
-    pub record: T,
-    pub sequence: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionList {
-    pub sessions: Vec<WorkbenchSession>,
-    pub sequence: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceList {
-    pub workspaces: Vec<Workspace>,
-    pub sequence: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionSnapshot {
-    pub workspace: Option<Workspace>,
-    pub session: WorkbenchSession,
-    pub sequence: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ConversationTurn {
-    pub id: String,
-    pub binding_id: String,
-    pub client_submission_id: String,
-    pub provider_turn_id: Option<String>,
-    pub state: String,
-    pub error: Option<Value>,
-    pub created_at: String,
-    pub updated_at: String,
-    pub terminal_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct TranscriptItem {
-    pub id: String,
-    pub turn_id: Option<String>,
-    pub provider_item_id: String,
-    pub item_kind: String,
-    pub payload: Value,
-    pub is_final: bool,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct ConversationSnapshot {
-    pub workspace: Option<Workspace>,
-    pub session: WorkbenchSession,
-    pub active_binding: Option<SessionBinding>,
-    pub turns: Vec<ConversationTurn>,
-    pub items: Vec<TranscriptItem>,
-    #[serde(default)]
-    pub older_cursor: Option<TranscriptCursor>,
-    pub sequence: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ReconcileResult {
-    pub changed: usize,
-    pub missing: usize,
-    pub restored: usize,
-    pub sequence: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionBinding {
-    pub id: String,
-    pub session_id: String,
-    pub runtime_namespace: String,
-    pub provider_thread_id: String,
-    pub incarnation: i64,
-    pub created_at: String,
-    pub retired_at: Option<String>,
-    pub retirement_reason: Option<String>,
-    #[serde(default)]
-    pub harness_fingerprint: Option<String>,
-    #[serde(default)]
-    pub instruction_sources: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateWorkspaceRequest {
-    pub name: String,
-    pub root: Option<String>,
-    pub operation_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RegisterWorkspaceRootRequest {
-    pub workspace_id: String,
-    pub root: String,
-    pub operation_id: String,
-    pub expected_revision: i64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClearWorkspaceRootRequest {
-    pub workspace_id: String,
-    pub operation_id: String,
-    pub expected_revision: i64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CreateSessionRequest {
-    pub workspace_id: Option<String>,
-    pub title: String,
-    pub operation_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateSessionRequest {
-    pub session_id: String,
-    pub expected_revision: i64,
-    pub operation_id: String,
-    pub title: Option<String>,
-    pub draft: Option<String>,
-    pub overrides: Option<Value>,
-    pub archived: Option<bool>,
-    pub preset_id: Option<String>,
-    pub paper_id: Option<String>,
-    pub clear_paper: Option<bool>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct MoveSessionRequest {
-    pub session_id: String,
-    pub expected_revision: i64,
-    pub operation_id: String,
-    /// `None` files the conversation as unfiled.
-    pub workspace_id: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DeleteSessionRequest {
-    pub session_id: String,
-    pub operation_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct UpdateWorkspaceRequest {
-    pub workspace_id: String,
-    pub expected_revision: i64,
-    pub operation_id: String,
-    pub name: Option<String>,
-    pub archived: Option<bool>,
 }
 
 fn now() -> String {
@@ -365,6 +187,13 @@ fn validate_overrides(overrides: &Value) -> WorkbenchResult<String> {
         return Err(WorkbenchError::invalid(
             "Session overrides must be a JSON object",
         ));
+    }
+    if let Some(runtime) = overrides.get("runtime") {
+        if !matches!(runtime.as_str(), Some("codex" | "claude")) {
+            return Err(WorkbenchError::invalid(
+                "Conversation runtime must be codex or claude",
+            ));
+        }
     }
     let encoded = serde_json::to_string(overrides)
         .map_err(|error| WorkbenchError::invalid(format!("Invalid session overrides: {error}")))?;
@@ -547,184 +376,6 @@ impl Store {
     }
 }
 
-fn configure_timeout(connection: &Connection) -> WorkbenchResult<()> {
-    connection
-        .busy_timeout(Duration::from_secs(5))
-        .map_err(|error| WorkbenchError::storage("Failed to configure database timeout", error))
-}
-
-fn configure_database(connection: &Connection) -> WorkbenchResult<()> {
-    connection
-        .execute_batch(
-            "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;",
-        )
-        .map_err(|error| WorkbenchError::storage("Failed to configure Workbench database", error))
-}
-
-fn configure_connection(connection: &Connection) -> WorkbenchResult<()> {
-    connection
-        .execute_batch("PRAGMA foreign_keys = ON; PRAGMA synchronous = FULL;")
-        .map_err(|error| WorkbenchError::storage("Failed to configure Workbench connection", error))
-}
-
-fn schema_version(connection: &Connection) -> WorkbenchResult<u32> {
-    connection
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .map_err(|error| WorkbenchError::storage("Failed to read Workbench schema version", error))
-}
-
-fn database_has_objects(connection: &Connection) -> WorkbenchResult<bool> {
-    connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name NOT LIKE 'sqlite_%')",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|error| WorkbenchError::storage("Failed to inspect Workbench database", error))
-}
-
-pub(super) fn migrate(connection: &mut Connection, from: u32) -> WorkbenchResult<()> {
-    connection
-        .pragma_update(None, "foreign_keys", false)
-        .map_err(|error| {
-            WorkbenchError::storage("Failed to suspend migration constraints", error)
-        })?;
-    let migration = (|| {
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(|error| {
-                WorkbenchError::storage("Failed to start Workbench migration", error)
-            })?;
-        if from < 1 {
-            transaction
-                .execute_batch(include_str!("migrations/001_initial.sql"))
-                .map_err(|error| {
-                    WorkbenchError::storage("Failed to apply Workbench migration 1", error)
-                })?;
-        }
-        if from < 2 {
-            transaction
-                .execute_batch(include_str!("migrations/002_independent_workspaces.sql"))
-                .map_err(|error| {
-                    WorkbenchError::storage("Failed to apply Workbench migration 2", error)
-                })?;
-        }
-        if from < 3 {
-            transaction
-                .execute_batch(include_str!("migrations/003_research_harness.sql"))
-                .map_err(|error| {
-                    WorkbenchError::storage("Failed to apply Workbench migration 3", error)
-                })?;
-        }
-        if from < 4 {
-            transaction
-                .execute_batch(include_str!(
-                    "migrations/004_native_instruction_sources.sql"
-                ))
-                .map_err(|error| {
-                    WorkbenchError::storage("Failed to apply Workbench migration 4", error)
-                })?;
-        }
-        if from < 5 {
-            transaction
-                .execute_batch(include_str!("migrations/005_release_readiness.sql"))
-                .map_err(|error| {
-                    WorkbenchError::storage("Failed to apply Workbench migration 5", error)
-                })?;
-        }
-        if from < 6 {
-            transaction
-                .execute_batch(include_str!("migrations/006_project_surface.sql"))
-                .map_err(|error| {
-                    WorkbenchError::storage("Failed to apply Workbench migration 6", error)
-                })?;
-        }
-        if from < 7 {
-            transaction
-                .execute_batch(include_str!("migrations/007_research_studio.sql"))
-                .map_err(|error| {
-                    WorkbenchError::storage("Failed to apply Workbench migration 7", error)
-                })?;
-        }
-        if from < 8 {
-            transaction
-                .execute_batch(include_str!("migrations/008_theory_notes.sql"))
-                .map_err(|error| {
-                    WorkbenchError::storage("Failed to apply Workbench migration 8", error)
-                })?;
-        }
-        if from < 9 {
-            transaction
-                .execute_batch(include_str!("migrations/009_project_exchange.sql"))
-                .map_err(|error| {
-                    WorkbenchError::storage("Failed to apply Workbench migration 9", error)
-                })?;
-        }
-        if from < 10 {
-            transaction
-                .execute_batch(include_str!("migrations/010_preferences.sql"))
-                .map_err(|error| {
-                    WorkbenchError::storage("Failed to apply Workbench migration 10", error)
-                })?;
-        }
-        if from < 11 {
-            transaction
-                .execute_batch(include_str!("migrations/011_research_desk.sql"))
-                .map_err(|error| {
-                    WorkbenchError::storage("Failed to apply Workbench migration 11", error)
-                })?;
-        }
-        if from < 12 {
-            transaction
-                .execute_batch(include_str!("migrations/012_task_exchanges.sql"))
-                .map_err(|e| WorkbenchError::storage("Failed to migrate task exchanges", e))?;
-        }
-        if from < 13 {
-            transaction
-                .execute_batch(include_str!("migrations/013_research_programs.sql"))
-                .map_err(|e| WorkbenchError::storage("Failed to migrate research programs", e))?;
-        }
-        if from < 14 {
-            transaction
-                .execute_batch(include_str!("migrations/014_agent_base_prompts.sql"))
-                .map_err(|e| WorkbenchError::storage("Failed to migrate agent base prompts", e))?;
-        }
-        if from < 15 {
-            transaction
-                .execute_batch(include_str!("migrations/015_self_discovery.sql"))
-                .map_err(|e| {
-                    WorkbenchError::storage("Failed to migrate self-discovery roles", e)
-                })?;
-        }
-        transaction
-            .pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)
-            .map_err(|error| {
-                WorkbenchError::storage("Failed to record Workbench schema version", error)
-            })?;
-        transaction
-            .commit()
-            .map_err(|error| WorkbenchError::storage("Failed to commit Workbench migration", error))
-    })();
-    let constraints = connection
-        .pragma_update(None, "foreign_keys", true)
-        .map_err(|error| WorkbenchError::storage("Failed to restore migration constraints", error));
-    migration?;
-    constraints?;
-    let violation: Option<String> = connection
-        .query_row("PRAGMA foreign_key_check", [], |row| row.get(0))
-        .optional()
-        .map_err(|error| {
-            WorkbenchError::storage("Failed to validate migrated references", error)
-        })?;
-    if let Some(table) = violation {
-        return Err(WorkbenchError::storage(
-            "Migrated store contains an invalid reference",
-            table,
-        ));
-    }
-    Ok(())
-}
-
 fn require_revision(current: i64, expected: i64, label: &str) -> WorkbenchResult<()> {
     if current != expected {
         return Err(WorkbenchError::conflict(format!(
@@ -749,284 +400,11 @@ fn resolve_optional_root(
     .unwrap_or(Ok((None, None)))
 }
 
-fn parse_json(value: String, column: usize) -> rusqlite::Result<Value> {
-    serde_json::from_str(&value).map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(
-            column,
-            rusqlite::types::Type::Text,
-            Box::new(error),
-        )
-    })
-}
-
-fn read_workspace_row(row: &Row<'_>) -> rusqlite::Result<Workspace> {
-    Ok(Workspace {
-        id: row.get(0)?,
-        name: row.get(1)?,
-        root: row.get(2)?,
-        root_identity: row.get(3)?,
-        settings_revision: row.get(4)?,
-        revision: row.get(5)?,
-        archived_at: row.get(6)?,
-        missing_root_at: row.get(7)?,
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
-    })
-}
-
-fn load_workspace(connection: &Connection, workspace_id: &str) -> WorkbenchResult<Workspace> {
-    connection
-        .query_row(
-            "SELECT id, name, root, root_identity, settings_revision, revision, archived_at, missing_root_at, created_at, updated_at FROM workspaces WHERE id = ?1",
-            [workspace_id],
-            read_workspace_row,
-        )
-        .optional()
-        .map_err(|error| WorkbenchError::storage("Failed to load workspace", error))?
-        .ok_or_else(|| WorkbenchError::invalid("Workbench workspace does not exist"))
-}
-
-fn read_session_row(row: &Row<'_>) -> rusqlite::Result<WorkbenchSession> {
-    let overrides: String = row.get(5)?;
-    Ok(WorkbenchSession {
-        id: row.get(0)?,
-        workspace_id: row.get(1)?,
-        paper_id: row.get(2)?,
-        title: row.get(3)?,
-        preset_id: row.get(4)?,
-        overrides: parse_json(overrides, 5)?,
-        draft: row.get(6)?,
-        revision: row.get(7)?,
-        archived_at: row.get(8)?,
-        created_at: row.get(9)?,
-        updated_at: row.get(10)?,
-    })
-}
-
 fn validate_provider_id(label: &str, value: &str) -> WorkbenchResult<()> {
     if value.is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
         return Err(WorkbenchError::invalid(format!("Invalid {label}")));
     }
     Ok(())
-}
-
-fn read_binding_row(row: &Row<'_>) -> rusqlite::Result<SessionBinding> {
-    let instruction_sources: String = row.get(9)?;
-    Ok(SessionBinding {
-        id: row.get(0)?,
-        session_id: row.get(1)?,
-        runtime_namespace: row.get(2)?,
-        provider_thread_id: row.get(3)?,
-        incarnation: row.get(4)?,
-        created_at: row.get(5)?,
-        retired_at: row.get(6)?,
-        retirement_reason: row.get(7)?,
-        harness_fingerprint: row.get(8)?,
-        instruction_sources: serde_json::from_str(&instruction_sources).unwrap_or_default(),
-    })
-}
-
-fn load_binding(connection: &Connection, binding_id: &str) -> WorkbenchResult<SessionBinding> {
-    connection
-        .query_row(
-            "SELECT id, session_id, runtime_namespace, provider_thread_id, incarnation, created_at, retired_at, retirement_reason, harness_fingerprint, instruction_sources_json FROM session_bindings WHERE id = ?1",
-            [binding_id],
-            read_binding_row,
-        )
-        .optional()
-        .map_err(|error| WorkbenchError::storage("Failed to load session binding", error))?
-        .ok_or_else(|| WorkbenchError::invalid("Workbench session binding does not exist"))
-}
-
-fn load_active_binding(
-    connection: &Connection,
-    session_id: &str,
-) -> WorkbenchResult<Option<SessionBinding>> {
-    connection
-        .query_row(
-            "SELECT id, session_id, runtime_namespace, provider_thread_id, incarnation, created_at, retired_at, retirement_reason, harness_fingerprint, instruction_sources_json FROM session_bindings WHERE session_id = ?1 AND retired_at IS NULL ORDER BY incarnation DESC LIMIT 1",
-            [session_id],
-            read_binding_row,
-        )
-        .optional()
-        .map_err(|error| WorkbenchError::storage("Failed to load active session binding", error))
-}
-
-fn required_json_string<'a>(
-    value: &'a Value,
-    key: &str,
-    context: &str,
-) -> WorkbenchResult<&'a str> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| WorkbenchError::invalid(format!("{context} omitted string field {key}")))
-}
-
-fn encode_projected_payload(value: &Value, context: &str) -> WorkbenchResult<String> {
-    let encoded =
-        serde_json::to_string(value).map_err(|error| WorkbenchError::storage(context, error))?;
-    if encoded.len() > MAX_PROJECTED_PAYLOAD_BYTES {
-        return Err(WorkbenchError::invalid(format!(
-            "{context} exceeded {MAX_PROJECTED_PAYLOAD_BYTES} bytes"
-        )));
-    }
-    Ok(encoded)
-}
-
-fn ensure_projected_turn(
-    connection: &Connection,
-    binding_id: &str,
-    provider_turn_id: &str,
-    timestamp: &str,
-) -> WorkbenchResult<String> {
-    if let Some(id) = connection
-        .query_row(
-            "SELECT id FROM turns WHERE binding_id = ?1 AND provider_turn_id = ?2",
-            params![binding_id, provider_turn_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|error| WorkbenchError::storage("Failed to inspect projected turn", error))?
-    {
-        return Ok(id);
-    }
-    let id = new_id("turn")?;
-    let provisional_submission_id = format!("provider:{provider_turn_id}");
-    connection
-        .execute(
-            "INSERT INTO turns (id, binding_id, client_submission_id, provider_turn_id, state, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 'inProgress', ?5, ?5)",
-            params![id, binding_id, provisional_submission_id, provider_turn_id, timestamp],
-        )
-        .map_err(|error| map_constraint("Failed to create projected turn", error))?;
-    Ok(id)
-}
-
-fn upsert_projected_turn(
-    connection: &Connection,
-    binding_id: &str,
-    provider_turn_id: &str,
-    turn: &Value,
-    timestamp: &str,
-    terminal: bool,
-) -> WorkbenchResult<()> {
-    validate_provider_id("provider turn id", provider_turn_id)?;
-    encode_projected_payload(turn, "Projected turn")?;
-    let id = ensure_projected_turn(connection, binding_id, provider_turn_id, timestamp)?;
-    let state = required_json_string(turn, "status", "projected turn")?;
-    let usage = turn
-        .get("usage")
-        .filter(|value| !value.is_null())
-        .map(|value| encode_projected_payload(value, "Projected turn usage"))
-        .transpose()?;
-    let error = turn
-        .get("error")
-        .filter(|value| !value.is_null())
-        .map(|value| encode_projected_payload(value, "Projected turn error"))
-        .transpose()?;
-    connection
-        .execute(
-            "UPDATE turns SET state = ?1, usage_json = ?2, error_json = ?3, updated_at = ?4, terminal_at = CASE WHEN ?5 THEN ?4 ELSE terminal_at END WHERE id = ?6",
-            params![state, usage, error, timestamp, terminal, id],
-        )
-        .map_err(|error| WorkbenchError::storage("Failed to update projected turn", error))?;
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn upsert_projected_item(
-    connection: &Connection,
-    binding_id: &str,
-    provider_turn_id: &str,
-    provider_item_id: &str,
-    item_kind: &str,
-    item: &Value,
-    is_final: bool,
-    timestamp: &str,
-) -> WorkbenchResult<()> {
-    validate_provider_id("provider item id", provider_item_id)?;
-    let payload = encode_projected_payload(item, "Projected transcript item")?;
-    let turn_id = ensure_projected_turn(connection, binding_id, provider_turn_id, timestamp)?;
-    let id = new_id("item")?;
-    connection
-        .execute(
-            "INSERT INTO transcript_items (id, binding_id, turn_id, provider_item_id, item_kind, payload_json, is_final, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) ON CONFLICT(binding_id, provider_item_id) DO UPDATE SET turn_id = excluded.turn_id, item_kind = excluded.item_kind, payload_json = excluded.payload_json, is_final = MAX(transcript_items.is_final, excluded.is_final), updated_at = excluded.updated_at",
-            params![id, binding_id, turn_id, provider_item_id, item_kind, payload, is_final, timestamp],
-        )
-        .map_err(|error| WorkbenchError::storage("Failed to project transcript item", error))?;
-    Ok(())
-}
-
-fn change_sequence(connection: &Connection, operation_id: &str) -> WorkbenchResult<Option<i64>> {
-    connection
-        .query_row(
-            "SELECT sequence FROM change_log WHERE operation_id = ?1",
-            [operation_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|error| WorkbenchError::storage("Failed to inspect projected event", error))
-}
-
-fn load_session(connection: &Connection, session_id: &str) -> WorkbenchResult<WorkbenchSession> {
-    connection
-        .query_row(
-            "SELECT id, workspace_id, paper_id, title, preset_id, overrides_json, draft, revision, archived_at, created_at, updated_at FROM sessions WHERE id = ?1",
-            [session_id],
-            read_session_row,
-        )
-        .optional()
-        .map_err(|error| WorkbenchError::storage("Failed to load session", error))?
-        .ok_or_else(|| WorkbenchError::invalid("Workbench session does not exist"))
-}
-
-fn ensure_operation_unused(connection: &Connection, operation_id: &str) -> WorkbenchResult<()> {
-    let exists: bool = connection
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM change_log WHERE operation_id = ?1)",
-            [operation_id],
-            |row| row.get(0),
-        )
-        .map_err(|error| WorkbenchError::storage("Failed to inspect operation id", error))?;
-    if exists {
-        return Err(WorkbenchError::conflict(
-            "This client operation id has already been committed",
-        ));
-    }
-    Ok(())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn insert_change(
-    connection: &Connection,
-    operation_id: &str,
-    entity_type: &str,
-    entity_id: &str,
-    action: &str,
-    workspace_id: Option<&str>,
-    session_id: Option<&str>,
-    details: &Value,
-    created_at: &str,
-) -> WorkbenchResult<i64> {
-    let details = serde_json::to_string(details)
-        .map_err(|error| WorkbenchError::storage("Failed to encode change record", error))?;
-    connection
-        .execute(
-            "INSERT INTO change_log (operation_id, entity_type, entity_id, action, workspace_id, session_id, details_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![operation_id, entity_type, entity_id, action, workspace_id, session_id, details, created_at],
-        )
-        .map_err(|error| map_constraint("Failed to append change record", error))?;
-    Ok(connection.last_insert_rowid())
-}
-
-fn current_sequence(connection: &Connection) -> WorkbenchResult<i64> {
-    connection
-        .query_row(
-            "SELECT COALESCE(MAX(sequence), 0) FROM change_log",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|error| WorkbenchError::storage("Failed to read Workbench sequence", error))
 }
 
 fn map_constraint(context: &str, error: rusqlite::Error) -> WorkbenchError {

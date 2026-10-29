@@ -47,7 +47,7 @@ export default function AdvancedSettings({
         <SectionHeader title="Diagnostics" />
         <Toggle
           label="Verbose console logging"
-          description="Show complete model subprocess output, including commands and responses, in the console. Use when troubleshooting."
+          description="Show full commands, responses, and logs in the console for troubleshooting."
           checked={settings.verbose_logging}
           onChange={(value) =>
             setSettings({ ...settings, verbose_logging: value })

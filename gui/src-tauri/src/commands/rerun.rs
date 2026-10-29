@@ -1,5 +1,17 @@
 use super::*;
 
+mod document;
+mod files;
+mod inputs;
+mod reuse;
+
+pub(super) use files::{load_run_report, load_run_report_in, read_run_file, read_run_file_in};
+use reuse::orientation_contract_error;
+#[cfg(test)]
+pub(super) use reuse::{
+    collect_preloaded_outputs, failed_base_ids, incompatible_reuse_ids, resume_seed_ids,
+};
+
 // --- Resume / partial re-run (1.3.2) ---
 
 /// Re-run a past run, reusing its captured document and orientation and (for
@@ -27,165 +39,6 @@ pub async fn rerun_run(
     })
     .join()
     .await
-}
-
-pub(super) fn read_run_file(run_id: &str, rel: &str) -> Result<String, String> {
-    crate::runs::validate_run_id(run_id)?;
-    read_run_file_in(&crate::runs::runs_dir()?.join(run_id), rel)
-}
-
-pub(super) fn read_run_file_in(run_dir: &std::path::Path, rel: &str) -> Result<String, String> {
-    if rel.is_empty()
-        || std::path::Path::new(rel).is_absolute()
-        || rel.split(['/', '\\']).any(|part| part == "..")
-    {
-        return Err("Invalid run-relative path".to_string());
-    }
-    let run_dir = run_dir
-        .canonicalize()
-        .map_err(|_| "Run not found".to_string())?;
-    let path = run_dir
-        .join(rel)
-        .canonicalize()
-        .map_err(|e| format!("Cannot resolve {rel} from run: {e}"))?;
-    if !path.starts_with(&run_dir) {
-        return Err("Run-relative path resolves outside the run directory".to_string());
-    }
-    let file = crate::safety::open_regular_file(&path)
-        .map_err(|e| format!("Cannot read {rel} from run: {e}"))?;
-    let mut bytes = Vec::with_capacity(64 * 1024);
-    file.take(MAX_RUN_CONTEXT_SIZE + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| format!("Cannot read {rel} from run: {e}"))?;
-    if bytes.len() as u64 > MAX_RUN_CONTEXT_SIZE {
-        return Err(format!(
-            "{rel} exceeds the {} MB run-context safety limit",
-            MAX_RUN_CONTEXT_SIZE / 1024 / 1024
-        ));
-    }
-    String::from_utf8(bytes).map_err(|e| format!("{rel} is not valid UTF-8: {e}"))
-}
-
-pub(super) fn load_run_report(run_id: &str) -> Result<PipelineReport, String> {
-    load_run_report_in(&crate::runs::runs_dir()?.join(run_id))
-}
-
-pub(super) fn load_run_report_in(run_dir: &std::path::Path) -> Result<PipelineReport, String> {
-    let json = read_run_file_in(run_dir, "report.json")
-        .map_err(|_| "This run predates comparison support (no report.json).".to_string())?;
-    let mut report: PipelineReport =
-        serde_json::from_str(&json).map_err(|e| format!("Invalid report.json: {e}"))?;
-    crate::findings::ensure_legacy_products(&mut report);
-    Ok(report)
-}
-
-pub(super) fn base_step_id(step_id: &str) -> String {
-    step_id.split('/').next().unwrap_or(step_id).to_string()
-}
-
-pub(super) fn failed_base_ids(
-    failures: &[crate::models::StepFailure],
-) -> std::collections::HashSet<String> {
-    failures
-        .iter()
-        .map(|failure| base_step_id(&failure.step_id))
-        .collect()
-}
-
-pub(super) fn resume_seed_ids(
-    enabled_ids: &[String],
-    report: &PipelineReport,
-) -> std::collections::HashSet<String> {
-    let mut seeds = failed_base_ids(&report.failed_steps);
-    let completed: std::collections::HashSet<String> = report
-        .step_outputs
-        .iter()
-        .map(|output| base_step_id(&output.step_id))
-        .collect();
-    // Recovery reports use a synthetic run-level failure when the process
-    // stopped without returning an ExecutionResult. Missing enabled steps are
-    // therefore the authoritative restart point.
-    seeds.extend(
-        enabled_ids
-            .iter()
-            .filter(|step_id| !completed.contains(*step_id))
-            .cloned(),
-    );
-    seeds
-}
-
-pub(super) fn collect_preloaded_outputs(
-    outputs: &[crate::models::StepOutput],
-    rerun: &std::collections::HashSet<String>,
-) -> std::collections::HashMap<String, Vec<crate::models::StepOutput>> {
-    let mut preloaded = std::collections::HashMap::<String, Vec<crate::models::StepOutput>>::new();
-    for output in outputs.iter().filter(|output| !output.skipped) {
-        let base = base_step_id(&output.step_id);
-        if !rerun.contains(&base) {
-            preloaded.entry(base).or_default().push(output.clone());
-        }
-    }
-    preloaded
-}
-
-fn orientation_contract_error(
-    config: &crate::pipeline_config::PipelineConfig,
-    orientation: &serde_json::Value,
-    input_mode: &str,
-) -> Result<(), String> {
-    let contract = crate::pipeline::orient::resolve_survey_schema(
-        &config.orientation_prompt,
-        config.orientation_schema.as_ref(),
-        input_mode,
-    )
-    .unwrap_or_else(|| serde_json::json!({"type": "object"}));
-    let resolved = crate::auto_review::resolve_schema_catalogs(&contract)?;
-    crate::pipeline::structured::validate(&resolved, orientation)?;
-    crate::auto_review::validate_contract_for_schema(&contract, orientation)?;
-    Ok(())
-}
-
-pub(super) fn incompatible_reuse_ids(
-    config: &crate::pipeline_config::PipelineConfig,
-    outputs: &[crate::models::StepOutput],
-) -> std::collections::HashSet<String> {
-    let mut by_base = std::collections::HashMap::<&str, Vec<&crate::models::StepOutput>>::new();
-    for output in outputs.iter().filter(|output| !output.skipped) {
-        by_base
-            .entry(output.step_id.split('/').next().unwrap_or(&output.step_id))
-            .or_default()
-            .push(output);
-    }
-    config
-        .steps
-        .iter()
-        .filter(|step| step.enabled)
-        .filter_map(|step| {
-            let compatible = by_base.get(step.id.as_str()).is_some_and(|prior| {
-                // A live schema reference must resolve before a cached
-                // artifact can be judged against it; an unresolvable
-                // reference simply reruns the step.
-                let resolved_schema = step
-                    .output_schema
-                    .as_ref()
-                    .map(crate::pipeline::structured::resolve_schema_reference);
-                !prior.is_empty()
-                    && prior.iter().all(|output| match resolved_schema.as_ref() {
-                        Some(Ok(schema)) => {
-                            output.structured_json
-                                && crate::pipeline::structured::canonicalize(
-                                    schema,
-                                    &output.raw_text,
-                                )
-                                .is_ok()
-                        }
-                        Some(Err(_)) => false,
-                        None => !output.structured_json && !output.raw_text.trim().is_empty(),
-                    })
-            });
-            (!compatible).then(|| step.id.clone())
-        })
-        .collect()
 }
 
 pub(super) async fn rerun_run_inner(
@@ -238,7 +91,7 @@ pub(super) async fn rerun_run_inner(
         || (parent.input_interpretation.is_empty() && parent.input_mode == "folder");
     if parent_is_source_tree && crate::auto_review::uses_auto_review_contract(&config) {
         return Err(
-            "Automatic Paper Review reviews a document, not a browsable source tree. Re-run this \
+            "This review reads a single document, not a browsable source tree. Re-run this \
              folder input with a folder-oriented workflow, or start a new run on the paper \
              file itself."
                 .to_string(),
@@ -349,90 +202,16 @@ pub(super) async fn rerun_run_inner(
         return Err("The expanded workflow requires source files that this run did not capture. Start a new run.".into());
     }
 
-    // Determine which steps to re-run vs. reuse.
-    let enabled_ids: Vec<String> = execution_config
-        .steps
-        .iter()
-        .filter(|s| s.enabled)
-        .map(|s| s.id.clone())
-        .collect();
-    let mut rerun: std::collections::HashSet<String> = if orientation_rebuilt {
-        enabled_ids.iter().cloned().collect()
-    } else if let Some(fs) = &from_step {
-        match enabled_ids.iter().position(|id| id == fs) {
-            Some(k) => {
-                // Steps may be listed in any order while the executor schedules
-                // by dependency graph, so a dependent of a re-run step can sit
-                // earlier in the list. Extend the positional set with graph
-                // dependents so no step is preloaded with stale upstream output.
-                let seeds: std::collections::HashSet<String> =
-                    enabled_ids[k..].iter().cloned().collect();
-                let mut set = seeds.clone();
-                set.extend(crate::pipeline::executor::dependents_of(
-                    &execution_config,
-                    &seeds,
-                ));
-                set
-            }
-            None => enabled_ids.iter().cloned().collect(), // unknown step → full re-run
-        }
-    } else if only_failed {
-        let seeds = resume_seed_ids(&enabled_ids, &parent_report);
-        let mut set = seeds.clone();
-        set.extend(crate::pipeline::executor::dependents_of(
-            &execution_config,
-            &seeds,
-        ));
-        set
-    } else {
-        enabled_ids.iter().cloned().collect()
-    };
-
-    // Even when the user asks for a narrow partial re-run, never preload an
-    // artifact produced under a different output mode or one that fails the
-    // step's current schema. Its graph dependents are stale as well.
-    let mut incompatible = incompatible_reuse_ids(&execution_config, &parent_report.step_outputs);
-    // Missing retained producer trees cannot satisfy a downstream file selector.
-    for step in execution_config.steps.iter().filter(|s| s.enabled) {
-        for selector in &step.context.include {
-            if let crate::pipeline_config::ArtifactSelector::Step {
-                step: producer,
-                parts,
-                ..
-            } = selector
-            {
-                if parts.contains(&crate::pipeline_config::StepArtifactPart::Files)
-                    && !parent_dir
-                        .join("artifacts/by-step")
-                        .join(executor::step_slug(producer))
-                        .is_dir()
-                {
-                    incompatible.insert(producer.clone());
-                }
-            }
-        }
-    }
-    if !incompatible.is_empty() {
-        rerun.extend(incompatible.iter().cloned());
-        rerun.extend(crate::pipeline::executor::dependents_of(
-            &execution_config,
-            &incompatible,
-        ));
-        app.emit_event("pipeline:log", serde_json::json!({
-            "line": format!(
-                "Re-run: invalidating {} cached step artifact(s) that do not satisfy the active output contracts",
-                incompatible.len()
-            )
-        })).ok();
-    }
-
-    // Preload the reused steps' outputs (keyed by base id).
-    let mut preloaded = collect_preloaded_outputs(&parent_report.step_outputs, &rerun);
-    let enabled: std::collections::HashSet<&str> = enabled_ids.iter().map(String::as_str).collect();
-    preloaded.retain(|id, _| enabled.contains(id.as_str()));
-    app.emit_event("pipeline:log", serde_json::json!({
-        "line": format!("Re-run of {parent_run_id}: reusing {} step(s), re-running the rest", preloaded.len())
-    })).ok();
+    let preloaded = reuse::select_reusable_outputs(
+        app,
+        parent_run_id,
+        &parent_dir,
+        &execution_config,
+        &parent_report,
+        orientation_rebuilt,
+        from_step,
+        only_failed,
+    );
 
     let extra_input_sources = parent.extra_input_sources.clone();
     let (mut run_writer, artifact_write_dir) = create_run_workspace(
@@ -486,126 +265,20 @@ pub(super) async fn rerun_run_inner(
         quality_notes: Vec::new(),
     };
     let orientation_sampling = orient::orientation_sample(&document_text);
-    let mut rerun_bundle_json = None;
-    let mut report_bundle = None;
-    let mut rerun_document_text = document_text.clone();
-    if let Some(w) = run_writer.as_mut() {
-        w.add_text(
-            crate::runs::DOCUMENT_TEXT_PATH,
-            "Readable document",
-            "document",
-            &document_text,
-        )
-        .map_err(|error| format!("Could not save the restored document: {error}"))?;
-        let orient_json = serde_json::to_string_pretty(&orientation_value)
-            .map_err(|error| format!("Could not serialize the orientation map: {error}"))?;
-        w.add_text(
-            "context/orientation.json",
-            "Orientation map",
-            "context",
-            &orient_json,
-        )
-        .map_err(|error| format!("Could not save the orientation map: {error}"))?;
-        let sampling_json = serde_json::to_string_pretty(&orientation_sampling)
-            .map_err(|error| format!("Could not serialize orientation coverage: {error}"))?;
-        w.add_text(
-            "context/orientation_sampling.json",
-            "Orientation sampling coverage",
-            "context",
-            &sampling_json,
-        )
-        .map_err(|error| format!("Could not save orientation sampling coverage: {error}"))?;
-
-        // Prefer the parent's canonical bundle so a partial re-run keeps the
-        // exact document model it was based on. Copy its visual assets into
-        // the new run so the bundle remains self-contained. Older runs fall
-        // back to a bundle rebuilt from their captured document.
-        let mut bundle = read_run_file(parent_run_id, "context/document_bundle.json")
-            .ok()
-            .and_then(|json| {
-                serde_json::from_str::<crate::document_bundle::DocumentBundle>(&json).ok()
-            })
-            .filter(|bundle| bundle.validate().is_ok());
-        if let Some(parent_bundle) = bundle.as_ref() {
-            if let Ok(parent_root) = crate::runs::runs_dir() {
-                let parent_root = parent_root.join(parent_run_id);
-                for asset in &parent_bundle.assets {
-                    let source = parent_root.join(&asset.rel_path);
-                    let destination = w.dir().join(&asset.rel_path);
-                    if !source.is_file() {
-                        continue;
-                    }
-                    if let Some(directory) = destination.parent() {
-                        let _ = std::fs::create_dir_all(directory);
-                    }
-                    if std::fs::copy(&source, &destination).is_ok() {
-                        let group = if asset.kind == "page" {
-                            "pages"
-                        } else {
-                            "figures"
-                        };
-                        let _ = w.register_existing(&asset.rel_path, &asset.label, group);
-                    }
-                }
-            }
-        } else if let Ok(build) = super::reuse_artifacts::build_bundle(
-            &resumed_extraction,
-            scoped_source.source_path.as_deref(),
-            w.dir(),
-        ) {
-            for (rel_path, label, group) in &build.added_artifacts {
-                let _ = w.register_existing(rel_path, label, group);
-            }
-            bundle = Some(build.bundle);
-        }
-        if let Some(bundle) = bundle.as_mut() {
-            bundle.enrich_from_orientation(&orientation_value);
-            if let Err(error) = bundle.validate() {
-                let _ = app.emit_event(
-                    "pipeline:log",
-                    serde_json::json!({
-                        "line": format!("WARNING: document bundle validation failed: {error}")
-                    }),
-                );
-            } else {
-                let markdown = bundle.to_markdown_with_text(&document_text);
-                rerun_document_text = markdown.clone();
-                match bundle
-                    .to_json_pretty()
-                    .and_then(|json| bundle.to_jsonl().map(|jsonl| (json, jsonl)))
-                {
-                    Ok((json, jsonl)) => {
-                        w.add_text(
-                            "context/document_bundle.json",
-                            "Document bundle",
-                            "document",
-                            &json,
-                        )
-                        .map_err(|error| format!("Could not save the document bundle: {error}"))?;
-                        w.add_text(
-                            "context/blocks.jsonl",
-                            "Document blocks",
-                            "document",
-                            &jsonl,
-                        )
-                        .map_err(|error| format!("Could not save document blocks: {error}"))?;
-                        rerun_bundle_json = Some(json);
-                        report_bundle = Some(bundle.clone());
-                    }
-                    Err(error) => {
-                        let _ = app.emit_event(
-                            "pipeline:log",
-                            serde_json::json!({
-                                "line": format!(
-                                    "WARNING: structured document context was omitted: {error}"
-                                )
-                            }),
-                        );
-                    }
-                }
-            }
-        }
-    }
+    let document::RestoredDocument {
+        rerun_bundle_json,
+        report_bundle,
+        rerun_document_text,
+    } = document::restore_document_context(
+        app,
+        parent_run_id,
+        &document_text,
+        &orientation_value,
+        &orientation_sampling,
+        &resumed_extraction,
+        &scoped_source,
+        &mut run_writer,
+    )?;
 
     // Document + orientation + named-input temp files for the steps to
     // Read, confined to the same private root as the staged source context.
@@ -640,67 +313,20 @@ pub(super) async fn rerun_run_inner(
         "orientation",
     )?;
 
-    // Rehydrate named inputs from the parent run's captured copies. Required
-    // inputs from older runs that predate capture fail explicitly instead of
-    // silently substituting an empty string into the prompt.
-    let mut runtime_extra_sources = std::collections::HashMap::new();
-    let mut resolved_inputs = std::collections::HashMap::new();
-    let mut persisted_inputs = std::collections::HashMap::new();
-    let mut extra_tmps: Vec<tempfile::NamedTempFile> = Vec::new();
-    for (input_index, slot) in config.extraction.extra_inputs.iter().enumerate() {
-        let Some(parent_rel) = parent.extra_inputs.get(&slot.key) else {
-            if slot.required {
-                let label = if slot.label.is_empty() {
-                    &slot.key
-                } else {
-                    &slot.label
-                };
-                return Err(format!(
-                    "Re-run requires named input '{label}', but the parent run did not capture it. Start a new run and select the input again."
-                ));
-            }
-            continue;
-        };
-        let captured_source = super::reuse_artifacts::restore_named_source(
-            &parent_dir,
-            &slot.key,
-            run_input_dir.path(),
-            super::reuse_artifacts::requires_named_source(&execution_config, &slot.key),
-        )?;
-        if let Some(path) = captured_source.source_path.as_ref() {
-            runtime_extra_sources.insert(slot.key.clone(), path.to_string_lossy().into_owned());
-        }
-        if let Some(writer) = run_writer.as_mut() {
-            super::reuse_artifacts::retain_named_source(&slot.key, &captured_source, writer)?;
-        }
-        let content = read_run_file(parent_run_id, parent_rel)
-            .map_err(|e| format!("Cannot restore named input '{}': {e}", slot.key))?;
-        let rel_path = extra_input_artifact_path(input_index, &slot.key);
-        let label = if slot.label.is_empty() {
-            &slot.key
-        } else {
-            &slot.label
-        };
-        let writer = run_writer
-            .as_mut()
-            .ok_or_else(|| "Durable run workspace disappeared before named inputs".to_string())?;
-        writer
-            .add_text(&rel_path, label, "context", &content)
-            .map_err(|error| format!("Could not save named input '{}': {error}", slot.key))?;
-        writer
-            .record_extra_input(&slot.key, &rel_path)
-            .map_err(|error| format!("Could not index named input '{}': {error}", slot.key))?;
-        persisted_inputs.insert(slot.key.clone(), rel_path);
-        let (temp, path) = write_run_input_file(
-            run_input_dir.path(),
-            "pipeline_input_",
-            ".txt",
-            &content,
-            &format!("restored input '{}'", slot.key),
-        )?;
-        resolved_inputs.insert(slot.key.clone(), path);
-        extra_tmps.push(temp);
-    }
+    let inputs::RestoredInputs {
+        runtime_extra_sources,
+        resolved_inputs,
+        persisted_inputs,
+        extra_tmps,
+    } = inputs::restore_named_inputs(
+        parent_run_id,
+        &parent_dir,
+        &parent,
+        &config,
+        &execution_config,
+        &run_input_dir,
+        &mut run_writer,
+    )?;
 
     let paper_type = crate::models::paper_view(&orientation_value)
         .map(|v| v.metadata.paper_type.to_string())

@@ -154,7 +154,7 @@ export default function ConnectionStatus({
       !catalog.stale &&
       !blocked ? (
         <p className="settings-row-description">
-          Model access verified. This check does not run a model.
+          Connection verified without making a model call.
         </p>
       ) : null}
     </div>

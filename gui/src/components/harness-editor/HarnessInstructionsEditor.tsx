@@ -15,6 +15,7 @@ import {
 } from "./harnessHelpers";
 
 interface Props {
+  runtime?: "codex" | "claude";
   value: string;
   baseInstructions: string | null;
   onBaseChange: (next: string | null) => void;
@@ -29,6 +30,7 @@ interface Props {
 }
 
 function HarnessInstructionsEditor({
+  runtime = "codex",
   value,
   baseInstructions,
   onBaseChange,
@@ -40,6 +42,7 @@ function HarnessInstructionsEditor({
   effective,
   inUse,
 }: Props) {
+  const provider = runtime === "claude" ? "Claude Code" : "Codex";
   const [viewNative, setViewNative] = useState(
     readOnly && baseInstructions === null,
   );
@@ -80,14 +83,14 @@ function HarnessInstructionsEditor({
           }
           className="mt-1 block w-full rounded border border-gray-300 bg-white p-2 text-xs font-normal dark:border-gray-600 dark:bg-gray-800"
         >
-          <option value="default">Use Codex default</option>
+          <option value="default">Use {provider} default</option>
           <option value="replace">Replace base prompt</option>
         </select>
       </label>
       {baseInstructions !== null && (
         <>
           <p className="text-xs text-gray-500">
-            This text replaces Codex’s built-in base prompt. Pipeline’s
+            This text replaces {provider}’s built-in base prompt. Pipeline’s
             supplemental instructions and the runtime’s tools and permissions
             still apply.
           </p>
@@ -113,7 +116,7 @@ function HarnessInstructionsEditor({
           </p>
           {!baseInstructions.trim() && (
             <p className="text-xs text-red-700 dark:text-red-300">
-              Enter a replacement prompt or choose Use Codex default.
+              Enter a replacement prompt or choose Use {provider} default.
             </p>
           )}
           {baseLint.map((hit) => (
@@ -132,21 +135,29 @@ function HarnessInstructionsEditor({
         className="rounded-lg border border-gray-200 text-xs dark:border-gray-700"
       >
         <summary className="cursor-pointer px-3 py-2 font-semibold">
-          View Codex default prompt
+          View {provider} default prompt
         </summary>
         {viewNative && (
           <div className="border-t border-gray-200 p-3 dark:border-gray-700">
-            <NativePromptViewer
-              busy={busy}
-              onUseTemplate={readOnly ? undefined : onBaseChange}
-            />
+            {runtime === "claude" ? (
+              <p>
+                Claude Code supplies its own native base prompt. Pipeline does
+                not retrieve or display that prompt. The instructions below are
+                added to it.
+              </p>
+            ) : (
+              <NativePromptViewer
+                busy={busy}
+                onUseTemplate={readOnly ? undefined : onBaseChange}
+              />
+            )}
           </div>
         )}
       </details>
-      <h3 className="text-xs font-semibold">Supplemental instructions</h3>
+      <h3 className="text-xs font-semibold">Additional instructions</h3>
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        Additional standing instructions for this profile, sent alongside
-        Pipeline’s Workspace instructions. These are separate from the base
+        Add instructions to send with every message that uses this profile.
+        Pipeline includes these alongside its standard instructions and the base
         prompt above.
       </p>
       {!readOnly && blocks.length > 0 && (
@@ -170,7 +181,7 @@ function HarnessInstructionsEditor({
       )}
       {readOnly ? (
         <pre
-          aria-label="Supplemental instructions"
+          aria-label="Additional instructions"
           className="min-h-[8rem] flex-1 overflow-auto whitespace-pre-wrap rounded-lg border border-gray-200 bg-gray-50 p-4 text-xs leading-relaxed text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
         >
           {value.trim() || "This profile adds no supplemental instructions."}
@@ -178,7 +189,7 @@ function HarnessInstructionsEditor({
       ) : (
         <textarea
           ref={textareaRef}
-          aria-label="Supplemental instructions"
+          aria-label="Additional instructions"
           value={value}
           disabled={busy}
           onChange={(event) => onChange(event.target.value)}

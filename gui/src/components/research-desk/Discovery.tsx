@@ -5,7 +5,7 @@ import {
   type Acquisition,
   type DeskRecord,
 } from "../../lib/deskClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { researchClient } from "../../lib/workbench/researchClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { button, input, card, muted, type DeskProps } from "./shared";
 export default function Discovery({ workspaceId, onOpen, onError }: DeskProps) {
@@ -50,7 +50,7 @@ export default function Discovery({ workspaceId, onOpen, onError }: DeskProps) {
         filters: [{ name: "Source PDF", extensions: ["pdf"] }],
       });
       if (typeof path !== "string") return;
-      await workbenchClient.importSource({
+      await researchClient.importSource({
         workspaceId,
         title: title || path.split("/").pop() || "Source PDF",
         citationKey: citation || null,
@@ -64,7 +64,7 @@ export default function Discovery({ workspaceId, onOpen, onError }: DeskProps) {
       });
     });
   const openSource = async (id: string) => {
-    const sources = await workbenchClient.listSources(workspaceId);
+    const sources = await researchClient.listSources(workspaceId);
     const source = sources.find((s) => s.versionId === id);
     if (!source) throw new Error("Source version is unavailable");
     onOpen({
@@ -76,7 +76,7 @@ export default function Discovery({ workspaceId, onOpen, onError }: DeskProps) {
   return (
     <div className="space-y-5">
       <section className={card}>
-        <h2 className="font-semibold">Literature acquisition</h2>
+        <h2 className="font-semibold">Find literature</h2>
         <label className="flex gap-2 text-sm">
           <input
             type="checkbox"
@@ -86,7 +86,8 @@ export default function Discovery({ workspaceId, onOpen, onError }: DeskProps) {
               void run(() => deskClient.network(workspaceId, e.target.checked))
             }
           />
-          Allow host literature and data acquisition for this project
+          Allow Pipeline to search for literature and download data for this
+          project
         </label>
         <p className={muted}>
           Queries go to the selected provider. This setting is separate from
@@ -242,7 +243,7 @@ export default function Discovery({ workspaceId, onOpen, onError }: DeskProps) {
                   )
                 }
               >
-                Import this candidate
+                Add this source
               </button>
             </details>
           ))}

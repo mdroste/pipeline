@@ -38,63 +38,25 @@ const ReportWorkspace = lazy(() => import("./components/ReportWorkspace"));
 function App() {
   useAppAppearance();
   const {
-    showDeps,
-    depsReport,
-    setShowDeps,
-    pendingRun,
-    setPendingRun,
-    launch,
-    runPreview,
-    setRunPreview,
-    startPreparedLaunch,
-    closeProtectionUnavailable,
-    setCloseProtectionUnavailable,
-    researchNotice,
-    inspectResearchAttention,
-    setResearchNotice,
+    navigation,
+    setup,
+    reviewLaunch,
+    attention,
+    appearance,
+    projects,
+    reviewView,
+    closePipeline,
+    openActivityReview,
+  } = useAppController();
+  const {
     openWorkspaceSession,
     openActivityProject,
     openActivityTask,
-    openActivityReview,
-    tasksAttention,
     page,
-    hasCurrentRun,
-    isRunning,
-    workspaceActive,
-    workspaceAttention,
-    depsLoading,
-    depsError,
-    navRailWidth,
-    setNavRailWidth,
-    handleNewRun,
     handleNavigate,
-    recentProjects,
-    projectsLoading,
     openWorkspaceProject,
     openWorkspace,
-    checkDependencies,
-    showRunSetup,
-    configVersion,
-    runConfigError,
-    setRunConfigError,
-    runConfigLoading,
-    inputMode,
-    listenersReady,
-    paperPath,
-    preparingRun,
-    parallelOverrides,
-    selectionKey,
-    runSetupWidth,
-    setPaperPath,
-    setInputSelection,
     openHelp,
-    setParallelOverrides,
-    handleProfileChange,
-    handleGenerate,
-    loadRunSetup,
-    setRunSetupWidth,
-    providerLimitNotices,
-    batchActive,
     createWorkspaceProject,
     setPage,
     workspaceEntry,
@@ -102,21 +64,16 @@ function App() {
     setNewProjectRequest,
     openTask,
     openWorkspaceSettings,
-    handleWorkspaceReviewHandoff,
     taskSessionId,
     taskId,
     discoveryId,
     automatePath,
     taskEntryRequest,
-    closePipeline,
     setTasksDirty,
     setWorkflowDirty,
     openPaddleInstallSettings,
     helpInitialSection,
     setSettingsDirty,
-    theme,
-    handleThemeChange,
-    setConfigVersion,
     settingsInitialSection,
     settingsTargetId,
     settingsNavigationKey,
@@ -127,14 +84,75 @@ function App() {
     registerProjectSave,
     registerWorkspaceSave,
     setProjectsDirty,
+  } = navigation;
+  const {
+    showDeps,
+    depsReport,
+    setShowDeps,
+    pendingRun,
+    setPendingRun,
+    depsLoading,
+    depsError,
+    checkDependencies,
+    configVersion,
+    runConfigError,
+    setRunConfigError,
+    runConfigLoading,
+    inputMode,
+    paperPath,
+    parallelOverrides,
+    selectionKey,
+    setPaperPath,
+    setInputSelection,
+    setParallelOverrides,
+    handleProfileChange,
+    loadRunSetup,
+    setConfigVersion,
+  } = setup;
+  const {
+    launch,
+    runPreview,
+    setRunPreview,
+    startPreparedLaunch,
+    handleNewRun,
+    preparingRun,
+    handleGenerate,
+    handleWorkspaceReviewHandoff,
+    openRun,
+    rerunReview,
+  } = reviewLaunch;
+  const {
+    researchNotice,
+    inspectResearchAttention,
+    setResearchNotice,
+    tasksAttention,
+    workspaceActive,
+    workspaceAttention,
+  } = attention;
+  const {
+    closeProtectionUnavailable,
+    setCloseProtectionUnavailable,
+    navRailWidth,
+    setNavRailWidth,
+    runSetupWidth,
+    setRunSetupWidth,
+    theme,
+    handleThemeChange,
+  } = appearance;
+  const { recentProjects, projectsLoading } = projects;
+  const {
+    hasCurrentRun,
+    isRunning,
+    showRunSetup,
+    listenersReady,
+    providerLimitNotices,
+    batchActive,
     state,
     runQueue,
     selectedRun,
     seenRuns,
     runningReviews,
     continueRunKey,
-    openRun,
-    rerunReview,
     dismissRuns,
     cancelRun,
     activeRunPlan,
@@ -144,7 +162,7 @@ function App() {
     reviewRouting,
     logs,
     usage,
-  } = useAppController();
+  } = reviewView;
   useAppNotifications(runQueue.runs);
   // Finished reviews not opened since they finished get a marker in the rail.
   const unseenRuns = useMemo(
@@ -260,8 +278,8 @@ function App() {
                      dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-200"
         >
           <span className="flex-1">
-            Window-close protection is unavailable. Save workflow and settings
-            changes before quitting.
+            Pipeline cannot warn you about unsaved changes when you quit. Save
+            your review designs and settings first.
           </span>
           <button
             type="button"
@@ -278,12 +296,14 @@ function App() {
           role="status"
           className="absolute bottom-5 right-5 z-50 max-w-sm space-y-2 rounded-lg border border-amber-300 bg-white p-4 shadow-lg dark:bg-neutral-950"
         >
-          <p className="text-sm">A tracked research state changed.</p>
+          <p className="text-sm">
+            Something you’re tracking in this project has changed.
+          </p>
           <button
             className="rounded border px-3 py-1 text-xs"
             onClick={() => void inspectResearchAttention()}
           >
-            Inspect research attention
+            View changes
           </button>
           <button
             className="px-3 py-1 text-xs"

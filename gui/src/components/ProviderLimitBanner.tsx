@@ -1,4 +1,4 @@
-import type { ProviderLimitNotice } from "../hooks/usePipeline";
+import type { ProviderLimitNotice } from "../lib/reviewRuntimeTypes";
 
 function providerName(provider: string | null): string {
   if (!provider) return "fallback provider";
@@ -33,7 +33,7 @@ export default function ProviderLimitBanner({
   const summary = blocking
     ? latest.status === "fallback_failed"
       ? `${providerName(latest.provider)} reached its account usage limit, and ${fallback ?? "the fallback"} also failed.`
-      : `${providerName(latest.provider)} reached its account usage limit. No fallback is configured.`
+      : `${providerName(latest.provider)} reached its account usage limit. No backup provider is set.`
     : latest.status === "recovered"
       ? `${providerName(latest.provider)} reached its account usage limit. Pipeline continued with ${fallback}.`
       : `${providerName(latest.provider)} reached its account usage limit. Switching this call to ${fallback}.`;

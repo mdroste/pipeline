@@ -165,9 +165,9 @@ export default function StorageSettings({
           Using Dropbox or another sync service
         </summary>
         <p className="mt-2">
-          This setting does not provide cross-device synchronization. The folder
-          contains live databases; keep cloud syncing paused while Pipeline is
-          running, and do not use the same data on two devices at once.
+          Pause cloud syncing while Pipeline is open, and use this data folder
+          on only one device at a time. This setting chooses a storage folder;
+          it does not synchronize devices.
         </p>
       </details>
     </section>

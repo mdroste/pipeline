@@ -140,7 +140,22 @@ fn convert_legacy_preserves_order() {
 fn builtin_catalog_contains_only_current_profiles() {
     assert_eq!(
         BUILTIN_PROFILES,
-        ["auto-review", "auto-review-quick", "grant-review"]
+        [
+            "auto-paper-review",
+            "auto-paper-review-fast",
+            "slide-review",
+            "grant-review"
+        ]
+    );
+    // Slide Review is born in the current format; the version-marked
+    // upgrades must never replay against it.
+    assert_eq!(
+        MIGRATED_BUILTIN_PROFILES,
+        [
+            "auto-paper-review",
+            "auto-paper-review-fast",
+            "grant-review"
+        ]
     );
     assert_eq!(
         V9_RETIRED_BUILTIN_PROFILES,
@@ -150,12 +165,12 @@ fn builtin_catalog_contains_only_current_profiles() {
         ]
     );
     // v15 completes the v3/v9 chains: everything that previously fell back
-    // to Paper Review (Full) now lands on Automatic Paper Review (Full).
+    // to Paper Review (Full) now lands on the current Paper Review IDs.
     assert_eq!(
         V15_RETIRED_BUILTIN_PROFILES,
         [
-            ("deep-review", "auto-review"),
-            ("quick-review", "auto-review-quick"),
+            ("deep-review", "auto-paper-review"),
+            ("quick-review", "auto-paper-review-fast"),
         ]
     );
 }
@@ -353,7 +368,7 @@ fn stale_builtin_auto_review_contract_is_replaced_before_validation() {
     stale.orientation_prompt = "Retired router prompt".to_string();
     stale.orientation_schema.as_mut().unwrap()["x-pipeline-contract"] =
         serde_json::json!("auto-review-v99");
-    let path = dir.path().join("auto-review.json");
+    let path = dir.path().join("auto-paper-review.json");
     fs::write(&path, serde_json::to_vec_pretty(&stale).unwrap()).unwrap();
 
     refresh_builtin_auto_review_contracts(dir.path()).unwrap();
@@ -383,7 +398,7 @@ fn pre_v2_builtin_auto_review_suite_is_archived_and_recreated() {
     stale.steps[0].output_schema = None;
     stale.orientation_schema.as_mut().unwrap()["x-pipeline-contract"] =
         serde_json::json!("auto-review-v1");
-    let path = dir.path().join("auto-review.json");
+    let path = dir.path().join("auto-paper-review.json");
     fs::write(&path, serde_json::to_vec_pretty(&stale).unwrap()).unwrap();
 
     crate::pipeline_config::migrations::refresh_stale_auto_review_suites(dir.path()).unwrap();
@@ -392,7 +407,7 @@ fn pre_v2_builtin_auto_review_suite_is_archived_and_recreated() {
     // current structured suite.
     assert!(dir
         .path()
-        .join(".retired-builtins/auto-review.json")
+        .join(".retired-builtins/auto-paper-review.json")
         .exists());
     let replaced: ProfileData = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     validate_profile_data(&replaced).unwrap();
@@ -420,7 +435,7 @@ fn current_builtin_auto_review_contract_is_left_byte_for_byte_unchanged() {
         .prompt
         .push_str("\nKeep this current-contract edit.");
     let bytes = serde_json::to_vec_pretty(&current).unwrap();
-    let path = dir.path().join("auto-review.json");
+    let path = dir.path().join("auto-paper-review.json");
     fs::write(&path, &bytes).unwrap();
 
     refresh_builtin_auto_review_contracts(dir.path()).unwrap();
@@ -434,13 +449,13 @@ fn expanded_builtin_auto_review_prompt_is_compacted_without_touching_custom_prom
     let template = crate::auto_review::orientation_prompt();
     let mut stock = auto_review_profile();
     stock.orientation_prompt = crate::auto_review::expand_orientation_prompt(&template);
-    let stock_path = dir.path().join("auto-review.json");
+    let stock_path = dir.path().join("auto-paper-review.json");
     fs::write(&stock_path, serde_json::to_vec_pretty(&stock).unwrap()).unwrap();
 
     let mut custom = quick_auto_review_profile();
     custom.orientation_prompt = "Custom compact router {paper_text}".to_string();
     let custom_bytes = serde_json::to_vec_pretty(&custom).unwrap();
-    let custom_path = dir.path().join("auto-review-quick.json");
+    let custom_path = dir.path().join("auto-paper-review-fast.json");
     fs::write(&custom_path, &custom_bytes).unwrap();
 
     compact_builtin_auto_review_prompts(dir.path()).unwrap();
@@ -470,7 +485,7 @@ fn a_builtin_that_fails_current_validation_does_not_block_the_catalog() {
     assert!(validate_profile_data(&profile)
         .unwrap_err()
         .contains("undeclared variable"));
-    let path = dir.path().join("auto-review.json");
+    let path = dir.path().join("auto-paper-review.json");
     let original = serde_json::to_vec_pretty(&profile).unwrap();
     fs::write(&path, &original).unwrap();
 
@@ -523,4 +538,100 @@ fn the_shipped_free_form_grant_suite_is_replaced_by_the_typed_suite() {
         .path()
         .join(".structured-grant-review-contract-v2")
         .exists());
+}
+
+#[test]
+fn renamed_builtins_move_with_their_edits_and_only_stock_names_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut full = auto_review_profile();
+    full.name = "Automatic Paper Review (Full)".into();
+    full.steps[0].prompt.push_str("\nCustom instruction.");
+    fs::write(
+        dir.path().join("auto-review.json"),
+        serde_json::to_vec_pretty(&full).unwrap(),
+    )
+    .unwrap();
+    let mut quick = quick_auto_review_profile();
+    quick.name = "My quick review".into();
+    let quick_bytes = serde_json::to_vec_pretty(&quick).unwrap();
+    fs::write(dir.path().join("auto-review-quick.json"), &quick_bytes).unwrap();
+
+    migrate_renamed_builtin_ids(dir.path()).unwrap();
+
+    assert!(!dir.path().join("auto-review.json").exists());
+    assert!(!dir.path().join("auto-review-quick.json").exists());
+    let moved: ProfileData =
+        serde_json::from_slice(&fs::read(dir.path().join("auto-paper-review.json")).unwrap())
+            .unwrap();
+    assert_eq!(moved.name, "Paper Review");
+    assert!(moved.steps[0].prompt.ends_with("Custom instruction."));
+    // A customized name is not a stock name, so the file moves byte-for-byte.
+    assert_eq!(
+        fs::read(dir.path().join("auto-paper-review-fast.json")).unwrap(),
+        quick_bytes
+    );
+    assert!(dir.path().join(".paper-review-ids-v1").exists());
+    assert!(CATALOG_MIGRATION_MARKERS.contains(&".paper-review-ids-v1"));
+
+    // One-time: a later custom profile may reuse a former ID.
+    fs::write(dir.path().join("auto-review.json"), &quick_bytes).unwrap();
+    migrate_renamed_builtin_ids(dir.path()).unwrap();
+    assert_eq!(
+        fs::read(dir.path().join("auto-review.json")).unwrap(),
+        quick_bytes
+    );
+}
+
+#[test]
+fn renamed_builtin_never_overwrites_an_existing_destination() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = serde_json::to_vec_pretty(&full_review_profile(true)).unwrap();
+    let destination = serde_json::to_vec_pretty(&auto_review_profile()).unwrap();
+    fs::write(dir.path().join("auto-review.json"), &source).unwrap();
+    fs::write(dir.path().join("auto-paper-review.json"), &destination).unwrap();
+
+    migrate_renamed_builtin_ids(dir.path()).unwrap();
+
+    assert_eq!(
+        fs::read(dir.path().join("auto-paper-review.json")).unwrap(),
+        destination
+    );
+    assert!(!dir.path().join("auto-review.json").exists());
+    assert_eq!(
+        fs::read(dir.path().join(".retired-builtins/auto-review.json")).unwrap(),
+        source
+    );
+}
+
+#[test]
+fn renamed_ids_resolve_until_a_file_claims_them() {
+    let dir = tempfile::tempdir().unwrap();
+    assert_eq!(
+        resolve_renamed_profile_id(dir.path(), "auto-review"),
+        "auto-paper-review"
+    );
+    assert_eq!(
+        resolve_renamed_profile_id(dir.path(), "auto-review-quick"),
+        "auto-paper-review-fast"
+    );
+    assert_eq!(resolve_renamed_profile_id(dir.path(), "mine"), "mine");
+    fs::write(dir.path().join("auto-review.json"), b"{}").unwrap();
+    assert_eq!(
+        resolve_renamed_profile_id(dir.path(), "auto-review"),
+        "auto-review"
+    );
+}
+
+#[test]
+fn catalog_migrations_never_rewrite_the_stock_slide_review() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("slide-review.json");
+    let stock = serde_json::to_vec_pretty(&slide_review_profile()).unwrap();
+    fs::write(&path, &stock).unwrap();
+
+    // No markers: every version-marked upgrade runs, including the v6
+    // artifact-context refresh that is destructive on a current profile.
+    migrate_builtin_catalog(dir.path()).unwrap();
+
+    assert_eq!(fs::read(&path).unwrap(), stock);
 }

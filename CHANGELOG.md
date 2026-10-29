@@ -1,10 +1,30 @@
 # Changelog
 
-This file records user-visible and release-integrity changes. Development before
-the first public release was not maintained as a stable release series.
+Changes to features, fixes, and releases are listed below. Development before
+the first public release was not tracked as a stable release series.
 
 ## Unreleased
 
+- Rewritten README and public guides explain setup, reviews, projects, and
+  automations in plain language. Privacy and security documentation now reflects
+  the shared ChatGPT sign-in, recoverable Trash, and current release checks.
+
+- Interface labels, help text, and messages use clearer, more direct language
+  throughout Workspace, Reviews, automations, and settings. Saved configurations
+  and application behavior are unchanged.
+- Built-in reviews are renamed. Automatic Paper Review (Full) is now **Paper
+  Review** (`auto-paper-review`), and Automatic Paper Review (Quick) is now
+  **Paper Review (Fast)** (`auto-paper-review-fast`). Existing copies, edits
+  included, move to the new IDs on first launch; a customized name is kept.
+  Saved automations and CLI scripts that name `auto-review` or
+  `auto-review-quick` keep working.
+- New built-in **Slide Review** (`slide-review`) reviews a slide deck exported
+  as PDF with Paper Review's reviewers. Every step receives slide-deck guidance
+  and cites slides by page number. Paper Review can also recognize a deck and
+  apply the same guidance.
+- In the Review designer, "Restore adaptive router prompt & schema" restores
+  the open built-in's own router. Paper Review (Fast) previously lost its
+  two-method limit; Slide Review keeps its slide-deck setup.
 - Reviews queue instead of blocking: start as many as needed, and up to
   Settings → Reviews → Simultaneous Reviews (default 2, at most 4) run at once.
   The sidebar lists running, queued, and recently finished reviews with their
@@ -14,6 +34,20 @@ the first public release was not maintained as a stable release series.
 - Each run owns its cancellation, child processes, console transcript, token
   totals, settings snapshot, and write quota, so cancelling one review never
   stops another. Batches, automations, and history purges still run alone.
+- Project conversations can use Claude Code with your own Claude subscription:
+  choose **Claude Code** in the conversation's model-and-thinking picker. The
+  choice is saved per conversation, and existing conversations stay on ChatGPT.
+  Claude works with the selected project context, enabled research tools, and
+  scoped project file tools; file edits require Edit access. Native Claude shell
+  tools, automatic titles, and quota reporting are not yet available.
+- Claude subscription calls in Reviews and conversations first confirm a
+  first-party Claude subscription sign-in, once per Review and before each
+  conversation turn. They remove inherited API credentials
+  and helpers and never fall back to a saved API key; API mode remains a
+  separate, explicit Review choice.
+- The Review designer's workflow graph stacks ready stages from top to bottom,
+  frames parallel stages together, and wraps wide stages onto new rows instead
+  of scrolling sideways.
 
 ## 1.1.1 — 2026-10-22
 

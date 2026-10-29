@@ -55,14 +55,17 @@ test("release has one draft coordinator behind quality gates and no publication 
   assert.doesNotMatch(contents, /--clobber|--draft=false|gh release edit/);
 });
 
-test("Tauri packages only the GUI and uses a cache-friendly release profile", () => {
+test("Tauri packages only the GUI and avoids persistent incremental caches", () => {
   const cargo = readText("gui", "src-tauri", "Cargo.toml");
   const config = JSON.parse(readText("gui", "src-tauri", "tauri.conf.json"));
   const capability = JSON.parse(
     readText("gui", "src-tauri", "capabilities", "default.json"),
   );
   assert.match(cargo, /\[\[bin\]\]\nname = "pipeline-gui"/);
-  assert.match(cargo, /\[profile\.release\][\s\S]*incremental = true/);
+  for (const profile of ["dev", "release"]) {
+    const body = cargo.split(`[profile.${profile}]`)[1]?.split("\n[")[0];
+    assert.match(body ?? "", /incremental = false/);
+  }
   assert.doesNotMatch(cargo, /lto\s*=\s*true|codegen-units\s*=\s*1/);
   assert.deepEqual(config.bundle.targets, ["app", "dmg", "appimage", "nsis"]);
   assert.equal(config.build.beforeBundleCommand, "node ../scripts/release/sign-macos-cli.mjs");

@@ -1,4 +1,5 @@
 use super::*;
+use sha2::{Digest, Sha256};
 
 /// Count of runs on disk and total bytes they occupy (best-effort walk).
 pub fn disk_usage() -> Result<RunsDiskUsage, String> {

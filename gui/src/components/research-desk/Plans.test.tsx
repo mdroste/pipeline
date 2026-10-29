@@ -10,8 +10,8 @@ vi.mock("../../lib/deskClient", () => ({
   deskClient: mocks,
   reference: vi.fn(),
 }));
-vi.mock("../../lib/workbenchClient", () => ({
-  workbenchClient: { listExecutionProfiles: mocks.profiles },
+vi.mock("../../lib/workbench/executionClient", () => ({
+  executionClient: { listExecutionProfiles: mocks.profiles },
 }));
 vi.mock("../research-studio/Jobs", () => ({
   default: () => <div>Job status</div>,

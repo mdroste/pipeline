@@ -8,7 +8,8 @@ const mocks = vi.hoisted(() => ({
   listPapers: vi.fn(),
   effectiveHarness: vi.fn(),
 }));
-vi.mock("../lib/workbenchClient", () => ({ workbenchClient: mocks }));
+vi.mock("../lib/workbench/harnessClient", () => ({ harnessClient: mocks }));
+vi.mock("../lib/workbench/researchClient", () => ({ researchClient: mocks }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 
 const snapshot = {

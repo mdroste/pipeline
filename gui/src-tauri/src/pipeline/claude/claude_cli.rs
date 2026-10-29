@@ -47,6 +47,29 @@ pub(super) fn fork_failure_uses_fallback(error: &str) -> bool {
         && !crate::pipeline::provider_error::is_usage_limit_error(error)
 }
 
+/// Check the Claude subscription sign-in on a Review run's first Claude call
+/// and reuse that executable for the rest of the run; concurrent first calls
+/// share one check. A failed check is not remembered, so a retry checks again.
+/// Outside a run the shared fallback scope is reused across operations, so
+/// every call checks.
+pub(super) async fn verify_subscription_once_per_run<F, Fut>(
+    verify: F,
+) -> Result<crate::deps::ResolvedCommand, String>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<crate::deps::ResolvedCommand, String>>,
+{
+    let scope = crate::run_scope::current();
+    if scope.is_fallback() {
+        return verify().await;
+    }
+    scope
+        .claude_subscription()
+        .get_or_try_init(verify)
+        .await
+        .cloned()
+}
+
 const SESSION_UNAVAILABLE_PREFIX: &str = "unavailable:";
 
 /// Use one warmed Claude session per compatible model/configuration, then fork
@@ -535,7 +558,14 @@ async fn call_claude_inner(
     // auto-approved in the cwd, and the scoped allow/deny rules above keep
     // everything else closed.
     let effective_cwd = workspace.cwd.as_deref();
-    let mut cmd = build_provider_command("claude", effective_cwd, &cmd_args)?;
+    let claude =
+        verify_subscription_once_per_run(crate::agent_runtime::claude::verified_subscription)
+            .await?;
+    let mut cmd = crate::agent_runtime::claude::verified_subscription_command(
+        &claude,
+        &cmd_args,
+        effective_cwd,
+    );
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

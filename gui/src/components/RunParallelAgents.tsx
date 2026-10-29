@@ -176,7 +176,7 @@ export default function RunParallelAgents({
             providers={providers}
             multi
             label="Agents for this report"
-            help="Each selected provider independently runs every Parallel step in this report."
+            help="Each selected provider runs its own version of every parallel review step."
             disabled={disabled}
             onChange={(next) =>
               onChange({
@@ -197,7 +197,7 @@ export default function RunParallelAgents({
                 catalogs={catalogs}
                 providers={providers}
                 label="Merge for this report"
-                help="One provider combines the independent Parallel outputs before downstream steps run."
+                help="One provider combines these reviews before the next steps begin."
                 disabled={disabled}
                 onChange={(next) =>
                   onChange({

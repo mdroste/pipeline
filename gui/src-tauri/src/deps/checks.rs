@@ -38,7 +38,9 @@ fn probe(name: &str, version_args: &[&str]) -> ProbeResult {
 /// failing status. Execution or parse failures are unknown, not evidence that
 /// the user signed out.
 pub(super) fn check_claude_auth(command: &ResolvedCommand) -> Option<bool> {
-    let mut process = command.command(["auth", "status"]);
+    let args = crate::agent_runtime::claude::subscription_args(&["auth".into(), "status".into()]);
+    let mut process = command.command(args);
+    crate::agent_runtime::claude::configure_subscription(&mut process);
     configure_probe_command(&mut process);
     let output =
         crate::process::run_bounded(&mut process, PROBE_TIMEOUT, PROBE_OUTPUT_LIMIT).ok()?;
@@ -46,10 +48,12 @@ pub(super) fn check_claude_auth(command: &ResolvedCommand) -> Option<bool> {
         return None;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let logged_in = serde_json::from_str::<serde_json::Value>(stdout.trim())
-        .ok()
-        .and_then(|value| value.get("loggedIn").and_then(|value| value.as_bool()))?;
-    Some(logged_in && output.status.success())
+    let value = serde_json::from_str::<serde_json::Value>(stdout.trim()).ok()?;
+    value.get("loggedIn")?.as_bool()?;
+    Some(
+        crate::agent_runtime::claude::validate_subscription_status(&value, output.status.success())
+            .is_ok(),
+    )
 }
 
 /// Only the explicitly selected legacy subscription backend consults ambient

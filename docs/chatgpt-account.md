@@ -1,17 +1,45 @@
-# Shared ChatGPT account
+# Connect ChatGPT
 
-Conversations and Reviews use one managed ChatGPT account. Open **Settings →
-Connections → OpenAI → ChatGPT account** to sign in, change accounts, cancel
-sign-in, or sign out. The same panel appears in conversation settings. Model
-availability and usage are read from this account. Signing out affects both
-modes; changing accounts requires all active native work to finish first.
-Review recovery actions remain in the Review section.
+Conversations and subscription Reviews use one ChatGPT account in Pipeline.
 
-This supersedes the earlier requirement for separate managed sign-ins. Explicit
-legacy Codex CLI uses the terminal account, and direct API mode uses its saved
-API key. Those advanced choices are not silently changed.
+## Sign in
 
-## Ownership
+1. Install the [Codex command-line tool](https://github.com/openai/codex).
+2. Open **Settings → Connections → OpenAI → ChatGPT account**.
+3. Choose **Sign in to ChatGPT** and complete the browser sign-in.
+4. For Reviews, select **Subscription** in the OpenAI connection settings.
+   For conversations, choose **ChatGPT** in the model picker.
+
+Pipeline reads available models and usage limits from the connected account.
+The same account panel also appears in conversation settings.
+
+## Change or disconnect an account
+
+Sign out or change accounts in the same panel. Finish active conversation and
+Review work first: the account cannot change while it is in use. Signing out
+affects both conversations and subscription Reviews.
+
+Pipeline's account is separate from your terminal's Codex sign-in. Signing in
+with `codex login` alone does not connect Pipeline's default subscription mode.
+The **Legacy Codex CLI** option under advanced connection settings uses that
+terminal account. Direct API mode uses its saved key.
+
+## Upgrading an existing installation
+
+Pipeline reuses a valid saved managed sign-in. If an older installation has
+different Conversation and Review accounts, choose **Use Conversations account**
+or **Use Reviews account**, or sign in again. Native histories stay in place.
+
+Credentials remain on this device when you change the research data folder and
+are excluded from research backups and project packages. See
+[Privacy](../PRIVACY.md) for the storage details.
+
+## Implementation reference
+
+The account service and execution rules are described below. Review-specific
+connection and recovery details are in [the Review adapter guide](workflow-codex.md).
+
+### Ownership
 
 `gui/src-tauri/src/agent_runtime/codex/chatgpt/` owns the account service:
 
@@ -56,7 +84,7 @@ the checked-in 0.147.0 schema; the older snapshot labels the login type internal
 while the current public documentation describes host applications. The local
 0.153.4 probe verifies admission. An incompatible runtime fails explicitly.
 
-## Account changes and cancellation
+### Account changes and cancellation
 
 A shared read lease spans each complete Review invocation and its uncertain-
 outcome cleanup. Workspace stores its lease alongside the active-turn permit
@@ -85,7 +113,7 @@ a failed or ambiguous managed refresh closes the account connection before
 another attempt. Native response deadlines remain bounded. The transport does
 not expose auth-refresh requests as model tools or user approval cards.
 
-## Existing installations
+### Existing installations
 
 On the first launch of the shared account service:
 
@@ -103,7 +131,7 @@ sign-out. The shared account and execution homes remain device-local when the
 research folder changes and remain excluded from research archives/exchanges.
 A second Pipeline process cannot concurrently own the managed account.
 
-## Validation — September 15, 2026
+### Validation — September 15, 2026
 
 On macOS arm64 with Codex 0.153.4:
 

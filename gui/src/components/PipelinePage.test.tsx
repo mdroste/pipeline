@@ -314,8 +314,8 @@ describe("PipelinePage", () => {
     });
     const remaining: ProfileSummary[] = [
       {
-        id: "auto-review",
-        name: "Automatic Paper Review (Full)",
+        id: "auto-paper-review",
+        name: "Paper Review",
         step_count: 5,
         builtin: true,
       },
@@ -358,11 +358,11 @@ describe("PipelinePage", () => {
     await act(async () => finishDelete());
     await waitFor(() => {
       expect(selector).toBeEnabled();
-      expect(selector).toHaveValue("auto-review");
+      expect(selector).toHaveValue("auto-paper-review");
     });
     expect(invoke).toHaveBeenCalledWith("delete_profile", { id: "custom" });
     expect(invoke).toHaveBeenCalledWith("switch_profile", {
-      id: "auto-review",
+      id: "auto-paper-review",
     });
   });
 
@@ -556,7 +556,9 @@ describe("PipelinePage", () => {
     await user.click(
       screen.getByRole("button", { name: "Economics — Macroeconomics" }),
     );
-    expect(screen.getByText(/adds an editable snapshot/i)).toBeVisible();
+    expect(
+      screen.getByText(/Add a copy you can edit for this review design/i),
+    ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Copy step" }));
 
     const prompt = await screen.findByRole("textbox", {
@@ -926,14 +928,14 @@ describe("PipelinePage", () => {
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("shows shared context reuse as the Automatic Paper Review default", async () => {
+  it("shows shared context reuse as the Paper Review default", async () => {
     const user = userEvent.setup();
     mockLoad(
       {
         ...makeConfig(),
         context_cache: { enabled: true },
       },
-      { get_active_profile: "auto-review" },
+      { get_active_profile: "auto-paper-review" },
     );
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
@@ -943,9 +945,9 @@ describe("PipelinePage", () => {
       name: "Reuse shared input context",
     });
     expect(toggle).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByText("Automatic review default")).toBeInTheDocument();
+    expect(screen.getByText("Built-in default")).toBeInTheDocument();
     expect(
-      screen.getByText(/Automatic Paper Review enables this by default/),
+      screen.getByText(/Paper Review and Slide Review enable this by default/),
     ).toBeInTheDocument();
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-checked", "false");
@@ -1129,7 +1131,7 @@ describe("PipelinePage", () => {
       screen.queryByRole("textbox", { name: "Output JSON schema" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/Output contracts live in the Schemas tab/),
+      screen.getByText(/Define result formats in the Schemas tab/),
     ).toBeInTheDocument();
   });
 });

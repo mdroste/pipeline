@@ -1,37 +1,50 @@
 # Research data folder
 
-Open **Settings → Data & Storage → Research data folder**, choose an existing dedicated
-folder, then quit and reopen Pipeline. Pipeline opens existing records there or
-creates a separate research library if the folder is empty. **Use default
-folder** selects `~/.pipeline/` for the next launch. **Open current folder** opens
-the location used by the running process, including while a change is pending.
+Pipeline stores research under `~/.pipeline/` by default. To use a different
+location:
 
-The selected folder stores Workspace conversations, research records, imported
-documents, blobs and execution artifacts; reviews, annotations and Workflow
-projects; Workflow profiles and prompt overrides; durable Tasks and research
-missions; and preprocessing logs. Each service keeps its existing subdirectory
-and ownership boundary. Original manuscripts and external datasets stay in their
-registered folders. Manual exports retain their explicitly selected destinations.
+1. Open **Settings → Data & Storage → Research data folder**.
+2. Choose an existing folder dedicated to Pipeline data.
+3. Quit and reopen Pipeline.
 
-App preferences, API keys, provider sign-ins and native session files, managed
-tools, and disposable extraction/model caches stay under the device's local
-`~/.pipeline/`. Workspace's native home remains
-`~/.pipeline/workbench/codex/` even with custom research storage. The
-[shared ChatGPT account](chatgpt-account.md) remains local under
-`~/.pipeline/providers/chatgpt/`; neither execution runtime persists its
-supplied tokens. Research archives and transfers exclude these credentials.
+If the folder already contains Pipeline records, the app opens them. If it is
+empty, the app starts a separate research library there. **Use default folder**
+selects `~/.pipeline/` for the next launch. **Open current folder** shows the
+location the running app is using.
 
-Changing folders does **not** move, merge, or delete existing data. Select the
-previous location to reopen it. Workspace archive/exchange tools remain the
-supported ways to transfer research records; simply copying its database to a
-different path does not rebase internal references or transfer native sessions.
+## What the folder contains
 
-This setting does not implement cross-device synchronization. Live SQLite files
-must not be replaced by a sync client while Pipeline is using them. Keep cloud
-syncing paused while the app runs, and do not use the same research data on two
-devices simultaneously. Registered paths and execution permissions remain
-machine-specific. A Dropbox folder does not establish portable conversations,
-distributed task ownership, or conflict handling.
+The research folder holds conversations, imported documents, notes, results,
+Reviews, annotations, saved workflows, Automations, and their logs. Original
+manuscripts and datasets stay in the project folders where you keep them.
+Exports go to the location you choose when saving.
+
+Device settings, API keys, provider sign-ins and session files, managed tools,
+and disposable caches stay under the local `~/.pipeline/` directory. In
+particular, the shared ChatGPT account remains under
+`~/.pipeline/providers/chatgpt/`. Research backups exclude credentials.
+
+## Change locations or move to another computer
+
+Choosing a folder **does not move, merge, or delete existing records**. Select
+the previous folder and restart to return to them.
+
+Use a research backup (`.pwrx`) to restore the Workspace research store into
+an empty destination, or a project package (`.pwex`) to transfer selected
+items. Neither format copies all Pipeline data: Review and Automation stores,
+external project files, and credentials are excluded. See
+[backup and sharing](projects.md#back-up-or-share-research) for the differences.
+Copying only the research database does not transfer its referenced files or
+update paths for another computer.
+
+This setting does not synchronize computers. Pause cloud sync while Pipeline
+uses the folder, and do not open the same research store on two computers at
+once. Project paths, installed tools, and execution permissions need to be
+configured on each machine.
+
+If a selected folder becomes unavailable, Pipeline reports the problem. It
+does not create replacement records in the default folder. Choose an available
+location in Settings and restart.
 
 ## Implementation
 

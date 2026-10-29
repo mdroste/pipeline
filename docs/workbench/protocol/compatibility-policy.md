@@ -38,7 +38,7 @@ the upstream transport and profile contracts.
 
 ## Project surface catalog 2
 
-PI-00–PI-03 add `workbench_project_context` and `workbench_anchor_read` as bounded,
+The project surface adds `workbench_project_context` and `workbench_anchor_read` as bounded,
 read-only dynamic tools under the existing `paper_tools` module. They use the
 same scoped services as the UI. The catalog version and effective harness
 fingerprint change so an existing native binding requires the normal successor
@@ -50,7 +50,7 @@ probe pass; authenticated use of this catalog remains a release gate.
 
 ## Research studio catalog 3
 
-PI-04–PI-09 add `workbench_research_records`, a Workspace-scoped read-only tool
+The research studio adds `workbench_research_records`, a Workspace-scoped read-only tool
 under `paper_tools`, capped at 20 records / 64 KiB. Human decisions, immutable
 source material and model assessments retain their provenance. No new provider
 wire method, permission mode, or authorization tool is introduced. The harness
@@ -105,3 +105,19 @@ expose the host-managed flow. Native admission is verified by a no-model probe
 against 0.153.4; unsupported runtimes fail explicitly rather than falling back
 to another sign-in. See [Shared account](../../chatgpt-account.md) for ownership,
 migration, token handling, validation, and remaining release gates.
+
+## Claude subscription conversations
+
+The provider picker adds an app-owned `runtime` session override (`codex` or
+`claude`). Absence preserves Codex behavior. Claude uses the isolated
+`claude-local-v1` binding namespace and app-owned transcript history; its IDs are
+never sent to Codex resume. Switching to Codex creates a new native binding with
+bounded history. Existing normalized events keep their wire shape; Claude
+message payloads include `runtime` and `model` attribution. No pinned Codex
+schema or applied database migration changes.
+
+Claude admits the native authentication contract and model catalog before any
+prompt. Unsupported fields/control operations fail explicitly. The tested CLI,
+billing controls, MCP boundary, and remaining qualification are documented in
+[Claude Code](../../claude-code.md). The broader native Codex sandbox guarantees
+above do not imply that Claude has those native tools: it uses host-scoped tools.

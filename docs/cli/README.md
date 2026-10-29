@@ -1,14 +1,19 @@
 # Pipeline CLI
 
-`pipeline-cli` runs Pipeline workflows without opening the desktop interface.
-It uses the same local settings, profiles, dependency checks, execution engine,
-and run store as the app. The desktop installers place the binary beside the
-application executable without adding it to `PATH`; it can also be built from
-source.
+`pipeline-cli` runs reviews and other saved workflows without the desktop
+interface. It uses the app's settings, providers, workflow definitions, and
+run history.
 
-## Build and help
+## Find or build the command
 
-From the repository root:
+Desktop installers place `pipeline-cli` beside the application executable and
+do not add it to `PATH`. On macOS it is inside the app bundle:
+
+```bash
+"/Applications/Pipeline.app/Contents/MacOS/pipeline-cli" --help
+```
+
+From a source checkout, build it with:
 
 ```bash
 cd gui/src-tauri
@@ -16,267 +21,225 @@ cargo build --locked --bin pipeline-cli
 ./target/debug/pipeline-cli --help
 ```
 
-During development, any example below can instead be run as:
+The examples below use `pipeline-cli`. Replace that name with the full path to
+your binary if it is not on `PATH`. During development you can also use
+`cargo run --locked --bin pipeline-cli -- <COMMAND> [OPTIONS]` from
+`gui/src-tauri/`.
+
+## Run a review
+
+Set up a provider in the desktop app's **Settings → Connections** first. Check
+that the input, provider, and parser are ready:
 
 ```bash
-cargo run --locked --bin pipeline-cli -- <COMMAND> [OPTIONS]
-```
-
-## Commands
-
-| Command | Purpose |
-| --- | --- |
-| `profiles` | List available workflows, or print the list as JSON. |
-| `profiles show <ID>` | Print one workflow's export JSON. |
-| `workflow` | Print the schema/template, strictly validate portable JSON, or explicitly install it. |
-| `check` | Validate one prospective run and its exact dependencies without running it. |
-| `run` | Run one workflow and print or save its Markdown report. |
-| `batch` | Run one workflow over supported documents in a directory. |
-| `engines` | Inspect, install, repair, or remove the managed Paddle bundle. |
-
-Use `pipeline-cli help <COMMAND>` for the complete option list for a command.
-
-## Profiles
-
-List the installed workflows:
-
-```bash
-./target/debug/pipeline-cli profiles
-./target/debug/pipeline-cli profiles --json
-./target/debug/pipeline-cli profiles show auto-review
-```
-
-Without `--profile`, `check`, `run`, and `batch` use the active desktop
-workflow. A command-specific selection is transient and does not change that
-active workflow:
-
-```bash
-./target/debug/pipeline-cli run \
-  --profile auto-review \
+pipeline-cli check \
+  --profile auto-paper-review \
   --input /path/to/paper.pdf
 ```
 
-## Portable workflows and agent authoring
-
-A workflow is saved as the same versioned JSON `profile` envelope produced by
-the GUI export and `profiles show`. There is no second CLI-only format. The
-current schema is v8 and includes steps, dependency and artifact selectors,
-merge policy, published outputs, extraction/input declarations, variables,
-orientation settings, and context caching. User settings and credentials are
-not part of a portable workflow.
-
-Start from a complete normalized example and consult the machine-readable
-schema rather than constructing the format from memory:
+Then run the review and save the report:
 
 ```bash
-./target/debug/pipeline-cli workflow template
-./target/debug/pipeline-cli workflow schema
-```
-
-Validate generated JSON without changing local state:
-
-```bash
-./target/debug/pipeline-cli workflow validate /path/to/workflow.json --json
-```
-
-Validation is strict for agent safety. It rejects unknown fields (including
-misspellings), malformed typed fields, newer schema versions, invalid or cyclic
-dependencies, unsupported providers or tools, invalid artifact access,
-unbounded fan-out, invalid output schemas, and workflows without an enabled
-Sequential report step. Older supported exports receive their normal defaults
-and are normalized to the current schema before hashing.
-
-Use a validated file ephemerally with `check`, `run`, or `batch`:
-
-```bash
-./target/debug/pipeline-cli check \
-  --workflow /path/to/workflow.json \
-  --input /path/to/paper.pdf \
-  --json
-
-./target/debug/pipeline-cli run \
-  --workflow /path/to/workflow.json \
-  --input /path/to/paper.pdf \
-  --out /path/to/review.md
-```
-
-`--workflow -` reads up to 10 MB of UTF-8 JSON from standard input. It is
-mutually exclusive with `--profile`. Ephemeral use never edits the active
-desktop workflow or saves a profile. To save a generated workflow explicitly:
-
-```bash
-./target/debug/pipeline-cli workflow install /path/to/workflow.json --json
-```
-
-Installation creates a new deduplicated profile ID; it does not overwrite an
-existing profile. Every run records the workflow source and normalized SHA-256
-fingerprint in `manifest.json` and retains the exact normalized definition as
-`context/workflow.json`, so a result remains auditable if the source file or an
-installed profile later changes.
-
-The repository includes a Codex/ChatGPT skill at
-`.agents/skills/pipeline-workflow` and exposes the same package to Claude from
-`.claude/skills/pipeline-workflow`. The skill obtains the live template/schema
-from the CLI, validates generated JSON, inspects the preflight plan and work
-bounds, and uses ephemeral execution unless installation is explicitly asked
-for.
-
-## Check a run
-
-`check` resolves the selected workflow, inputs, runtime variables, providers,
-and parser dependencies without extracting the document or contacting a
-model:
-
-```bash
-./target/debug/pipeline-cli check \
-  --profile auto-review \
-  --input /path/to/paper.pdf
-
-./target/debug/pipeline-cli check \
-  --profile auto-review \
-  --input /path/to/paper.pdf \
-  --json
-```
-
-With `--json`, the report also includes the normalized workflow fingerprint,
-authoritative scheduler stages, selected Parallel/Merge agents, and upper
-bounds on step units, merge calls, and provider attempts.
-
-The concrete primary and named-input paths determine whether PDF parsing can
-run. For a PDF:
-
-- LLM extraction requires the selected model provider and `pdftotext`.
-- `pdftotext` extraction requires `pdftotext`.
-- PaddleOCR-VL extraction requires the managed Full Parser bundle.
-
-TeX and DOCX inputs do not inherit PDF-only requirements. A selected PDF
-passed with `--extra-input key=path` is checked in the same way as the primary
-input. Missing required dependencies cause `check` and `run` to exit before
-extraction or a model call.
-
-## Run one workflow
-
-By default, the Markdown report goes to standard output and progress goes to
-standard error:
-
-```bash
-./target/debug/pipeline-cli run \
-  --profile auto-review \
-  --input /path/to/paper.pdf
-```
-
-Save the report to a file with `--out`:
-
-```bash
-./target/debug/pipeline-cli run \
-  --profile auto-review \
+pipeline-cli run \
+  --profile auto-paper-review \
   --input /path/to/paper.pdf \
   --out /path/to/report.md
 ```
 
-Pipeline will not replace an existing output file unless `--force` is passed.
-Every execution is also saved as a normal Pipeline run under
-`~/.pipeline/runs/`, regardless of whether `--out` is used.
+Without `--out`, the report goes to standard output. Progress and errors go
+to standard error. Pipeline also saves the full run in the research data
+folder's `runs/` directory, which defaults to `~/.pipeline/runs/`.
 
-### Input modes
+An existing output file is protected unless you pass `--force`. Without
+`--profile`, the command uses the desktop app's active workflow. Selecting a
+profile for one command does not change that desktop selection.
 
-Use `--interpret-as` when a directory's meaning should be explicit:
+## Available commands
+
+| Command | Purpose |
+| --- | --- |
+| `profiles` | List saved workflows |
+| `profiles show <ID>` | Print a workflow as exportable JSON |
+| `workflow` | Print the template or schema, validate a file, or install a workflow |
+| `check` | Check a proposed run without extracting the document or calling a model |
+| `run` | Run one workflow |
+| `batch` | Run a workflow on documents in a directory |
+| `engines` | Inspect, install, repair, or remove the optional PDF parser |
+
+Use `pipeline-cli help <COMMAND>` for the full option list. Commands that
+support `--json` can return structured output for scripts.
+
+## Choose inputs
+
+Single-document runs accept PDF, DOCX, TeX, UTF-8 Markdown, and text. For a
+folder, specify how to interpret it:
 
 ```bash
-./target/debug/pipeline-cli run \
+pipeline-cli run \
   --input /path/to/latex-project \
   --interpret-as latex-project
 
-./target/debug/pipeline-cli run \
+pipeline-cli run \
+  --workflow /path/to/source-review.json \
   --input /path/to/repository \
   --interpret-as source-tree
 ```
 
-Accepted values are `document`, `latex-project`, and `source-tree`. A workflow
-configured with no primary input is run by omitting `--input`.
+`--interpret-as` accepts `document`, `latex-project`, or `source-tree`. The
+selected workflow must support the input. Omit `--input` for workflows that
+need no primary document.
 
-### Variables and named inputs
-
-Runtime variables and named inputs are repeatable:
+A custom workflow can declare variables and additional named inputs. Pass each
+one separately, using the keys declared by that workflow:
 
 ```bash
-./target/debug/pipeline-cli run \
-  --profile auto-review \
+pipeline-cli run \
+  --workflow /path/to/custom-review.json \
   --input /path/to/paper.pdf \
   --var journal=AER \
   --var audience=editor \
   --extra-input appendix=/path/to/appendix.pdf
 ```
 
-Keys must be unique within each option type. The selected workflow still
-determines which variables and named inputs are valid or required.
+This example requires a workflow declaring `journal`, `audience`, and
+`appendix`. Each key must be unique within its option type.
 
-## Batch runs
+## Check dependencies before running
 
-`batch` scans one directory non-recursively for PDF, TeX, and DOCX files and
-runs them sequentially. It captures the workflow and execution settings once
-before the first item, so edits made during a batch apply to the next batch.
-Hidden files are skipped:
+`check` resolves the workflow, input files, variables, providers, and parser
+requirements. It makes no model call and does not extract the document.
+Add `--json` to inspect the planned stages, selected reviewers, workflow
+fingerprint, and upper limits on step executions and provider attempts.
+
+For PDF inputs:
+
+- model extraction needs the selected provider and `pdftotext`;
+- Poppler extraction needs `pdftotext`; and
+- PaddleOCR-VL extraction needs the managed Full Parser.
+
+The same checks apply to additional PDF inputs. TeX and DOCX files do not need
+PDF extraction tools. Missing required dependencies stop the run before
+extraction or model calls.
+
+## Run a batch
+
+`batch` reads PDF, TeX, and DOCX files directly inside one directory. It skips
+hidden files and does not search subdirectories. Files run one at a time:
 
 ```bash
-./target/debug/pipeline-cli batch \
-  --profile auto-review \
+pipeline-cli batch \
+  --profile auto-paper-review \
   --input-dir /path/to/papers \
   --out-dir /path/to/reports
 ```
 
-Each item is saved in Pipeline's normal run store. `--out-dir` additionally
-writes one Markdown report per input. Existing reports are protected unless
-`--force` is supplied, and output-name collisions are rejected before model
-work starts. A failed item does not prevent later items from running, but the
-batch exits non-zero if any item fails.
+Each result is saved in normal run history. `--out-dir` also writes a Markdown
+report for each input. Pipeline checks for output-name collisions before
+starting; existing files require `--force` to replace.
 
-## PaddleOCR-VL Full Parser
+The batch keeps the workflow and settings selected at its start. Changes made
+in the app during execution apply to a later batch. A failed item does not stop
+the remaining files, but the command exits with a failure status if any item
+fails.
 
-Inspect the managed engine without changing it:
+## Create and share workflows
 
-```bash
-./target/debug/pipeline-cli engines status
-./target/debug/pipeline-cli engines status --json
-```
+The CLI and desktop app use the same versioned JSON format. A workflow
+contains its steps, prompts, dependencies, input declarations, variables,
+tools, and output settings. It contains no account credentials.
 
-Install the bundle, or repair an existing installation:
-
-```bash
-./target/debug/pipeline-cli engines install paddle
-```
-
-The download is roughly 2.9 GB and the installed bundle roughly 3.8 GB. The
-command uses the same pinned, checksum-verified provisioner as the desktop
-Settings page. Progress is written to standard error, and an interrupt cancels
-the installation and its child processes.
-
-Remove the managed bundle with explicit confirmation:
+List or export an existing workflow:
 
 ```bash
-./target/debug/pipeline-cli engines uninstall paddle --yes
+pipeline-cli profiles
+pipeline-cli profiles --json
+pipeline-cli profiles show auto-paper-review
 ```
 
-Managed engine files stay under `~/.pipeline/native/`. Uninstall removes both
-Pipeline-owned Paddle roots; it does not remove saved runs or system Python,
-package managers, or other system software.
+Start a new one from the complete template and consult the schema for fields
+and allowed values:
 
-## Output and exit status
+```bash
+pipeline-cli workflow template
+pipeline-cli workflow schema
+pipeline-cli workflow validate /path/to/workflow.json --json
+```
 
-- `0`: the command completed successfully, or `check` found the run ready.
-- `1`: dependencies, execution, report writing, engine management, or at least
-  one batch item failed.
-- `2`: command syntax or local pre-dispatch validation was invalid.
-- `130`: an active run or installation was interrupted.
+Validation rejects unknown or mistyped fields, newer schema versions, circular
+or invalid dependencies, unsupported providers or tools, invalid file access,
+unbounded repeated steps, invalid output schemas, and definitions without an
+enabled Sequential report step. Supported older exports are converted to the
+current schema, version 8.
 
-Machine-readable workflow validation/planning, profile, dependency, and engine
-status output is available with the commands' `--json` options. Progress and
-diagnostics remain on standard error so standard output can be redirected
-safely.
+Use a file directly without installing it:
 
-## Local state and concurrency
+```bash
+pipeline-cli check \
+  --workflow /path/to/workflow.json \
+  --input /path/to/paper.pdf \
+  --json
 
-Profiles, settings, managed engines, and run history are shared with the
-desktop app under `~/.pipeline/`. Pipeline serializes workflow execution with
-a cross-process lock, so the CLI and desktop app cannot run conflicting jobs
-against the same store at the same time.
+pipeline-cli run \
+  --workflow /path/to/workflow.json \
+  --input /path/to/paper.pdf \
+  --out /path/to/review.md
+```
+
+`--workflow` works with `check`, `run`, and `batch` and cannot be combined with
+`--profile`. Use `--workflow -` to read up to 10 MB of UTF-8 JSON from standard
+input. Running from a file does not save a profile or change the desktop's
+active workflow.
+
+To add the definition to your saved workflows:
+
+```bash
+pipeline-cli workflow install /path/to/workflow.json --json
+```
+
+Installation assigns a new profile ID without overwriting an existing profile.
+Every run keeps the normalized definition in `context/workflow.json` and its
+SHA-256 fingerprint in `manifest.json`, so you can inspect the version used
+even after editing the original.
+
+The repository includes a `pipeline-workflow` skill for Codex/ChatGPT and
+Claude. It uses the CLI's template, schema, validation, and run preview to
+create workflows from a request. See
+[the skill instructions](../../.agents/skills/pipeline-workflow/SKILL.md).
+
+## Install the optional PDF parser
+
+Check the parser's status or install and repair it:
+
+```bash
+pipeline-cli engines status
+pipeline-cli engines status --json
+pipeline-cli engines install paddle
+```
+
+The Full Parser download is roughly 2.9 GB and uses roughly 3.8 GB when
+installed. The CLI uses the same verified downloads as Settings. Progress
+goes to standard error; interrupting the command cancels installation and its
+child processes.
+
+To remove it:
+
+```bash
+pipeline-cli engines uninstall paddle --yes
+```
+
+This removes Pipeline's managed Paddle files under `~/.pipeline/native/`.
+It keeps saved runs and system Python installations.
+
+## Exit codes and concurrent use
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Completed successfully, or the proposed run is ready |
+| `1` | Dependency, execution, report-writing, or parser-management failure; also returned if a batch item fails |
+| `2` | Invalid command syntax or input validation failure before execution |
+| `130` | A running review or installation was interrupted |
+
+The CLI shares settings, profiles, parsers, and history with the desktop app.
+It takes a cross-process run lock to prevent conflicting work against the same
+store. If another operation owns the lock, finish or stop that work before
+trying again.

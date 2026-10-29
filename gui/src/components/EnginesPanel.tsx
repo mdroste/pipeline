@@ -174,7 +174,7 @@ export default function EnginesPanel({
   const uninstall = async (id: string) => {
     if (
       !(await confirmDialog(
-        "Uninstall this engine? Its managed runtime, packages, and model files will be removed.",
+        "Uninstall this parser and remove its installed software and model files?",
         {
           title: "Uninstall engine",
           confirmLabel: "Uninstall",
@@ -399,7 +399,7 @@ export default function EnginesPanel({
       )}
       {!refreshingStatus && !engineStatusError && engines.length === 0 && (
         <p className="text-xs text-gray-500 dark:text-gray-400">
-          No managed local engines are available.
+          No local parsers are available to install.
         </p>
       )}
 

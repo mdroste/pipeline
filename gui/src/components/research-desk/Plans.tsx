@@ -5,7 +5,7 @@ import {
   type DeskRecord,
   type PlanStatus,
 } from "../../lib/deskClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { executionClient } from "../../lib/workbench/executionClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type { ExecutionProfile } from "../../lib/workbenchTypes";
 import Jobs from "../research-studio/Jobs";
@@ -23,7 +23,7 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
   const [preview, setPreview] = useState<PlanStatus | null>(null);
   const refresh = useCallback(async () => {
     const [p, c] = await Promise.all([
-      workbenchClient.listExecutionProfiles(workspaceId),
+      executionClient.listExecutionProfiles(workspaceId),
       deskClient.records(workspaceId, "execution_plan"),
     ]);
     setProfiles(p);
@@ -52,7 +52,7 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
     run(async () => {
       if (!preview) return;
       const profile = preview.record.body.profile as ExecutionProfile;
-      await workbenchClient.runExecution({
+      await executionClient.runExecution({
         profileId: profile.id,
         planId: preview.record.id,
         sessionId: null,
@@ -63,11 +63,11 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
   return (
     <div className="space-y-5">
       <section className={card}>
-        <h2 className="font-semibold">Captured execution plans</h2>
+        <h2 className="font-semibold">Saved analysis plans</h2>
         <p className={muted}>
-          Capture a configured profile's scripts and declared inputs. Each test
-          or replay copies those bytes into a fresh private directory. The
-          process retains host access.
+          Save a command’s scripts and listed input files. Each run uses a new
+          working folder with those saved files. The command still has your
+          computer’s file and network permissions.
         </p>
         <select
           aria-label="Execution profile to capture"
@@ -171,8 +171,8 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
         <section className={card}>
           <h2 className="font-semibold">Review exact plan</h2>
           <p className="text-sm">
-            This command runs with your host operating-system access. Captured
-            inputs do not contain its filesystem or network access.
+            This command runs with your computer’s permissions. It can access
+            files and the network beyond the saved inputs.
           </p>
           <pre className="max-h-96 overflow-auto whitespace-pre-wrap text-xs">
             {JSON.stringify(preview.record.body, null, 2)}
@@ -198,7 +198,7 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
                 )
               }
             >
-              Authorize this exact host plan
+              Allow this plan to run on this computer
             </button>
           )}
           <button
@@ -206,7 +206,7 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
             disabled={busy || !preview.authorized}
             onClick={() => void queue(true)}
           >
-            Test captured plan
+            Test saved plan
           </button>
           <button
             className={button}
@@ -215,7 +215,7 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
             }
             onClick={() => void queue(false)}
           >
-            Run / replay in a fresh directory
+            Run in a new working folder
           </button>
         </section>
       )}

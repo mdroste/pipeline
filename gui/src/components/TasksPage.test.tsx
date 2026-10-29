@@ -8,7 +8,8 @@ import {
 } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import TasksPage from "./TasksPage";
-import { template, type TaskRun, type Receipt } from "../lib/taskClient";
+import { template } from "../lib/taskTemplates";
+import { type TaskRun, type Receipt } from "../lib/taskTypes";
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
@@ -87,7 +88,7 @@ it("prepares a concrete scope before starting work", async () => {
   fireEvent.change(screen.getByLabelText("What should happen next?"), {
     target: { value: "Continue the idea" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Prepare automation →" }));
+  fireEvent.click(screen.getByRole("button", { name: "Preview automation →" }));
   await screen.findByRole("button", { name: "Start automation" });
   expect(
     mocks.invoke.mock.calls.some(([command]) => command === "task_control"),
@@ -114,7 +115,7 @@ it("surfaces preparation failures without launching or clearing the request", as
       ? Promise.reject("Conversation changed")
       : implementation(command, ...args),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Prepare automation →" }));
+  fireEvent.click(screen.getByRole("button", { name: "Preview automation →" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Conversation changed",
   );
@@ -125,7 +126,7 @@ it("surfaces preparation failures without launching or clearing the request", as
 });
 it("keeps recurring schedules separate from active occurrences", async () => {
   render(<TasksPage />);
-  await screen.findByText("Give your work a next step.");
+  await screen.findByText("Create your first automation.");
   fireEvent.click(screen.getByRole("tab", { name: "Scheduled" }));
   await screen.findByText("Make time for recurring work.");
   expect(screen.getByRole("tab", { name: "Scheduled" })).toHaveAttribute(
@@ -136,7 +137,7 @@ it("keeps recurring schedules separate from active occurrences", async () => {
 });
 it("handles task errors emitted by the native coordinator", async () => {
   render(<TasksPage />);
-  await screen.findByText("Give your work a next step.");
+  await screen.findByText("Create your first automation.");
   act(() =>
     mocks.listeners.get("tasks:error")?.({
       payload: "Another instance owns task execution",
@@ -230,7 +231,7 @@ it("inspects the retained operation for a prior attempt after retry", async () =
 it("roves tabs without loading until activation and associates every panel", async () => {
   const user = (await import("@testing-library/user-event")).default.setup();
   render(<TasksPage />);
-  await screen.findByText("Give your work a next step.");
+  await screen.findByText("Create your first automation.");
   const active = screen.getByRole("tab", { name: "Active" });
   const scheduled = screen.getByRole("tab", { name: "Scheduled" });
   const calls = mocks.invoke.mock.calls.length;

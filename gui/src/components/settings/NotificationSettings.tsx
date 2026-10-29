@@ -38,7 +38,7 @@ export default function NotificationSettings() {
           [
             "suppressFocused",
             "Quiet while I’m using Pipeline",
-            "Suppress these notifications and sounds while the app window is focused.",
+            "Mute these notifications and sounds while you’re using Pipeline.",
           ],
         ] as const
       ).map(([key, label, description]) => (
@@ -119,8 +119,9 @@ export default function NotificationSettings() {
         Test completion notification
       </button>
       <p className="settings-row-description mt-2">
-        The test respects completion, focus, sound, and desktop preferences.
-        Pipeline must remain running; system notification settings also apply.
+        The test uses your current notification and sound settings, including
+        muting while Pipeline is in focus. Pipeline must be open, and system
+        settings may block desktop notifications.
       </p>
     </>
   );

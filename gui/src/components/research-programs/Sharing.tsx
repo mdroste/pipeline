@@ -81,9 +81,9 @@ export default function Sharing(props: DeskProps) {
       <section className={card}>
         <h2 className="font-semibold">Prepare for coauthor review</h2>
         <p className={muted}>
-          Write questions, select exact evidence, and record revision-specific
-          comments. The readable brief becomes an ordinary handoff note for the
-          existing .pwex exchange preview below.
+          Write questions, choose supporting evidence, and add comments on a
+          manuscript version. Save the brief as a note to include in the sharing
+          package below.
         </p>
         <Field label="Brief title">
           <input
@@ -184,9 +184,8 @@ export default function Sharing(props: DeskProps) {
         <section key={r.id} className={card}>
           <h3>{r.title}</h3>
           <p className={muted}>
-            Select “Notes” in the exchange preview to carry this brief and its
-            comments. Add the referenced source objects using the ordinary
-            package selections.
+            Select Notes in the sharing preview to include this brief and its
+            comments. Also select the sources it references.
           </p>
           <Artifacts
             workspaceId={workspaceId}
@@ -199,7 +198,7 @@ export default function Sharing(props: DeskProps) {
       ))}
       <details className={card}>
         <summary className="font-semibold">
-          Selective .pwex export, return import, and conflicts
+          Share selected work and import a coauthor’s changes
         </summary>
         <WorkspaceExchangePanel
           workspaceId={workspaceId}
@@ -210,11 +209,11 @@ export default function Sharing(props: DeskProps) {
         />
       </details>
       <section className={card}>
-        <h2 className="font-semibold">Replication capsule</h2>
+        <h2 className="font-semibold">Replication package</h2>
         <p className={muted}>
-          A separate research-capsule-v1 archive holds declared inputs, ordered
-          plans, environment requirements, and optional numeric tolerances.
-          Importing it grants no execution authority.
+          Create a package containing input files, ordered analysis steps,
+          software requirements, and optional numerical tolerances. Imported
+          commands require your approval before they can run.
         </p>
         <Field label="Capsule title">
           <input
@@ -299,9 +298,8 @@ export default function Sharing(props: DeskProps) {
                 </div>
               ))}
               <p className={muted}>
-                Non-script data requires the project's package-data permission
-                in Data & samples. Omitted required inputs produce an incomplete
-                verification.
+                To include data files, enable data sharing in Data & samples.
+                Verification will be incomplete if required inputs are missing.
               </p>
               <details>
                 <summary className="text-xs">
@@ -413,7 +411,7 @@ export default function Sharing(props: DeskProps) {
           <>
             <Inspect
               value={inspected.preview.manifest}
-              label="Incoming inert material"
+              label="Files to import"
             />
             <p className="text-sm text-neutral-500">
               Executable file flags are restored when binding, without granting
@@ -436,7 +434,7 @@ export default function Sharing(props: DeskProps) {
                 })
               }
             >
-              Import reviewed capsule as inert material
+              Import package without running commands
             </button>
           </>
         )}
@@ -460,7 +458,7 @@ export default function Sharing(props: DeskProps) {
               ))}
           </select>
         </Field>
-        <Field label="Plan to bind">
+        <Field label="Analysis plan to set up locally">
           <select
             className={input}
             value={ordinal}
@@ -554,10 +552,10 @@ export default function Sharing(props: DeskProps) {
           Prepare local verification plan
         </button>
         <p className={muted}>
-          Open Captured execution to inspect, authorize, and test the prepared
-          local plan. No imported plan is authorized automatically.
+          Open Saved analysis plans to review, approve, and test this plan
+          before running it.
         </p>
-        <Field label="Locally bound capsule">
+        <Field label="Package configured for this computer">
           <select
             className={input}
             value={bound}

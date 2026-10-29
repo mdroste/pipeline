@@ -181,8 +181,8 @@ export default function Checks(props: DeskProps & { active?: boolean }) {
                 setMonitor((m) => ({ ...m, networkConsent: e.target.checked }))
               }
             />{" "}
-            Allow this query to be sent to api.crossref.org at each check.
-            Project acquisition access must also be enabled.
+            Allow Pipeline to send this search to Crossref at each check.
+            Literature search must also be enabled for this project.
           </label>
         )}
         <button
@@ -230,7 +230,7 @@ export default function Checks(props: DeskProps & { active?: boolean }) {
                 )
               }
             >
-              Acknowledge this attention item
+              Mark as seen
             </button>
           </section>
         ))}

@@ -1,4 +1,5 @@
-import { stateLabel, type Chain, type Step } from "../../lib/taskClient";
+import { stateLabel } from "../../lib/taskPresentation";
+import { type Chain, type Step } from "../../lib/taskTypes";
 import { describeStep } from "./language";
 
 export function Status({ state }: { state: string }) {

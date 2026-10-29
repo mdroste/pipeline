@@ -1,8 +1,12 @@
-# Project exchange, retention, and Workflow drafts: PI-11 and PI-12 (authoring half)
+# Project packages and storage: developer reference
 
-These are optional Workspace features under the research inspector's Release
-tab. They do not change Workspace's runtime, credential, or cancellation
-boundaries, and the whole-store `.pwrx` archive keeps its existing semantics.
+Project packages (`.pwex`) share selected research with a coauthor. Storage
+cleanup moves unused files to recoverable Trash. Workflow drafts turn selected
+completed work into an editable review definition.
+
+For user instructions and a comparison of export formats, see
+[Back up or share research](../projects.md#back-up-or-share-research).
+This page describes package contents, import rules, and retention.
 
 ## Implementation map
 
@@ -100,7 +104,7 @@ precede every batch. Listing trash reconciles interrupted moves and restores.
 Trash entries can be restored until trash is explicitly emptied. The database,
 credentials, and Workflow runs are never touched.
 
-## Workflow drafts (PI-12 authoring half)
+## Workflow drafts
 
 A draft is built from completed tasks, completed recipe runs in the current
 conversation, and non-abandoned theory notes, at most twelve. Each becomes a
@@ -114,7 +118,7 @@ an ordinary profile file that the Workflows page imports through its normal
 validation and launch preview. Nothing is installed or executed from the
 Workspace, and no provider, model, or credential choice is carried.
 
-Concurrent Workspace turns, the other half of PI-12, are not implemented. The
+Concurrent Workspace turns are not implemented. The
 one-active-turn invariant, compatibility record, storage/event contracts, and
 live qualification matrix are unchanged.
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import WaveDiagram from "./WaveDiagram";
 import type { MergeConfig, StepConfig } from "../lib/types";
@@ -49,6 +49,43 @@ describe("WaveDiagram", () => {
     expect(screen.getByRole("button", { name: "Merge" })).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Consolidate" }),
+    ).toBeInTheDocument();
+  });
+
+  it("frames a parallel wave and describes each card's call shape", () => {
+    render(
+      <WaveDiagram
+        steps={[
+          step({
+            id: "technical",
+            label: "Technical",
+            agents: ["claude", "codex"],
+          }),
+          step({ id: "empirical", label: "Empirical" }),
+          step({
+            id: "consolidate",
+            label: "Consolidate",
+            phase: "sequential",
+          }),
+        ]}
+        merge={merge}
+        selectedId={null}
+        onSelect={() => {}}
+        hint="Select any stage to open it."
+      />,
+    );
+    const group = screen.getByRole("group", { name: "Parallel steps" });
+    expect(
+      within(group).getByRole("button", { name: "Technical" }),
+    ).toHaveAccessibleDescription("2 agents");
+    expect(
+      within(group).getByRole("button", { name: "Empirical" }),
+    ).toBeInTheDocument();
+    expect(
+      within(group).queryByRole("button", { name: "Consolidate" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Select any stage to open it."),
     ).toBeInTheDocument();
   });
 

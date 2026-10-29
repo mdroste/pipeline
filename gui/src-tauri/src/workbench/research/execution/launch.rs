@@ -1,5 +1,10 @@
 //! Resolve and fingerprint the same executable and environment used at launch.
-use super::*;
+use super::types::ExecutionProfile;
+use crate::workbench::research::papers::{hash_file, hash_resolved_file};
+use crate::workbench::store::{WorkbenchError, WorkbenchResult};
+use serde_json::{json, Value};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 fn profile_environment<'a>(profile: &'a ExecutionProfile, key: &str) -> Option<&'a str> {
     profile

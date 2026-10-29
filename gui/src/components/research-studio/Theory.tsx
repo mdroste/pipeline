@@ -297,7 +297,7 @@ export default function Theory({
               options={opts(THEORY_KINDS)}
             />
             <Select
-              label="Status (your disposition)"
+              label="Your assessment"
               value={note.status}
               onChange={(v) => set("status", v)}
               options={opts(THEORY_STATUSES)}
@@ -314,7 +314,7 @@ export default function Theory({
             onChange={(v) => set("statement", v)}
             multiline
           />
-          <Field label="Derivation or argument (promotable prose)">
+          <Field label="Derivation or argument to add to the manuscript">
             <textarea
               aria-label="Derivation prose"
               className={input}
@@ -382,10 +382,10 @@ export default function Theory({
             value={note.origin}
             onChange={(v) => set("origin", v)}
             options={[
-              { value: "manual", label: "Researcher-authored or reviewed" },
+              { value: "manual", label: "Written or reviewed by you" },
               {
                 value: "proposed",
-                label: "Proposed; awaiting review (stays open)",
+                label: "Suggested by the assistant — awaiting your review",
               },
             ]}
           />
@@ -475,7 +475,7 @@ export default function Theory({
                   options={opts(CHECK_METHODS)}
                 />
                 <Select
-                  label="Outcome (did the check's own assertion hold?)"
+                  label="Did the check pass?"
                   value={check.outcome}
                   onChange={(v) => setC("outcome", v)}
                   options={opts(["passed", "failed", "inconclusive"])}
@@ -551,7 +551,7 @@ export default function Theory({
               <label className="flex gap-2 text-xs">
                 <input
                   type="checkbox"
-                  aria-label="Claims generality"
+                  aria-label="Applies to all cases under the stated assumptions"
                   disabled={numericalOnly}
                   checked={check.claimsGenerality}
                   onChange={(e) => setC("claimsGenerality", e.target.checked)}
@@ -583,12 +583,12 @@ export default function Theory({
                 Record check
               </button>
               <h3 className="pt-4 text-sm font-semibold">
-                Promote derivation prose into the manuscript
+                Add this derivation to the manuscript
               </h3>
               <p className="text-xs">
-                Inserts this note’s derivation text with a comment header that
-                lists its assumptions and unresolved steps. The file is staged
-                in a task copy for review in Changes; nothing else changes.
+                Add the derivation to a working copy, with a comment listing its
+                assumptions and unresolved steps. Review and accept the edit in
+                Review edits.
               </p>
               <Select
                 label="Task change set"
@@ -640,7 +640,7 @@ export default function Theory({
                     await load();
                     await onRefresh();
                     setNotice(
-                      "Derivation staged. Review and accept its captured task in Changes.",
+                      "The derivation is ready in the working copy. Review and accept it in Review edits.",
                     );
                   })
                 }
@@ -657,10 +657,9 @@ export default function Theory({
       <section className={panel}>
         <h2 className="font-semibold">Research directions</h2>
         <p className="text-xs text-gray-500">
-          A structured idea note: question, mechanism, closest known work,
-          minimal model or data, first discriminating test, likely failure mode
-          and next action. Compare ideas side by side and convert one into a
-          task. There are no generated novelty or tractability scores.
+          Record the question, mechanism, related work, model or data needed,
+          first test, possible obstacles, and next step. Compare ideas side by
+          side and turn one into an action item.
         </p>
         <div className="overflow-auto">
           <table className="w-full text-left text-xs">
@@ -668,8 +667,8 @@ export default function Theory({
               <tr>
                 <th>Question</th>
                 <th>Mechanism</th>
-                <th>First discriminating test</th>
-                <th>Likely failure mode</th>
+                <th>First test that could support or reject the idea</th>
+                <th>What might prevent this from working?</th>
                 <th>Next action</th>
                 <th>Status</th>
                 <th>Action</th>
@@ -770,13 +769,13 @@ export default function Theory({
             multiline
           />
           <Text
-            label="First discriminating test"
+            label="First test that could support or reject the idea"
             value={direction.firstDiscriminatingTest}
             onChange={(v) => setD("firstDiscriminatingTest", v)}
             multiline
           />
           <Text
-            label="Likely failure mode"
+            label="What might prevent this from working?"
             value={direction.likelyFailureMode}
             onChange={(v) => setD("likelyFailureMode", v)}
             multiline

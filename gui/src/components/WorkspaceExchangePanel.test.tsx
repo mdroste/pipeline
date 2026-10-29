@@ -30,7 +30,10 @@ const mocks = vi.hoisted(() => ({
   open: vi.fn(),
   save: vi.fn(),
 }));
-vi.mock("../lib/workbenchClient", () => ({ workbenchClient: mocks }));
+vi.mock("../lib/workbench/researchClient", () => ({ researchClient: mocks }));
+vi.mock("../lib/workbench/executionClient", () => ({ executionClient: mocks }));
+vi.mock("../lib/workbench/recipeClient", () => ({ recipeClient: mocks }));
+vi.mock("../lib/workbench/releaseClient", () => ({ releaseClient: mocks }));
 vi.mock("../lib/projectClient", () => ({
   projectClient: { home: mocks.home },
 }));

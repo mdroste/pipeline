@@ -50,11 +50,11 @@ export default function Campaigns(
   return (
     <div className="space-y-5">
       <section className={card}>
-        <h2 className="font-semibold">Revision campaigns</h2>
+        <h2 className="font-semibold">Revision rounds</h2>
         <p className={muted}>
-          Group an exact manuscript, original comments, response revisions, and
-          required evidence. Save a new version as work progresses; earlier
-          rounds remain readable.
+          Keep a manuscript version, reviewer comments, responses, and
+          supporting evidence together. Save each round so you can revisit
+          earlier versions.
         </p>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Campaign title">
@@ -194,7 +194,7 @@ export default function Campaigns(
             onChange={(e) => setSummary(e.target.value)}
           />
         </Field>
-        <Field label="Proposed re-review scope and omissions">
+        <Field label="What to include in the next review, and what to leave out">
           <textarea
             className={input}
             value={scope}
@@ -291,7 +291,7 @@ export default function Campaigns(
                   ["Accepted files still current", c.fileAcceptedAndCurrent],
                   ["Check executed", c.checkExecuted],
                   ["Required links pass checks", c.linkChecksPass],
-                  ["Researcher judges addressed", c.researcherAddressed],
+                  ["Marked addressed by you", c.researcherAddressed],
                 ].map(([label, done]) => (
                   <p key={String(label)}>
                     {label}: {done ? "yes" : "no / not linked"}
@@ -306,17 +306,17 @@ export default function Campaigns(
               <p className={muted}>{c.judgment}</p>
               <Inspect
                 value={c.requiredOutputs}
-                label="Required output freshness"
+                label="Are the required results up to date?"
               />
             </div>
           ))}
           <p className="text-sm">{status.reviewRecommendation}</p>
           <details className="space-y-3">
-            <summary>Preview scoped re-review</summary>
+            <summary>Preview review of selected passages</summary>
             <p className={muted}>
-              Selected changed passages must come from this round's manuscript.
-              Dependencies may add exact passages from other retained documents.
-              The next screen is the ordinary Review launch preview.
+              Choose changed passages from this round’s manuscript. You can
+              include supporting passages from other saved documents. Check the
+              selection on the next screen before starting the review.
             </p>
             <Sources
               sources={anchors}

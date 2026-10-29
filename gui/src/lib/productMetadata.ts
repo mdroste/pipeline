@@ -9,7 +9,7 @@ export const REPORT_WORKSPACE_TABS = [
   },
   {
     id: "provenance",
-    label: "Provenance",
+    label: "Report details",
     description: "run, model, usage, and quality details",
     availability: "when report metadata is available",
   },

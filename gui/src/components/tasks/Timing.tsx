@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { taskClient, taskTime, type Trigger } from "../../lib/taskClient";
+import { taskClient } from "../../lib/taskClient";
+import { taskTime } from "../../lib/taskPresentation";
+import { type Trigger } from "../../lib/taskTypes";
 import {
   localDateTime,
   localDateTimeHint,

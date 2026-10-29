@@ -2,7 +2,10 @@ import WorkspaceStorageRetention from "./WorkspaceStorageRetention";
 import { useCallback, useEffect, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { workbenchClient } from "../lib/workbenchClient";
+import { researchClient } from "../lib/workbench/researchClient";
+import { executionClient } from "../lib/workbench/executionClient";
+import { recipeClient } from "../lib/workbench/recipeClient";
+import { releaseClient } from "../lib/workbench/releaseClient";
 import { projectClient, type ProjectHome } from "../lib/projectClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type {
@@ -95,16 +98,14 @@ export default function WorkspaceExchangePanel({
   const [notice, setNotice] = useState("");
 
   const refreshConflicts = useCallback(async () => {
-    setConflicts(await workbenchClient.listExchangeConflicts(workspaceId));
+    setConflicts(await releaseClient.listExchangeConflicts(workspaceId));
   }, [workspaceId]);
   useEffect(() => {
     let disposed = false;
     void Promise.all([
-      workbenchClient.listExchangeConflicts(workspaceId),
+      releaseClient.listExchangeConflicts(workspaceId),
       projectClient.home(workspaceId),
-      sessionId
-        ? workbenchClient.listRecipeRuns(sessionId)
-        : Promise.resolve([]),
+      sessionId ? recipeClient.listRecipeRuns(sessionId) : Promise.resolve([]),
     ])
       .then(([c, h, r]) => {
         if (disposed) return;
@@ -122,10 +123,10 @@ export default function WorkspaceExchangePanel({
 
   const selection = async (): Promise<ExchangeSelection> => {
     const papers = allPapers
-      ? await workbenchClient.listPapers(workspaceId)
+      ? await researchClient.listPapers(workspaceId)
       : [];
     const executions = allExecutions
-      ? await workbenchClient.listExecutions(workspaceId)
+      ? await executionClient.listExecutions(workspaceId)
       : [];
     return {
       includeNotes,
@@ -235,7 +236,7 @@ export default function WorkspaceExchangePanel({
             onClick={() =>
               onAction(async () =>
                 setPreview(
-                  await workbenchClient.previewProjectExchange(
+                  await releaseClient.previewProjectExchange(
                     workspaceId,
                     await selection(),
                   ),
@@ -258,7 +259,7 @@ export default function WorkspaceExchangePanel({
                   ],
                 });
                 if (!path) return;
-                const report = await workbenchClient.exportProjectExchange(
+                const report = await releaseClient.exportProjectExchange(
                   workspaceId,
                   path,
                   await selection(),
@@ -292,8 +293,9 @@ export default function WorkspaceExchangePanel({
             </ul>
             {preview.externalReferences.length > 0 && (
               <p className="mt-1 text-amber-700">
-                {preview.externalReferences.length} reference(s) stay external
-                (raw inputs, missing or oversized artifacts).
+                {preview.externalReferences.length} referenced items are not
+                included: raw data, missing files, or files above the size
+                limit.
               </p>
             )}
             {preview.limitations.map((l) => (
@@ -317,7 +319,7 @@ export default function WorkspaceExchangePanel({
                   ],
                 });
                 if (typeof path !== "string") return;
-                const i = await workbenchClient.inspectProjectExchange(path);
+                const i = await releaseClient.inspectProjectExchange(path);
                 setInspection(i);
                 setTargetName(`${i.workspaceName} (imported)`);
                 setImportPreview(null);
@@ -379,7 +381,7 @@ export default function WorkspaceExchangePanel({
                 onClick={() =>
                   onAction(async () =>
                     setImportPreview(
-                      await workbenchClient.previewProjectExchangeImport(
+                      await releaseClient.previewProjectExchangeImport(
                         inspection.path,
                         target(),
                       ),
@@ -395,13 +397,13 @@ export default function WorkspaceExchangePanel({
                 disabled={busy || !importPreview}
                 onClick={() =>
                   onAction(async () => {
-                    const report = await workbenchClient.importProjectExchange(
+                    const report = await releaseClient.importProjectExchange(
                       inspection.path,
                       target(),
                       `exchange-${crypto.randomUUID()}`,
                     );
                     setNotice(
-                      `Imported ${report.new + report.remapped} new object(s); ${report.identical} identical; ${report.conflicts} conflict(s) recorded for review; ${report.blobs} blob(s) retained.`,
+                      `Imported ${report.new + report.remapped} new object(s); ${report.identical} identical; ${report.conflicts} conflict(s) recorded for review; ${report.blobs} file contents saved.`,
                     );
                     setImportPreview(null);
                     if (report.workspaceId === workspaceId)
@@ -441,7 +443,7 @@ export default function WorkspaceExchangePanel({
                       disabled={busy}
                       onClick={() =>
                         onAction(async () => {
-                          await workbenchClient.resolveExchangeConflict(
+                          await releaseClient.resolveExchangeConflict(
                             workspaceId,
                             c.id,
                             false,
@@ -458,7 +460,7 @@ export default function WorkspaceExchangePanel({
                       disabled={busy}
                       onClick={() =>
                         onAction(async () => {
-                          await workbenchClient.resolveExchangeConflict(
+                          await releaseClient.resolveExchangeConflict(
                             workspaceId,
                             c.id,
                             true,
@@ -480,7 +482,7 @@ export default function WorkspaceExchangePanel({
                           ? { commonAncestor: c.base }
                           : {
                               comparison:
-                                "No established common ancestor; compare local and incoming versions",
+                                "No shared earlier version was found. Compare your version with the imported version.",
                             }),
                         local: c.local,
                         incoming: c.imported,
@@ -502,13 +504,12 @@ export default function WorkspaceExchangePanel({
 
       <section>
         <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-          Draft a Workflow from research steps
+          Create a review design from saved research steps
         </h3>
         <p className="mt-1 text-xs text-gray-500">
-          Builds a portable Workflow definition from completed tasks and recipe
-          runs for inspection. Save it and import it in Reviews → Designer;
-          validation and the launch preview happen there. Nothing is installed
-          or run from here, and local computations remain listed prerequisites.
+          Create a review design from completed tasks and saved research
+          procedures. Save it, then import it in Review designer to check it and
+          preview a run. Complete any listed local analyses separately.
         </p>
         <div className="mt-2 grid gap-2 text-xs md:grid-cols-2">
           <div>
@@ -568,7 +569,7 @@ export default function WorkspaceExchangePanel({
             onClick={() =>
               onAction(async () =>
                 setDraft(
-                  await workbenchClient.draftWorkflow({
+                  await releaseClient.draftWorkflow({
                     workspaceId,
                     name: draftName,
                     recipeRunIds: draftRuns,
@@ -624,7 +625,7 @@ export default function WorkspaceExchangePanel({
             {draft.unsupported.length > 0 && (
               <div className="mt-1 text-amber-700">
                 <p className="font-medium">
-                  Unsupported operations (prerequisites outside the Workflow)
+                  Steps to complete separately before running the review
                 </p>
                 <ul className="list-inside list-disc">
                   {draft.unsupported.map((u) => (

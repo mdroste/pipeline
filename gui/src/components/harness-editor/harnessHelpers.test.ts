@@ -143,7 +143,7 @@ describe("summaries", () => {
       "No research instructions or automatic context; an ordinary conversation.",
     );
     expect(describeModules([], CATALOG, "Be concise.")).toBe(
-      "Preset instructions only; no automatic context, tools, or inspectors.",
+      "Use the profile’s instructions without adding project sources or research tools.",
     );
     expect(
       describePreset(
@@ -160,7 +160,7 @@ describe("summaries", () => {
         CATALOG,
       ),
     ).toBe(
-      "Adds 1 instruction pack, paper context, paper tools and research ledger, and 1 inspector.",
+      "Adds 1 research instruction set, paper context, paper tools and notes, claims & evidence, and 1 research panel.",
     );
     expect(
       describeModules(
@@ -174,7 +174,9 @@ describe("summaries", () => {
         CATALOG,
         "",
       ),
-    ).toBe("Adds 2 instruction packs and 3 tools. No preset instructions.");
+    ).toBe(
+      "Adds 2 research instruction sets and 3 tools. No preset instructions.",
+    );
   });
 
   it("summarizes access and module counts compactly", () => {

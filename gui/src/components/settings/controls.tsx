@@ -61,7 +61,7 @@ export function CatalogStatus({
         {loading
           ? "Discovering models…"
           : blocked
-            ? "Waiting for autosave; Refresh to discover these values now"
+            ? "Waiting to save. Choose Refresh to load the available options now."
             : catalog
               ? `${catalog.transport.toUpperCase()} · ${catalog.source_version || catalog.source}${catalog.stale ? " · stale" : ""}`
               : "Catalog not loaded"}

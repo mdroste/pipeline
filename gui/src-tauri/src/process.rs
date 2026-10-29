@@ -54,6 +54,24 @@ pub fn run_bounded(
     timeout: Duration,
     output_limit: usize,
 ) -> Result<BoundedOutput, String> {
+    run_bounded_owned(command, timeout, output_limit, false)
+}
+
+/// Account/runtime probes must not be cancelled by the Reviews PID registry.
+pub(crate) fn run_bounded_independent(
+    command: &mut Command,
+    timeout: Duration,
+    output_limit: usize,
+) -> Result<BoundedOutput, String> {
+    run_bounded_owned(command, timeout, output_limit, true)
+}
+
+fn run_bounded_owned(
+    command: &mut Command,
+    timeout: Duration,
+    output_limit: usize,
+    independent: bool,
+) -> Result<BoundedOutput, String> {
     configure_isolation(command);
     command
         .stdin(Stdio::null())
@@ -64,7 +82,11 @@ pub fn run_bounded(
         .map_err(|e| format!("Failed to start subprocess: {e}"))?;
     let pid = child.id();
     if pid > 0 {
-        crate::commands::register_child_pid(pid);
+        if independent {
+            crate::commands::lifecycle::register_independent_child_pid(pid);
+        } else {
+            crate::commands::register_child_pid(pid);
+        }
     }
 
     let stdout = child.stdout.take();
@@ -128,7 +150,11 @@ pub fn run_bounded(
         }
     }
     if pid > 0 {
-        crate::commands::unregister_child_pid(pid);
+        if independent {
+            crate::commands::lifecycle::unregister_independent_child_pid(pid);
+        } else {
+            crate::commands::unregister_child_pid(pid);
+        }
     }
     if stdout_result.is_some() {
         let _ = stdout_thread.join();

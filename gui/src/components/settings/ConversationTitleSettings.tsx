@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { conversationClient } from "../../lib/workbench/conversationClient";
+import { runtimeClient } from "../../lib/workbench/runtimeClient";
 import type {
   TitlePreferences,
   WorkspaceModelCatalog,
@@ -20,7 +21,7 @@ export default function ConversationTitleSettings() {
   });
   useEffect(() => {
     let live = true;
-    workbenchClient
+    conversationClient
       .titlePreferences()
       .then((v) => {
         if (live) setTitles(v);
@@ -28,10 +29,10 @@ export default function ConversationTitleSettings() {
       .catch((e) => {
         if (live) setTitlesError(String(e));
       });
-    workbenchClient
+    runtimeClient
       .accountState(false)
       .then((account) =>
-        account.status === "chatgpt" ? workbenchClient.modelCatalog() : null,
+        account.status === "chatgpt" ? runtimeClient.modelCatalog() : null,
       )
       .then((value) => {
         if (live) setCatalog(value);
@@ -51,7 +52,7 @@ export default function ConversationTitleSettings() {
       .catch(() => {})
       .then(async () => {
         try {
-          const result = await workbenchClient.saveTitlePreferences(next);
+          const result = await conversationClient.saveTitlePreferences(next);
           if (request === sequence.current) {
             setTitles(result);
             setSaved(true);

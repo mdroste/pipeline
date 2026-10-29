@@ -1,10 +1,11 @@
 import { useAppPreferences, shouldSendMessage } from "../lib/appPreferences";
 import { isMac } from "../lib/platform";
+import { payloadText, roleFor } from "../lib/workspaceTranscript";
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { FileNavigationContext } from "./file-workspace/FileNavigation";
 import { workspaceFileAdapter } from "../lib/fileWorkspaceClient";
 import { appEvents } from "../lib/appEvents";
-import { workbenchClient } from "../lib/workbenchClient";
+import { conversationClient } from "../lib/workbench/conversationClient";
 import type { ReactNode, RefObject } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
@@ -25,42 +26,8 @@ import type {
   ConversationSnapshot,
   TranscriptItem,
 } from "../lib/workbenchTypes";
-export function payloadText(item: TranscriptItem): string {
-  const payload = item.payload;
-  if (!payload) return "";
-  for (const key of ["text", "message", "content"]) {
-    const value = payload[key];
-    if (typeof value === "string") return value;
-    if (Array.isArray(value)) {
-      const joined = value
-        .map((part) => {
-          if (typeof part === "string") return part;
-          if (
-            part &&
-            typeof part === "object" &&
-            "text" in part &&
-            typeof part.text === "string"
-          )
-            return part.text;
-          return "";
-        })
-        .filter(Boolean)
-        .join("\n");
-      if (joined) return joined;
-    }
-  }
-  return "";
-}
-
-export function isMessage(item: TranscriptItem) {
-  return item.itemKind.toLowerCase().includes("message");
-}
-
-export function roleFor(item: TranscriptItem) {
-  return item.itemKind.toLowerCase().includes("user") ? "You" : "ChatGPT";
-}
-
 interface Props {
+  assistantName?: string;
   taskCards?: ReactNode;
   inspector?: ReactNode;
   inspectorOpen?: boolean;
@@ -100,6 +67,7 @@ interface Props {
   onFollow: (follow: boolean) => void;
 }
 export default function WorkspaceConversationView({
+  assistantName = "ChatGPT",
   taskCards,
   inspector,
   inspectorOpen = Boolean(inspector),
@@ -149,7 +117,10 @@ export default function WorkspaceConversationView({
       root: snapshot.workspace?.root ?? undefined,
       open: (location: import("../lib/fileLinks").FileLocation) => {
         if (!workspaceId || !snapshot.workspace?.root)
-          return workbenchClient.openConversationFile(sessionId, location.path);
+          return conversationClient.openConversationFile(
+            sessionId,
+            location.path,
+          );
         sessionStorage.setItem(
           `pipeline.openFile.${workspaceId}`,
           JSON.stringify(location),
@@ -157,11 +128,11 @@ export default function WorkspaceConversationView({
         appEvents.emit("open-file", { workspaceId, location });
       },
       openAbsolute: (path: string) =>
-        workbenchClient.openConversationFile(sessionId, path),
+        conversationClient.openConversationFile(sessionId, path),
       image: async (path: string) => {
         const file = adapter
           ? await adapter.read(path)
-          : await workbenchClient.readConversationFile(sessionId, path);
+          : await conversationClient.readConversationFile(sessionId, path);
         if (!file.base64 || !file.mime.startsWith("image/"))
           throw new Error("Image unavailable");
         return `data:${file.mime};base64,${file.base64}`;
@@ -314,7 +285,7 @@ export default function WorkspaceConversationView({
                 <span className="workspace-assistant-mark">
                   <WorkspaceIcon name="message" size={14} />
                 </span>
-                ChatGPT
+                {assistantName}
                 <span className="ml-1 h-1.5 w-1.5 rounded-full bg-current motion-safe:animate-pulse" />
               </div>
               <div className="workspace-message-body">
@@ -395,7 +366,7 @@ export default function WorkspaceConversationView({
                   onSend();
                 }
               }}
-              placeholder={`Ask ChatGPT… ${shortcut} to send`}
+              placeholder={`Ask ${assistantName}… ${shortcut} to send`}
               rows={1}
               className="workspace-composer-input"
             />

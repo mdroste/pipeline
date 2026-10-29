@@ -1,4 +1,6 @@
-use super::*;
+use super::persistence::{acquire_settings_write_lock, read_settings_file};
+use std::fs;
+use std::path::PathBuf;
 
 /// Retain each corrupt version under a unique name, serialized with writers.
 /// Recheck the exact bytes under the lock so a concurrent repair is never moved.

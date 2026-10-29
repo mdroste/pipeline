@@ -75,8 +75,11 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage
 # line tables keep backtraces and profiling usable at a fraction of the size.
 [profile.dev]
 debug = "line-tables-only"
+# Incremental state accumulated tens of GB across local rebuilds. Tests inherit
+# this profile; dependencies still reuse ordinary Cargo build artifacts.
+incremental = false
 
 [profile.release]
 strip = true
 panic = "unwind"
-incremental = true
+incremental = false

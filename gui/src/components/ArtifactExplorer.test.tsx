@@ -286,7 +286,7 @@ describe("ArtifactExplorer", () => {
     );
 
     expect(
-      await screen.findByText("Select an artifact to preview it."),
+      await screen.findByText("Select a file to preview it."),
     ).toBeVisible();
     expect(
       invoke.mock.calls.filter(([command]) => command === "read_artifact"),
@@ -361,15 +361,11 @@ describe("ArtifactExplorer", () => {
       runId: manifest.run_id,
       page: 1,
     });
-    await user.click(
-      screen.getByRole("button", { name: "Hide artifact browser" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Hide files" }));
     expect(
       screen.queryByRole("textbox", { name: "Page number" }),
     ).not.toBeInTheDocument();
-    await user.click(
-      screen.getByRole("button", { name: "Show artifact browser" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Show files" }));
     expect(screen.getByRole("textbox", { name: "Page number" })).toBeVisible();
   });
 
@@ -738,7 +734,9 @@ describe("ArtifactExplorer", () => {
     await user.click(screen.getByRole("button", { name: "Document bundle" }));
 
     expect(
-      await screen.findByRole("heading", { name: "DocumentBundle inspection" }),
+      await screen.findByRole("heading", {
+        name: "Extracted document details",
+      }),
     ).toBeInTheDocument();
     expect(
       screen.getAllByText("Impulse responses after a monetary policy shock.")
@@ -746,7 +744,7 @@ describe("ArtifactExplorer", () => {
     ).toBeGreaterThan(0);
     expect(screen.getByText("OCR confidence was low.")).toBeInTheDocument();
     const visualAssets = screen
-      .getByRole("heading", { name: "Visual assets" })
+      .getByRole("heading", { name: "Figures and images" })
       .closest("section");
     expect(visualAssets).not.toBeNull();
     expect(within(visualAssets!).getByText("figure_1.png")).toBeInTheDocument();

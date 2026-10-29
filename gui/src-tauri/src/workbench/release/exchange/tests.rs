@@ -1,6 +1,10 @@
 use super::*;
-use crate::workbench::project::{DocumentSelection, ProjectAction, ProjectMutation};
-use crate::workbench::research::{CreateNoteRequest, ImportPaperRequest};
+use crate::workbench::project::{self, DocumentSelection, ProjectAction, ProjectMutation};
+use crate::workbench::research::{self, CreateNoteRequest, ImportPaperRequest};
+use crate::workbench::store::CreateWorkspaceRequest;
+use std::collections::BTreeSet;
+use std::io::Write;
+use zip::write::SimpleFileOptions;
 
 fn fixture() -> (tempfile::TempDir, Store, String, PathBuf) {
     let temp = tempfile::tempdir().unwrap();

@@ -1,5 +1,5 @@
+import { settingsClient } from "../../lib/settingsClient";
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
 
 import type { ModelCatalog, Settings } from "../../lib/types";
 import { providerTransport, PROVIDERS } from "../../lib/providers";
@@ -44,7 +44,7 @@ export function useProviderCatalogs(settings: Settings | null) {
     catalogRequestsRef.current[provider] = request;
     setCatalogLoading((old) => ({ ...old, [provider]: true }));
     try {
-      const catalog = await invoke<ModelCatalog>("get_model_catalog", {
+      const catalog = await settingsClient.modelCatalog({
         provider,
         settings: current,
         refresh,

@@ -78,7 +78,7 @@ describe("RunPreview", () => {
     );
 
     expect(
-      screen.getByRole("dialog", { name: "Review the execution plan" }),
+      screen.getByRole("dialog", { name: "Review the plan" }),
     ).toBeVisible();
     expect(screen.getByText(/2 documents · document/)).toBeVisible();
     expect(screen.getByTitle("4–16")).toBeVisible();

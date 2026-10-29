@@ -1,10 +1,7 @@
 //! Shared types and the tool-use loop for direct API calls.
 
-use base64::{engine::general_purpose::STANDARD, Engine};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::future::Future;
-use std::io::Write as _;
-use std::path::PathBuf;
 use std::sync::LazyLock;
 
 /// Maximum tool-call round-trips before giving up.
@@ -243,20 +240,25 @@ pub(crate) async fn response_bytes_limited(
 
 mod execution;
 mod loops;
-mod models;
 mod retry;
+mod tool_access;
+mod tool_files;
+mod tool_schema;
+mod usage;
+mod wire;
 
 use execution::{
     anthropic_tool_result_content, append_openai_image_message, append_openai_tool_result,
     execute_tool, google_tool_result_parts,
 };
-use models::{
-    anthropic_hosted_search_count, anthropic_output_incomplete, direct_tool_kind,
-    google_hosted_search_count, google_output_incomplete, openai_output_incomplete,
-    read_bytes_limited, read_file_for_tool_limited, read_image_for_tool, read_pdf_for_tool,
-    slice_text_range, text_line_bounds, validate_tool_path,
-};
 use retry::{format_api_error, send_with_status_retry};
+use tool_access::validate_tool_path;
+use tool_files::{
+    read_bytes_limited, read_file_for_tool_limited, read_image_for_tool, read_pdf_for_tool,
+    slice_text_range, text_line_bounds,
+};
+use usage::{anthropic_hosted_search_count, direct_tool_kind, google_hosted_search_count};
+use wire::{anthropic_output_incomplete, google_output_incomplete, openai_output_incomplete};
 
 #[cfg(test)]
 use execution::{enforce_media_budget, execute_read_assets_batch, execute_read_text_batch};
@@ -264,8 +266,24 @@ use execution::{enforce_media_budget, execute_read_assets_batch, execute_read_te
 use retry::transient_api_status;
 
 pub(crate) use execution::{execute_native_tool, ToolBudget};
-pub use loops::*;
-pub use models::*;
+pub use loops::{anthropic_tool_loop, google_tool_loop, openai_tool_loop, GoogleToolLoopContext};
+pub use tool_access::ToolAccess;
+pub use tool_files::{
+    pdf_attachment_base64, reset_write_budget, write_file_for_tool, ToolImage, ToolResult,
+    MAX_ATTACH_PDF, MAX_ATTACH_PDF_GOOGLE,
+};
+pub use tool_schema::{
+    DocumentAssetToolDef, DocumentAssetsBatchToolDef, ReadTextBatchToolDef, ReadToolDef,
+    WriteToolDef,
+};
+pub use usage::Usage;
+pub use wire::{
+    anthropic_extract_text, anthropic_has_tool_use, AnthropicMessage, AnthropicRequest,
+    AnthropicResponse, AnthropicServerToolUsage, AnthropicUsage, GoogleCandidate, GoogleContent,
+    GoogleError, GoogleFunctionCall, GoogleFunctionResponse, GoogleRequest, GoogleResponse,
+    OpenAIChoice, OpenAIFunctionCall, OpenAIMessage, OpenAIPromptTokenDetails, OpenAIRequest,
+    OpenAIResponse, OpenAIToolCall, OpenAIUsage,
+};
 
 #[cfg(test)]
 mod tests;

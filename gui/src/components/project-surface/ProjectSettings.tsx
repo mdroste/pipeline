@@ -157,8 +157,8 @@ export default function ProjectSettings({
               </select>
             </label>
             <p className={muted}>
-              The run that new results are compared against. Runs appear here
-              after an experiment completes in Research tools.
+              Choose the completed experiment to use as the baseline for new
+              results.
             </p>
             {data.ledger.staleClaims.length > 0 && (
               <p className="text-xs text-amber-700 dark:text-amber-300">

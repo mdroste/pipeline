@@ -57,6 +57,7 @@ Thumbs.db
 CLAUDE.md
 AGENTS.md
 /.claude/settings.local.json
+/.claude/worktrees/
 
 # Agent-written audits, plans, and progress reports stay on the local machine.
 /reports/

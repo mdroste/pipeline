@@ -69,14 +69,14 @@ function makeConfig(): PipelineConfig {
 
 const profiles: ProfileSummary[] = [
   {
-    id: "auto-review",
-    name: "Automatic Paper Review (Full)",
+    id: "auto-paper-review",
+    name: "Paper Review",
     step_count: 5,
     builtin: true,
   },
   {
-    id: "auto-review-quick",
-    name: "Automatic Paper Review (Quick)",
+    id: "auto-paper-review-fast",
+    name: "Paper Review (Fast)",
     step_count: 4,
     builtin: true,
   },
@@ -221,7 +221,7 @@ describe("WorkflowPanel", () => {
       pointer: "/review_plan/method_specialist_ids",
       contains: "formal_proofs",
     };
-    mockLoad(autoConfig, "auto-review");
+    mockLoad(autoConfig, "auto-paper-review");
     renderPanel();
 
     expect(
@@ -270,7 +270,7 @@ describe("WorkflowPanel", () => {
         },
       },
     };
-    mockLoad(quickConfig, "auto-review-quick");
+    mockLoad(quickConfig, "auto-paper-review-fast");
     renderPanel();
 
     expect(

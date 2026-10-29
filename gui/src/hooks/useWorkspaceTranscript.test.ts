@@ -7,7 +7,9 @@ import type {
   TranscriptItem,
 } from "../lib/workbenchTypes";
 const mocks = vi.hoisted(() => ({ transcriptPage: vi.fn() }));
-vi.mock("../lib/workbenchClient", () => ({ workbenchClient: mocks }));
+vi.mock("../lib/workbench/conversationClient", () => ({
+  conversationClient: mocks,
+}));
 const items = (start: number): TranscriptItem[] =>
   Array.from({ length: 200 }, (_, i) => ({
     id: String(start + i),

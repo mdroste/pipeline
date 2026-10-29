@@ -84,8 +84,8 @@ export function BinaryCard({
       </p>
       {executable ? (
         <p className="text-xs text-gray-600 dark:text-gray-300">
-          This file is a program written during the run. Pipeline does not
-          launch it; inspect it from its folder if you need it.
+          The review created this program file. Open its folder to inspect the
+          code. Pipeline will not run it from this preview.
         </p>
       ) : (
         <button

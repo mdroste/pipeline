@@ -65,110 +65,118 @@ export default function WorkspacePage({
   onReviewHandoff?: (handoff: ReviewHandoff) => void;
 }) {
   const {
-    sidebarWidth,
-    setSidebarWidth,
-    workspaces,
-    workspaceId,
-    sessions,
-    sessionId,
-    snapshot,
-    models,
-    model,
-    setModel,
-    effort,
-    setEffort,
-    draft,
-    stream,
-    pendingUser,
-    active,
-    submitting,
-    showArchived,
-    setShowArchived,
-    tasksEnabled,
-    inspector,
-    projectRequest,
-    resetRequest,
-    destination,
-    shellRef,
-    shellWidth,
-    navigationOpen,
-    setNavigationOpen,
-    navigationButtonRef,
-    toolPickerOpen,
-    setToolPickerOpen,
-    conversationMenuRef,
-    assistantRequest,
-    harnessEditor,
-    setHarnessEditor,
-    selectedMessage,
-    contextBusy,
-    setContextBusy,
-    contextBusyRef,
-    messageRef,
-    transcriptRef,
-    surface,
-    projectDialog,
-    setProjectDialog,
-    moveTarget,
-    setMoveTarget,
-    moving,
-    moveError,
-    setMoveError,
-    error,
-    setError,
-    submittingRef,
-    editDraft,
-    loadSessions,
-    hydrate,
-    saveCurrentDraft,
-    selectProject,
-    selectSession,
-    createSession,
-    projectCreated,
-    openResearchConversation,
-    updateProjectWorkspace,
-    archiveSession,
-    renameSession,
-    generateTitle,
-    deleteSession,
-    moveSession,
-    exportCurrent,
-    stopCurrent,
-    stopping,
-    exporting,
-    actionError,
-    actionNotice,
-    saveSelection,
-    send,
-    resolve,
-    renderedItems,
-    outlineEntries,
-    jumpToMessage,
-    latest,
-    visibleRequests,
-    recordDestination,
-    navigateProject,
-    acceptSnapshot,
-    openInspector,
-    closeInspector,
-    setInspector,
-    setSubmitting,
-    allRenderedItems,
-    transcriptStart,
-    transcriptEnd,
-    setTranscriptPage,
-    loadEarlier,
-    loadingEarlier,
-    followLatestRef,
-    sessionRef,
-    setSnapshot,
-    navigationFits,
-    navigationCollapsed,
-    pinNavigation,
-    navigationDialog,
-    currentWorkspace,
-    projectFolder,
-    setProjectRequest,
+    layout: {
+      sidebarWidth,
+      setSidebarWidth,
+      shellRef,
+      shellWidth,
+      navigationOpen,
+      setNavigationOpen,
+      navigationButtonRef,
+      toolPickerOpen,
+      setToolPickerOpen,
+      conversationMenuRef,
+      navigationFits,
+      navigationCollapsed,
+      pinNavigation,
+      navigationDialog,
+    },
+    inspector: {
+      inspector,
+      harnessEditor,
+      setHarnessEditor,
+      openInspector,
+      closeInspector,
+      setInspector,
+    },
+    navigation: {
+      workspaces,
+      workspaceId,
+      sessions,
+      sessionId,
+      showArchived,
+      setShowArchived,
+      tasksEnabled,
+      projectRequest,
+      resetRequest,
+      destination,
+      assistantRequest,
+      surface,
+      projectDialog,
+      setProjectDialog,
+      loadSessions,
+      selectProject,
+      selectSession,
+      createSession,
+      projectCreated,
+      openResearchConversation,
+      updateProjectWorkspace,
+      recordDestination,
+      navigateProject,
+      currentWorkspace,
+      projectFolder,
+      setProjectRequest,
+    },
+    conversation: {
+      snapshot,
+      models,
+      model,
+      setModel,
+      runtime,
+      setRuntime,
+      effort,
+      setEffort,
+      stream,
+      pendingUser,
+      active,
+      submitting,
+      submittingRef,
+      hydrate,
+      exportCurrent,
+      stopCurrent,
+      stopping,
+      exporting,
+      actionError,
+      actionNotice,
+      send,
+      resolve,
+      visibleRequests,
+      acceptSnapshot,
+      setSubmitting,
+      sessionRef,
+      setSnapshot,
+    },
+    persistence: { draft, editDraft, saveCurrentDraft, saveSelection },
+    context: { contextBusy, setContextBusy, contextBusyRef },
+    mutations: {
+      moveTarget,
+      setMoveTarget,
+      moving,
+      moveError,
+      setMoveError,
+      archiveSession,
+      renameSession,
+      generateTitle,
+      deleteSession,
+      moveSession,
+    },
+    feedback: { error, setError },
+    transcript: {
+      selectedMessage,
+      messageRef,
+      transcriptRef,
+      renderedItems,
+      outlineEntries,
+      jumpToMessage,
+      latest,
+      allRenderedItems,
+      transcriptStart,
+      transcriptEnd,
+      setTranscriptPage,
+      loadEarlier,
+      loadingEarlier,
+      followLatestRef,
+    },
   } = useWorkspacePageController({
     entryTarget,
     entryRequest,
@@ -616,7 +624,9 @@ export default function WorkspacePage({
                 {snapshot?.session.title ?? DEFAULT_TITLE}
               </h1>
               {(active || submitting) && (
-                <p role="status">ChatGPT is working…</p>
+                <p role="status">
+                  {runtime === "claude" ? "Claude" : "ChatGPT"} is working…
+                </p>
               )}
               {/* The brief heads the conversation only when the chat stands
                   alone; beside the overview it would repeat what is on screen. */}
@@ -722,6 +732,7 @@ export default function WorkspacePage({
             </WorkspaceMenu>
           </header>
           <WorkspaceConversationView
+            assistantName={runtime === "claude" ? "Claude" : "ChatGPT"}
             header={null}
             dropState={dropState}
             inspectorOpen={Boolean(inspector)}
@@ -791,7 +802,7 @@ export default function WorkspacePage({
                     </div>
                     <p role="status">
                       {active || submitting
-                        ? "ChatGPT is working…"
+                        ? `${runtime === "claude" ? "Claude" : "ChatGPT"} is working…`
                         : "No response running."}
                     </p>
                     {sessionId && (
@@ -862,7 +873,16 @@ export default function WorkspacePage({
                 disabled={
                   !snapshot || contextBusy || Boolean(active) || submitting
                 }
-                loadAccount={loadAccountSummary}
+                runtime={runtime}
+                loadAccount={
+                  runtime === "codex" ? loadAccountSummary : undefined
+                }
+                onRuntimeChange={(next) => {
+                  setRuntime(next);
+                  setModel("");
+                  setEffort("");
+                  saveSelection("", "", next);
+                }}
                 onChange={(nextModel, nextEffort) => {
                   setModel(nextModel);
                   setEffort(nextEffort);

@@ -1,5 +1,5 @@
+import { workflowProfileClient } from "../../lib/workflowProfileClient";
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type {
   PipelineConfig,
@@ -8,6 +8,7 @@ import type {
   ExportEnvelope,
   Settings,
 } from "../../lib/types";
+import { DEFAULT_PROFILE_ID } from "../../lib/autoReview";
 
 import { confirmDialog, notify } from "../DialogService";
 
@@ -60,9 +61,9 @@ export function useProfileOperations(
     setLoading(true);
     setLoadError(null);
     Promise.all([
-      invoke<PipelineConfig>("get_pipeline_config"),
-      invoke<ProfileSummary[]>("list_profiles"),
-      invoke<string>("get_active_profile"),
+      workflowProfileClient.config(),
+      workflowProfileClient.profiles(),
+      workflowProfileClient.active(),
     ])
       .then(async ([c, p, a]) => {
         if (!live) return;
@@ -139,7 +140,7 @@ export function useProfileOperations(
 
   const refreshProfiles = async (request?: number) => {
     try {
-      const p = await invoke<ProfileSummary[]>("list_profiles");
+      const p = await workflowProfileClient.profiles();
       if (request !== undefined && !profileMutationIsCurrent(request)) return;
       setProfiles(p);
     } catch (e) {
@@ -150,7 +151,7 @@ export function useProfileOperations(
   };
 
   const switchProfileForMutation = async (id: string, request: number) => {
-    const newConfig = await invoke<PipelineConfig>("switch_profile", { id });
+    const newConfig = await workflowProfileClient.switch({ id });
     if (!profileMutationIsCurrent(request)) return false;
     const normalized = normalizeConfig(newConfig);
     replaceDraft(normalized, normalized, id, true);
@@ -202,7 +203,7 @@ export function useProfileOperations(
         const request = beginProfileMutation();
         if (request === null) return;
         try {
-          const summary = await invoke<ProfileSummary>("create_profile", {
+          const summary = await workflowProfileClient.create({
             name,
           });
           if (!profileMutationIsCurrent(request)) return;
@@ -239,7 +240,7 @@ export function useProfileOperations(
         if (request === null) return;
         const sourceId = activeProfileRef.current;
         try {
-          const summary = await invoke<ProfileSummary>("duplicate_profile", {
+          const summary = await workflowProfileClient.duplicate({
             sourceId,
             newName: name,
           });
@@ -269,7 +270,7 @@ export function useProfileOperations(
         const request = beginProfileMutation();
         if (request === null) return;
         try {
-          await invoke<ProfileSummary>("rename_profile", {
+          await workflowProfileClient.rename({
             id: profile,
             newName: name,
           });
@@ -309,10 +310,10 @@ export function useProfileOperations(
     const request = beginProfileMutation();
     if (request === null) return;
     try {
-      await invoke("delete_profile", { id: profile });
+      await workflowProfileClient.remove({ id: profile });
       if (!profileMutationIsCurrent(request)) return;
       await refreshProfiles(request);
-      await switchProfileForMutation("auto-review", request);
+      await switchProfileForMutation(DEFAULT_PROFILE_ID, request);
     } catch (e) {
       if (profileMutationIsCurrent(request)) {
         notify(
@@ -332,7 +333,7 @@ export function useProfileOperations(
     setSaving(true);
     setSaved(false);
     try {
-      await invoke("save_pipeline_config", {
+      await workflowProfileClient.save({
         config: configToSave,
         profileId: profileToSave,
       });
@@ -391,7 +392,7 @@ export function useProfileOperations(
     if (request === null) return;
     const profile = activeProfileRef.current;
     try {
-      const d = await invoke<PipelineConfig>("reset_pipeline_config");
+      const d = await workflowProfileClient.reset();
       if (
         !profileMutationIsCurrent(request) ||
         activeProfileRef.current !== profile
@@ -430,7 +431,7 @@ export function useProfileOperations(
     const envelope: ExportEnvelope = { type: "step", data: editingStep };
     const suggestedName = `pipeline-step-${editingStep.id}.json`;
     try {
-      await invoke("export_item", {
+      await workflowProfileClient.exportItem({
         json: JSON.stringify(envelope, null, 2),
         suggestedName,
       });
@@ -443,7 +444,10 @@ export function useProfileOperations(
     const suggestedName = `pipeline-profile-${activeProfile}.json`;
     try {
       if (!(await saveBeforeExport("the profile"))) return;
-      await invoke("export_profile", { id: activeProfile, suggestedName });
+      await workflowProfileClient.exportProfile({
+        id: activeProfile,
+        suggestedName,
+      });
     } catch (e) {
       notify(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -452,7 +456,7 @@ export function useProfileOperations(
   const handleExportBundle = async () => {
     try {
       if (!(await saveBeforeExport("the settings bundle"))) return;
-      await invoke("export_bundle", {
+      await workflowProfileClient.exportBundle({
         suggestedName: "pipeline-settings-backup.json",
       });
     } catch (e) {
@@ -468,7 +472,7 @@ export function useProfileOperations(
         filters: [{ name: "JSON", extensions: ["json"] }],
       });
       if (!path) return;
-      const envelope = await invoke<ExportEnvelope>("import_item", { path });
+      const envelope = await workflowProfileClient.importItem({ path });
       switch (envelope.type) {
         case "step": {
           const imported = envelope.data as StepConfig;
@@ -533,7 +537,7 @@ export function useProfileOperations(
             ))
           )
             return;
-          const summary = await invoke<ProfileSummary>("import_profile", {
+          const summary = await workflowProfileClient.importProfile({
             path,
           });
           await refreshProfiles();
@@ -551,11 +555,11 @@ export function useProfileOperations(
           const request = beginProfileMutation();
           if (request === null) return;
           try {
-            await invoke("import_bundle", { path });
+            await workflowProfileClient.importBundle({ path });
             const [c, p, a] = await Promise.all([
-              invoke<PipelineConfig>("get_pipeline_config"),
-              invoke<ProfileSummary[]>("list_profiles"),
-              invoke<string>("get_active_profile"),
+              workflowProfileClient.config(),
+              workflowProfileClient.profiles(),
+              workflowProfileClient.active(),
             ]);
             if (!profileMutationIsCurrent(request)) return;
             const normalized = normalizeConfig(c);

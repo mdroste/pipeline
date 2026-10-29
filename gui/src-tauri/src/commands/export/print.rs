@@ -1,0 +1,485 @@
+//! Self-contained report HTML, math protection and embedded font rendering.
+use crate::output;
+
+pub(in crate::commands) fn offline_katex_css() -> Result<String, String> {
+    use base64::Engine as _;
+
+    const KATEX_CSS: &str = include_str!("../../../../node_modules/katex/dist/katex.min.css");
+    const FONTS: &[(&str, &[u8])] = &[
+        (
+            "KaTeX_AMS-Regular",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_AMS-Regular.woff2"),
+        ),
+        (
+            "KaTeX_Caligraphic-Bold",
+            include_bytes!(
+                "../../../../node_modules/katex/dist/fonts/KaTeX_Caligraphic-Bold.woff2"
+            ),
+        ),
+        (
+            "KaTeX_Caligraphic-Regular",
+            include_bytes!(
+                "../../../../node_modules/katex/dist/fonts/KaTeX_Caligraphic-Regular.woff2"
+            ),
+        ),
+        (
+            "KaTeX_Fraktur-Bold",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_Fraktur-Bold.woff2"),
+        ),
+        (
+            "KaTeX_Fraktur-Regular",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_Fraktur-Regular.woff2"),
+        ),
+        (
+            "KaTeX_Main-Bold",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_Main-Bold.woff2"),
+        ),
+        (
+            "KaTeX_Main-BoldItalic",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_Main-BoldItalic.woff2"),
+        ),
+        (
+            "KaTeX_Main-Italic",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_Main-Italic.woff2"),
+        ),
+        (
+            "KaTeX_Main-Regular",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_Main-Regular.woff2"),
+        ),
+        (
+            "KaTeX_Math-BoldItalic",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_Math-BoldItalic.woff2"),
+        ),
+        (
+            "KaTeX_Math-Italic",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_Math-Italic.woff2"),
+        ),
+        (
+            "KaTeX_SansSerif-Bold",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_SansSerif-Bold.woff2"),
+        ),
+        (
+            "KaTeX_SansSerif-Italic",
+            include_bytes!(
+                "../../../../node_modules/katex/dist/fonts/KaTeX_SansSerif-Italic.woff2"
+            ),
+        ),
+        (
+            "KaTeX_SansSerif-Regular",
+            include_bytes!(
+                "../../../../node_modules/katex/dist/fonts/KaTeX_SansSerif-Regular.woff2"
+            ),
+        ),
+        (
+            "KaTeX_Script-Regular",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_Script-Regular.woff2"),
+        ),
+        (
+            "KaTeX_Size1-Regular",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_Size1-Regular.woff2"),
+        ),
+        (
+            "KaTeX_Size2-Regular",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_Size2-Regular.woff2"),
+        ),
+        (
+            "KaTeX_Size3-Regular",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_Size3-Regular.woff2"),
+        ),
+        (
+            "KaTeX_Size4-Regular",
+            include_bytes!("../../../../node_modules/katex/dist/fonts/KaTeX_Size4-Regular.woff2"),
+        ),
+        (
+            "KaTeX_Typewriter-Regular",
+            include_bytes!(
+                "../../../../node_modules/katex/dist/fonts/KaTeX_Typewriter-Regular.woff2"
+            ),
+        ),
+    ];
+
+    let mut css = KATEX_CSS.to_string();
+    for (name, bytes) in FONTS {
+        let original = format!(
+            "src:url(fonts/{name}.woff2) format(\"woff2\"),\
+             url(fonts/{name}.woff) format(\"woff\"),\
+             url(fonts/{name}.ttf) format(\"truetype\")"
+        );
+        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let embedded = format!("src:url(\"data:font/woff2;base64,{encoded}\") format(\"woff2\")");
+        if !css.contains(&original) {
+            return Err(format!(
+                "Bundled KaTeX CSS does not match embedded font {name}"
+            ));
+        }
+        css = css.replace(&original, &embedded);
+    }
+    if css.contains("url(fonts/") || css.contains("http://") || css.contains("https://") {
+        return Err("Bundled KaTeX CSS still contains an external font reference".to_string());
+    }
+    Ok(css)
+}
+
+#[derive(Debug)]
+pub(in crate::commands) struct ProtectedPrintMath {
+    token: String,
+    latex: String,
+    display: bool,
+}
+
+pub(in crate::commands) fn escaped_at(bytes: &[u8], index: usize) -> bool {
+    let mut slashes = 0usize;
+    let mut cursor = index;
+    while cursor > 0 && bytes[cursor - 1] == b'\\' {
+        slashes += 1;
+        cursor -= 1;
+    }
+    slashes % 2 == 1
+}
+
+pub(in crate::commands) fn math_close(
+    source: &str,
+    mut index: usize,
+    delimiter_len: usize,
+) -> Option<usize> {
+    let bytes = source.as_bytes();
+    while index < bytes.len() {
+        if bytes[index] == b'\\' {
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        if bytes[index] == b'$' && !escaped_at(bytes, index) {
+            if delimiter_len == 2 {
+                if bytes.get(index + 1) == Some(&b'$') {
+                    return Some(index);
+                }
+            } else if bytes.get(index + 1) != Some(&b'$') {
+                return Some(index);
+            }
+        }
+        let character = source[index..].chars().next()?;
+        index += character.len_utf8();
+    }
+    None
+}
+
+pub(in crate::commands) fn protect_math_chunk(
+    source: &str,
+    token_base: &str,
+    protected: &mut Vec<ProtectedPrintMath>,
+) -> String {
+    let bytes = source.as_bytes();
+    let mut output = String::with_capacity(source.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        // Copy code spans byte-for-byte. KaTeX auto-render ignores code tags,
+        // and dollar signs in examples must never become equations.
+        if bytes[index] == b'`' {
+            let ticks = bytes[index..]
+                .iter()
+                .take_while(|byte| **byte == b'`')
+                .count();
+            let marker = "`".repeat(ticks);
+            if let Some(relative_end) = source[index + ticks..].find(&marker) {
+                let end = index + ticks + relative_end + ticks;
+                output.push_str(&source[index..end]);
+                index = end;
+                continue;
+            }
+        }
+
+        if bytes[index] == b'$' && !escaped_at(bytes, index) {
+            let delimiter_len = usize::from(bytes.get(index + 1) == Some(&b'$')) + 1;
+            let content_start = index + delimiter_len;
+            if let Some(close) = math_close(source, content_start, delimiter_len) {
+                let latex = &source[content_start..close];
+                // Inline `$…$` must have non-whitespace ends and stay on one
+                // line without crossing a code span: math_close scans raw
+                // bytes, so "from $5 to $8 … `$x$`" would otherwise pair a
+                // currency `$` with a later paragraph's or code span's `$`
+                // and swallow the prose in between as an equation.
+                let valid_inline_spacing = delimiter_len == 2
+                    || (!latex.chars().next().is_some_and(char::is_whitespace)
+                        && !latex.chars().next_back().is_some_and(char::is_whitespace)
+                        && !latex.contains('\n')
+                        && !latex.contains('`'));
+                if !latex.trim().is_empty() && valid_inline_spacing {
+                    let token = format!("{token_base}{}END", protected.len());
+                    protected.push(ProtectedPrintMath {
+                        token: token.clone(),
+                        latex: latex.to_string(),
+                        display: delimiter_len == 2,
+                    });
+                    output.push_str(&token);
+                    index = close + delimiter_len;
+                    continue;
+                }
+            }
+        }
+
+        let character = source[index..]
+            .chars()
+            .next()
+            .expect("index remains on a UTF-8 boundary");
+        output.push(character);
+        index += character.len_utf8();
+    }
+    output
+}
+
+/// Replace math with alphanumeric placeholders before pulldown-cmark sees it.
+/// Otherwise `_`, `*`, and backslashes inside LaTeX can be consumed as Markdown
+/// emphasis/escapes before KaTeX's auto-render pass runs.
+pub(in crate::commands) fn protect_print_math(markdown: &str) -> (String, Vec<ProtectedPrintMath>) {
+    let mut discriminator = 0usize;
+    let token_base = loop {
+        let candidate = format!("PIPELINEMATHPLACEHOLDER{discriminator}X");
+        if !markdown.contains(&candidate) {
+            break candidate;
+        }
+        discriminator += 1;
+    };
+
+    let mut output = String::with_capacity(markdown.len());
+    let mut prose = String::new();
+    let mut protected = Vec::new();
+    let mut fence: Option<(u8, usize)> = None;
+    let flush_prose =
+        |output: &mut String, prose: &mut String, protected: &mut Vec<ProtectedPrintMath>| {
+            if !prose.is_empty() {
+                output.push_str(&protect_math_chunk(prose, &token_base, protected));
+                prose.clear();
+            }
+        };
+
+    for line in markdown.split_inclusive('\n') {
+        if let Some((marker, count)) = output::fence_marker(line) {
+            flush_prose(&mut output, &mut prose, &mut protected);
+            if let Some((open_marker, open_count)) = fence {
+                if marker == open_marker && count >= open_count {
+                    fence = None;
+                }
+            } else {
+                fence = Some((marker, count));
+            }
+            output.push_str(line);
+        } else if fence.is_some() {
+            output.push_str(line);
+        } else {
+            prose.push_str(line);
+        }
+    }
+    flush_prose(&mut output, &mut prose, &mut protected);
+    (output, protected)
+}
+
+pub(in crate::commands) fn escape_html_text(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+pub(in crate::commands) fn restore_print_math(
+    mut html: String,
+    protected: &[ProtectedPrintMath],
+) -> String {
+    for item in protected {
+        // Restore with backslash delimiters: the client-side renderMathInElement
+        // pass deliberately does not scan for `$`, so unprotected currency
+        // amounts in prose ("tariffs rose from $5 to $8") stay literal text
+        // instead of being typeset as an equation in the printed report.
+        let expression = if item.display {
+            format!("\\[{}\\]", escape_html_text(&item.latex))
+        } else {
+            format!("\\({}\\)", escape_html_text(&item.latex))
+        };
+        if item.display {
+            let paragraph = format!("<p>{}</p>", item.token);
+            if html.contains(&paragraph) {
+                html = html.replace(
+                    &paragraph,
+                    &format!("<div class=\"pipeline-display-equation\">{expression}</div>"),
+                );
+                continue;
+            }
+        }
+        html = html.replace(&item.token, &expression);
+    }
+    html
+}
+
+/// Match the numbered issue treatment used by ReportViewer. Pulldown-cmark
+/// renders `**#N. Title**` as a plain strong paragraph, so the standalone
+/// export needs this small structural pass before it can share the viewer's
+/// visual hierarchy.
+pub(in crate::commands) fn style_print_issue_headers(html: String) -> String {
+    let issue_header = regex::Regex::new(r#"(?s)<p><strong>#([0-9]+)\.\s*(.*?)</strong></p>"#)
+        .expect("print issue-header regex is valid");
+    issue_header
+        .replace_all(&html, |captures: &regex::Captures<'_>| {
+            format!(
+                "<div class=\"comment-header\"><span class=\"comment-num\">{}</span><span class=\"comment-title\">{}</span></div>",
+                &captures[1], &captures[2]
+            )
+        })
+        .into_owned()
+}
+
+pub(in crate::commands) fn render_print_markdown(markdown: &str) -> String {
+    use pulldown_cmark::{html, Options, Parser};
+
+    let markdown = output::normalize_math_delimiters(&output::clean_export_markdown(markdown));
+    let (markdown, protected_math) = protect_print_math(&markdown);
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    let parser = Parser::new_ext(&markdown, options);
+    let mut html_body = String::new();
+    html::push_html(&mut html_body, parser);
+
+    // Sanitize HTML to strip <script>, event handlers, and other XSS vectors
+    // that could be injected via LLM output (e.g. prompt injection in paper
+    // text). Images keep their alt text but lose `src`, so opening the
+    // temporary print document cannot fetch remote or local subresources.
+    let html_body = ammonia::Builder::default()
+        .rm_tag_attributes("img", &["src"])
+        .clean(&html_body)
+        .to_string();
+    restore_print_math(style_print_issue_headers(html_body), &protected_math)
+}
+
+/// Keep only the compact opening metadata. Older callers may still send the
+/// former detailed provenance section, so discard that suffix defensively.
+pub(in crate::commands) fn print_provenance_masthead(html: String) -> String {
+    const DETAILS_HEADING: &str = "<h2>Run provenance</h2>";
+    match html.split_once(DETAILS_HEADING) {
+        Some((masthead, _)) => masthead.to_string(),
+        None => html,
+    }
+}
+
+pub(in crate::commands) fn build_print_report_html(
+    markdown: &str,
+    provenance_markdown: Option<&str>,
+) -> Result<String, String> {
+    let report_html = render_print_markdown(markdown);
+    let provenance_html = provenance_markdown
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(render_print_markdown)
+        .map(print_provenance_masthead);
+
+    // KaTeX code, CSS, and every WOFF2 face are compiled into this one HTML
+    // document. The print path therefore performs no network or file fetches.
+    const KATEX_JS: &str = include_str!("../../../../node_modules/katex/dist/katex.min.js");
+    const AUTO_RENDER_JS: &str =
+        include_str!("../../../../node_modules/katex/dist/contrib/auto-render.min.js");
+    let katex_css = offline_katex_css()?;
+
+    let mut html_doc = String::with_capacity(
+        katex_css.len()
+            + KATEX_JS.len()
+            + AUTO_RENDER_JS.len()
+            + report_html.len()
+            + provenance_html.as_ref().map_or(0, String::len)
+            + 12_288,
+    );
+    html_doc.push_str("<!DOCTYPE html>\n<html><head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Pipeline Report</title>\n<style>\n");
+    html_doc.push_str(&katex_css);
+    html_doc.push_str("\n</style>\n<script>\n");
+    html_doc.push_str(KATEX_JS);
+    html_doc.push_str("\n</script>\n<script>\n");
+    html_doc.push_str(AUTO_RENDER_JS);
+    html_doc.push_str(concat!(
+        "\n</script>\n<style>\n",
+        ":root { --ink: #20242a; --muted: #66707a; --navy: #18364d; --rule: #d7d9d8; --paper: #fffefb; --canvas: #e9e7e2; color-scheme: light; font-family: \"Iowan Old Style\", \"Palatino Linotype\", \"Book Antiqua\", Palatino, Georgia, \"Times New Roman\", serif; }\n",
+        "* { box-sizing: border-box; }\n",
+        "html { background: var(--canvas); }\n",
+        "body { margin: 0; color: var(--ink); font-size: 16px; line-height: 1.68; -webkit-font-smoothing: antialiased; font-kerning: normal; text-rendering: optimizeLegibility; }\n",
+        ".report-document { width: min(50rem, calc(100% - 2rem)); margin: 2.75rem auto; padding: 4rem 4.5rem 4.75rem; background: var(--paper); border: 1px solid rgba(41, 47, 54, 0.12); border-radius: 0.2rem; box-shadow: 0 22px 55px rgba(35, 38, 41, 0.13); }\n",
+        "h1, h2, h3 { break-after: avoid; break-inside: avoid; }\n",
+        "h1 { margin: 0 0 1rem; color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 1.7rem; font-weight: 680; letter-spacing: -0.025em; line-height: 1.2; }\n",
+        "h2 { margin: 2.9rem 0 1.15rem; padding-bottom: 0.45rem; border-bottom: 1px solid var(--rule); color: var(--navy); font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 0.78rem; font-weight: 750; letter-spacing: 0.105em; line-height: 1.4; text-transform: uppercase; }\n",
+        "h3 { margin: 2rem 0 0.75rem; color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 0.98rem; font-weight: 700; line-height: 1.4; }\n",
+        "p { margin: 0 0 0.82rem; orphans: 3; widows: 3; }\n",
+        "ul, ol { margin: 0 0 0.9rem; padding-left: 1.35rem; }\n",
+        "li { margin-bottom: 0.32rem; padding-left: 0.15rem; line-height: 1.58; }\n",
+        "li > p { margin-bottom: 0.35rem; }\n",
+        "a { color: var(--navy); text-decoration-color: #9aabb6; text-underline-offset: 0.16em; }\n",
+        "strong { color: #171a1e; font-weight: 700; }\n",
+        "hr { margin: 2.25rem 0; border: 0; border-top: 1px solid var(--rule); }\n",
+        ".report-masthead { margin-bottom: 2.25rem; padding: 0 0 1.25rem; border-bottom: 1px solid var(--rule); }\n",
+        ".report-masthead > h1 { margin: 0 0 0.8rem; color: var(--ink); font-size: 0.92rem; font-weight: 720; letter-spacing: -0.01em; text-transform: none; }\n",
+        ".report-masthead > p { display: grid; grid-template-columns: 7.15rem minmax(0, 1fr); column-gap: 0.65rem; margin: 0.24rem 0; color: #4f5961; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 0.73rem; line-height: 1.45; }\n",
+        ".report-masthead > p strong { color: var(--muted); font-size: 0.67rem; font-weight: 700; letter-spacing: 0.025em; }\n",
+        ".report-body > h1:first-child, .report-body > h2:first-child, .report-body > h3:first-child { margin-top: 0; }\n",
+        ".comment-header { display: grid; grid-template-columns: 1.75rem minmax(0, 1fr); align-items: start; column-gap: 0.8rem; margin: 2.25rem 0 0.72rem; padding: 0.85rem 0 0; border-top: 1px solid var(--rule); break-after: avoid; break-inside: avoid; }\n",
+        ".comment-num { display: inline-flex; width: 1.55rem; height: 1.55rem; align-items: center; justify-content: center; border-radius: 999px; background: var(--navy); color: #fff; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 0.68rem; font-weight: 750; font-variant-numeric: tabular-nums; line-height: 1; }\n",
+        ".comment-title { padding-top: 0.05rem; color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 0.98rem; font-weight: 700; line-height: 1.42; }\n",
+        "blockquote { margin: 1.25rem 0 1.35rem; padding: 0.65rem 0 0.65rem 1.1rem; border-left: 2px solid #9cabb4; color: #4f5961; font-size: 0.95em; font-style: italic; break-inside: avoid; }\n",
+        "code { padding: 0.12rem 0.32rem; border-radius: 0.2rem; background: #f1f0ed; color: #30373d; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.8em; overflow-wrap: anywhere; }\n",
+        "pre { margin: 1.15rem 0; padding: 1rem 1.1rem; overflow: auto; border: 1px solid #deddd9; border-radius: 0.25rem; background: #f7f6f3; white-space: pre-wrap; overflow-wrap: anywhere; break-inside: avoid; }\n",
+        "pre code { padding: 0; background: transparent; font-size: 0.8125rem; }\n",
+        "table { width: 100%; margin: 1.35rem 0 1.6rem; border-collapse: collapse; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 0.79rem; line-height: 1.45; font-variant-numeric: tabular-nums; }\n",
+        "th, td { padding: 0.48rem 0.52rem; border: 0; border-bottom: 1px solid #dfe1e1; text-align: left; vertical-align: top; overflow-wrap: anywhere; }\n",
+        "th { border-top: 1.5px solid #59636b; border-bottom-color: #8a9298; background: transparent; color: #566069; font-size: 0.67rem; font-weight: 750; letter-spacing: 0.065em; text-transform: uppercase; }\n",
+        "tbody tr:last-child td { border-bottom: 1.5px solid #59636b; }\n",
+        "thead { display: table-header-group; }\n",
+        "tr { break-inside: avoid; }\n",
+        ".pipeline-display-equation, .katex-display { break-before: avoid; break-inside: avoid; }\n",
+        ".katex { font-size: 1em; }\n",
+        ".katex-display { margin: 1.15rem 0; overflow: visible; }\n",
+        "img { max-width: 100%; height: auto; }\n",
+        "@page { margin: 0 0 0.28in; }\n",
+        "@page { @bottom-center { content: counter(page) \" / \" counter(pages); color: #7b838a; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 8pt; font-variant-numeric: tabular-nums; } }\n",
+        "@media print {\n",
+        "  html, body { background: #fff; }\n",
+        "  body { color: var(--ink); font-size: 10.4pt; line-height: 1.6; print-color-adjust: exact; -webkit-print-color-adjust: exact; }\n",
+        "  .report-document { width: 100%; max-width: none; margin: 0; padding: 0.72in 0.82in 0.7in; border: 0; border-radius: 0; box-shadow: none; -webkit-box-decoration-break: clone; box-decoration-break: clone; }\n",
+        "  h1 { font-size: 21pt; }\n",
+        "  h2 { margin-top: 2.2rem; font-size: 8.3pt; }\n",
+        "  h3 { margin-top: 1.5rem; font-size: 10.7pt; }\n",
+        "  .report-masthead { margin-bottom: 1.65rem; padding-bottom: 1rem; }\n",
+        "  .comment-header { margin-top: 1.55rem; padding-top: 0.65rem; }\n",
+        "  .comment-num { width: 1.42rem; height: 1.42rem; font-size: 6.8pt; }\n",
+        "  .comment-title { font-size: 10.2pt; }\n",
+        "  .report-body p { text-align: justify; hyphens: auto; }\n",
+        "  a { color: inherit; text-decoration: none; }\n",
+        "  pre, blockquote { break-inside: avoid; }\n",
+        "}\n",
+        "@media (max-width: 640px) { .report-document { width: 100%; margin: 0; padding: 2.25rem 1.35rem 3rem; border: 0; border-radius: 0; box-shadow: none; } .report-masthead > p { grid-template-columns: 1fr; row-gap: 0.05rem; margin-top: 0.45rem; } }\n",
+        "</style>\n</head><body>\n<article class=\"report-document\">\n",
+    ));
+    if let Some(provenance_html) = provenance_html.as_ref() {
+        html_doc.push_str("<header class=\"report-masthead\">\n");
+        html_doc.push_str(provenance_html);
+        html_doc.push_str("</header>\n");
+    }
+    html_doc.push_str("<main class=\"report-body\">\n");
+    html_doc.push_str(&report_html);
+    html_doc.push_str("</main>\n");
+    html_doc.push_str("</article>");
+    // Rendering is synchronous, but embedded webfonts are not. Wait for the
+    // font set before the final paint and print dialog.
+    html_doc.push_str(concat!(
+        "\n<script>",
+        // No `$`/`$$` delimiters here: all legitimate dollar-delimited math was
+        // already tokenized server-side by protect_print_math and restored as
+        // \( \) / \[ \]; a bare `$` reaching this pass is prose currency.
+        "renderMathInElement(document.body,{delimiters:[",
+        "{left:'\\\\(',right:'\\\\)',display:false},",
+        "{left:'\\\\[',right:'\\\\]',display:true}",
+        "],throwOnError:false,strict:'ignore',trust:false,macros:{",
+        "'\\\\bm':'\\\\boldsymbol','\\\\mathbbm':'\\\\mathbb','\\\\mathds':'\\\\mathbb',",
+        "'\\\\R':'\\\\mathbb{R}','\\\\N':'\\\\mathbb{N}','\\\\Z':'\\\\mathbb{Z}',",
+        "'\\\\Q':'\\\\mathbb{Q}','\\\\E':'\\\\mathbb{E}',",
+        "'\\\\Var':'\\\\operatorname{Var}','\\\\Cov':'\\\\operatorname{Cov}',",
+        "'\\\\diag':'\\\\operatorname{diag}'}});",
+        "var fontsReady=(document.fonts&&document.fonts.ready)?document.fonts.ready:Promise.resolve();",
+        "fontsReady.then(function(){requestAnimationFrame(function(){window.print();});});",
+        "</script>\n</body></html>",
+    ));
+    Ok(html_doc)
+}

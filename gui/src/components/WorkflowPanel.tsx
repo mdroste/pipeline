@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { PipelineConfig, ProfileSummary } from "../lib/types";
 import {
+  ADAPTIVE_REVIEW_PROFILE_IDS,
   adaptiveAgentCount,
   adaptiveAgentCountLabel,
   adaptiveAgentRange,
@@ -107,7 +108,7 @@ export default function WorkflowPanel({
   const disabledCount = config.steps.length - enabledSteps.length;
   const autoAssembled = isAutoReview(config);
   const autoReview =
-    autoAssembled || ["auto-review", "auto-review-quick"].includes(activeId);
+    autoAssembled || ADAPTIVE_REVIEW_PROFILE_IDS.includes(activeId);
   const configuredAdaptiveCount = adaptiveAgentCount(config);
   const configuredAdaptiveRange = adaptiveAgentRange(config);
 

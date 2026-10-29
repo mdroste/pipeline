@@ -95,9 +95,9 @@ export default function Followups({
           : ""}
       </summary>
       <p className={muted}>
-        Draft a follow-up while the assistant works. Queue next message saves
-        it; Run next sends it after checking that the selected sources are still
-        current.
+        Draft your next message while the assistant works. Save it with Queue
+        next message, then choose Run next when you’re ready to send it.
+        Pipeline checks whether its sources have changed first.
       </p>
       <textarea
         className={input}
@@ -252,7 +252,7 @@ export default function Followups({
                 <p>Working folder: {review.request.binding.runtimeRoot}</p>
                 <p>
                   Research preset: {review.settings.preset} · Permissions:{" "}
-                  {review.settings.permissions} · Command network:{" "}
+                  {review.settings.permissions} · Internet access for commands:{" "}
                   {review.settings.commandNetwork ? "allowed" : "off"}
                 </p>
                 <Inspect
@@ -368,7 +368,8 @@ export default function Followups({
             ))}
             {!context.length && (
               <p className={muted}>
-                Select research objects in the conversation context tray first.
+                First select the research items in the conversation’s Sources
+                panel.
               </p>
             )}
             <button
@@ -388,7 +389,7 @@ export default function Followups({
                 })
               }
             >
-              Create context branch
+              Start a new conversation with these sources
             </button>
           </>
         )}

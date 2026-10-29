@@ -227,7 +227,7 @@ export const projectClient = {
     );
     if ("outcome" in result)
       throw new Error(
-        "This operation has an uncertain outcome. Refresh the project and inspect its task and recovery history before trying again.",
+        "Pipeline could not confirm whether this finished. Refresh the project and check its task history and recovery records before trying again.",
       );
     return result;
   },

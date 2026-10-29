@@ -129,7 +129,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
           disabled={busy}
           onClick={() => void importData()}
         >
-          Capture CSV / TSV
+          Import CSV / TSV
         </button>
         <p className={muted}>
           Save a copy of the data with a row count and detected variable types.
@@ -166,8 +166,10 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
               />
               {
                 {
-                  dictionary: "Dictionary in search and context",
-                  summaries: "Derived diagnostics in search and context",
+                  dictionary:
+                    "Include variable descriptions in search and conversations",
+                  summaries:
+                    "Include data summaries in search and conversations",
                   assistantRows: "Allow the assistant to preview rows",
                   packageData: "Allow raw data in sharing packages",
                 }[k]
@@ -176,9 +178,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
           ))}
       </details>
       <details className={card}>
-        <summary className="font-semibold">
-          Import an exporter dictionary
-        </summary>
+        <summary className="font-semibold">Import a data dictionary</summary>
         <p className={muted}>
           Paste DatasetVersion JSON (schemaVersion 1) with a SHA-256 hash and an
           externalReference to the saved data version. This imports metadata
@@ -205,7 +205,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
             )
           }
         >
-          Import declared metadata
+          Import dataset details
         </button>
       </details>
       {preview && (
@@ -261,8 +261,8 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
           onChange={(e) => setKey(e.target.value)}
         />
         <p className={muted}>
-          Uses the exact vintage entered above and original units (lin). Enable
-          project acquisition in Library first. The key is not saved.
+          Download the selected vintage in its original units. First allow data
+          downloads in Library. Pipeline uses the API key for this request only.
         </p>
         <button
           className={button}
@@ -282,7 +282,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
             });
           }}
         >
-          Capture series vintage
+          Download this vintage
         </button>
       </details>
       {datasets.map((d) => (
@@ -356,8 +356,8 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
       <section className={card}>
         <h2 className="font-semibold">Declare a sample</h2>
         <p className={muted}>
-          Select exact datasets above. Rules are researcher declarations; this
-          form does not claim to have executed them.
+          Select the dataset versions above and record your sample rules. Saving
+          these rules does not apply them to the data.
         </p>
         <textarea
           aria-label="Sample inclusion rules"
@@ -388,7 +388,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
           placeholder="Optional date range"
         />
         <select
-          aria-label="Sample supersession"
+          aria-label="Replaces an earlier sample"
           className={input}
           value={samplePrevious}
           onChange={(e) => setSamplePrevious(e.target.value)}
@@ -425,7 +425,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
             )
           }
         >
-          Save new sample identity
+          Save sample definition
         </button>
         {samples.map((s) => (
           <button

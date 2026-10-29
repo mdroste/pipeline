@@ -58,8 +58,9 @@ export default function Theory(props: DeskProps) {
       <section className={card}>
         <h2 className="font-semibold">Symbols and assumptions</h2>
         <p className={muted}>
-          Definitions have a scope. Collision suggestions compare overlapping
-          scopes; original source remains authoritative.
+          Specify where each definition applies. Pipeline checks for conflicting
+          uses in overlapping sections. Check suggested conflicts against the
+          original text.
         </p>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Notation">
@@ -153,14 +154,14 @@ export default function Theory(props: DeskProps) {
             )
           }
         >
-          Find possible collisions
+          Find notation conflicts
         </button>
         {collisions !== null && (
           <Inspect value={collisions} label="Potential notation conflicts" />
         )}
       </section>
       <section className={card}>
-        <h3 className="font-semibold">Extract notation candidates</h3>
+        <h3 className="font-semibold">Find symbols in the source</h3>
         <ObjectSelect
           choices={p.choices?.objects ?? []}
           value={candidateSource}
@@ -181,7 +182,7 @@ export default function Theory(props: DeskProps) {
             )
           }
         >
-          Inspect lexical candidates
+          Review suggested symbols
         </button>
         {candidates && (
           <>
@@ -309,14 +310,16 @@ export default function Theory(props: DeskProps) {
             })
           }
         >
-          Create an open theory branch
+          Save this alternative argument
         </button>
       </section>
       <section className={card}>
-        <h3 className="font-semibold">Record an executable assumption check</h3>
+        <h3 className="font-semibold">
+          Record a computational check of an assumption
+        </h3>
         <p className={muted}>
-          Run a plan in Captured execution first, then link it here. The record
-          includes the expression, assumptions, parameters, and results.
+          Run a plan in Saved analysis plans first, then link it here. The
+          record includes the expression, assumptions, parameters, and results.
           Numerical checks apply only to the cases tested.
         </p>
         <div className="flex flex-wrap gap-2">
@@ -397,7 +400,7 @@ export default function Theory(props: DeskProps) {
             />
           </Field>
         </div>
-        <Field label="Completed captured execution">
+        <Field label="Completed analysis run">
           <select
             className={input}
             value={execution}
@@ -463,7 +466,7 @@ export default function Theory(props: DeskProps) {
             })
           }
         >
-          Retain check with its tested scope
+          Save the check and the cases tested
         </button>
       </section>
       {p.records.assumption_branch?.map((r) => (

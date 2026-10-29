@@ -1,7 +1,12 @@
 //! Recovery paths for settings the app could not load as saved: diagnostics
 //! for the Settings page, discarding a stored key that no longer decrypts,
 //! and normalizing imported exports the way the loader would.
-use super::*;
+use super::crypto::{decrypt_string, load_or_create_key, ENC_PREFIX, KEY_SIZE};
+use super::persistence::{
+    acquire_settings_write_lock, load_raw_settings_required, load_with_warnings_inner,
+    save_raw_unlocked, settings_path,
+};
+use super::types::Settings;
 
 /// What the UI loader had to work around.
 #[derive(Debug, Default)]

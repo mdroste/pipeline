@@ -227,6 +227,7 @@ export default function PipelinePage({
             schema={config.orientation_schema}
             inputMode={config.extraction?.input_mode ?? "document"}
             autoReview={autoReview}
+            profileId={activeProfile}
             onPromptChange={(orientation_prompt) => {
               setConfig((current) =>
                 current ? { ...current, orientation_prompt } : current,
@@ -309,11 +310,8 @@ export default function PipelinePage({
                 adaptiveAgentRange={adaptiveAgentRange}
                 selectedId={editing}
                 onSelect={(id) => setEditing(id)}
+                hint="Select any stage to edit its prompt, inputs, conditions, and models."
               />
-              <p className="mt-4 text-center text-xs text-gray-500 dark:text-gray-400">
-                Select any stage to edit its prompt, inputs, conditions, and
-                models.
-              </p>
             </div>
           </div>
         )}

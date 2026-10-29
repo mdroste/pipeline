@@ -124,7 +124,9 @@ describe("AboutPage", () => {
     render(<AboutPage onClose={() => undefined} />);
 
     expect(
-      screen.getByText(/doing and reviewing academic research/i),
+      screen.getByText(
+        /develop research, work with AI assistants, and review papers/i,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Chat with the assistant in an unfiled conversation/i),
@@ -136,12 +138,9 @@ describe("AboutPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/plan and data-use terms/i)).toBeInTheDocument();
     expect(screen.getByText("Reviews")).toBeInTheDocument();
-    expect(
-      screen.getByText("Automatic Paper Review (Full)"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Automatic Paper Review (Quick)"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Paper Review")).toBeInTheDocument();
+    expect(screen.getByText("Paper Review (Fast)")).toBeInTheDocument();
+    expect(screen.getByText("Slide Review")).toBeInTheDocument();
     expect(screen.getByText("Grant Proposal Review")).toBeInTheDocument();
     expect(screen.queryByText("Codebase Review")).not.toBeInTheDocument();
     expect(

@@ -16,7 +16,11 @@ const mocks = vi.hoisted(() => ({
   sendTurn: vi.fn(),
   listeners: [] as any[],
 }));
-vi.mock("../lib/workbenchClient", () => ({ workbenchClient: mocks }));
+vi.mock("../lib/workbench/workspaceClient", () => ({ workspaceClient: mocks }));
+vi.mock("../lib/workbench/conversationClient", () => ({
+  conversationClient: mocks,
+}));
+vi.mock("../lib/workbench/runtimeClient", () => ({ runtimeClient: mocks }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (_: string, cb: any) => {
     mocks.listeners.push(cb);
@@ -69,7 +73,7 @@ async function draftFixture(initial: Record<string, unknown> = {}) {
   });
   const hook = renderHook(() => useWorkspacePageController({}));
   await waitFor(() =>
-    expect(hook.result.current.snapshot?.session.id).toBe("A"),
+    expect(hook.result.current.conversation.snapshot?.session.id).toBe("A"),
   );
   return { ...hook, saved: () => saved };
 }
@@ -87,16 +91,18 @@ it("a failed request resolution recovers the still-pending approval", async () =
   await act(async () => {
     for (const cb of mocks.listeners) cb({ payload: request });
   });
-  expect(result.current.visibleRequests).toHaveLength(1);
+  expect(result.current.conversation.visibleRequests).toHaveLength(1);
   mocks.pendingRequests.mockResolvedValue([request]);
   mocks.resolveServerRequest.mockRejectedValue(
     new Error("temporary IPC error"),
   );
   await act(async () => {
-    await result.current.resolve(request as any, { decision: "accept" });
+    await result.current.conversation.resolve(request as any, {
+      decision: "accept",
+    });
   });
-  expect(result.current.error).toContain("temporary IPC error");
-  expect(result.current.visibleRequests).toHaveLength(1);
+  expect(result.current.feedback.error).toContain("temporary IPC error");
+  expect(result.current.conversation.visibleRequests).toHaveLength(1);
   expect(mocks.pendingRequests).toHaveBeenCalledTimes(2);
   unmount();
 });
@@ -111,7 +117,7 @@ it("late conversation creation respects newer project navigation", async () => {
   );
   let creating!: Promise<void>;
   act(() => {
-    creating = result.current.createSession();
+    creating = result.current.navigation.createSession();
   });
   await waitFor(() => expect(mocks.createSession).toHaveBeenCalled());
   const workspaceB = { id: "project-B", name: "Project B" };
@@ -144,16 +150,22 @@ it("late conversation creation respects newer project navigation", async () => {
     id === "B" ? snapB : saved(),
   );
   await act(async () => {
-    await result.current.selectProject("project-B");
+    await result.current.navigation.selectProject("project-B");
   });
-  await waitFor(() => expect(result.current.snapshot?.session.id).toBe("B"));
+  await waitFor(() =>
+    expect(result.current.conversation.snapshot?.session.id).toBe("B"),
+  );
   await act(async () => {
     finish({ record: created.session });
     await creating;
   });
-  await waitFor(() => expect(result.current.snapshot?.session.id).toBe("B"));
-  expect(result.current.workspaceId).toBe("project-B");
-  expect(result.current.snapshot?.session.workspaceId).toBe("project-B");
+  await waitFor(() =>
+    expect(result.current.conversation.snapshot?.session.id).toBe("B"),
+  );
+  expect(result.current.navigation.workspaceId).toBe("project-B");
+  expect(result.current.conversation.snapshot?.session.workspaceId).toBe(
+    "project-B",
+  );
   unmount();
 });
 
@@ -177,10 +189,12 @@ it("deduplicates pending approval decisions and reconciles ambiguous acknowledge
   );
   let pending!: Promise<void>;
   act(() => {
-    pending = result.current.resolve(request, { decision: "accept" });
+    pending = result.current.conversation.resolve(request, {
+      decision: "accept",
+    });
   });
   await act(async () => {
-    await result.current.resolve(request, { decision: "accept" });
+    await result.current.conversation.resolve(request, { decision: "accept" });
   });
   expect(mocks.resolveServerRequest).toHaveBeenCalledTimes(1);
   mocks.pendingRequests.mockRejectedValueOnce(new Error("offline"));
@@ -190,7 +204,7 @@ it("deduplicates pending approval decisions and reconciles ambiguous acknowledge
   });
   mocks.pendingRequests.mockResolvedValue([]); // Server consumed the first decision.
   await act(async () => {
-    await result.current.resolve(request, { decision: "accept" });
+    await result.current.conversation.resolve(request, { decision: "accept" });
   });
   expect(mocks.resolveServerRequest).toHaveBeenCalledTimes(1);
   unmount();

@@ -145,7 +145,7 @@ export default function PaperSelector({
       .filter((path): path is string => Boolean(path));
     if (paths.length === 0) {
       setPickerError(
-        "This drag did not provide local file paths. Use Select files instead.",
+        "Pipeline couldn’t open the files you dropped. Use Select files instead.",
       );
       return;
     }
@@ -298,9 +298,9 @@ export default function PaperSelector({
           </label>
           <p className="text-[11px] leading-4 text-gray-500 dark:text-gray-400">
             {selection?.interpretation === "latex_project"
-              ? "Pipeline finds the project’s top-level main TeX file and resolves its local includes."
+              ? "Pipeline finds the main TeX file and reads the local files it includes."
               : selection?.interpretation === "source_tree"
-                ? "The workflow receives an inventory and may read files inside this folder on demand."
+                ? "The review can browse and read files in this folder as needed."
                 : selection?.interpretation === "batch"
                   ? selection.selectionKind === "folder"
                     ? "Each supported document directly inside this folder becomes an independent report."

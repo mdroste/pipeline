@@ -451,3 +451,54 @@ fn forked_write_calls_keep_their_write_root_editable_and_lock_the_shared_workspa
     let read_only = cli_deny_list(&["Read"], &workspace.read_dirs, None, Some("/tmp/shared"));
     assert!(read_only.iter().any(|d| d == "Edit"));
 }
+
+#[tokio::test]
+async fn review_runs_check_the_claude_subscription_once() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use super::claude_cli::verify_subscription_once_per_run as once_per_run;
+    use crate::deps::ResolvedCommand;
+
+    let checks = Arc::new(AtomicUsize::new(0));
+    let check = |succeed: bool| {
+        let checks = checks.clone();
+        move || async move {
+            checks.fetch_add(1, Ordering::SeqCst);
+            // Let concurrent first calls queue behind this check.
+            tokio::task::yield_now().await;
+            if succeed {
+                Ok(ResolvedCommand::direct("/opt/claude".into()))
+            } else {
+                Err("signed out".to_string())
+            }
+        }
+    };
+
+    let run = crate::run_scope::ActiveScope::begin("claude-subscription-once");
+    crate::run_scope::scoped(run.scope().clone(), async {
+        // A failed check is not remembered; the run's next call checks again.
+        assert!(once_per_run(check(false)).await.is_err());
+        let (first, second) = tokio::join!(once_per_run(check(true)), once_per_run(check(true)));
+        assert_eq!(
+            first.unwrap().program(),
+            std::path::Path::new("/opt/claude")
+        );
+        second.unwrap();
+        once_per_run(check(true)).await.unwrap();
+    })
+    .await;
+    assert_eq!(checks.load(Ordering::SeqCst), 2);
+
+    // Another run checks for itself.
+    let other = crate::run_scope::ActiveScope::begin("claude-subscription-other");
+    crate::run_scope::scoped(other.scope().clone(), once_per_run(check(true)))
+        .await
+        .unwrap();
+    assert_eq!(checks.load(Ordering::SeqCst), 3);
+
+    // Outside a run every call checks.
+    once_per_run(check(true)).await.unwrap();
+    once_per_run(check(true)).await.unwrap();
+    assert_eq!(checks.load(Ordering::SeqCst), 5);
+}

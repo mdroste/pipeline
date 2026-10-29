@@ -105,9 +105,8 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
             Start from a reviewed workflow
           </h1>
           <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-400">
-            Gallery workflows install as ordinary local profiles. You can
-            inspect every prompt, provider, dependency, and artifact permission
-            before running them.
+            Add a review design you can edit. Check its prompts, models, step
+            order, and file access before running it.
           </p>
         </header>
 

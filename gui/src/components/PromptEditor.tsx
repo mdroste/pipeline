@@ -108,7 +108,7 @@ export default function PromptEditor({
             {lintHits.length > 5 ? ", …" : ""}
           </span>
           <span className="ml-1 text-amber-700/70 dark:text-amber-400/70">
-            — they'll be passed to the LLM verbatim.
+            — these placeholders will reach the model unchanged.
           </span>
         </div>
       )}

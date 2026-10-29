@@ -1,81 +1,127 @@
 # Contributing to Pipeline
 
-Thanks for helping improve Pipeline. Small, focused changes with tests and
-clear user impact are easiest to review.
+Bug reports, documentation improvements, and focused code changes are welcome.
+For a substantial feature, open an issue first so we can agree on the problem
+and scope.
 
-## Before opening an issue
+## Issues and pull requests
 
-- Use the bug form for reproducible defects and the feature form for proposals.
-- Search existing issues first.
-- Remove papers, prompts, API keys, provider tokens, usernames, and local paths
-  from screenshots, logs, and run artifacts.
-- Report vulnerabilities privately according to [SECURITY.md](SECURITY.md).
-  Never use a public issue for an unpatched security problem.
+Search existing issues before opening one. Describe the research task or bug
+in concrete terms, and use a small example that you can share. Remove private
+research and credentials from attachments. Report vulnerabilities through
+[the private reporting process](SECURITY.md).
 
-The supported release platforms and maintenance policy are in
-[SUPPORT.md](SUPPORT.md).
+Keep each pull request focused on one change. Explain what users will notice,
+why it is needed, and how you checked it. Update the documentation and add an
+[Unreleased changelog entry](CHANGELOG.md) for user-visible changes that are
+not already covered by a prepared release entry.
 
 ## Development setup
 
-Use the exact Node.js version in `gui/.nvmrc` and the Rust toolchain in
-`rust-toolchain.toml`. From `gui/`:
+Use Node.js 24.18.0 from [`gui/.nvmrc`](gui/.nvmrc) and Rust 1.97.1 from
+[`rust-toolchain.toml`](rust-toolchain.toml). From a source checkout:
 
 ```bash
+cd gui
 npm ci
 npm run tauri dev
 ```
 
-Linux development also needs the WebKitGTK and application-indicator packages
-listed in `.github/workflows/build.yml`. Do not commit generated `node_modules`,
-Rust `target` output, release bundles, generated notices, bundled Poppler
-binaries, `.env` files, or machine-local agent settings.
+Install the native build tools for your platform. Linux also needs WebKitGTK,
+application-indicator, and SVG development libraries; the package list is in
+[the CI workflow](.github/workflows/build.yml). `npm run tauri build` creates
+installers under `gui/src-tauri/target/release/bundle/` when using the default
+Cargo target directory.
 
-## Tests
+Release tests need Python 3.11 or later. The test launcher tries `python3`, the
+Windows `py -3` launcher, and then a verified `python`. Set `PYTHON` to an
+interpreter path to override discovery; put no arguments in that value. The
+packaged app does not require a system Python installation.
 
-Release contract tests require Python 3.11 or later. The launcher tries `python3`,
-then the Windows `py -3` launcher where applicable, then a verified `python`.
-Set `PYTHON` to an explicit interpreter executable path (including paths with
-spaces) to override discovery; do not include command-line arguments in it.
-This is a development/test prerequisite, not a dependency of the packaged app.
+## Understand the code
 
-Run checks proportionate to the change. Before requesting review for a
-release-relevant change, run:
+Rust owns native services and saved data; React and TypeScript own the
+interface. Start with the [feature module map](docs/refactoring/module-map.md)
+and read the relevant implementation guide before changing a feature.
+
+- [Workspace](docs/workbench/README.md) owns projects, conversations, and
+  interactive research tools.
+- Reviews execute saved workflows and keep their own run history.
+- [Automations](docs/tasks.md) coordinate conversation turns, Reviews, and
+  local checks through each feature's interface.
+
+Conversations and Reviews share a managed ChatGPT account, but keep their
+execution state, storage, cancellation, and file access separate. Preserve
+those boundaries. Saved settings, workflow definitions, and reports must
+remain readable after an upgrade; new persisted fields need defaults and
+tests using older records. Keep dependency manifests and lockfiles aligned.
+
+## Check your changes
+
+For documentation-only edits, run this from the repository root:
+
+```bash
+node scripts/check-markdown-links.mjs
+```
+
+For code changes, run the relevant tests and formatting checks. Before
+requesting review for a release-related change, run the full checks:
 
 ```bash
 cd gui
 npm run test:release
 npm test
 npm run build
+npm run format:check
+npm run check:source-size
+npm run check:links
 cd src-tauri
 cargo test --locked --all-targets
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 ```
 
-On Windows, set `PIPELINE_LINK_TEST_MANIFEST=1` before `cargo test`. Tauri
-embeds the application manifest only in binaries, and the library's test
-executable cannot start without it.
+On Windows, set `PIPELINE_LINK_TEST_MANIFEST=1` before `cargo test` so the
+library test executable gets the manifest it needs to start.
 
-Changes to packaged behavior, release metadata, signing, native dependencies,
-or workflows must also follow [RELEASING.md](RELEASING.md). Do not weaken a
-fail-closed release check merely to make CI pass.
+Add regression coverage for bug fixes. Use synthetic documents and test
+credentials. Changes to installers, signing, native dependencies, or release
+workflows also need the checks in [Releasing](RELEASING.md). Diagnose a failed
+check before changing its requirements.
 
-## Pull requests
+## Clean up build output
 
-- Keep one coherent change per pull request.
-- Explain the user-visible behavior, risks, and validation performed.
-- Add regression tests for bug fixes and update user-facing documentation when
-  behavior or requirements change.
-- Treat Pipeline as an academic-research agent orchestration suite. Preserve the
-  distinction between interactive Workspace harnesses/recipes and deterministic
-  Workflows; read `docs/workbench/README.md` before changing Workspace code.
-- Keep Workspace runtime, credentials, storage, cancellation, and lifecycle
-  independent from Workflow state except at the explicit immutable handoff.
-- Preserve backward compatibility for saved settings, profiles, and run
-  manifests; new persisted fields need serde defaults and old-file coverage.
-- Keep dependency lockfiles synchronized with their manifests.
-- Add an entry under `Unreleased` in [CHANGELOG.md](CHANGELOG.md) for
-  user-visible changes that are not already part of a prepared release entry.
-- Never include confidential source documents or live credentials in tests.
+From `gui/`, preview generated files that can be removed:
 
-All contributions are provided under the repository's [MIT license](LICENSE).
+```bash
+npm run clean
+```
+
+Stop builds, tests, and development servers, then apply the cleanup:
+
+```bash
+npm run clean -- --apply
+```
+
+Cleanup removes the local Rust `target/` directory, frontend `dist/`, Vite
+caches, and generated Tauri schemas. It keeps installed dependencies, source,
+lockfiles, local PDFs, bundled tools, credentials, and application data. The
+next build recreates these outputs and requires a full Rust rebuild. External
+`CARGO_TARGET_DIR` locations are not included.
+
+Add `--worktrees` to include the same generated paths in checkouts under
+`.claude/worktrees/`. Source files and Git registrations remain intact.
+Use `npm run test:clean` to check the cleanup safeguards.
+
+Development and release Cargo profiles disable incremental compilation, but
+compiled dependencies and other output still accumulate. Cleanup is useful
+after toolchain changes or when disk use grows. Avoid `git clean -fdx`: ignored
+files can include research inputs and local settings.
+
+## Files to keep out of commits
+
+Do not commit `node_modules`, Rust `target` output, release bundles, generated
+notices, bundled Poppler binaries, `.env` files, machine-specific agent
+settings, confidential documents, or live credentials.
+
+Contributions use the repository's [MIT License](LICENSE).

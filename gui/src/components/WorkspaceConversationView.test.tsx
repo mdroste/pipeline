@@ -3,7 +3,16 @@ import { createRef, type ComponentProps } from "react";
 import { expect, it, vi } from "vitest";
 import WorkspaceConversationView from "./WorkspaceConversationView";
 
-vi.mock("../lib/workbenchClient", () => ({ workbenchClient: {} }));
+vi.mock("../lib/workbench/workspaceClient", () => ({ workspaceClient: {} }));
+vi.mock("../lib/workbench/conversationClient", () => ({
+  conversationClient: {},
+}));
+vi.mock("../lib/workbench/harnessClient", () => ({ harnessClient: {} }));
+vi.mock("../lib/workbench/researchClient", () => ({ researchClient: {} }));
+vi.mock("../lib/workbench/executionClient", () => ({ executionClient: {} }));
+vi.mock("../lib/workbench/recipeClient", () => ({ recipeClient: {} }));
+vi.mock("../lib/workbench/releaseClient", () => ({ releaseClient: {} }));
+vi.mock("../lib/workbench/runtimeClient", () => ({ runtimeClient: {} }));
 
 const onSend = vi.fn();
 const onStop = vi.fn();

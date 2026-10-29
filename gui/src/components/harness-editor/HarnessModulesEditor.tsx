@@ -1,3 +1,4 @@
+import { moduleName, moduleDescription } from "./harnessCopy";
 // Module selection grouped by kind, with capability bundle chips above the
 // fine-grained rows and the session's unavailability reasons inline. Follows
 // ArtifactContextEditor: preset chips first, then an exact allowlist.
@@ -85,10 +86,8 @@ function HarnessModulesEditor({
   return (
     <div className="space-y-4">
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        Choose the Workspace tools and context this profile may use. Unselected
-        Workspace tools are never offered. Selected tools that need a project,
-        Edit access, or a tested execution profile stay unavailable until those
-        requirements are met.
+        Choose the project sources and tools this profile can use. Some tools
+        require a project, permission to edit files, or a tested command.
       </p>
 
       <div>
@@ -111,8 +110,8 @@ function HarnessModulesEditor({
           ))}
         </div>
         <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-          Bundles set the context, tool, and inspector modules together;
-          instruction packs are chosen individually below.
+          Choose a group of sources, tools, and research panels, then select
+          research instructions below.
         </p>
       </div>
 
@@ -143,7 +142,7 @@ function HarnessModulesEditor({
                   <Switch
                     checked={enabled}
                     disabled={readOnly || busy}
-                    label={module.name}
+                    label={moduleName(module)}
                     onToggle={() =>
                       onChange(toggleModule(selected, module.id, catalog))
                     }
@@ -151,7 +150,7 @@ function HarnessModulesEditor({
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                        {module.name}
+                        {moduleName(module)}
                       </span>
                       <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-600 dark:bg-gray-800 dark:text-gray-300">
                         {module.capability}
@@ -163,7 +162,7 @@ function HarnessModulesEditor({
                       )}
                     </div>
                     <p className="text-[11px] text-gray-500 dark:text-gray-400">
-                      {module.description}
+                      {moduleDescription(module)}
                     </p>
                     {enabled && !state.available && (
                       <div className="mt-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300">

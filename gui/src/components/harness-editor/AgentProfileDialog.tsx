@@ -76,7 +76,7 @@ export default function AgentProfileDialog({
                 {workspaceId && (
                   <option value={workspaceId}>{workspaceName}</option>
                 )}
-                <option value="global">All Workspaces</option>
+                <option value="global">All conversations</option>
               </select>
             </label>
             <p className="mt-3 text-xs text-gray-500">

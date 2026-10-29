@@ -8,7 +8,8 @@ import {
   type Specification,
   type SeriesRecord,
 } from "../../lib/studioClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { workspaceClient } from "../../lib/workbench/workspaceClient";
+import { executionClient } from "../../lib/workbench/executionClient";
 import type {
   ExecutionProfile,
   ResearchResultV1,
@@ -84,8 +85,8 @@ export default function Experiments({
   } | null>(null);
   const refresh = async () => {
     const [r, p, e, s, irf] = await Promise.all([
-      workbenchClient.listStructuredResults(workspaceId),
-      workbenchClient.listExecutionProfiles(workspaceId),
+      executionClient.listStructuredResults(workspaceId),
+      executionClient.listExecutionProfiles(workspaceId),
       studioClient.records<Experiment>(workspaceId, "experiment"),
       studioClient.records<Specification>(workspaceId, "specification"),
       studioClient.records<SeriesRecord>(workspaceId, "series"),
@@ -99,12 +100,12 @@ export default function Experiments({
   useEffect(() => {
     let disposed = false;
     void Promise.all([
-      workbenchClient.listStructuredResults(workspaceId),
-      workbenchClient.listExecutionProfiles(workspaceId),
+      executionClient.listStructuredResults(workspaceId),
+      executionClient.listExecutionProfiles(workspaceId),
       studioClient.records<Experiment>(workspaceId, "experiment"),
       studioClient.records<Specification>(workspaceId, "specification"),
       studioClient.records<SeriesRecord>(workspaceId, "series"),
-      workbenchClient.getWorkspace(workspaceId),
+      workspaceClient.getWorkspace(workspaceId),
     ])
       .then(([r, p, e, s, irf, w]) => {
         if (!disposed) {
@@ -140,7 +141,7 @@ export default function Experiments({
       <ErrorNotice error={error} />
       <div className="grid gap-4 lg:grid-cols-2">
         <section className={panel}>
-          <h2 className="font-semibold">Local execution profiles</h2>
+          <h2 className="font-semibold">Local commands</h2>
           <Select
             label="Configured profile"
             value={profileId}
@@ -212,7 +213,7 @@ export default function Experiments({
           <details>
             <summary className="text-xs">Advanced argv</summary>
             <Text
-              label="Explicit command argument array"
+              label="Command arguments (JSON array)"
               multiline
               value={argv}
               onChange={setArgv}
@@ -239,7 +240,7 @@ export default function Experiments({
                         `oldstata -q -b do ${quote(`${directory}/${script}`)}`,
                       ]
                     : [language, script];
-                const p = await workbenchClient.saveExecutionProfile({
+                const p = await executionClient.saveExecutionProfile({
                   profileId: profileId || null,
                   workspaceId,
                   name: profileName,
@@ -408,8 +409,9 @@ export default function Experiments({
           Import research-results-v1 / v2
         </button>
         <p className="text-xs text-gray-500">
-          Pipeline binds values to this execution and the adopted output. Logs
-          are not parsed into authoritative coefficients.
+          Pipeline links imported values to this run and its selected output
+          file. Import coefficients from structured results; Pipeline does not
+          extract them from logs.
         </p>
         <div className="overflow-auto">
           <table className="w-full text-left text-xs">
@@ -610,8 +612,8 @@ export default function Experiments({
               />
             </div>
             <p className="text-xs text-gray-500">
-              Numerical agreement, solver convergence and economic
-              interpretation are separate assessments.
+              Check numerical agreement, solver convergence, and economic
+              interpretation separately.
             </p>
           </>
         )}
@@ -641,9 +643,9 @@ export default function Experiments({
           <Text label="Sample ID" value={sampleId} onChange={setSampleId} />
         </div>
         <p className="text-xs text-gray-500">
-          Each field retains its value, declared/inferred origin and source.
-          Typical fields: controls, weights, inference, calibration and solver
-          convergence.
+          Save details such as controls, weights, inference, calibration, and
+          solver convergence. Each field records its source and whether you
+          supplied it or Pipeline inferred it.
         </p>
         <Text
           label={

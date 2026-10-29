@@ -4,7 +4,7 @@ import {
   type Dispatch,
   type SetStateAction,
 } from "react";
-import { workbenchClient } from "../lib/workbenchClient";
+import { conversationClient } from "../lib/workbench/conversationClient";
 import type { WorkbenchSession } from "../lib/workbenchTypes";
 
 export default function useWorkspaceSessionList(
@@ -17,7 +17,7 @@ export default function useWorkspaceSessionList(
   return useCallback(
     async (selectedWorkspace: string | null, archived = showArchived) => {
       const request = ++sequence.current;
-      const response = await workbenchClient.listSessions(
+      const response = await conversationClient.listSessions(
         selectedWorkspace,
         archived,
       );

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
-import { workbenchClient } from "../lib/workbenchClient";
+import { conversationClient } from "../lib/workbench/conversationClient";
+import { runtimeClient } from "../lib/workbench/runtimeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type { ConversationSnapshot } from "../lib/workbenchTypes";
 
@@ -41,14 +42,14 @@ export function useConversationActions({
     setActionError(null);
     setActionNotice(null);
     try {
-      await workbenchClient.interruptTurn(turn.threadId, turn.turnId);
+      await runtimeClient.interruptTurn(turn.threadId, turn.turnId);
       // The terminal event owns cancellation state; an acknowledgement is not
       // evidence that the model has already stopped.
     } catch (cause) {
       let message = `Could not stop the response: ${workbenchErrorMessage(cause)}. The response may still be running. Try Stop again.`;
       if (sessionRef.current === id) setActionError(message);
       try {
-        await workbenchClient.reconcileSession(id);
+        await runtimeClient.reconcileSession(id);
         if (sessionRef.current === id) await hydrate(id);
       } catch (refreshError) {
         message += ` Could not refresh its status: ${workbenchErrorMessage(refreshError)}`;
@@ -78,7 +79,7 @@ export function useConversationActions({
         filters: [{ name: "Markdown", extensions: ["md"] }],
       });
       if (!path) return;
-      await workbenchClient.exportConversation(current.session.id, path);
+      await conversationClient.exportConversation(current.session.id, path);
       if (sessionRef.current === current.session.id)
         setActionNotice(`Conversation exported to ${path}`);
     } catch (cause) {

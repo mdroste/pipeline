@@ -7,7 +7,7 @@ import type {
   RuntimeStage,
   RuntimeStageKind,
   ReviewRoutingSummary,
-} from "../hooks/usePipeline";
+} from "../lib/reviewRuntimeTypes";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
 
 interface Props {

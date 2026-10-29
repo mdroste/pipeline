@@ -1,70 +1,92 @@
 # Automations
 
-Automations connect project conversations, immutable paper snapshots, Review profiles,
-and follow-ups. Open **Automations** under Tools, or choose **Run an automation** in
-the conversation menu. The built-in starting points are **Review and revise**,
-**Follow up**, and **Wait for input**. Prepare the automation to inspect its conversation,
-folder, saved Review profiles, and limits; **Start automation** begins that exact scope.
-The native compatibility namespace and portable schema continue to use `task` and
-`chain`; those are implementation terms rather than separate product objects.
+Automations run a sequence of conversation turns, Reviews, local checks, and
+waits. Use one for repeated work such as drafting a paper, reviewing it, and
+revising it a limited number of times.
 
-The Review-and-revise template produces a complete Markdown paper or captures an
-existing document, reviews it, and revises only when another review is permitted.
-It finishes when a complete review contains no high-priority or unclassified
-findings, or when the review limit is reached. The last artifact is always the
-reviewed version. An unchanged revision needs attention instead of spending
-another Review run on the same bytes. Findings and quality limitations remain
-available with the result; completing the sequence does not establish scientific
-correctness.
+## Start an automation
 
-The Active, Scheduled and History tabs show automations. Project **Action items**
-are local research objectives; they do not start an automation. Tabs use
-Arrow/Home/End to move focus and Enter/Space to activate, avoiding native reads
-while moving across labels.
+1. Open **Automations** under Tools, or choose **Run an automation** in a
+   conversation's menu.
+2. Choose **Review and revise**, **Follow up**, or **Wait for input**.
+3. Choose the conversation, folder, timing, review settings, and limits.
+4. Prepare the automation and inspect the work it will run.
+5. Choose **Start automation**.
+
+The **Active**, **Scheduled**, and **History** tabs show ongoing work,
+schedules, and previous runs. Project **Action items** are separate research
+to-dos; creating one does not start an automation.
+
+## Review and revise
+
+This template drafts a complete Markdown paper or captures an existing
+document, reviews it, and revises it when another review round is available.
+It stops when a complete review has no high-priority or unclassified findings,
+or when it reaches the review limit. The final document is always a version
+that was reviewed.
+
+If a revision leaves the document unchanged, Pipeline asks for attention
+instead of reviewing the same content again. The result includes the findings
+and remaining limitations. Inspect these before treating the revision as ready.
+
+## Set a schedule
+
+Choose **Now**, **Later**, an interval, or a calendar schedule. Calendar
+schedules let you choose weekdays and a time zone; the form previews the next
+three occurrences.
+
+Pipeline skips times that do not exist during the spring daylight-saving
+change. A repeated autumn time runs once, at its first occurrence. Intervals
+stay anchored to the first start you chose. If several occurrences are missed,
+Pipeline combines them into one pending run. Runs from the same schedule do
+not overlap.
+
+Each occurrence gets its own conversation with the source conversation's
+research settings. Changes to the project, folder, or assistant configuration
+can require you to review the setup again.
+
+**Pipeline must remain running and the computer must be awake.** Enable
+**Keep running when the window closes** to continue through the tray menu.
+Quitting stops execution. On reopening, Pipeline restores saved schedules,
+waits, and progress; it checks interrupted work before deciding what can
+continue. It does not wake the computer or install a separate background service.
+
+## Wait for input, pause, or stop
+
+An input step waits for your answer on the automation card. It uses no model
+turn while waiting. Custom definitions can set a timeout and choose what
+happens if no answer arrives.
+
+**Pause** lets active work finish and prevents the next action from starting.
+**Stop** cancels that automation's active work. Saved results remain available.
+
+If Pipeline loses track of whether an action finished, it asks for attention.
+Use **Reconcile recorded results** to look for a saved conversation response,
+Review, or command result before retrying. The Activity log keeps earlier
+attempts and their outputs.
+
+A changed conversation may require **Use current conversation context** before
+work resumes. This refreshes the conversation context; it does not change the
+Review definitions saved with the automation.
 
 ## Research automations
 
-**Automations → Research** provides persistent adaptive research agendas. A research automation
-creates separate planner, investigator and challenger conversations, chooses
-bounded investigations, retains evidence and negative results, and replans after
-assessment or researcher input. Prepared criteria, permissions and cumulative
-limits remain fixed. Child actions are inspected from the automation's Activity tab;
-pause, stop and recovery belong to the parent automation. See
-[Research missions](research-missions.md) for the full contract and walkthrough.
+Under **Automations → Research**, you can start a longer investigation with
+separate planner, investigator, and challenger conversations. Set the research
+question, completion criteria, tools, and limits. See
+[Research automations](research-missions.md).
 
-The same Research area includes **Full self-discovery (supervised)** and
-**Full self-discovery (unsupervised)**. These develop a portfolio from a topic
-prompt through reviewed proposals, paper drafting and final ranking. Their
-typed portfolio state and child ownership live in `orchestration/discovery/`;
-see [Self-discovery](self-discovery.md) for the current contract and limits.
+**Research discovery** starts from a topic, develops proposals, and produces
+reviewed drafts. Choose projects yourself from a shortlist or let Pipeline
+choose them. See [Research discovery](self-discovery.md) for settings and limits.
 
-## Timing and input
+## Advanced definitions
 
-Choose **Now**, **Later**, an interval, or a calendar schedule. Calendar schedules
-use an IANA time zone and selected weekdays. The form previews the next three
-occurrences. Spring daylight-saving gaps are skipped; repeated autumn clock
-times run once at their first occurrence. Intervals remain anchored to the
-chosen first start. Missed recurring occurrences are combined into one, and
-occurrences of one schedule never overlap. Each occurrence receives a separate
-conversation with the source conversation's selected research settings. A blocked
-schedule retains one coalesced pending occurrence without consuming the batch
-slots available to other eligible schedules. Changing
-the source project, folder identity, or harness requires reviewing that scope.
+The sections below describe custom automation JSON and its execution rules.
+The format uses `task` and `chain` as technical names for an automation and its
+steps.
 
-An input step suspends the task without holding a worker or model turn. Supply
-the answer on the task card. Signals are consumed once. Optional input timeouts
-produce `{ "timedOut": true, "at": ... }`; a custom chain should branch on this
-value before using it as research input. Timers, pending inputs, pauses,
-schedules, and the action journal survive restarts.
-
-**Keep running when the window closes** keeps the native desktop process alive
-with a tray menu. This uses the same runtime owner and locks as foreground work.
-Quitting Pipeline stops execution; reopening resumes eligible durable waits.
-The computer must be awake. This implementation does not install a login agent,
-wake a sleeping computer, or provide an always-on remote runner. The tray follows
-the native [Tauri system tray APIs](https://tauri.app/learn/system-tray/).
-
-## Defining chains
+### Defining chains
 
 **Edit definition** exposes the versioned JSON format. Import and export chain
 files, or save content-addressed versions in **Saved chains**. The authoritative
@@ -126,7 +148,7 @@ identities; `workbench_task_propose` records a local proposal. Neither starts
 work nor grants permissions. Open the resulting proposal card to resolve its
 exact scope and start it. Plain conversations load no task tool catalog.
 
-## Runtime boundaries and recovery
+### Runtime boundaries and recovery
 
 `src-tauri/src/orchestration/` owns the durable coordinator, pure control-flow
 interpreter, scheduler, and SQLite store. `commands/orchestration.rs` is the
@@ -184,7 +206,7 @@ report text and structured findings. Manuscript text above 128 KiB is unavailabl
 to the default text-revision prompt and requires a file-based chain; the full raw
 Review result remains retained. Prompts exceeding 256 KiB need smaller bindings.
 
-## Validation
+### Validation
 
 The Rust suite includes real-store coordinator tests for timer/input suspension,
 parallel joins, exactly-once signal consumption, artifact persistence, pause and
@@ -208,7 +230,7 @@ real host tools, packaged close/reopen behavior, and Windows/Linux runtime
 qualification remain governed by the existing
 [release qualification policy](workbench/release-qualification.md).
 
-### Control evaluation and retained Review failures
+#### Control evaluation and retained Review failures
 
 Control-only branches and loops have a separate ceiling of 4,096 durable
 control decisions and 32,768 interpreter visits per advance. Progress must stay

@@ -75,15 +75,14 @@ export default function SelfDiscovery({
   return (
     <section
       className="research-missions discovery-page"
-      aria-label="Full self-discovery"
+      aria-label="Research discovery"
     >
       <div className="task-section-heading">
         <div>
           <button onClick={onBack}>← Research automations</button>
-          <h2>Full self-discovery</h2>
+          <h2>Research discovery</h2>
           <p className="task-muted">
-            Develop original research across academic fields, from topic to
-            assessed papers.
+            Explore research questions, develop papers, and review the results.
           </p>
         </div>
         <button
@@ -94,7 +93,7 @@ export default function SelfDiscovery({
             setCreating(true);
           }}
         >
-          New self-discovery
+          New research discovery
         </button>
       </div>
       {error && (
@@ -105,7 +104,7 @@ export default function SelfDiscovery({
       <div
         className={`tasks-content ${creating || run ? "tasks-content--split" : ""}`}
       >
-        <section className="task-list" aria-label="Self-discovery history">
+        <section className="task-list" aria-label="Research discovery history">
           {rows.map((r) => (
             <button
               className={`task-list-row ${run?.id === r.id ? "is-selected" : ""}`}

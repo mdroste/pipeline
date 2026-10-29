@@ -63,9 +63,7 @@ export default function ArtifactExplorer({
           role="alert"
           className="m-4 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3 text-sm text-red-700 dark:text-red-300"
         >
-          <p className="font-medium">
-            Could not load this run's artifact manifest.
-          </p>
+          <p className="font-medium">Could not load this review’s file list.</p>
           <p className="mt-1 text-xs">{manifestError}</p>
           <button
             type="button"
@@ -76,7 +74,7 @@ export default function ArtifactExplorer({
           </button>
         </div>
         {fallbackMarkdown && (
-          <section aria-label="Fallback report">
+          <section aria-label="Saved report text">
             <p className="mx-4 text-xs text-gray-500">
               Showing the fallback report.
             </p>
@@ -111,7 +109,7 @@ export default function ArtifactExplorer({
             <button
               onClick={() => setFileTab(fileTab ? null : { path: selected })}
             >
-              {fileTab ? "Return to artifact preview" : "Open in file tabs"}
+              {fileTab ? "Return to file preview" : "Open in file tabs"}
             </button>
           </div>
         )}
@@ -165,11 +163,11 @@ export default function ArtifactExplorer({
           <div className="min-h-0 flex-1 overflow-auto">
             {loadError ? (
               <div className="p-6 text-sm text-gray-500 dark:text-gray-400">
-                Could not read this artifact: {loadError}
+                Could not read this file: {loadError}
               </div>
             ) : !selected ? (
               <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-500 dark:text-gray-400">
-                Select an artifact to preview it.
+                Select a file to preview it.
               </div>
             ) : content ? (
               <RunMarkdown

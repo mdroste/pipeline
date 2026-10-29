@@ -100,7 +100,7 @@
           "id": "review",
           "label": "Run the Review profile",
           "kind": "review",
-          "profileId": "auto-review",
+          "profileId": "auto-paper-review",
           "interpretation": "document",
           "input": {
             "kind": "firstAvailable",

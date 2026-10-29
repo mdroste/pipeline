@@ -8,7 +8,7 @@ import type {
   Condition,
   Json,
   Step,
-} from "../../lib/taskClient";
+} from "../../lib/taskTypes";
 import { describeCondition, OUTPUT_FIELDS, stepsBefore } from "./language";
 
 interface OutputOption {
@@ -313,8 +313,8 @@ export function ConditionEditor({
     // Structures beyond the picker (nested groups) stay intact; edit as JSON.
     return (
       <p className="task-muted">
-        {describeCondition(chain, value)} — this condition uses nesting the
-        picker does not edit; change it in the definition view.
+        {describeCondition(chain, value)} — edit this nested condition in the
+        advanced definition view.
       </p>
     );
   }
@@ -431,8 +431,7 @@ export function ConditionEditor({
         + Condition
       </button>
       <p className="task-muted">
-        If a value is not known yet, the automation pauses for your attention
-        instead of guessing.
+        The automation pauses for your input when a required value is missing.
       </p>
     </div>
   );

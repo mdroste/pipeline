@@ -26,7 +26,9 @@ vi.mock("../../lib/studioClient", async (original) => ({
   studioClient: mocks,
 }));
 vi.mock("../../lib/projectClient", () => ({ projectClient: mocks }));
-vi.mock("../../lib/workbenchClient", () => ({ workbenchClient: mocks }));
+vi.mock("../../lib/workbench/executionClient", () => ({
+  executionClient: mocks,
+}));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: vi.fn() }));
 // The save/conflict integration is independent of the editor's DOM implementation.

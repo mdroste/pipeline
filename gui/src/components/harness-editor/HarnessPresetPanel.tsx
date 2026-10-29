@@ -1,3 +1,4 @@
+import { presetDescription } from "./harnessCopy";
 // Detail panel for one harness preset: editable header with a generated
 // summary, ownership badges, use/clone/restore/save actions, and Instructions
 // and Modules tabs. Built-ins render read-only; clones own their copy.
@@ -26,6 +27,7 @@ export interface PresetDraft {
 }
 
 interface Props {
+  runtime?: "codex" | "claude";
   preset: HarnessPreset;
   sourcePreset: HarnessPreset | null;
   catalog: HarnessCatalog;
@@ -57,6 +59,7 @@ const inputClass =
   "w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100";
 
 function HarnessPresetPanel({
+  runtime = "codex",
   preset,
   sourcePreset,
   catalog,
@@ -116,7 +119,9 @@ function HarnessPresetPanel({
         <div className="flex flex-wrap items-center gap-2">
           {readOnly ? (
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-              {preset.name}
+              {runtime === "claude" && preset.id === "plain"
+                ? "Claude Code default"
+                : preset.name}
             </h2>
           ) : (
             <input
@@ -158,14 +163,16 @@ function HarnessPresetPanel({
           <p className="text-[11px] text-gray-500">
             {preset.workspaceId
               ? "Available in this project."
-              : "Available in all Workspaces."}{" "}
+              : "Available in all conversations."}{" "}
             Saving changes affects future turns in every conversation using this
             profile. Duplicate it to customize only this conversation.
           </p>
         )}
         {readOnly ? (
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            {preset.description}
+            {runtime === "claude" && preset.id === "plain"
+              ? "Claude Code with Pipeline instructions and scoped project tools."
+              : presetDescription(preset)}
           </p>
         ) : (
           <input
@@ -273,6 +280,7 @@ function HarnessPresetPanel({
         className="min-h-0 flex-1 overflow-auto p-4"
       >
         <HarnessInstructionsEditor
+          runtime={runtime}
           value={draft.instructions}
           baseInstructions={draft.baseInstructions}
           onBaseChange={(baseInstructions) => onDraft({ baseInstructions })}

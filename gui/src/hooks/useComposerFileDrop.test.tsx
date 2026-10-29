@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   notify: vi.fn(),
   emit: null as ((event: FileDropEvent) => void) | null,
 }));
-vi.mock("../lib/workbenchClient", () => ({ workbenchClient: mocks }));
+vi.mock("../lib/workbench/researchClient", () => ({ researchClient: mocks }));
 vi.mock("../components/DialogService", () => ({ notify: mocks.notify }));
 vi.mock("../lib/fileDrop", () => ({
   onFileDrop: async (handler: (event: FileDropEvent) => void) => {

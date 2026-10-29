@@ -1013,3 +1013,5 @@ async fn markdown_document_extraction_preserves_bytes_and_bundle() {
     assert_eq!(bundle.bundle.source_kind, "text");
     assert!(!bundle.bundle.nodes.is_empty());
 }
+
+mod pdf_characterization;

@@ -128,7 +128,7 @@ function Cell({
           type="button"
           disabled={busy}
           aria-label={`Inherit ${row.label} for ${scopeLabel}`}
-          title="Remove this override and inherit from the scope to the left"
+          title="Use the setting shown to the left."
           onClick={() => onSet(scope, row.key, undefined)}
           className="rounded px-1 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800"
         >
@@ -239,7 +239,7 @@ function HarnessAccessTable({
         Access changes apply to your next message. Current permissions:{" "}
         <span className="font-mono">{effective.permissionProfile}</span>.
         {successor &&
-          " The assistant will start fresh with the new settings and saved project context. Earlier messages remain in the transcript."}
+          " Your next message starts a new assistant session with these settings and the saved project context. Earlier messages remain visible here."}
       </p>
     </div>
   );

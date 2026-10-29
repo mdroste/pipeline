@@ -1,5 +1,5 @@
+import { reviewHistoryClient } from "../lib/reviewHistoryClient";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { router } from "../lib/router";
 import { confirmDialog, notify } from "./DialogService";
 import ComparePage from "./ComparePage";
@@ -7,7 +7,6 @@ import ErrorBoundary from "./ErrorBoundary";
 import ReportWorkspace from "./ReportWorkspace";
 import type {
   Project,
-  ProjectsResponse,
   RunSummary,
   RunsDiskUsage,
   TrashedRun,
@@ -183,9 +182,9 @@ export default function HistoryPage({
     setLoading(true);
     try {
       const [nextRuns, nextUsage, nextProjects] = await Promise.all([
-        invoke<RunSummary[]>("list_runs"),
-        invoke<RunsDiskUsage>("runs_disk_usage").catch(() => null),
-        invoke<ProjectsResponse>("list_projects").catch(() => null),
+        reviewHistoryClient.list(),
+        reviewHistoryClient.usage().catch(() => null),
+        reviewHistoryClient.projects().catch(() => null),
       ]);
       if (request !== refreshRequestRef.current) return;
       setRuns(nextRuns);
@@ -208,7 +207,7 @@ export default function HistoryPage({
   const refreshTrash = useCallback(async () => {
     setTrashLoading(true);
     try {
-      setTrashedRuns(await invoke<TrashedRun[]>("list_trashed_runs"));
+      setTrashedRuns(await reviewHistoryClient.trashed());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -324,7 +323,7 @@ export default function HistoryPage({
       .map((t) => t.trim())
       .filter(Boolean);
     try {
-      await invoke("update_run_meta", { runId, title: editTitle, tags });
+      await reviewHistoryClient.updateMeta({ runId, title: editTitle, tags });
       setEditing(null);
       void refresh();
     } catch (e) {
@@ -346,7 +345,7 @@ export default function HistoryPage({
     )
       return;
     try {
-      await invoke("delete_run", { runId: r.run_id });
+      await reviewHistoryClient.trash({ runId: r.run_id });
       notify("Report moved to Trash.", "success");
       if (openRunId === r.run_id) {
         setOpenRunId(null);
@@ -361,7 +360,7 @@ export default function HistoryPage({
 
   const restoreRun = async (run: TrashedRun) => {
     try {
-      await invoke("restore_trashed_run", { runId: run.run_id });
+      await reviewHistoryClient.restore({ runId: run.run_id });
       notify("Report restored to History.", "success");
       await Promise.all([refresh(), refreshTrash()]);
     } catch (e) {
@@ -383,7 +382,7 @@ export default function HistoryPage({
     )
       return;
     try {
-      await invoke("permanently_delete_trashed_run", { runId: run.run_id });
+      await reviewHistoryClient.remove({ runId: run.run_id });
       notify("Report permanently deleted.", "success");
       await refreshTrash();
     } catch (e) {
@@ -586,7 +585,7 @@ export default function HistoryPage({
               Report Trash
             </h3>
             <span className="text-xs text-gray-500 dark:text-gray-400">
-              Restore reports here, or deliberately delete them forever.
+              Restore reports or delete them permanently.
             </span>
             <button
               onClick={refreshTrash}
@@ -834,7 +833,7 @@ export default function HistoryPage({
                               title={
                                 runInProgress
                                   ? "A report is already being generated"
-                                  : "Regenerate with the active workflow, reusing the captured document and orientation"
+                                  : "Run the current review design using the saved document and input assessment."
                               }
                             >
                               Regenerate

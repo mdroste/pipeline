@@ -113,7 +113,7 @@ export default function Search(props: DeskProps) {
         {index?.complete
           ? "Local index complete"
           : "Building local index; results may be incomplete"}{" "}
-        · lexical search · exact revisions{" "}
+        · keyword search · saved versions{" "}
         <button
           className="ml-2 underline"
           onClick={() =>

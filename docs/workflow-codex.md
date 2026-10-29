@@ -1,10 +1,13 @@
-# Workflow Codex App Server migration
+# Review ChatGPT connection: developer reference
 
-Implementation status: default subscription connection, September 7, 2026;
-live and packaged release qualification remains incomplete. Claude continues to use
-its existing CLI/API adapters. Existing installations migrate the former
-legacy Codex default to App Server. Legacy CLI remains an explicit advanced
-compatibility option.
+Reviews use Codex App Server as the default ChatGPT subscription connection.
+For setup, see [Connect ChatGPT](chatgpt-account.md). This page documents the
+adapter, compatibility checks, and recovery behavior.
+
+The default changed on September 7, 2026. Existing installations migrate the
+former default once; users can still explicitly choose the legacy CLI adapter
+for compatibility troubleshooting. Live and packaged release checks are
+recorded separately below.
 
 ## Using it
 
@@ -13,7 +16,7 @@ compatibility option.
    exercised with 0.153.4 on macOS arm64. Older/newer installations must pass
    strict configuration and runtime contract checks; a minimum version check
    alone is not a compatibility guarantee.
-2. In **Settings → Providers → OpenAI → Review & workflows**, choose
+2. In **Settings → Connections → OpenAI → Reviews**, choose
    **Subscription**. Codex App Server is the default connection.
 3. Use **Sign in to ChatGPT**. Complete the native browser flow. Pipeline
    uses the [shared ChatGPT account](chatgpt-account.md) for both Conversations
@@ -204,7 +207,7 @@ logs in or submits a model turn. On macOS this probe must be allowed to create
 its own sandbox; a parent sandbox can cause `sandbox_apply: Operation not
 permitted` before the baseline command runs.
 
-[The recorded macOS result](workflow-codex-probe-0.153.4-macos-arm64.json)
+[The recorded macOS result](releases/workflow-codex-probe-0.153.4-macos-arm64.json)
 passed on September 6, 2026. During qualification the installed runtime rejected
 `tools.view_image`; the versioned [upstream configuration schema](https://raw.githubusercontent.com/openai/codex/rust-v0.153.4/codex-rs/core/config.schema.json)
 places that toggle under `features.view_image`. Strict startup exposed this

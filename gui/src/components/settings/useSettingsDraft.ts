@@ -1,5 +1,5 @@
+import { settingsClient } from "../../lib/settingsClient";
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
 
 import type { Settings } from "../../lib/types";
 
@@ -35,11 +35,8 @@ export function useSettingsDraft(onSystemChange?: () => void) {
   }, [saved]);
 
   const load = () =>
-    invoke<{
-      settings: Settings;
-      warnings: string[];
-      undecryptable_keys?: string[];
-    }>("get_settings")
+    settingsClient
+      .load()
       .then((resp) => {
         providerCatalogs.initialize(resp.settings);
         setSettings(resp.settings);
@@ -69,11 +66,8 @@ export function useSettingsDraft(onSystemChange?: () => void) {
       const operation = saveChainRef.current
         .catch(() => undefined)
         .then(async () => {
-          await invoke("discard_undecryptable_secret", { provider });
-          const response = await invoke<{
-            warnings: string[];
-            undecryptable_keys?: string[];
-          }>("get_settings");
+          await settingsClient.discardSecret({ provider });
+          const response = await settingsClient.load();
           setWarnings(response.warnings);
           setUndecryptableKeys(response.undecryptable_keys ?? []);
         });
@@ -100,7 +94,7 @@ export function useSettingsDraft(onSystemChange?: () => void) {
       .catch(() => undefined)
       .then(async () => {
         try {
-          await invoke("save_settings", { settings: settingsToSave });
+          await settingsClient.save({ settings: settingsToSave });
           setSavedSettingsSnapshot(savedSnapshot);
           setWarnings([]);
           setSaved(JSON.stringify(settingsRef.current) === savedSnapshot);

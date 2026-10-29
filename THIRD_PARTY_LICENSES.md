@@ -1,9 +1,8 @@
 # Third-party software notices
 
-Pipeline itself is distributed under the MIT License (see `LICENSE`). The
-desktop bundle also contains compiled Rust/JavaScript dependencies and a
-platform-specific Poppler command-line distribution. This notice describes the
-release inputs; it does not replace the license text supplied by any project.
+Pipeline uses the [MIT License](LICENSE). Its installers also include Rust and
+JavaScript dependencies and Poppler PDF tools. Those components retain their
+own licenses, described below and in the accompanying license files.
 
 Every installer contains this notice, Pipeline's MIT license, and the Poppler
 license text supplied with that platform's Poppler distribution. The GitHub
@@ -14,7 +13,7 @@ release page publishes the platform installers themselves.
 Pipeline invokes `pdftoppm` and `pdftotext` as separate programs. Poppler is
 licensed under GPL terms; consult the license text bundled beside these tools.
 
-The active build uses the installed Homebrew Poppler distribution on macOS and
+The build uses the installed Homebrew Poppler distribution on macOS and
 the installed Ubuntu packages on Linux. These inputs are not pinned to an exact
 formula commit or APT snapshot. Windows uses the archive URL and SHA-256 in
 `scripts/release/poppler-lock.json`; the build verifies that archive before
@@ -25,8 +24,8 @@ to a conda package archive.
 SHA-256 of every file in the bundled Poppler tree. The build verifies cached
 resources before use and regenerates the inventory after macOS signing. This
 inventory is not a full dependency SBOM or evidence of exact source provenance.
-The source repository's Poppler lock and provenance utilities are review inputs;
-they do not establish pins that the active bundler does not enforce.
+The bundling script determines which checks run. Additional lock and source
+records in the repository are available for maintainer review.
 
 Upstream source and distribution records are available from the
 [Poppler project](https://poppler.freedesktop.org/),
@@ -35,9 +34,9 @@ Upstream source and distribution records are available from the
 [Windows distribution](https://github.com/oschwartz10612/poppler-windows).
 Source archives are not embedded in the installed application.
 
-Before public release, the maintainer must review the actual bundled closure,
-its licenses and notices, and its corresponding-source distribution or offer
-under `RELEASING.md`. Upstream links and file hashes alone do not establish that
+Before public release, the maintainer must review all bundled components,
+their licenses and notices, and the required source distribution or offer
+under [Releasing](RELEASING.md). Upstream links and file hashes alone do not establish that
 this requirement is satisfied. The Windows provider ZIP does not include a
 separate license file for every dependency; any additional notices must be
 supplied as part of that review.

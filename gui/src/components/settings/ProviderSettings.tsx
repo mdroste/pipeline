@@ -75,9 +75,9 @@ export function LocalProviderSection({
             ollama.com
           </a>{" "}
           installed, run <span className="font-mono">ollama pull llama3.3</span>
-          , then select the model below. LM Studio, llama.cpp, and vLLM work by
-          changing the URL. Local models may be less capable than cloud models
-          and may lack file-reading support.
+          , then select the model below. For LM Studio, llama.cpp, or vLLM,
+          enter that server’s URL. Local models may be less capable than cloud
+          models and may lack file-reading support.
         </InfoButton>
       </div>
       {externalLinkError && (
@@ -200,8 +200,8 @@ export function AccessModeSelector({
         {subscriptionDisabledNote
           ? subscriptionDisabledNote
           : effectiveValue === "subscription"
-            ? "Uses the provider’s native connection and signed-in subscription. The saved API key is not used."
-            : "Uses direct, token-metered API calls with the key below. The provider CLI is not required."}
+            ? "Use your signed-in subscription account. The saved API key stays inactive."
+            : "Use the API key below. The provider charges for token usage; no command-line tool is needed."}
       </p>
     </div>
   );

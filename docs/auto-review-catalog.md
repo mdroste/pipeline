@@ -1,51 +1,59 @@
-# Auto Review specialist catalog
+# Review specialists
 
-Auto Paper Review separates the stable workflow from the specialist catalog.
-The saved profile has five steps: three universal reviews, one consolidation
-(Consolidate Feedback), and one validation pass (Validate Feedback).
-After orientation, Rust validates the routing plan and materializes only the
-selected reviewers. A normal run therefore has seven to eleven steps:
+Paper Review selects reviewers for the document's subject and methods. A
+mathematics paper can receive both a subject review and a proof review; an
+empirical paper can receive a field review and an assessment of its research
+design. The tables below describe the available coverage.
 
-- three universal reviewers;
-- one primary subject specialist and, for genuinely interdisciplinary work,
-  one secondary subject specialist;
+For instructions on running a review, see [Reviews](reviews.md).
+
+## How reviewers are selected
+
+An initial classification identifies the field, methods, and document type.
+Paper Review then runs:
+
+- three core assessments;
+- one or two subject specialists;
 - one to four method specialists;
-- Consolidate Feedback, which merges every report into up to forty ordered
-  comments; and
-- Validate Feedback, which re-checks each consolidated comment against the
-  paper, repairs details that are easy to fix, removes comments that do not
-  validate, and returns the same report-viewer format. Its artifact context is
-  the primary input, the survey, and the consolidated report only — never the
-  raw parallel reports.
+- a consolidation step that combines the reports into up to forty comments; and
+- a validation step that checks those comments against the paper, corrects
+  details where possible, and removes comments it cannot support.
 
-Every skeleton step and every materialized specialist declares the optional
-`WebSearch` capability by default.
+This produces seven to eleven review steps, excluding the initial
+classification. Paper Review (Fast) omits the separate contribution-and-literature
+assessment and uses at most two method specialists, for six to eight steps.
+Slide Review uses the same selection process with instructions tailored to a
+slide deck.
 
-The orientation call also classifies the document's genre (`review_plan.genre`)
-against a nine-entry allowlist, defaulting to `research_article`. Genre is
-context, not a reviewer: for a non-article genre, materialization injects that
-genre's host-owned context paragraph into every enabled step — core reviewers,
-specialists, consolidation, and validation — so the whole panel judges the
-manuscript as the kind of document it claims to be, with an explicit
-instruction to review the paper as what it is if the classification proves
-wrong.
+A specialist's selection reason appears with its instructions. Reviewers also
+receive guidance for the document type, such as a replication study, survey,
+comment, or slide deck. Subject and method reviews serve different purposes:
+a field specialist does not replace a separate assessment of the method.
 
-The orientation model chooses stable IDs only. Prompts, tools, artifact access,
-providers, model policy, phase, and synthesis selectors remain host-owned. The
-router's validated per-selection reason is additionally foregrounded in each
-materialized prompt as a quoted "Routing Context" section — bounded, condensed
-to one line, and framed as a model-authored pointer to verify rather than an
-instruction — so each specialist starts from the claim that triggered its
-selection.
+In the designer, **Orientation & Classification** precedes the
+**Auto-filled from orientation** subject and method slots. Open the catalog
+from those slots to browse the available reviewers. The selected reviewers
+appear as individual parallel steps when the run starts.
 
-The Workflow Editor represents this without pretending the full catalog is a
-saved workflow. It shows one combined **Orientation & Classification** stage,
-then read-only **Auto-filled from orientation** slots for subject and method
-specialists. The slots link to the searchable catalog. At run time, each
-chosen role becomes an ordinary parallel step, and every resulting specialist
-report is added directly to Consolidate Feedback beside the three universal
-reports. Validate Feedback then verifies the consolidated report before it
-becomes the run's final report.
+## Implementation reference
+
+The saved Paper Review profile contains three core reviewers, consolidation,
+and validation. Rust validates the classification and adds the selected
+specialists for that run. Every reviewer report feeds consolidation. Validation
+reads the primary input, orientation, and consolidated report; it does not read
+the individual parallel reports.
+
+The model selects catalog IDs. Pipeline supplies each role's prompt, tools,
+file access, provider settings, and output routing. All generated steps declare
+optional web search; whether it is available depends on the provider.
+
+Document genres are validated against the catalog, with `research_article` as
+the default. Genre guidance is included in each step and uses no specialist
+slot. Slide Review fixes the genre to `genre_slide_deck` through its orientation
+schema. The host accepts a fixed genre only if it exists in the current catalog.
+
+Selection reasons are bounded, quoted model text that reviewers must check
+against the document. They cannot change a step's permissions or configuration.
 
 ## Prompt composition
 
@@ -174,8 +182,9 @@ itself as — `research_article` by default, or one of:
 - methods and tool papers;
 - registered reports and preregistered studies;
 - null and negative results;
-- case reports and case series; and
-- research software papers.
+- case reports and case series;
+- research software papers; and
+- slide decks.
 
 The classification is not a reviewer selection and consumes no specialist
 slot. For a non-article genre, every reviewer receives the same host-owned
@@ -197,7 +206,7 @@ reviewer does not replace clinical-study design review.
 2. Give the router a positive description and a concrete exclusion. The
    exclusion is important for avoiding attractive but irrelevant reviewers.
 3. For a subject role, reuse its discipline lens and add `focus.md` beside the
-   manifest. Add a new discipline Markdown lens only for a genuinely new
+   manifest. Add a new discipline Markdown lens only for a new
    discipline. For a method role, add `prompt.md` beside the manifest; both
    reviewer types inherit their shared evidence and report-output contract.
    For a genre, add a compact `prompt.md` context paragraph with no output
@@ -211,6 +220,5 @@ reviewer does not replace clinical-study design review.
    The saved profile must remain five steps and the materialized workflow must
    remain below the 100-step profile limit.
 
-There are no pinned or legacy Auto Review catalogs in this pre-release codebase.
-The current manifest format, compact schema references, and generated catalog
-are the single source of truth.
+The current manifests, schema references, and generated catalog define the
+reviewer set. The app does not keep separate pinned or legacy catalogs.

@@ -1,5 +1,5 @@
+import { reviewHistoryClient } from "../../lib/reviewHistoryClient";
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { confirmDialog } from "../DialogService";
 
 import type { Settings } from "../../lib/types";
@@ -23,9 +23,7 @@ export function RunRetention({
 
   const loadUsage = async () => {
     try {
-      setUsage(
-        await invoke<{ count: number; bytes: number }>("runs_disk_usage"),
-      );
+      setUsage(await reviewHistoryClient.usage());
     } catch {
       setUsage(null);
     }
@@ -47,20 +45,12 @@ export function RunRetention({
     setPurgeResult(null);
     let purgeStarted = false;
     try {
-      const preview = await invoke<{
-        delete_count: number;
-        delete_bytes: number;
-        remaining_count: number;
-        remaining_bytes: number;
-        preview_token: string;
-      }>("preview_purge_runs", {
+      const preview = await reviewHistoryClient.previewPurge({
         keep: settings.max_saved_runs,
         maxBytes: settings.max_saved_run_bytes,
       });
       if (preview.delete_count === 0) {
-        setPurgeResult(
-          "No completed reports were beyond the configured limits.",
-        );
+        setPurgeResult("Your completed reports are within the storage limits.");
         await loadUsage();
         return;
       }
@@ -71,7 +61,7 @@ export function RunRetention({
           } (${fmtBytes(preview.delete_bytes)}). ` +
           `${preview.remaining_count} report${preview.remaining_count === 1 ? "" : "s"} ` +
           `(${fmtBytes(preview.remaining_bytes)}) will remain.\n\n` +
-          "Reports remain recoverable from Trash until deliberately deleted there.",
+          "You can restore reports from Trash until you delete them permanently.",
         {
           title: "Apply retention policy",
           confirmLabel: "Move to Trash",
@@ -81,14 +71,14 @@ export function RunRetention({
       if (!confirmed) return;
 
       purgeStarted = true;
-      const removed = await invoke<number>("purge_runs", {
+      const removed = await reviewHistoryClient.purge({
         keep: settings.max_saved_runs,
         maxBytes: settings.max_saved_run_bytes,
         previewToken: preview.preview_token,
       });
       setPurgeResult(
         removed === 0
-          ? "No completed reports were beyond the configured limits."
+          ? "Your completed reports are within the storage limits."
           : `Moved ${removed} completed report${removed === 1 ? "" : "s"} to Trash.`,
       );
       await loadUsage();
@@ -112,10 +102,9 @@ export function RunRetention({
           Review history retention
         </span>
         <InfoButton label="Review history retention">
-          Past reports and their artifacts are stored in your active research
-          data folder. After each report, Pipeline moves to Trash the oldest
-          completed reports until both limits hold. Set a limit to 0 to disable
-          it.
+          Reports and supporting files are saved in your research data folder.
+          After each review, Pipeline moves the oldest completed reports to
+          Trash to stay within both limits. Set either limit to 0 for no limit.
         </InfoButton>
         {usage && (
           <span className="ml-auto text-xs font-normal text-gray-500 dark:text-neutral-400">

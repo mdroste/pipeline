@@ -5,7 +5,8 @@ import {
   type Mission,
   type MissionQuestion,
 } from "../../lib/missionClient";
-import { taskTime, type Json, type TaskEvent } from "../../lib/taskClient";
+import { taskTime } from "../../lib/taskPresentation";
+import { type Json, type TaskEvent } from "../../lib/taskTypes";
 const ReportViewer = lazy(() => import("../ReportViewer"));
 
 function Answer({
@@ -201,22 +202,23 @@ export default function MissionDetail({
       )}
       {m.state === "draft" && (
         <div className="task-scope">
-          <h3>Prepared scope</h3>
+          <h3>Plan and permissions</h3>
           <dl>
             <dt>Folder</dt>
             <dd>{m.scope.runtimeRoot}</dd>
             <dt>Role conversations</dt>
             <dd>
-              Separate planner, investigator and challenger, with scoped project
-              search and exact-source retrieval.
+              Separate assistants plan, investigate, and critically review the
+              work. They can search the selected project and read its saved
+              sources.
             </dd>
             <dt>File access</dt>
             <dd>
               {m.definition.policy.allowEdits
-                ? "Investigator may edit the existing isolated task copy; planner and challenger inspect only."
+                ? "The investigator can edit the task’s working copy. The planner and reviewer have read-only access."
                 : "Inspect only."}
             </dd>
-            <dt>Command network</dt>
+            <dt>Internet access for commands</dt>
             <dd>
               {m.definition.policy.commandNetwork
                 ? "Uses the source conversation’s existing network permission."
@@ -262,9 +264,9 @@ export default function MissionDetail({
                 </div>
               ))}
               <p className="task-muted">
-                Captured execution uses fresh copies of declared inputs and
-                retains host access. Starting authorizes these exact variants;
-                changed plans require a new review.
+                Each analysis uses a new copy of its saved inputs and runs with
+                your computer’s permissions. Starting approves the listed
+                variants. Changed plans require your approval again.
               </p>
             </details>
           )}
@@ -313,7 +315,7 @@ export default function MissionDetail({
           <div className="task-actions">
             {m.activeChild && (
               <button disabled={busy} onClick={() => void control("reconcile")}>
-                Reconcile recorded results
+                Check saved results and update status
               </button>
             )}
             <button disabled={busy} onClick={() => void control("retry")}>
@@ -509,8 +511,8 @@ export default function MissionDetail({
               </p>
             )}
             <p className="task-muted">
-              Conclusions are model assessments. Researcher acceptance and file
-              acceptance remain separate.
+              Review the AI’s conclusions yourself, and approve any proposed
+              file changes separately.
             </p>
           </>
         )}
@@ -580,8 +582,9 @@ export default function MissionDetail({
               </p>
             )}
             <p className="task-muted">
-              Retained methods keep their original evidence and limitations.
-              They are not automatically evaluated or installed as defaults.
+              Saved methods include their original evidence and limitations.
+              Review them before reuse; saving a method does not make it a
+              default.
             </p>
           </>
         )}

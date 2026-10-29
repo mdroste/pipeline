@@ -102,12 +102,14 @@ function StepRow({
           <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">
             {step.label}
           </span>
-          <span
-            className="mt-0.5 block truncate text-[11px] font-normal text-gray-500 dark:text-gray-400"
-            title={summary}
-          >
-            {summary}
-          </span>
+          {summary && (
+            <span
+              className="mt-0.5 block truncate text-[11px] font-normal text-gray-500 dark:text-gray-400"
+              title={summary}
+            >
+              {summary}
+            </span>
+          )}
         </button>
         <button
           type="button"

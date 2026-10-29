@@ -24,7 +24,7 @@ import {
   type ProjectRecord,
 } from "../lib/projectClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import { workbenchClient } from "../lib/workbenchClient";
+import { researchClient } from "../lib/workbench/researchClient";
 
 const button = "rounded border px-2 py-1 text-xs disabled:opacity-40";
 export default function WorkspaceDocumentReader({
@@ -186,7 +186,7 @@ export default function WorkspaceDocumentReader({
       image: async (path: string) => {
         const file = await adapter.read(path);
         if (!file.base64 || !file.mime.startsWith("image/"))
-          throw new Error("Image unavailable in this capture");
+          throw new Error("This saved copy does not include the image.");
         return `data:${file.mime};base64,${file.base64}`;
       },
     }),
@@ -243,7 +243,7 @@ export default function WorkspaceDocumentReader({
           className="flex gap-2 border-b p-2"
           onSubmit={(event) => {
             event.preventDefault();
-            void workbenchClient
+            void researchClient
               .paperSearch(workspaceId, revisionId, search, 20)
               .then(setHits)
               .catch((e) => onError(workbenchErrorMessage(e)));
@@ -332,14 +332,14 @@ export default function WorkspaceDocumentReader({
         )}
         {view?.revision.extraction.status !== "complete" && view && (
           <p className="p-2 text-xs text-amber-700">
-            Text extraction is incomplete or unavailable. Inspect the original
-            document or available PDF page view; text search may omit content.
+            Some text could not be read. Check the original document or PDF
+            pages; search may miss passages.
           </p>
         )}
         {view?.revision.inputKind === "pdf" && (
           <p className="px-3 py-2 text-xs text-gray-500">
-            PDF text can lose equation layout. Inspect page images for visual
-            evidence; drag a region or select the whole page.
+            Check equations in the PDF page view. Select a region or the whole
+            page to attach it.
           </p>
         )}
         {linkedFile && (

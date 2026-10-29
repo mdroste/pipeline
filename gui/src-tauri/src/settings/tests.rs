@@ -1,4 +1,103 @@
+use super::crypto::{decrypt_string, encrypt_string, ENC_PREFIX, KEY_SIZE};
+use super::extraction::resolve_pdf_extractor_for_paddle_availability;
+use super::persistence::{
+    load_raw_settings_required, prepare_secret_for_save, read_settings_file, save_raw_unlocked,
+    MAX_SETTINGS_BYTES,
+};
+use super::quarantine::quarantine_corrupt_file;
+use super::recovery::discard_undecryptable_secret_at;
 use super::*;
+use std::fs;
+
+#[test]
+fn validation_preserves_first_failure_order() {
+    let mut settings = Settings {
+        codex_backend: "unknown".into(),
+        preferred_provider: "unknown".into(),
+        max_workers: 0,
+        ..Default::default()
+    };
+    assert_eq!(
+        settings.validate().unwrap_err(),
+        "Unsupported Workflow Codex backend"
+    );
+    settings.codex_backend = "app_server".into();
+    assert_eq!(
+        settings.validate().unwrap_err(),
+        "Invalid preferred provider 'unknown'"
+    );
+    settings.preferred_provider = "claude".into();
+    assert_eq!(
+        settings.validate().unwrap_err(),
+        "Maximum workers must be between 1 and 20"
+    );
+}
+
+#[test]
+fn frozen_settings_remain_scoped_across_spawned_work() {
+    let first = crate::run_scope::ActiveScope::begin("settings-frozen-first");
+    let second = crate::run_scope::ActiveScope::begin("settings-frozen-second");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(crate::run_scope::scoped(first.scope().clone(), async {
+        let first_guard = freeze_for_run(Settings {
+            max_workers: 1,
+            ..Default::default()
+        });
+        assert_eq!(load().max_workers, 1);
+        assert_eq!(
+            crate::run_scope::spawn(async { load().max_workers })
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            crate::run_scope::spawn_blocking(|| load().max_workers)
+                .await
+                .unwrap(),
+            1
+        );
+        crate::run_scope::scoped(second.scope().clone(), async {
+            let second_guard = freeze_for_run(Settings {
+                max_workers: 2,
+                ..Default::default()
+            });
+            assert_eq!(load().max_workers, 2);
+            assert_eq!(first.scope().frozen_settings().unwrap().max_workers, 1);
+            drop(second_guard);
+            assert!(second.scope().frozen_settings().is_none());
+        })
+        .await;
+        assert_eq!(load().max_workers, 1);
+        drop(first_guard);
+        assert!(first.scope().frozen_settings().is_none());
+    }));
+}
+
+#[test]
+fn stale_frozen_guard_does_not_release_replacement() {
+    let run = crate::run_scope::ActiveScope::begin("settings-frozen-replacement");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(crate::run_scope::scoped(run.scope().clone(), async {
+        let old_guard = freeze_for_run(Settings {
+            max_workers: 1,
+            ..Default::default()
+        });
+        let current_guard = freeze_for_run(Settings {
+            max_workers: 2,
+            ..Default::default()
+        });
+        drop(old_guard);
+        assert_eq!(load().max_workers, 2);
+        drop(current_guard);
+        assert!(run.scope().frozen_settings().is_none());
+    }));
+}
 
 #[test]
 fn revision_reconciliation_is_opt_in_for_new_and_existing_settings() {

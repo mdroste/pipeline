@@ -1,8 +1,8 @@
 # Release process
 
-Releases are built by manually dispatching [release.yml](.github/workflows/release.yml)
+Build a release by manually starting [release.yml](.github/workflows/release.yml)
 on a signed, annotated version tag. Pushing a tag alone does not start packaging.
-The workflow leaves a draft; publication is a separate human action.
+The workflow creates a draft release. Review it before publishing.
 
 ## Repository setup
 
@@ -34,9 +34,6 @@ later; Linux packaging uses Ubuntu 22.04 and produces an AppImage.
    git tag -s vX.Y.Z -m "Pipeline vX.Y.Z"
    git push origin vX.Y.Z
    ```
-
-   On the maintainer's configured Mac, run Git through an interactive login
-   zsh outside the agent sandbox, as required by [AGENTS.md](AGENTS.md).
 4. Dispatch **Release** on that tag. Choose `all` for a complete candidate, or
    a specific platform to build a missing installer. The default is macOS ARM.
 
@@ -59,10 +56,10 @@ draft and fails completeness until the other platforms have been built.
 
 ## Packaged resources and evidence
 
-The Poppler packaging policy is unchanged. macOS copies the available Homebrew
-Poppler and its dylib closure; Linux copies the runner's installed APT utilities
-and selected native libraries. Windows downloads the locked provider archive
-and verifies its archive hash. Platform caches may reuse that bundled tree only after `BUNDLE_INVENTORY.json`
+macOS copies the available Homebrew Poppler tools and the libraries they need.
+Linux copies the runner's installed APT utilities and selected native libraries.
+Windows downloads the locked provider archive and verifies its archive hash.
+Platform caches may reuse that bundled tree only after `BUNDLE_INVENTORY.json`
 hashes match every file. Cache keys include the bundler, lock and inventory
 code; no partial-key fallback is used. Notices preparation regenerates the
 observed version and file inventory after macOS signing.
@@ -70,30 +67,31 @@ The build prepares the three configured notice files and packages them alongside
 Poppler resources. See [bundle-poppler.sh](scripts/release/bundle-poppler.sh) and
 [Tauri configuration](gui/src-tauri/tauri.conf.json) for the actual inputs.
 
-The active workflow produces four installers and four checksum sidecars. It
-does not produce SBOMs, attestations, exhaustive native-library provenance,
-Windows Authenticode signatures, automated vulnerability scans, or packaged
-application smoke results. Other checked-in release utilities are available for
-separate checks; their presence is not evidence that CI ran them. The runner
-package sources and signing services also prevent a claim of bit-for-bit
-reproducible builds.
+The active workflow produces four installers and four checksum files. It does
+not produce software bills of materials, build attestations, a complete record
+of native-library sources, Windows signatures, automated vulnerability scans,
+or results from launching the packaged applications. Other release utilities
+are available for separate checks. Runner packages and signing services can
+change the output, so rebuilding the same source may produce different
+installer bytes.
 
 ## Review and publish
 
 Maintain [the candidate evidence manifest](docs/releases/1.1.0-qualification.json)
 with the exact final commit, tool/provider versions, expected/observed outcomes,
-platforms, and SHA-256-bound evidence and installer files. Keep sanitized evidence
-and installers beside a completed copy of that manifest, then run:
+platforms, and SHA-256 hashes for the evidence and installer files. Keep
+sanitized evidence and installers beside a completed copy of that manifest,
+then run:
 
 ```bash
 node scripts/release/qualify-release.mjs /absolute/path/evidence.json <candidate-commit>
 ```
 
 The command fails on missing/pending scenarios, a different commit, or changed
-files. This is a required pre-publication check; the draft build does not certify
-human observations. The checked-in manifest intentionally remains pending until
-those observations exist. Its current matrix requires all four advertised
-platforms; narrowing scope requires an explicit product and gate change.
+files. Run this check before publication. Fill in the currently pending
+observations from actual candidate testing. The manifest requires all four advertised
+platforms; changing that scope also requires updating the support policy and
+release checks.
 
 Before manually publishing the draft, verify its tag/commit, quality and
 completeness conclusions, installer checksums, release notes, and intended
@@ -102,11 +100,12 @@ machines, including upgrade/data preservation and Windows WebView2 setup.
 For Linux, exercise the AppImage directly on a machine with FUSE 2. Verify macOS
 signature/notarization acceptance on a clean machine.
 
-Complete applicable Workspace live and packaged qualification in
-[release-qualification.md](docs/workbench/release-qualification.md). Deterministic
-tests and no-model probes do not establish authenticated model/tool behavior,
-packaged crash recovery, or platform permission enforcement. Review third-party
-notices and distribution obligations against the actual bundled components.
+Complete the applicable provider and packaged-app checks in
+[release-qualification.md](docs/workbench/release-qualification.md). Use real
+provider calls and packaged apps to check tool behavior, crash recovery, and
+operating-system permissions. Unit tests and connection probes cover only part
+of that behavior. Review third-party notices and distribution obligations
+against the actual bundled components.
 
 Leave a failing candidate unpublished. For changes to existing installer bytes,
 bump the version and create a new signed tag. Published assets and tags remain
@@ -114,12 +113,12 @@ immutable. This workflow has no automatic publication step.
 
 ## Updating tools
 
-Keep `.nvmrc`, `rust-toolchain.toml`, and both workflow toolchain versions aligned.
+Keep `gui/.nvmrc`, `rust-toolchain.toml`, and both workflow toolchain versions aligned.
 Third-party Actions are pinned to immutable commit SHAs; update a pin only after
 reviewing the upstream change and rerunning release-contract tests. Changes to
 Poppler packaging require explicit review of the active bundling script and
-applicable locked inputs; do not assume unused provenance utilities constrain
-that script.
+locked inputs. Verify what the active script checks; unused utilities do not
+affect its output.
 
 ## Local unsigned macOS builds
 

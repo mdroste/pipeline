@@ -52,7 +52,7 @@ describe("AdvancedStepOptions artifact fan-out", () => {
       },
     });
 
-    fireEvent.change(screen.getByLabelText("Maximum fan-out items"), {
+    fireEvent.change(screen.getByLabelText("Maximum items"), {
       target: { value: "7" },
     });
     expect(onChange).toHaveBeenLastCalledWith({

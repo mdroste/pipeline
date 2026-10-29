@@ -1,21 +1,22 @@
 # Workspace developer guide
 
-Pipeline is an agent orchestration suite for doing and reviewing academic
-research. Workspace is its persistent, interactive orchestration mode;
-`workbench` is Workspace's compatibility implementation namespace. Reviews
-(formerly Workflows) is the suite's deterministic orchestration mode. A workflow
-remains a saved dependency graph; code and storage names are unchanged.
+Workspace implements Pipeline's projects, conversations, and research tools.
+The code uses `workbench` for this part of the app. Reviews execute saved
+workflows and keep their own runtime and run history.
+
+For user instructions, see [Projects and conversations](../projects.md).
+This page maps the implementation and its constraints.
 
 | Term                                      | Meaning                                                                                                  |
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | Workflow                                  | A deterministic dependency graph of isolated model calls for repeatable research or review tasks         |
-| Workspace                                 | Persistent ChatGPT conversations plus optional research capabilities                                     |
+| Workspace                                 | Persistent ChatGPT or Claude Code conversations plus optional research capabilities                                     |
 | Agent profile (harness preset internally) | Resolved instructions, context providers, tools, inspectors, and permissions for a Workspace turn        |
 | Recipe                                    | Optional versioned conversation instructions, input requirements, and completion checks; not a scheduler |
 | Review handoff                            | Explicit copy of one immutable Workspace paper revision into the normal Workflow launch preview          |
 
-This page is the current implementation map. Canonical
-repository-wide architecture remains in [`../../CLAUDE.md`](../../CLAUDE.md).
+This page is the current implementation map. The
+[feature module map](../refactoring/module-map.md) lists the current code owners.
 
 ## Product boundary
 
@@ -24,8 +25,10 @@ Settings → Data & Storage → Research data folder after restart. Native sessi
 ChatGPT credentials belong to the [shared account service](../chatgpt-account.md). See
 [storage selection](../storage.md) for scope and transfer limitations.
 
-Workspace works without a Pipeline project, Workflow run, profile, provider
-selection, or paper. It owns its SQLite store, blobs, Codex home, native
+Workspace works without a Pipeline project, Workflow run, profile, or paper.
+ChatGPT is the default; the conversation picker also offers Claude Code. See
+[Claude Code subscriptions](../claude-code.md) for policy, authentication, scoped
+tools and qualification. It owns its SQLite store, blobs, Codex home, native
 process tree, cancellation, conversations, and research records under
 `~/.pipeline/workbench/`. Unfiled conversations are valid.
 
@@ -64,8 +67,9 @@ reset controls.
 
 Below the message sit the attach button, one model-and-thinking chip, and the
 Assistant settings gear, with a single Send control that becomes Stop while a
-response runs. The chip opens a picker with the connected account, remaining
-usage, each model's description, and the thinking levels that model supports;
+response runs. The chip opens a provider and model picker with each model's description and
+the thinking levels that model supports. ChatGPT also shows the connected
+account and remaining usage;
 a saved choice that is no longer offered stays visible as a warning. The
 message field grows with its text. The attach menu adds files, a project
 document, or an automation; files dropped on the conversation follow the same
@@ -170,9 +174,9 @@ authenticated model turns or packaged releases.
 
 ## Research desk
 
-[NF-07–NF-14 implementation and usage](research-programs.md) covers specification grids, publication assets, theory checks, revision campaigns, explicit follow-ups, coauthor/replication materials, starter kits and app-open checks. It states the native branching/concurrency and persistent-service qualification boundaries.
+[Research programs](research-programs.md) covers specification grids, publication assets, theory checks, revision campaigns, explicit follow-ups, coauthor/replication materials, starter kits and app-open checks. It states the native branching/concurrency and persistent-service qualification boundaries.
 
-[NF-01–NF-06 implementation and usage](research-desk.md) covers the persistent
+[Research desk](research-desk.md) covers the persistent
 object/assistant desk, exact-reference search and collections, decisions and
 impact, literature acquisition, dataset/sample catalog, and captured execution.
 The guide records service limits, sharing policy, archive recovery and observed
@@ -188,9 +192,12 @@ and verification status.
 ### Frontend
 
 - `gui/src/components/WorkspacePage.tsx` composes the project and companion
-  assistant. `gui/src/hooks/useWorkspacePageController.ts` owns project/session
-  navigation, bounded transcripts, streaming, pending App Server requests,
-  and serialized composer saves. `useWorkspaceTranscript.ts` owns on-demand
+  assistant. `gui/src/hooks/useWorkspacePageController.ts` composes project/session
+  navigation, bounded transcripts and grouped page contracts. `hooks/workspace/`
+  separates Chrome and session mutations from the single draft/model write lane
+  and conversation runtime. The runtime keeps hydration, submission, terminal
+  identity, streaming and its private native event bridge together.
+  `useWorkspaceTranscript.ts` owns on-demand
   transcript pages; `lib/workspaceSessionState.ts` merges metadata acknowledgements
   without replacing the draft or transcript. `WorkspaceDesk.tsx`
   owns the actual project/chat sizing; `WorkspaceProjectNavigation.tsx` and
@@ -237,9 +244,10 @@ and verification status.
   import conflicts and Workflow drafts. `WorkspaceResearchDataSettings.tsx`
   and `WorkspaceStorageRetention.tsx` expose whole-store operations in Settings.
   See [project-exchange.md](project-exchange.md).
-- `gui/src/lib/workbenchClient.ts`, `workbenchTypes.ts`, and
-  `workbenchError.ts` are the typed Tauri boundary. Raw Codex protocol payloads
-  must not cross it.
+- `gui/src/lib/workbench/` contains the workspace, conversation, harness,
+  research, execution, recipe, release and runtime clients. Together with
+  `workbenchTypes.ts` and `workbenchError.ts`, they form the typed Tauri boundary.
+  Callers import their domain directly; raw Codex protocol payloads stay native.
 
 ### Backend
 
@@ -248,7 +256,9 @@ and verification status.
   serialization, and active-turn identity. `commands/codex.rs` owns submission,
   server requests, and the epoch-scoped event bridge; `commands/` also groups
   desk, project, and research handlers through the same database gates.
-- `store.rs` owns SQLite setup, migrations, shared records, and the journal;
+- `store.rs` owns SQLite setup, errors and backups;
+  `store/{records,schema,projection,journal}.rs` own records, migration execution,
+  projection and the journal. Existing
   `store/{workspaces,sessions,runtime,views}.rs` implement roots, conversations,
   bindings/turns/event persistence, and snapshots/reconciliation with optimistic
   revisions. `store/roots.rs` revalidates registered folder authority at dispatch;
@@ -263,17 +273,23 @@ and verification status.
   [shared account service](../chatgpt-account.md), with a lease spanning the
   matching terminal event. The development-only `workbench_probe` exercises the no-model
   native boundary.
-- `research.rs` owns harness resolution and shared research record types;
+- `research.rs` is the facade for the research service;
+  `research/{config,context,tool_catalog,harness,snapshots}.rs` own configuration,
+  bounded context, tool declarations, ordered harness resolution and snapshots.
   `research/{papers,sources,notes,ledger,tools}.rs` own immutable revisions,
   notes, claims/evidence, and dynamic research tools.
-  `research/execution.rs` owns tested execution profiles, process isolation,
-  artifacts, structured results, comparisons, and verification receipts.
+  `research/execution.rs` exposes execution services through
+  `execution/{types,profiles,authorization,process,outputs,lifecycle,results}.rs`.
+  Complete process lifecycle operations retain their guards. `finalization.rs`
+  remains the once-only adoption journal owner.
 - `research/jobs.rs` owns the bounded local queue, turn/detached ownership,
   log cursors and adoption reconciliation. `project/studio/` implements the
   editor/build, response, experiment/binding and literature services.
-- `release.rs` owns recipes, evaluation/performance records, and Review
-  handoffs. `release/archive.rs` owns bounded `.pwrx` inspection, export, and
-  whole-store restore. Older supported archive databases are validated and migrated
+- `release.rs` exposes `release/{recipes,recipe_runs,evaluations,review_handoff}.rs`.
+  `release/archive/` owns `.pwrx` format, inspection, export, restore and transcript
+  entries; the archive facade retains bounded mechanics shared with `.pwex`.
+  Whole-store restore and selective exchange keep separate policy and transactions.
+  Older supported archive databases are validated and migrated
   using the store migration runner on an isolated extracted copy before restore;
   archive migration failure leaves the destination unchanged.
 - `migrations/` is append-only. Never edit an applied migration; add the next
@@ -380,7 +396,7 @@ manual release gates.
 
 ## Project home and reversible research tasks
 
-[Project surface](project-surface.md) documents PI-00–PI-03 and the UI's
+[Project surface](project-surface.md) documents the project home and the UI's
 plain-language label map: accepted manuscript
 and computational baselines, curated context, immutable document selections,
 regular-file inventories, isolated local/Git tasks, diff review, recoverable

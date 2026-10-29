@@ -1,0 +1,40 @@
+/* Workflow overview canvas: a dot grid drawn from the border token so it
+   follows the active theme. */
+.wave-canvas {
+  background-image: radial-gradient(
+    var(--ui-border-strong) 1px,
+    transparent 1px
+  );
+  background-size: 16px 16px;
+  background-position: center;
+}
+
+/* Parallel waves split their frame into equal columns as it widens, so
+   side-by-side cards read as concurrent work; a partial last row stays
+   centered under the full ones. */
+.wave-parallel {
+  container-type: inline-size;
+}
+
+.wave-parallel-cards {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.wave-parallel-cards > * {
+  width: 100%;
+}
+
+@container (min-width: 300px) {
+  .wave-parallel-cards > * {
+    width: calc((100% - 0.5rem) / 2);
+  }
+}
+
+@container (min-width: 500px) {
+  .wave-parallel-cards > * {
+    width: calc((100% - 1rem) / 3);
+  }
+}

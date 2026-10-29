@@ -1,28 +1,29 @@
+import {
+  useWorkspaceConversationRuntime,
+  useWorkspaceConversationEvents,
+  createWorkspaceSubmission,
+} from "./workspace/useWorkspaceConversationRuntime";
+import {
+  useWorkspaceSessionPersistence,
+  useWorkspaceDraftAutosave,
+} from "./workspace/useWorkspaceSessionPersistence";
+import { useWorkspaceSessionMutations } from "./workspace/useWorkspaceSessionMutations";
+import {
+  useWorkspaceChrome,
+  useWorkspaceChromeSession,
+  useWorkspaceSurfacePreference,
+  useWorkspaceChromeEffects,
+} from "./workspace/useWorkspaceChrome";
+import useWorkspaceModelCatalog from "./useWorkspaceModelCatalog";
 import useWorkspaceSessionList from "./useWorkspaceSessionList";
 import useWorkspaceRequestResolution from "./useWorkspaceRequestResolution";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConversationActions } from "./useConversationActions";
-import useModalDialog from "./useModalDialog";
-import {
-  useWorkbenchEvents,
-  terminalKey,
-  type PendingSubmission,
-} from "./useWorkbenchEvents";
-import useContainerWidth from "./useContainerWidth";
 import useWorkspaceEntry from "./useWorkspaceEntry";
-import {
-  mergeSessionSnapshot,
-  newOperation,
-  saveWorkspaceDraft,
-} from "../lib/workspaceSessionState";
+import { newOperation } from "../lib/workspaceSessionState";
 import useWorkspaceTranscript from "./useWorkspaceTranscript";
-import usePersistentPanelWidth from "./usePersistentPanelWidth";
-import { loadDeskLayout } from "../lib/deskLayout";
-import {
-  isWorkspaceDestination,
-  type WorkspaceDestination,
-} from "../lib/workspaceNavigation";
-import { payloadText, roleFor } from "../components/WorkspaceConversationView";
+import { isWorkspaceDestination } from "../lib/workspaceNavigation";
+import { payloadText, roleFor } from "../lib/workspaceTranscript";
 import { deskClient, type ContextItem } from "../lib/deskClient";
 import { appEvents } from "../lib/appEvents";
 import { asContextItems } from "../lib/workspaceAttachments";
@@ -30,15 +31,11 @@ import {
   useWorkspaceRouteEntry,
   type WorkspaceEntryTarget,
 } from "./useWorkspaceRouteEntry";
-import { workbenchClient } from "../lib/workbenchClient";
+import { workspaceClient } from "../lib/workbench/workspaceClient";
+import { conversationClient } from "../lib/workbench/conversationClient";
+import { runtimeClient } from "../lib/workbench/runtimeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import type {
-  ConversationSnapshot,
-  WorkbenchEvent,
-  WorkbenchSession,
-  Workspace,
-  WorkspaceModel,
-} from "../lib/workbenchTypes";
+import type { WorkbenchSession, Workspace } from "../lib/workbenchTypes";
 
 export function useWorkspacePageController({
   entryTarget,
@@ -53,12 +50,6 @@ export function useWorkspacePageController({
   newProjectRequest?: number;
   onNewProjectRequestHandled?: () => void;
 }) {
-  const [sidebarWidth, setSidebarWidth] = usePersistentPanelWidth(
-    "pipeline.workspace.sidebarWidth",
-    224,
-    200,
-    440,
-  );
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState<string | null>(
     () =>
@@ -73,74 +64,85 @@ export function useWorkspacePageController({
       ? null
       : localStorage.getItem("pipeline.workspace.sessionId"),
   );
-  const [snapshot, setSnapshot] = useState<ConversationSnapshot | null>(null);
-  const [models, setModels] = useState<WorkspaceModel[]>([]);
-  const [model, setModel] = useState("");
-  const [effort, setEffort] = useState("");
-  const [draft, setDraft] = useState("");
-  const [stream, setStream] = useState("");
-  const [pendingUser, setPendingUser] = useState<string | null>(null);
-  const [active, setActive] = useState<{
-    threadId: string;
-    turnId: string;
-  } | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [requests, setRequests] = useState<WorkbenchEvent[]>([]);
+  const [contextBusy, setContextBusy] = useState(false);
+  const contextBusyRef = useRef(false);
+  const chrome = useWorkspaceChrome(workspaceId, entrySurface, contextBusyRef);
+  const {
+    sidebarWidth,
+    setSidebarWidth,
+    inspector,
+    setInspector,
+    projectRequest,
+    setProjectRequest,
+    resetRequest,
+    destination,
+    setDestinationState,
+    shellRef,
+    shellWidth,
+    navigationOpen,
+    setNavigationOpen,
+    navigationButtonRef,
+    navigationPinned,
+    toolPickerOpen,
+    setToolPickerOpen,
+    conversationMenuRef,
+    assistantRequest,
+    setAssistantRequest,
+    harnessEditor,
+    setHarnessEditor,
+    inspectorTriggerRef,
+    surface,
+    setSurface,
+    projectDialog,
+    setProjectDialog,
+    recordDestination,
+    navigateProject,
+    openInspector,
+    closeInspector,
+    navigationFits,
+    navigationCollapsed,
+    pinNavigation,
+  } = chrome;
+  const conversation = useWorkspaceConversationRuntime(sessionId, setSessions);
+  const {
+    snapshot,
+    setSnapshot,
+    models,
+    setModels,
+    model,
+    setModel,
+    runtime,
+    setRuntime,
+    effort,
+    setEffort,
+    draft,
+    setDraft,
+    stream,
+    pendingUser,
+    active,
+    submitting,
+    setSubmitting,
+    requests,
+    setRequests,
+    error,
+    setError,
+    sessionRef,
+    snapshotRef,
+    activeRef,
+    submittingRef,
+    hydrationGeneration,
+    hydrate,
+    refreshSessionRecord,
+    acceptSnapshot,
+  } = conversation;
   const [showArchived, setShowArchived] = useState(false);
   // Automations are a first-class capability; no discovery gate hides them.
   const tasksEnabled = true;
-  const [inspector, setInspector] = useState<
-    "settings" | "outline" | "context" | "activity" | null
-  >(null);
-  const [projectRequest, setProjectRequest] = useState(0);
-  const resetRequest = 0;
-  const [destinationState, setDestinationState] = useState<{
-    workspaceId: string | null;
-    tab: WorkspaceDestination;
-  } | null>(null);
-  const savedDestination = useMemo(
-    () => (workspaceId ? loadDeskLayout(workspaceId).tab : "overview"),
-    [workspaceId],
-  );
-  const destination =
-    destinationState?.workspaceId === workspaceId
-      ? destinationState.tab
-      : isWorkspaceDestination(savedDestination)
-        ? savedDestination
-        : "overview";
-  const [shellRef, shellWidth] = useContainerWidth<HTMLDivElement>();
-  const [navigationOpen, setNavigationOpen] = useState(false);
-  const navigationButtonRef = useRef<HTMLButtonElement>(null);
-  const [navigationPinned, setNavigationPinned] = useState(() => {
-    try {
-      return (
-        localStorage.getItem("pipeline.workspace.navigationPinned") === "true"
-      );
-    } catch {
-      return false;
-    }
-  });
-  const [toolPickerOpen, setToolPickerOpen] = useState(false);
-  const conversationMenuRef = useRef<HTMLButtonElement>(null);
-  const [assistantRequest, setAssistantRequest] = useState(0);
-
-  const [harnessEditor, setHarnessEditor] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<string | null>(null);
   const [jumpTarget, setJumpTarget] = useState<string | null>(null);
-  const [contextBusy, setContextBusy] = useState(false);
-  const contextBusyRef = useRef(false);
-  const inspectorTriggerRef = useRef<HTMLButtonElement | null>(null);
   const messageRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
-  const [surface, setSurface] = useState<"chat" | "project">(
-    () =>
-      entrySurface ??
-      (Boolean(localStorage.getItem("pipeline.workspace.workspaceId"))
-        ? "project"
-        : "chat"),
-  );
-  const [projectDialog, setProjectDialog] = useState(false);
   useWorkspaceEntry({
     workspaceId,
     entryRequest,
@@ -152,71 +154,13 @@ export function useWorkspacePageController({
     setAssistantRequest,
     setProjectDialog,
   });
-  const [moveTarget, setMoveTarget] = useState<WorkbenchSession | null>(null);
-  const [moving, setMoving] = useState(false);
-  const [moveError, setMoveError] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const navigationGeneration = useRef(0);
   const workspaceRef = useRef(workspaceId);
   workspaceRef.current = workspaceId;
-  const sessionRef = useRef(sessionId);
-  const snapshotRef = useRef(snapshot);
-  const submissionRef = useRef<PendingSubmission | null>(null);
-  const activeRef = useRef(active);
-  const submittingRef = useRef(false);
-  const completedTurnsRef = useRef(new Map<string, string>());
-  const selectionSaveRef = useRef<Promise<void>>(Promise.resolve());
-  const sessionWriteRef = useRef<Promise<unknown>>(Promise.resolve());
   const sessionListSequence = useRef(0);
-  const draftSaveRef = useRef<Promise<unknown>>(Promise.resolve());
-  const streamBufferRef = useRef("");
-  const streamFlushRef = useRef<number | null>(null);
-  sessionRef.current = sessionId;
-  snapshotRef.current = snapshot;
-  activeRef.current = active;
-
-  const draftEditRevision = useRef(0);
-  const hydrationGeneration = useRef(0);
-  const draftRef = useRef(draft);
-  draftRef.current = draft;
-  const persistDraft = useCallback((selectedSession: string, text: string) => {
-    // Navigation can flush a draft while its debounce save is in flight.
-    const pending = sessionWriteRef.current
-      .catch(() => undefined)
-      .then(() => saveWorkspaceDraft(selectedSession, text))
-      .then((next) => {
-        if (sessionRef.current === selectedSession)
-          setSnapshot((old) => mergeSessionSnapshot(old, next));
-        return next;
-      });
-    draftSaveRef.current = pending;
-    sessionWriteRef.current = pending;
-    return pending;
-  }, []);
-
-  const editDraft = (text: string) => {
-    draftEditRevision.current += 1;
-    if (sessionId)
-      try {
-        localStorage.setItem(`pipeline.pendingDraft.${sessionId}`, text);
-      } catch {
-        /* Server debounce remains available. */
-      }
-    setDraft(text);
-  };
-  useEffect(
-    () => () => {
-      const id = sessionRef.current;
-      if (
-        id &&
-        snapshotRef.current?.session.id === id &&
-        !activeRef.current &&
-        !submittingRef.current
-      )
-        void persistDraft(id, draftRef.current).catch(() => undefined);
-    },
-    [persistDraft],
-  );
+  const persistence = useWorkspaceSessionPersistence(conversation);
+  const { persistDraft, editDraft, saveCurrentDraft, saveSelection } =
+    persistence;
   const loadSessions = useWorkspaceSessionList(
     workspaceRef,
     sessionListSequence,
@@ -225,101 +169,11 @@ export function useWorkspacePageController({
     showArchived,
   );
 
-  const hydrate = useCallback(async (selectedSession = sessionRef.current) => {
-    if (!selectedSession) {
-      if (!sessionRef.current) setSnapshot(null);
-      return;
-    }
-    const generation = ++hydrationGeneration.current;
-    const activeAtStart = activeRef.current;
-    const ownerAtStart = submissionRef.current;
-    const editRevision = draftEditRevision.current;
-    const initialize = snapshotRef.current?.session.id !== selectedSession;
-    let next: ConversationSnapshot;
-    try {
-      next = await workbenchClient.conversationSnapshot(selectedSession);
-    } catch (cause) {
-      if (
-        sessionRef.current === selectedSession &&
-        generation === hydrationGeneration.current
-      )
-        setError(workbenchErrorMessage(cause));
-      return;
-    }
-    if (
-      sessionRef.current !== selectedSession ||
-      generation !== hydrationGeneration.current ||
-      activeRef.current !== activeAtStart ||
-      submissionRef.current !== ownerAtStart
-    )
-      return;
-    const current = snapshotRef.current;
-    if (
-      current?.session.id === selectedSession &&
-      (current.sequence > next.sequence ||
-        current.session.revision > next.session.revision)
-    )
-      return;
-    setSnapshot(next);
-    let recoveredDraft: string | null = null;
-    try {
-      recoveredDraft = localStorage.getItem(
-        `pipeline.pendingDraft.${selectedSession}`,
-      );
-    } catch {
-      /* Optional recovery cache. */
-    }
-    const owner = submissionRef.current;
-    const pendingHere = owner?.sessionId === selectedSession;
-    setPendingUser(pendingHere ? owner.text : null);
-    setSubmitting(pendingHere && !owner.turnId);
-    const inProgress = [...next.turns]
-      .reverse()
-      .find(
-        (turn) =>
-          !turn.terminalAt &&
-          turn.providerTurnId &&
-          turn.bindingId === next.activeBinding?.id,
-      );
-    if (!activeRef.current || (!pendingHere && !inProgress)) {
-      setStream("");
-      if (streamFlushRef.current !== null)
-        window.clearTimeout(streamFlushRef.current);
-      streamFlushRef.current = null;
-      streamBufferRef.current = "";
-    }
-    if (initialize && draftEditRevision.current === editRevision)
-      setDraft(pendingHere ? "" : (recoveredDraft ?? next.session.draft));
-    const overrides = next.session.overrides;
-    setModel(typeof overrides.model === "string" ? overrides.model : "");
-    setEffort(typeof overrides.effort === "string" ? overrides.effort : "");
-    if (pendingHere && owner.threadId && owner.turnId) {
-      setActive({ threadId: owner.threadId, turnId: owner.turnId });
-    } else if (inProgress && next.activeBinding) {
-      setActive({
-        threadId: next.activeBinding.providerThreadId,
-        turnId: inProgress.providerTurnId!,
-      });
-    } else {
-      setActive(null);
-    }
-  }, []);
-
-  // Refresh records without replacing the composer draft.
-  const refreshSessionRecord = useCallback(async (id: string) => {
-    const latest = await workbenchClient.sessionSnapshot(id);
-    setSessions((old) =>
-      old.map((session) => (session.id === id ? latest.session : session)),
-    );
-    if (sessionRef.current === id)
-      setSnapshot((old) => mergeSessionSnapshot(old, latest));
-  }, []);
-
   useEffect(() => {
     let disposed = false;
     // App-owned conversations remain available even when an installed Codex
     // update changes or temporarily breaks the optional live runtime.
-    void workbenchClient
+    void workspaceClient
       .listWorkspaces(true)
       .then((listed) => {
         if (!disposed) setWorkspaces(listed.workspaces);
@@ -327,7 +181,7 @@ export function useWorkspacePageController({
       .catch((cause) => {
         if (!disposed) setError(workbenchErrorMessage(cause));
       });
-    void workbenchClient
+    void runtimeClient
       .pendingRequests()
       .then((pending) => {
         if (!disposed) setRequests(pending);
@@ -335,25 +189,19 @@ export function useWorkspacePageController({
       .catch((cause) => {
         if (!disposed) setError(workbenchErrorMessage(cause));
       });
-    if (surface === "chat" || sessionId)
-      void workbenchClient
-        .connectCodex()
-        .then(() => workbenchClient.accountState())
-        .then(async (account) => {
-          if (account.status !== "chatgpt") return;
-          const catalog = await workbenchClient.modelCatalog();
-          if (!disposed) setModels(catalog.models);
-        })
-        .catch((cause) => {
-          if (!disposed)
-            setError(
-              `The assistant could not connect. Saved conversations remain available: ${workbenchErrorMessage(cause)}`,
-            );
-        });
     return () => {
       disposed = true;
     };
   }, [surface, sessionId]);
+
+  useWorkspaceModelCatalog(
+    surface,
+    sessionId,
+    snapshot?.session.id,
+    runtime,
+    setModels,
+    setError,
+  );
 
   useEffect(() => {
     void loadSessions(workspaceId);
@@ -388,11 +236,7 @@ export function useWorkspacePageController({
     }
   }, [sessionId, workspaceId, snapshot?.session.id]);
 
-  // The harness editor is conversation-scoped; leaving the conversation closes it.
-  useEffect(() => {
-    setHarnessEditor(false);
-    setInspector(null);
-  }, [sessionId]);
+  useWorkspaceChromeSession(chrome, sessionId);
 
   useEffect(() => {
     if (!sessionId) {
@@ -403,7 +247,7 @@ export function useWorkspacePageController({
     setSelectedMessage(null);
     setJumpTarget(null);
     followLatestRef.current = true;
-    void workbenchClient
+    void runtimeClient
       .reconcileSession(sessionId)
       .catch((cause) =>
         setError(
@@ -413,76 +257,12 @@ export function useWorkspacePageController({
       .finally(() => void hydrate(sessionId));
   }, [hydrate, sessionId]);
 
-  useEffect(() => {
-    const current = snapshot;
-    if (
-      !current ||
-      current.session.id !== sessionId ||
-      pendingUser ||
-      active ||
-      submitting ||
-      contextBusy ||
-      current.session.draft === draft
-    )
-      return;
-    const selectedSession = current.session.id;
-    const text = draft;
-    const timer = window.setTimeout(() => {
-      void persistDraft(selectedSession, text)
-        .then((next) => {
-          if (sessionRef.current === selectedSession)
-            setSnapshot((old) => mergeSessionSnapshot(old, next));
-        })
-        .catch((cause) =>
-          setError(`Draft could not be saved: ${workbenchErrorMessage(cause)}`),
-        );
-    }, 350);
-    return () => window.clearTimeout(timer);
-  }, [
-    active,
-    contextBusy,
-    draft,
-    pendingUser,
-    persistDraft,
-    sessionId,
-    snapshot,
-    submitting,
-  ]);
+  useWorkspaceDraftAutosave(conversation, persistence, contextBusy);
 
-  const { finishSubmission } = useWorkbenchEvents({
-    activeRef,
-    completedTurnsRef,
-    hydrate,
-    submissionRef,
-    persistDraft,
-    refreshSessionRecord,
-    sessionRef,
-    setActive,
-    setDraft,
-    setError,
-    setModels,
-    setPendingUser,
-    setRequests,
-    setSnapshot,
-    setStream,
-    setSubmitting,
-    snapshotRef,
-    streamBufferRef,
-    streamFlushRef,
-    submittingRef,
-  });
-
-  const saveCurrentDraft = useCallback(async () => {
-    await selectionSaveRef.current;
-    const id = sessionRef.current;
-    if (
-      id &&
-      snapshotRef.current?.session.id === id &&
-      !activeRef.current &&
-      !submittingRef.current
-    )
-      await persistDraft(id, draftRef.current);
-  }, [persistDraft]);
+  const { finishSubmission } = useWorkspaceConversationEvents(
+    conversation,
+    persistence,
+  );
 
   const selectProject = useCallback(
     async (id: string | null) => {
@@ -526,7 +306,7 @@ export function useWorkspacePageController({
     const generation = ++navigationGeneration.current;
     await saveCurrentDraft();
     if (generation !== navigationGeneration.current) return;
-    const created = await workbenchClient.createSession({
+    const created = await conversationClient.createSession({
       workspaceId,
       title: "New conversation",
       operationId: newOperation("create-session"),
@@ -549,9 +329,7 @@ export function useWorkspacePageController({
     setAssistantRequest((value) => value + 1);
   };
 
-  useEffect(() => {
-    localStorage.setItem("pipeline.workspace.surface", surface);
-  }, [surface]);
+  useWorkspaceSurfacePreference(surface);
   const openProject = () => {
     void saveCurrentDraft()
       .then(() => setSurface("project"))
@@ -586,14 +364,14 @@ export function useWorkspacePageController({
         session = await projectClient.taskSession(workspaceId, checkpoint);
       } else {
         session = (
-          await workbenchClient.createSession({
+          await conversationClient.createSession({
             workspaceId,
             title: "Selected passage",
             operationId: newOperation("selection-chat"),
           })
         ).record;
         session = (
-          await workbenchClient.updateSession({
+          await conversationClient.updateSession({
             sessionId: session.id,
             expectedRevision: session.revision,
             operationId: newOperation("selection-context"),
@@ -655,92 +433,33 @@ export function useWorkspacePageController({
     [],
   );
 
-  const archiveSession = async (session: WorkbenchSession) => {
-    const latest = await workbenchClient.sessionSnapshot(session.id);
-    await workbenchClient.updateSession({
-      sessionId: session.id,
-      expectedRevision: latest.session.revision,
-      operationId: newOperation("archive-session"),
-      archived: !latest.session.archivedAt,
-    });
-    await loadSessions(workspaceId, showArchived);
-    if (sessionRef.current === session.id)
-      await refreshSessionRecord(session.id);
-  };
-
-  const renameSession = async (session: WorkbenchSession) => {
-    const answer = window.prompt("Conversation title", session.title);
-    if (answer === null) return;
-    const title = answer.trim();
-    if (!title || title === session.title) return;
-    const latest = await workbenchClient.sessionSnapshot(session.id);
-    await workbenchClient.updateSession({
-      sessionId: session.id,
-      expectedRevision: latest.session.revision,
-      operationId: newOperation("rename-session"),
-      title,
-    });
-    await refreshSessionRecord(session.id);
-  };
-
-  const generateTitle = async (session: WorkbenchSession) => {
-    setError(null);
-    await workbenchClient.generateSessionTitle(session.id);
-    await refreshSessionRecord(session.id);
-  };
-
-  const deleteSession = async (session: WorkbenchSession) => {
-    if (
-      !window.confirm(
-        `Delete “${session.title}”? Its transcript and ChatGPT history are removed permanently. Research records it produced stay with their project.`,
-      )
-    )
-      return;
-    await workbenchClient.deleteSession({
-      sessionId: session.id,
-      operationId: newOperation("delete-session"),
-    });
-    if (sessionRef.current === session.id) {
-      setSnapshot(null);
-      setSessionId(null);
-      setDraft("");
-    }
-    await loadSessions(workspaceId, showArchived);
-  };
-
-  const moveSession = async (
-    session: WorkbenchSession,
-    target: string | null,
-  ) => {
-    setMoving(true);
-    setMoveError(null);
-    try {
-      await saveCurrentDraft();
-      const latest = await workbenchClient.sessionSnapshot(session.id);
-      await workbenchClient.moveSession({
-        sessionId: session.id,
-        expectedRevision: latest.session.revision,
-        operationId: newOperation("move-session"),
-        workspaceId: target,
-      });
-      setMoveTarget(null);
-      if (sessionRef.current === session.id) {
-        // Follow the conversation into its new project instead of losing it
-        // behind the sidebar filter.
-        if (target !== workspaceId) {
-          setSessions([]);
-          setWorkspaceId(target);
-        }
-        await hydrate(session.id);
-      } else {
-        await loadSessions(workspaceId, showArchived);
-      }
-    } catch (cause) {
-      setMoveError(workbenchErrorMessage(cause));
-    } finally {
-      setMoving(false);
-    }
-  };
+  const sessionMutations = useWorkspaceSessionMutations({
+    workspaceId,
+    showArchived,
+    sessionRef,
+    saveCurrentDraft,
+    loadSessions,
+    refreshSessionRecord,
+    hydrate,
+    setSnapshot,
+    setSessionId,
+    setDraft,
+    setSessions,
+    setWorkspaceId,
+    setError,
+  });
+  const {
+    moveTarget,
+    setMoveTarget,
+    moving,
+    moveError,
+    setMoveError,
+    archiveSession,
+    renameSession,
+    generateTitle,
+    deleteSession,
+    moveSession,
+  } = sessionMutations;
 
   const conversationActions = useConversationActions({
     sessionId,
@@ -749,148 +468,6 @@ export function useWorkspacePageController({
     activeRef,
     hydrate,
   });
-
-  const saveSelection = (nextModel: string, nextEffort: string) => {
-    const selectedSession = sessionRef.current;
-    if (!selectedSession) return;
-    const pending = sessionWriteRef.current
-      .catch(() => undefined)
-      .then(async () => {
-        const latest = await workbenchClient.sessionSnapshot(selectedSession);
-        const updated = await workbenchClient.updateSession({
-          sessionId: latest.session.id,
-          expectedRevision: latest.session.revision,
-          operationId: newOperation("model-selection"),
-          overrides: {
-            ...latest.session.overrides,
-            model: nextModel || null,
-            effort: nextEffort || null,
-          },
-        });
-        if (sessionRef.current === selectedSession) {
-          setSnapshot((old) =>
-            mergeSessionSnapshot(old, {
-              ...latest,
-              session: updated.record,
-              sequence: updated.sequence,
-            }),
-          );
-        }
-      });
-    sessionWriteRef.current = pending;
-    selectionSaveRef.current = pending;
-    void pending.catch((cause) => {
-      if (sessionRef.current === selectedSession)
-        setError(
-          `Model selection could not be saved: ${workbenchErrorMessage(cause)}. Select the model again to retry.`,
-        );
-    });
-  };
-
-  const send = async () => {
-    hydrationGeneration.current += 1;
-    if (
-      !sessionId ||
-      snapshotRef.current?.session.id !== sessionId ||
-      !draft.trim() ||
-      active ||
-      submittingRef.current ||
-      submissionRef.current ||
-      contextBusyRef.current
-    )
-      return;
-    submittingRef.current = true;
-    setSubmitting(true);
-    const text = draft.trim();
-    const submission: PendingSubmission = { sessionId, text };
-    submissionRef.current = submission;
-    if (streamFlushRef.current !== null)
-      window.clearTimeout(streamFlushRef.current);
-    streamFlushRef.current = null;
-    streamBufferRef.current = "";
-    followLatestRef.current = true;
-    setSelectedMessage(null);
-    setJumpTarget(null);
-    setTranscriptPage(0);
-    setError(null);
-    setPendingUser(text);
-    setStream("");
-    setDraft("");
-    try {
-      localStorage.removeItem(`pipeline.pendingDraft.${sessionId}`);
-    } catch {
-      /* The host retains submission recovery. */
-    }
-    const editRevisionAtSend = draftEditRevision.current; // see catch
-    let dispatched = false;
-    try {
-      await selectionSaveRef.current;
-      await draftSaveRef.current;
-      dispatched = true;
-      const result = await workbenchClient.sendTurn({
-        sessionId,
-        text,
-        clientSubmissionId: newOperation("submission"),
-        model: model || null,
-        effort: effort || null,
-      });
-      Object.assign(submission, {
-        threadId: result.threadId,
-        turnId: result.turnId,
-        epoch: result.epoch,
-      });
-      const key = terminalKey(result.epoch, result.threadId, result.turnId);
-      const terminal =
-        completedTurnsRef.current.get(key) ??
-        completedTurnsRef.current.get(terminalKey(result.epoch, "", ""));
-      if (terminal) {
-        completedTurnsRef.current.delete(key);
-        finishSubmission(terminal);
-      } else if (sessionRef.current === sessionId) {
-        const turn = { threadId: result.threadId, turnId: result.turnId };
-        activeRef.current = turn;
-        setActive(turn);
-        setSubmitting(false);
-      }
-      submittingRef.current = false;
-      void workbenchClient
-        .pendingRequests()
-        .then((pending) => setRequests(pending))
-        .catch(() => undefined);
-    } catch (cause) {
-      submittingRef.current = false;
-      if (sessionRef.current === sessionId) setSubmitting(false);
-      if (!dispatched) {
-        submissionRef.current = null;
-        if (sessionRef.current === sessionId) {
-          setPendingUser(null);
-          setDraft(text);
-        }
-        try {
-          localStorage.setItem(`pipeline.pendingDraft.${sessionId}`, text);
-        } catch {
-          /* Keep the visible draft. */
-        }
-        if (sessionRef.current === sessionId)
-          setError(
-            `Message not sent because its settings or draft could not be saved: ${workbenchErrorMessage(cause)}`,
-          );
-        return;
-      }
-      if (sessionRef.current === sessionId)
-        setError(
-          `The submission may not have been acknowledged. It was preserved as a draft and will not be retried automatically. ${workbenchErrorMessage(cause)}`,
-        );
-      submissionRef.current = null;
-      if (sessionRef.current === sessionId) setPendingUser(null);
-      await hydrate(sessionId);
-      if (
-        sessionRef.current === sessionId &&
-        draftEditRevision.current === editRevisionAtSend
-      )
-        editDraft(text);
-    }
-  };
 
   const resolve = useWorkspaceRequestResolution(setRequests, setError);
 
@@ -904,13 +481,25 @@ export function useWorkspacePageController({
     loadEarlier,
     loadingEarlier,
   } = useWorkspaceTranscript(snapshot, setSnapshot, setError);
+  const send = createWorkspaceSubmission(
+    conversation,
+    persistence,
+    finishSubmission,
+    {
+      contextBusyRef,
+      followLatestRef,
+      setSelectedMessage,
+      setJumpTarget,
+      setTranscriptPage,
+    },
+  );
   const outlineEntries = useMemo(
     () =>
       allRenderedItems
         .map((item) => ({
           id: item.id,
           text: payloadText(item),
-          role: roleFor(item) as "You" | "ChatGPT",
+          role: roleFor(item),
         }))
         .filter((item) => item.text),
     [allRenderedItems],
@@ -957,7 +546,7 @@ export function useWorkspacePageController({
       const generation = ++navigationGeneration.current;
       await saveCurrentDraft();
       const selected = target.sessionId
-        ? await workbenchClient.sessionSnapshot(target.sessionId)
+        ? await conversationClient.sessionSnapshot(target.sessionId)
         : null;
       if (!current() || generation !== navigationGeneration.current) return;
       const project = selected
@@ -991,87 +580,12 @@ export function useWorkspacePageController({
     },
     (cause) => setError(workbenchErrorMessage(cause)),
   );
-  const recordDestination = useCallback(
-    (tab: WorkspaceDestination) => {
-      setDestinationState({ workspaceId, tab });
-    },
-    [workspaceId],
+  const navigationDialog = useWorkspaceChromeEffects(
+    chrome,
+    workspaceId,
+    sessionId,
+    contextBusy,
   );
-  const navigateProject = (tab: WorkspaceDestination) => {
-    recordDestination(tab);
-    setSurface("project");
-    setNavigationOpen(false);
-    // Re-selecting the current destination also leaves an opened object view.
-    if (workspaceId)
-      appEvents.emit("workspace-destination", { workspaceId, tab });
-    setProjectRequest((value) => value + 1);
-  };
-  const acceptSnapshot = useCallback((next: ConversationSnapshot) => {
-    if (sessionRef.current === next.session.id) setSnapshot(next);
-  }, []);
-  const openInspector = (
-    next: "settings" | "outline" | "context" | "activity",
-    trigger?: HTMLButtonElement,
-  ) => {
-    if (contextBusyRef.current || harnessEditor) return;
-    if (trigger) inspectorTriggerRef.current = trigger;
-    setInspector((value) => (value === next ? null : next));
-    setAssistantRequest((value) => value + 1);
-    setNavigationOpen(false);
-  };
-  const closeInspector = (restoreFocus = true) => {
-    if (contextBusyRef.current) return;
-    setInspector(null);
-    if (restoreFocus)
-      requestAnimationFrame(() => inspectorTriggerRef.current?.focus());
-  };
-  const navigationFits =
-    shellWidth === null ||
-    shellWidth - sidebarWidth >= (workspaceId ? 848 : 480);
-  const navigationCollapsed = !navigationPinned || !navigationFits;
-  const pinNavigation = (value: boolean) => {
-    setNavigationPinned(value);
-    setNavigationOpen(false);
-    try {
-      localStorage.setItem(
-        "pipeline.workspace.navigationPinned",
-        String(value),
-      );
-    } catch {
-      /* Optional view preference. */
-    }
-    navigationButtonRef.current?.focus();
-  };
-  const navigationDialog = useModalDialog<HTMLDivElement>(
-    () => setNavigationOpen(false),
-    navigationCollapsed && navigationOpen,
-    true,
-  );
-  useEffect(() => {
-    setNavigationOpen(false);
-    setToolPickerOpen(false);
-  }, [sessionId, workspaceId, surface]);
-  useEffect(() => {
-    const shortcut = (event: KeyboardEvent) => {
-      if (
-        (event.metaKey || event.ctrlKey) &&
-        event.key.toLowerCase() === "k" &&
-        !event.altKey &&
-        workspaceId &&
-        !harnessEditor &&
-        !contextBusy
-      ) {
-        // Keep shortcuts local to the project; another modal owns its keyboard.
-        if (document.querySelector('[aria-modal="true"]') && !toolPickerOpen)
-          return;
-        event.preventDefault();
-        setToolPickerOpen((value) => !value);
-        setNavigationOpen(false);
-      }
-    };
-    window.addEventListener("keydown", shortcut);
-    return () => window.removeEventListener("keydown", shortcut);
-  }, [workspaceId, harnessEditor, contextBusy, toolPickerOpen]);
 
   const currentWorkspace =
     workspaces.find((item) => item.id === workspaceId) ?? null;
@@ -1083,109 +597,117 @@ export function useWorkspacePageController({
     : null;
 
   return {
-    sidebarWidth,
-    setSidebarWidth,
-    workspaces,
-    workspaceId,
-    sessions,
-    sessionId,
-    snapshot,
-    models,
-    model,
-    setModel,
-    effort,
-    setEffort,
-    draft,
-    stream,
-    pendingUser,
-    active,
-    submitting,
-    requests,
-    showArchived,
-    setShowArchived,
-    tasksEnabled,
-    inspector,
-    projectRequest,
-    resetRequest,
-    destination,
-    shellRef,
-    shellWidth,
-    navigationOpen,
-    setNavigationOpen,
-    navigationButtonRef,
-    navigationPinned,
-    toolPickerOpen,
-    setToolPickerOpen,
-    conversationMenuRef,
-    assistantRequest,
-    harnessEditor,
-    setHarnessEditor,
-    selectedMessage,
-    jumpTarget,
-    contextBusy,
-    setContextBusy,
-    contextBusyRef,
-    inspectorTriggerRef,
-    messageRef,
-    transcriptRef,
-    surface,
-    projectDialog,
-    setProjectDialog,
-    moveTarget,
-    setMoveTarget,
-    moving,
-    moveError,
-    setMoveError,
-    error,
-    setError,
-    submittingRef,
-    editDraft,
-    loadSessions,
-    hydrate,
-    saveCurrentDraft,
-    selectProject,
-    selectSession,
-    createSession,
-    openProject,
-    projectCreated,
-    openResearchConversation,
-    updateProjectWorkspace,
-    archiveSession,
-    renameSession,
-    generateTitle,
-    deleteSession,
-    moveSession,
-    ...conversationActions,
-    saveSelection,
-    send,
-    resolve,
-    renderedItems,
-    outlineEntries,
-    jumpToMessage,
-    latest,
-    visibleRequests,
-    recordDestination,
-    navigateProject,
-    acceptSnapshot,
-    openInspector,
-    closeInspector,
-    setInspector,
-    setSubmitting,
-    allRenderedItems,
-    transcriptStart,
-    transcriptEnd,
-    setTranscriptPage,
-    loadEarlier,
-    loadingEarlier,
-    followLatestRef,
-    sessionRef,
-    setSnapshot,
-    navigationFits,
-    navigationCollapsed,
-    pinNavigation,
-    navigationDialog,
-    currentWorkspace,
-    projectFolder,
-    setProjectRequest,
+    layout: {
+      sidebarWidth,
+      setSidebarWidth,
+      shellRef,
+      shellWidth,
+      navigationOpen,
+      setNavigationOpen,
+      navigationButtonRef,
+      navigationPinned,
+      toolPickerOpen,
+      setToolPickerOpen,
+      conversationMenuRef,
+      navigationFits,
+      navigationCollapsed,
+      pinNavigation,
+      navigationDialog,
+    },
+    inspector: {
+      inspector,
+      openInspector,
+      closeInspector,
+      setInspector,
+      inspectorTriggerRef,
+      harnessEditor,
+      setHarnessEditor,
+    },
+    navigation: {
+      workspaces,
+      workspaceId,
+      sessions,
+      sessionId,
+      showArchived,
+      setShowArchived,
+      tasksEnabled,
+      projectRequest,
+      resetRequest,
+      destination,
+      assistantRequest,
+      surface,
+      projectDialog,
+      setProjectDialog,
+      loadSessions,
+      selectProject,
+      selectSession,
+      createSession,
+      openProject,
+      projectCreated,
+      openResearchConversation,
+      updateProjectWorkspace,
+      recordDestination,
+      navigateProject,
+      currentWorkspace,
+      projectFolder,
+      setProjectRequest,
+    },
+    conversation: {
+      snapshot,
+      models,
+      model,
+      setModel,
+      runtime,
+      setRuntime,
+      effort,
+      setEffort,
+      stream,
+      pendingUser,
+      active,
+      submitting,
+      requests,
+      submittingRef,
+      hydrate,
+      send,
+      resolve,
+      visibleRequests,
+      acceptSnapshot,
+      setSubmitting,
+      sessionRef,
+      setSnapshot,
+      ...conversationActions,
+    },
+    persistence: { draft, editDraft, saveCurrentDraft, saveSelection },
+    context: { contextBusy, setContextBusy, contextBusyRef },
+    mutations: {
+      moveTarget,
+      setMoveTarget,
+      moving,
+      moveError,
+      setMoveError,
+      archiveSession,
+      renameSession,
+      generateTitle,
+      deleteSession,
+      moveSession,
+    },
+    feedback: { error, setError },
+    transcript: {
+      selectedMessage,
+      jumpTarget,
+      messageRef,
+      transcriptRef,
+      renderedItems,
+      outlineEntries,
+      jumpToMessage,
+      latest,
+      allRenderedItems,
+      transcriptStart,
+      transcriptEnd,
+      setTranscriptPage,
+      loadEarlier,
+      loadingEarlier,
+      followLatestRef,
+    },
   };
 }

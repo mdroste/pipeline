@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { workbenchClient } from "../lib/workbenchClient";
+import { releaseClient } from "../lib/workbench/releaseClient";
 import type { StorageReport, PrunePlan } from "../lib/workbenchTypes";
 const button =
   "rounded border px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800";
@@ -40,7 +40,7 @@ export default function WorkspaceStorageRetention({
           disabled={busy}
           onClick={() =>
             onAction(async () => {
-              setStorage(await workbenchClient.storageReport());
+              setStorage(await releaseClient.storageReport());
               setPrunePlan(null);
               pruneGeneration.current += 1;
             })
@@ -106,7 +106,7 @@ export default function WorkspaceStorageRetention({
                   onAction(async () => {
                     const generation = ++pruneGeneration.current;
                     setPrunePlan(null);
-                    const plan = await workbenchClient.pruneStorage(
+                    const plan = await releaseClient.pruneStorage(
                       pruneKeys,
                       false,
                     );
@@ -123,13 +123,13 @@ export default function WorkspaceStorageRetention({
                 disabled={busy || !prunePlan || prunePlan.applied}
                 onClick={() =>
                   onAction(async () => {
-                    const plan = await workbenchClient.pruneStorage(
+                    const plan = await releaseClient.pruneStorage(
                       pruneKeys,
                       true,
                       prunePlan?.previewToken,
                     );
                     setPrunePlan(plan);
-                    setStorage(await workbenchClient.storageReport());
+                    setStorage(await releaseClient.storageReport());
                     setNotice(
                       `Moved ${plan.entries.length} item(s), ${mib(plan.bytes)}, to trash. Restore or empty trash below.`,
                     );
@@ -150,8 +150,8 @@ export default function WorkspaceStorageRetention({
                       )
                     )
                       return;
-                    await workbenchClient.emptyTrash();
-                    setStorage(await workbenchClient.storageReport());
+                    await releaseClient.emptyTrash();
+                    setStorage(await releaseClient.storageReport());
                   })
                 }
               >
@@ -178,8 +178,8 @@ export default function WorkspaceStorageRetention({
                   disabled={busy}
                   onClick={() =>
                     onAction(async () => {
-                      await workbenchClient.restoreTrash(t.id);
-                      setStorage(await workbenchClient.storageReport());
+                      await releaseClient.restoreTrash(t.id);
+                      setStorage(await releaseClient.storageReport());
                     })
                   }
                 >

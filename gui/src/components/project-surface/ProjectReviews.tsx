@@ -74,7 +74,7 @@ export default function ProjectReviews({
           <h2 className="text-lg font-semibold">Reviews</h2>
           <p className={`${muted} mt-1`}>
             {workspaceRoot
-              ? "Reviews of documents in this project's folder, and the findings ledger that tracks them across drafts."
+              ? "See reviews of this project’s documents and track findings across drafts."
               : "Attach a folder to this project to connect its documents' reviews here."}
           </p>
         </div>

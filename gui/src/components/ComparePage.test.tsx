@@ -73,7 +73,7 @@ describe("ComparePage", () => {
     expect(
       screen.getByText(/1 changed · 0 added · 0 removed · 0 unchanged/),
     ).toBeVisible();
-    expect(screen.getByText(/Reconciliation sends both reports/)).toBeVisible();
+    expect(screen.getByText(/AI comparison sends both reports/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Export diff…" }));
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("save_text_file", {

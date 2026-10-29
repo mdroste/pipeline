@@ -1,3 +1,4 @@
+import { presetDescription } from "./harness-editor/harnessCopy";
 import useContainerWidth from "../hooks/useContainerWidth";
 // Lazy two-pane harness editor for one Workspace conversation. The left
 // navigator lists presets and the conversation-level Access and Preview
@@ -9,7 +10,8 @@ import SidebarPanel, { SidebarHeader } from "./SidebarPanel";
 import AgentProfileDialog from "./harness-editor/AgentProfileDialog";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 import { confirmDialog } from "./DialogService";
-import { workbenchClient } from "../lib/workbenchClient";
+import { conversationClient } from "../lib/workbench/conversationClient";
+import { harnessClient } from "../lib/workbench/harnessClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type {
   ConversationSnapshot,
@@ -79,6 +81,12 @@ export default function WorkspaceHarnessEditor({
 }) {
   const [root, width] = useContainerWidth<HTMLDivElement>();
   const compact = width !== null && width < 760;
+  const runtime =
+    snapshot.session.overrides.runtime === "claude" ? "claude" : "codex";
+  const presetName = (preset: HarnessPreset) =>
+    runtime === "claude" && preset.id === "plain"
+      ? "Claude Code default"
+      : preset.name;
   const sessionId = snapshot.session.id;
   const workspaceId = snapshot.session.workspaceId;
   const [panelWidth, setPanelWidth] = usePersistentPanelWidth(
@@ -114,11 +122,11 @@ export default function WorkspaceHarnessEditor({
   const load = useCallback(async () => {
     const [nextCatalog, nextEffective, nextGlobal, nextWorkspace] =
       await Promise.all([
-        workbenchClient.harnessCatalog(workspaceId),
-        workbenchClient.effectiveHarness(sessionId),
-        workbenchClient.getWorkspaceConfig(null),
+        harnessClient.harnessCatalog(workspaceId),
+        harnessClient.effectiveHarness(sessionId),
+        harnessClient.getWorkspaceConfig(null),
         workspaceId
-          ? workbenchClient.getWorkspaceConfig(workspaceId)
+          ? harnessClient.getWorkspaceConfig(workspaceId)
           : Promise.resolve(null),
       ]);
     setCatalog(nextCatalog);
@@ -198,8 +206,8 @@ export default function WorkspaceHarnessEditor({
     presetId?: string;
     overrides?: Record<string, unknown>;
   }) => {
-    const latest = await workbenchClient.conversationSnapshot(sessionId);
-    const updated = await workbenchClient.updateSession({
+    const latest = await conversationClient.conversationSnapshot(sessionId);
+    const updated = await conversationClient.updateSession({
       sessionId: latest.session.id,
       expectedRevision: latest.session.revision,
       operationId: operation("harness-session"),
@@ -220,7 +228,7 @@ export default function WorkspaceHarnessEditor({
   ) =>
     void act(async () => {
       if (scope === "conversation") {
-        const latest = await workbenchClient.conversationSnapshot(sessionId);
+        const latest = await conversationClient.conversationSnapshot(sessionId);
         const overrides = { ...latest.session.overrides };
         if (value === undefined) delete overrides[key];
         else overrides[key] = value;
@@ -237,7 +245,7 @@ export default function WorkspaceHarnessEditor({
       const body = { ...config.body };
       if (value === undefined) delete body[key];
       else body[key] = value;
-      await workbenchClient.saveWorkspaceConfig({
+      await harnessClient.saveWorkspaceConfig({
         workspaceId: scope === "global" ? null : workspaceId,
         expectedRevision: config.revision,
         body,
@@ -248,7 +256,7 @@ export default function WorkspaceHarnessEditor({
   const savePreset = () =>
     void act(async () => {
       if (!selectedPreset || !draft) return;
-      await workbenchClient.updatePreset({
+      await harnessClient.updatePreset({
         presetId: selectedPreset.id,
         expectedRevision: selectedPreset.revision,
         name: draft.name.trim(),
@@ -280,7 +288,7 @@ export default function WorkspaceHarnessEditor({
         },
       );
       if (!confirmed) return;
-      await workbenchClient.updatePreset({
+      await harnessClient.updatePreset({
         presetId: selectedPreset.id,
         expectedRevision: selectedPreset.revision,
         name: selectedPreset.name,
@@ -299,7 +307,7 @@ export default function WorkspaceHarnessEditor({
     void act(async () => {
       if (!naming) return;
       const source = naming.sourceId;
-      const created = await workbenchClient.clonePreset({
+      const created = await harnessClient.clonePreset({
         workspaceId: targetWorkspaceId,
         sourceWorkspaceId: workspaceId,
         sourcePresetId: source,
@@ -343,7 +351,7 @@ export default function WorkspaceHarnessEditor({
   );
   const filtered =
     catalog?.presets.filter((preset) =>
-      `${preset.name} ${preset.description}`
+      `${presetName(preset)} ${presetDescription(preset)}`
         .toLowerCase()
         .includes(query.trim().toLowerCase()),
     ) ?? [];
@@ -364,10 +372,10 @@ export default function WorkspaceHarnessEditor({
         <span className="flex items-center justify-between gap-2">
           <span className="min-w-0">
             <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">
-              {preset.name}
+              {presetName(preset)}
             </span>
             <span className="block truncate text-[11px] text-gray-500 dark:text-gray-400">
-              {preset.description ||
+              {presetDescription(preset) ||
                 describePreset(preset, catalog?.modules ?? [])}
             </span>
           </span>
@@ -447,7 +455,7 @@ export default function WorkspaceHarnessEditor({
             {!selection && <option value="">Loading…</option>}
             {catalog?.presets.map((preset) => (
               <option key={preset.id} value={preset.id}>
-                {preset.name}
+                {presetName(preset)}
               </option>
             ))}
             <option value="access">Access & inheritance</option>
@@ -495,8 +503,9 @@ export default function WorkspaceHarnessEditor({
           </SidebarHeader>
           {successor && (
             <p className="m-2 rounded border border-blue-200 bg-blue-50 p-2 text-[11px] text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
-              The assistant will start fresh with the new settings and saved
-              project context. Earlier messages remain in the transcript.
+              Your next message starts a new assistant session with these
+              settings and the saved project context. Earlier messages remain
+              visible here.
             </p>
           )}
           <div className="min-h-0 flex-1 overflow-y-auto">
@@ -550,6 +559,7 @@ export default function WorkspaceHarnessEditor({
         ) : selection?.kind === "preset" && selectedPreset && draft ? (
           <HarnessPresetPanel
             key={selectedPreset.id}
+            runtime={runtime}
             preset={selectedPreset}
             sourcePreset={
               catalog.presets.find(

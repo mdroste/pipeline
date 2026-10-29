@@ -8,13 +8,13 @@ import {
   useState,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { taskClient } from "../lib/taskClient";
+import { taskTime } from "../lib/taskPresentation";
 import {
-  taskClient,
-  taskTime,
   type Schedule,
   type TaskRun,
   type TaskSummary,
-} from "../lib/taskClient";
+} from "../lib/taskTypes";
 import Builder from "./tasks/Builder";
 import Detail from "./tasks/Detail";
 import ScheduleCard from "./tasks/ScheduleCard";
@@ -145,8 +145,8 @@ export default function TasksPage({
           <p className="task-eyebrow">PIPELINE</p>
           <h1>Automations</h1>
           <p className="task-muted">
-            Continue project work, reviews, waits, and decisions now or on a
-            schedule.
+            Run project work and reviews now or on a schedule, with pauses for
+            your input.
           </p>
         </div>
         {view !== "missions" && (
@@ -295,7 +295,7 @@ export default function TasksPage({
                       ? "Completed work will appear here."
                       : selected
                         ? "No active automations."
-                        : "Give your work a next step."}
+                        : "Create your first automation."}
                   </h2>
                   <p>
                     Connect project conversations and reviews, pause for input,

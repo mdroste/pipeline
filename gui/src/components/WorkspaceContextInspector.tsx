@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { workbenchClient } from "../lib/workbenchClient";
+import { harnessClient } from "../lib/workbench/harnessClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type { EffectiveHarness } from "../lib/workbenchTypes";
 import Spinner from "../ui/Spinner";
@@ -23,7 +23,7 @@ export default function WorkspaceContextInspector({
     if (!sessionId) return;
     let stale = false;
     setHarness(null);
-    workbenchClient
+    harnessClient
       .effectiveHarness(sessionId)
       .then((loaded) => {
         if (!stale) setHarness(loaded);

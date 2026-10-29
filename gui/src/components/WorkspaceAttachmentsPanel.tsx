@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { workbenchClient } from "../lib/workbenchClient";
+import { conversationClient } from "../lib/workbench/conversationClient";
+import { harnessClient } from "../lib/workbench/harnessClient";
+import { researchClient } from "../lib/workbench/researchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import {
   importResearchFiles,
@@ -48,9 +50,9 @@ export default function WorkspaceAttachmentsPanel({
     if (workspaceId)
       void Promise.all([
         mode === "documents"
-          ? workbenchClient.listPapers(workspaceId)
+          ? researchClient.listPapers(workspaceId)
           : Promise.resolve([]),
-        workbenchClient.effectiveHarness(snapshot.session.id),
+        harnessClient.effectiveHarness(snapshot.session.id),
       ])
         .then(([nextPapers, nextHarness]) => {
           if (!disposed) {
@@ -115,15 +117,15 @@ export default function WorkspaceAttachmentsPanel({
     });
   const selectPaper = (paperId: string | null) =>
     act(async () => {
-      const latest = await workbenchClient.conversationSnapshot(
+      const latest = await conversationClient.conversationSnapshot(
         snapshot.session.id,
       );
-      const effective = await workbenchClient.effectiveHarness(
+      const effective = await harnessClient.effectiveHarness(
         snapshot.session.id,
       );
       const enableResearch =
         paperId !== null && !effective.enabledModules.includes("paper_context");
-      const updated = await workbenchClient.updateSession({
+      const updated = await conversationClient.updateSession({
         sessionId: latest.session.id,
         expectedRevision: latest.session.revision,
         operationId: `composer-document-${crypto.randomUUID()}`,
@@ -154,7 +156,7 @@ export default function WorkspaceAttachmentsPanel({
           Using a document in the conversation switches to the Research
           assistant profile so ChatGPT can read it.
           {snapshot.activeBinding &&
-            " This changes the model context for your next message; the saved transcript remains here."}
+            " The assistant will use this document in your next message. Earlier messages stay in the conversation."}
         </p>
       )}
       {mode === "import" && (

@@ -400,9 +400,9 @@ function StartEdit({ api }: { api: SurfaceApi }) {
           </div>
           {backend === "git" && (
             <p className={muted}>
-              Creates a new branch under codex/ and a worktree for it, then
-              copies your selected files in. Your current branch, index, and
-              uncommitted work are not touched. Nothing is committed or pushed.
+              Copies the selected files to a separate worktree on a new codex/
+              branch. Your existing work stays unchanged. You decide what to
+              commit or push.
             </p>
           )}
         </>
@@ -470,7 +470,7 @@ export default function ProjectEdits(props: Props) {
               <p className={`mt-2 ${muted}`}>
                 {selected.body.backend === "git"
                   ? "Working copy on a separate Git branch; your own branch and index are untouched."
-                  : "Working copy made from plain copies of the selected files."}
+                  : "A separate copy of the files you selected."}
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
@@ -591,8 +591,8 @@ export default function ProjectEdits(props: Props) {
                     {selected.body.checkedExecutionIds.length
                       ? `${selected.body.checkedExecutionIds.length} completed run${selected.body.checkedExecutionIds.length === 1 ? "" : "s"} recorded for this edit.`
                       : "No runs were recorded for this edit."}{" "}
-                    Accepting copies files; it does not check that the results
-                    are correct. Rebuild or rerun after accepting.
+                    After accepting the files, rebuild the manuscript or rerun
+                    the analysis to check the results.
                   </p>
                   {selected.body.limitations.map((limit, i) => (
                     <p key={i} className={`mt-2 ${muted}`}>

@@ -1,4 +1,4 @@
-import { workbenchClient } from "./workbenchClient";
+import { conversationClient } from "./workbench/conversationClient";
 import type { ConversationSnapshot, SessionSnapshot } from "./workbenchTypes";
 
 // Metadata saves must not replace transcript pages or active-turn state.
@@ -29,10 +29,10 @@ export async function saveWorkspaceDraft(
   selectedSession: string,
   text: string,
 ): Promise<SessionSnapshot> {
-  const latest = await workbenchClient.sessionSnapshot(selectedSession);
+  const latest = await conversationClient.sessionSnapshot(selectedSession);
   let result = latest;
   if (latest.session.draft !== text) {
-    const updated = await workbenchClient.updateSession({
+    const updated = await conversationClient.updateSession({
       sessionId: selectedSession,
       expectedRevision: latest.session.revision,
       operationId: `save-draft-${crypto.randomUUID()}`,

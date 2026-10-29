@@ -114,7 +114,7 @@ export function Field({
 }
 export function Inspect({
   value,
-  label = "Inspect retained record",
+  label = "View saved record",
 }: {
   value: unknown;
   label?: string;
@@ -155,7 +155,7 @@ export function ObjectSelect({
           )
         }
       >
-        <option value="">Choose retained evidence</option>
+        <option value="">Choose saved evidence</option>
         {shown.map((o) => (
           <option key={key(o.reference)} value={key(o.reference)}>
             {o.title} · {o.reference.kind} · {o.reference.revision.slice(0, 8)}
@@ -305,7 +305,7 @@ export function Artifacts({
           <p className={muted}>Export the PDF to open it in your PDF reader.</p>
         ))}
       <details className="space-y-2 text-xs">
-        <summary>Stage selected artifact for comparison and acceptance</summary>
+        <summary>Add the selected file to a working copy for review</summary>
         <select
           className={input}
           aria-label="Artifact to stage"
@@ -363,7 +363,7 @@ export function Artifacts({
                 expectedHash: expected || null,
               });
               setNotice(
-                "Staged in the task copy. Open Edits & acceptance to capture, compare, check, and accept the change.",
+                "Added to the working copy. Open Review edits to check and accept the change.",
               );
             })
           }

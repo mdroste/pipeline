@@ -148,7 +148,7 @@ export default function FileWorkspace({
                 ? {
                     ...old[path],
                     status:
-                      "Reload skipped because this buffer changed. Your draft was preserved.",
+                      "The file was not reloaded because you made more edits. Your draft is still open.",
                   }
                 : { file: base, draft, status },
           }));
@@ -711,8 +711,8 @@ export default function FileWorkspace({
         </div>
       ) : (
         <p className="file-status">
-          Find a file above to open it. Unsaved drafts are retained when
-          switching files.
+          Choose a file above. Pipeline keeps unsaved drafts when you switch
+          files.
         </p>
       )}
     </div>

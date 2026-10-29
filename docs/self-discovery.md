@@ -1,107 +1,97 @@
-# Full self-discovery
+# Research discovery
 
-Two research automations appear under **Automations → Research**:
+Research discovery develops a topic into proposals, investigations, and
+reviewed paper drafts. Open **Automations → Research** and choose one of two
+options:
 
-- **Full self-discovery (supervised)** pauses at a reviewed project shortlist.
-  The researcher chooses the projects, then research, drafting, review and
-  ranking continue automatically.
-- **Full self-discovery (unsupervised)** accepts the topic prompt, selects
-  projects automatically and returns the papers and retained research. It does
-  not ask follow-up research questions.
+- **Research discovery — choose projects yourself** pauses at a shortlist so
+  you can select the proposals to develop.
+- **Research discovery — let Pipeline choose projects** selects the proposals
+  automatically and continues without follow-up research questions.
 
-Both start directly with the displayed settings. An existing Project supplies
-optional context and input files; otherwise Start creates a Project. Workspace
-must have a usable configured model and account. The app must remain running
-and the computer awake to execute work. Restart recovers saved state; ambiguous
-native submissions are reconciled or blocked rather than replayed.
+Enter the topic and review the settings before starting. An existing project
+can supply context and input files; otherwise Pipeline creates one. A working
+conversation model connection is required. Keep Pipeline running and the
+computer awake while it works.
 
-## Field adaptation
+## How it works
 
-An orientation step identifies the fields, research genres, contribution forms,
-available evidence, prerequisites and relevant standards. It selects validated
-subject and method IDs from the existing automatic Paper Review catalog. A
-specialty outside that catalog uses explicit standards with empty catalog IDs;
-interdisciplinary research can combine several fields.
+Pipeline identifies the field, methods, available evidence, and type of
+contribution. It generates proposals, screens them, and asks separate reviewers
+to assess the strongest candidates. Selected proposals then move through
+investigation, drafting, review, and revision.
 
-Prompts distinguish formal proof, computation, observation, qualitative evidence,
-archival interpretation and synthesis. Quantitative or experimental requirements
-are applied only when relevant. The same engine handles history, literary
-studies, mathematics, sciences, engineering, medicine and social sciences.
-This is field adaptation, not evidence that autonomous research quality has been
-validated in every discipline.
+Each paper has its own author conversation and folder. Referees get the
+research record and a saved manuscript version, without the author's chat
+history or proposal scores. Revised manuscripts receive fresh reviews. The
+final report compares the papers and records incomplete work and unresolved
+findings.
 
-## Pipeline and defaults
+Prompts adapt to different fields and forms of evidence, including formal
+arguments, computation, observation, archival sources, and synthesis. Research
+quality across these fields has not been established by the software tests.
+Treat the outputs as drafts and research records to assess.
 
-| Step or setting | Default and supported limits |
-| --- | --- |
-| Candidate generation | 75 proposals in batches of five; 50–100 configurable |
-| Initial screening | Every proposal; eligibility, contribution, feasibility, overlap and uncertainty |
-| Detailed assessment | Up to min(C, max(20, 2N)) eligible candidates; two independent reviewers, configurable 0–4 |
-| Proposal revision | One revision followed by fresh assessment; configurable 0–2, requires detailed reviewers |
-| Shortlist | N = 10, configurable 1–25; fewer if insufficient proposals qualify |
-| Paper target | K = 5, configurable 1–9 and K ≤ N |
-| Research | Up to eight investigation rounds, configurable 1–16; optional independent challenge after each |
-| Paper review | Two fresh referees per manuscript version, configurable 0–4 |
-| Paper revision | Up to two revisions, configurable 0–5; each changed version is reviewed again |
-| Extra Review | Optional pinned structured Review profile, applied to the exact frozen Markdown artifact |
-| Replacements | Unsupervised only: up to two eligible reserve projects, configurable 0–5 |
-| Limits | 500 managed actions; 48 active hours; 30 minutes per action; seven elapsed days |
+## Settings and defaults
 
-Proposal revisions retain the previous design and its objections. Shortlisting
-uses the current assessed version. The supervised selection carries the exact
-shortlist hash and an idempotent operation identity. It cannot exceed K, include
-an ineligible ID, or advance automatically on timeout. Researchers can select
-fewer projects. The original paper target remains visible in the final report.
+| Setting | Default | Available range or behavior |
+| --- | --- | --- |
+| Proposals | 75, generated in groups of five | 50–100 |
+| Initial screening | Every proposal | Checks contribution, feasibility, overlap, and uncertainty |
+| Detailed assessment | Two reviewers | 0–4 reviewers; assesses up to the smaller of the eligible candidate count and the larger of 20 or twice the shortlist size |
+| Proposal revision | One round | 0–2; requires detailed reviewers |
+| Shortlist | 10 proposals | 1–25; may be smaller if too few qualify |
+| Paper target | 5 | 1–9, no more than the shortlist size |
+| Investigation | Up to 8 rounds | 1–16; optional independent challenge after each round |
+| Manuscript review | Two fresh referees per version | 0–4 |
+| Manuscript revision | Up to 2 rounds | 0–5; each revised version is reviewed again |
+| Additional Review | Off | Choose a saved structured Review for each captured Markdown manuscript |
+| Replacement projects | Up to 2 | 0–5; available when Pipeline chooses the projects |
+| Work limits | 500 actions, 48 active hours, 30 minutes per action, seven elapsed days | Review these limits before starting |
 
-Each paper has its own persistent author conversation and folder. Each referee
-gets a fresh conversation with the research dossier and frozen manuscript;
-proposal scores and the author transcript are omitted. Final ranking compares
-assessed papers, and sound papers must rank above incomplete papers. Outstanding
-major/fatal findings or incomplete/unknown/high-priority structured Review
-coverage prevent the final assessor from marking a paper complete.
+When choosing projects yourself, you can select fewer than the paper target.
+Pipeline waits for your selection rather than advancing after a timeout.
 
-Counts are targets, not guaranteed scientific yield. Failed investigations,
-negative results, unsupported claims and unavailable evidence remain explicit.
-No step can manufacture data, laboratory observations, interviews, primary
-source access or proof verification to meet a requested paper count.
+These counts are targets. Missing data, inconclusive investigations, and
+unresolved objections can leave fewer completed drafts. The report keeps those
+outcomes visible.
 
-## Sources, computation and outputs
+## Sources and computation
 
-Public literature acquisition is enabled by default for a newly created
-Project. It uses the Workspace-owned Crossref service: up to eight oriented
-queries with bounded metadata and abstract excerpts. Existing projects retain
-their Library acquisition policy. This implementation does not discover and
-download arbitrary datasets, paywalled papers or archives automatically.
+New projects enable public literature search through Crossref by default.
+Pipeline uses up to eight topic-specific queries and retrieves limited
+metadata and abstract excerpts. Existing projects keep their Library
+acquisition settings. It does not automatically obtain arbitrary datasets,
+paywalled papers, or archives.
 
-Researchers can supply up to 20 individual files relative to an existing
-Project root. Start captures their bytes and hashes. Each author receives those
-snapshots in its isolated directory; reviewers receive immutable evidence and
-the reviewed manuscript. Relative input paths cannot traverse outside the
-Project, and each action's artifact capture is bounded at 64 MiB.
+You can provide up to 20 files from an existing project folder. Pipeline saves
+copies at the start, so later changes to the originals do not alter the run's
+inputs. Each author receives those copies in its paper folder.
 
-Computation is enabled by default in the isolated paper folders. Native commands
-can use installed tools within the declared sandbox, with command networking
-disabled. There are no new grants for legacy host execution profiles. The native
-approval policy is `never` only for host-created discovery roles. Research
-questions receive empty answers and requests to expand authority are declined;
-interactive Workspace conversations retain their existing approval behavior.
-Execution grants expire with the run and are revoked when it terminates or when
-a Workspace archive is restored.
+Computation is enabled by default in the isolated paper folders and can use
+installed tools within the permitted file access. Command networking is
+disabled. Discovery roles do not ask for broader permissions; requests outside
+their scope are declined. Each action can retain up to 64 MiB of output files.
 
-Each frozen manuscript retains Markdown, standalone LaTeX, BibTeX, evidence IDs,
-limitations and the response to reviewers. A model may also produce a PDF and
-other attachments using an available toolchain. Listed manuscript sources must
-match returned sources; attachments are captured artifacts, not a host-certified
-compilation or scientific validation. Markdown remains readable if compilation
-is unavailable.
+## Read and export results
 
-The paper reader displays manuscripts and reviews. ZIP export contains the
-portfolio, all proposal versions, input snapshots, research records, manuscript
-version history, latest paper files and captured evidence. Exports are bounded
-at 256 MiB and verify stored artifact hashes. Native credentials and writable
-runtime grants are excluded. A separate Markdown portfolio report is available.
+The paper reader shows manuscripts and reviews. Each saved manuscript version
+includes Markdown, standalone LaTeX, BibTeX, evidence references, limitations,
+and a response to reviewers. A model may also generate a PDF if the required
+tools are installed. Markdown remains readable when PDF compilation is
+unavailable.
 
-## Ownership and implementation
+Export a Markdown portfolio report or a ZIP containing proposals, input copies,
+research records, manuscript history, the latest paper files, and captured
+evidence. ZIP exports are limited to 256 MiB and check stored file hashes.
+Credentials and execution permissions are excluded.
+
+## Implementation reference
+
+The code and saved format use the name *self-discovery*. The following
+sections document the implementation and its tests.
+
+### Ownership and implementation
 
 - `orchestration/discovery/`: typed state machine, validation, prompts, durable
   child ownership, budgets, selection, result adoption and exports.
@@ -121,7 +111,7 @@ Not yet implemented: user editing of shortlisted briefs, replacement-shortlist
 feedback, quality presets, automatic dataset/full-text acquisition and a
 cross-field scientific evaluation program.
 
-## Qualification
+### Qualification
 
 Deterministic tests cover the complete 50/75/100-candidate lifecycle, field
 orientation, proposal revision, frozen-version re-review, soundness gates,

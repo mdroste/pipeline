@@ -73,3 +73,5 @@ mod identifiers;
 mod migrations;
 
 mod profiles;
+
+mod migration_characterization;

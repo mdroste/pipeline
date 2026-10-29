@@ -112,6 +112,20 @@ pub(super) fn discard_copy(store: &Store, ws: &str, checkpoint_id: &str) -> Work
     fs::remove_dir_all(&task_root).map_err(err)?;
     Ok(())
 }
+/// Canonical Windows roots are verbatim (`\\?\C:\…`); Git for Windows takes
+/// the equivalent drive or UNC form as an argument and working directory.
+fn git_path(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{rest}"));
+        }
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
+        }
+    }
+    path.to_path_buf()
+}
 pub(super) fn git(root: &Path, args: &[&str]) -> WorkbenchResult<Vec<u8>> {
     use std::process::{Command, Stdio};
     // This is a host operation explicitly selected by the user. Paths are argv,
@@ -133,7 +147,7 @@ pub(super) fn git(root: &Path, args: &[&str]) -> WorkbenchResult<Vec<u8>> {
             "core.fsmonitor=false",
         ])
         .args(args)
-        .current_dir(root)
+        .current_dir(git_path(root))
         .stdin(Stdio::null());
     // File-backed capture cannot block behind inherited pipes. Independent owner:
     // Workflow cancellation never receives this PID.
@@ -237,7 +251,7 @@ pub(super) fn checkpoint(
     paths: Vec<String>,
     backend: &str,
 ) -> WorkbenchResult<ProjectRecord> {
-    if !cfg!(unix) {
+    if !files::REPLACEMENT {
         return Err(WorkbenchError::invalid("Task file isolation is unavailable on this platform; safe replacement has not been qualified."));
     }
     if !["copy", "git"].contains(&backend) || paths.is_empty() || paths.len() > MAX_FILES {
@@ -345,7 +359,7 @@ pub(super) fn checkpoint(
             &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         )?;
         let name = format!("codex/{checkpoint_id}");
-        let path = task_root.to_string_lossy().into_owned();
+        let path = git_path(&task_root).to_string_lossy().into_owned();
         // No checkout: avoids filters/hooks and copies the selected actual working
         // bytes (including staged/unstaged/untracked edits) rather than HEAD bytes.
         git(
@@ -470,7 +484,7 @@ pub(super) fn apply(
     paths: Vec<String>,
     expected: i64,
 ) -> WorkbenchResult<ProjectRecord> {
-    if !cfg!(unix) {
+    if !files::REPLACEMENT {
         return Err(WorkbenchError::invalid("File acceptance is unavailable on this platform; safe replacement has not been qualified."));
     }
     ensure_no_application(store, ws, checkpoint_id)?;

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { workbenchClient } from "../lib/workbenchClient";
+import { conversationClient } from "../lib/workbench/conversationClient";
+import { executionClient } from "../lib/workbench/executionClient";
+import { recipeClient } from "../lib/workbench/recipeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type {
   ConversationSnapshot,
@@ -51,9 +53,9 @@ export default function WorkspaceRecipesPanel({
       return;
     }
     const [nextRecipes, nextRuns, nextExecutions] = await Promise.all([
-      workbenchClient.listRecipes(workspaceId),
-      workbenchClient.listRecipeRuns(snapshot.session.id),
-      workbenchClient.listExecutions(workspaceId),
+      recipeClient.listRecipes(workspaceId),
+      recipeClient.listRecipeRuns(snapshot.session.id),
+      executionClient.listExecutions(workspaceId),
     ]);
     setRecipes(nextRecipes);
     setRuns(nextRuns);
@@ -79,7 +81,7 @@ export default function WorkspaceRecipesPanel({
       setChecks([]);
       return;
     }
-    void workbenchClient
+    void recipeClient
       .checkRecipeInputs(snapshot.session.id, selectedId)
       .then(setChecks)
       .catch((cause) => onError(workbenchErrorMessage(cause)));
@@ -98,10 +100,10 @@ export default function WorkspaceRecipesPanel({
   };
 
   const patchSession = async (overrides: Record<string, unknown>) => {
-    const latest = await workbenchClient.conversationSnapshot(
+    const latest = await conversationClient.conversationSnapshot(
       snapshot.session.id,
     );
-    const updated = await workbenchClient.updateSession({
+    const updated = await conversationClient.updateSession({
       sessionId: latest.session.id,
       expectedRevision: latest.session.revision,
       operationId: operation("recipe-session"),
@@ -179,7 +181,7 @@ export default function WorkspaceRecipesPanel({
           disabled={!selected || busy}
           onClick={() =>
             void act(async () => {
-              const nextChecks = await workbenchClient.checkRecipeInputs(
+              const nextChecks = await recipeClient.checkRecipeInputs(
                 snapshot.session.id,
                 selected!.id,
               );
@@ -189,7 +191,7 @@ export default function WorkspaceRecipesPanel({
                 recipeId: selected!.id,
                 mode: selected!.suggestedPermissionMode,
               });
-              await workbenchClient.startRecipe({
+              await recipeClient.startRecipe({
                 sessionId: snapshot.session.id,
                 recipeId: selected!.id,
                 operationId: operation("recipe-run"),
@@ -209,7 +211,7 @@ export default function WorkspaceRecipesPanel({
                 .prompt("Name for recipe copy", `${selected!.name} copy`)
                 ?.trim();
               if (!name) return;
-              const created = await workbenchClient.cloneRecipe({
+              const created = await recipeClient.cloneRecipe({
                 workspaceId,
                 sourceRecipeId: selected!.id,
                 name,
@@ -248,7 +250,7 @@ export default function WorkspaceRecipesPanel({
               event.preventDefault();
               const data = new FormData(event.currentTarget);
               void act(async () => {
-                await workbenchClient.updateRecipe({
+                await recipeClient.updateRecipe({
                   recipeId: selected.id,
                   expectedRevision: selected.revision,
                   name: String(data.get("name")),
@@ -372,7 +374,7 @@ export default function WorkspaceRecipesPanel({
                         );
                         const completed = new Set(recordedChecks[run.id] ?? []);
                         const currentInputs =
-                          await workbenchClient.checkRecipeInputs(
+                          await recipeClient.checkRecipeInputs(
                             snapshot.session.id,
                             run.recipe.id,
                           );
@@ -395,7 +397,7 @@ export default function WorkspaceRecipesPanel({
                                 `Check not recorded: ${name.replaceAll("_", " ")}`,
                             ),
                         ];
-                        await workbenchClient.completeRecipe({
+                        await recipeClient.completeRecipe({
                           recipeRunId: run.id,
                           artifacts: executions
                             .filter(

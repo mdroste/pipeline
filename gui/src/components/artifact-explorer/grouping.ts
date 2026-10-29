@@ -15,7 +15,8 @@ export const GROUPS: { id: string; label: string; description?: string }[] = [
   {
     id: "step",
     label: "Step outputs",
-    description: "One finalized result per workflow step, after agent merging.",
+    description:
+      "One result for each review step, combining its reviewers’ responses.",
   },
   { id: "files", label: "Files" },
 ];

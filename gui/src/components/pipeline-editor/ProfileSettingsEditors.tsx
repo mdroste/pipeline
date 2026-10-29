@@ -128,7 +128,7 @@ function CalibrateSection({
               </button>
             </div>
             <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-2">
-              Save the profile to persist the change.
+              Save the review design to keep this change.
             </p>
           </div>
         </div>

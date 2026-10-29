@@ -20,7 +20,7 @@ import {
 } from "./shared";
 const DocumentReader = lazy(() => import("../WorkspaceDocumentReader"));
 
-export type SelectionActionKind = "ask" | "note" | "task" | "revision";
+import type { SelectionActionKind } from "./types";
 
 interface Props extends SurfaceApi {
   revisionId: string | null;

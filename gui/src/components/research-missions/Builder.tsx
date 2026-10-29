@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { taskClient, type SessionChoice } from "../../lib/taskClient";
+import { taskClient } from "../../lib/taskClient";
+import { type SessionChoice } from "../../lib/taskTypes";
 import {
   missionClient,
   newMission,
@@ -226,7 +227,7 @@ export default function MissionBuilder({
           />
         </label>
         <label>
-          Research question and remit
+          Research question and scope
           <textarea
             rows={5}
             value={d.objective}
@@ -268,7 +269,7 @@ export default function MissionBuilder({
             />
           </label>
           <label>
-            Managed actions
+            Maximum actions
             <input
               type="number"
               min={3}
@@ -337,7 +338,7 @@ export default function MissionBuilder({
             />
           </label>
           <label>
-            Stop after stagnant rounds
+            Stop after this many rounds without progress
             <input
               type="number"
               min={1}
@@ -384,19 +385,18 @@ export default function MissionBuilder({
             <details>
               <summary>Computation and project changes</summary>
               <p className="task-muted">
-                Select the checks and exact captured variants this automation
-                may choose between. Host execution retains its existing
-                authorization and input checks.
+                Choose which checks and saved analysis variants the automation
+                may run. Each keeps its existing permissions and input checks.
               </p>
               {!choices.canHostCompute && (
                 <p className="task-muted">
-                  This task conversation uses its native sandbox for
-                  computation. Select a project conversation without a task
-                  binding to delegate host checks.
+                  This conversation runs code in its task’s restricted working
+                  area. To use configured local checks, choose a project
+                  conversation that is not linked to a task.
                 </p>
               )}
               <fieldset>
-                <legend>Configured host checks</legend>
+                <legend>Configured local checks</legend>
                 {choices.checks.length ? (
                   choices.checks.map((c) => (
                     <label className="mission-check" key={c.id}>
@@ -496,7 +496,7 @@ export default function MissionBuilder({
         </label>
         {!!methods.length && (
           <details>
-            <summary>Retained research methods</summary>
+            <summary>Saved research methods</summary>
             <p className="task-muted">
               Choose methods to reuse. Their evidence and limitations are
               included.
@@ -535,7 +535,7 @@ export default function MissionBuilder({
           d.criteria.some((c) => !c.trim())
         }
       >
-        {busy ? "Preparing…" : "Prepare research automation →"}
+        {busy ? "Preparing…" : "Preview research automation →"}
       </button>
       <p className="task-muted">
         Review the preview before starting. Starting allows the automation to

@@ -50,7 +50,13 @@ vi.mock("./WorkspaceProjectSurface", () => ({
 vi.mock("../lib/programClient", () => ({
   programClient: { queue: vi.fn().mockResolvedValue([]) },
 }));
-vi.mock("../lib/workbenchClient", () => ({ workbenchClient: mocks }));
+vi.mock("../lib/workbench/workspaceClient", () => ({ workspaceClient: mocks }));
+vi.mock("../lib/workbench/conversationClient", () => ({
+  conversationClient: mocks,
+}));
+vi.mock("../lib/workbench/harnessClient", () => ({ harnessClient: mocks }));
+vi.mock("../lib/workbench/researchClient", () => ({ researchClient: mocks }));
+vi.mock("../lib/workbench/runtimeClient", () => ({ runtimeClient: mocks }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
 }));
@@ -317,7 +323,7 @@ it("opens project tools with the keyboard while leaving a message draft untouche
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: "Find a project view" }),
-  ).toHaveTextContent("Execution settings");
+  ).toHaveTextContent("Command settings");
   expect(draft).toHaveValue("Keep my assumptions");
   expect(mocks.sendTurn).not.toHaveBeenCalled();
 });
@@ -979,9 +985,7 @@ it("retains unsaved assistant instructions and the message across inspector swit
       screen.getByLabelText("Message").closest(".workspace-composer")!,
     ).getByRole("button", { name: "Assistant settings" }),
   );
-  const instructions = await screen.findByLabelText(
-    "Supplemental instructions",
-  );
+  const instructions = await screen.findByLabelText("Additional instructions");
   fireEvent.click(
     screen.getByText("Create a customized profile", { selector: "summary" }),
   );

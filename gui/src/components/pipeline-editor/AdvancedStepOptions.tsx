@@ -77,7 +77,7 @@ function AdvancedStepOptions({
           className="text-[11px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 flex items-center gap-1"
         >
           <span>{open ? "▾" : "▸"}</span>
-          <span>Artifact access &amp; execution rules</span>
+          <span>Files, inputs & run conditions</span>
           {hasAny && !open && (
             <span className="text-[10px] text-gray-600 dark:text-gray-400 ml-1">
               set
@@ -137,8 +137,8 @@ function AdvancedStepOptions({
                   Wait for (order only)
                 </label>
                 <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-1">
-                  Adds timing constraints without exposing the producer's
-                  artifacts.
+                  Wait for selected steps to finish without giving this step
+                  access to their files.
                 </p>
                 {otherSteps.length ? (
                   <div className="flex flex-wrap gap-1">
@@ -404,7 +404,7 @@ function AdvancedStepOptions({
                       })
                     }
                   />
-                  Fan out (run once per item)
+                  Run once for each item
                 </label>
                 {step.for_each && (
                   <div className="space-y-1.5 pl-4">
@@ -443,7 +443,7 @@ function AdvancedStepOptions({
                     {step.for_each.artifact ? (
                       <>
                         <select
-                          aria-label="Fan-out artifact source"
+                          aria-label="Result containing the items"
                           value={step.for_each.artifact.step}
                           onChange={(e) =>
                             onChange({
@@ -498,7 +498,7 @@ function AdvancedStepOptions({
                     ) : (
                       <input
                         type="text"
-                        aria-label="Fan-out file pattern"
+                        aria-label="Files to repeat this step over"
                         value={step.for_each.glob}
                         onChange={(e) =>
                           onChange({
@@ -517,7 +517,7 @@ function AdvancedStepOptions({
                       {step.for_each.artifact ? "Max items" : "Max files"}
                       <input
                         type="number"
-                        aria-label="Maximum fan-out items"
+                        aria-label="Maximum items"
                         min={1}
                         value={step.for_each.max}
                         onChange={(e) =>

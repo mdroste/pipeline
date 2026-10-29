@@ -228,9 +228,14 @@ it("keeps the desktop setting off when permission is denied", async () => {
 it("reports local preference write failures without applying the change", async () => {
   view();
   const select = await screen.findByLabelText("Interface text size");
-  const write = vi.spyOn(localStorage, "setItem").mockImplementation(() => {
-    throw new Error("full");
-  });
+  const setItem = localStorage.setItem.bind(localStorage);
+  const write = vi
+    .spyOn(localStorage, "setItem")
+    .mockImplementation((key, value) => {
+      // Inject the preference failure without failing unrelated panel-width effects.
+      if (key === PREFERENCES_KEY) throw new Error("full");
+      setItem(key, value);
+    });
   fireEvent.change(select, { target: { value: "125" } });
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Could not save this preference",

@@ -1,5 +1,14 @@
 //! Adaptive research planning above the deterministic task coordinator.
+mod accounting;
+mod assessment;
 mod brief;
+mod chains;
+mod planning;
+pub(crate) use accounting::{account, exhausted};
+pub(crate) use assessment::apply_challenge;
+use assessment::host_finding;
+pub(crate) use chains::child_chain;
+pub(crate) use planning::apply_plan;
 pub mod commands;
 pub mod model;
 mod prompts;
@@ -12,10 +21,11 @@ mod validate;
 
 use super::{
     adapters,
-    definition::{Action, Binding, Chain, Limits, Step},
     store::{self, now, Result, TaskRun},
     Coordinator,
 };
+#[cfg(test)]
+use crate::orchestration::definition::{Action, Chain, Limits, Step};
 use crate::workbench::{commands::run_store, missions as workspace};
 use model::*;
 use serde_json::{json, Value};
@@ -233,219 +243,6 @@ async fn advance(coordinator: &Arc<Coordinator>, m: &mut Mission) -> Result<()> 
         .await?;
     Ok(())
 }
-pub(crate) fn exhausted(m: &Mission) -> bool {
-    m.actions_reserved >= m.definition.budget.max_actions
-        || m.active_seconds + 30 > m.definition.budget.active_seconds as u64
-        || (m.phase == Phase::Plan && m.rounds.len() >= m.definition.budget.max_rounds as usize)
-}
-pub(crate) fn account(m: &mut Mission, child: &TaskRun) {
-    m.active_seconds = m.active_seconds.saturating_add(
-        child
-            .progress
-            .receipts
-            .values()
-            .map(|r| {
-                r.finished_at
-                    .unwrap_or(now())
-                    .saturating_sub(r.started_at)
-                    .max(0) as u64
-            })
-            .sum::<u64>(),
-    );
-    let target = if child.scope.session_id == m.planner_scope.session_id {
-        &mut m.planner_scope
-    } else if child.scope.session_id == m.challenger_scope.session_id {
-        &mut m.challenger_scope
-    } else {
-        &mut m.scope
-    };
-    *target = child.scope.clone();
-}
-/// The finding synthesized for a Check/Experiment execution. Plan candidates
-/// allow 12 000-byte instructions while findings cap tested_domain at 4 000,
-/// so the instruction is excerpted; the full text stays in the round.
-fn host_finding(c: &Candidate, outcome: &str) -> Finding {
-    Finding {
-        summary: format!(
-            "Executed the selected check: {}",
-            prompts::short(&c.question, 3800)
-        ),
-        outcome: format!("Execution outcome: {outcome}"),
-        method: format!(
-            "Recorded {} execution",
-            if c.kind == InvestigationKind::Experiment {
-                "captured-plan"
-            } else {
-                "configured host"
-            }
-        ),
-        tested_domain: prompts::short(&c.instruction, 3800),
-        limitations: vec!["Process completion and scientific support are separate assessments. Dependency coverage is declared-only; host execution is not a conversation sandbox.".into()],
-        sources: Vec::new(),
-        files: Vec::new(),
-    }
-}
-
-pub(crate) fn child_chain(m: &Mission) -> Result<Chain> {
-    let workspace = |prompt| Action::Workspace {
-        prompt,
-        model: None,
-        effort: None,
-    };
-    let (label, action) = match m.phase {
-        Phase::Plan => (
-            "Choose the next investigation".to_string(),
-            workspace(prompts::plan(m)?),
-        ),
-        Phase::Challenge => (
-            "Challenge the findings".to_string(),
-            workspace(prompts::challenge(m)?),
-        ),
-        Phase::Review => {
-            let r = m.rounds.last().ok_or("Investigation is missing")?;
-            let artifact = r
-                .evidence
-                .get(&format!("r{}-memo", r.number))
-                .ok_or("Investigation memo was not captured")?;
-            (
-                "Review the investigation memo".into(),
-                Action::Review {
-                    profile_id: m
-                        .definition
-                        .policy
-                        .review_profile_id
-                        .clone()
-                        .ok_or("Review was not authorized")?,
-                    input: Binding::Literal {
-                        value: artifact.clone(),
-                    },
-                    interpretation: "document".into(),
-                    variables: BTreeMap::new(),
-                },
-            )
-        }
-        Phase::Investigate => {
-            let c = m
-                .rounds
-                .last()
-                .and_then(|r| r.selected.as_ref())
-                .ok_or("Selected investigation is missing")?;
-            let action = match c.kind {
-                InvestigationKind::Workspace => workspace(prompts::investigate(m)?),
-                InvestigationKind::Check => Action::Check {
-                    profile_id: c.capability_id.clone().ok_or("Check identity is missing")?,
-                },
-                InvestigationKind::Experiment => Action::CapturedCheck {
-                    plan_id: c
-                        .capability_id
-                        .clone()
-                        .ok_or("Experiment identity is missing")?,
-                },
-            };
-            (c.question.chars().take(160).collect(), action)
-        }
-    };
-    let remaining = (m.definition.budget.active_seconds as u64)
-        .saturating_sub(m.active_seconds)
-        .min(m.definition.budget.action_timeout_seconds as u64) as u32;
-    Ok(Chain {
-        schema_version: 1,
-        name: format!(
-            "{} · {}",
-            m.definition.name.chars().take(60).collect::<String>(),
-            label.chars().take(90).collect::<String>()
-        ),
-        description: "Managed research mission action".into(),
-        steps: vec![Step {
-            id: "action".into(),
-            label,
-            action,
-        }],
-        limits: Limits {
-            max_actions: 1,
-            deadline_hours: m.definition.budget.deadline_hours,
-            action_timeout_secs: remaining,
-        },
-    })
-}
-fn merge_questions(m: &mut Mission, questions: Vec<QuestionSpec>) -> Result<()> {
-    for spec in questions {
-        if let Some(existing) = m.questions.iter().find(|q| q.spec.id == spec.id) {
-            if store::hash(&existing.spec)? != store::hash(&spec)? {
-                return Err("An existing research question cannot be silently redefined".into());
-            }
-        } else {
-            m.questions.push(Question { spec, answer: None });
-        }
-    }
-    if m.questions.len() > 64 {
-        return Err("Mission question limit reached".into());
-    }
-    Ok(())
-}
-pub(crate) fn apply_plan(m: &mut Mission, p: Plan, child: &str) -> Result<()> {
-    validate::plan(m, &p)?;
-    for spec in &p.new_goals {
-        m.goals.push(Goal {
-            spec: spec.clone(),
-            state: "open".into(),
-            assessment: String::new(),
-            resolved_round: None,
-        });
-    }
-    merge_questions(m, p.questions.clone())?;
-    let selected = p
-        .candidates
-        .iter()
-        .find(|c| Some(&c.id) == p.selected_id.as_ref())
-        .cloned();
-    let disposition = p.disposition;
-    m.rounds.push(Round {
-        number: m.rounds.len() as u32 + 1,
-        change_cursor: m.watch_epoch,
-        plan: p,
-        selected,
-        finding: None,
-        evidence: BTreeMap::new(),
-        review: None,
-        challenge: None,
-        child_ids: vec![child.into()],
-        result_fingerprint: None,
-    });
-    m.state = "queued".into();
-    m.due_at = Some(now());
-    match disposition {
-        Disposition::Investigate => {
-            m.phase = Phase::Investigate;
-            m.reason = "Investigation selected within the mission's scope".into();
-        }
-        Disposition::AssessCompletion => {
-            m.phase = Phase::Challenge;
-            m.reason = "Checking the original completion criteria".into();
-        }
-        Disposition::WaitForInput | Disposition::WaitForChange => {
-            m.state = "waiting".into();
-            m.phase = Phase::Plan;
-            m.reason = if disposition == Disposition::WaitForInput {
-                "Waiting for your research input"
-            } else {
-                "Waiting for a tracked project change"
-            }
-            .into();
-            if disposition == Disposition::WaitForInput
-                && !m.questions.iter().any(|q| q.answer.is_none())
-            {
-                return Err("The proposed input wait has no unanswered question".into());
-            }
-            m.due_at = if m.definition.policy.monitor_ids.is_empty() {
-                None
-            } else {
-                Some(now() + 60)
-            };
-        }
-    }
-    Ok(())
-}
 
 async fn consume(coordinator: &Coordinator, m: &mut Mission, child: &TaskRun) -> Result<()> {
     let output = storage::child_output(child)?;
@@ -556,85 +353,6 @@ async fn consume(coordinator: &Coordinator, m: &mut Mission, child: &TaskRun) ->
             m.reason = "Review retained; checking the evidence and completion criteria".into();
         }
         Phase::Challenge => apply_challenge(m, validate::response(&output)?, &child.id)?,
-    }
-    Ok(())
-}
-
-pub(crate) fn apply_challenge(m: &mut Mission, c: Challenge, child: &str) -> Result<()> {
-    validate::challenge(m, &c)?;
-    let r = m.rounds.last().ok_or("Challenge round is missing")?;
-    if r.challenge.is_some() {
-        return Err("This investigation already has a retained challenge".into());
-    }
-    if c.goal_resolved
-        && c.outcome != Outcome::Infeasible
-        && r.selected
-            .as_ref()
-            .is_some_and(|s| s.kind != InvestigationKind::Workspace)
-        && r.evidence
-            .get(&format!("r{}-execution", r.number))
-            .is_some_and(|e| e["result"]["passed"] != true)
-    {
-        return Err(
-            "A failed or unknown computation cannot establish support or a scientific refutation"
-                .into(),
-        );
-    }
-    let repeated = r.result_fingerprint.as_ref().is_some_and(|f| {
-        m.rounds
-            .iter()
-            .take(m.rounds.len() - 1)
-            .any(|old| old.result_fingerprint.as_ref() == Some(f))
-    });
-    if c.progress_made && !repeated {
-        m.stagnant_rounds = 0;
-    } else {
-        m.stagnant_rounds += 1;
-    }
-    if let Some(candidate) = &r.selected {
-        if let Some(goal) = m.goals.iter_mut().find(|g| g.spec.id == candidate.goal_id) {
-            goal.assessment = c.summary.clone();
-            if c.goal_resolved {
-                goal.state = match c.outcome {
-                    Outcome::Supported => "supported",
-                    Outcome::Refuted => "refuted",
-                    Outcome::Infeasible => "infeasible",
-                    Outcome::Inconclusive => "open",
-                }
-                .into();
-                goal.resolved_round = Some(r.number);
-            }
-        }
-    }
-    let number = r.number;
-    for (i, spec) in c.methods.iter().enumerate() {
-        m.methods.push(Method {
-            id: format!("{}-r{number}-m{i}", m.id),
-            mission_id: m.id.clone(),
-            round: number,
-            workspace_id: m.workspace_id.clone(),
-            spec: spec.clone(),
-            retained: false,
-        });
-    }
-    merge_questions(m, c.questions.clone())?;
-    let complete = c.mission_complete;
-    let r = m.rounds.last_mut().unwrap();
-    r.challenge = Some(c);
-    r.child_ids.push(child.into());
-    m.phase = Phase::Plan;
-    m.state = "queued".into();
-    m.due_at = Some(now());
-    m.reason = "Assessment retained; selecting the next useful investigation".into();
-    if complete {
-        m.state = "completed".into();
-        m.reason="The challenger assessed every original criterion as met; review the evidence and its limitations".into();
-        m.due_at = None;
-    } else if m.stagnant_rounds >= m.definition.budget.max_stagnant_rounds {
-        m.state = "attention".into();
-        m.reason="Repeated investigations are no longer adding evidence. Reconsider the agenda before spending more resources.".into();
-        m.due_at = None;
-        m.attention_count += 1;
     }
     Ok(())
 }

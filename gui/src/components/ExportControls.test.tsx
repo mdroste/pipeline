@@ -81,10 +81,10 @@ describe("ExportControls", () => {
     await openMenu();
     expect(
       screen.getByRole("menuitem", { name: /Shareable report/ }),
-    ).toHaveTextContent("No source or raw responses");
+    ).toHaveTextContent("Excludes source documents and raw model responses");
     expect(
-      screen.getByRole("menuitem", { name: /Forensic archive/ }),
-    ).toHaveTextContent("Sensitive");
+      screen.getByRole("menuitem", { name: /Complete review archive/ }),
+    ).toHaveTextContent("Includes private material");
     expect(
       screen.getByRole("menuitem", { name: "Custom selection…" }),
     ).toBeVisible();
@@ -131,7 +131,7 @@ describe("ExportControls", () => {
     await openMenu();
     await userEvent
       .setup()
-      .click(screen.getByRole("menuitem", { name: /Forensic archive/ }));
+      .click(screen.getByRole("menuitem", { name: /Complete review archive/ }));
     expect(confirmDialog.mock.calls[0][0]).toMatch(
       /source documents, raw model responses, logs/i,
     );
@@ -151,7 +151,9 @@ describe("ExportControls", () => {
       .click(
         screen.getByRole("checkbox", { name: "Source documents · Sensitive" }),
       );
-    expect(screen.getByText(/selection is sensitive/i)).toBeVisible();
+    expect(
+      screen.getByText(/selection includes private material/i),
+    ).toBeVisible();
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: "Export selected items…" }));
@@ -198,7 +200,7 @@ describe("ExportControls", () => {
     await userEvent
       .setup()
       .click(
-        screen.getByRole("menuitem", { name: "Export unsaved core package…" }),
+        screen.getByRole("menuitem", { name: "Export current report files…" }),
       );
     expect(invoke).toHaveBeenCalledWith("save_all_artifacts", {
       dir: "/tmp/core",

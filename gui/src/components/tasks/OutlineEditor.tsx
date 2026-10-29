@@ -8,7 +8,7 @@ import {
   localDateTimeHint,
   readLocalDateTime,
 } from "../../lib/localDateTime";
-import type { Binding, Chain, Step } from "../../lib/taskClient";
+import type { Binding, Chain, Step } from "../../lib/taskTypes";
 import {
   allStepIds,
   blankStep,

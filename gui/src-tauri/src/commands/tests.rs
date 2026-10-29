@@ -116,3 +116,5 @@ mod print;
 mod recovery;
 
 mod snapshots;
+
+mod run_admission_contracts;

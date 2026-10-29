@@ -233,7 +233,7 @@ export default function RunPreview({
               id="run-preview-title"
               className="mt-1 text-xl font-semibold text-gray-950 dark:text-gray-50"
             >
-              Review the execution plan
+              Review the plan
             </h1>
             <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
               {batchCount > 1 ? `${batchCount} documents` : basename(inputPath)}{" "}
@@ -286,21 +286,21 @@ export default function RunPreview({
               className={`text-sm font-semibold ${remoteIsPossible ? "text-amber-900 dark:text-amber-200" : "text-emerald-900 dark:text-emerald-200"}`}
             >
               {remoteIsPossible
-                ? "Selected artifacts may leave this computer"
+                ? "What your AI provider can receive"
                 : "Selected providers run locally"}
             </h2>
             <p
               className={`mt-1 text-xs leading-5 ${remoteIsPossible ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300"}`}
             >
-              Each step receives only the artifacts listed below. Provider
-              retries and schema-repair attempts are not included in the
-              work-unit estimate.
+              Each step can read the files and results listed below. The
+              estimated call count excludes retries and attempts to correct
+              response formatting.
             </p>
           </div>
 
           <section className="mt-6">
             <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-              Execution timeline
+              Review steps
             </h2>
             {autoAssembled && (
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -348,7 +348,7 @@ export default function RunPreview({
           <section className="mt-6">
             <div className="flex items-baseline gap-3">
               <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                Artifact access by step
+                Files and results each step can read
               </h2>
               {summary.tools.length > 0 && (
                 <span className="text-[11px] text-gray-500 dark:text-gray-400">
@@ -418,7 +418,8 @@ export default function RunPreview({
 
         <footer className="flex items-center justify-between border-t border-gray-200 px-6 py-4 dark:border-gray-800">
           <p className="text-[11px] text-gray-500 dark:text-gray-400">
-            Extraction and actual fan-out determine final duration and usage.
+            Reading the documents and the number of repeated steps affect the
+            total time and usage.
           </p>
           <div className="flex gap-2">
             <button

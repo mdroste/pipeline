@@ -8,8 +8,8 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("../lib/taskClient", () => ({ taskClient: { list: mocks.list } }));
-vi.mock("../lib/workbenchClient", () => ({
-  workbenchClient: { interruptTurn: mocks.stop },
+vi.mock("../lib/workbench/runtimeClient", () => ({
+  runtimeClient: { interruptTurn: mocks.stop },
 }));
 afterEach(() => {
   cleanup();

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { researchClient } from "../../lib/workbench/researchClient";
 import { projectClient } from "../../lib/projectClient";
 import type { ResearchNote } from "../../lib/workbenchTypes";
 import {
@@ -23,7 +23,7 @@ function NoteCard({ note, api }: { note: ResearchNote; api: SurfaceApi }) {
     if (saving || !body.trim()) return;
     setSaving(true);
     await run(async () => {
-      await workbenchClient.updateNote({
+      await researchClient.updateNote({
         noteId: note.id,
         expectedRevision: note.revision,
         body: body.trim(),
@@ -35,7 +35,7 @@ function NoteCard({ note, api }: { note: ResearchNote; api: SurfaceApi }) {
   };
   const update = (patch: { state?: "accepted" | "rejected" }) =>
     run(() =>
-      workbenchClient.updateNote({
+      researchClient.updateNote({
         noteId: note.id,
         expectedRevision: note.revision,
         operationId: op(),
@@ -127,7 +127,7 @@ function NoteCard({ note, api }: { note: ResearchNote; api: SurfaceApi }) {
                 const checked = e.target.checked;
                 void run(async () => {
                   if (note.pinned && !checked)
-                    await workbenchClient.updateNote({
+                    await researchClient.updateNote({
                       noteId: note.id,
                       expectedRevision: note.revision,
                       pinned: false,
@@ -176,8 +176,8 @@ export default function ProjectNotes(props: SurfaceApi) {
     <section className="space-y-3">
       <h2 className="font-semibold">Notes</h2>
       <p className={muted}>
-        Record decisions, assumptions, questions, and next steps so they survive
-        across conversations.
+        Save decisions, assumptions, questions, and next steps to use in future
+        conversations.
       </p>
       <div className="flex flex-wrap gap-2 sm:flex-nowrap">
         <select
@@ -205,7 +205,7 @@ export default function ProjectNotes(props: SurfaceApi) {
           disabled={!noteBody.trim()}
           onClick={() =>
             void run(async () => {
-              await workbenchClient.createNote({
+              await researchClient.createNote({
                 workspaceId,
                 paperId: null,
                 kind: noteKind,

@@ -44,7 +44,7 @@ function RoleCard({
         </h3>
         {isFallback && (
           <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-400">
-            Broad fallback
+            General reviewer
           </span>
         )}
       </div>
@@ -194,7 +194,7 @@ export default function AutoReviewCatalogDialog({
           <div className="flex items-start gap-4">
             <div className="min-w-0 flex-1">
               <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-blue-700 dark:text-blue-300">
-                Automatic Paper Review
+                Paper Review and Slide Review
               </p>
               <h2
                 id="auto-review-catalog-title"
@@ -203,8 +203,8 @@ export default function AutoReviewCatalogDialog({
                 Specialist catalog
               </h2>
               <p className="mt-1 max-w-3xl text-xs leading-5 text-gray-500 dark:text-gray-400">
-                Automatic paper review selects 1-2 primary subject agents and
-                1-4 methodology agents from this catalog.
+                Each review chooses 1–2 subject specialists and 1–4 methods
+                specialists from this list.
               </p>
             </div>
             <button
@@ -290,7 +290,7 @@ export default function AutoReviewCatalogDialog({
           {catalog && tab === "methods" && !normalizedQuery && (
             <GroupedTab
               groups={catalog.methodFamilies}
-              navLabel="Method families"
+              navLabel="Method categories"
               selectedGroup={selectedFamily}
               onSelectGroup={setSelectedFamily}
               hint="The review uses a specialist when one fits. A general reviewer covers other methods or work that spans several approaches."

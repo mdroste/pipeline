@@ -47,7 +47,7 @@ export default function ObjectPane({
   }
   return (
     <section
-      aria-label="Research object"
+      aria-label="Research item"
       className="flex min-h-0 min-w-0 flex-1 flex-col rounded border bg-white dark:bg-neutral-950"
     >
       <header className="flex flex-wrap items-center gap-2 border-b p-3">

@@ -111,8 +111,8 @@ export default function ProjectIndexPage({
           <section className="project-home-empty">
             <h2>Your research starts here</h2>
             <p>
-              Create a project to keep conversations, papers, and notes
-              together. A folder and paper are optional.
+              Keep related conversations, papers, and notes in a project. Add
+              files whenever you’re ready.
             </p>
             <button
               type="button"

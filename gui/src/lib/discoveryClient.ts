@@ -1,10 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { Json, TaskEvent } from "./taskClient";
+import type { Json, TaskEvent } from "./taskTypes";
 
 export type DiscoveryMode = "supervised" | "unsupervised";
 export const discoveryNames: Record<DiscoveryMode, string> = {
-  supervised: "Full self-discovery (supervised)",
-  unsupervised: "Full self-discovery (unsupervised)",
+  supervised: "Research discovery — choose projects yourself",
+  unsupervised: "Research discovery — let Pipeline choose projects",
 };
 export const discoveryStatus = (state: string) =>
   ({

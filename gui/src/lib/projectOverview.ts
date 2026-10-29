@@ -20,7 +20,7 @@ import type {
 } from "./studioClient";
 import type { ImpactReport } from "./deskClient";
 import type { CampaignStatus, MonitorState } from "./programClient";
-import type { TaskSummary } from "./taskClient";
+import type { TaskSummary } from "./taskTypes";
 import type { WorkspaceDestination } from "./workspaceNavigation";
 import { remoteLabel, type RepositoryStatus } from "./repositoryClient";
 import { severityRank } from "./issues";

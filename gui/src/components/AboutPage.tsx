@@ -136,8 +136,8 @@ function HelpContent({
     <div className="space-y-8">
       {/* Overview */}
       <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-        Pipeline orchestrates AI agents for doing and reviewing academic
-        research. Projects keep conversations, files, and evidence together;
+        Use Pipeline to develop research, work with AI assistants, and review
+        papers. Projects keep conversations, files, and evidence together;
         Reviews provide repeatable, structured assessments of papers, proposals,
         and other research material.
       </p>
@@ -165,8 +165,8 @@ function HelpContent({
             badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
             title="PDF tools"
           >
-            The tools that render PDF pages, check extraction completeness, and
-            run pdftotext are bundled. Nothing else is required.
+            Pipeline includes the tools needed to display PDFs and extract plain
+            text.
           </BadgeRow>
           <BadgeRow
             badge="Highly recommended"
@@ -186,18 +186,18 @@ function HelpContent({
         <div className="grid gap-3">
           <StageCard
             number="1"
-            title="Choose a review and input"
+            title="Choose a review design and files"
             description="On New review, pick a review design, then select files or a folder and say how Pipeline should treat the selection — one document, a LaTeX project, a browsable folder, or a batch."
           />
           <StageCard
             number="2"
             title="Confirm the preview"
-            description="Pipeline shows which steps will run, which provider they will use, and what they may read. Nothing starts until you confirm."
+            description="Check the steps, providers, and files each step can read, then start the review."
           />
           <StageCard
             number="3"
             title="Read the report"
-            description="Pipeline extracts the text, builds a short survey of the material so each step knows where things are, runs the steps, and opens the finished report."
+            description="Pipeline reads the document, prepares an overview, runs the review, and opens the report."
           />
         </div>
       </Section>
@@ -240,15 +240,21 @@ function HelpContent({
               ? builtinProfiles
               : [
                   {
-                    id: "auto-review",
-                    name: "Automatic Paper Review (Full)",
+                    id: "auto-paper-review",
+                    name: "Paper Review",
                     step_count: 5,
                     builtin: true,
                   },
                   {
-                    id: "auto-review-quick",
-                    name: "Automatic Paper Review (Quick)",
+                    id: "auto-paper-review-fast",
+                    name: "Paper Review (Fast)",
                     step_count: 4,
+                    builtin: true,
+                  },
+                  {
+                    id: "slide-review",
+                    name: "Slide Review",
+                    step_count: 5,
                     builtin: true,
                   },
                   {
@@ -278,7 +284,8 @@ function HelpContent({
             </ul>
           </div>
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            The Gallery installs curated workflows as ordinary editable copies.
+            Choose a ready-made review design from the Gallery and edit it to
+            suit your work.
           </p>
           <div className="flex gap-4">
             <NavLink
@@ -294,7 +301,7 @@ function HelpContent({
 
         <Collapsible title="Reading your report">
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            A finished report can expose {REPORT_WORKSPACE_TABS.length} views:{" "}
+            A finished report can include {REPORT_WORKSPACE_TABS.length} views:{" "}
             {REPORT_WORKSPACE_TABS.map((tab) => tab.label).join(", ")}.{" "}
             {REPORT_WORKSPACE_TABS.map(
               (tab) =>
@@ -302,9 +309,9 @@ function HelpContent({
             ).join(" ")}
           </p>
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            Use Export for a safe shareable package, a clearly marked sensitive
-            forensic archive, a custom selection, Markdown, or the system print
-            dialog for saving PDF.
+            Use Export to save a shareable report, a complete archive, selected
+            files, or Markdown. Choose Print / save as PDF for a PDF copy.
+            Complete archives include private source material and logs.
           </p>
         </Collapsible>
 
@@ -317,9 +324,8 @@ function HelpContent({
             document.
           </p>
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            Review collections group related reports and revisions and keep a
-            running ledger of issues across them, without moving or deleting
-            anything.
+            Use collections to group related reports and track findings across
+            revisions.
           </p>
           <div className="flex gap-4">
             <NavLink
@@ -381,9 +387,9 @@ function HelpContent({
         <Collapsible title="Batch reports">
           <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
             To review several documents with the same workflow, select multiple
-            files on New review, or choose a folder and set its meaning to Batch
-            of documents. Each document becomes an independent report and the
-            queue appears under Current batch.
+            files on New review, or choose a folder and select Batch of
+            documents. Each document becomes an independent report and the queue
+            appears under Current batch.
           </p>
         </Collapsible>
 
@@ -406,9 +412,8 @@ function HelpContent({
               <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded font-mono">
                 ~/.pipeline/workbench/
               </code>
-              . Project archives exclude assistant credentials, but the exported
-              archive or transcript is a sensitive ordinary file wherever you
-              save it.
+              . Archives exclude sign-in details but may contain private
+              research and conversation text. Store and share them carefully.
             </li>
             <li>
               Each step reads only the material its workflow allows. When a step
@@ -437,8 +442,8 @@ function HelpContent({
       <Section title="Something not working?">
         <ul className="space-y-1.5 text-sm text-gray-600 dark:text-gray-400 leading-relaxed list-disc pl-5">
           <li>
-            The status button in the lower-left corner reports missing CLIs,
-            keys, and tools.
+            Use the status button in the lower-left corner to check for missing
+            provider connections and tools.
           </li>
           <li>
             The Console at the bottom of the workspace has per-step logs; failed

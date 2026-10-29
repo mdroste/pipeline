@@ -99,10 +99,9 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
       <section className={card}>
         <h2 className="font-semibold">Specification grids</h2>
         <p className={muted}>
-          Enumerate the complete comparison before launch. Each specification
-          gets a fresh copy of the captured inputs; runs proceed serially.
-          Parameters are available to the script through
-          PIPELINE_PARAMETERS_FILE.
+          Choose all specifications before starting. Pipeline runs them one at a
+          time, each with a new copy of the saved inputs. Scripts read
+          parameters from PIPELINE_PARAMETERS_FILE.
         </p>
         <Field label="Experiment title">
           <input
@@ -118,13 +117,13 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
             onChange={(e) => setQuestion(e.target.value)}
           />
         </Field>
-        <Field label="Captured baseline plan">
+        <Field label="Saved baseline plan">
           <select
             className={input}
             value={base}
             onChange={(e) => setBase(e.target.value)}
           >
-            <option value="">Choose captured execution</option>
+            <option value="">Choose a saved analysis plan</option>
             {p.choices?.plans.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.title} · {c.contentHash.slice(0, 8)}
@@ -203,7 +202,7 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
               onChange={(e) => setMaxRuns(Number(e.target.value))}
             />
           </Field>
-          <Field label="Total timeout budget (seconds)">
+          <Field label="Total time limit (seconds)">
             <input
               className={input}
               type="number"
@@ -254,9 +253,9 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
             captured inputs before per-run copies
           </p>
           <p className={muted}>
-            Every enumerated command has host access. Toolchain availability and
-            license limits still apply. This plan does not change the accepted
-            baseline.
+            Each command runs with your computer’s permissions and requires the
+            listed software and licenses. These runs keep the current baseline
+            unchanged.
           </p>
           <Inspect
             value={preview.basePlan.body}
@@ -327,7 +326,7 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
                 })
               }
             >
-              Export full attempted set
+              Export all run attempts
             </button>
           </div>
           <Field label="Sort specifications">
@@ -405,9 +404,9 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
             </table>
           </div>
           <p className={muted}>
-            Use Publication assets to compare imported estimates or overlay
-            numeric IRFs. Failed, missing, timed-out, and excluded rows remain
-            here.
+            Compare estimates and impulse responses in Tables & figures. This
+            list also keeps failed, missing, timed-out, and excluded
+            specifications.
           </p>
         </section>
       )}

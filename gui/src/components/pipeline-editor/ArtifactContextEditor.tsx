@@ -175,7 +175,7 @@ function ArtifactContextEditor({
       <div>
         <div className="flex items-center justify-between gap-2">
           <label className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-            Artifact access
+            What this step can read
           </label>
           <span
             className="text-[10px] text-gray-600 dark:text-gray-400 truncate"
@@ -186,8 +186,8 @@ function ArtifactContextEditor({
         </div>
         <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-0.5 leading-relaxed">
           {step.phase === "parallel"
-            ? "This is an exact allowlist. Parallel steps are independent and cannot read another step's output."
-            : "This is an exact allowlist. Selecting a step artifact also makes this step wait for its producer."}
+            ? "This step can read only the items you select. Parallel steps run independently and cannot read each other’s results."
+            : "This step can read only the items you select. If you select another step’s result, it will wait for that step to finish."}
         </p>
       </div>
 

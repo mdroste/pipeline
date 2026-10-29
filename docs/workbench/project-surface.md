@@ -1,8 +1,8 @@
 # Project home, reading, and isolated tasks
 
-This document describes project-surface items PI-00–PI-03. Release
+This document describes project home, reading, anchors, and isolated tasks. Release
 claims belong to [release-qualification.md](release-qualification.md); the
-[local evidence record](project-surface-qualification.json) contains observed
+[local evidence record](../releases/project-surface-qualification.json) contains observed
 outcomes and measurements, with unqualified cases stated separately.
 
 ## Using the project surface
@@ -108,7 +108,7 @@ lives there too. The lifecycle below uses the record vocabulary.
    proposal changes task state and keeps the snapshots/copy for inspection.
    Neither operation performs a destructive reset, commit, or push.
 
-Git setup uses the local launch policy (`/bin/zsh -lic` on this Mac), with
+Git setup uses the local launch policy (`/bin/zsh -lic` on macOS), with
 arguments passed positionally, hooks and fsmonitor disabled, a new `codex/`
 branch, and `worktree add --no-checkout`. Only selected working bytes are
 copied. Tracked symlinks/submodules, unsupported files, excessive metadata,

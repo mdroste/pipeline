@@ -123,7 +123,7 @@ export default function ArtifactTree({
               <button
                 type="button"
                 onClick={() => setNavigationOpen(false)}
-                aria-label="Hide artifact browser"
+                aria-label="Hide files"
                 className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800
                            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400
                            dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
@@ -197,7 +197,7 @@ export default function ArtifactTree({
         <button
           type="button"
           onClick={() => setNavigationOpen(true)}
-          aria-label="Show artifact browser"
+          aria-label="Show files"
           title="Show artifacts"
           className="flex w-10 shrink-0 items-start justify-center border-r border-gray-200 pt-4 text-gray-500
                      hover:bg-gray-50 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2

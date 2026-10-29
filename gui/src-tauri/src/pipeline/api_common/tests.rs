@@ -1,4 +1,6 @@
 use super::*;
+use base64::{engine::general_purpose::STANDARD, Engine};
+use std::io::Write as _;
 
 static READ_DIR_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -642,4 +644,106 @@ fn write_tool_confinement_in_scope() {
 
     // Disabled state rejects everything.
     assert!(write_file_for_tool(&ToolAccess::default(), "steps/report.md", "x").is_err());
+}
+
+#[test]
+fn provider_request_json_preserves_omissions_casing_and_wire_fields() {
+    let anthropic = AnthropicRequest {
+        model: "fixture".into(),
+        max_tokens: 17,
+        system: None,
+        messages: vec![AnthropicMessage {
+            role: "user".into(),
+            content: serde_json::json!([{"type":"text","text":"paper"}]),
+        }],
+        tools: vec![],
+        output_config: None,
+    };
+    assert_eq!(
+        serde_json::to_string(&anthropic).unwrap(),
+        r#"{"model":"fixture","max_tokens":17,"messages":[{"role":"user","content":[{"text":"paper","type":"text"}]}]}"#
+    );
+    let openai = OpenAIRequest {
+        model: "fixture".into(),
+        messages: vec![OpenAIMessage {
+            role: "assistant".into(),
+            content: None,
+            tool_calls: Some(vec![OpenAIToolCall {
+                id: "call-1".into(),
+                call_type: "function".into(),
+                function: OpenAIFunctionCall {
+                    name: "Read".into(),
+                    arguments: "{}".into(),
+                },
+            }]),
+            tool_call_id: None,
+        }],
+        tools: vec![],
+        reasoning_effort: Some("high".into()),
+        max_completion_tokens: Some(17),
+        prompt_cache_key: Some("paper-1".into()),
+        response_format: None,
+    };
+    assert_eq!(
+        serde_json::to_string(&openai).unwrap(),
+        r#"{"model":"fixture","messages":[{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"Read","arguments":"{}"}}]}],"reasoning_effort":"high","max_completion_tokens":17,"prompt_cache_key":"paper-1"}"#
+    );
+    let google = GoogleRequest {
+        contents: vec![GoogleContent {
+            role: "user".into(),
+            parts: vec![serde_json::json!({"text":"paper"})],
+        }],
+        system_instruction: Some(GoogleContent {
+            role: String::new(),
+            parts: vec![serde_json::json!({"text":"instructions"})],
+        }),
+        tools: vec![],
+        tool_config: Some(serde_json::json!({"functionCallingConfig":{"mode":"AUTO"}})),
+        generation_config: Some(serde_json::json!({"maxOutputTokens":17})),
+    };
+    assert_eq!(
+        serde_json::to_string(&google).unwrap(),
+        r#"{"contents":[{"role":"user","parts":[{"text":"paper"}]}],"systemInstruction":{"role":"","parts":[{"text":"instructions"}]},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"generationConfig":{"maxOutputTokens":17}}"#
+    );
+    assert_eq!(
+        serde_json::to_string(&ReadToolDef::default()).unwrap(),
+        r#"{"name":"Read","description":"Read the contents of a file at the given absolute path. Returns the file's text content.","input_schema":{"properties":{"file_path":{"description":"Absolute file path to read","type":"string"}},"required":["file_path"],"type":"object"}}"#
+    );
+}
+
+#[test]
+fn write_quota_is_run_owned_and_failed_reservations_roll_back() {
+    use std::sync::atomic::Ordering;
+    let first = crate::run_scope::ActiveScope::begin("write-quota-first");
+    let second = crate::run_scope::ActiveScope::begin("write-quota-second");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_string_lossy().to_string();
+    let access = ToolAccess::new(&[], Some(&root));
+    first.scope().write_count.store(4, Ordering::SeqCst);
+    first
+        .scope()
+        .write_bytes
+        .store(MAX_WRITE_BYTES_PER_RUN, Ordering::SeqCst);
+    crate::run_scope::enter_blocking(first.scope().clone(), || {
+        assert!(write_file_for_tool(&access, "first.txt", "x")
+            .unwrap_err()
+            .contains("Run artifact quota reached"));
+        assert_eq!(first.scope().write_count.load(Ordering::SeqCst), 4);
+        assert_eq!(
+            first.scope().write_bytes.load(Ordering::SeqCst),
+            MAX_WRITE_BYTES_PER_RUN
+        );
+        assert!(!dir.path().join("first.txt").exists());
+    });
+    crate::run_scope::enter_blocking(second.scope().clone(), || {
+        write_file_for_tool(&access, "second.txt", "second").unwrap();
+        assert_eq!(second.scope().write_count.load(Ordering::SeqCst), 1);
+        assert_eq!(second.scope().write_bytes.load(Ordering::SeqCst), 6);
+    });
+    assert_eq!(first.scope().write_count.load(Ordering::SeqCst), 4);
+    assert_eq!(
+        first.scope().write_bytes.load(Ordering::SeqCst),
+        MAX_WRITE_BYTES_PER_RUN
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
 }

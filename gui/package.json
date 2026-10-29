@@ -34,6 +34,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "clean": "node ../scripts/clean-build-artifacts.mjs",
+    "test:clean": "node --test ../scripts/clean-build-artifacts.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "prepare:release-resources": "node ../scripts/release/prepare-package-notices.mjs",

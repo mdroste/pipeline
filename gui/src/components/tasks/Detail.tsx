@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from "react";
+import { stateLabel, taskTime } from "../../lib/taskPresentation";
+import { taskClient } from "../../lib/taskClient";
 import {
-  stateLabel,
-  taskClient,
-  taskTime,
   type Json,
   type Receipt,
   type TaskEvent,
   type TaskRun,
-} from "../../lib/taskClient";
+} from "../../lib/taskTypes";
 import { Outline, Status } from "./shared";
 
 function Output({
@@ -185,7 +184,7 @@ export default function Detail({
             <dt>Conversation</dt>
             <dd>{run.scope.sessionId ?? "No conversation steps"}</dd>
             <dt>Folder</dt>
-            <dd>{run.scope.runtimeRoot ?? "Automation artifacts"}</dd>
+            <dd>{run.scope.runtimeRoot ?? "Automation files and results"}</dd>
             <dt>Review profiles</dt>
             <dd>
               {Object.values(run.scope.profiles)
@@ -203,9 +202,9 @@ export default function Detail({
             <dd>{taskTime(run.dueAt)}</dd>
           </dl>
           <p className="task-muted">
-            Conversation steps use this project’s tools and folder permissions.
-            Scheduled occurrences get their own conversation. Reviews use the
-            saved review profile and their own provider credentials.
+            Assistant steps use this project’s tools and file permissions. Each
+            scheduled run starts a separate conversation. Review steps use their
+            saved design and configured provider account.
           </p>
         </div>
       )}
@@ -263,12 +262,12 @@ export default function Detail({
       {!run.missionId && run.state === "attention" && (
         <div className="task-attention">
           <p>
-            Inspect any completed work before retrying an interrupted action. A
-            retry can repeat effects that were not recorded.
+            Check the completed work before retrying. The interrupted action may
+            already have made changes that Pipeline could not record.
           </p>
           <div className="task-actions">
             <button disabled={busy} onClick={() => void control("reconcile")}>
-              Reconcile recorded results
+              Check saved results and update status
             </button>
             <button
               disabled={busy}
@@ -277,7 +276,7 @@ export default function Detail({
               Use current conversation context
             </button>
             <button disabled={busy} onClick={() => void control("retry")}>
-              Retry unresolved actions
+              Retry unfinished actions
             </button>
           </div>
         </div>
@@ -289,8 +288,8 @@ export default function Detail({
       )}
       {run.progress.limitReached && (
         <p className="task-attention">
-          The iteration limit was reached. The final artifact is the last
-          reviewed version; unresolved findings remain available below.
+          The review limit was reached. The final file is the last version
+          reviewed. Unresolved findings appear below.
         </p>
       )}
       {receipts.length ? (
@@ -328,7 +327,7 @@ export default function Detail({
         <Outline steps={run.chain.steps} />
       )}
       <details>
-        <summary>Chain and limits</summary>
+        <summary>Steps and limits</summary>
         <Outline steps={run.chain.steps} />
         <pre className="task-result">{JSON.stringify(run.chain, null, 2)}</pre>
         <div className="task-actions">
@@ -340,7 +339,9 @@ export default function Detail({
                 .catch((e) => setError(String(e)));
             }}
           >
-            {saved ? "Saved to your chains" : "Save reusable chain"}
+            {saved
+              ? "Saved to your automation templates"
+              : "Save as an automation template"}
           </button>
           <button
             onClick={() => {

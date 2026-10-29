@@ -144,7 +144,7 @@ function exportLedger(project: Project, issues: ProjectIssue[]): string {
       return `## ${issueIndex + 1}. ${issue.title}\n\n- Status: ${issue.status}\n- Severity: ${issue.severity || "unspecified"}\n- First observed: ${formatDate(issueFirstObserved(issue))}\n- Last observed: ${formatDate(issueLastObserved(issue))}\n- Occurrences: ${issue.occurrences.length}${issue.section ? `\n- Current section/location: ${issue.section}` : ""}${issue.note ? `\n\n**Collection note:** ${issue.note}` : ""}\n\n### Observations\n\n${occurrences}`;
     })
     .join("\n\n");
-  return `# ${project.name} — Issue ledger\n\nExported ${formatDate(new Date().toISOString(), true)}. Lifecycle decisions are collection-level; observations retain their original report provenance.\n\n${body || "No issues match the current filters."}\n`;
+  return `# ${project.name} — Findings across reviews\n\nExported ${formatDate(new Date().toISOString(), true)}. Lifecycle decisions are collection-level; observations retain their original report provenance.\n\n${body || "No issues match the current filters."}\n`;
 }
 
 export default function ProjectIssueLedgerPanel({
@@ -364,7 +364,7 @@ export default function ProjectIssueLedgerPanel({
   if (loading && !ledger) {
     return (
       <div className="rounded-xl border border-gray-200 px-4 py-10 text-center text-sm text-gray-500 dark:border-gray-800 dark:text-gray-400">
-        Refreshing issue ledger…
+        Refreshing findings…
       </div>
     );
   }
@@ -374,13 +374,12 @@ export default function ProjectIssueLedgerPanel({
       <div className="flex flex-wrap items-start gap-4">
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-            Issue ledger
+            Findings across reviews
           </h2>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-gray-500 dark:text-gray-400">
-            Findings are matched conservatively across structured reports.
-            Collection decisions persist; a missing finding is never treated as
-            addressed automatically. The ledger works the same way for
-            documents, source trees, and input-free reports.
+            Track related findings across reports. Pipeline links clear matches
+            and keeps your decisions. A finding stays open when a later report
+            omits it, until you mark it addressed.
           </p>
         </div>
         <div className="flex gap-2">
@@ -780,9 +779,8 @@ export default function ProjectIssueLedgerPanel({
                 : "No structured issues were found in this collection’s reports."}
             </p>
             <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-gray-500 dark:text-gray-400">
-              Issues appear here when a workflow saves structured findings,
-              including older Paper Review reports. Reports saved only as prose
-              do not populate this list.
+              Findings appear here when a review saves them as individual items.
+              Reports containing only prose do not add items to this list.
             </p>
           </div>
         )}

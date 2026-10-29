@@ -1,5 +1,10 @@
+import { reportExportClient } from "../lib/reportExportClient";
+import type {
+  ExportMode,
+  ExportSelection,
+  ExportPackageResult,
+} from "../lib/reportExportClient";
 import { open } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
 import { useMemo, useState } from "react";
 import type { PipelineReport } from "../lib/types";
 import { confirmDialog, notify } from "./DialogService";
@@ -11,28 +16,6 @@ interface Props {
   provenanceMarkdown?: string;
   report?: PipelineReport;
   extractedText?: string;
-}
-
-type ExportMode = "shareable" | "forensic" | "custom";
-
-interface ExportSelection {
-  report: boolean;
-  verifiedFindings: boolean;
-  provenance: boolean;
-  workflow: boolean;
-  sourceDocuments: boolean;
-  rawResponses: boolean;
-  logs: boolean;
-  supportingArtifacts: boolean;
-}
-
-interface ExportPackageResult {
-  exportedPath: string;
-  fileCount: number;
-  bytes: number;
-  checksum: string;
-  mode: ExportMode;
-  sensitivity: "shareable" | "sensitive";
 }
 
 const SAFE_SELECTION: ExportSelection = {
@@ -80,7 +63,7 @@ export default function ExportControls({
     setMenuOpen(false);
     try {
       const suggestedName = `PIPELINE_REPORT_${new Date().toISOString().slice(0, 10)}.md`;
-      await invoke("save_report_md", { markdown, suggestedName });
+      await reportExportClient.saveMarkdown({ markdown, suggestedName });
     } catch (e: unknown) {
       notify(`Failed to save: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -89,7 +72,7 @@ export default function ExportControls({
   const handlePrint = async () => {
     setMenuOpen(false);
     try {
-      await invoke("print_report_html", {
+      await reportExportClient.print({
         markdown: pdfMarkdown ?? markdown,
         provenanceMarkdown: provenanceMarkdown ?? null,
       });
@@ -111,7 +94,7 @@ export default function ExportControls({
         title: "Choose folder for core report files",
       });
       if (!dir) return;
-      await invoke("save_all_artifacts", {
+      await reportExportClient.saveCore({
         dir,
         markdown,
         extractedText,
@@ -138,7 +121,7 @@ export default function ExportControls({
     setMenuOpen(false);
     if (mode === "forensic") {
       const confirmed = await confirmDialog(
-        "The forensic archive is sensitive. It includes the entire saved run: source documents, raw model responses, logs, workflow, effective configuration, and manifest. Export it?",
+        "Export the complete review? It includes source documents, raw model responses, logs, the review design, settings, and file list. These may contain private information.",
         {
           title: "Export sensitive forensic archive",
           confirmLabel: "Export archive",
@@ -165,7 +148,7 @@ export default function ExportControls({
       });
       if (!destination) return;
       setProgress("Copying files and calculating checksums…");
-      const next = await invoke<ExportPackageResult>("export_run_package", {
+      const next = await reportExportClient.package({
         runId,
         destination,
         mode,
@@ -189,7 +172,7 @@ export default function ExportControls({
   const reveal = async () => {
     if (!result) return;
     try {
-      await invoke("reveal_export_in_folder", { path: result.exportedPath });
+      await reportExportClient.reveal({ path: result.exportedPath });
     } catch (e: unknown) {
       notify(
         `Could not reveal the package: ${e instanceof Error ? e.message : String(e)}`,
@@ -234,8 +217,9 @@ export default function ExportControls({
                   Shareable report
                 </span>
                 <span className="block text-xs text-gray-500 dark:text-gray-400">
-                  Report, verified findings, limitations, and redacted
-                  provenance. No source or raw responses.
+                  Report, checked findings, limitations, and report details with
+                  private information removed. Excludes source documents and raw
+                  model responses.
                 </span>
               </button>
               <button
@@ -246,11 +230,11 @@ export default function ExportControls({
                 className="w-full rounded px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
               >
                 <span className="block text-sm font-medium text-amber-700 dark:text-amber-300">
-                  Forensic archive · Sensitive
+                  Complete review archive · Includes private material
                 </span>
                 <span className="block text-xs text-gray-500 dark:text-gray-400">
-                  Entire run, including sources, raw responses, logs, workflow,
-                  configuration, and manifest.
+                  All review files, including source documents, raw model
+                  responses, logs, the review design, settings, and file list.
                 </span>
               </button>
               <button
@@ -272,7 +256,7 @@ export default function ExportControls({
               onClick={() => void handleLegacyCore()}
               className="w-full rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
             >
-              Export unsaved core package…
+              Export current report files…
             </button>
           )}
           <button
@@ -304,8 +288,8 @@ export default function ExportControls({
                 Custom export
               </h3>
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Only checked artifact classes are included. Every package gets a
-                manifest and checksums.
+                Choose the types of files to export. Pipeline includes a file
+                list and checksums to help detect changes.
               </p>
             </div>
             <button
@@ -319,11 +303,17 @@ export default function ExportControls({
           <div className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
             {(
               [
-                ["report", "Rendered report"],
+                ["report", "Formatted report"],
                 ["verifiedFindings", "Verified findings and limitations"],
-                ["provenance", "Redacted provenance"],
-                ["workflow", "Workflow snapshot"],
-                ["supportingArtifacts", "Supporting artifacts · Sensitive"],
+                [
+                  "provenance",
+                  "Report details with private information removed",
+                ],
+                ["workflow", "Saved review design"],
+                [
+                  "supportingArtifacts",
+                  "Supporting files · May contain private information",
+                ],
                 ["sourceDocuments", "Source documents · Sensitive"],
                 ["rawResponses", "Raw responses and step outputs · Sensitive"],
                 ["logs", "Console logs · Sensitive"],
@@ -341,7 +331,8 @@ export default function ExportControls({
           </div>
           {customSensitive && (
             <p className="mt-3 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-              This selection is sensitive and should be shared deliberately.
+              This selection includes private material. Check the files before
+              sharing them.
             </p>
           )}
           <button

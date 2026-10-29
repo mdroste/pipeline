@@ -1,7 +1,8 @@
 import { useId, useRef, useState } from "react";
 import useModalDialog from "../hooks/useModalDialog";
 import { open } from "@tauri-apps/plugin-dialog";
-import { workbenchClient } from "../lib/workbenchClient";
+import { workspaceClient } from "../lib/workbench/workspaceClient";
+import { researchClient } from "../lib/workbench/researchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type { Workspace } from "../lib/workbenchTypes";
 
@@ -71,7 +72,7 @@ export default function WorkspaceProjectDialog({
       let workspace = created.current;
       if (!workspace) {
         workspace = (
-          await workbenchClient.createWorkspace({
+          await workspaceClient.createWorkspace({
             name: trimmed,
             operationId: `create-workspace-${crypto.randomUUID()}`,
           })
@@ -80,7 +81,7 @@ export default function WorkspaceProjectDialog({
       }
       if (folder && !workspace.root) {
         workspace = (
-          await workbenchClient.registerWorkspaceRoot({
+          await workspaceClient.registerWorkspaceRoot({
             workspaceId: workspace.id,
             root: folder,
             expectedRevision: workspace.revision,
@@ -90,7 +91,7 @@ export default function WorkspaceProjectDialog({
         created.current = workspace;
       }
       if (paper && !paperImported.current) {
-        await workbenchClient.importPaper({
+        await researchClient.importPaper({
           workspaceId: workspace.id,
           paperId: null,
           title: basename(paper).replace(/\.[^.]+$/, ""),

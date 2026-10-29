@@ -187,15 +187,23 @@ pub(crate) async fn submit_turn(
         }
 
         let session_id = request.session_id.clone();
-        let (binding, runtime_root, prepared) = run_store(move |store| {
+        let (binding, runtime_root, prepared, use_claude) = run_store(move |store| {
             if store.session_snapshot(&session_id)?.session.workspace_id.as_deref().is_some_and(crate::workbench::research::jobs::workspace_active) {return Err(WorkbenchError::conflict("This project has a local job holding its write resources. Finish or stop it before starting a research turn."));}
             Ok::<_, WorkbenchError>((
                 store.active_binding(&session_id)?,
                 store.runtime_root(&session_id)?,
                 crate::workbench::research::prepare_turn(&store, &session_id)?,
+                crate::workbench::claude::selected(&store.session_snapshot(&session_id)?.session.overrides)?,
             ))
         })
         .await?;
+        if use_claude {
+            return crate::workbench::claude::submit(app, request, binding, prepared, automated).await;
+        }
+        let transferred_history = if binding.as_ref().is_some_and(|b| b.runtime_namespace == crate::workbench::claude::NAMESPACE) {
+            let session = request.session_id.clone();
+            run_store(move |store| crate::workbench::history::recent_context(&store, &session)).await?
+        } else { String::new() };
         let root = runtime_root.to_string_lossy().into_owned();
         let permission_profile = prepared.effective.permission_profile.as_str();
         let supervisor = crate::workbench::codex::supervisor_manager().connect().await?;
@@ -207,7 +215,8 @@ pub(crate) async fn submit_turn(
             .epoch = Some(supervisor.status().epoch);
         ensure_event_bridge(app, supervisor.clone());
         let connection = if let Some(binding) = binding.filter(|binding| {
-            binding.harness_fingerprint.as_deref() == Some(&prepared.effective.fingerprint)
+            binding.runtime_namespace != crate::workbench::claude::NAMESPACE
+                && binding.harness_fingerprint.as_deref() == Some(&prepared.effective.fingerprint)
         }) {
             supervisor
                 .resume_thread(
@@ -225,7 +234,7 @@ pub(crate) async fn submit_turn(
                     cwd: root.clone(),
                     runtime_workspace_roots: vec![root],
                     permissions: permission_profile.to_string(),
-                    developer_instructions: prepared.effective.developer_instructions.clone(),
+                    developer_instructions: format!("{}\n{}", prepared.effective.developer_instructions, transferred_history),
                     model: request.model.clone(),
                     effort: request.effort.clone(),
                     dynamic_tools: prepared.effective.dynamic_tools.clone(),
@@ -343,6 +352,16 @@ pub async fn workbench_codex_interrupt_turn(
     thread_id: String,
     turn_id: String,
 ) -> Result<(), crate::workbench::codex::RequestError> {
+    if thread_id.starts_with("claude-") {
+        let result = crate::workbench::claude::interrupt(&thread_id, &turn_id);
+        let _ = run_store(move |store| {
+            crate::workbench::research::cancel_executions_for_provider_turn(
+                &store, &thread_id, &turn_id,
+            )
+        })
+        .await;
+        return result;
+    }
     let result = crate::workbench::codex::supervisor_manager()
         .connect()
         .await?
@@ -366,6 +385,22 @@ pub async fn workbench_codex_reconcile_session(
     app: tauri::AppHandle,
     session_id: String,
 ) -> Result<bool, RuntimeCommandError> {
+    let claude_session = session_id.clone();
+    let use_claude = run_store(move |store| {
+        let snapshot = store.session_snapshot(&claude_session)?;
+        let selected = crate::workbench::claude::selected(&snapshot.session.overrides)?;
+        let was_claude = store
+            .active_binding(&claude_session)?
+            .is_some_and(|b| b.runtime_namespace == crate::workbench::claude::NAMESPACE);
+        if was_claude {
+            crate::workbench::claude::reconcile(store, claude_session)?;
+        }
+        Ok(selected || was_claude)
+    })
+    .await?;
+    if use_claude {
+        return Ok(true);
+    }
     let lookup_session_id = session_id.clone();
     let (binding, root, harness) = run_store(move |store| {
         Ok::<_, WorkbenchError>((

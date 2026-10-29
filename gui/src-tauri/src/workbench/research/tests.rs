@@ -1,5 +1,6 @@
 //! Cross-domain tests for the modular research harness.
 
+use super::config::find_preset;
 use super::*;
 use crate::workbench::store::{CreateSessionRequest, CreateWorkspaceRequest, UpdateSessionRequest};
 

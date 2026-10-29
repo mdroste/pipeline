@@ -4,7 +4,7 @@ import {
   type HostExecutionPreview,
 } from "../../lib/projectClient";
 import { studioClient, type JobStatus } from "../../lib/studioClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { executionClient } from "../../lib/workbench/executionClient";
 import type {
   ExecutionProfile,
   ResearchExecution,
@@ -53,8 +53,8 @@ export function JobLauncher({
             label="Declared inputs, launcher and expected outputs"
           />
           <p className="text-xs">
-            This detached job continues if a research turn stops. Use Stop job
-            below to cancel it. Quitting Pipeline stops all local jobs.
+            This job keeps running if you stop the assistant. Use Stop job to
+            cancel it. Quitting Pipeline stops all local jobs.
           </p>
           <button
             className={button}
@@ -65,7 +65,7 @@ export function JobLauncher({
                   profile.id,
                   preview.fingerprint,
                 );
-                const e = await workbenchClient.runExecution({
+                const e = await executionClient.runExecution({
                   profileId: profile.id,
                   sessionId: null,
                   testOnly: profile.testStatus !== "passed",
@@ -192,7 +192,7 @@ export default function Jobs({
                 className={button}
                 onClick={() =>
                   void run(() =>
-                    workbenchClient.cancelExecution(j.execution.id),
+                    executionClient.cancelExecution(j.execution.id),
                   )
                 }
               >
@@ -222,7 +222,8 @@ export default function Jobs({
               "captured_inputs_verified" && (
               <div className="w-full space-y-1 text-gray-600 dark:text-gray-400">
                 <p>
-                  Verified captured inputs · declared dependencies · host access
+                  Saved inputs checked · listed dependencies · runs with your
+                  computer’s permissions
                 </p>
                 <Inspect
                   label="Run details and saved inputs"

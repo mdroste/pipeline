@@ -578,7 +578,7 @@ pub(super) fn validate_primary_input_selection(
             // names and every reviewer would read the inventory as the paper.
             if crate::auto_review::uses_auto_review_contract(config) {
                 return Err(
-                    "Automatic Paper Review reviews a document, not a browsable source tree. \
+                    "This review reads a single document, not a browsable source tree. \
                      Select the folder as a LaTeX project (if it contains the paper's TeX \
                      source), pick the paper file directly, or switch to a folder-oriented \
                      workflow."

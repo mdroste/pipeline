@@ -1,10 +1,7 @@
 import { useState } from "react";
-import {
-  taskClient,
-  taskTime,
-  type Schedule,
-  type Trigger,
-} from "../../lib/taskClient";
+import { taskClient } from "../../lib/taskClient";
+import { taskTime } from "../../lib/taskPresentation";
+import { type Schedule, type Trigger } from "../../lib/taskTypes";
 import { Timing } from "./Timing";
 
 export default function ScheduleCard({

@@ -9,7 +9,7 @@ import type {
   TranscriptItem,
   WorkbenchSession,
 } from "../../lib/workbenchTypes";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { researchClient } from "../../lib/workbench/researchClient";
 import { projectDate } from "../../lib/projectIndex";
 import { router } from "../../lib/router";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
@@ -33,7 +33,7 @@ import {
   type Visit,
 } from "../../lib/projectOverview";
 import useProjectSignals from "../../hooks/useProjectSignals";
-import { payloadText } from "../WorkspaceConversationView";
+import { payloadText } from "../../lib/workspaceTranscript";
 import { isOpenTask, noteKindLabel, op, type SurfaceApi } from "./shared";
 import ProjectNotes from "./ProjectNotes";
 import "./ProjectHome.css";
@@ -204,7 +204,7 @@ export default function ProjectOverview(props: Props) {
     if (!question.trim() || saving) return;
     setSaving(true);
     await run(async () => {
-      await workbenchClient.createNote({
+      await researchClient.createNote({
         workspaceId,
         paperId: null,
         kind: "question",

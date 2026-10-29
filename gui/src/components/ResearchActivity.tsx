@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { taskClient, type TaskSummary } from "../lib/taskClient";
-import { workbenchClient } from "../lib/workbenchClient";
+import { taskClient } from "../lib/taskClient";
+import { type TaskSummary } from "../lib/taskTypes";
+import { runtimeClient } from "../lib/workbench/runtimeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type { RunSummary } from "../lib/types";
 import type { WorkbenchEvent } from "../lib/workbenchTypes";
@@ -102,8 +103,8 @@ export default function ResearchActivity({
           <div>
             <h1 className="text-xl font-semibold">Activity</h1>
             <p className={`${muted} mt-1`}>
-              What is running, what needs you, and what finished — across
-              conversations, reviews, automations, and local jobs.
+              See work in progress, completed work, and items that need your
+              attention.
             </p>
           </div>
         ) : (
@@ -134,7 +135,7 @@ export default function ResearchActivity({
             <button
               className={button}
               onClick={() =>
-                void workbenchClient
+                void runtimeClient
                   .interruptTurn(t.threadId, t.turnId!)
                   .then(refresh)
                   .catch((e) => setError(workbenchErrorMessage(e)))
@@ -221,8 +222,8 @@ export default function ResearchActivity({
         </section>
       )}
       <p className={`${muted} mt-4`}>
-        Each runtime retains its own Stop and recovery controls. Stopping a
-        Stopping a review does not cancel project jobs.
+        Stop or resume work from its own page. Stopping a review leaves project
+        jobs running.
       </p>
     </aside>
   );

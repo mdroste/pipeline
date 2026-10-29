@@ -1,4 +1,11 @@
+use super::assets::{
+    CORE_CONSISTENCY, CORE_CONTRIBUTION, CORE_EXPOSITION, METHOD_REVIEW_BASE, ORIENTATION_TEMPLATE,
+    SUBJECT_REVIEW_BASE, SYNTHESIS, VALIDATE,
+};
+use super::prompts::MAX_ROUTING_REASON_CHARS;
+use super::prompts::{method_prompt, subject_prompt};
 use super::*;
+use crate::pipeline_config::{ArtifactSelector, Phase, PipelineConfig, StepArtifactPart};
 
 fn configured_auto_review() -> PipelineConfig {
     let mut config = PipelineConfig {
@@ -546,6 +553,57 @@ fn genre_classification_injects_shared_context_into_every_step() {
     assert!(materialize_config(&config, &orientation)
         .unwrap_err()
         .contains("unknown"));
+}
+
+#[test]
+fn slide_router_pins_the_slide_deck_genre_for_every_step() {
+    assert!(GENRES.iter().any(|genre| genre.id == SLIDE_DECK_GENRE));
+    let schema = slide_orientation_schema();
+    validate_schema_settings(&schema).unwrap();
+    let resolved = resolve_schema_catalogs(&schema).unwrap();
+    assert_eq!(
+        resolved["properties"]["review_plan"]["properties"]["genre"]["enum"],
+        serde_json::json!([SLIDE_DECK_GENRE])
+    );
+    // Panel bounds and catalog-backed specialists match the Full router.
+    let full = orientation_schema();
+    assert_eq!(adaptive_agent_bounds(&schema), adaptive_agent_bounds(&full));
+    let prompt = slide_orientation_prompt();
+    assert!(prompt.starts_with("This document is a slide deck"));
+    assert!(prompt.ends_with(&orientation_prompt()));
+
+    let mut config = configured_auto_review();
+    config.orientation_prompt = prompt;
+    config.orientation_schema = Some(schema);
+    let mut orientation = valid_orientation();
+    orientation["review_plan"]["genre"] = serde_json::json!(SLIDE_DECK_GENRE);
+    let materialized = materialize_config(&config, &orientation).unwrap();
+    for step in materialized.steps.iter().filter(|step| step.enabled) {
+        assert!(
+            step.prompt
+                .contains("classified this manuscript as: Slide Deck"),
+            "{} is missing the slide-deck context",
+            step.id
+        );
+    }
+}
+
+#[test]
+fn a_pinned_genre_must_name_catalog_genres() {
+    let mut schema = orientation_schema();
+    let genre = "/properties/review_plan/properties/genre";
+    *schema.pointer_mut(genre).unwrap() =
+        serde_json::json!({"type": "string", "enum": ["research_article", SLIDE_DECK_GENRE]});
+    validate_schema_settings(&schema).unwrap();
+    *schema.pointer_mut(genre).unwrap() =
+        serde_json::json!({"type": "string", "enum": ["genre_unknown"]});
+    assert!(validate_schema_settings(&schema)
+        .unwrap_err()
+        .contains("unknown genre"));
+    *schema.pointer_mut(genre).unwrap() = serde_json::json!({"type": "string", "enum": []});
+    assert!(validate_schema_settings(&schema).is_err());
+    *schema.pointer_mut(genre).unwrap() = serde_json::json!({"type": "string"});
+    assert!(validate_schema_settings(&schema).is_err());
 }
 
 #[test]

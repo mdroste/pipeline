@@ -10,7 +10,7 @@ import {
   type ResponseExport,
 } from "../../lib/studioClient";
 import type { ProjectRecord } from "../../lib/projectClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { researchClient } from "../../lib/workbench/researchClient";
 import type { RunSummary } from "../../lib/types";
 import {
   button,
@@ -109,7 +109,7 @@ export default function Responses({
                   ],
                 });
                 if (typeof path !== "string") return;
-                const p = await workbenchClient.importPaper({
+                const p = await researchClient.importPaper({
                   workspaceId,
                   paperId: null,
                   title: path.split(/[\\/]/).pop() ?? "Referee report",
@@ -151,8 +151,8 @@ export default function Responses({
             Preview paragraph split
           </button>
           <p className="text-xs text-gray-500">
-            Correct numbering and select the comments to retain. Original text
-            and byte locators stay attached.
+            Check the numbering and choose which comments to keep. Each comment
+            keeps its original text and source location.
           </p>
           <div className="max-h-72 space-y-2 overflow-auto">
             {comments.map((c, i) => (
@@ -406,7 +406,7 @@ export default function Responses({
           <div className="grid gap-4 lg:grid-cols-2">
             <div className={panel}>
               <Text
-                label="Stable comment number"
+                label="Comment number"
                 value={decision.number}
                 onChange={(s) => set("number", s)}
               />
@@ -497,7 +497,7 @@ export default function Responses({
                 }))}
               />
               <Select
-                label="Exact manuscript revision"
+                label="Manuscript version"
                 value={decision.manuscriptRevisionId ?? ""}
                 onChange={(s) => set("manuscriptRevisionId", s || null)}
                 options={data.papers.flatMap((p) =>
@@ -639,7 +639,7 @@ export default function Responses({
               onClick={() =>
                 void run(() =>
                   exportText(
-                    `${letter.draft ? (letter.format === "latex" ? "% DRAFT: unresolved export flags\n" : "DRAFT — unresolved export flags\n\n") : ""}${letter.text}`,
+                    `${letter.draft ? (letter.format === "latex" ? "% DRAFT: unresolved export flags\n" : "DRAFT — issues to resolve before export\n\n") : ""}${letter.text}`,
                     `response-letter${letter.draft ? "-DRAFT" : ""}.${letter.format === "latex" ? "tex" : "md"}`,
                   ),
                 )
@@ -654,9 +654,8 @@ export default function Responses({
         <section className={panel}>
           <h2 className="font-semibold">Focused re-review</h2>
           <p className="text-xs">
-            Choose changed passages and their dependencies. The coverage
-            manifest goes to the normal Workflow preview; this does not launch a
-            review.
+            Choose the changed passages and supporting passages to review. Next,
+            check the selection in the review preview before starting.
           </p>
           <div className="max-h-48 overflow-auto">
             {data.anchors.map((a) => (
@@ -699,7 +698,7 @@ export default function Responses({
               )
             }
           >
-            Prepare covered passages for Workflow preview
+            Preview review of selected passages
           </button>
         </section>
       )}

@@ -9,6 +9,7 @@ import type {
   StepConfig,
   VarSpec,
 } from "../../lib/types";
+import { ADAPTIVE_REVIEW_PROFILE_IDS } from "../../lib/autoReview";
 import PromptEditor from "../PromptEditor";
 import AdvancedStepOptions from "./AdvancedStepOptions";
 import AgentChips from "./AgentChips";
@@ -51,8 +52,8 @@ export const MergeEditorPanel = memo(function MergeEditorPanel({
           </span>
         </div>
         <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-          When a step runs on multiple LLM agents, this merges their independent
-          outputs into a single report. Only runs when needed.
+          When several models run the same step, combine their responses into
+          one report.
         </p>
         <AgentChips
           agents={merge.agents ?? []}
@@ -130,18 +131,16 @@ export const PipelineSettingsEditorPanel = memo(
                   Reuse shared input context
                 </span>
                 <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/50 dark:text-blue-300">
-                  {["auto-review", "auto-review-quick"].includes(activeProfile)
-                    ? "Automatic review default"
+                  {ADAPTIVE_REVIEW_PROFILE_IDS.includes(activeProfile)
+                    ? "Built-in default"
                     : "Optional"}
                 </span>
               </div>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                Automatic Paper Review enables this by default. It prepares the
-                extracted input and orientation map once for all review steps.
-                Pipeline automatically uses provider prompt caches for API calls
-                and forked base sessions for Claude or Codex CLI. For other
-                profiles, turn it on for large, multi-step reviews; unsupported
-                providers fall back safely to ordinary calls.
+                Prepare the document text and input assessment once for all
+                review steps. Supported providers reuse this material to reduce
+                repeated processing. Paper Review and Slide Review enable this
+                by default; other providers process each call normally.
               </p>
               {config.context_cache?.enabled && (
                 <p className="text-[11px] text-green-700 dark:text-green-400 mt-1">
@@ -168,7 +167,7 @@ export const PipelineSettingsEditorPanel = memo(
                   type="button"
                   onClick={() => onResetParallelTemplate("generic")}
                   className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
-                  title="Neutral wrapper for any input: survey + instructions + input path."
+                  title="Include the input assessment, step instructions, and file path."
                 >
                   Reset to generic
                 </button>
@@ -176,7 +175,7 @@ export const PipelineSettingsEditorPanel = memo(
                   type="button"
                   onClick={() => onResetParallelTemplate("paper")}
                   className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
-                  title="Referee briefing for academic papers: paper type, figure hints, issue-focused framing."
+                  title="Give reviewers the paper type, guidance on figures, and instructions for identifying problems."
                 >
                   Reset to paper review
                 </button>
@@ -415,8 +414,8 @@ export const StepEditorPanel = memo(function StepEditorPanel({
             When it runs
           </h3>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Timing, run conditions, published results, and file-by-file fan-out.
-            Output contracts live in the Schemas tab.
+            Set timing, conditions, saved results, and steps to repeat for each
+            file. Define result formats in the Schemas tab.
           </p>
         </div>
         <div className="mb-5">
@@ -472,7 +471,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
             <span>
               Use as the primary report
               <span className="block text-[10px] text-gray-500 dark:text-gray-400">
-                This becomes the run's main human-readable result.
+                Use this step’s output as the final report.
               </span>
             </span>
           </label>
@@ -493,15 +492,14 @@ export const StepEditorPanel = memo(function StepEditorPanel({
             <span>
               Track findings in the project ledger
               <span className="block text-[10px] text-gray-500 dark:text-gray-400">
-                This step's structured findings feed the issue ledger that
-                follows your document across runs. Pipeline adds an issues
-                contract automatically; review it in the Schemas tab.
+                Track this step’s findings across reviews of the document.
+                Pipeline adds the required findings format in the Schemas tab.
               </span>
             </span>
           </label>
           {step.phase !== "sequential" && (
             <p className="text-[10px] text-amber-700 dark:text-amber-300">
-              Published results must come from a sequential step.
+              Choose a sequential step for the final report or tracked findings.
             </p>
           )}
         </div>

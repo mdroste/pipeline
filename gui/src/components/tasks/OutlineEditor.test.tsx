@@ -4,7 +4,8 @@ import { beforeEach, expect, it, vi } from "vitest";
 import Builder from "./Builder";
 import { describeCondition, describeStep } from "./language";
 import { modelFromCondition, modelToCondition } from "./ConditionEditor";
-import { template, type Chain, type Step } from "../../lib/taskClient";
+import { template } from "../../lib/taskTemplates";
+import { type Chain, type Step } from "../../lib/taskTypes";
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
@@ -122,7 +123,7 @@ it("composes the draft→review→revise loop from an empty outline and prepares
   // No internal kind ids leak into the outline copy.
   expect(outline().textContent).not.toMatch(/\bworkspace\b|\bsnapshot\b/);
 
-  await user.click(screen.getByRole("button", { name: /Prepare automation/ }));
+  await user.click(screen.getByRole("button", { name: /Preview automation/ }));
   expect(prepared).not.toBeNull();
   const kinds = prepared!.steps.map((step) => step.kind);
   expect(kinds).toEqual(["workspace", "snapshot", "repeat", "deliver"]);
@@ -157,7 +158,7 @@ it("keeps the review template editable and validates the edited chain", async ()
   await user.click(
     screen.getByRole("button", { name: /Remove Return the reviewed paper/ }),
   );
-  await user.click(screen.getByRole("button", { name: /Prepare automation/ }));
+  await user.click(screen.getByRole("button", { name: /Preview automation/ }));
   expect(prepared).not.toBeNull();
   expect(prepared!.steps.some((step) => step.kind === "deliver")).toBe(false);
   expect(prepared!.steps.some((step) => step.kind === "repeat")).toBe(true);

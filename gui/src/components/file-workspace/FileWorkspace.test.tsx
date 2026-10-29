@@ -168,7 +168,9 @@ it("preserves newer edits and their retained base while Reload is pending", asyn
   fireEvent.change(editor, { target: { value: "New unsaved work" } });
   await act(async () => finish(file("a.py", "Changed on disk", "external")));
   expect(editor).toHaveValue("New unsaved work");
-  expect(screen.getByText(/Reload skipped/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/not reloaded because you made more edits/),
+  ).toBeInTheDocument();
   unmount();
   expect(
     JSON.parse(localStorage.getItem("pipeline.files.draft.reload-race.a.py")!),

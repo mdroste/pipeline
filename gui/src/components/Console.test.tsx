@@ -6,7 +6,7 @@ import type {
   LlmRequestDetails,
   LogEntry,
   UsageState,
-} from "../hooks/usePipeline";
+} from "../lib/reviewRuntimeTypes";
 
 const NO_TOOL_CALLS = {
   text_file: 0,

@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { appClient } from "../../lib/appClient";
+import { taskClient } from "../../lib/taskClient";
+import { template } from "../../lib/taskTemplates";
 import {
-  taskClient,
-  template,
   type Chain,
   type Json,
   type SessionChoice,
   type TaskRun,
   type Trigger,
-} from "../../lib/taskClient";
+} from "../../lib/taskTypes";
 import OutlineEditor from "./OutlineEditor";
 import { Timing } from "./Timing";
 
@@ -135,8 +135,8 @@ export default function Builder({
         <div>
           <h2>New automation</h2>
           <p className="task-muted">
-            Chain assistant work, reviews, waits, and decisions. Start from a
-            template or compose the steps yourself.
+            Combine assistant work, reviews, and pauses for input. Start with a
+            template or add your own steps.
           </p>
         </div>
         <button
@@ -414,7 +414,7 @@ export default function Builder({
           }
           onClick={() => void prepare()}
         >
-          {busy ? "Preparing…" : "Prepare automation →"}
+          {busy ? "Preparing…" : "Preview automation →"}
         </button>
       </div>
     </section>

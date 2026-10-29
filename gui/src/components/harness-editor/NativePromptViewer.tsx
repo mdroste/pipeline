@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { harnessClient } from "../../lib/workbench/harnessClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type { NativePromptCatalog } from "../../lib/workbenchTypes";
 
@@ -17,7 +17,7 @@ export default function NativePromptViewer({
   const [modelId, setModelId] = useState("");
   useEffect(() => {
     let live = true;
-    workbenchClient
+    harnessClient
       .nativePromptCatalog()
       .then((result) => {
         if (live) {
@@ -38,10 +38,9 @@ export default function NativePromptViewer({
   return (
     <div className="space-y-3 text-xs">
       <p className="text-gray-500 dark:text-gray-400">
-        Read-only model templates from local Codex metadata. This is a cached
-        reference, not the fully assembled prompt for a turn. Runtime
-        instructions, tools, permissions, and project instructions are added
-        separately. Variables are shown verbatim.
+        View locally saved Codex prompt templates. The assistant also receives
+        Pipeline’s instructions, tools, permissions, and project instructions.
+        Placeholders appear as saved.
       </p>
       {error && <p role="alert">{error}</p>}
       {!catalog && !error && <p role="status">Reading local prompt cache…</p>}
@@ -82,8 +81,8 @@ export default function NativePromptViewer({
               </label>
               {source.origin === "codex" && (
                 <p className="text-amber-700 dark:text-amber-300">
-                  This cache belongs to the regular Codex installation. It does
-                  not establish which default Pipeline’s runtime is using.
+                  These templates come from your separate Codex installation and
+                  may differ from the ones Pipeline uses.
                 </p>
               )}
               <p className="break-all text-gray-500">
@@ -161,9 +160,9 @@ export default function NativePromptViewer({
             </>
           ) : (
             <p>
-              No supported prompt cache is available. Connect Codex in Workspace
-              settings and refresh after its model catalog loads. You can still
-              supply your own replacement prompt.
+              No saved prompt templates are available. Connect ChatGPT in
+              Settings, load the model list, then refresh. You can also enter
+              your own base prompt.
             </p>
           )}
         </>

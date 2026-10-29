@@ -1,17 +1,11 @@
+import { workflowSchemaClient } from "../../lib/workflowSchemaClient";
+import type { ProviderSchemaPreview } from "../../lib/workflowSchemaClient";
 import { useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import type { AutoReviewCatalog, StepConfig } from "../../lib/types";
 import { AUTO_REVIEW_CONTRACT } from "../../lib/autoReview";
 import { ISSUES_SCHEMA } from "./stepTemplates";
 import { exampleInstance, outputSchemaError } from "./utils";
 import SchemaTreeView from "./SchemaTreeView";
-
-interface ProviderSchemaPreview {
-  projected: Record<string, unknown>;
-  bytes: number;
-  limit: number;
-  openaiStrict: boolean;
-}
 
 const DIALECT_KEYWORDS: [string, string][] = [
   [
@@ -157,7 +151,8 @@ export default function SchemaEditorPanel({
       return;
     }
     let live = true;
-    invoke<Record<string, unknown>>("get_findings_output_schema")
+    workflowSchemaClient
+      .findings()
       .then((schema) => {
         if (live) setReferencedSchema(schema);
       })
@@ -182,7 +177,8 @@ export default function SchemaEditorPanel({
       return;
     }
     let live = true;
-    invoke<AutoReviewCatalog>("get_auto_review_catalog")
+    workflowSchemaClient
+      .catalog()
       .then((value) => {
         if (live) setCatalog(value);
       })
@@ -210,9 +206,7 @@ export default function SchemaEditorPanel({
   // machinery.
   const insertFindingsSchema = async () => {
     try {
-      const schema = await invoke<Record<string, unknown>>(
-        "get_findings_output_schema",
-      );
+      const schema = await workflowSchemaClient.findings();
       applyConfiguredSchema(schema);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -226,9 +220,7 @@ export default function SchemaEditorPanel({
     setResolutionError(null);
     if (!next.trim()) {
       if (target.kind === "orientation" && target.autoReview) {
-        setError(
-          "Automatic Paper Review requires its generated orientation schema.",
-        );
+        setError("This review requires its generated orientation schema.");
         onDraftValidityChange(false);
         return;
       }
@@ -266,7 +258,7 @@ export default function SchemaEditorPanel({
         parsed["x-pipeline-contract"] !== AUTO_REVIEW_CONTRACT
       ) {
         setError(
-          `Automatic Paper Review must retain x-pipeline-contract: "${AUTO_REVIEW_CONTRACT}". ` +
+          `This review must retain x-pipeline-contract: "${AUTO_REVIEW_CONTRACT}". ` +
             "Create a separate custom workflow to replace this host-owned contract.",
         );
         onDraftValidityChange(false);
@@ -304,12 +296,9 @@ export default function SchemaEditorPanel({
     setPreviewingProvider(true);
     setProviderPreviewError(null);
     try {
-      const preview = await invoke<ProviderSchemaPreview>(
-        "preview_provider_schema",
-        {
-          schema: parsed,
-        },
-      );
+      const preview = await workflowSchemaClient.preview({
+        schema: parsed,
+      });
       setProviderPreview(preview);
     } catch (caught) {
       setProviderPreviewError(
@@ -337,10 +326,7 @@ export default function SchemaEditorPanel({
     setResolving(true);
     setResolutionError(null);
     try {
-      const resolved = await invoke<Record<string, unknown>>(
-        "resolve_orientation_schema_catalogs",
-        { schema: parsed },
-      );
+      const resolved = await workflowSchemaClient.resolve({ schema: parsed });
       setResolvedSchema(resolved);
     } catch (caught) {
       setResolutionError(
@@ -399,7 +385,7 @@ export default function SchemaEditorPanel({
               ? "Pipeline requires one JSON object. Add a custom schema when the workflow depends on particular orientation fields."
               : catalogBacked
                 ? "Pipeline stores this compact contract, resolves its live catalog references into strict enums for the provider call, and validates the result against the same catalog snapshot."
-                : "Pipeline sends this contract through every provider’s native structured-output channel and validates the returned artifact again before saving it."}
+                : "Pipeline asks the provider to return this JSON format and checks the response before saving it."}
         </p>
       </div>
 
@@ -551,10 +537,9 @@ export default function SchemaEditorPanel({
                   <span className="font-mono">{liveReference}</span>
                 </h3>
                 <p className="mt-1 max-w-2xl text-xs leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-                  This step follows Pipeline&rsquo;s canonical contract,
-                  resolved fresh at each dispatch. The structure below shows the
-                  current resolved form; replace the reference with a full
-                  schema to customize it.
+                  This step uses Pipeline’s standard output format, updated for
+                  each request. The current format appears below. Replace the
+                  reference with a full schema to customize it.
                 </p>
               </section>
             )}
@@ -655,8 +640,9 @@ export default function SchemaEditorPanel({
             )}
             {target.kind === "step" && target.publishesFindings && (
               <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-                This contract powers the published findings product. Returning
-                to Markdown also turns off findings publication for this step.
+                This format lets Pipeline save individual findings. Switching to
+                Markdown stops this step from adding findings to the Issues
+                list.
               </p>
             )}
 
@@ -742,8 +728,8 @@ export default function SchemaEditorPanel({
                   Example response
                 </summary>
                 <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-                  A minimal artifact matching this contract; the model fills
-                  real content.
+                  An example of the required format. The model supplies the
+                  content.
                 </p>
                 <pre className="mt-2 max-h-[20rem] overflow-auto rounded-lg bg-gray-50 p-3 font-mono text-xs leading-relaxed text-gray-800 dark:bg-gray-950 dark:text-gray-200">
                   {JSON.stringify(exampleInstance(structureSchema), null, 2)}
@@ -756,8 +742,8 @@ export default function SchemaEditorPanel({
                 Supported schema keywords
               </summary>
               <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-                Pipeline&rsquo;s portable dialect deliberately rejects anything
-                it cannot enforce on every provider.
+                Pipeline supports only schema rules it can check across all
+                providers.
               </p>
               <dl className="mt-2 space-y-1.5">
                 {DIALECT_KEYWORDS.map(([keyword, note]) => (

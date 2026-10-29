@@ -161,10 +161,10 @@ export default function RunSetupPanel({
                          text-amber-900 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200"
             >
               <p>
-                Your selected source and the context granted to a step may be
-                sent to its configured model provider. WebSearch steps also send
-                queries to an external search service. Report records and
-                artifacts persist locally until removed.
+                Your AI provider may receive the selected source and any
+                material each step can read. Web searches send queries to an
+                external service. Reports and supporting files stay on this
+                computer until deleted.
               </p>
               <div className="mt-2 flex items-center gap-3">
                 <button

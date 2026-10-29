@@ -1,10 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import ReportViewer, {
-  plainHeadingText,
-  stripInternalReportMarkers,
-} from "./ReportViewer";
+import ReportViewer from "./ReportViewer";
+import { plainHeadingText } from "../lib/reportNavigation";
+import { stripInternalReportMarkers } from "../lib/reportPresentation";
 import { stripPresentationalHtml } from "../lib/mathMarkdown";
 
 describe("ReportViewer", () => {

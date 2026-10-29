@@ -1,45 +1,64 @@
-# Autonomous research automations
+# Research automations
 
-The first desktop implementation is available in **Automations → Research**. This
-document describes the implemented contract and qualification limits.
+A research automation investigates a question over several rounds. Pipeline
+uses separate conversations to plan the work, investigate it, and challenge
+the results. It keeps the findings, failed attempts, evidence, and unanswered
+questions with the project.
 
-## Product contract
+Use this when the next useful step depends on what an investigation finds.
+For a fixed sequence such as review and revise, use a regular
+[automation](tasks.md).
 
-A mission delegates a research question, completion criteria and bounded access.
-Pipeline develops subgoals, compares candidate investigations, executes a selected
-investigation, challenges its result in a separate conversation, and updates its
-agenda. Refutations and well-supported negative results are useful outcomes.
-The original research remit and authorization remain researcher-owned.
+## Start an investigation
 
-Research automations appear under Automations. Preparation shows the exact project, conversations,
-permissions, available checks, experiment variants and limits. Starting that
-prepared mission authorizes its child actions within those limits. Pause lets
-active work settle; Stop cancels only the mission's child. Inputs and observed project
-changes can wake a waiting mission. A brief retains findings, source references,
-limitations, unresolved questions, activity and proposed reusable methods.
+1. Open **Automations → Research → New research automation** and choose a
+   project conversation.
+2. Choose a starting point: theory, empirical research, quantitative work,
+   literature, discovery, or maintenance. Describe the question, what is
+   already known, and what would count as completion.
+3. Set limits on rounds, actions, active work time, each action's duration,
+   the overall deadline, and rounds without progress.
+4. Select authorized local checks, prepared experiment variants, project
+   monitors, and any additional Review or saved methods to use.
+5. Choose **Prepare research automation**, inspect the project, tools,
+   conversations, and limits, then choose **Start research automation**.
 
-## Starting a research automation
+The app must stay running and the computer must stay awake. Closing the
+window can leave Pipeline running if its background option is enabled.
 
-1. Open **Automations → Research → New research automation** and choose a project conversation.
-2. Choose a theory, empirical, quantitative, literature, discovery or maintenance
-   starting point. Set the remit, current understanding and completion criteria.
-3. Set limits on rounds, managed actions, active execution time, each action's
-   duration, elapsed deadline and consecutive rounds without substantive progress.
-4. Select existing authorized checks, prepared experiment variants, project
-   monitors, an optional additional Review and any retained methods.
-5. **Prepare research automation** creates a durable preview and scoped role conversations.
-   **Start research automation** delegates the displayed work within its recorded limits.
+## Follow the results
 
-Agenda shows the original criteria, evolving goals and selected investigation.
-Findings retains alternatives, reasoning, negative outcomes and evidence. Decisions
-collects researcher questions; answering one does not resume a paused mission.
-Methods makes proposals available for explicit reuse in another mission in the
-same project. Activity opens role conversations and child receipts. Brief renders
-an evidence-indexed report; Markdown and complete JSON exports use native save
-dialogs. Full retained evidence is inspected on demand rather than copied into
-every list response. Model findings remain distinct from researcher acceptance.
+| Tab | What it shows |
+| --- | --- |
+| Agenda | Original criteria, current goals, and the next investigation |
+| Findings | Arguments, evidence, alternatives, and negative results |
+| Decisions | Questions needing your input |
+| Methods | Proposed methods that you can select for another investigation in the same project |
+| Activity | Role conversations, local checks, and other actions |
+| Brief | A report with evidence references, limitations, and unresolved questions |
 
-## Ownership and execution
+Export the brief as Markdown or the full record as JSON. A completed
+investigation records the model's assessment against your criteria; you still
+review its claims and evidence.
+
+## Pause, stop, and permissions
+
+Pause lets active work finish before the next action. Stop cancels the active
+action owned by the research automation. Answering a question does not resume
+a paused run; resume it separately.
+
+The run can choose among the checks and experiment variants you prepared.
+Changing their scripts, inputs, or permissions requires another review.
+The investigator can edit only when its source conversation already has **Allow edits**
+enabled in an isolated task copy. Starting a research automation does not
+accept those edits into your manuscript.
+
+## Implementation reference
+
+The implementation calls a research automation a *mission*. The sections
+below describe its execution rules and recorded validation.
+
+### Ownership and execution
 
 `orchestration/missions/` owns the typed agenda, pure planning/result validation,
 mission tables, admission and child-task association. It extends the existing
@@ -73,7 +92,7 @@ return to a state seen before. Unchanged observations stay quiet. Missed checks
 and intervening states may coalesce; this is not a filesystem event log. Disabled
 monitors and acquisition permissions retain their owning service's behavior.
 
-## Scientific state
+### Scientific state
 
 Goal IDs and dependencies are validated, bounded and acyclic. Every proposed
 investigation names its goal, uncertainty, possible outcomes, method and selection
@@ -88,7 +107,7 @@ available for failed and inconclusive attempts. Repeated investigations and
 stagnation have explicit bounds. Reusable methods are proposals with applicability
 and limitations; they enter another mission only by explicit selection.
 
-## Delivery ledger
+### Delivery ledger
 
 - [x] Durable mission preparation, start/pause/stop/recovery and cumulative budgets.
 - [x] Goal graph, next-investigation planner, isolated challenge and stopping rules.
@@ -104,7 +123,7 @@ OS wake support and concurrent native Workspace turns require distinct lifecycle
 and protocol qualification. They are subsequent deployment capabilities; the
 mission UI must state the actual awake-computer/desktop-process requirement.
 
-## Qualification and remaining deployment work
+### Qualification and remaining deployment work
 
 The full current Rust run passed 903 tests (10 environment/qualification tests
 ignored); the frontend run passed 587 tests. Production frontend build and Clippy

@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import ReportWorkspace, {
+import ReportWorkspace from "./ReportWorkspace";
+import {
   canonicalReportProblem,
   splitUnexpectedPreamble,
-} from "./ReportWorkspace";
+} from "../lib/reportPresentation";
 import type { PipelineReport } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -87,21 +88,21 @@ describe("ReportWorkspace", () => {
       await screen.findByRole("tabpanel", { name: "Report" }, lazyPanelWait),
     ).toHaveAttribute("aria-labelledby", expect.stringMatching(/-tab-report$/));
     expect(screen.getByText("Monetary Policy and Networks")).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Provenance" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: "Report details" })).toHaveAttribute(
       "aria-selected",
       "false",
     );
     expect(
-      screen.queryByRole("region", { name: "Report provenance" }),
+      screen.queryByRole("region", { name: "Report details" }),
     ).not.toBeInTheDocument();
     expect(screen.getByText("gpt-5.6-sol")).toBeVisible();
     expect(
       await screen.findByRole("heading", { name: "Referee Report" }),
     ).toBeVisible();
 
-    await user.click(screen.getByRole("tab", { name: "Provenance" }));
+    await user.click(screen.getByRole("tab", { name: "Report details" }));
     expect(
-      await screen.findByRole("region", { name: "Report provenance" }),
+      await screen.findByRole("region", { name: "Report details" }),
     ).toBeVisible();
     expect(screen.getByRole("columnheader", { name: "Step" })).toBeVisible();
     expect(screen.getByRole("cell", { name: "Technical" })).toBeVisible();
@@ -120,7 +121,7 @@ describe("ReportWorkspace", () => {
       />,
     );
 
-    await user.click(screen.getByRole("tab", { name: "Provenance" }));
+    await user.click(screen.getByRole("tab", { name: "Report details" }));
     expect(screen.getAllByText("2m 0s")[0]).toBeVisible();
     expect(screen.queryByText("1m 60s")).not.toBeInTheDocument();
   });
@@ -150,7 +151,7 @@ describe("ReportWorkspace", () => {
       />,
     );
 
-    await user.click(screen.getByRole("tab", { name: "Provenance" }));
+    await user.click(screen.getByRole("tab", { name: "Report details" }));
     expect(screen.getAllByRole("cell", { name: "Technical" })).toHaveLength(2);
     expect(screen.getByRole("cell", { name: "gpt-5.6-sol" })).toBeVisible();
     expect(screen.getByRole("cell", { name: "claude-opus-4-8" })).toBeVisible();
@@ -206,7 +207,9 @@ describe("ReportWorkspace", () => {
       await screen.findByText("No final report was produced."),
     ).toBeVisible();
     expect(
-      screen.getByText(/did not substitute an individual agent analysis/i),
+      screen.getByText(
+        /You can still read the individual reviewers’ analyses in Agent reports/i,
+      ),
     ).toBeVisible();
     expect(
       screen.queryByText("This is only the technical specialist analysis."),
@@ -236,7 +239,9 @@ describe("ReportWorkspace", () => {
     expect(
       await screen.findByText("No final report was produced."),
     ).toBeVisible();
-    expect(screen.getByText(/apparent refusal/i)).toBeVisible();
+    expect(
+      screen.getByText(/appears to have declined the review/i),
+    ).toBeVisible();
     expect(
       screen.queryByText("I'm unable to provide the requested report."),
     ).not.toBeInTheDocument();
@@ -282,7 +287,7 @@ describe("ReportWorkspace", () => {
     );
 
     const reportTab = screen.getByRole("tab", { name: "Report" });
-    const provenanceTab = screen.getByRole("tab", { name: "Provenance" });
+    const provenanceTab = screen.getByRole("tab", { name: "Report details" });
     const sourcesTab = screen.getByRole("tab", { name: "Sources" });
     reportTab.focus();
 
@@ -326,7 +331,7 @@ describe("ReportWorkspace", () => {
     );
 
     const reportTab = screen.getByRole("tab", { name: "Report" });
-    const provenanceTab = screen.getByRole("tab", { name: "Provenance" });
+    const provenanceTab = screen.getByRole("tab", { name: "Report details" });
     const issuesTab = screen.getByRole("tab", { name: /Issues/ });
     const sourcesTab = screen.getByRole("tab", { name: "Sources" });
     expect(issuesTab).toHaveAttribute(
@@ -378,6 +383,51 @@ describe("ReportWorkspace", () => {
       relPath: "report.md",
     });
     expect(screen.getByRole("button", { name: /Export/ })).toBeVisible();
+  });
+
+  it("loads report content independently of the pending manifest and ignores stale report reads", async () => {
+    let finishOldReport!: (report: PipelineReport) => void;
+    let finishOldMarkdown!: (content: { text: string }) => void;
+    invoke.mockImplementation(
+      (command: string, args?: Record<string, unknown>) => {
+        if (command === "get_run_manifest") return new Promise(() => {});
+        if (command === "get_run_report") {
+          return args?.runId === "old"
+            ? new Promise((resolve) => {
+                finishOldReport = resolve;
+              })
+            : Promise.resolve(makeReport());
+        }
+        if (command === "read_artifact") {
+          return args?.runId === "old"
+            ? new Promise((resolve) => {
+                finishOldMarkdown = resolve;
+              })
+            : Promise.resolve({ text: "# Current report\n\nCurrent body." });
+        }
+        return Promise.reject(new Error(`unexpected command: ${command}`));
+      },
+    );
+    const view = render(<ReportWorkspace runId="old" />);
+    expect(invoke).toHaveBeenCalledWith("get_run_report", { runId: "old" });
+    expect(invoke).toHaveBeenCalledWith("read_artifact", {
+      runId: "old",
+      relPath: "report.md",
+    });
+    view.rerender(<ReportWorkspace runId="current" />);
+    expect(
+      await screen.findByRole("heading", { name: "Current report" }),
+    ).toBeVisible();
+    await act(async () => {
+      finishOldReport(makeReport());
+      finishOldMarkdown({ text: "# Obsolete report\n\nOld body." });
+    });
+    expect(
+      screen.getByRole("heading", { name: "Current report" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Obsolete report" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps preserved agent reports reachable when canonical report files are malformed", async () => {
@@ -436,7 +486,7 @@ describe("ReportWorkspace", () => {
     render(<ReportWorkspace runId="broken_run" />);
 
     expect(
-      await screen.findByText("Canonical report is incomplete."),
+      await screen.findByText("The final report is incomplete."),
     ).toBeVisible();
     expect(screen.getByRole("tab", { name: "Sources" })).toHaveAttribute(
       "aria-selected",
@@ -494,7 +544,7 @@ describe("ReportWorkspace", () => {
       relPath: "context/document.md",
     });
     await userEvent.setup().click(screen.getByRole("tab", { name: "Sources" }));
-    await screen.findByText("Select an artifact to preview it.");
+    await screen.findByText("Select a file to preview it.");
     expect(invoke).not.toHaveBeenCalledWith("read_artifact", {
       runId: "saved_run",
       relPath: "context/document.md",

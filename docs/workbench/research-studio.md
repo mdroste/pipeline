@@ -1,4 +1,4 @@
-# Research studio: PI-04–PI-10
+# Research studio
 
 Project **Research tools** contains Manuscript, Responses, Experiments, Result
 links, Literature, and Theory. These are optional Workspace surfaces. Ordinary chat and
@@ -158,8 +158,8 @@ Pipeline uses only bounded GET requests, disables proxies and redirects, and
 imports selected collection metadata after preview. Instance IDs and item
 versions are retained; older clients without an instance ID also use content
 hashes to distinguish imports. No write authorization, key storage, attachment
-fetch or library write-back is implemented. The endpoint was unavailable on the
-qualification machine; actual Zotero collection import remains a live gate.
+fetch or library write-back is implemented. Live Zotero collection import has not
+yet been qualified.
 Online source discovery/acquisition remains disabled pending capability
 qualification. Local bibliography and source work needs neither service.
 
@@ -215,7 +215,7 @@ counterexample supports the statement only on the instances tested.
 
 `fixtures/research-studio/export_results.py` provides explicit OLS results and
 an explicitly illustrative IRF. `export_results.do` provides Stata OLS results;
-on this Mac invoke only through `oldstata`. Declare the script/input files and
+run it through the Stata launcher configured in the execution profile. Declare the script/input files and
 `results.json` as profile inputs/outputs; also declare the Stata log.
 
 The editor/BibTeX import limit is 2 MiB; finding/result exchanges are 4 MiB;

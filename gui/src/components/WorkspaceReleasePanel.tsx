@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { workbenchClient } from "../lib/workbenchClient";
+import { releaseClient } from "../lib/workbench/releaseClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type {
   ConversationSnapshot,
@@ -56,7 +56,7 @@ export default function WorkspaceReleasePanel({
 
   useEffect(() => {
     if (view !== "all" && view !== "diagnostics") return;
-    void workbenchClient
+    void releaseClient
       .performanceBudgets()
       .then(setBudgets)
       .catch((cause) => onError(workbenchErrorMessage(cause)));
@@ -68,7 +68,7 @@ export default function WorkspaceReleasePanel({
       filters: [{ name: "Workspace research archive", extensions: ["pwrx"] }],
     });
     if (!path) return;
-    const report = await workbenchClient.exportResearchArchive(path);
+    const report = await releaseClient.exportResearchArchive(path);
     window.alert(
       `Exported ${report.workspaceCount} workspace(s), ${report.sessionCount} conversation(s), and ${report.blobCount} file(s).\n\n${report.portabilityNote}`,
     );
@@ -80,7 +80,7 @@ export default function WorkspaceReleasePanel({
       filters: [{ name: "Workspace research archive", extensions: ["pwrx"] }],
     });
     if (typeof path !== "string") return;
-    const inspection = await workbenchClient.inspectResearchArchive(path);
+    const inspection = await releaseClient.inspectResearchArchive(path);
     const roots = inspection.workspaceRoots.length
       ? inspection.workspaceRoots.map((root) => `• ${root}`).join("\n")
       : "• No registered Workspace roots";
@@ -98,7 +98,7 @@ export default function WorkspaceReleasePanel({
       JSON.stringify(defaultMappings, null, 2),
     );
     if (mappingText === null) return;
-    const report = await workbenchClient.importResearchArchive(
+    const report = await releaseClient.importResearchArchive(
       path,
       parseRootMappings(mappingText),
     );
@@ -110,7 +110,7 @@ export default function WorkspaceReleasePanel({
 
   const handoffToReview = async () => {
     if (!workspaceId || !selectedPaper?.revision || !onReviewHandoff) return;
-    const handoff = await workbenchClient.prepareReviewHandoff({
+    const handoff = await releaseClient.prepareReviewHandoff({
       workspaceId,
       sessionId: snapshot?.session.id ?? null,
       paperId: selectedPaper.paper.id,
@@ -128,10 +128,10 @@ export default function WorkspaceReleasePanel({
             Research backup
           </h3>
           <p className="mt-1 text-xs text-gray-500">
-            Back up project records, retained research files, conversation
-            working files, and transcripts in Markdown and JSON. External
-            project folders, Review and Automation stores, Trash, and sign-in
-            details are excluded. Back up external folders separately.
+            Back up projects, saved research files, conversation working files,
+            and transcripts. This backup excludes external project folders,
+            reviews, automations, Trash, and sign-ins. Back up external folders
+            separately.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <button
@@ -194,9 +194,8 @@ export default function WorkspaceReleasePanel({
             Review this revision…
           </button>
           <p className="mt-2 text-[10px] text-gray-500">
-            The review receives the paper and its selected metadata. It uses
-            your Reviews settings and sign-in, and does not include project
-            notes.
+            Send the paper and selected document details using your Reviews
+            settings and account. Project notes stay out of the review.
           </p>
         </section>
       )}
@@ -225,9 +224,9 @@ export default function WorkspaceReleasePanel({
 
       {(view === "all" || view === "backup") && (
         <p className="rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
-          After restoring, sign in to ChatGPT to continue. New replies use your
-          reviewed notes and selected evidence; earlier messages remain in the
-          saved transcript.
+          After restoring, sign in to ChatGPT. The assistant starts a new
+          session using your reviewed notes and selected evidence. Earlier
+          messages remain available to read.
         </p>
       )}
     </div>

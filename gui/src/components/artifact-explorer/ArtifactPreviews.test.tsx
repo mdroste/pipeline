@@ -20,7 +20,9 @@ describe("BinaryCard", () => {
     expect(
       screen.queryByRole("button", { name: "Open in system viewer" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText(/does not launch it/)).toBeVisible();
+    expect(
+      screen.getByText(/Pipeline will not run it from this preview/),
+    ).toBeVisible();
   });
 
   it("still opens ordinary documents in the system viewer", () => {

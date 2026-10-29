@@ -1,4 +1,5 @@
 //! Single-component, handle-relative opens: no ancestor pathname is re-resolved.
+//! Creation, rename, and deletion act on handles relative to a verified parent.
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::os::windows::{
@@ -10,22 +11,30 @@ use std::path::{Path, PathBuf};
 use windows_sys::Wdk::{
     Foundation::OBJECT_ATTRIBUTES,
     Storage::FileSystem::{
-        NtCreateFile, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN,
-        FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
+        FileRenameInformation, NtCreateFile, NtSetInformationFile, FILE_CREATE,
+        FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT,
+        FILE_RENAME_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT,
     },
 };
 use windows_sys::Win32::{
     Foundation::{
-        RtlNtStatusToDosError, INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE, UNICODE_STRING,
+        RtlNtStatusToDosError, ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER,
+        ERROR_NOT_SUPPORTED, INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE, UNICODE_STRING,
     },
     Storage::FileSystem::{
-        FileAttributeTagInfo, GetFileInformationByHandleEx, GetFinalPathNameByHandleW, ReOpenFile,
-        FILE_ATTRIBUTE_TAG_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-        FILE_GENERIC_READ, FILE_NAME_NORMALIZED, FILE_SHARE_DELETE, FILE_SHARE_READ,
-        FILE_SHARE_WRITE,
+        FileAttributeTagInfo, FileDispositionInfo, FileDispositionInfoEx,
+        GetFileInformationByHandleEx, GetFinalPathNameByHandleW, ReOpenFile,
+        SetFileInformationByHandle, DELETE, FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
+        FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
+        FILE_DISPOSITION_INFO, FILE_DISPOSITION_INFO_EX, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_LIST_DIRECTORY,
+        FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, SYNCHRONIZE,
     },
     System::IO::IO_STATUS_BLOCK,
 };
+
+const SHARE_ALL: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
 
 fn invalid() -> io::Error {
     io::Error::new(
@@ -92,8 +101,24 @@ fn final_path(file: &File) -> io::Result<PathBuf> {
     }
 }
 
-fn open_child(parent: &File, name: &str, directory: bool) -> io::Result<File> {
-    // The caller supplies one validated component, never an NT path or stream.
+/// One name relative to a directory handle: an empty name would reopen the
+/// directory itself, and separators or a colon would reach another path or a stream.
+fn component(name: &str) -> io::Result<()> {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', ':']) {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+fn nt_open(
+    parent: &File,
+    name: &str,
+    access: u32,
+    share: u32,
+    disposition: u32,
+    options: u32,
+) -> io::Result<File> {
+    component(name)?;
     let mut encoded: Vec<u16> = name.encode_utf16().collect();
     let length = u16::try_from(encoded.len() * 2).map_err(|_| invalid())?;
     let object_name = UNICODE_STRING {
@@ -115,63 +140,80 @@ fn open_child(parent: &File, name: &str, directory: bool) -> io::Result<File> {
     let status = unsafe {
         NtCreateFile(
             &mut handle,
-            FILE_GENERIC_READ,
+            access,
             &attributes,
             &mut status_block,
             std::ptr::null(),
             0,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            FILE_OPEN,
-            FILE_SYNCHRONOUS_IO_NONALERT
-                | FILE_OPEN_REPARSE_POINT
-                | if directory {
-                    FILE_DIRECTORY_FILE
-                } else {
-                    FILE_NON_DIRECTORY_FILE
-                },
+            share,
+            disposition,
+            FILE_SYNCHRONOUS_IO_NONALERT | options,
             std::ptr::null(),
             0,
         )
     };
     if status < 0 {
-        return Err(io::Error::from_raw_os_error(
-            unsafe { RtlNtStatusToDosError(status) } as i32,
-        ));
+        return Err(nt_error(status));
     }
-    let file = unsafe { File::from_raw_handle(handle) };
+    Ok(unsafe { File::from_raw_handle(handle) })
+}
+
+fn nt_error(status: i32) -> io::Error {
+    io::Error::from_raw_os_error(unsafe { RtlNtStatusToDosError(status) } as i32)
+}
+
+/// Checking the long name from the opened object also catches DOS 8.3 aliases.
+/// App-owned recovery names are reachable only when requested exactly.
+fn permitted(resolved: &Path, internal: Option<&str>) -> bool {
+    let Some(name) = resolved.file_name().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    match internal {
+        Some(expected) => name.eq_ignore_ascii_case(expected),
+        None => !super::reserved_component(name),
+    }
+}
+
+/// Reopen the verified *object*, not its pathname, so cloud filters can
+/// hydrate it without introducing a second path-resolution race.
+fn reopen(file: &File, resolved: &Path, access: u32, share: u32) -> io::Result<File> {
+    let handle = unsafe { ReOpenFile(file.as_raw_handle(), access, share, 0) };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    let reopened = unsafe { File::from_raw_handle(handle) };
+    check_reparse(&reopened)?;
+    if !reopened.metadata()?.is_file() || final_path(&reopened)? != resolved {
+        return Err(invalid());
+    }
+    Ok(reopened)
+}
+
+fn open_child(parent: &File, name: &str, directory: bool) -> io::Result<File> {
+    let kind = if directory {
+        FILE_DIRECTORY_FILE
+    } else {
+        FILE_NON_DIRECTORY_FILE
+    };
+    let file = nt_open(
+        parent,
+        name,
+        FILE_GENERIC_READ,
+        SHARE_ALL,
+        FILE_OPEN,
+        FILE_OPEN_REPARSE_POINT | kind,
+    )?;
     let cloud = check_reparse(&file)?;
     let kind = file.metadata()?.file_type();
     if (directory && !kind.is_dir()) || (!directory && !kind.is_file()) {
         return Err(invalid());
     }
-    // Checking the long name from the opened object also catches DOS 8.3 aliases.
     let resolved = final_path(&file)?;
-    if resolved
-        .file_name()
-        .and_then(|s| s.to_str())
-        .is_none_or(super::reserved_component)
-    {
+    if !permitted(&resolved, None) {
         return Err(invalid());
     }
     if !directory && cloud {
-        // Reopen the verified *object*, not its pathname, so cloud filters can
-        // hydrate it without introducing a second path-resolution race.
-        let handle = unsafe {
-            ReOpenFile(
-                file.as_raw_handle(),
-                FILE_GENERIC_READ,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                0,
-            )
-        };
-        if handle == INVALID_HANDLE_VALUE {
-            return Err(io::Error::last_os_error());
-        }
-        let hydrated = unsafe { File::from_raw_handle(handle) };
-        if !hydrated.metadata()?.is_file() || final_path(&hydrated)? != resolved {
-            return Err(invalid());
-        }
-        return Ok(hydrated);
+        return reopen(&file, &resolved, FILE_GENERIC_READ, SHARE_ALL);
     }
     Ok(file)
 }
@@ -183,6 +225,184 @@ pub(super) fn open_relative(root: &File, path: &str) -> io::Result<File> {
         parent = open_child(&parent, name, parts.peek().is_some())?;
     }
     Ok(parent)
+}
+
+/// Walk to the directory holding the last component of a validated relative
+/// path, creating missing directories when asked. Each step is verified as a
+/// real directory before it becomes the next parent handle.
+pub(super) fn open_parent<'a>(
+    root: &File,
+    path: &'a str,
+    create: bool,
+) -> io::Result<(File, &'a str)> {
+    let mut directory = root.try_clone()?;
+    let mut parts = path.split('/').peekable();
+    while let Some(name) = parts.next() {
+        if parts.peek().is_none() {
+            return Ok((directory, name));
+        }
+        if create {
+            match nt_open(
+                &directory,
+                name,
+                FILE_LIST_DIRECTORY | SYNCHRONIZE,
+                SHARE_ALL,
+                FILE_CREATE,
+                FILE_DIRECTORY_FILE,
+            ) {
+                Ok(_) => (),
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
+                Err(error) => return Err(error),
+            }
+        }
+        directory = open_child(&directory, name, true)?;
+    }
+    Err(invalid())
+}
+
+/// Whether any entry, including a link or directory, has this name.
+pub(super) fn exists(parent: &File, name: &str) -> io::Result<bool> {
+    match nt_open(
+        parent,
+        name,
+        FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        SHARE_ALL,
+        FILE_OPEN,
+        FILE_OPEN_REPARSE_POINT,
+    ) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Open a regular file to verify its bytes and then rename or delete it. The
+/// share mode admits other readers only, so no writer can change the file
+/// between verification and the handle-relative rename.
+pub(super) fn open_exclusive(parent: &File, name: &str, internal: bool) -> io::Result<File> {
+    let probe = nt_open(
+        parent,
+        name,
+        FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        SHARE_ALL,
+        FILE_OPEN,
+        FILE_OPEN_REPARSE_POINT | FILE_NON_DIRECTORY_FILE,
+    )?;
+    check_reparse(&probe)?;
+    if !probe.metadata()?.is_file() {
+        return Err(invalid());
+    }
+    let resolved = final_path(&probe)?;
+    if !permitted(&resolved, internal.then_some(name)) {
+        return Err(invalid());
+    }
+    // The probe holds no data access, so this stricter reopen cannot conflict
+    // with it; any other open writer or non-delete-sharing reader refuses it.
+    reopen(
+        &probe,
+        &resolved,
+        FILE_GENERIC_READ | DELETE,
+        FILE_SHARE_READ,
+    )
+}
+
+/// Create a new app-owned file for writing. Any existing entry, including a
+/// dangling link, makes this fail instead of being followed or replaced.
+pub(super) fn create_new(parent: &File, name: &str) -> io::Result<File> {
+    nt_open(
+        parent,
+        name,
+        FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE,
+        FILE_SHARE_READ,
+        FILE_CREATE,
+        FILE_NON_DIRECTORY_FILE,
+    )
+}
+
+/// Rename an open file within its current directory. An existing entry with
+/// the new name is never replaced. This uses the NT call because the Win32
+/// wrapper resolves a bare name against the process's current directory.
+pub(super) fn rename_new(file: &File, name: &str) -> io::Result<()> {
+    component(name)?;
+    let encoded: Vec<u16> = name.encode_utf16().collect();
+    let name_bytes = encoded.len() * 2;
+    let size = std::mem::size_of::<FILE_RENAME_INFORMATION>() + name_bytes;
+    // Zeroed u64 storage is suitably aligned and already says: do not replace
+    // an existing entry, and with no root directory and a single component,
+    // rename within the file's own directory.
+    let mut buffer = vec![0u64; size.div_ceil(8)];
+    let info = buffer.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
+    // SAFETY: the buffer is large enough for the header and the name with a
+    // trailing NUL; the name pointer derives from the whole buffer.
+    unsafe {
+        (*info).FileNameLength = u32::try_from(name_bytes).map_err(|_| invalid())?;
+        let target = buffer
+            .as_mut_ptr()
+            .cast::<u8>()
+            .add(std::mem::offset_of!(FILE_RENAME_INFORMATION, FileName))
+            .cast::<u16>();
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), target, encoded.len());
+    }
+    let mut status_block = IO_STATUS_BLOCK::default();
+    let status = unsafe {
+        NtSetInformationFile(
+            file.as_raw_handle(),
+            &mut status_block,
+            buffer.as_ptr().cast(),
+            u32::try_from(size).map_err(|_| invalid())?,
+            FileRenameInformation,
+        )
+    };
+    if status < 0 {
+        return Err(nt_error(status));
+    }
+    Ok(())
+}
+
+/// Delete an open file. POSIX semantics remove the name at once; file systems
+/// without them fall back to removal when the last handle closes.
+pub(super) fn delete(file: &File) -> io::Result<()> {
+    let info = FILE_DISPOSITION_INFO_EX {
+        Flags: FILE_DISPOSITION_FLAG_DELETE
+            | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS
+            | FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
+    };
+    let ok = unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle(),
+            FileDispositionInfoEx,
+            (&info as *const FILE_DISPOSITION_INFO_EX).cast(),
+            std::mem::size_of_val(&info) as u32,
+        )
+    };
+    if ok != 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    let unsupported = [
+        ERROR_INVALID_PARAMETER,
+        ERROR_NOT_SUPPORTED,
+        ERROR_INVALID_FUNCTION,
+    ];
+    if !error
+        .raw_os_error()
+        .is_some_and(|code| unsupported.contains(&(code as u32)))
+    {
+        return Err(error);
+    }
+    let info = FILE_DISPOSITION_INFO { DeleteFile: true };
+    let ok = unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle(),
+            FileDispositionInfo,
+            (&info as *const FILE_DISPOSITION_INFO).cast(),
+            std::mem::size_of_val(&info) as u32,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -247,5 +467,94 @@ mod tests {
         assert_eq!(safe.read("moved/file.txt").unwrap(), b"inside");
         // Junction removal must not recursively traverse the target.
         fs::remove_dir(&root).unwrap();
+    }
+
+    #[test]
+    fn replacement_is_handle_relative_no_clobber_and_refuses_open_writers() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        let outside = temp.path().join("outside");
+        fs::create_dir(&root).unwrap();
+        fs::create_dir(&outside).unwrap();
+        junction(&root.join("escape"), &outside);
+        let safe = super::super::SafeRoot::open(&root).unwrap();
+        let hash = super::super::super::hash;
+        let first = hash(b"first");
+        // New files create their folders; links and existing names are refused.
+        safe.replace("notes/new.md", None, false, Some(b"first"), false, "new")
+            .unwrap();
+        safe.clear_claim("notes/new.md", "new").unwrap();
+        assert_eq!(fs::read(root.join("notes/new.md")).unwrap(), b"first");
+        assert!(safe
+            .replace("escape/new.md", None, false, Some(b"bad"), false, "escape")
+            .is_err());
+        assert!(!outside.join("new.md").exists());
+        assert!(safe
+            .replace("notes/new.md", None, false, Some(b"bad"), false, "again")
+            .is_err());
+        // Stale bytes, a recorded executable bit, or an open writer change nothing.
+        let stale = hash(b"other");
+        let error = safe
+            .replace(
+                "notes/new.md",
+                Some(&stale),
+                false,
+                Some(b"x"),
+                false,
+                "stale",
+            )
+            .unwrap_err();
+        assert!(error.message.contains("External change"));
+        assert!(safe
+            .replace(
+                "notes/new.md",
+                Some(&first),
+                true,
+                Some(b"x"),
+                false,
+                "mode"
+            )
+            .is_err());
+        let writer = fs::OpenOptions::new()
+            .write(true)
+            .open(root.join("notes/new.md"))
+            .unwrap();
+        let error = safe
+            .replace(
+                "notes/new.md",
+                Some(&first),
+                false,
+                Some(b"x"),
+                false,
+                "busy",
+            )
+            .unwrap_err();
+        assert!(error.message.contains("open in another program"));
+        drop(writer);
+        assert_eq!(fs::read(root.join("notes/new.md")).unwrap(), b"first");
+        // The original stays under its claim until it is cleared or recovered.
+        safe.replace(
+            "notes/new.md",
+            Some(&first),
+            false,
+            Some(b"second"),
+            false,
+            "edit",
+        )
+        .unwrap();
+        assert_eq!(fs::read(root.join("notes/new.md")).unwrap(), b"second");
+        let claim = root.join("notes/.pipeline-apply-edit");
+        assert_eq!(fs::read(&claim).unwrap(), b"first");
+        assert!(!safe.recover_claim("notes/new.md", "edit").unwrap());
+        fs::remove_file(root.join("notes/new.md")).unwrap();
+        assert!(safe.recover_claim("notes/new.md", "edit").unwrap());
+        assert_eq!(fs::read(root.join("notes/new.md")).unwrap(), b"first");
+        assert!(!claim.exists());
+        // Deletion moves the file to its claim; clearing the claim removes it.
+        safe.replace("notes/new.md", Some(&first), false, None, false, "delete")
+            .unwrap();
+        assert!(!root.join("notes/new.md").exists());
+        safe.clear_claim("notes/new.md", "delete").unwrap();
+        assert_eq!(fs::read_dir(root.join("notes")).unwrap().count(), 0);
     }
 }

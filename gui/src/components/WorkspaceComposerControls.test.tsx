@@ -3,7 +3,16 @@ import { expect, it, vi } from "vitest";
 import WorkspaceComposerControls from "./WorkspaceComposerControls";
 import type { WorkspaceModel } from "../lib/workbenchTypes";
 
-vi.mock("../lib/workbenchClient", () => ({ workbenchClient: {} }));
+vi.mock("../lib/workbench/workspaceClient", () => ({ workspaceClient: {} }));
+vi.mock("../lib/workbench/conversationClient", () => ({
+  conversationClient: {},
+}));
+vi.mock("../lib/workbench/harnessClient", () => ({ harnessClient: {} }));
+vi.mock("../lib/workbench/researchClient", () => ({ researchClient: {} }));
+vi.mock("../lib/workbench/executionClient", () => ({ executionClient: {} }));
+vi.mock("../lib/workbench/recipeClient", () => ({ recipeClient: {} }));
+vi.mock("../lib/workbench/releaseClient", () => ({ releaseClient: {} }));
+vi.mock("../lib/workbench/runtimeClient", () => ({ runtimeClient: {} }));
 
 const models: WorkspaceModel[] = [
   {
@@ -34,7 +43,7 @@ it("offers only supported efforts and resets effort when changing model", () => 
     />,
   );
   expect(
-    screen.getByRole("button", { name: "Model and thinking: Auto" }),
+    screen.getByRole("button", { name: "Model and thinking: ChatGPT · Auto" }),
   ).toBeInTheDocument();
   open();
   expect(screen.getByRole("option", { name: /Automatic/ })).toHaveAttribute(
@@ -65,7 +74,7 @@ it("offers only supported efforts and resets effort when changing model", () => 
   expect(screen.getByText("Uses the model's default: Medium.")).toBeVisible();
   expect(
     screen.getByRole("button", {
-      name: "Model and thinking: Example · Medium",
+      name: "Model and thinking: ChatGPT · Example · Medium",
     }),
   ).toBeInTheDocument();
   fireEvent.click(screen.getByRole("radio", { name: "High" }));
@@ -106,7 +115,7 @@ it("shows saved unavailable settings without silently selecting replacements", (
   );
   expect(
     screen.getByRole("button", {
-      name: "Model and thinking: removed-model · Ultra",
+      name: "Model and thinking: ChatGPT · removed-model · Ultra",
     }),
   ).toHaveAttribute("data-warning", "true");
   open();
@@ -182,4 +191,29 @@ it("shows the account and remaining usage once the picker opens", async () => {
   open();
   await screen.findByText("researcher@example.edu · Plus");
   expect(screen.getByText("62% of your usage limit left")).toBeVisible();
+});
+
+it("offers Claude subscription mode and hides ChatGPT account information", async () => {
+  const change = vi.fn();
+  const load = vi.fn();
+  render(
+    <WorkspaceComposerControls
+      models={[]}
+      model=""
+      effort=""
+      disabled={false}
+      onChange={vi.fn()}
+      runtime="claude"
+      onRuntimeChange={change}
+      loadAccount={load}
+    />,
+  );
+  open();
+  expect(screen.getByRole("radio", { name: "Claude Code" })).toBeChecked();
+  expect(
+    screen.getByText(/Uses your Claude Code subscription sign-in/),
+  ).toBeVisible();
+  expect(load).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("radio", { name: "ChatGPT" }));
+  expect(change).toHaveBeenCalledWith("codex");
 });

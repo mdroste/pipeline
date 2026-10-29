@@ -8,15 +8,15 @@ const PdfReader = lazy(() => import("../file-workspace/PdfReader"));
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   studioClient,
-  proseForDiff,
   type BuildConfig,
   type BuildReceipt,
   type BuildRecord,
   type EditorFile,
 } from "../../lib/studioClient";
+import { proseForDiff } from "../../lib/studioPresentation";
 import { lineDiff } from "../../lib/diff";
 import type { ProjectRecord } from "../../lib/projectClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { executionClient } from "../../lib/workbench/executionClient";
 import type { ExecutionProfile } from "../../lib/workbenchTypes";
 import {
   button,
@@ -108,7 +108,7 @@ export default function Manuscript({
     let stopped = false;
     void Promise.all([
       studioClient.records<BuildRecord | BuildReceipt>(workspaceId, "build"),
-      workbenchClient.listExecutionProfiles(workspaceId),
+      executionClient.listExecutionProfiles(workspaceId),
     ])
       .then(([v, p]) => {
         if (!stopped) {
@@ -264,7 +264,7 @@ export default function Manuscript({
     setDraft(retained?.draft ?? next.content);
     setSourceLine(line);
     setNotice(
-      "Opened source at the build location. The working source may have changed since this build; previous unsaved drafts remain retained by file.",
+      "Opened the source location recorded in this build. The file may have changed since then. Unsaved drafts are still available for each file.",
     );
   };
   useEffect(() => {
@@ -351,7 +351,7 @@ export default function Manuscript({
                     /* Saving still succeeded. */
                   }
                   setNotice(
-                    "Saved. Rebuild to validate this file combination.",
+                    "Saved. Rebuild the manuscript to check the updated files.",
                   );
                   await onRefresh();
                 })
@@ -478,8 +478,7 @@ export default function Manuscript({
                 </div>
                 {diffMode === "prose" && (
                   <p className="text-xs text-gray-500">
-                    Simplified prose is an aid. Inspect source for equations,
-                    labels and citations.
+                    Check equations, labels, and citations in the source view.
                   </p>
                 )}
                 {diffMode === "source" ? (
@@ -586,8 +585,8 @@ export default function Manuscript({
             }
           />
           <p className="text-xs text-gray-500">
-            Include sections, bibliography, generated tables and figures.
-            Dependency coverage is limited to these declarations.
+            List all sections, bibliography files, tables, and figures used in
+            the build. Pipeline tracks changes only in the files you list.
           </p>
           <Field label="Timeout (seconds)">
             <input
@@ -609,7 +608,7 @@ export default function Manuscript({
               Advanced engine arguments
             </summary>
             <Text
-              label="Explicit argv JSON (optional)"
+              label="Command arguments as JSON (optional)"
               multiline
               value={advanced}
               onChange={setAdvanced}
@@ -734,7 +733,7 @@ export default function Manuscript({
                     className={button}
                     onClick={() => onDocument(receipt.pdf!.revision!.id)}
                   >
-                    Open exact build PDF in Documents
+                    Open this build’s PDF in Documents
                   </button>
                   <Field label="Source line">
                     <input
@@ -836,7 +835,7 @@ export default function Manuscript({
                         action: "inspectPages",
                         executionId: receipt.executionId,
                         pages: [pdfPage],
-                        note: "Researcher inspected the displayed compiled page",
+                        note: "I checked this page in the compiled PDF.",
                       });
                       await refresh();
                     })

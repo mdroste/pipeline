@@ -3,6 +3,62 @@
 use super::*;
 
 #[test]
+fn step_validation_preserves_first_failure_order() {
+    let mut step = StepConfig {
+        id: "bad/id".into(),
+        label: "x".repeat(MAX_STEP_LABEL_CHARS + 1),
+        phase: Phase::Sequential,
+        agents: vec!["claude".into(), "codex".into()],
+        after: vec!["missing".into()],
+        run_if: Some(RunCondition::SurveyPath {
+            pointer: "bad-pointer".into(),
+            equals: None,
+            exists: None,
+            contains: None,
+        }),
+        tools: vec!["Unsupported".into()],
+        ..Default::default()
+    };
+    assert_eq!(
+        validate_profile_steps(std::slice::from_ref(&step)).unwrap_err(),
+        "Invalid step id 'bad/id'. Use 1–64 ASCII letters, numbers, '.', '-', or '_'."
+    );
+
+    step.id = "final".into();
+    assert_eq!(
+        validate_profile_steps(std::slice::from_ref(&step)).unwrap_err(),
+        "Step 'final' depends on unknown step 'missing'."
+    );
+
+    step.after.clear();
+    assert_eq!(
+        validate_profile_steps(std::slice::from_ref(&step)).unwrap_err(),
+        "Sequential step 'final' selects multiple agents, but sequential multi-agent execution is unsupported."
+    );
+
+    step.agents.truncate(1);
+    assert_eq!(
+        validate_profile_steps(std::slice::from_ref(&step)).unwrap_err(),
+        "Step 'final' survey condition uses an invalid JSON pointer 'bad-pointer'."
+    );
+
+    step.run_if = None;
+    assert_eq!(
+        validate_profile_steps(std::slice::from_ref(&step)).unwrap_err(),
+        "Step 'final' label exceeds 200 characters"
+    );
+
+    step.label = "Final".into();
+    assert_eq!(
+        validate_profile_steps(std::slice::from_ref(&step)).unwrap_err(),
+        "Step 'final' requests unsupported tool 'Unsupported'. Allowed tools: WebSearch"
+    );
+
+    step.tools.clear();
+    validate_profile_steps(&[step]).unwrap();
+}
+
+#[test]
 fn unsupported_sequential_multi_unit_shapes_are_rejected() {
     let multi_agent = StepConfig {
         id: "synthesis".to_string(),

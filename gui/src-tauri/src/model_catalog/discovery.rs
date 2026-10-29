@@ -227,7 +227,7 @@ async fn claude_sdk_initialize() -> Result<serde_json::Value, String> {
     .into_iter()
     .map(str::to_string)
     .collect::<Vec<_>>();
-    let mut command = build_provider_command("claude", None, &args)?;
+    let mut command = crate::agent_runtime::claude::subscription_command(&args, None).await?;
     command
         .kill_on_drop(true)
         .stdin(Stdio::piped())

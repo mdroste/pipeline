@@ -1,5 +1,7 @@
+import { reviewHistoryClient } from "../lib/reviewHistoryClient";
+import { reportExportClient } from "../lib/reportExportClient";
+import { artifactClient } from "../lib/artifactClient";
 import { useState, useEffect, useMemo } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { lineDiff, type DiffOp } from "../lib/diff";
@@ -72,10 +74,10 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
   useEffect(() => {
     setLoading(true);
     Promise.all([
-      invoke<PipelineReport>("get_run_report", { runId: runA }),
-      invoke<PipelineReport>("get_run_report", { runId: runB }),
-      invoke<RunManifest>("get_run_manifest", { runId: runA }),
-      invoke<RunManifest>("get_run_manifest", { runId: runB }),
+      reviewHistoryClient.report({ runId: runA }),
+      reviewHistoryClient.report({ runId: runB }),
+      artifactClient.manifest(runA),
+      artifactClient.manifest(runB),
     ])
       .then(([a, b, aManifest, bManifest]) => {
         setReportA(a);
@@ -149,7 +151,7 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
       ...blocks,
     ].join("\n\n");
     try {
-      await invoke("save_text_file", {
+      await reportExportClient.saveText({
         content,
         suggestedName: `pipeline-diff-${runA.slice(0, 8)}-${runB.slice(0, 8)}.md`,
       });
@@ -162,7 +164,7 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
     setReconciling(true);
     setError(null);
     try {
-      const md = await invoke<string>("reconcile_runs", { runA, runB });
+      const md = await reviewHistoryClient.reconcile({ runA, runB });
       setReconcile(md);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -201,9 +203,9 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
           onClick={runReconcile}
           disabled={reconciling || loading}
           className="px-3 py-1 text-xs rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-40"
-          title="Ask an LLM which concerns were addressed, which remain, and what's new (costs one call)"
+          title="Ask AI which concerns were addressed, which remain, and which are new. Uses one model call."
         >
-          {reconciling ? "Reconciling…" : "Reconcile with LLM"}
+          {reconciling ? "Reconciling…" : "Compare findings with AI"}
         </button>
       </div>
 
@@ -280,8 +282,8 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
                 <span className="text-green-700 dark:text-green-400">
                   + newer
                 </span>{" "}
-                lines. Reconciliation sends both reports and their disclosed
-                provider-produced artifacts to the selected model for one
+                lines. AI comparison sends both reports and the listed
+                model-generated files to the selected model. This uses one
                 additional call.
               </span>
             </div>

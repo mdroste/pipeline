@@ -6,7 +6,7 @@ import {
   type PlanStatus,
   type OpenResearchObject,
 } from "../../lib/deskClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { executionClient } from "../../lib/workbench/executionClient";
 import type { AssetSpec, Entry, Publication } from "../../lib/programClient";
 import {
   button,
@@ -51,10 +51,10 @@ export default function Assets(props: DeskProps) {
   return (
     <div className="space-y-5">
       <section className={card}>
-        <h2 className="font-semibold">Publication assets</h2>
+        <h2 className="font-semibold">Tables & figures</h2>
         <p className={muted}>
-          Build tables and scientific figures from retained numeric results.
-          Values, units, samples, and source revisions travel with every asset.
+          Create tables and figures from saved results. Each keeps its values,
+          units, sample details, and source versions.
         </p>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Asset title">
@@ -154,10 +154,10 @@ export default function Assets(props: DeskProps) {
             </div>
             {spec.kind !== "irf" && (
               <details>
-                <summary className="text-xs">Manual numeric override</summary>
+                <summary className="text-xs">Enter a value manually</summary>
                 <p className={muted}>
-                  An override clears uncertainty and remains visibly manual. The
-                  original estimate is retained.
+                  A manual value has no uncertainty interval and is labeled as
+                  entered by you. Pipeline keeps the original estimate.
                 </p>
                 <label className="text-xs">
                   <input
@@ -234,7 +234,7 @@ export default function Assets(props: DeskProps) {
                 }))
               }
             >
-              <option value="ci">Retained confidence interval</option>
+              <option value="ci">Saved confidence interval</option>
               <option value="se">One standard error</option>
               <option value="none">No uncertainty displayed</option>
             </select>
@@ -314,7 +314,7 @@ export default function Assets(props: DeskProps) {
         >
           {spec.kind === "table"
             ? "Generate table draft"
-            : "Prepare reproducible figure plan"}
+            : "Preview figure setup"}
         </button>
         {supersedes && (
           <p className={muted}>
@@ -369,7 +369,7 @@ export default function Assets(props: DeskProps) {
               )
             }
           >
-            Authorize exact plotting plan
+            Allow this plotting command to run
           </button>
           <button
             className={button}
@@ -377,7 +377,7 @@ export default function Assets(props: DeskProps) {
             onClick={() =>
               void p.run(async () => {
                 const profile = preview.record.body.profile as { id: string };
-                await workbenchClient.runExecution({
+                await executionClient.runExecution({
                   planId: preview.record.id,
                   profileId: profile.id,
                   sessionId: null,
@@ -387,7 +387,7 @@ export default function Assets(props: DeskProps) {
               })
             }
           >
-            Run plot and retain outputs
+            Create figure and save files
           </button>
           <button className={button} onClick={() => void p.run(p.refresh)}>
             Refresh completed runs
@@ -426,7 +426,7 @@ export default function Assets(props: DeskProps) {
               })
             }
           >
-            Adopt figure as publication asset
+            Save figure to Tables & figures
           </button>
         </section>
       )}
@@ -457,7 +457,7 @@ export default function Assets(props: DeskProps) {
             </button>
           ))}
           <button className={button} onClick={() => onOpen(reference(r))}>
-            Inspect provenance
+            View sources and run details
           </button>
           <Artifacts
             workspaceId={workspaceId}

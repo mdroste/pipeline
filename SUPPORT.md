@@ -1,51 +1,67 @@
-# Support policy
+# Support
 
-Pipeline is a local desktop agent orchestration suite. Support covers the
-latest published patch release on the official binary platforms below.
-Development builds, prereleases, older Pipeline releases, and source builds on
-other platforms are best effort.
+Pipeline maintains the latest stable release on the platforms below. Older
+versions, prereleases, and source builds on other platforms receive help as
+time permits.
 
-## Supported release platforms
+## Supported platforms
 
-| Platform | Official binary | Minimum and support boundary |
-|---|---|---|
-| macOS | Apple Silicon and Intel `.dmg` | macOS 15.0 or later. The bundled Poppler library closure must be checked on the release candidate at this minimum version. |
-| Windows | x86-64 NSIS installer | Windows 11 on a Microsoft-supported servicing release. Windows 10 22H2 is the compatibility floor, but is supported only on devices receiving Microsoft security updates, such as eligible ESU-managed systems. ARM64 Windows is not an official binary target. |
-| Linux | x86-64 AppImage | Ubuntu 22.04 LTS or a compatible newer distribution with glibc 2.35 or later and FUSE 2. Other distributions and extract-and-run AppImage use are compatibility paths rather than separately tested release targets. |
+| Platform | Installer | Requirements |
+| --- | --- | --- |
+| macOS | Apple Silicon or Intel `.dmg` | macOS 15 or later |
+| Windows | x86-64 `.exe` | Windows 11 on a supported servicing release, or Windows 10 22H2 while the device receives security updates |
+| Linux | x86-64 AppImage | Ubuntu 22.04 or a compatible distribution with glibc 2.35 or later and FUSE 2 |
 
-The Windows installer embeds the WebView2 bootstrapper. Installation requires
-a network connection when Evergreen WebView2 is missing. Microsoft
-documents the underlying [WebView2 operating-system support
-matrix](https://learn.microsoft.com/microsoft-edge/webview2/) separately; that
-matrix is broader than Pipeline's tested support policy.
+Windows ARM64 is not an official build target. Other Linux distributions and
+extracted AppImages may work but are not separately tested release targets.
 
-CI runs native tests on Ubuntu 22.04, Windows Server 2022, and macOS 15. The
-release workflow builds Ubuntu x86-64, Windows x86-64, and both macOS architectures;
-it does not launch the packaged applications. Before publication,
-the release checklist also requires clean-machine installation and launch
-checks on supported client operating systems. Passing CI is not a substitute
-for those release checks.
+On Windows, the installer supplies WebView2 if it is missing. That download
+requires an internet connection. The Windows installer is unsigned, so
+SmartScreen may warn before it runs. macOS releases are signed and notarized.
 
-## Update policy
+## Updates
 
-Only the latest stable Pipeline release receives security and maintenance
-fixes. Pipeline checks GitHub's stable-release channel and links to a newer
-release when one exists; it never installs an update automatically.
-Prereleases are not offered by the in-app update check, and the public release
-workflow rejects prerelease or build-metadata tags until a separate publishing
-channel is deliberately designed.
+Pipeline checks GitHub for stable releases and links to a newer version when
+one is available. Download and install the update yourself; the app does not
+replace itself automatically. Prereleases are not offered by this check.
 
-The application identifier is intentionally fixed at `com.pipeline.report`,
-the identifier used by v1.0.0. Changing it would create a different
-application identity and can break upgrades, settings continuity, signing
-expectations, and operating-system permissions.
+Only the latest stable release receives security and maintenance fixes.
 
-## Getting help
+## Common problems
 
-Before filing a bug, reproduce it on the latest release and review the
-[README](README.md), [privacy notice](PRIVACY.md), and known limitations.
-Use the repository's bug-report form for ordinary defects. Do not attach real
-papers, API keys, provider tokens, or unredacted run artifacts.
+| Problem | What to check |
+| --- | --- |
+| A model connection is unavailable | Open **Settings → Connections** and check the account, installed provider tool, or API key |
+| ChatGPT works in your terminal but not in Pipeline | Sign in inside Pipeline; its managed account is separate from the terminal's Codex account |
+| Claude subscription access fails | Run `claude auth login` and choose a Claude subscription account; see the [connection guide](docs/claude-code.md) |
+| A PDF review fails during extraction | Inspect the extraction error and the selected parser in **Settings → Reviews**; see [PDF extraction](docs/reviews.md#pdf-extraction) |
+| Research disappears after changing the data folder | Select the previous folder and restart; changing folders does not move existing records |
+| A scheduled automation did not run | Keep Pipeline running and the computer awake; see [Automations](docs/tasks.md) |
+| Project file editing is unavailable on Windows | Reading is supported; accepting file edits and creating isolated task copies are not yet available |
 
-Security vulnerabilities must follow [SECURITY.md](SECURITY.md) and must not be
-reported in a public issue.
+## Report a bug or request a feature
+
+Search [existing issues](https://github.com/mdroste/pipeline/issues) first.
+For a new bug, use the
+[bug-report form](https://github.com/mdroste/pipeline/issues/new?template=bug_report.yml)
+and include:
+
+- the Pipeline version from **Settings → Advanced & About**;
+- your operating system and whether you used an installer or built from source;
+- the steps that caused the problem, what you expected, and what happened; and
+- the provider, connection type, and a short error excerpt, if relevant.
+
+Use a small example document that you can share. Remove confidential papers,
+API keys, tokens, and private information from logs and screenshots.
+
+For a feature request, describe the research task you want to complete and
+what makes it difficult now. Report vulnerabilities privately under
+[SECURITY.md](SECURITY.md).
+
+## Testing and release checks
+
+CI runs native tests on Ubuntu 22.04, Windows Server 2022, and macOS 15.
+Release builds cover all four installer targets. Packaged installation,
+launch, and provider behavior require separate checks on client machines;
+CI does not launch the packaged apps. See [Releasing](RELEASING.md) for the
+release checklist and [current limitations](README.md#current-limitations).

@@ -1,25 +1,11 @@
+import { chatgptAccountClient } from "../lib/chatgptAccountClient";
+import type { AccountStatus } from "../lib/chatgptAccountClient";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
-  WorkspaceAccountState,
   WorkspaceModelCatalog,
   WorkspaceRateLimits,
 } from "../lib/workbenchTypes";
-
-interface AccountStatus {
-  account: WorkspaceAccountState;
-  epoch: number;
-  version: string;
-  loginInProgress: boolean;
-  pendingLogin?: { loginId: string; epoch: number } | null;
-  existingAccounts?: Array<{
-    source: string;
-    label: string;
-    email: string | null;
-  }>;
-  error?: string | null;
-}
 
 export default function ChatgptConnection({
   onAccountChange,
@@ -37,7 +23,7 @@ export default function ChatgptConnection({
   const readiness = useRef<string | null>(null);
   const mounted = useRef(true);
   const refresh = useCallback(async () => {
-    const next = await invoke<AccountStatus>("chatgpt_account_status");
+    const next = await chatgptAccountClient.status();
     if (mounted.current) {
       setStatus(next);
       setError(null);
@@ -122,7 +108,7 @@ export default function ChatgptConnection({
               disabled={disabled}
               onClick={() =>
                 void act(() =>
-                  invoke("chatgpt_select_existing_account", {
+                  chatgptAccountClient.selectExisting({
                     source: account.source,
                   }),
                 )
@@ -144,7 +130,7 @@ export default function ChatgptConnection({
         <button
           className="settings-button"
           disabled={disabled}
-          onClick={() => void act(() => invoke("chatgpt_login_start"))}
+          onClick={() => void act(() => chatgptAccountClient.loginStart())}
         >
           {signedIn ? "Change account" : "Sign in to ChatGPT"}
         </button>
@@ -154,7 +140,7 @@ export default function ChatgptConnection({
             disabled={busy}
             onClick={() =>
               void act(() =>
-                invoke("chatgpt_login_cancel", { ...status.pendingLogin }),
+                chatgptAccountClient.loginCancel({ ...status.pendingLogin }),
               )
             }
           >
@@ -165,7 +151,7 @@ export default function ChatgptConnection({
           <button
             className="settings-button"
             disabled={disabled}
-            onClick={() => void act(() => invoke("chatgpt_logout"))}
+            onClick={() => void act(() => chatgptAccountClient.logout())}
           >
             Sign out
           </button>
@@ -184,8 +170,8 @@ export default function ChatgptConnection({
             onClick={() =>
               void act(async () => {
                 const [models, usage] = await Promise.all([
-                  invoke<WorkspaceModelCatalog>("chatgpt_model_catalog"),
-                  invoke<WorkspaceRateLimits>("chatgpt_rate_limits"),
+                  chatgptAccountClient.models(),
+                  chatgptAccountClient.limits(),
                 ]);
                 setCatalog(models);
                 setLimits(usage);

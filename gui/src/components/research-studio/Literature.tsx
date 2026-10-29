@@ -10,7 +10,7 @@ import {
 } from "../../lib/studioClient";
 import type { ProjectRecord } from "../../lib/projectClient";
 import type { SourceRecord } from "../../lib/workbenchTypes";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { researchClient } from "../../lib/workbench/researchClient";
 import {
   button,
   panel,
@@ -79,7 +79,7 @@ export default function Literature({
     const [b, n, s] = await Promise.all([
       studioClient.records<BibliographyRecord>(workspaceId, "bibliography"),
       studioClient.records<LiteratureRecord>(workspaceId, "literature"),
-      workbenchClient.listSources(workspaceId),
+      researchClient.listSources(workspaceId),
     ]);
     setBibliography(b);
     setNotes(n);
@@ -90,7 +90,7 @@ export default function Literature({
     void Promise.all([
       studioClient.records<BibliographyRecord>(workspaceId, "bibliography"),
       studioClient.records<LiteratureRecord>(workspaceId, "literature"),
-      workbenchClient.listSources(workspaceId),
+      researchClient.listSources(workspaceId),
     ])
       .then(([b, n, s]) => {
         if (!disposed) {
@@ -149,7 +149,7 @@ export default function Literature({
                   filters: [{ name: "BibTeX", extensions: ["bib"] }],
                 });
                 if (typeof path !== "string") return;
-                const p = await workbenchClient.importPaper({
+                const p = await researchClient.importPaper({
                   workspaceId,
                   paperId: null,
                   title: path.split(/[\\/]/).pop() ?? "Bibliography",
@@ -198,7 +198,7 @@ export default function Literature({
           </button>
           <p className="text-xs text-gray-500">
             {bibNotice ||
-              "Citation keys, unknown fields and original file bytes remain intact. Reimport preserves project notes."}
+              "Pipeline keeps citation keys, all fields, and a copy of the original file. Importing it again keeps your project notes."}
           </p>
           <div className="max-h-64 space-y-2 overflow-auto">
             {entries.map((e) => (
@@ -268,9 +268,9 @@ export default function Literature({
         <section className={panel}>
           <h2 className="font-semibold">Zotero collection preview</h2>
           <p className="text-xs text-gray-500">
-            Read-only local API. Open Zotero and enable local application
-            communication. Collection items enter Pipeline as metadata;
-            attachments are not downloaded.
+            Open Zotero and enable local application communication. Pipeline
+            imports citation details from your collections. Attachments stay in
+            Zotero.
           </p>
           <button
             className={button}
@@ -342,7 +342,7 @@ export default function Literature({
               <p className="text-xs">
                 Instance:{" "}
                 {zotero.serverId ??
-                  "Legacy instance identity unavailable; content hashes distinguish imports"}
+                  "This older import has no saved source ID. Pipeline identifies it by its file contents."}
               </p>
               <div className="max-h-64 overflow-auto">
                 {zotero.items.map((i) => (
@@ -505,7 +505,7 @@ export default function Literature({
                 ],
               });
               if (typeof path !== "string") return;
-              const imported = await workbenchClient.importSource({
+              const imported = await researchClient.importSource({
                 workspaceId,
                 title: sourceTitle,
                 citationKey: sourceKey || null,
@@ -634,7 +634,7 @@ export default function Literature({
           </Field>
           <p className="whitespace-pre-wrap text-xs">
             Exact passage:{" "}
-            {note.quote || "None — substantive support remains unverified"}
+            {note.quote || "None — supporting evidence has not been checked"}
           </p>
           <button
             className={button}
@@ -670,7 +670,7 @@ export default function Literature({
               )
             }
           >
-            Read retained source text
+            Read saved source text
           </button>
           {sourceText && (
             <>

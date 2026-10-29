@@ -326,7 +326,7 @@ export const WORKFLOW_GALLERY: WorkflowGalleryItem[] = [
     name: "Revision Response Check",
     category: "Papers",
     description:
-      "Verifies an author response against the revised manuscript and carries unresolved concerns into an evidence-linked issue ledger.",
+      "Check an author response against the revised manuscript and list unresolved concerns with supporting evidence.",
     inputs: "Revised manuscript, prior report, response letter",
     outcome: "Verified, partial, unsupported, and unresolved revision claims",
     config: revisionResponse,
@@ -346,7 +346,7 @@ export const WORKFLOW_GALLERY: WorkflowGalleryItem[] = [
     name: "Thesis Chapter Review",
     category: "Long documents",
     description:
-      "Fans out over chapter source files, then checks consistency, notation, and connective arguments across the thesis.",
+      "Review each chapter, then check consistency, notation, and links between chapters.",
     inputs: "Thesis source folder",
     outcome: "Chapter-level and cross-chapter issue ledger",
     config: thesisReview,
@@ -356,7 +356,7 @@ export const WORKFLOW_GALLERY: WorkflowGalleryItem[] = [
     name: "Rubric-Based Review",
     category: "Teaching",
     description:
-      "Applies an explicit rubric without inventing criteria and retains evidence for each actionable deficiency.",
+      "Assess the work against your rubric and cite evidence for each suggested improvement.",
     inputs: "Submission and rubric",
     outcome: "Criterion-linked, evidence-backed issues",
     config: rubricReview,

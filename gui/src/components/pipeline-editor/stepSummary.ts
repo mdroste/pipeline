@@ -117,7 +117,9 @@ export function describeStep(
 
   return {
     sentence: `${disabled}${timing}${condition} using ${providers}. ${receives} ${output}${fanOut} ${calls}`,
-    compact: `${step.enabled ? timing : "Disabled"} · ${providers} · ${maxCalls} ${maxCalls === 1 ? "call" : "calls"}`,
+    // The list's section header says when a step runs, its toggle whether it
+    // is on, and its chips who runs it; the row adds only a multi-call count.
+    compact: maxCalls === 1 ? "" : `Up to ${maxCalls} calls`,
     maxCalls,
   };
 }

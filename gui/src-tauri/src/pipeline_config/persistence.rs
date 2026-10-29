@@ -1,6 +1,65 @@
 use super::*;
 
+const MAX_PROFILE_BYTES: usize = 16 * 1024 * 1024;
+
+pub(super) struct ProfileMutationGuard {
+    _process: std::sync::MutexGuard<'static, ()>,
+    file: fs::File,
+}
+
+impl Drop for ProfileMutationGuard {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.file);
+    }
+}
+
+pub(super) fn lock_profile_mutations() -> Result<ProfileMutationGuard, String> {
+    static PROCESS_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    let process = PROCESS_LOCK
+        .get_or_init(|| std::sync::Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let profiles = profiles_dir()?;
+    let root = profiles
+        .parent()
+        .ok_or("Profiles directory has no parent")?;
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join("profiles.lock"))
+        .map_err(|error| format!("Failed to open profile lock: {error}"))?;
+    fs2::FileExt::lock_exclusive(&file)
+        .map_err(|error| format!("Failed to lock profiles: {error}"))?;
+    Ok(ProfileMutationGuard {
+        _process: process,
+        file,
+    })
+}
+
+pub(super) fn read_profile_file(path: &Path) -> Result<String, String> {
+    use std::io::Read as _;
+    let file = crate::safety::open_regular_file(path)
+        .map_err(|e| format!("Failed to read profile '{}': {e}", path.display()))?;
+    let mut bytes = Vec::with_capacity(64 * 1024);
+    file.take(MAX_PROFILE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("Failed to read profile '{}': {e}", path.display()))?;
+    if bytes.len() > MAX_PROFILE_BYTES {
+        return Err(format!(
+            "Profile '{}' exceeds the {} MB safety limit",
+            path.display(),
+            MAX_PROFILE_BYTES / 1024 / 1024
+        ));
+    }
+    String::from_utf8(bytes)
+        .map_err(|e| format!("Profile '{}' is not valid UTF-8: {e}", path.display()))
+}
+
 pub(crate) fn load_profile(id: &str) -> Result<ProfileData, String> {
+    validate_profile_id(id)?;
+    let id = resolve_renamed_profile_id(&profiles_dir()?, id);
     let path = profile_path(id)?;
     let content =
         read_profile_file(&path).map_err(|e| format!("Failed to read profile '{id}': {e}"))?;

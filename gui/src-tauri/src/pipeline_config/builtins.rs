@@ -88,6 +88,7 @@ pub(super) fn full_review_profile(validate_enabled: bool) -> ProfileData {
 fn adaptive_review_profile(
     name: &str,
     steps: Vec<StepConfig>,
+    orientation_prompt: String,
     orientation_schema: serde_json::Value,
 ) -> ProfileData {
     let mut steps = configure_artifact_flow(steps, "document", &["auto_validate"]);
@@ -104,19 +105,20 @@ fn adaptive_review_profile(
     profile.context_cache.enabled = true;
     profile.outputs.primary_step = "auto_validate".to_string();
     profile.outputs.findings_step = "auto_validate".to_string();
-    profile.orientation_prompt = crate::auto_review::orientation_prompt();
+    profile.orientation_prompt = orientation_prompt;
     profile.orientation_schema = Some(orientation_schema);
     profile
 }
 
 /// Built-in adaptive paper review. The orientation call selects a bounded set
-/// of allowlisted specialist IDs. The saved Full profile contains three core
+/// of allowlisted specialist IDs. The saved profile contains three core
 /// reviewers plus synthesis and validation; selected reviewers are
 /// materialized for the run.
 pub(super) fn auto_review_profile() -> ProfileData {
     adaptive_review_profile(
-        "Automatic Paper Review (Full)",
+        "Paper Review",
         crate::auto_review::steps(),
+        crate::auto_review::orientation_prompt(),
         crate::auto_review::orientation_schema(),
     )
 }
@@ -125,25 +127,106 @@ pub(super) fn auto_review_profile() -> ProfileData {
 /// 1–2 method specialists, consolidation, and validation.
 pub(super) fn quick_auto_review_profile() -> ProfileData {
     adaptive_review_profile(
-        "Automatic Paper Review (Quick)",
+        "Paper Review (Fast)",
         crate::auto_review::quick_steps(),
+        crate::auto_review::orientation_prompt(),
         crate::auto_review::quick_orientation_schema(),
     )
+}
+
+/// Paper Review's reviewers applied to a slide deck (exported as PDF). The
+/// router is told the input is a deck, and the schema pins the slide-deck
+/// genre, whose host-owned context is injected into every step at run time.
+pub(super) fn slide_review_profile() -> ProfileData {
+    adaptive_review_profile(
+        "Slide Review",
+        crate::auto_review::steps(),
+        crate::auto_review::slide_orientation_prompt(),
+        crate::auto_review::slide_orientation_schema(),
+    )
+}
+
+/// The stock router prompt and orientation schema for an adaptive built-in.
+/// Any other profile, including a custom copy, gets Paper Review's pair.
+pub fn adaptive_orientation_defaults(profile_id: &str) -> (String, serde_json::Value) {
+    use crate::auto_review as auto;
+    match profile_id {
+        PAPER_REVIEW_FAST_ID => (auto::orientation_prompt(), auto::quick_orientation_schema()),
+        SLIDE_REVIEW_ID => (
+            auto::slide_orientation_prompt(),
+            auto::slide_orientation_schema(),
+        ),
+        _ => (auto::orientation_prompt(), auto::orientation_schema()),
+    }
 }
 
 pub(super) fn defaults() -> PipelineConfig {
     auto_review_profile().into()
 }
 
+pub(crate) const PAPER_REVIEW_ID: &str = "auto-paper-review";
+pub(crate) const PAPER_REVIEW_FAST_ID: &str = "auto-paper-review-fast";
+pub(crate) const SLIDE_REVIEW_ID: &str = "slide-review";
+pub(crate) const GRANT_REVIEW_ID: &str = "grant-review";
+
 /// Profile IDs that cannot be deleted.
 // All are recreated by create_builtin_profiles() on startup, so
 // deleting any of them would silently "undo" itself — block deletion for all.
-pub(super) const BUILTIN_PROFILES: &[&str] = &["auto-review", "auto-review-quick", "grant-review"];
+pub(super) const BUILTIN_PROFILES: &[&str] = &[
+    PAPER_REVIEW_ID,
+    PAPER_REVIEW_FAST_ID,
+    SLIDE_REVIEW_ID,
+    GRANT_REVIEW_ID,
+];
+
+/// Built-ins that existed before the version-marked catalog migrations below.
+/// Those upgrades apply only to these; a built-in added later (Slide Review)
+/// is always created in the current format and must never be replayed.
+pub(super) const MIGRATED_BUILTIN_PROFILES: &[&str] =
+    &[PAPER_REVIEW_ID, PAPER_REVIEW_FAST_ID, GRANT_REVIEW_ID];
 
 pub(super) fn builtin_primary_readers(id: &str) -> &'static [&'static str] {
     match id {
-        "auto-review" | "auto-review-quick" => &["auto_validate"],
+        PAPER_REVIEW_ID | PAPER_REVIEW_FAST_ID | SLIDE_REVIEW_ID => &["auto_validate"],
         _ => &[],
+    }
+}
+
+/// A built-in whose ID and stock display name changed without changing its
+/// definition. Unlike a retirement, the user's file (edits included) moves to
+/// the new ID once, and the old ID keeps resolving while no file claims it.
+pub(super) struct RenamedBuiltin {
+    pub old_id: &'static str,
+    pub id: &'static str,
+    pub old_name: &'static str,
+    pub name: &'static str,
+}
+
+pub(super) const RENAMED_BUILTIN_PROFILES: &[RenamedBuiltin] = &[
+    RenamedBuiltin {
+        old_id: "auto-review",
+        id: PAPER_REVIEW_ID,
+        old_name: "Automatic Paper Review (Full)",
+        name: "Paper Review",
+    },
+    RenamedBuiltin {
+        old_id: "auto-review-quick",
+        id: PAPER_REVIEW_FAST_ID,
+        old_name: "Automatic Paper Review (Quick)",
+        name: "Paper Review (Fast)",
+    },
+];
+
+/// The current ID for a profile reference that may predate a rename. Durable
+/// references (Task chains, missions, CLI scripts) keep working, but a file
+/// that has since claimed the old ID always wins.
+pub(super) fn resolve_renamed_profile_id<'a>(profiles: &Path, id: &'a str) -> &'a str {
+    match RENAMED_BUILTIN_PROFILES
+        .iter()
+        .find(|renamed| renamed.old_id == id)
+    {
+        Some(renamed) if !profiles.join(format!("{id}.json")).exists() => renamed.id,
+        _ => id,
     }
 }
 
@@ -166,14 +249,14 @@ pub(super) const V9_RETIRED_BUILTIN_PROFILES: &[(&str, &str)] = &[
     ("replication-audit", "deep-review"),
 ];
 
-/// Paper Review (Full) and (Quick) retired in favor of Automatic Paper Review.
-/// Their step prompts remain shipped defaults (`prompts/*.md`), usable from
-/// the editor's insertable defaults and prompt overrides. The replacement
-/// swap must run after the v3/v9 swaps so chains like
-/// `deep-code-review → deep-review → auto-review` resolve fully.
+/// Paper Review (Full) and (Quick) retired in favor of Automatic Paper Review,
+/// since renamed Paper Review. Their step prompts remain shipped defaults
+/// (`prompts/*.md`), usable from the editor's insertable defaults and prompt
+/// overrides. The replacement swap must run after the v3/v9 swaps so chains
+/// like `deep-code-review → deep-review → auto-paper-review` resolve fully.
 pub(super) const V15_RETIRED_BUILTIN_PROFILES: &[(&str, &str)] = &[
-    ("deep-review", "auto-review"),
-    ("quick-review", "auto-review-quick"),
+    ("deep-review", PAPER_REVIEW_ID),
+    ("quick-review", PAPER_REVIEW_FAST_ID),
 ];
 
 pub(super) fn profile_summary(id: String, profile: &ProfileData) -> ProfileSummary {
@@ -405,15 +488,70 @@ pub(super) fn grant_review_profile() -> ProfileData {
 pub(super) fn create_builtin_profiles() -> Result<(), String> {
     let profiles = profiles_dir()?;
 
-    // Automatic Paper Review — one validated orientation/router call, core
-    // reviews, and a bounded set of selected subject/method specialists.
-    write_builtin_if_missing(&profiles.join("auto-review.json"), &auto_review_profile())?;
-    write_builtin_if_missing(
-        &profiles.join("auto-review-quick.json"),
-        &quick_auto_review_profile(),
-    )?;
-
-    write_builtin_if_missing(&profiles.join("grant-review.json"), &grant_review_profile())?;
+    // Paper Review and Slide Review — one validated orientation/router call,
+    // core reviews, and a bounded set of selected subject/method specialists.
+    for (id, profile) in [
+        (PAPER_REVIEW_ID, auto_review_profile()),
+        (PAPER_REVIEW_FAST_ID, quick_auto_review_profile()),
+        (SLIDE_REVIEW_ID, slide_review_profile()),
+        (GRANT_REVIEW_ID, grant_review_profile()),
+    ] {
+        write_builtin_if_missing(&profiles.join(format!("{id}.json")), &profile)?;
+    }
 
     Ok(())
+}
+
+/// Default parallel-step context template, with user override applied from
+/// ~/.pipeline/prompts/parallel_context.md if present.
+///
+/// This is the paper-review wrapper — it remains the fallback default because
+/// the built-in profiles and all pre-generalization profiles assume it.
+pub fn default_parallel_template() -> String {
+    prompts::load_prompt("parallel_context").unwrap_or_default()
+}
+
+/// Generic (domain-neutral) parallel-step context template.
+pub fn generic_parallel_template() -> String {
+    prompts::load_prompt("parallel_context_generic").unwrap_or_default()
+}
+
+/// Starter steps for a brand-new profile: one parallel step to replace and a
+/// generic consolidation step. New profiles are domain-neutral; the paper
+/// machinery lives in the built-in review profiles.
+pub(super) fn generic_starter_steps() -> Vec<StepConfig> {
+    vec![
+        StepConfig {
+            id: "analysis".into(),
+            label: "Analysis".into(),
+            prompt: "Replace this with instructions for the step. It receives only the \
+                     artifacts selected in this step's context."
+                .into(),
+            enabled: true,
+            phase: Phase::Parallel,
+            tools: vec![],
+            agents: vec![],
+            ..Default::default()
+        },
+        StepConfig {
+            id: "synthesis".into(),
+            label: "Synthesize".into(),
+            prompt: "Consolidate the selected upstream reports into a single report. Merge \
+                     duplicate findings, resolve contradictions, and order by importance.\n\n\
+                     {prior_outputs}"
+                .into(),
+            enabled: true,
+            phase: Phase::Sequential,
+            tools: vec![],
+            agents: vec![],
+            context: StepContext {
+                include: vec![ArtifactSelector::Step {
+                    step: "analysis".into(),
+                    parts: vec![StepArtifactPart::Report],
+                    glob: String::new(),
+                }],
+            },
+            ..Default::default()
+        },
+    ]
 }

@@ -7,15 +7,19 @@ splits after R0–R5; it does not establish release qualification.
 
 ## App, Workspace, and Tasks presentation
 
-- `App.tsx` composes the desktop shell; `hooks/useAppController.ts`
-  owns navigation, application state, events, and Review launch coordination.
+- `App.tsx` composes the desktop shell; `hooks/useAppController.ts` composes
+  `hooks/app/` owners for navigation, attention, native close, theme, batch
+  activity, setup and Review launch. Each owner retains its original effects;
+  navigation commit and legacy persistence remain separate.
   `lib/appRunPreparation.ts` owns pure launch-preparation helpers and types;
   `lib/appClient.ts` is the typed IPC boundary for shell-owned runtime commands.
 - `components/WorkspacePage.tsx` composes project and conversation views;
-  `hooks/useWorkspacePageController.ts` owns navigation, transcript paging,
-  pending requests, and serialized composer saves. `hooks/useWorkbenchEvents.ts`
-  isolates the live event subscription, coalesced streams, and terminal-turn
-  cleanup.
+  `hooks/useWorkspacePageController.ts` composes navigation, transcript paging
+  and grouped page contracts. `hooks/workspace/` owns Chrome, session mutations,
+  session persistence and the conversation runtime. Persistence has one write
+  lane for drafts and model selections. The runtime owns hydration, submission,
+  terminal identity and its private event bridge; native subscription callbacks
+  retain their original effect registration phase and 50 ms stream flush.
 - `ui/` is the shared interaction kit: `Popover`, `Menu`, `Select`,
   `SegmentedControl`, `Tooltip`, `IconButton`, `Sheet`, `Skeleton`, and the
   icon set, positioned by `ui/anchoredPosition.ts`. Semantic `--ui-*` tokens
@@ -29,20 +33,37 @@ splits after R0–R5; it does not establish release qualification.
   and `lib/fileDrop.ts` own native file drops.
 - `components/WorkspaceResearchPanel.tsx` renders the research inspector;
   `components/research-panel/useResearchPanelController.ts` owns its scoped
-  loading, drafts, and mutations.
+  loading, drafts, and mutations. The six stateless tab views live beside it.
 - `components/ProjectIndexPage.tsx`, `hooks/useProjectIndex.ts`, and
   `lib/projectIndex.ts` own the Projects index. `project-surface/ProjectOverview`,
   `ProjectNotes`, `ProjectSettings`, and `ProjectActionItems` split the project
   home's presentation. `hooks/useWorkspaceEntry.ts` interprets external navigation
   requests; `hooks/useRecentProjects.ts` loads suite navigation metadata. See
   [Projects home](../workbench/projects-home.md).
+  `project-surface/ProjectDestination.tsx` dispatches the retained destinations;
+  `useProjectSurfaceData`, `useProjectReadingState` and
+  `useProjectSelectionActions` retain loading, reading/focus and mutation gates.
 - `components/TasksPage.tsx` owns task navigation, selection, refresh, and events.
   `components/tasks/` contains `Builder.tsx`, `Detail.tsx`, `Timing.tsx`,
   `ScheduleCard.tsx`, and shared presentation helpers. All task IPC is routed
-  through `lib/taskClient.ts`.
+  through `lib/taskClient.ts`; task types, templates and pure presentation live
+  in `taskTypes.ts`, `taskTemplates.ts`, and `taskPresentation.ts`.
 
 Paths in this section are relative to `gui/src/`. These controller extractions
 do not merge the owning runtime or storage boundaries.
+
+Workspace transport lives under `lib/workbench/`: workspace, conversation,
+harness, research, execution, recipe, release and runtime clients. Production
+callers import their domain directly; there is no runtime umbrella barrel.
+History/export/settings/profile/schema/account views use narrow typed clients,
+reusing `artifactClient.ts` for existing run-owned reads. Payloads remain literal.
+
+Pure transcript interpretation lives in `lib/workspaceTranscript.ts`, shared by
+conversation rendering and paging/controller hooks. Review event/state records
+live in `lib/reviewRuntimeTypes.ts`; `usePipeline` owns subscriptions and
+`runViews` owns pure projection. `research-panel/types.ts` owns inspector tab
+contracts, and `lib/studioPresentation.ts` owns prose normalization for the
+existing Studio preview diff.
 
 The About dialog's easter egg lives in `components/FlappyBirdGame.tsx` (pilot
 selection and game loop). `components/flappy/` owns shared game dimensions and
@@ -56,21 +77,38 @@ Under `gui/src-tauri/src/workbench/`:
 - `commands.rs` retains database workers, archive gates, and active-turn state.
   `commands/codex.rs` owns turn submission, requests, and the event bridge;
   `commands/{desk,project,research}.rs` group the remaining feature handlers.
-- `store.rs` retains shared records, store setup, migrations, and journal
-  mechanics. `store/workspaces.rs`, `sessions.rs`, `runtime.rs`, and `views.rs`
+- `store.rs` retains the Store/error boundary, setup and backup ownership.
+  `store/{records,schema,projection,journal}.rs` own records, the migration
+  runner, projection and journal mechanics. `store/workspaces.rs`, `sessions.rs`, `runtime.rs`, and `views.rs`
   own workspace roots, conversations, binding/turn/event persistence, and
   snapshots/preferences/root reconciliation respectively. `store/roots.rs` validates
   registered directory identity; `store/history.rs` owns transcript paging and export
   traversal. `project/task_pages.rs` filters open context before its limit and pages
   the complete task history.
-- `research.rs` retains harness resolution and shared persistence helpers.
+- `research.rs` is the service facade with shared persistence helpers.
+  `research/{config,context,tool_catalog,harness,snapshots}.rs` own configuration,
+  bounded context, tool declarations, ordered resolution and frozen snapshots.
   `research/types.rs` owns the public harness DTOs and `catalog.rs` owns stock
   modules and presets. `research/{papers,sources,notes,ledger,tools}.rs` own the
-  corresponding services; `execution.rs`, `execution_plan.rs`, and `jobs.rs`
-  own local work.
+  corresponding services. `research/execution/` separates types, profiles,
+  authorization, process setup, outputs, lifecycle and results. Complete
+  prepare/start/wait/finalize operations retain ownership of their guards;
+  `execution_plan.rs`, `jobs.rs` and `finalization.rs` remain separate owners.
+- `release.rs` is the explicit service facade for `release/recipes.rs`,
+  `recipe_runs.rs`, `evaluations.rs`, and `review_handoff.rs`. Whole-store
+  archive, selective exchange, retention and workflow-draft ownership remain
+  distinct. `release/exchange/` separates records, dependency selection, package
+  decoding, export, import planning/application and conflicts; `fingerprint.rs`
+  remains its content-identity owner. `release/archive/` owns whole-store
+  format, inspection, export, restore and transcripts; the install guard remains
+  in `conversation_files.rs`. Restore remains one ordered operation.
 - `project/index.rs` and `project/index.sql` own the bounded, read-only project
   metadata query used by `workbench_project_index`; it does not load project
   artifacts, transcripts, or model runtimes.
+
+`project/{records,home,inventory,blobs}.rs` separate scoped records, project
+home/context, bounded file capture and immutable blobs. The project facade
+retains mutation dispatch, locking and program input ownership.
 
 See the [Workspace guide](../workbench/README.md) for contracts and invariants.
 
@@ -88,10 +126,21 @@ See [Workflow Codex](../workflow-codex.md) for the consolidation record.
 
 ## Workflow provider calls
 
+Review exports retain their command boundary in `commands/export.rs`.
+`commands/export/{types,files,manifest,package,print,desktop}.rs` own command
+records, confined copying/publication, checksums, disclosure selection,
+self-contained HTML rendering, and session-scoped reveal/print cleanup.
+The headless entry point is `bin/cli.rs`; its implementation lives in `cli/`
+(outside `bin/` to preserve bundler binary discovery), with pipe-safe output
+still in `cli_io.rs`.
+
 Under `gui/src-tauri/src/pipeline/`, `api_common.rs` retains shared constants,
 HTTP clients, and the public facade. `api_common/loops.rs` owns tool loops,
 `execution.rs` owns host-tool execution, `retry.rs` owns HTTP retry/error policy,
-and `models.rs` owns provider types, usage, and bounded tool file access.
+and `tool_schema.rs`, `tool_access.rs`, `tool_files.rs`, `wire.rs`, and
+`usage.rs` separate exact tool declarations, per-call authority, bounded file
+operations/run quotas, wire records and accounting. Provider loops remain
+independent and retain their Drop-based usage receipts.
 
 `claude.rs` remains the compatibility facade. `claude/dispatch.rs` routes model
 calls; `claude_cli.rs`, `cli_workspace.rs`, `artifacts.rs`, and `process.rs`
@@ -118,7 +167,24 @@ Relative component filenames above are under `gui/src/components/artifact-explor
 Run Sources still uses its owning manifest and read-only adapter; Workspace
 file saves remain scoped to its own backend with expected-hash validation.
 
+Report presentation helpers live in `lib/reportPresentation.ts` and navigation/
+AST helpers in `lib/reportNavigation.ts`. `components/report-workspace/` owns
+independent resource reads and stateless report sections; `report-viewer/` owns
+contents and error boundaries. Console grouping/formatting is in
+`lib/consolePresentation.ts`; request/token views live in `components/console/`.
+The existing parents retain interactive selection, scroll, focus and timing.
+
+`gui/src-tauri/src/auto_review/` separates compiled assets, generated catalog
+identity, selection checks, prompt/schema construction, readable findings and
+host-only materialization. The facade retains its public API and contract keys.
+
 ## Settings and workflow editor
+
+`gui/src-tauri/src/settings/` separates flat serialized records (`types.rs`),
+model policy, extraction resolution, ordered validation, persistence and run
+snapshots. Crypto, quarantine and recovery retain distinct contracts and share
+the existing persistence lock. The settings facade preserves public imports.
+
 
 `gui/src/components/SettingsPage.tsx` composes the selected settings section.
 Under `components/settings/`, `useSettingsDraft.ts` owns settings loading,
@@ -152,6 +218,30 @@ Under `components/pipeline-editor/`:
 - `useWorkflowCatalogs.ts` loads the editor's persisted provider catalogs.
   Existing editor panels, schema editors and dialogs keep their prior roles.
 
+Workflow configuration records live in `pipeline_config/{step,inputs,profile,legacy}.rs`.
+`validation/` separates steps, graph, artifacts, conditions and profile checks
+without changing their ordered entry points. `persistence.rs` owns the existing
+profile mutation lock and bounded reads. `migrations.rs` retains the ordered
+runner; `migrations/{catalog,prompts,retirement,suites}.rs` contain its unchanged
+migration operations and marker rules.
+
+PDF extraction has a small `pipeline/extract/pdf.rs` facade and focused
+`pdf/{native,paddle_server,full_structure,cache,page_quality,llm}.rs` owners.
+The full-parser lease/invocation remains in `extract/paddle_full.rs`.
+
+`gui/src-tauri/src/runs/` separates immutable records, identity/OS locking,
+file inspection, writer/Drop, history, recovery and trash. Existing artifact,
+atomic persistence, retention and unlisted-output owners remain distinct.
+Run tests are grouped by records, writer, recovery and retention behavior.
+
+`commands/run.rs` and `rerun.rs` retain separate run coordinators, frozen
+settings, cancellation scopes, writers and temporary-file lifetimes.
+`run/{inputs,visuals,orientation,document,report}.rs` own fresh-run stages;
+`rerun/{files,reuse,inputs,document}.rs` own captured-input and reuse policy.
+Helpers borrow the coordinator's resources or return temporary handles that
+are immediately bound there. `reuse_artifacts.rs` retains confined snapshots
+and producer copying; no live-source fallback is introduced for reruns.
+
 ## Workflow executor
 
 `gui/src-tauri/src/pipeline/executor.rs` is the public facade. Its modules are
@@ -181,6 +271,23 @@ Executor tests live in `executor/tests/{schedule,artifacts,findings,units,output
 prompts,placeholders}.rs`, with shared fixtures in `executor/tests.rs`. Other
 large inline test modules moved beside their original source under
 `<source-stem>/tests.rs`. Command and profile tests are grouped by behavior.
+
+## Durable task coordination
+
+Under `gui/src-tauri/src/orchestration/`, the root retains the coordinator,
+singleton, database-worker limit, ownership lock and shared gate.
+`coordinator/{scheduler,completion,recovery}.rs` retain complete scheduling,
+completion and recovery methods. Scheduling keeps save-before-dispatch adjacent
+to worker creation; completion and recovery retain their distinct sequences.
+
+`store/{records,runs,receipts,schedules,signals,chains}.rs` group methods along
+existing transaction boundaries. `adapters/{prepare,snapshots,execute,review,preview}.rs`
+separate immutable preparation and product adapters while `execute.rs` retains
+one complete cancellation/journal envelope, including its early returns.
+`missions/{accounting,chains,planning,assessment}.rs` own pure policy; admission
+and adoption stay in their existing transaction owners. Coordinator tests are
+grouped into interpreter, availability, schedules, receipts and snapshots;
+the existing real-store coordinator scenarios remain separate.
 
 ## Size reporting
 
@@ -226,3 +333,16 @@ the API-key readiness record labeled Google API.
 - `settings/recovery.rs` owns load diagnostics for the Settings page, discarding a stored key that no longer decrypts, and import normalization of exported settings.
 - `cli_io.rs` (included by `bin/cli.rs`) owns pipe-safe stdout output, report file writing, and absolute resolution of CLI input paths.
 - `workbench/missions.rs` owns the read-only source-scope refresh and the retry re-adoption used by missions and self-discovery; `orchestration/discovery/mod.rs` classifies failures as attention or blocked.
+
+## Claude subscription boundary
+
+- `agent_runtime/claude.rs`: stateless CLI authentication and billing guard shared
+  by Reviews and Workspace, with independently owned process supervision.
+- `workbench/claude/`: Workspace stream-json transport, lifecycle, and MCP bridge.
+- `workbench/history.rs`: bounded app-owned text history for independent turns
+  and provider switches.
+- `workbench/project/assistant_files.rs`: scoped Claude file tools over the
+  existing safe-root and Studio edit journal.
+- `useWorkspaceModelCatalog.ts`: provider-specific connection and model loading.
+
+See [Claude Code](../claude-code.md) for the contract and qualification evidence.

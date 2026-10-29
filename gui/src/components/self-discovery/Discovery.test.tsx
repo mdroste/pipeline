@@ -96,15 +96,21 @@ it("starts prompt-only unsupervised research once with the exact name and defaul
   );
   expect(screen.getByLabelText("Mode")).toHaveValue("unsupervised");
   expect(
-    screen.getByRole("option", { name: "Full self-discovery (supervised)" }),
+    screen.getByRole("option", {
+      name: "Research discovery — choose projects yourself",
+    }),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("option", { name: "Full self-discovery (unsupervised)" }),
+    screen.getByRole("option", {
+      name: "Research discovery — let Pipeline choose projects",
+    }),
   ).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Research topics and questions"), {
     target: { value: "Study source transmission in medieval archives" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Start self-discovery" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Start research discovery" }),
+  );
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
   const starts = mocks.invoke.mock.calls.filter(
     (c) => c[0] === "discovery_start",
@@ -149,14 +155,18 @@ it("retains the operation identity when a Start response is uncertain", async ()
   fireEvent.change(screen.getByLabelText("Research topics and questions"), {
     target: { value: "A theoretical physics question" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Start self-discovery" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Start research discovery" }),
+  );
   await screen.findByRole("alert");
   await waitFor(() =>
     expect(
-      screen.getByRole("button", { name: "Start self-discovery" }),
+      screen.getByRole("button", { name: "Start research discovery" }),
     ).toBeEnabled(),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Start self-discovery" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Start research discovery" }),
+  );
   await waitFor(() =>
     expect(
       mocks.invoke.mock.calls.filter((c) => c[0] === "discovery_start"),
