@@ -116,41 +116,10 @@ It does not load transcripts, drafts, artifacts, inventories, or model runtimes.
 Review and Automation runtime ownership remains separate. No schema migration
 or new synthesized research summary is required.
 
-## Validation — 2026-09-13
+## Development fixtures
 
-The full frontend suite passed (97 files, 716 tests), as did the Rust suite
-(959 tests passed, 10 ignored). Production build, frontend formatting, Rust
-formatting, Clippy with warnings denied, source-size checks, and Git whitespace
-checks passed. New documentation links resolve.
-
-Native regression tests cover project scoping, archive exclusion, exact latest
-conversation selection, accepted-note provenance, Unicode preview bounds,
-activity ordering, task priority, and interrupted-edit attention. Frontend tests
-cover index navigation with an existing selected project, search, persisted pins,
-load/resume failures, precise resume callbacks, empty projects, proposed-note
-exclusion, and composer saving before navigation.
-
-The browser fixture at `gui/e2e/projects.html` uses the real index and project
-components with explicitly synthetic data. It was inspected at 1024-pixel and
-wide layouts in light and dark appearances; project opening, note editing,
-pending-note inspection, and resume destinations were exercised. The Tauri
-development build launched with disposable research and task stores; the
-computer-use adapter could not attach to its unbundled native window. Browser
-fixture checks are not native WebKit, authenticated model, or packaged-release
-qualification.
-
-## Validation — 2026-10-01 (derived overview and repository)
-
-The full frontend suite passed (105 files, 773 tests), with TypeScript, the
-production build, and Prettier. Native tests for `workbench::project` passed
-(52 passed, 6 ignored), including a real clone-and-fetch round trip against a
-local bare remote; the full Rust suite was not rerun. New tests cover every
-derivation, silence when a source fails, single-action rows, visit tracking,
-the conversation-first default, target-date validation, remote-URL credential
-stripping, and porcelain parsing.
-
-The full-app fixture (`gui/e2e/app-full.html`) gained `?project=rich|thin|bare`.
-The Overview was inspected at 1440×860 in light and dark and at 1024×700, as
-were the conversation-only entry and the Repository settings card. Not
-exercised: the native window, a fetch against github.com, and the derived
-sources against a large real project.
+`gui/e2e/projects.html` renders the real index and project components with
+synthetic data. The full-app fixture `gui/e2e/app-full.html` accepts
+`?project=rich|thin|bare`: a populated project, a project with only
+conversations, and a folder-only project. Browser fixtures do not qualify the
+native WebKit window, authenticated model turns, or packaged releases.

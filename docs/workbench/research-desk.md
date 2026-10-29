@@ -144,13 +144,9 @@ Typed service constructors validate new concepts; papers, sources, notes, execut
 
 ## Validation and qualification
 
-The final full-suite run passed **831 Rust tests** (9 opt-in tests ignored) and **540 frontend tests** across 68 files. Clippy passed with warnings denied, and the TypeScript/Vite production build passed. Counts include the existing suite and concurrently developed orchestration coverage; they are not all new tests for this feature set.
-
 Automated coverage includes a 200-document Unicode/repeated-title project, exact older references, index rebuilds and exclusions, identifier/abbreviation search, context scope and optimistic conflicts, note supersession, distinct data vintages, sample impact, missing-value preservation, row policy, immutable acquisition identities, archive authority retirement, draft recovery, layout restoration, and context-save races.
 
-A real numerical Python fixture captures an analysis, replaces its live script, then tests and replays the capture in different directories. Both results equal the expected mean of 2 within `1e-12`. A separately invoked real TeX fixture compiles twice from the capture after a live edit, verifies PDF/recorder output and the PDF page guard. This establishes those local fixture results, not bitwise reproducibility of arbitrary projects. A separately invoked public Crossref DOI lookup passed.
-
-The native walkthrough used `npm run tauri dev`, a disposable Workspace store and a temporary bundle of that debug executable. It verified signed-out Markdown import/rendering, adding the exact document beside a new conversation, retaining an unsent draft, and returning from Reviews to the same document revision and draft. The Mac locked before the remaining desk panels and narrow-window behavior could be checked natively; automated UI coverage does not replace that outstanding walkthrough.
+A real numerical Python fixture captures an analysis, replaces its live script, then tests and replays the capture in different directories; both results must equal the expected mean of 2 within `1e-12`. The opt-in `captured_real_tex_build` fixture compiles twice from the capture after a live edit and verifies PDF/recorder output and the PDF page guard. These establish local fixture results, not bitwise reproducibility of arbitrary projects. The opt-in `live_crossref_doi_lookup` test queries the public Crossref API.
 
 Credentialed FRED/ALFRED acquisition, real Zotero attachments, R/Julia/Stata execution, authenticated model use of the new tools, packaged-app behavior and other operating systems remain unqualified. No general release claim should be based on these deterministic tests alone. The separate release checklist remains authoritative.
 
