@@ -26,8 +26,13 @@ produce an AppImage.
 1. Choose a reviewed commit and a stable `X.Y.Z` version newer than every
    earlier stable tag. Update the version in `gui/package.json`,
    `gui/package-lock.json`, `gui/src-tauri/Cargo.toml`, and
-   `gui/src-tauri/Cargo.lock` together. Keep the app identifier
-   `com.pipeline.report`.
+   `gui/src-tauri/Cargo.lock` together. Update the README heading and badge,
+   issue templates, release metadata, and current-version fixtures and browser
+   shims. Verify that About, Settings, the built app, and the CLI show that
+   version. Keep Tauri's version sourced from `gui/package.json` and the app
+   identifier `com.pipeline.report`. Preserve historical release notes,
+   compatibility statements, dependency versions, and deliberately different
+   versions in update tests.
 2. Update the [changelog](../CHANGELOG.md), the guides, and the notices. Run
    every check in [Contributing](../.github/CONTRIBUTING.md), and review dependency
    advisories.
