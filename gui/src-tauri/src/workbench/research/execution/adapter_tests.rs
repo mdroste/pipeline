@@ -867,7 +867,11 @@ fn migration_16_keeps_profiles_and_accepts_structured_adapters() {
         &store,
         request(
             "stata",
-            &["/bin/zsh", "-lic", "oldstata -q -b do main.do"],
+            if cfg!(windows) {
+                &["StataMP-64.exe", "/e", "do", "main.do"]
+            } else {
+                &["/bin/zsh", "-lic", "oldstata -q -b do main.do"]
+            },
             &["main.log"],
             "legacy",
         ),

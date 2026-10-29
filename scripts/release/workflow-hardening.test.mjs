@@ -55,6 +55,15 @@ test("clean checkouts retain a Poppler resource for native test builds", () => {
   );
 });
 
+test("Windows PDF tests use the pinned Poppler tools before system executables", () => {
+  const contents = readText(".github", "workflows", "build.yml");
+  const setup = contents.split("- name: Install pinned Poppler for Windows PDF tests")[1]?.split("- name:")[0];
+  assert.ok(setup, "Windows CI must install Poppler instead of using the runner's Xpdf");
+  assert.match(setup, /if: runner\.os == 'Windows'/);
+  assert.match(setup, /bash scripts\/release\/bundle-poppler\.sh windows/);
+  assert.match(setup, /cygpath -w "\$PWD\/gui\/src-tauri\/resources\/poppler" >> "\$GITHUB_PATH"/);
+});
+
 test("release has one draft coordinator behind quality gates and no publication or overwrite", () => {
   const contents = readText(".github", "workflows", "release.yml");
   for (const required of ["workflow_dispatch:", "needs: quality", "needs: prepare", "needs: package", "fetch-depth: 0",

@@ -134,6 +134,12 @@ jobs:
       - name: Install embedded renderer resources
         working-directory: gui
         run: npm ci --no-audit --no-fund
+      - name: Install pinned Poppler for Windows PDF tests
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          bash scripts/release/bundle-poppler.sh windows
+          cygpath -w "$PWD/gui/src-tauri/resources/poppler" >> "$GITHUB_PATH"
       - name: Prepare package notices
         working-directory: gui
         run: npm run prepare:release-resources
