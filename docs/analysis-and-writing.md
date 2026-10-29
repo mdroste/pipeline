@@ -87,7 +87,8 @@ missing count. **Preview local rows** shows up to 25 rows.
 rules, unit of observation, weights, and dates. Your own code applies the
 rules.
 
-**Project sharing policy** controls what leaves the dataset view:
+**Project sharing policy** controls which dataset details search,
+conversations, and packages can use:
 
 | Setting | Default | What it allows |
 | --- | --- | --- |
@@ -95,9 +96,6 @@ rules.
 | **Include data summaries in search and conversations** | Off | Missing-value counts and other summaries |
 | **Allow the assistant to preview rows** | Off | The assistant can read a few rows |
 | **Allow raw data in sharing packages** | Off | Selected data files can go into project packages and replication capsules |
-
-Your own commands run with your computer's file permissions, whatever these
-settings say.
 
 #### Download public data
 
@@ -114,11 +112,11 @@ set in **Reading inbox**.
 
 FRED and DBnomics downloads can have up to 100,000 observations, and World
 Bank downloads up to 20,000. Narrow a larger request. Each download becomes a
-dataset with its query, licence, suggested citation, and notice, shown under
+dataset with its query, license, suggested citation, and notice, shown under
 **Source terms and citation**.
 
 Some FRED series belong to other copyright holders and need their permission
-beyond personal use. The recorded licence says so. For IMF series from
+beyond personal use. The recorded license says so. For IMF series from
 DBnomics, bulk automated download and model training need the IMF's
 permission.
 
@@ -183,11 +181,9 @@ starts from the same files in a new working folder.
 5. Choose **Test saved plan**. After a passing test,
    **Run in a new working folder** runs it again from the saved copy.
 
-Each run folder contains `pipeline-parameters.json`. Your script finds it
-through `PIPELINE_PARAMETERS_FILE` and the seed through
-`PIPELINE_RANDOM_SEED`, and must apply both itself. The command still has
-your computer's full file and network access, so a script can read files you
-didn't list.
+Each run folder contains `pipeline-parameters.json`. Pipeline sets two
+environment variables: `PIPELINE_PARAMETERS_FILE`, the path to that file, and
+`PIPELINE_RANDOM_SEED`. Your script must read and apply both.
 
 ### Specification grids
 

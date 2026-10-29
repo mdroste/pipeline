@@ -106,8 +106,7 @@ pipeline-cli run \
 are ready. It doesn't call a model or extract the document. It also prints a
 rough range of model calls and, for API connections, the cost at list price.
 
-Add `--json` to see the planned stages, the selected reviewers, the workflow's
-fingerprint, the most steps and provider calls the run can use, and the usage
+Add `--json` to see the planned stages, the workflow's fingerprint, the most steps and provider calls the run can use, and the usage
 estimate with the review limits that apply.
 
 PDF inputs need:
@@ -183,7 +182,8 @@ pipeline-cli workflow validate /path/to/workflow.json --json
 
 Validation reports unknown fields, broken dependencies, unsupported
 connections or tools, and file access the workflow isn't allowed. A workflow
-also needs at least one enabled Sequential step to write the report. Older
+also needs at least one enabled step set to Sequential, which writes the
+report. Older
 exports are converted to the current format, version 11.
 
 ### Give a step the document
@@ -207,9 +207,9 @@ instead of a model call. It names the check and its version:
 ```
 
 Such a step can't set a prompt, provider, model, effort, output schema, or
-fan-out. The checks are `reference_audit`, with the options `network`,
+fan-out (repeating the step over a list of files). The checks are `reference_audit`, with the options `network`,
 `check_retractions`, and `max_references`, and `replication_static`, with the
-option `max_files`. Older versions of Pipeline reject a workflow with an
+option `max_files`. Pipeline 1.1.1 and earlier reject a workflow with an
 analyzer step.
 
 ### Run or install a workflow file

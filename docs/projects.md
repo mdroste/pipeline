@@ -15,8 +15,8 @@ Then choose **Create project**.
 A folder lets you browse and edit files, run your own code, and see Git
 status. Without one, a project still holds conversations, notes, sources,
 decisions, and imported data. You can attach a folder later in
-**Project settings**. If a step fails after the project exists, choose
-**Try again**. Pipeline won't create a second copy.
+**Project settings**. If setup stops after the project is created, choose
+**Try again** to finish the same project.
 
 **Projects** lists your work under **Pinned** and **Recently active**. Search
 by name, research brief, or folder. Each row shows the latest activity and
@@ -85,8 +85,8 @@ sources or settings change, **Review current context** shows the difference.
 
 Under **New conversation from selected context**, choose
 **Preview selected context**, tick the sources to keep, and choose
-**Start a new conversation with these sources**. Chat history and edit
-permission stay behind.
+**Start a new conversation with these sources**. The new conversation starts
+without the chat history or edit permission.
 
 ## Overview
 
@@ -216,9 +216,8 @@ conversations and keeps the file.
 
 **Crossref contact email** is optional. Crossref asks for a contact address
 and may limit requests per address. When you set one, Pipeline sends it with
-each Crossref lookup from this computer. The address belongs to this
-computer, not the project. Research backups include it, and project packages
-leave it out.
+each Crossref lookup. It applies to every project. Research backups include
+it, and project packages leave it out.
 
 ### Literature notes
 
@@ -276,7 +275,7 @@ Exports are copies, so export again to pass on later changes.
 
 | | Research backup (`.pwrx`) | Project package (`.pwex`) | Replication capsule (`.pwrc`) |
 | --- | --- | --- | --- |
-| Use it to | Restore your whole library | Send selected research to a coauthor | Let someone rerun your analysis and check its numbers |
+| Use it to | Restore all your projects and conversations | Send selected research to a coauthor | Let someone rerun your analysis and check its numbers |
 | Find it in | **Settings → Data & Storage** | **Write → Share project** | **Write → Coauthors & replication** |
 | Includes | Every project and conversation, notes, documents, imported data, and agent profiles | The records you select and everything they refer to | Up to 16 saved analysis plans with scripts, inputs, and expected numbers |
 | Leaves out | Project folders, reviews, automations, Trash, and sign-ins | Conversations, sign-ins, command settings, agent profiles, and raw data | Paths on your computer, sign-ins, and data files unless you allow them |
@@ -310,8 +309,8 @@ unless you turn on **Allow raw data in sharing packages** in
 
 To import, choose **Inspect package…**, then
 **Into a new separate project (default)** or **Merge into this project**.
-**Preview import** shows what's new, identical, or in conflict. Imported runs
-are records only.
+**Preview import** shows what's new, identical, or in conflict. Imported
+command runs show their results but never run again.
 
 When an incoming item differs from yours, Pipeline keeps your version and
 lists it under **Import conflicts awaiting review**. **Compare** shows both,
@@ -327,7 +326,7 @@ Build a capsule under **Replication package** in
    plan.
 2. Set **Expected numeric outputs and tolerances**.
 3. Choose **Preview replication materials**. Each missing input needs
-   instructions for getting it, such as a data licence.
+   instructions for getting it, such as a data license.
 4. Choose **Export this capsule**.
 
 To use a capsule you received, choose **Inspect capsule archive**, then
@@ -335,13 +334,14 @@ To use a capsule you received, choose **Inspect capsule archive**, then
 profile on your computer, supply missing inputs, and choose
 **Prepare local verification plan**. Approve, test, and run it in
 **Saved analysis plans**. Then **Check selected outputs and tolerances**
-compares the numbers. A value matches when it's within the absolute tolerance
-plus the relative tolerance times the expected value.
+compares the numbers. A value matches when
+|actual − expected| ≤ absolute tolerance + relative tolerance × |expected|.
 
 ### Trash
 
 To free space, open **Settings → Data & Storage**, then
 **Storage and retention**, and choose **Inspect disk use**. Select categories,
-choose **Preview deletion**, then **Move to trash**. Cleanup offers only files
+choose **Preview deletion**, then **Move to trash**. Reviews have their own
+cleanup, described in [Settings](settings.md#storage-and-cleanup). Cleanup offers only files
 nothing refers to, such as finished run files. **Restore** brings items back
 until you choose **Empty trash**, which deletes them permanently.

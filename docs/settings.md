@@ -58,8 +58,9 @@ Some files always stay in `~/.pipeline/` on this computer: device settings,
 API keys, provider sign-ins, installed parsers, and caches.
 
 **Choosing a folder doesn't move your existing data.** To get back to earlier
-work, choose the previous folder and restart. To move research to another
-computer, use a backup or project package. See
+work, choose the previous folder and restart. To move projects and
+conversations to another computer, use a research backup or project package.
+Reviews and automations aren't included. See
 [Back up and share](projects.md#back-up-and-share).
 
 Use the folder on one computer at a time, and pause cloud sync while Pipeline

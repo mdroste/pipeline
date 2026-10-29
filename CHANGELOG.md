@@ -64,7 +64,8 @@ public release was not tracked as a stable release series.
   the project's files. Edits need the **Allow edits** access mode. On macOS and Linux
   it can run shell commands in a sandbox that reads the project but can't
   change it or reach the network.
-- On Windows, you can accept file edits and create task copies in a project.
+- On Windows, projects can use working copies, and you can accept edits in
+  **Review edits**.
 
 ### Changed
 

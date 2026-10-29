@@ -36,9 +36,9 @@ The final paper is always the last version reviewed. **Save paper…** saves
 it.
 
 If a revision leaves the paper unchanged, the automation asks for your
-attention. The revision step receives the manuscript text only when it's
-under about 20,000 words. For a longer paper, edit the definition to revise
-the file in the conversation's folder.
+attention. The revision step can include the manuscript text only up to
+about 20,000 words. For a longer paper, open **Definition (advanced)** and
+have the step revise the file in the conversation's folder instead.
 
 ## Set a schedule
 
@@ -123,9 +123,9 @@ action.
 
 The automation runs only the checks and analyses you chose. If their scripts,
 inputs, or permissions change, it asks you to approve them again. The
-investigator edits files only if you turn on **Allow edits in the working
-copy**, which needs a source conversation that works on a task copy with
-**Allow edits** on. Edits stay in the task copy until you accept them in
+investigator can edit files only if you turn on **Allow edits in the working
+copy**. The source conversation must work in a working copy, with **Allow
+edits** on. Edits stay in the working copy until you accept them in
 **Review edits**.
 
 ## Research discovery

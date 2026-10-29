@@ -73,8 +73,8 @@ asks you to sign in again instead of switching to an API key. See
 When the review finishes, read the report and open **Sources** to see the
 document and the evidence behind each comment. Paper Review picks subject and
 method specialists for your paper, combines their comments, and checks each
-one against the text. It's still an AI assessment, so check important claims,
-calculations, and citations yourself.
+one against the text. Before you rely on a comment, check its claims,
+calculations, and citations.
 
 Pipeline saves every report with the individual responses and sources. You
 can annotate findings, compare runs, and track comments across drafts. See
@@ -102,8 +102,8 @@ See [Projects and conversations](docs/projects.md) and
 
 ## Automate repeated work
 
-Open **Automations**, or choose **Run an automation** from a conversation's
-menu. Start from **Review and revise**, **Follow up**, or **Wait for input**,
+Open **Automations**, or choose **Run an automation** from the **+** menu
+below a conversation's message box. Start from **Review and revise**, **Follow up**, or **Wait for input**,
 choose the conversation, review, timing, and limits, and check the plan before
 you start.
 
@@ -114,8 +114,7 @@ background. See [Automations](docs/automations.md).
 ## Data and privacy
 
 Pipeline has no telemetry and needs no Pipeline account. AI providers receive
-the prompts and material for the calls you run. A local model server keeps
-those calls on your computer only if its URL points to your computer.
+the prompts and material for the calls you run.
 
 Your research is stored in `~/.pipeline/` unless you choose another
 [research data folder](docs/settings.md#research-data-folder). Pipeline
@@ -125,18 +124,17 @@ Uninstalling the app leaves your research data in place. See
 
 ## Current limitations
 
-- Reviews have had more testing than projects and automations, and most
-  testing has been on macOS.
-- On Windows, accepting file edits and creating task copies are new and less
-  tested.
+- Reviews are the most mature part of Pipeline, and macOS is the
+  best-supported platform. See [Support](SUPPORT.md) for Windows and Linux.
 - PDF extraction can lose equations, table structure, or reading order. Check
   **Sources** when these matter, or see the
   [extraction options](docs/reviews.md#pdf-extraction).
-- Model context windows and account limits cap document size and how much
-  runs at once. More reviewers in parallel doesn't always mean a faster
-  review.
-- Claude conversations can run shell commands only in a read-only sandbox
-  without network access, and not on Windows. They have no browser tools.
+- Each model's input limit caps document length, and your account's limits
+  cap how many calls run at once. Past that cap, more parallel reviewers
+  won't help.
+- On macOS and Linux, Claude conversations can run shell commands that read
+  the project folder but can't change it or reach the internet. Claude has no
+  shell on Windows and no browser tools in any conversation.
   Remaining Claude usage appears after Claude's first reply in each app
   session.
 

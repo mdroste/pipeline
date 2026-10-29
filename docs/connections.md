@@ -46,9 +46,9 @@ in use.
 The sign-in stays on this computer. It isn't included in backups or project
 packages, and it doesn't move when you change the research data folder.
 
-If an earlier version of Pipeline had separate sign-ins for conversations and
-reviews with different accounts, the panel offers **Use Conversations
-account** and **Use Reviews account**. Choose one, or sign in again.
+If the panel shows **Use Conversations account** and **Use Reviews account**,
+conversations and reviews are signed in to different accounts. Choose one, or
+sign in again.
 
 ### Recover an interrupted review
 
@@ -77,8 +77,9 @@ The interrupted call still counts against your plan.
 
 Claude Code handles its own sign-in, and Pipeline never reads your Claude
 credentials. Pipeline checks the sign-in before each conversation turn and at
-the first Claude call of each review. Only a Claude subscription passes. API
-keys, Console accounts, and cloud-provider accounts are refused. If the check
+the first Claude call of each review. The check accepts only a Claude
+subscription, not an API key, an Anthropic Console account, or a
+cloud-provider account. If the check
 fails, follow the error, which usually asks you to run `claude auth login`
 again or update Claude Code.
 
@@ -100,8 +101,9 @@ In a conversation, Claude can:
 - edit existing text files when **Allow edits** is on in **Assistant
   settings**. Claude must read a file before editing it, and the edit fails if
   the file changed in the meantime. Edits appear in **Review edits**, where
-  you can undo them. In a conversation that works on a task copy, they wait
-  there for you to accept; and
+  you can undo them;
+- in a conversation on a working copy, leave its edits there until you accept
+  them; and
 - run shell commands for quick checks and calculations, on macOS and Linux.
 
 Shell commands can read the project folder, but not your home folder, other
@@ -130,12 +132,15 @@ interrupted by quitting Pipeline stays in the history and isn't sent again.
 
 ### Provider terms
 
-Anthropic publishes conditions for products that run the unmodified Claude
-Code tool. Users sign in and pay under their own agreements, developers accept
-the applicable Commercial Terms, and the tool and its sign-in methods stay
-intact. The guidance also prohibits collecting or passing on subscription
-credentials. Pipeline uses the published tool and Anthropic's own sign-in.
-Anthropic hasn't endorsed Pipeline. See
+Anthropic lets a product run the unmodified Claude Code tool when:
+
+- each user signs in and pays under their own Anthropic agreement;
+- the product's developer accepts Anthropic's Commercial Terms;
+- the tool and its sign-in methods are left intact; and
+- the product never collects or passes on subscription credentials.
+
+Pipeline runs the published tool and uses Anthropic's own sign-in. Anthropic
+hasn't endorsed Pipeline. See
 [Anthropic's product-hosting and authentication guidance](https://code.claude.com/docs/en/legal-and-compliance#can-customers-offer-claude-code-in-their-products),
 checked October 28, 2026.
 

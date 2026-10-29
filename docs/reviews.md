@@ -52,9 +52,9 @@ That makes 7 to 11 review steps. Paper Review (Fast) uses up to two method
 specialists and runs 6 to 8 steps. Slide Review picks reviewers the same way,
 with instructions for slide decks.
 
-Every reviewer is told what kind of document it's reading. A comment or reply
-isn't faulted for lacking a new contribution, and a null result isn't faulted
-for being null. The document types are research articles, replications,
+Every reviewer is told what kind of document it's reading. For example,
+reviewers don't expect a published comment or reply to make a new
+contribution, or a null result to find an effect. The document types are research articles, replications,
 comments and replies, surveys, data descriptors, methods and software papers,
 registered reports, null results, case reports, and slide decks.
 
@@ -77,11 +77,12 @@ single review.
 | --- | --- | --- |
 | Poppler (`pdftotext`) | Extracts text on your computer with the bundled PDF tools | Nothing to install. Equations, tables, and reading order may be incomplete |
 | Model extraction | Sends the document to the model connection you selected | Needs a working connection. The document leaves your computer |
-| PaddleOCR-VL Full Parser | Extracts text, layout, formulas, tables, and figures on your computer | Install it from Settings. It needs several GB of disk space |
+| PaddleOCR-VL Full Parser | Extracts text, layout, formulas, tables, and figures on your computer | Install it from Settings. It needs about 4 GB of disk space |
 
-By default, Pipeline uses the Full Parser if it's installed and model
-extraction otherwise. If extraction fails, the review stops and shows the
-error. Pipeline always uses the method you chose.
+**By default, Pipeline uses the Full Parser if it's installed, and otherwise
+sends the PDF to your model connection.** If extraction fails, the review
+stops and shows the error. Pipeline never switches to another method on its
+own.
 
 Local extraction keeps the PDF on your computer during extraction. The review
 itself still sends material to the provider you chose.
@@ -182,10 +183,10 @@ a label:
 | Quote not found | The text isn't in the extracted document. Check the source before relying on the comment |
 | Not checkable | There's no quote, the evidence cites an outside source, or the cited file wasn't saved with the run |
 
-Reviews run before quote checks existed show **Not checked**.
+**Not checked** means the review has no quote-check results.
 
 **Quote found** means the quoted text is in your document where the comment
-says. Whether the comment is right is still your call. A PDF that lost its
+says. It confirms the quote, not the comment's reasoning. A PDF that lost its
 equations during extraction can make a real quote look missing. The details
 are saved in the run as `products/evidence_verification.json`.
 
@@ -201,8 +202,8 @@ the designer, choose **+ Add step**, then **Pipeline check**. Or start from the
 | Replication package check | Reads a package folder and checks the README against the Social Science Data Editors template. Also checks for a main script, absolute paths, package installation, random seeds, missing files, exported tables and figures, very large files, and a license. It doesn't run the code | None |
 
 The templates pair each check with a model step that explains the problems
-found. A reference Crossref can't find may be a book, report, or dataset
-outside Crossref, or it may have errors in its details.
+found. If Crossref can't find a reference, it may be a book, report, or
+dataset that Crossref doesn't list, or its details may be wrong.
 
 With lookups on, the preview shows what's sent: the text of each reference as
 written in your bibliography, and nothing else from the manuscript. Lookups

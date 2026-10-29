@@ -21,9 +21,9 @@ Leave out real papers, credentials, access tokens, and signing keys. The
 maintainer will assess the report and coordinate disclosure if a fix is
 needed. There's no guaranteed response time.
 
-Use the ordinary [bug report form](https://github.com/mdroste/pipeline/issues/new?template=bug_report.yml)
-for provider outages or wrong model answers that don't expose data or get
-around permissions.
+Report provider outages and wrong model answers with the
+[bug report form](https://github.com/mdroste/pipeline/issues/new?template=bug_report.yml).
+If one exposes data or bypasses a permission, report it privately instead.
 
 ## Keeping your research safe
 
@@ -31,10 +31,10 @@ Pipeline encrypts saved API keys but stores research files and conversations
 as ordinary files. Protect your computer account, backups, and exports. See
 [Privacy](PRIVACY.md) for what's stored where.
 
-Documents and model responses can contain misleading instructions. Check
-which files and permissions you give an assistant or an imported workflow.
-Pipeline asks for your approval when the permission mode you chose requires
-it. Imported backups and project packages never include credentials or
+A document or model response can contain text that tries to steer the
+assistant. Give an assistant or an imported workflow only the files and
+permissions it needs. Your permission mode decides which actions need your
+approval. Imported backups and project packages never include credentials or
 permission to run commands.
 
 ## How releases are built

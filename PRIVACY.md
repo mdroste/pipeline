@@ -45,7 +45,8 @@ provider later in the same way, even if the command itself ran offline.
 
 ChatGPT conversations and ChatGPT reviews share one sign-in, stored in
 `~/.pipeline/providers/chatgpt/`. Claude Code keeps its own sign-in. Pipeline
-checks that you're signed in but never copies your Claude credentials.
+checks that you're signed in but never reads or copies your Claude
+credentials.
 
 ### Reviews and extraction
 
@@ -57,8 +58,7 @@ workflow can use several providers in one run.
 API connections send requests to the OpenAI, Anthropic, Google, or custom
 endpoint you set up. Subscription connections go through the Codex or Claude
 Code tool on your computer. The advanced legacy Codex connection uses your
-terminal's Codex account instead of Pipeline's sign-in. Pipeline can't change
-a provider's retention or training policies.
+terminal's Codex account instead of Pipeline's sign-in.
 
 Poppler and the optional PaddleOCR-VL Full Parser extract PDFs on your
 computer. **Model extraction sends the document to the model connection you
@@ -114,8 +114,8 @@ format includes. Check the export preview before you share a file.
 
 Deleting a review moves it and its files to Trash, where you can restore it.
 Emptying Trash deletes it permanently. Archiving a project or conversation
-hides it without deleting anything. Storage cleanup shows what it will move to
-Trash before you confirm.
+hides it without deleting anything. Review cleanup and project storage cleanup
+both show what they'll move to Trash before you confirm.
 
 Uninstalling Pipeline leaves your data in place. To remove all of it, quit
 Pipeline, keep copies of anything you need, and delete `~/.pipeline/` and any
@@ -125,9 +125,8 @@ saved them. Provider tools may keep their own account and session files.
 Pipeline keeps a record of each ChatGPT review call in
 `~/.pipeline/providers/workflows/attempts/`, so it can recover results after
 an interruption. These records can contain prompts, responses, file paths,
-and usage. They
-aren't part of report exports, and deleting a run doesn't remove them, so
-include them when you clean up copies of your research.
+and usage. Report exports leave them out. Deleting a run or emptying Trash
+doesn't remove them, so delete this folder when you remove research.
 
 Deleting local files doesn't delete material already sent to a provider,
 search service, or custom server. Use that service's account controls. Before

@@ -8,16 +8,16 @@ older versions, prereleases, and source builds is given as time allows.
 | Platform | Installer | Requirements |
 | --- | --- | --- |
 | macOS | Apple Silicon or Intel `.dmg` | macOS 15 or later |
-| Windows | x86-64 `.exe` | Windows 11, or Windows 10 22H2 while it still receives security updates |
+| Windows | x86-64 `.exe` | Windows 11, or Windows 10 22H2 with Extended Security Updates |
 | Linux | x86-64 AppImage | Ubuntu 22.04 or a similar distribution with glibc 2.35 or later and FUSE 2 |
 
-Windows on ARM isn't an official build. Other Linux distributions may work but
-aren't tested for releases.
+There's no Windows on ARM build. Other Linux distributions may run the
+AppImage, but only those in the table are supported.
 
 On Windows, the installer downloads WebView2 if it's missing, so it needs an
 internet connection. The Windows installer isn't signed, so SmartScreen may
-warn you before it runs. Accepting file edits and creating task copies are
-newer on Windows and have had less testing than on macOS.
+warn you before it runs. On Windows, working copies and accepting edits in
+**Review edits** are newer and less mature than on macOS.
 
 ## Updates
 

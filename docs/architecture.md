@@ -91,7 +91,7 @@ Each module's header comment has the details.
 | `workbench/codex/` | Conversation app server supervisor and probe |
 | `workbench/claude/` | Claude Code conversations and the MCP bridge |
 | `workbench/research/` | Harness, sources, notes, evidence, tools, local jobs |
-| `workbench/project/` | Project files, task copies, edit acceptance |
+| `workbench/project/` | Project files, working copies, edit acceptance |
 | `workbench/release/` | Backups, project packages, retention, recipes |
 | `workbench/desk/`, `workbench/data/`, `workbench/programs/` | Research desk, datasets, research programs |
 | `orchestration/` | Automations coordinator, missions, discovery |
