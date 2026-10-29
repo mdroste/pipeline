@@ -2,7 +2,7 @@ import { useAppAppearance } from "./hooks/useAppAppearance";
 import { useAppNotifications } from "./hooks/useAppNotifications";
 import { useAppController } from "./hooks/useAppController";
 import ProviderLimitBanner from "./components/ProviderLimitBanner";
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense, useLayoutEffect, useMemo, useRef } from "react";
 import ReviewRunView from "./components/ReviewRunView";
 import DepsCheck from "./components/DepsCheck";
 import Console from "./components/Console";
@@ -13,6 +13,9 @@ import NavRail from "./components/NavRail";
 import RunSetupPanel from "./components/RunSetupPanel";
 import RunPlanPreview from "./components/RunPlanPreview";
 import ErrorBoundary from "./components/ErrorBoundary";
+import GetStartedHost from "./components/get-started/GetStartedHost";
+import { openGetStarted } from "./lib/getStarted";
+import { HistoryRunOpener } from "./hooks/app/historyRunOpener";
 import { isMac } from "./lib/platform";
 import { router } from "./lib/router";
 import { confirmDialog, notify } from "./components/DialogService";
@@ -78,8 +81,8 @@ function App() {
     settingsTargetId,
     settingsNavigationKey,
     historyRunId,
+    route,
     historySourceSelection,
-    setHistorySourceSelection,
     openHistoryRun,
     registerProjectSave,
     registerWorkspaceSave,
@@ -99,6 +102,7 @@ function App() {
     setRunConfigError,
     runConfigLoading,
     inputMode,
+    inputSelection,
     paperPath,
     parallelOverrides,
     selectionKey,
@@ -113,6 +117,9 @@ function App() {
     launch,
     runPreview,
     setRunPreview,
+    launchError,
+    launchRetry,
+    clearLaunchError,
     startPreparedLaunch,
     handleNewRun,
     preparingRun,
@@ -164,6 +171,14 @@ function App() {
     usage,
   } = reviewView;
   useAppNotifications(runQueue.runs);
+  // Every destination shares the content scroller below, so open each new
+  // page, review, or saved run at the top. A layout effect runs before pages'
+  // passive effects, so a page that restores its own offset still wins.
+  const contentRef = useRef<HTMLDivElement>(null);
+  const routeRunKey = route.page === "main" ? (route.runKey ?? null) : null;
+  useLayoutEffect(() => {
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+  }, [page, routeRunKey, historyRunId]);
   // Finished reviews not opened since they finished get a marker in the rail.
   const unseenRuns = useMemo(
     () =>
@@ -236,10 +251,21 @@ function App() {
         />
       )}
 
+      <GetStartedHost
+        dependencies={depsReport}
+        dependenciesLoading={depsLoading}
+        onCheckDependencies={() => void checkDependencies()}
+        onNewReview={() => void handleNewRun()}
+        onNewProject={() => void createWorkspaceProject()}
+      />
+
       {pendingRun && (
         <VariablePrompt
           variables={pendingRun.variables}
           inputSlots={pendingRun.inputSlots}
+          initialValues={launchRetry?.values}
+          initialInputs={launchRetry?.inputs}
+          error={launchRetry?.message}
           onCancel={() => setPendingRun(null)}
           onSubmit={(values, inputs) => {
             const snapshot = pendingRun;
@@ -262,18 +288,20 @@ function App() {
       )}
 
       {/* Invisible window-wide drag strip along the very top edge (macOS).
-          Thin (16px) so it stays above the content panels' own controls,
-          which start at 8px padding — grab the top edge anywhere to drag. */}
+          Only 6px tall, so it clears the controls in top bars and banners;
+          those bars' backgrounds drag the window as well ("deep" regions,
+          where buttons and other controls still take their own clicks). */}
       {isMac && (
         <div
           data-tauri-drag-region
-          className="fixed inset-x-0 top-0 z-30 h-4"
+          className="fixed inset-x-0 top-0 z-30 h-1.5"
         />
       )}
 
       {closeProtectionUnavailable && (
         <div
           role="alert"
+          data-tauri-drag-region={isMac ? "deep" : undefined}
           className="flex shrink-0 items-center gap-3 border-b border-amber-300 bg-amber-50 px-5 py-2 text-xs text-amber-900
                      dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-200"
         >
@@ -363,6 +391,8 @@ function App() {
             configLoading={runConfigLoading}
             dependenciesError={depsError}
             inputMode={inputMode}
+            inputSelection={inputSelection}
+            launchError={launchError}
             listenersReady={listenersReady}
             localLlmActive={
               depsReport?.deps.some(
@@ -385,6 +415,7 @@ function App() {
             onInputSelectionChange={(selection) => {
               setInputSelection(selection);
               setPaperPath(selection?.paths[0] ?? null);
+              clearLaunchError();
               if (selection) setRunConfigError(null);
             }}
             onPrivacyDetails={() => {
@@ -413,6 +444,8 @@ function App() {
             />
           )}
           <div
+            ref={contentRef}
+            data-testid="app-content"
             className={`min-h-0 flex-1 ${page === "settings" ? "overflow-hidden" : "overflow-auto"}`}
           >
             <Suspense
@@ -439,6 +472,8 @@ function App() {
                       : setPage(batchActive ? "batch" : "main")
                   }
                   onNavigate={(next) => void handleNavigate(next)}
+                  onSetUp={() => openGetStarted("setup")}
+                  onExampleReview={() => openGetStarted("example")}
                 />
               ) : page === "project-index" ? (
                 <ProjectIndexPage
@@ -446,20 +481,24 @@ function App() {
                   onResumeConversation={openWorkspaceSession}
                 />
               ) : page === "workspace" ? (
-                <WorkspacePage
-                  onAllProjects={() => void handleNavigate("project-index")}
-                  onSaveHandlerChange={registerWorkspaceSave}
-                  entryTarget={workspaceEntry.target}
-                  entryRequest={workspaceEntry.request}
-                  entrySurface={workspaceEntry.surface}
-                  newProjectRequest={newProjectRequest}
-                  onNewProjectRequestHandled={() => setNewProjectRequest(0)}
-                  onTasks={(session, id) => void openTask(session, id)}
-                  onOpenSettings={() => void openWorkspaceSettings()}
-                  onReviewHandoff={(handoff) =>
-                    void handleWorkspaceReviewHandoff(handoff)
-                  }
-                />
+                // A project's Reviews open saved runs (and cited sources)
+                // through the shell, like the other review entry points.
+                <HistoryRunOpener.Provider value={openHistoryRun}>
+                  <WorkspacePage
+                    onAllProjects={() => void handleNavigate("project-index")}
+                    onSaveHandlerChange={registerWorkspaceSave}
+                    entryTarget={workspaceEntry.target}
+                    entryRequest={workspaceEntry.request}
+                    entrySurface={workspaceEntry.surface}
+                    newProjectRequest={newProjectRequest}
+                    onNewProjectRequestHandled={() => setNewProjectRequest(0)}
+                    onTasks={(session, id) => void openTask(session, id)}
+                    onOpenSettings={() => void openWorkspaceSettings()}
+                    onReviewHandoff={(handoff) =>
+                      void handleWorkspaceReviewHandoff(handoff)
+                    }
+                  />
+                </HistoryRunOpener.Provider>
               ) : page === "tasks" ? (
                 <TasksPage
                   key={
@@ -540,15 +579,12 @@ function App() {
                 <BatchPanel
                   onClose={() => setPage("main")}
                   showClose={false}
-                  onOpenRun={(runId) => {
-                    setHistorySourceSelection(null);
-                    void router.navigate({ page: "history", runId });
-                  }}
+                  onOpenRun={(runId) => void openHistoryRun(runId, null)}
                 />
               ) : state.kind === "done" ? (
                 // A rendering defect in the finished-run view must not take
                 // down the whole app shell with it.
-                <ErrorBoundary>
+                <ErrorBoundary nested>
                   <ReportWorkspace
                     runId={state.runId}
                     markdown={state.markdown}

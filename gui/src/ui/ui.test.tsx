@@ -131,6 +131,26 @@ describe("Popover", () => {
     fireEvent.focusIn(screen.getByRole("button", { name: "Elsewhere" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
+  it("hands Tab back to the anchor for focus-out layers only", () => {
+    const { unmount } = render(<PopoverHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Inside" }), {
+      key: "Tab",
+    });
+    expect(screen.getByRole("dialog", { name: "Details" })).toBeInTheDocument();
+    unmount();
+
+    render(<PopoverHarness focusOut />);
+    const trigger = screen.getByRole("button", { name: "Open" });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Inside" }), {
+      key: "Tab",
+      shiftKey: true,
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // The browser's default Tab action then continues from the anchor.
+    expect(trigger).toHaveFocus();
+  });
 });
 
 function MenuHarness({ onSelect }: { onSelect: (id: string) => void }) {
@@ -232,6 +252,18 @@ describe("Select", () => {
     expect(trigger).toHaveTextContent("gone");
     fireEvent.keyDown(trigger, { key: "ArrowDown" });
     expect(screen.getByRole("listbox")).toBeInTheDocument();
+  });
+  it("closes on Tab and returns focus to the trigger", () => {
+    render(
+      <Select label="Project" value="a" options={options} onChange={vi.fn()} />,
+    );
+    const trigger = screen.getByRole("combobox", { name: "Project" });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole("option", { name: /Alpha/ }), {
+      key: "Tab",
+    });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 });
 

@@ -60,6 +60,20 @@ const REQUEST: LlmRequestDetails = {
   local_endpoint: null,
 };
 
+/** Simulate the reader scrolling the log to `top` in a 200px viewport. */
+function scrollTo(element: Element, top: number) {
+  Object.defineProperty(element, "scrollHeight", {
+    configurable: true,
+    value: 10_000,
+  });
+  Object.defineProperty(element, "clientHeight", {
+    configurable: true,
+    value: 200,
+  });
+  element.scrollTop = top;
+  fireEvent.scroll(element);
+}
+
 describe("Console", () => {
   it("collapses when its active run reaches a terminal state", () => {
     const { rerender } = render(
@@ -219,6 +233,94 @@ describe("Console", () => {
     await user.click(screen.getByTitle("Scroll to the first error"));
     expect(screen.getByText("ERROR: earliest")).toBeVisible();
     expect(screen.queryByText("line 649")).not.toBeInTheDocument();
+  });
+
+  it("keeps the lines being read in place while new lines arrive", () => {
+    const logs = [
+      log("ERROR: earliest", "error"),
+      ...Array.from({ length: 650 }, (_, index) => log(`line ${index}`)),
+    ];
+    const { rerender } = render(<Console logs={logs} usage={EMPTY_USAGE} />);
+    const scroller = screen.getByText("line 649").closest(".overflow-auto")!;
+    scrollTo(scroller, 0);
+    const reading = screen.getByText("line 100").parentElement;
+
+    const more = [
+      ...logs,
+      ...Array.from({ length: 5 }, (_, index) => log(`line ${650 + index}`)),
+    ];
+    rerender(<Console logs={more} usage={EMPTY_USAGE} />);
+
+    // The window no longer slides: the same rows stay, newer lines wait.
+    expect(screen.getByText("line 50")).toBeInTheDocument();
+    expect(screen.getByText("line 100").parentElement).toBe(reading);
+    expect(screen.queryByText("line 654")).not.toBeInTheDocument();
+    const follow = screen.getByRole("button", { name: /Follow/ });
+    expect(follow).toHaveTextContent("↓ Follow · 5 more lines");
+
+    fireEvent.click(follow);
+    expect(screen.getByText("line 654")).toBeInTheDocument();
+    expect(screen.queryByText("line 50")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Follow/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("scrolls to the first error once per request, not on every new line", () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    try {
+      const logs = [
+        log("ERROR: earliest", "error"),
+        ...Array.from({ length: 650 }, (_, index) => log(`line ${index}`)),
+      ];
+      const { rerender } = render(<Console logs={logs} usage={EMPTY_USAGE} />);
+      fireEvent.click(screen.getByTitle("Scroll to the first error"));
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      expect(scrollIntoView.mock.contexts[0]).toHaveTextContent(
+        "ERROR: earliest",
+      );
+
+      rerender(
+        <Console logs={[...logs, log("line 650")]} usage={EMPTY_USAGE} />,
+      );
+      rerender(
+        <Console
+          logs={[...logs, log("line 650"), log("line 651")]}
+          usage={EMPTY_USAGE}
+        />,
+      );
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("ERROR: earliest")).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTitle("Scroll to the first error"));
+      expect(scrollIntoView).toHaveBeenCalledTimes(2);
+    } finally {
+      Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
+    }
+  });
+
+  it("opens a collapsed console to show the first error", () => {
+    const { rerender } = render(
+      <Console
+        logs={[log("ERROR: boom", "error")]}
+        usage={EMPTY_USAGE}
+        active
+      />,
+    );
+    rerender(
+      <Console
+        logs={[log("ERROR: boom", "error")]}
+        usage={EMPTY_USAGE}
+        active={false}
+      />,
+    );
+    expect(screen.queryByText("ERROR: boom")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Scroll to the first error"));
+    expect(screen.getByText("ERROR: boom")).toBeVisible();
   });
 
   it("decomposes logical input into fresh, cache-read, and cache-write tokens", () => {

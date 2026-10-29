@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { releaseClient } from "../lib/workbench/releaseClient";
+import { confirmDialog } from "./DialogService";
 import type { StorageReport, PrunePlan } from "../lib/workbenchTypes";
 const button =
   "rounded border px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800";
@@ -145,9 +146,14 @@ export default function WorkspaceStorageRetention({
                 onClick={() =>
                   onAction(async () => {
                     if (
-                      !window.confirm(
+                      !(await confirmDialog(
                         `Permanently delete ${storage.trash.length} trashed item(s)? This cannot be undone.`,
-                      )
+                        {
+                          title: "Empty trash",
+                          confirmLabel: "Delete permanently",
+                          destructive: true,
+                        },
+                      ))
                     )
                       return;
                     await releaseClient.emptyTrash();

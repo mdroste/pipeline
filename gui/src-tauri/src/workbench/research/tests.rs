@@ -318,7 +318,7 @@ fn source_tree_identity_tracks_included_files_without_following_symlinks() {
 
 #[cfg(unix)] // Unix tools or journalled project writes
 #[test]
-fn execution_profiles_require_oldstata_and_tests_before_runs() {
+fn execution_profiles_validate_stata_batch_shape_and_require_tests_before_runs() {
     let fixture = fixture();
     let direct = save_execution_profile(
         &fixture.store,
@@ -337,7 +337,7 @@ fn execution_profiles_require_oldstata_and_tests_before_runs() {
             operation_id: "bad-stata".into(),
         },
     );
-    assert!(direct.unwrap_err().message.contains("oldstata"));
+    assert!(direct.unwrap_err().message.contains("batch mode"));
     let profile = save_execution_profile(
         &fixture.store,
         SaveExecutionProfileRequest {

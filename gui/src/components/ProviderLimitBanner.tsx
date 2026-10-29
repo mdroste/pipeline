@@ -1,4 +1,5 @@
 import type { ProviderLimitNotice } from "../lib/reviewRuntimeTypes";
+import { isMac } from "../lib/platform";
 
 function providerName(provider: string | null): string {
   if (!provider) return "fallback provider";
@@ -41,6 +42,8 @@ export default function ProviderLimitBanner({
   return (
     <div
       role="alert"
+      // On macOS the banner row drags the window; its button still clicks.
+      data-tauri-drag-region={isMac ? "deep" : undefined}
       className={`flex shrink-0 items-center gap-3 border-b px-5 py-2.5 text-xs ${
         blocking
           ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950/45 dark:text-red-300"

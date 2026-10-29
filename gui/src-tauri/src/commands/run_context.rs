@@ -360,6 +360,45 @@ pub(super) fn bind_parallel_overrides(
     Ok(snapshot)
 }
 
+/// One-run Review limits from the command line. `None` fields keep the
+/// Settings value; a present value is fingerprinted and never persisted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize)]
+pub struct ReviewLimitOverrides {
+    pub max_cost_usd: Option<f64>,
+    pub max_calls: Option<u32>,
+    pub max_minutes: Option<u32>,
+}
+
+impl ReviewLimitOverrides {
+    pub fn is_empty(&self) -> bool {
+        self.max_cost_usd.is_none() && self.max_calls.is_none() && self.max_minutes.is_none()
+    }
+}
+
+pub(super) fn bind_review_limits(
+    mut snapshot: RunSnapshot,
+    limits: &ReviewLimitOverrides,
+) -> Result<RunSnapshot, String> {
+    if limits.is_empty() {
+        return Ok(snapshot);
+    }
+    if let Some(cost) = limits.max_cost_usd {
+        if !cost.is_finite() || cost < 0.0 {
+            return Err("The cost limit must be zero or a positive number".to_string());
+        }
+        snapshot.settings.review_max_cost_usd = cost;
+    }
+    if let Some(calls) = limits.max_calls {
+        snapshot.settings.review_max_calls = calls;
+    }
+    if let Some(minutes) = limits.max_minutes {
+        snapshot.settings.review_max_minutes = minutes;
+    }
+    snapshot.fingerprint = stable_snapshot_fingerprint(&(snapshot.fingerprint.as_str(), limits))
+        .map_err(|error| format!("Could not fingerprint Review limits: {error}"))?;
+    Ok(snapshot)
+}
+
 pub(super) fn bind_foreground_launch(
     mut snapshot: RunSnapshot,
     paper_path: &str,

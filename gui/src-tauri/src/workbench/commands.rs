@@ -384,16 +384,20 @@ pub async fn workbench_generate_session_title(
     session_id: String,
 ) -> Result<String, RuntimeCommandError> {
     let selected_session = session_id.clone();
-    if run_store(move |store| {
+    let runtime = if run_store(move |store| {
         super::claude::selected(&store.session_snapshot(&selected_session)?.session.overrides)
     })
     .await?
     {
-        return Err(super::claude::error("Automatic titles are unavailable for Claude conversations. Rename the conversation from its menu."));
-    }
-    let supervisor = super::codex::supervisor_manager().connect().await?;
-    ensure_event_bridge(app.clone(), supervisor.clone());
-    generate_session_title(&app, &supervisor, session_id, true)
+        TitleRuntime::Claude {
+            epoch: super::claude::fresh_epoch(),
+        }
+    } else {
+        let supervisor = super::codex::supervisor_manager().connect().await?;
+        ensure_event_bridge(app.clone(), supervisor.clone());
+        TitleRuntime::Codex(supervisor)
+    };
+    generate_session_title(&app, &runtime, session_id, true)
         .await?
         .ok_or_else(|| RuntimeCommandError {
             code: "title_unavailable".to_string(),
@@ -407,12 +411,34 @@ pub async fn workbench_generate_session_title(
 const TITLE_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 const TITLE_PROJECTION_ATTEMPTS: usize = 10;
 
+/// The provider that writes a conversation's title: the one it talks to.
+pub(crate) enum TitleRuntime {
+    Codex(Arc<super::codex::AppServerSupervisor>),
+    Claude { epoch: u64 },
+}
+
+impl TitleRuntime {
+    fn namespace(&self) -> String {
+        match self {
+            Self::Codex(supervisor) => supervisor.runtime_namespace(),
+            Self::Claude { .. } => super::claude::NAMESPACE.to_string(),
+        }
+    }
+
+    fn epoch(&self) -> u64 {
+        match self {
+            Self::Codex(supervisor) => supervisor.status().epoch,
+            Self::Claude { epoch } => *epoch,
+        }
+    }
+}
+
 /// One title side call. Returns `Ok(None)` when nothing should change: titles
 /// are disabled, the user already named the conversation, or no completed
 /// exchange exists yet. `force` skips the first two checks.
 async fn generate_session_title(
     app: &tauri::AppHandle,
-    supervisor: &Arc<super::codex::AppServerSupervisor>,
+    runtime: &TitleRuntime,
     session_id: String,
     force: bool,
 ) -> Result<Option<String>, RuntimeCommandError> {
@@ -440,32 +466,23 @@ async fn generate_session_title(
     let Some((user, assistant)) = exchange else {
         return Ok(None);
     };
-    let catalog = supervisor.model_catalog().await?;
-    let (model, effort) = match titles::choose_model(&catalog.models, &preferences) {
-        Some((model, effort)) => (Some(model), effort),
-        None => (None, None),
-    };
-    let scratch = tempfile::Builder::new()
-        .prefix("pipeline-workbench-title-")
-        .tempdir()
-        .map_err(|error| RuntimeCommandError {
-            code: "storage_error".to_string(),
-            message: format!("Could not create a scratch directory for the title call: {error}"),
+    let raw = match runtime {
+        TitleRuntime::Codex(supervisor) => {
+            codex_title(supervisor, &preferences, &user, &assistant).await?
+        }
+        // Title preferences name ChatGPT models; Claude uses its cheapest offered model.
+        TitleRuntime::Claude { .. } => super::claude::title::generate(
+            titles::title_prompt(&user, &assistant),
+            TITLE_CALL_TIMEOUT,
+        )
+        .await
+        .map_err(|message| RuntimeCommandError {
+            code: "title_failed".to_string(),
+            message,
             retryable: true,
             recovery: None,
-        })?;
-    let raw = supervisor
-        .run_side_turn(super::codex::SideTurnRequest {
-            cwd: scratch.path().to_string_lossy().into_owned(),
-            permissions: "workbench-inspect".to_string(),
-            developer_instructions: titles::TITLE_INSTRUCTIONS.to_string(),
-            text: titles::title_prompt(&user, &assistant),
-            model,
-            effort,
-            timeout: TITLE_CALL_TIMEOUT,
-        })
-        .await?;
-    drop(scratch);
+        })?,
+    };
     let Some(title) = titles::sanitize_title(&raw) else {
         return Err(RuntimeCommandError {
             code: "title_unusable".to_string(),
@@ -509,7 +526,7 @@ async fn generate_session_title(
         "workbench:event",
         json!({
             "kind": "sessionTitleUpdated",
-            "epoch": supervisor.status().epoch,
+            "epoch": runtime.epoch(),
             "sessionId": session_id,
             "title": title
         }),
@@ -517,10 +534,46 @@ async fn generate_session_title(
     Ok(Some(title))
 }
 
+/// The ChatGPT title side call: an ephemeral read-only App Server thread.
+async fn codex_title(
+    supervisor: &Arc<super::codex::AppServerSupervisor>,
+    preferences: &TitlePreferences,
+    user: &str,
+    assistant: &str,
+) -> Result<String, RuntimeCommandError> {
+    let catalog = supervisor.model_catalog().await?;
+    let (model, effort) = match titles::choose_model(&catalog.models, preferences) {
+        Some((model, effort)) => (Some(model), effort),
+        None => (None, None),
+    };
+    let scratch = tempfile::Builder::new()
+        .prefix("pipeline-workbench-title-")
+        .tempdir()
+        .map_err(|error| RuntimeCommandError {
+            code: "storage_error".to_string(),
+            message: format!("Could not create a scratch directory for the title call: {error}"),
+            retryable: true,
+            recovery: None,
+        })?;
+    let raw = supervisor
+        .run_side_turn(super::codex::SideTurnRequest {
+            cwd: scratch.path().to_string_lossy().into_owned(),
+            permissions: "workbench-inspect".to_string(),
+            developer_instructions: titles::TITLE_INSTRUCTIONS.to_string(),
+            text: titles::title_prompt(user, assistant),
+            model,
+            effort,
+            timeout: TITLE_CALL_TIMEOUT,
+        })
+        .await?;
+    drop(scratch);
+    Ok(raw)
+}
+
 /// Background title generation after a conversation turn completes.
-fn spawn_title_generation(
+pub(crate) fn spawn_title_generation(
     app: tauri::AppHandle,
-    supervisor: Arc<super::codex::AppServerSupervisor>,
+    runtime: TitleRuntime,
     thread_id: String,
     turn_id: String,
 ) {
@@ -532,7 +585,7 @@ fn spawn_title_generation(
         {
             return;
         }
-        let namespace = supervisor.runtime_namespace();
+        let namespace = runtime.namespace();
         let lookup_thread = thread_id.clone();
         let session = run_store(move |store| store.session_for_thread(&namespace, &lookup_thread))
             .await
@@ -541,14 +594,13 @@ fn spawn_title_generation(
         let Some(session_id) = session else {
             return;
         };
-        if let Err(error) =
-            generate_session_title(&app, &supervisor, session_id.clone(), false).await
+        if let Err(error) = generate_session_title(&app, &runtime, session_id.clone(), false).await
         {
             let _ = app.emit(
                 "workbench:event",
                 json!({
                     "kind": "sessionTitleFailed",
-                    "epoch": supervisor.status().epoch,
+                    "epoch": runtime.epoch(),
                     "sessionId": session_id,
                     "error": error.message
                 }),

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import useDraftText from "../../hooks/useDraftText";
 import {
   remoteLabel,
   repositoryClient,
@@ -19,6 +20,12 @@ import {
   formatDate,
   type SurfaceApi,
 } from "./shared";
+
+// A date input reports a complete value for every digit typed into the year
+// (2 becomes 0002), so only a four-digit year is ever saved.
+const isTargetDate = (text: string) =>
+  /^\d{4}-\d{2}-\d{2}$/.test(text) && Number(text.slice(0, 4)) >= 1000;
+
 export default function ProjectSettings({
   data,
   workspace,
@@ -50,6 +57,23 @@ export default function ProjectSettings({
   const [targetLabel, setTargetLabel] = useState(
     () => data.settings.body.targetLabel ?? "",
   );
+  // Saved on blur, Enter, or a short pause on a complete date, so a two-digit
+  // month or day is never saved half-typed.
+  const savedDate = data.settings.body.targetDate ?? "";
+  const partialDate = useRef(false);
+  const commitDate = (text: string) => {
+    if (text === savedDate) return;
+    // Empty with some segments still filled is unfinished, not a clear.
+    if (text ? isTargetDate(text) : !partialDate.current)
+      void saveSettings({ targetDate: text || null });
+  };
+  const targetDate = useDraftText(savedDate, commitDate);
+  useEffect(() => {
+    if (targetDate.value === savedDate || !isTargetDate(targetDate.value))
+      return;
+    const timer = setTimeout(() => commitDate(targetDate.value), 800);
+    return () => clearTimeout(timer);
+  }, [targetDate.value, savedDate, saveSettings]);
   // Local Git state of the attached folder; null when it is not a repository.
   const [repository, setRepository] = useState<RepositoryStatus | null>(null);
   const [checking, setChecking] = useState(false);
@@ -221,10 +245,11 @@ export default function ProjectSettings({
                   type="date"
                   aria-label="Target date"
                   className={`${input} mt-1`}
-                  value={data.settings.body.targetDate ?? ""}
-                  onChange={(e) =>
-                    void saveSettings({ targetDate: e.target.value || null })
-                  }
+                  {...targetDate}
+                  onChange={(e) => {
+                    partialDate.current = e.target.validity.badInput;
+                    targetDate.onChange(e);
+                  }}
                 />
               </label>
               <label className="block text-xs">

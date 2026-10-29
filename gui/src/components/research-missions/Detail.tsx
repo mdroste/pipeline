@@ -6,7 +6,8 @@ import {
   type MissionQuestion,
 } from "../../lib/missionClient";
 import { taskTime } from "../../lib/taskPresentation";
-import { type Json, type TaskEvent } from "../../lib/taskTypes";
+import { type Json } from "../../lib/taskTypes";
+import useMissionActivity from "./useMissionActivity";
 const ReportViewer = lazy(() => import("../ReportViewer"));
 
 function Answer({
@@ -84,11 +85,19 @@ export default function MissionDetail({
   const [tab, setTab] = useState("agenda");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [events, setEvents] = useState<TaskEvent[]>([]);
+  const activity = useMissionActivity(
+    m.id,
+    m.revision,
+    tab === "activity",
+    setError,
+  );
   const [evidence, setEvidence] = useState<{ id: string; value: Json } | null>(
     null,
   );
   const evidenceVersion = useRef(0);
+  const evidenceSection = useRef<HTMLElement>(null);
+  const evidenceHeading = useRef<HTMLHeadingElement>(null);
+  const evidenceOpener = useRef<HTMLElement | null>(null);
   useEffect(
     () => () => {
       evidenceVersion.current++;
@@ -96,20 +105,14 @@ export default function MissionDetail({
     [],
   );
   useEffect(() => {
-    let live = true;
-    if (tab === "activity")
-      void missionClient
-        .events(m.id)
-        .then((v) => {
-          if (live) setEvents(v);
-        })
-        .catch((e) => {
-          if (live) setError(String(e));
-        });
-    return () => {
-      live = false;
-    };
-  }, [m.id, m.revision, tab]);
+    // The viewer renders below the tab panel; bring it into view and focus.
+    if (!evidence) return;
+    evidenceSection.current?.scrollIntoView?.({
+      block: "start",
+      behavior: "smooth",
+    });
+    evidenceHeading.current?.focus({ preventScroll: true });
+  }, [evidence]);
   async function control(action: string) {
     setBusy(true);
     setError("");
@@ -121,7 +124,8 @@ export default function MissionDetail({
       setBusy(false);
     }
   }
-  async function openEvidence(id: string) {
+  async function openEvidence(id: string, opener: HTMLElement) {
+    evidenceOpener.current = opener;
     const version = ++evidenceVersion.current;
     setEvidence(null);
     try {
@@ -387,7 +391,7 @@ export default function MissionDetail({
                       <button
                         className="mission-evidence-link"
                         key={id}
-                        onClick={() => void openEvidence(id)}
+                        onClick={(e) => void openEvidence(id, e.currentTarget)}
                       >
                         {id}
                       </button>
@@ -481,7 +485,10 @@ export default function MissionDetail({
                   )}
                   <div className="task-actions">
                     {Object.keys(r.evidence).map((id) => (
-                      <button key={id} onClick={() => void openEvidence(id)}>
+                      <button
+                        key={id}
+                        onClick={(e) => void openEvidence(id, e.currentTarget)}
+                      >
                         Evidence: {id}
                       </button>
                     ))}
@@ -552,7 +559,10 @@ export default function MissionDetail({
                   </p>
                   <div className="task-actions">
                     {method.evidenceIds.map((id) => (
-                      <button key={id} onClick={() => void openEvidence(id)}>
+                      <button
+                        key={id}
+                        onClick={(e) => void openEvidence(id, e.currentTarget)}
+                      >
                         {id}
                       </button>
                     ))}
@@ -625,23 +635,16 @@ export default function MissionDetail({
             ))}
             <h3>Automation history</h3>
             <ol className="task-event-log">
-              {events.map((e) => (
+              {activity.events.map((e) => (
                 <li key={e.sequence}>
                   <time>{taskTime(e.at)}</time>
                   <span>{e.detail}</span>
                 </li>
               ))}
             </ol>
-            {events.length > 0 && events.length % 100 === 0 && (
-              <button
-                onClick={() =>
-                  void missionClient
-                    .events(m.id, events[events.length - 1]!.sequence)
-                    .then((rows) => setEvents((old) => [...old, ...rows]))
-                    .catch((e) => setError(String(e)))
-                }
-              >
-                Load more activity
+            {activity.more && (
+              <button disabled={activity.loading} onClick={activity.loadMore}>
+                {activity.loading ? "Loading activity…" : "Load more activity"}
               </button>
             )}
             <button onClick={() => void exportBrief("json")}>
@@ -659,16 +662,22 @@ export default function MissionDetail({
       </div>
       {evidence && (
         <section
+          ref={evidenceSection}
           className="mission-evidence"
           aria-label="Retained research automation evidence"
         >
           <div className="task-section-heading">
-            <h3>{evidence.id}</h3>
+            <h3 ref={evidenceHeading} tabIndex={-1}>
+              {evidence.id}
+            </h3>
             <button
               aria-label="Close evidence"
               onClick={() => {
                 evidenceVersion.current++;
                 setEvidence(null);
+                const opener = evidenceOpener.current;
+                evidenceOpener.current = null;
+                if (opener?.isConnected) opener.focus();
               }}
             >
               ×

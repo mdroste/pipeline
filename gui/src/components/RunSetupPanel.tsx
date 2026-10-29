@@ -17,6 +17,10 @@ interface Props {
   configLoading: boolean;
   dependenciesError: string | null;
   inputMode: string;
+  /** The primary input App holds; the selector shows it across remounts. */
+  inputSelection: PrimaryInputSelection | null;
+  /** Why the last launch failed. Start review stays available to retry. */
+  launchError?: string | null;
   listenersReady: boolean;
   localLlmActive: boolean;
   paperPath: string | null;
@@ -44,6 +48,8 @@ export default function RunSetupPanel({
   configLoading,
   dependenciesError,
   inputMode,
+  inputSelection,
+  launchError = null,
   listenersReady,
   localLlmActive,
   paperPath,
@@ -98,6 +104,7 @@ export default function RunSetupPanel({
             <PaperSelector
               key={selectionKey}
               inputMode={inputMode}
+              selection={inputSelection}
               onPathChange={onPaperPathChange}
               onSelectionChange={onInputSelectionChange}
               disabled={configLoading}
@@ -135,6 +142,15 @@ export default function RunSetupPanel({
               >
                 Retry workflow
               </button>
+            </div>
+          )}
+          {launchError && (
+            <div
+              role="alert"
+              className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300"
+            >
+              <p className="font-medium">The review could not be started.</p>
+              <p className="mt-1 break-words">{launchError}</p>
             </div>
           )}
           {dependenciesError && (

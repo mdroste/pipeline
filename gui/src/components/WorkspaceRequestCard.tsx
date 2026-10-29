@@ -1,12 +1,191 @@
 import { useState } from "react";
 import type { WorkbenchEvent } from "../lib/workbenchTypes";
 
+const NETWORK_PROTOCOLS: Record<string, string> = {
+  http: "HTTP",
+  https: "HTTPS",
+  socks5Tcp: "SOCKS5 (TCP)",
+  socks5Udp: "SOCKS5 (UDP)",
+};
+/** Long diffs stay inspectable without letting one approval flood the page. */
+const DIFF_PREVIEW_CHARACTERS = 20_000;
+const FILE_LIST_LIMIT = 50;
+
+const text = (value: unknown) =>
+  typeof value === "string" && value.trim() ? value : null;
+
+function networkAccess(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const { host, protocol } = value as Record<string, unknown>;
+  if (typeof host !== "string" || !host) return null;
+  const label =
+    typeof protocol === "string"
+      ? (NETWORK_PROTOCOLS[protocol] ?? protocol)
+      : null;
+  return label ? `${host} over ${label}` : host;
+}
+
+interface FileChange {
+  path: string;
+  action: string;
+  diff: string | null;
+}
+function fileChanges(item: unknown): FileChange[] | null {
+  const changes =
+    item && typeof item === "object"
+      ? (item as Record<string, unknown>).changes
+      : null;
+  if (!Array.isArray(changes)) return null;
+  return changes.flatMap((change) => {
+    if (!change || typeof change !== "object") return [];
+    const { path, kind, diff } = change as Record<string, unknown>;
+    if (typeof path !== "string") return [];
+    const type =
+      kind && typeof kind === "object"
+        ? (kind as Record<string, unknown>).type
+        : kind;
+    const moveTo =
+      kind && typeof kind === "object"
+        ? text((kind as Record<string, unknown>).move_path)
+        : null;
+    const action =
+      type === "add"
+        ? "Create"
+        : type === "delete"
+          ? "Delete"
+          : moveTo
+            ? `Move to ${moveTo} and edit`
+            : "Edit";
+    return [{ path, action, diff: text(diff) }];
+  });
+}
+
+/** What a command or file-change approval would allow, shown before any decision. */
+function ApprovalDetails({
+  params,
+  method,
+  item,
+}: {
+  params: Record<string, unknown>;
+  method: string | undefined;
+  item: unknown;
+}) {
+  const reason = text(params.reason);
+  const command = text(params.command);
+  const cwd = text(params.cwd);
+  const network = networkAccess(params.networkApprovalContext);
+  const amendment = Array.isArray(params.proposedExecpolicyAmendment)
+    ? params.proposedExecpolicyAmendment.filter(
+        (part): part is string => typeof part === "string",
+      )
+    : [];
+  const grantRoot = text(params.grantRoot);
+  const isFileChange = method === "item/fileChange/requestApproval";
+  const changes = isFileChange ? fileChanges(item) : null;
+  const pre =
+    "mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded border border-amber-300 bg-white/70 p-2 font-mono text-xs text-amber-950 dark:border-amber-800 dark:bg-neutral-950/60 dark:text-amber-100";
+  if (
+    !reason &&
+    !command &&
+    !cwd &&
+    !network &&
+    !amendment.length &&
+    !grantRoot &&
+    !isFileChange
+  )
+    return (
+      <p className="mt-2 text-amber-900 dark:text-amber-200">
+        Review this request before continuing.
+      </p>
+    );
+  return (
+    <div className="mt-2 space-y-2 text-amber-900 dark:text-amber-200">
+      {reason && (
+        <p className="whitespace-pre-wrap">
+          <span className="font-medium">Assistant’s explanation:</span> {reason}
+        </p>
+      )}
+      {command && (
+        <div>
+          <span className="font-medium">Command</span>
+          <pre className={pre}>{command}</pre>
+        </div>
+      )}
+      {cwd && (
+        <p className="break-all">
+          <span className="font-medium">Working directory:</span> {cwd}
+        </p>
+      )}
+      {network && (
+        <p className="break-all">
+          <span className="font-medium">Network access:</span> {network}
+        </p>
+      )}
+      {amendment.length > 0 && (
+        <div>
+          <span className="font-medium">
+            Suggested rule to run similar commands without asking (Allow once
+            does not apply it)
+          </span>
+          <pre className={pre}>{amendment.join(" ")}</pre>
+        </div>
+      )}
+      {isFileChange &&
+        (changes?.length ? (
+          <div>
+            <span className="font-medium">Files to change</span>
+            <ul className="mt-1 space-y-0.5">
+              {changes.slice(0, FILE_LIST_LIMIT).map((change, index) => (
+                <li key={`${change.path}-${index}`} className="break-all">
+                  {change.action}: <code>{change.path}</code>
+                </li>
+              ))}
+            </ul>
+            {changes.length > FILE_LIST_LIMIT && (
+              <p>and {changes.length - FILE_LIST_LIMIT} more files</p>
+            )}
+            {changes.some((change) => change.diff) && (
+              <details className="mt-1">
+                <summary className="cursor-pointer">Show changes</summary>
+                <pre className={pre}>
+                  {(() => {
+                    const diff = changes
+                      .filter((change) => change.diff)
+                      .map((change) => `${change.path}\n${change.diff}`)
+                      .join("\n\n");
+                    return diff.length > DIFF_PREVIEW_CHARACTERS
+                      ? `${diff.slice(0, DIFF_PREVIEW_CHARACTERS)}\n… (shortened)`
+                      : diff;
+                  })()}
+                </pre>
+              </details>
+            )}
+          </div>
+        ) : (
+          <p>Pipeline cannot show which files this change would edit.</p>
+        ))}
+      {grantRoot && (
+        <div>
+          <span className="font-medium">
+            Also asks to allow writes anywhere in this folder for the rest of
+            the session
+          </span>
+          <pre className={pre}>{grantRoot}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** An approval, permission, or question the assistant is waiting on. */
 export default function RequestCard({
   event,
+  item = null,
   onResolve,
 }: {
   event: WorkbenchEvent;
+  /** The live or saved item the request refers to, such as a file change. */
+  item?: unknown;
   onResolve: (
     event: WorkbenchEvent,
     result?: Record<string, unknown>,
@@ -37,17 +216,17 @@ export default function RequestCard({
             ? "Permission requested"
             : "Approval requested"}
       </div>
-      {!isQuestion && (
-        <p className="mt-2 whitespace-pre-wrap text-amber-900 dark:text-amber-200">
-          {String(
-            params.reason ??
-              params.command ??
-              "Review this request before continuing.",
-          )}
-        </p>
+      {!isQuestion && !isPermission && (
+        <ApprovalDetails params={params} method={event.method} item={item} />
       )}
       {isPermission && (
         <div className="mt-2 space-y-2">
+          {typeof params.reason === "string" && params.reason.trim() && (
+            <p className="whitespace-pre-wrap">
+              <span className="font-medium">Assistant’s explanation:</span>{" "}
+              {params.reason}
+            </p>
+          )}
           <p>Duration: this turn</p>
           <p>Working directory: {String(params.cwd ?? "Not specified")}</p>
           <p>Requested permissions (including all paths and network access):</p>

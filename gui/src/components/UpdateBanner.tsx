@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
-import type { UpdateInfo } from "../lib/types";
+import type { UpdateInfo, UpdateStatus } from "../lib/types";
 
 const DISMISS_KEY = "pipeline:update-dismissed-version";
+const UPDATE_AVAILABLE_EVENT = "update-available";
 
 export default function UpdateBanner() {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
@@ -11,19 +13,36 @@ export default function UpdateBanner() {
 
   useEffect(() => {
     let cancelled = false;
-    invoke<UpdateInfo>("check_for_update")
-      .then((result) => {
-        if (cancelled) return;
-        if (!result.update_available) return;
-        // Respect prior dismissal for this specific version.
-        if (localStorage.getItem(DISMISS_KEY) === result.latest) return;
-        setInfo(result);
+    let heardEvent = false;
+    let unlisten: (() => void) | null = null;
+    const offer = (result: UpdateInfo | null | undefined) => {
+      if (cancelled || !result?.update_available) return;
+      // Respect prior dismissal for this specific version.
+      if (localStorage.getItem(DISMISS_KEY) === result.latest) return;
+      setInfo(result);
+    };
+    // The backend checks GitHub on its own schedule; mounting only reads the
+    // saved result, after the listener is active so no event is missed.
+    listen<UpdateInfo>(UPDATE_AVAILABLE_EVENT, (event) => {
+      heardEvent = true;
+      offer(event.payload);
+    })
+      .then((stop) => {
+        if (cancelled) stop();
+        else unlisten = stop;
+      })
+      .catch(() => {})
+      .then(() => (cancelled ? null : invoke<UpdateStatus>("update_status")))
+      .then((status) => {
+        // A live event is never replaced by an older saved result.
+        if (!heardEvent) offer(status?.info);
       })
       .catch(() => {
-        // Silent on network failure — don't nag the user offline.
+        // Silent on failure — don't nag the user offline.
       });
     return () => {
       cancelled = true;
+      unlisten?.();
     };
   }, []);
 
@@ -34,10 +53,10 @@ export default function UpdateBanner() {
     setInfo(null);
   };
 
-  const viewRelease = async () => {
+  const openPage = async (url: string) => {
     setOpenError(null);
     try {
-      await openUrl(info.release_url);
+      await openUrl(url);
     } catch (error) {
       setOpenError(error instanceof Error ? error.message : String(error));
     }
@@ -73,10 +92,16 @@ export default function UpdateBanner() {
         </span>
       )}
       <button
-        onClick={() => void viewRelease()}
+        onClick={() => void openPage(info.download_url ?? info.release_url)}
         className="shrink-0 px-2.5 py-1 rounded-md bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition-colors"
       >
-        View release
+        Download
+      </button>
+      <button
+        onClick={() => void openPage(info.release_url)}
+        className="shrink-0 px-2 py-1 text-xs text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 transition-colors"
+      >
+        What’s new
       </button>
       <button
         onClick={dismiss}

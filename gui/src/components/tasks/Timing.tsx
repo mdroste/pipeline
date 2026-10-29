@@ -7,6 +7,7 @@ import {
   localDateTimeHint,
   readLocalDateTime,
 } from "../../lib/localDateTime";
+import { NumberField } from "./NumberField";
 
 const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 export function Timing({
@@ -100,17 +101,13 @@ export function Timing({
           <>
             <label>
               Every{" "}
-              <input
+              <NumberField
                 aria-label="Interval in minutes"
-                type="number"
                 min={1}
                 max={525600}
                 value={value.seconds / 60}
-                onChange={(e) =>
-                  onChange({
-                    ...value,
-                    seconds: Math.max(1, Number(e.target.value)) * 60,
-                  })
+                onChange={(minutes) =>
+                  onChange({ ...value, seconds: minutes * 60 })
                 }
               />{" "}
               minutes

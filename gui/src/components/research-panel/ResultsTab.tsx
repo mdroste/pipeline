@@ -3,6 +3,17 @@ import { executionClient } from "../../lib/workbench/executionClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { operation } from "./useResearchPanelController";
 import { compactHash } from "./format";
+import RunOutput from "./RunOutput";
+import ToolchainPicker from "./ToolchainPicker";
+import {
+  ADAPTER_HELP,
+  ADAPTER_OPTIONS,
+  adapterTemplate,
+  guessPlatform,
+  isUntouchedTemplate,
+  STATA_CLEANUP_NOTICE,
+  stataUsesLauncher,
+} from "../../lib/workbench/toolchains";
 import type { useResearchPanelController } from "./useResearchPanelController";
 import type {
   ConversationSnapshot,
@@ -79,21 +90,43 @@ export default function ResultsTab({
         />
         <select
           value={adapter}
-          onChange={(event) =>
-            setAdapter(event.target.value as ExecutionProfile["adapter"])
-          }
+          aria-label="Execution adapter"
+          onChange={(event) => {
+            const next = event.target.value as ExecutionProfile["adapter"];
+            // Replace only unedited templates; typed arguments stay.
+            const template = adapterTemplate(next, guessPlatform());
+            if (isUntouchedTemplate(argv, adapter, "argv"))
+              setArgv(JSON.stringify(template.argv));
+            if (
+              !outputs.trim() ||
+              isUntouchedTemplate(outputs, adapter, "outputs")
+            )
+              setOutputs(template.outputs.join("\n"));
+            setAdapter(next);
+          }}
           className="w-full rounded border bg-white p-2 text-xs dark:bg-neutral-950"
         >
-          <option value="command">Command</option>
-          <option value="latex">LaTeX</option>
-          <option value="stata">Stata via oldstata</option>
+          {ADAPTER_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
         </select>
+        <p className="text-[11px] text-gray-500">{ADAPTER_HELP[adapter]}</p>
         <textarea
           value={argv}
           onChange={(event) => setArgv(event.target.value)}
           rows={3}
           aria-label="Argument vector JSON"
           className="w-full rounded border bg-white p-2 font-mono text-[11px] dark:bg-neutral-950"
+        />
+        <ToolchainPicker
+          workspaceId={workspaceId}
+          adapter={adapter}
+          argv={argv}
+          setArgv={setArgv}
+          disabled={busy}
+          onError={onError}
         />
         <textarea
           value={inputs}
@@ -303,22 +336,18 @@ export default function ResultsTab({
                     Stop execution
                   </button>
                 )}
-                {run.adapter === "stata" && (
+                {run.adapter === "stata" && stataUsesLauncher(run.command) && (
                   <p>
-                    Stopping allows up to 30 seconds for oldstata to exit
-                    through Legacy Time Off.
+                    Stopping gives the Stata launcher up to 30 seconds to exit
+                    on its own before it is forced to stop.
                   </p>
                 )}
                 {run.validation.stataCleanupRequired === true && (
                   <p role="alert" className="text-red-600">
-                    The Stata wrapper was forcibly stopped. Verify its process
-                    has exited and run the Legacy Time Off shortcut to restore
-                    the normal clock before continuing.
+                    {STATA_CLEANUP_NOTICE}
                   </p>
                 )}
-                <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded bg-gray-100 p-2 dark:bg-neutral-900">
-                  {run.stderr || run.stdout || "No captured output"}
-                </pre>
+                <RunOutput run={run} />
                 <pre className="overflow-auto whitespace-pre-wrap">
                   {JSON.stringify(run.validation, null, 2)}
                 </pre>

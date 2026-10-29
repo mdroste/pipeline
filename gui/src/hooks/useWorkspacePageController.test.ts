@@ -140,10 +140,13 @@ it.each(
       expect(result.current.conversation.pendingUser).toBe(null),
     );
     expect.soft(result.current.persistence.draft).toBe("B important draft");
-    if (status !== "completed")
-      await waitFor(() =>
-        expect(snaps.A.session.draft).toBe("A original question"),
-      );
+    // The turn was acknowledged, so A's thread holds its message; putting it
+    // back in A's composer would invite a second send.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(snaps.A.session.draft).not.toBe("A original question");
+    expect(localStorage.getItem("pipeline.pendingDraft.A")).toBeNull();
     expect(mocks.updateSession).not.toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: "B", draft: "A original question" }),
     );
@@ -499,6 +502,29 @@ it("does not dispatch when the selection save barrier failed and restores the dr
   expect(result.current.feedback.error).toContain(
     "Message not sent because its settings or draft could not be saved",
   );
+  unmount();
+});
+
+it("restores a message the host reports as not sent instead of calling delivery uncertain", async () => {
+  const { result, unmount } = await draftFixture();
+  mocks.sendTurn.mockRejectedValueOnce({
+    code: "turn_not_sent",
+    message: "The selected model is no longer available.",
+  });
+  act(() =>
+    result.current.persistence.editDraft("question for a retired model"),
+  );
+  await act(async () => {
+    await result.current.conversation.send();
+  });
+  expect(mocks.sendTurn).toHaveBeenCalledTimes(1);
+  expect(result.current.persistence.draft).toBe("question for a retired model");
+  expect(localStorage.getItem("pipeline.pendingDraft.A")).toBe(
+    "question for a retired model",
+  );
+  expect(result.current.conversation.pendingUser).toBeNull();
+  expect(result.current.feedback.error).toContain("Message not sent:");
+  expect(result.current.feedback.error).not.toContain("could not confirm");
   unmount();
 });
 

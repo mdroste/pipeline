@@ -189,6 +189,8 @@ pub struct HeadlessRunOptions {
     pub input_interpretation: Option<String>,
     pub variables: std::collections::HashMap<String, String>,
     pub extra_inputs: std::collections::HashMap<String, String>,
+    /// One-run Review limits; empty keeps Settings.
+    pub limits: ReviewLimitOverrides,
 }
 
 #[derive(Debug, Clone)]
@@ -211,6 +213,8 @@ pub struct HeadlessCheckReport {
     pub parallel_agents: Vec<String>,
     pub merge_agent: Option<String>,
     pub budget: crate::safety::RunBudgetEstimate,
+    /// Rough calls, tokens, and API list-price range with the limits in force.
+    pub usage_estimate: crate::pipeline::executor::budget::UsageEstimate,
     /// Flatten the historical dependency report so existing `ready`/`deps`
     /// JSON consumers keep working as planning metadata is added.
     #[serde(flatten)]
@@ -229,6 +233,7 @@ async fn prepare_headless_snapshot(
     options: &HeadlessRunOptions,
     snapshot: RunSnapshot,
 ) -> Result<(RunSnapshot, crate::deps::DepsReport), String> {
+    let snapshot = bind_review_limits(snapshot, &options.limits)?;
     crate::safety::validate_runtime_context(&options.variables, "Run variables")?;
     crate::safety::validate_runtime_context(&options.extra_inputs, "Named input paths")?;
     validate_runtime_bindings(
@@ -282,6 +287,12 @@ pub async fn check_headless_plan(
     pipeline_config::apply_agent_defaults(&mut config, &snapshot.settings);
     let budget = crate::safety::estimate_run_budget(&config, &snapshot.settings)?;
     crate::safety::validate_run_budget(&config, &snapshot.settings)?;
+    let usage_estimate = crate::pipeline::executor::budget::preview_estimate(
+        &config,
+        &snapshot.settings,
+        Some(options.input_path.as_str()),
+    )
+    .await;
     let resolved_interpretation = resolved_input_interpretation(
         &config.extraction.input_mode,
         &options.input_path,
@@ -319,6 +330,7 @@ pub async fn check_headless_plan(
         parallel_agents: snapshot.settings.parallel_agents(),
         merge_agent,
         budget,
+        usage_estimate,
         readiness,
     })
 }

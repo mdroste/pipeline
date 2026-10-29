@@ -158,9 +158,22 @@ export function useAppNavigation() {
 
   const [settingsNavigationKey, setSettingsNavigationKey] = useState(0);
   // Rich artifact target accompanying a history run route (not serialized;
-  // restored relaunches open the run without a preselected source).
-  const [historySourceSelection, setHistorySourceSelection] =
-    useState<ArtifactSelectionTarget | null>(null);
+  // restored relaunches open the run without a preselected source). It
+  // belongs to one run, so a target left from another run never opens.
+  const [historySource, setHistorySource] = useState<{
+    runId: string;
+    target: ArtifactSelectionTarget;
+  } | null>(null);
+  const historySourceRef = useRef(historySource);
+  historySourceRef.current = historySource;
+  const historySourceSelection =
+    historySource && historySource.runId === historyRunId
+      ? historySource.target
+      : null;
+  const clearHistorySourceSelection = useCallback(
+    () => setHistorySource(null),
+    [],
+  );
   const handleNavigate = async (nextPage: AppPage) => {
     return router.navigate({ page: nextPage } as AppRoute);
   };
@@ -227,13 +240,19 @@ export function useAppNavigation() {
     await router.navigate({ page: "settings", section: "workspace" });
   };
 
-  const openHistoryRun = async (
-    runId: string,
-    source: ArtifactSelectionTarget | null,
-  ) => {
-    if (!(await router.navigate({ page: "history", runId }))) return;
-    setHistorySourceSelection(source);
-  };
+  // The source is set before the route commits, so the report opens on it in
+  // its first render instead of loading again when the source arrives.
+  const openHistoryRun = useCallback(
+    async (runId: string, source: ArtifactSelectionTarget | null) => {
+      const previous = historySourceRef.current;
+      const next = source ? { runId, target: source } : null;
+      setHistorySource(next);
+      if (await router.navigate({ page: "history", runId })) return;
+      // Declined: restore the earlier source unless a newer one replaced it.
+      setHistorySource((current) => (current === next ? previous : current));
+    },
+    [],
+  );
 
   const openActivityProject = async (id: string) => {
     await router.navigate({
@@ -278,7 +297,7 @@ export function useAppNavigation() {
     settingsNavigationKey,
     setSettingsNavigationKey,
     historySourceSelection,
-    setHistorySourceSelection,
+    clearHistorySourceSelection,
     handleNavigate,
     openHelp,
     openWorkspace,
@@ -326,7 +345,7 @@ export function useAppRouteCommits(
     route,
     setTaskEntryRequest,
     setSettingsNavigationKey,
-    setHistorySourceSelection,
+    clearHistorySourceSelection,
     setWorkspaceEntry,
   } = navigation;
   // Route-commit side effects. Registered as a plain router subscription (not
@@ -344,8 +363,9 @@ export function useAppRouteCommits(
       if (previous.page === "settings" && next.page !== "settings")
         void checkDependencies();
       if (next.page === "settings") setSettingsNavigationKey((key) => key + 1);
-      if (next.page === "history" && !next.runId)
-        setHistorySourceSelection(null);
+      // A cited source belongs to one visit to a saved run; opening a run
+      // any other way (or leaving it) must not reuse it.
+      if (next.page !== "history" || !next.runId) clearHistorySourceSelection();
       if (next.page === "workspace") {
         try {
           if (next.projectId) {

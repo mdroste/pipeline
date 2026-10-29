@@ -330,14 +330,28 @@ const executionPlan = {
   ],
   parallelAgents: ["claude", "codex"],
   mergeAgent: "claude",
+  usageEstimate: { documentTokens: 21000, callsLow: 8, callsHigh: 12, inputTokensLow: 190000, inputTokensHigh: 420000, outputTokensLow: 32000, outputTokensHigh: 110000, apiCostLow: 0.86, apiCostHigh: 2.4, unpricedCalls: 0, subscriptionCallsHigh: 6, maxCostUsd: params.get("limits") === "1" ? 2 : null, maxCalls: null, maxMinutes: params.get("limits") === "1" ? 30 : null, exceedsCostLimit: params.get("limits") === "1", exceedsCallLimit: false },
+  hostChecks: params.get("checks") === "1" ? [{ stepId: "reference_check", stepLabel: "Check References", analyzer: "Reference check", reads: ["Extracted document"], networkServices: ["Crossref"], networkPayload: "Each reference's text as written in the bibliography (titles, authors, years, venues, DOIs). No other manuscript text." }] : [],
 };
+const analyzers = [
+  { id: "reference_audit", version: 1, label: "Reference check", description: "Finds the bibliography and, when network lookups are enabled, checks each reference against Crossref: whether it can be found, whether its details match, whether another version exists, and whether it was retracted or corrected.", reads: ["Extracted document", "Bibliography files (.bib) beside a LaTeX source"], networkServices: ["Crossref"], networkPayload: "Each reference's text as written in the bibliography (titles, authors, years, venues, DOIs). No other manuscript text." },
+  { id: "replication_static", version: 1, label: "Replication package check", description: "Checks a replication package folder against common data-editor requirements.", reads: ["Source folder"], networkServices: [], networkPayload: "" },
+];
+
+// `?update=available` shows the update banner and Settings offer.
+const updateInfo = params.get("update") === "available" ? { current: "1.1.0", latest: "1.2.0", update_available: true, release_url: "https://github.com/mdroste/pipeline/releases/tag/v1.2.0", release_name: "Pipeline v1.2.0", published_at: now, download_url: "https://github.com/mdroste/pipeline/releases/download/v1.2.0/Pipeline-1.2.0-macOS-AppleSilicon.dmg", checked_at: now } : null;
+const updateStatus = (automatic = true) => ({ automatic, automatic_available: true, last_checked_at: updateInfo?.checked_at ?? null, info: updateInfo, error: null });
 
 const commandData: Record<string, unknown> = {
   mark_smoke_ready: true,
   get_execution_plan: executionPlan,
+  list_analyzers: analyzers,
   get_settings: settings,
   save_settings: true,
-  check_for_update: { current: "1.1.0", latest: "1.1.0", update_available: false, release_url: "", release_name: "", published_at: null },
+  check_for_update: { current: "1.1.0", latest: "1.1.0", update_available: false, release_url: "", release_name: "", published_at: null, download_url: null, checked_at: null },
+  list_run_queue: { limit: 2, runs: [] },
+  update_status: () => updateStatus(),
+  update_set_automatic: (args: { enabled: boolean }) => updateStatus(args.enabled),
   get_batch_status: [],
   get_run_setup: { profileId: "auto_paper_review", profileConfigSnapshotId: "snap-1", inputMode: "document", variables: pipelineConfig.variables, inputSlots: [] },
   get_pipeline_config: pipelineConfig,
@@ -361,10 +375,12 @@ const commandData: Record<string, unknown> = {
   workbench_harness_catalog: harnessCatalog,
   workbench_effective_harness: effectiveHarness,
   workbench_codex_account_state: { status: "chatgpt", email: "mike@example.edu", planType: "plus", unsupportedAccountType: null, requiresOpenaiAuth: false },
+  workbench_claude_rate_limits: { status: "allowed", resetsAt: Math.floor(Date.now() / 1000) + 3 * 3600, rateLimitType: "five_hour", usedPercent: 41, isUsingOverage: false, observedAt: Date.now() },
   workbench_codex_rate_limits: { source: "perBucket", buckets: [{ limitId: "codex", limitName: null, planType: "plus", primary: { usedPercent: 38, remainingPercent: 62, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 2 * 3600 }, secondary: null }] },
   workbench_codex_pending_requests: [],
   workbench_codex_connect: {},
   workbench_codex_model_catalog: workspaceModelCatalog,
+  workbench_claude_model_catalog: { models: [{ id: "sonnet", model: "sonnet", displayName: "Sonnet", description: "Balanced reasoning and writing", isDefault: false, defaultReasoningEffort: "", supportedReasoningEfforts: efforts("low", "medium", "high") }, { id: "haiku", model: "haiku", displayName: "Haiku", description: "Fastest for quick answers", isDefault: false, defaultReasoningEffort: "", supportedReasoningEfforts: [] }] },
   workbench_project_home: projectHome,
   workbench_project_index: [
     {

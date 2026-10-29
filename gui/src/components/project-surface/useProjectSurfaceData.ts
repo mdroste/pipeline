@@ -25,6 +25,7 @@ export function useProjectSurfaceData(
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
+  const background = useRef<Promise<void> | null>(null);
   const [watch, setWatch] = useState(false);
   const reportError = useCallback((message: string) => setError(message), []);
   const refresh = useCallback(async () => {
@@ -52,6 +53,8 @@ export function useProjectSurfaceData(
       setBusy(true);
       setError(null);
       try {
+        // A user action waits for a quiet folder check rather than racing it.
+        if (background.current) await background.current;
         await operation();
       } catch (e) {
         setError(workbenchErrorMessage(e));
@@ -84,6 +87,22 @@ export function useProjectSurfaceData(
     [act, data],
   );
 
+  // Focus and timer checks are not user actions: they never disable the surface,
+  // show "Saving…", or clear an error the researcher is reading.
+  const backgroundRefresh = useCallback(() => {
+    if (busyRef.current || background.current) return;
+    background.current = projectClient
+      .mutate(workspaceId, { action: "refresh" })
+      .then(() => refresh())
+      .catch((e) => {
+        const message = workbenchErrorMessage(e);
+        setError((current) => current ?? message);
+      })
+      .finally(() => {
+        background.current = null;
+      });
+  }, [refresh, workspaceId]);
+
   // Bounded polling is optional; a focus refresh handles the usual external-editor
   // round trip. Neither mechanism changes captured document revisions or selection.
   useEffect(() => {
@@ -91,9 +110,7 @@ export function useProjectSurfaceData(
     let timer: ReturnType<typeof setTimeout> | undefined;
     const focus = () => {
       clearTimeout(timer);
-      timer = setTimeout(() => {
-        if (!busyRef.current) void act({ action: "refresh" });
-      }, 400);
+      timer = setTimeout(backgroundRefresh, 400);
     };
     window.addEventListener("focus", focus);
     const interval = watch
@@ -106,7 +123,7 @@ export function useProjectSurfaceData(
       clearTimeout(timer);
       if (interval) clearInterval(interval);
     };
-  }, [act, watch, workspace?.root]);
+  }, [backgroundRefresh, watch, workspace?.root]);
 
   return {
     data,

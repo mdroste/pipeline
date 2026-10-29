@@ -430,6 +430,42 @@ describe("ArtifactExplorer", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("leaves file tabs when a page or another file is chosen in the file list", async () => {
+    localStorage.clear();
+    const user = userEvent.setup();
+    mockBackend({
+      "report.md": textContent("markdown", "# R"),
+      "artifacts/01_technical.md": textContent("markdown", "# Technical"),
+      "page:1": {
+        kind: "image",
+        bytes: 500,
+        text: null,
+        base64: "aGVsbG8=",
+        truncated: false,
+        abs_path: "/runs/x/page-1.jpg",
+      },
+    });
+    render(<ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />);
+    await screen.findByRole("heading", { name: "R" });
+    const openFiles = () =>
+      screen.queryByRole("tablist", { name: "Open files" });
+    await user.click(screen.getByRole("button", { name: "Open in file tabs" }));
+    await waitFor(() => expect(openFiles()).not.toBeNull());
+    await user.type(
+      screen.getByRole("textbox", { name: "Page number" }),
+      "1{enter}",
+    );
+    expect(await screen.findByRole("img", { name: "Page 1" })).toBeVisible();
+    expect(openFiles()).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Technical" }));
+    await user.click(screen.getByRole("button", { name: "Open in file tabs" }));
+    await waitFor(() => expect(openFiles()).not.toBeNull());
+    await user.click(screen.getByRole("button", { name: "Report" }));
+    expect(await screen.findByRole("heading", { name: "R" })).toBeVisible();
+    expect(openFiles()).toBeNull();
+  });
+
   it("keeps the next compact page after an evidence request opened an earlier one", async () => {
     const user = userEvent.setup();
     const pagedManifest = {

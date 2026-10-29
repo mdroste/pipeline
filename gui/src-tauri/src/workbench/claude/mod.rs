@@ -2,10 +2,13 @@
 //! app-owned transcripts supply bounded history to independent `claude -p` turns.
 
 mod protocol;
+mod shell;
 #[cfg(test)]
 mod tests;
+pub(crate) mod title;
 mod tools;
 pub(crate) mod transport;
+pub(crate) mod usage;
 
 use super::codex::NormalizedEvent;
 use super::commands::{run_store, RuntimeCommandError, SendTurnRequest, SendTurnResult};
@@ -40,6 +43,11 @@ pub(crate) fn selected(overrides: &Value) -> WorkbenchResult<bool> {
 
 pub(crate) fn error(message: impl Into<String>) -> RuntimeCommandError {
     WorkbenchError::invalid(message).into()
+}
+
+/// An event epoch for Claude work that no turn started, such as a title request.
+pub(crate) fn fresh_epoch() -> u64 {
+    protocol::next_epoch()
 }
 
 #[derive(Clone)]
@@ -88,15 +96,28 @@ pub(crate) async fn submit(
 ) -> Result<SendTurnResult, RuntimeCommandError> {
     let session = request.session_id.clone();
     let text = request.text.clone();
-    let prompt = run_store(move |store| protocol::prompt(&store, &session, &text)).await?;
+    let shell = shell::available();
+    let (prompt, root) = run_store(move |store| {
+        let root = if shell {
+            Some(store.runtime_root(&session)?)
+        } else {
+            None
+        };
+        Ok((protocol::prompt(&store, &session, &text)?, root))
+    })
+    .await?;
     let tool_specs = tools::catalog(&prepared.effective);
     let args = protocol::arguments(
         &prepared.effective,
         request.model.as_deref(),
         request.effort.as_deref(),
+        root.as_deref(),
     );
+    let sandbox = root.as_deref().map(shell::sandbox);
     // CLI auth, configuration and handshake all finish before sending a prompt.
-    let mut process = transport::Process::start(&args).await.map_err(error)?;
+    let mut process = transport::Process::start(&args, sandbox.as_ref())
+        .await
+        .map_err(error)?;
     let initialization = process.initialize(&tool_specs).await.map_err(error)?;
     protocol::validate_model(
         &initialization,
@@ -198,6 +219,14 @@ pub(crate) async fn submit(
         }
         *running().lock().unwrap_or_else(|e| e.into_inner()) = None;
         super::commands::finish_claude_turn(epoch, &thread, &id);
+        if status == "completed" {
+            super::commands::spawn_title_generation(
+                app,
+                super::commands::TitleRuntime::Claude { epoch },
+                thread,
+                id,
+            );
+        }
     });
     let draft_cleared = if automated {
         false

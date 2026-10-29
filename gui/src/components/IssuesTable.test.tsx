@@ -172,6 +172,32 @@ describe("IssuesTable annotation lifecycle", () => {
     );
   });
 
+  it("labels each quote with Pipeline's own check", async () => {
+    const user = userEvent.setup();
+    render(
+      <IssuesTable
+        issues={[
+          {
+            ...issues[0],
+            evidence: [
+              { page: 3, quote: "exists", verificationStatus: "verified" },
+              { page: 4, quote: "invented", verificationStatus: "not_found" },
+              { page: 5, quote: "unchecked" },
+            ],
+          },
+        ]}
+        runId=""
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /^First issue/i }));
+    expect(screen.getByText("Quote found")).toHaveAttribute(
+      "title",
+      expect.stringContaining("not whether the comment is correct"),
+    );
+    expect(screen.getByText("Quote not found")).toBeInTheDocument();
+    expect(screen.queryByText("Not checked")).not.toBeInTheDocument();
+  });
+
   it("opens an evidence-linked page from an expanded issue", async () => {
     const onOpenEvidence = vi.fn();
     const user = userEvent.setup();
@@ -276,5 +302,52 @@ describe("IssuesTable annotation lifecycle", () => {
     ).not.toBeInTheDocument();
     await user.click(button);
     expect(onOpenEvidence).toHaveBeenCalledWith(evidence);
+  });
+});
+
+describe("IssuesTable sticky controls", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+  });
+
+  it("keeps filters and errors on top and the bulk bar below the rows", async () => {
+    invoke.mockImplementation((command: string) =>
+      command === "save_text_file"
+        ? Promise.reject(new Error("disk full"))
+        : Promise.resolve(undefined),
+    );
+    const user = userEvent.setup();
+    const many = Array.from({ length: 30 }, (_, index) => ({
+      ...issues[0],
+      id: `i${index + 1}`,
+      title: `Issue ${index + 1}`,
+    }));
+    render(<IssuesTable issues={many} runId="" />);
+
+    const toolbar = screen
+      .getByRole("heading", { name: "Issues (30)" })
+      .closest(".sticky");
+    expect(toolbar).toHaveClass("top-0");
+    await user.click(
+      screen.getByRole("button", { name: "Export all decisions" }),
+    );
+    expect(toolbar).toContainElement(await screen.findByRole("alert"));
+
+    const row = screen.getByRole("checkbox", {
+      name: "Select issue: Issue 25",
+    });
+    await user.click(row);
+    const bar = screen.getByRole("group", {
+      name: "Decision for selected issues",
+    });
+    expect(bar).toHaveClass("sticky", "bottom-0");
+    expect(bar).toHaveTextContent("1 selected");
+    // Inserted after the list, so no row above it moves.
+    const lastRow = screen.getByRole("checkbox", {
+      name: "Select issue: Issue 30",
+    });
+    expect(
+      lastRow.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });

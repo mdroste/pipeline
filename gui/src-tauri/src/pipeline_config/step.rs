@@ -101,10 +101,43 @@ impl DependencyPolicy {
     }
 }
 
+/// What a step runs. Model steps call a provider; analyzer steps run one
+/// deterministic Pipeline check and make no model call.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StepKind {
+    #[default]
+    Model,
+    Analyzer,
+}
+
+impl StepKind {
+    pub fn is_model(&self) -> bool {
+        *self == StepKind::Model
+    }
+}
+
+/// A versioned host analyzer and its options. The id and version are pinned
+/// so a saved workflow keeps the exact check it was written for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnalyzerSpec {
+    pub id: String,
+    pub version: u32,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub options: serde_json::Value,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepConfig {
     pub id: String,
     pub label: String,
+    /// `model` (default) or `analyzer`. Omitted when `model`, so existing
+    /// workflows serialize and fingerprint exactly as before.
+    #[serde(default, skip_serializing_if = "StepKind::is_model")]
+    pub kind: StepKind,
+    /// Required for analyzer steps; absent for model steps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub analyzer: Option<AnalyzerSpec>,
     pub prompt: String,
     /// Trusted, literal reviewer instructions. Codex App Server uses developerInstructions.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -222,6 +255,8 @@ impl Default for StepConfig {
         Self {
             id: String::new(),
             label: String::new(),
+            kind: StepKind::Model,
+            analyzer: None,
             prompt: String::new(),
             system_prompt: String::new(),
             enabled: true,
@@ -279,23 +314,41 @@ impl StepConfig {
 /// and their per-step model policies always win.
 pub fn apply_agent_defaults(config: &mut PipelineConfig, settings: &crate::settings::Settings) {
     for step in &mut config.steps {
-        if !step.agents.is_empty() {
+        // Analyzer steps make no provider call.
+        if !step.agents.is_empty() || step.kind == StepKind::Analyzer {
             continue;
         }
-        match step.phase {
+        let (models, efforts) = match step.phase {
             Phase::Parallel => {
                 step.agents = settings.parallel_agents();
-                step.model_overrides
-                    .extend(settings.default_parallel_model_overrides.clone());
-                step.effort_overrides
-                    .extend(settings.default_parallel_effort_overrides.clone());
+                (
+                    &settings.default_parallel_model_overrides,
+                    &settings.default_parallel_effort_overrides,
+                )
             }
             Phase::Sequential => {
                 step.agents = vec![settings.sequential_agent().to_string()];
+                (
+                    &settings.default_sequential_model_overrides,
+                    &settings.default_sequential_effort_overrides,
+                )
+            }
+        };
+        // Role defaults fill gaps; a step's own override for the same key wins.
+        // Overrides take precedence over the step's single `model`/`effort`
+        // fields, so a step that sets one of them takes no role default.
+        if step.model.trim().is_empty() {
+            for (key, selection) in models {
                 step.model_overrides
-                    .extend(settings.default_sequential_model_overrides.clone());
+                    .entry(key.clone())
+                    .or_insert_with(|| selection.clone());
+            }
+        }
+        if step.effort.trim().is_empty() {
+            for (key, effort) in efforts {
                 step.effort_overrides
-                    .extend(settings.default_sequential_effort_overrides.clone());
+                    .entry(key.clone())
+                    .or_insert_with(|| effort.clone());
             }
         }
     }

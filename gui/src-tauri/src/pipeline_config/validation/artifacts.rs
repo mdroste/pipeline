@@ -162,7 +162,11 @@ pub(super) fn validate_published_outputs(profile: &ProfileData) -> Result<(), St
                 "Published {role} step '{step_id}' must be Sequential"
             ));
         }
-        if role == "findings" && step.output_schema.is_none() {
+        // Analyzer steps publish Pipeline's own fixed findings structure.
+        if role == "findings"
+            && step.output_schema.is_none()
+            && step.kind == crate::pipeline_config::StepKind::Model
+        {
             return Err(format!(
                 "Published findings step '{step_id}' must define an output JSON schema"
             ));

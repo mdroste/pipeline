@@ -1,5 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { appClient } from "../../lib/appClient";
+import { router } from "../../lib/router";
 import {
   plannedInterpretation,
   type PendingRun,
@@ -196,12 +203,26 @@ export function useReviewSetupLifecycle(
 
 export function useReviewDependencyWarning(setup: ReviewSetup, page: AppPage) {
   const { depsReport, setShowDeps } = setup;
-  // Auto-show missing dependencies only on the main page. If the user has
-  // already navigated (most importantly, to Settings), do not let a late
-  // readiness response cover that destination with this modal.
+  // Auto-show missing dependencies only in the new-review setup. `main` with a
+  // run key shows a queued, running, or finished review, whose workflow this
+  // report does not describe. If the user has already navigated (most
+  // importantly, to Settings), do not let a late readiness response cover
+  // that destination with this modal.
+  const { route } = useSyncExternalStore(router.subscribe, router.getSnapshot);
+  const setupView = page === "main" && route.page === "main" && !route.runKey;
+  // Show each unresolved report once. A recheck with the same result (for
+  // example after leaving Settings) does not reopen a dismissed warning.
+  const shownReport = useRef<string | null>(null);
   useEffect(() => {
-    if (page === "main" && depsReport && !depsReport.ready) {
-      setShowDeps(true);
+    if (!depsReport) return;
+    if (depsReport.ready) {
+      shownReport.current = null;
+      return;
     }
-  }, [depsReport, page]);
+    if (!setupView) return;
+    const signature = JSON.stringify(depsReport.deps);
+    if (signature === shownReport.current) return;
+    shownReport.current = signature;
+    setShowDeps(true);
+  }, [depsReport, setupView]);
 }

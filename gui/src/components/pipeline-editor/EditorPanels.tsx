@@ -12,6 +12,7 @@ import type {
 import { ADAPTIVE_REVIEW_PROFILE_IDS } from "../../lib/autoReview";
 import PromptEditor from "../PromptEditor";
 import AdvancedStepOptions from "./AdvancedStepOptions";
+import AnalyzerStepPanel from "./AnalyzerStepPanel";
 import AgentChips from "./AgentChips";
 import ModelOverrides from "./ModelOverrides";
 import { describeStep } from "./stepSummary";
@@ -278,6 +279,18 @@ export const StepEditorPanel = memo(function StepEditorPanel({
     setActiveTab(id);
     document.getElementById(`step-tab-${id}`)?.focus();
   };
+
+  if (step.kind === "analyzer") {
+    return (
+      <AnalyzerStepPanel
+        step={step}
+        config={config}
+        onUpdate={onUpdate}
+        onPhaseChange={onPhaseChange}
+        onOutputRoleChange={onOutputRoleChange}
+      />
+    );
+  }
 
   return (
     <div className="flex-1 flex flex-col min-h-0">

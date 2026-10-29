@@ -176,14 +176,19 @@ invalidate success. Only completed, validated receipts are eligible as accepted
 baselines. Incompatible units, estimands or transformations cannot be overridden
 with a rationale in numeric comparisons.
 
-Stata always uses `/bin/zsh -lic` and `oldstata`; no direct executable or probe
-is used. Cancellation is observed by the process owner. Because this machine's
-wrapper has no signal trap, it gets up to 30 seconds to return through Legacy
-Time Off. The local cooperative-timeout fixture reached `exit, clear`, returned
-through the wrapper, restored the normal date and remained `timed_out`, not
-successful. A forced kill records `stataCleanupRequired`; the receipt instructs
-the user to verify exit and run Legacy Time Off. That forced path is **not**
-qualified as automatic cleanup.
+Stata profiles run either an installed Stata directly in batch mode
+(`-b` on macOS and Linux, `/e` on Windows) or a custom launcher, a shell alias
+started through `/bin/zsh -lic` or `/bin/bash -lic` such as this machine's
+`oldstata` wrapper. Detection never starts Stata. Cancellation is observed by
+the process owner. Direct Stata is stopped with its process group at once. A
+custom launcher may restore machine state only on a normal return (the
+`oldstata` wrapper has no signal trap and returns through Legacy Time Off), so
+it gets up to 30 seconds first. The local cooperative-timeout fixture reached
+`exit, clear`, returned through the wrapper, restored the normal date and
+remained `timed_out`, not successful. A forced kill of a custom launcher records
+`stataCleanupRequired`; the receipt asks the user to verify exit and any state
+the launcher changes. That forced path is **not** qualified as automatic
+cleanup.
 
 Settings → Workspace ChatGPT includes a capability inventory and actionable
 missing-tool information. Discovery is not qualification. File acceptance is

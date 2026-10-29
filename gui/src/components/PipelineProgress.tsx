@@ -578,14 +578,23 @@ export default function PipelineProgress({
   }
   stages = groupAdjacentSequentialStages(stages);
 
+  // Screen readers hear stage transitions only. The view itself is not a live
+  // region, because its elapsed clocks change every second.
+  const failedStage = stages.find((stage) => stage.status === "failed");
+  const activeStage = stages.find((stage) => stage.status === "active");
+  const announcement = failedStage
+    ? `${failedStage.label} ${isCancelled ? "cancelled" : "failed"}.`
+    : state.kind === "done"
+      ? "Review complete."
+      : activeStage
+        ? `${activeStage.label} in progress.`
+        : "";
+
   return (
-    <div
-      className="space-y-1"
-      role="status"
-      aria-live="polite"
-      aria-atomic="false"
-      aria-busy={running}
-    >
+    <div className="space-y-1">
+      <p role="status" className="sr-only">
+        {announcement}
+      </p>
       <div className="flex items-baseline justify-between mb-2">
         <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
           Progress

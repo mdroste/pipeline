@@ -141,9 +141,9 @@ for storage, exports, deletion, and provider access.
   Inspect **Sources** when these matter; see the [extraction options](docs/reviews.md#pdf-extraction).
 - Model context windows and account limits constrain document size and
   concurrency. More parallel reviewers do not always make a review faster.
-- Claude conversations currently lack native shell and browser tools,
-  automatic titles, and remaining-quota reporting. Configured Pipeline
-  research tools are available.
+- Claude conversations run shell commands only in a read-only sandbox without
+  network access, and not on Windows. They have no browser tools. Remaining
+  Claude usage appears after Claude has replied in the current app session.
 
 ## Command line and source builds
 

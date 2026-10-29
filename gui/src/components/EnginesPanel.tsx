@@ -16,6 +16,9 @@ const PHASES: { id: string; label: string }[] = [
 /** Cap the streamed install log kept in memory. */
 const MAX_LOG_LINES = 200;
 
+/** Status poll while an install started before this panel mounted runs. */
+const BACKGROUND_POLL_MS = 2500;
+
 /**
  * Installable native extraction engines. Everything lands under
  * ~/.pipeline/native/ and is removed by Uninstall.
@@ -43,6 +46,8 @@ export default function EnginesPanel({
   const [openingPipelineDir, setOpeningPipelineDir] = useState(false);
   const logRef = useRef<HTMLPreElement>(null);
   const refreshGeneration = useRef(0);
+  const backgroundInstalls = useRef(new Set<string>());
+  const cancelRequested = useRef(false);
 
   const refresh = useCallback(() => {
     const generation = ++refreshGeneration.current;
@@ -156,6 +161,7 @@ export default function EnginesPanel({
   }, [logLines]);
 
   const install = async (id: string) => {
+    cancelRequested.current = false;
     setBusy(id);
     setError(null);
     setPhases({});
@@ -201,6 +207,7 @@ export default function EnginesPanel({
 
   const cancel = async () => {
     setError(null);
+    cancelRequested.current = true;
     try {
       await invoke("cancel_engine_install");
     } catch (caught) {
@@ -211,6 +218,33 @@ export default function EnginesPanel({
 
   // An install started elsewhere (e.g. before this panel mounted).
   const backendBusy = engines.some((e) => e.installing);
+  const watchingBackground = backendBusy && busy === null;
+
+  // The backend reports no completion event, so a remounted panel polls the
+  // engine list until the install it inherited ends.
+  useEffect(() => {
+    if (!watchingBackground) return;
+    const timer = window.setInterval(refresh, BACKGROUND_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [refresh, watchingBackground]);
+
+  useEffect(() => {
+    if (busy !== null) return;
+    const finished: EngineStatus[] = [];
+    for (const engine of engines) {
+      if (engine.installing) backgroundInstalls.current.add(engine.id);
+      else if (backgroundInstalls.current.delete(engine.id))
+        finished.push(engine);
+    }
+    if (!finished.length) return;
+    onSystemChange?.();
+    const failed = finished.find((engine) => !engine.installed);
+    if (failed && !cancelRequested.current)
+      setError(
+        `${failed.label} was not installed. The installation stopped before it finished; install again to retry.`,
+      );
+    cancelRequested.current = false;
+  }, [busy, engines, onSystemChange]);
 
   return (
     <div>

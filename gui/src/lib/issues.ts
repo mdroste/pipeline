@@ -11,6 +11,29 @@ export interface IssueEvidence {
   sourceHash?: string;
   description?: string;
   quote?: string;
+  /** Host-set result of checking the quote against the source. */
+  verificationStatus?: EvidenceVerificationStatus;
+}
+
+export type EvidenceVerificationStatus =
+  | "verified"
+  | "verified_with_normalization"
+  | "partially_verified"
+  | "not_found"
+  | "not_checkable";
+
+const EVIDENCE_VERIFICATION_STATUSES: readonly EvidenceVerificationStatus[] = [
+  "verified",
+  "verified_with_normalization",
+  "partially_verified",
+  "not_found",
+  "not_checkable",
+];
+
+function parseVerificationStatus(
+  value: unknown,
+): EvidenceVerificationStatus | undefined {
+  return EVIDENCE_VERIFICATION_STATUSES.find((status) => status === value);
 }
 
 export interface Issue {
@@ -242,6 +265,9 @@ function parseEvidence(value: unknown): IssueEvidence[] {
     );
     const description = boundedString(object.description ?? object.label);
     const quote = boundedString(object.quote);
+    const verificationStatus = parseVerificationStatus(
+      object.verification_status ?? object.verificationStatus,
+    );
     if (
       page ||
       lineStart ||
@@ -265,6 +291,7 @@ function parseEvidence(value: unknown): IssueEvidence[] {
         sourceHash,
         description,
         quote,
+        verificationStatus,
       });
     }
   }

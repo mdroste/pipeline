@@ -1,6 +1,6 @@
 import { workflowSchemaClient } from "../../lib/workflowSchemaClient";
 import type { ProviderSchemaPreview } from "../../lib/workflowSchemaClient";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AutoReviewCatalog, StepConfig } from "../../lib/types";
 import { AUTO_REVIEW_CONTRACT } from "../../lib/autoReview";
 import { ISSUES_SCHEMA } from "./stepTemplates";
@@ -113,7 +113,28 @@ export default function SchemaEditorPanel({
     unknown
   > | null>(null);
 
+  // The schema object this panel last sent to the workflow, or loaded from it.
+  // The owner stores that same object, so identity tells this panel's own
+  // edits apart from outside changes such as undo, redo or a reset.
+  const syncedSchema = useRef<{
+    key: string;
+    schema: Record<string, unknown> | null;
+  } | null>(null);
+  const emitSchema = (schema: Record<string, unknown> | null) => {
+    syncedSchema.current = { key: draftKey, schema };
+    if (target.kind === "orientation") {
+      onOrientationSchemaChange(schema);
+    } else {
+      onStepSchemaChange(target.step.id, schema);
+    }
+  };
+
   useEffect(() => {
+    const synced = syncedSchema.current;
+    if (synced?.key === draftKey && synced.schema === configuredSchema) return;
+    // A new target, or an outside change to this one, replaces the draft.
+    // The panel's own valid edits keep their local formatting and caret.
+    syncedSchema.current = { key: draftKey, schema: configuredSchema };
     setDraft(configuredSchema ? schemaText(configuredSchema) : "");
     setError(null);
     setResolvedSchema(null);
@@ -121,13 +142,11 @@ export default function SchemaEditorPanel({
     setProviderPreview(null);
     setProviderPreviewError(null);
     onDraftValidityChange(true);
-    // A target change remounts the editing draft. Successful edits remain
-    // locally formatted without cursor jumps from parent object identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey]);
+  }, [draftKey, configuredSchema]);
 
   // The current draft as a valid parsed schema, for the structure and example
-  // views. Invalid drafts simply hide those views; the textarea stays.
+  // views. An invalid draft hides the example; the textarea stays.
   const parsedDraft = useMemo<Record<string, unknown> | null>(() => {
     if (!draft.trim()) return null;
     try {
@@ -166,6 +185,20 @@ export default function SchemaEditorPanel({
 
   const structureSchema = liveReference ? referencedSchema : parsedDraft;
 
+  // While a draft is momentarily invalid, keep showing the last valid
+  // structure so the view above the textarea does not collapse mid-typing.
+  const [lastStructure, setLastStructure] = useState<{
+    key: string;
+    schema: Record<string, unknown>;
+  } | null>(null);
+  useEffect(() => {
+    if (structureSchema)
+      setLastStructure({ key: draftKey, schema: structureSchema });
+  }, [draftKey, structureSchema]);
+  const shownStructure =
+    structureSchema ??
+    (lastStructure?.key === draftKey ? lastStructure.schema : null);
+
   useEffect(() => () => onDraftValidityChange(true), [onDraftValidityChange]);
 
   const catalogBacked =
@@ -194,11 +227,7 @@ export default function SchemaEditorPanel({
     setDraft(schema ? schemaText(schema) : "");
     setError(null);
     onDraftValidityChange(true);
-    if (target.kind === "orientation") {
-      onOrientationSchemaChange(schema);
-    } else {
-      onStepSchemaChange(target.step.id, schema);
-    }
+    emitSchema(schema);
   };
 
   // The canonical findings contract is served from the binary so the inserted
@@ -226,11 +255,7 @@ export default function SchemaEditorPanel({
       }
       setError(null);
       onDraftValidityChange(true);
-      if (target.kind === "orientation") {
-        onOrientationSchemaChange(null);
-      } else {
-        onStepSchemaChange(target.step.id, null);
-      }
+      emitSchema(null);
       return;
     }
     try {
@@ -266,11 +291,7 @@ export default function SchemaEditorPanel({
       }
       setError(null);
       onDraftValidityChange(true);
-      if (target.kind === "orientation") {
-        onOrientationSchemaChange(parsed);
-      } else {
-        onStepSchemaChange(target.step.id, parsed);
-      }
+      emitSchema(parsed);
     } catch (parseError) {
       setError(
         parseError instanceof Error ? parseError.message : "invalid JSON",
@@ -543,12 +564,19 @@ export default function SchemaEditorPanel({
                 </p>
               </section>
             )}
-            {structureSchema && (
+            {shownStructure && (
               <div>
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                  Structure
-                </h3>
-                <SchemaTreeView schema={structureSchema} />
+                <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    Structure
+                  </h3>
+                  {!structureSchema && (
+                    <span className="text-[11px] text-gray-500 dark:text-gray-400">
+                      Showing the last valid version
+                    </span>
+                  )}
+                </div>
+                <SchemaTreeView schema={shownStructure} />
               </div>
             )}
             <div className="mb-2 flex flex-wrap items-center justify-between gap-3">

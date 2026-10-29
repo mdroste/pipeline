@@ -32,28 +32,75 @@ pub(in crate::workbench::research) fn validate_execution_outputs(
         valid &= pdf;
     }
     if profile.adapter == "stata" {
-        static STATA_ERROR_CODE: OnceLock<regex::Regex> = OnceLock::new();
-        let error_code = STATA_ERROR_CODE.get_or_init(|| {
-            regex::Regex::new(r"(?m)^r\([0-9]+\);\s*$").expect("static Stata error-code regex")
-        });
         let mut found_log = false;
         let mut clean = true;
+        let mut logs = Vec::new();
         for relative in profile
             .outputs
             .iter()
             .filter(|path| path.to_ascii_lowercase().ends_with(".log"))
         {
             found_log = true;
-            match fs::read_to_string(Path::new(&profile.cwd).join(relative)) {
-                Ok(log) => clean &= !error_code.is_match(&log),
-                Err(_) => clean = false,
+            match read_log(&Path::new(&profile.cwd).join(relative)) {
+                Some(log) => {
+                    let errors = stata_log_errors(&log);
+                    clean &= errors.is_empty();
+                    logs.push(json!({"path":relative,"errors":errors}));
+                }
+                None => {
+                    clean = false;
+                    logs.push(json!({"path":relative,"readable":false}));
+                }
             }
         }
         clean &= found_log;
-        checks.push(json!({"check":"stataLogHasNoErrorCode","passed":clean}));
+        checks.push(json!({"check":"stataLogHasNoErrorCode","passed":clean,"logs":logs}));
         valid &= clean;
     }
     (json!({"passed":valid,"checks":checks}), valid)
+}
+
+const STATA_LOG_LIMIT: u64 = 256 * 1024 * 1024;
+
+/// Read a log as lossy UTF-8 (Stata 13 and earlier write Latin-1 logs).
+fn read_log(path: &Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    let mut bytes = Vec::new();
+    file.take(STATA_LOG_LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() as u64 <= STATA_LOG_LIMIT).then(|| String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Stata return codes (`r(###);` on a line of their own) with the nearest
+/// preceding message line. Batch logs repeat the code after "end of do-file",
+/// so identical code/message pairs are reported once.
+pub(super) fn stata_log_errors(log: &str) -> Vec<Value> {
+    static STATA_ERROR_CODE: OnceLock<regex::Regex> = OnceLock::new();
+    let error_code = STATA_ERROR_CODE.get_or_init(|| {
+        regex::Regex::new(r"^r\(([0-9]+)\);\s*$").expect("static Stata error-code regex")
+    });
+    let mut errors: Vec<Value> = Vec::new();
+    let mut previous: Option<&str> = None;
+    for line in log.lines() {
+        let trimmed = line.trim_end();
+        if let Some(code) = error_code
+            .captures(trimmed)
+            .and_then(|captures| captures[1].parse::<u32>().ok())
+        {
+            let message = previous.map(|text| text.chars().take(300).collect::<String>());
+            let entry = json!({"code":code,"message":message});
+            if !errors.contains(&entry) && errors.len() < 20 {
+                errors.push(entry);
+            }
+            continue;
+        }
+        let content = trimmed.trim();
+        if !content.is_empty() && content != "end of do-file" && !content.starts_with("--Break--") {
+            previous = Some(content);
+        }
+    }
+    errors
 }
 
 pub(super) fn adopt_execution_outputs(

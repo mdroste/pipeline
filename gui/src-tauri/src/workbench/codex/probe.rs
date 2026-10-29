@@ -11,6 +11,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 
 mod config;
 mod discovery;
+mod history;
 use config::write_probe_config;
 
 const PROBE_SCHEMA_VERSION: u32 = 1;
@@ -53,6 +54,7 @@ pub struct QualificationProbeReport {
     pub dynamic_tool_declaration_accepted: bool,
     pub read_only_sandbox_verified: bool,
     pub discovery_permissions_verified: bool,
+    pub paged_turn_history_verified: bool,
     pub runtime_workspace_roots_verified: bool,
     pub instruction_sources_empty: bool,
     pub allowed_fixture_read_verified: bool,
@@ -783,11 +785,13 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
                     "modelProvider": "openai",
                     "permissions": PROBE_PERMISSION_PROFILE,
                     "runtimeWorkspaceRoots": [fixture_root],
+                    "excludeTurns": true,
                 }
             }),
         )
         .await?;
         let resumed = response_for(&mut reader, &resume_id).await?;
+        history::verify(&mut stdin, &mut reader, &provider_thread_id, &resumed).await?;
 
         let allowed_read_id = json!(8);
         send(
@@ -1200,6 +1204,7 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
         dynamic_tool_declaration_accepted: true,
         read_only_sandbox_verified,
         discovery_permissions_verified: true,
+        paged_turn_history_verified: true,
         runtime_workspace_roots_verified,
         instruction_sources_empty,
         allowed_fixture_read_verified,

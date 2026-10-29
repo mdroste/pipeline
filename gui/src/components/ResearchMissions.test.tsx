@@ -386,3 +386,131 @@ it("refreshes a selected mission after a native mission change", async () => {
     screen.queryByRole("button", { name: "Start research automation" }),
   ).not.toBeInTheDocument();
 });
+it("keeps loaded activity pages and appends new events when the mission updates", async () => {
+  const log = Array.from({ length: 150 }, (_, i) => ({
+    sequence: i + 1,
+    at: 100,
+    kind: "note",
+    detail: `Event ${i + 1}`,
+  }));
+  const handler = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((name, args) =>
+    name === "mission_events"
+      ? Promise.resolve(
+          log.filter((e) => e.sequence > args.after).slice(0, 100),
+        )
+      : handler(name, args),
+  );
+  const running = { ...mission, state: "running" as const };
+  const view = render(
+    <MissionDetail mission={running} onUpdated={vi.fn()} onClose={vi.fn()} />,
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Activity" }));
+  await screen.findByText("Event 100");
+  fireEvent.click(screen.getByRole("button", { name: "Load more activity" }));
+  await screen.findByText("Event 150");
+  expect(
+    screen.queryByRole("button", { name: "Load more activity" }),
+  ).not.toBeInTheDocument();
+  log.push({ sequence: 151, at: 101, kind: "note", detail: "Event 151" });
+  view.rerender(
+    <MissionDetail
+      mission={{ ...running, revision: 2 }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  await screen.findByText("Event 151");
+  expect(screen.getByText("Event 1")).toBeInTheDocument();
+  expect(screen.getByText("Event 120")).toBeInTheDocument();
+  expect(
+    mocks.invoke.mock.calls
+      .filter(([name]) => name === "mission_events")
+      .map(([, args]) => args.after),
+  ).toEqual([0, 100, 150]);
+});
+it("brings opened evidence into view and returns focus when it closes", async () => {
+  const scroll = vi.fn();
+  const original = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = scroll;
+  try {
+    render(
+      <MissionDetail
+        mission={{
+          ...mission,
+          state: "running",
+          methods: [
+            {
+              id: "method1",
+              missionId: "mission1",
+              workspaceId: "project",
+              round: 1,
+              name: "Residual check",
+              whenToUse: "After calibration",
+              procedure: "Compare residuals",
+              limitations: "Tested grid only",
+              evidenceIds: ["evidence-1"],
+              retained: false,
+            },
+          ],
+        }}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Methods" }));
+    const opener = screen.getByRole("button", { name: "evidence-1" });
+    fireEvent.click(opener);
+    const heading = await screen.findByRole("heading", { name: "evidence-1" });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(scroll).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close evidence" }));
+    expect(opener).toHaveFocus();
+  } finally {
+    Element.prototype.scrollIntoView = original;
+  }
+});
+it("ignores blank criteria lines and says why preview is unavailable", async () => {
+  render(
+    <MissionBuilder
+      initialSessionId="source"
+      onPrepared={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  const preview = screen.getByRole("button", {
+    name: "Preview research automation →",
+  });
+  await waitFor(() => expect(preview).toBeEnabled());
+  fireEvent.change(screen.getByLabelText("Automation name"), {
+    target: { value: " " },
+  });
+  expect(preview).toBeDisabled();
+  expect(preview).toHaveAccessibleDescription("Name the automation.");
+  fireEvent.change(screen.getByLabelText("Automation name"), {
+    target: { value: "Extension" },
+  });
+  fireEvent.change(screen.getByLabelText(/Completion criteria/), {
+    target: { value: "\n" },
+  });
+  expect(preview).toHaveAccessibleDescription(
+    "Add at least one completion criterion.",
+  );
+  fireEvent.change(screen.getByLabelText(/Completion criteria/), {
+    target: { value: "Reproduce the baseline\n\n Explain the gap \n" },
+  });
+  expect(preview).toBeEnabled();
+  fireEvent.click(preview);
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "mission_prepare",
+      expect.objectContaining({
+        request: expect.objectContaining({
+          definition: expect.objectContaining({
+            criteria: ["Reproduce the baseline", "Explain the gap"],
+          }),
+        }),
+      }),
+    ),
+  );
+});

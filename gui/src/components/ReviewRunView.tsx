@@ -27,10 +27,14 @@ interface Props {
   onOpenHistory: (runId?: string) => void;
 }
 
+/** Centers short content; content taller than the view starts at its top so
+ *  the surrounding scroller can reach all of it. */
 function Centered({ children }: { children: ReactNode }) {
   return (
-    <div className="flex h-full items-center justify-center px-8 py-12">
-      <div className="w-full max-w-sm">{children}</div>
+    <div className="flex min-h-full justify-center px-8 py-12">
+      <div data-testid="review-run-content" className="my-auto w-full max-w-sm">
+        {children}
+      </div>
     </div>
   );
 }

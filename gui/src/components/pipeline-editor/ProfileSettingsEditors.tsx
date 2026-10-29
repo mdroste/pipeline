@@ -1,6 +1,7 @@
 import { memo, useId, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { InputSlot, VarSpec } from "../../lib/types";
+import useDraftText from "../../hooks/useDraftText";
 import useModalDialog from "../../hooks/useModalDialog";
 
 interface CalibrationDraft {
@@ -137,6 +138,32 @@ function CalibrateSection({
   );
 }
 
+// A comma-separated list keeps its raw text while it is edited, so separators
+// and spaces inside items survive; the parsed list is committed on blur or
+// Enter.
+function CommaListInput({
+  values,
+  parse,
+  onCommit,
+  ...inputProps
+}: {
+  values: string[];
+  parse: (item: string) => string;
+  onCommit: (values: string[]) => void;
+  "aria-label": string;
+  placeholder: string;
+  className: string;
+}) {
+  const draft = useDraftText(values.join(", "), (text) =>
+    onCommit(text.split(",").map(parse).filter(Boolean)),
+  );
+  return <input {...inputProps} {...draft} />;
+}
+
+const trimItem = (item: string) => item.trim();
+const extensionItem = (item: string) =>
+  item.trim().toLowerCase().replace(/^\./, "");
+
 // --- Extra named inputs (profile-level) ---
 //
 // Additional inputs beyond the primary one; each is extracted at run time and
@@ -218,19 +245,11 @@ function ExtraInputsEditor({
               />
               required
             </label>
-            <input
+            <CommaListInput
               aria-label={`Allowed extensions for ${s.label || s.key || i + 1}`}
-              value={(s.extensions ?? []).join(", ")}
-              onChange={(e) =>
-                update(i, {
-                  extensions: e.target.value
-                    .split(",")
-                    .map((value) =>
-                      value.trim().toLowerCase().replace(/^\./, ""),
-                    )
-                    .filter(Boolean),
-                })
-              }
+              values={s.extensions ?? []}
+              parse={extensionItem}
+              onCommit={(extensions) => update(i, { extensions })}
               placeholder="extensions: pdf, docx"
               className={`${inputClass} min-w-[10rem] flex-1`}
             />
@@ -385,17 +404,11 @@ function VariablesEditor({
               ✕
             </button>
             {v.kind === "choice" && (
-              <input
+              <CommaListInput
                 aria-label={`Variable ${v.label || v.key || i + 1} choices`}
-                value={(v.choices ?? []).join(", ")}
-                onChange={(e) =>
-                  update(i, {
-                    choices: e.target.value
-                      .split(",")
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                  })
-                }
+                values={v.choices ?? []}
+                parse={trimItem}
+                onCommit={(choices) => update(i, { choices })}
                 placeholder="choices, comma-separated"
                 className={`${inputClass} w-full`}
               />

@@ -153,6 +153,11 @@ pub(in crate::workbench) fn migrate(connection: &mut Connection, from: u32) -> W
                     WorkbenchError::storage("Failed to migrate self-discovery roles", e)
                 })?;
         }
+        if from < 16 {
+            transaction
+                .execute_batch(include_str!("../migrations/016_execution_adapters.sql"))
+                .map_err(|e| WorkbenchError::storage("Failed to migrate execution adapters", e))?;
+        }
         transaction
             .pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)
             .map_err(|error| {

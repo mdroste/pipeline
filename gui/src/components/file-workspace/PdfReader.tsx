@@ -15,6 +15,7 @@ import {
 import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { safeExternalHref } from "../SafeMarkdownLink";
+import useDraftText from "../../hooks/useDraftText";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./pdf.css";
 GlobalWorkerOptions.workerSrc = workerUrl;
@@ -46,6 +47,18 @@ type OutlineEntry = {
   dest: string | unknown[] | null;
   depth: number;
 };
+// Zoom values PDF.js derives from the container size.
+const FITTED_SCALES = new Set([
+  "page-width",
+  "page-fit",
+  "page-height",
+  "auto",
+]);
+/** A whole page number within 1..count, or null for a value that is not a number. */
+function pageWithin(value: unknown, count: number): number | null {
+  const n = Math.round(Number(value));
+  return Number.isFinite(n) ? Math.max(1, Math.min(count, n)) : null;
+}
 export function decodePdf(base64: string): Uint8Array {
   const value = atob(base64);
   return Uint8Array.from(value, (c) => c.charCodeAt(0));
@@ -133,12 +146,18 @@ export default function PdfReader(props: Props) {
   const drag = useRef<{ page: number; x: number; y: number } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const go = (number: number) => {
-    if (instance.current && pdf)
-      instance.current.viewer.currentPageNumber = Math.max(
-        1,
-        Math.min(pdf.numPages, number),
-      );
+    const target = pdf && pageWithin(number, pdf.numPages);
+    if (instance.current && target)
+      instance.current.viewer.currentPageNumber = target;
   };
+  const pageInput = useDraftText(
+    pageLabels[page - 1] ?? String(page),
+    (text) => {
+      const labelIndex = pageLabels.indexOf(text.trim());
+      const n = labelIndex >= 0 ? labelIndex + 1 : Number(text);
+      if (Number.isInteger(n) && n > 0) go(n);
+    },
+  );
   useEffect(() => {
     if (fallbackMode || !container.current || !pages.current) return;
     let live = true;
@@ -148,6 +167,11 @@ export default function PdfReader(props: Props) {
     setOutline([]);
     setPageLabels([]);
     setSelectionRect(null);
+    setThumbStart(1);
+    setQuery("");
+    setMatches({ current: 0, total: 0 });
+    setRegionMode(false);
+    setSelectionNotice("");
     const bus = new EventBus();
     const links = new PDFLinkService({ eventBus: bus, externalLinkTarget: 0 });
     const find = new PDFFindController({ eventBus: bus, linkService: links });
@@ -178,19 +202,47 @@ export default function PdfReader(props: Props) {
     } catch {
       /* Optional layout. */
     }
-    bus.on("pagesinit", () => {
-      if (!live) return;
+    const scrollArea = container.current;
+    const applyInitialView = () => {
       viewer.currentScaleValue =
         callbacks.current.position?.scale ?? saved?.scale ?? "page-width";
       viewer.pagesRotation =
         callbacks.current.position?.rotation ?? saved?.rotation ?? 0;
-      viewer.currentPageNumber = Math.min(
-        viewer.pagesCount,
-        Math.max(
-          1,
-          callbacks.current.position?.page ?? initialPage ?? saved?.page ?? 1,
-        ),
-      );
+      viewer.currentPageNumber =
+        pageWithin(
+          callbacks.current.position?.page ??
+            callbacks.current.initialPage ??
+            saved?.page,
+          viewer.pagesCount,
+        ) ?? 1;
+    };
+    // PDF.js computes fitted zoom from the container size only when a zoom
+    // value is assigned. A reader inside a hidden pane has no size, so wait
+    // until it is shown, and refit whenever the reading area changes size.
+    let initialView: (() => void) | null = null;
+    let frame = 0;
+    const resize =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(([entry]) => {
+            if (!entry?.contentRect.width || !entry.contentRect.height) return;
+            cancelAnimationFrame(frame);
+            frame = requestAnimationFrame(() => {
+              if (!live) return;
+              if (initialView) {
+                const apply = initialView;
+                initialView = null;
+                apply();
+              } else if (FITTED_SCALES.has(viewer.currentScaleValue))
+                viewer.currentScaleValue = viewer.currentScaleValue;
+            });
+          });
+    resize?.observe(scrollArea);
+    bus.on("pagesinit", () => {
+      if (!live) return;
+      if (resize && scrollArea.clientWidth === 0)
+        initialView = applyInitialView;
+      else applyInitialView();
     });
     const positionChanged = () => {
       if (!live) return;
@@ -271,6 +323,8 @@ export default function PdfReader(props: Props) {
       });
     return () => {
       live = false;
+      resize?.disconnect();
+      cancelAnimationFrame(frame);
       instance.current = null;
       lifetime.abort();
       viewer.cleanup();
@@ -291,11 +345,9 @@ export default function PdfReader(props: Props) {
     const viewer = instance.current?.viewer;
     if (!viewer || !pdf || !props.position) return;
     const position = props.position;
-    if (position.page !== viewer.currentPageNumber)
-      viewer.currentPageNumber = Math.max(
-        1,
-        Math.min(pdf.numPages, position.page),
-      );
+    const target = pageWithin(position.page, pdf.numPages);
+    if (target && target !== viewer.currentPageNumber)
+      viewer.currentPageNumber = target;
     if (position.scale && position.scale !== viewer.currentScaleValue)
       viewer.currentScaleValue = position.scale;
     if (
@@ -485,13 +537,7 @@ export default function PdfReader(props: Props) {
           <input
             aria-label="PDF page number"
             className="file-line-input"
-            value={pageLabels[page - 1] ?? page}
-            onChange={(e) => {
-              const labelIndex = pageLabels.indexOf(e.target.value);
-              const n =
-                labelIndex >= 0 ? labelIndex + 1 : Number(e.target.value);
-              if (n > 0) go(n);
-            }}
+            {...pageInput}
           />
         </label>
         <span>of {pdf?.numPages ?? "…"}</span>

@@ -245,7 +245,7 @@ fn zero_match_fan_out_returns_visible_skipped_output() {
         .enable_all()
         .build()
         .unwrap();
-    let (outputs, failures) = runtime
+    let (outputs, failures, failed_calls) = runtime
         .block_on(run_parallel_wave(
             &bus,
             &steps,
@@ -270,10 +270,218 @@ fn zero_match_fan_out_returns_visible_skipped_output() {
         ))
         .unwrap();
     assert!(failures.is_empty());
+    assert!(failed_calls.is_empty());
     assert_eq!(outputs.len(), 1);
     assert!(outputs[0].skipped);
     assert_eq!(outputs[0].step_id, "fan");
     assert!(outputs[0].raw_text.contains("matched no files"));
+}
+
+type WaveResult = Result<
+    (
+        Vec<StepOutput>,
+        Vec<crate::models::StepFailure>,
+        Vec<crate::models::StepCallRecord>,
+    ),
+    String,
+>;
+
+/// Runs one parallel wave with no provider calls possible: the worker
+/// semaphore is closed when `closed` is set, so a dispatched unit can only
+/// fail before resolving a model. Returns the wave result and its pass events.
+fn run_wave_recording(
+    steps: &[&StepConfig],
+    prior_outputs: &[StepOutput],
+    source: &std::path::Path,
+    closed: bool,
+) -> (WaveResult, Vec<serde_json::Value>) {
+    let settings = crate::settings::Settings::default();
+    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+    if closed {
+        semaphore.close();
+    }
+    let output_budget = std::sync::Arc::new(OutputBudget::default());
+    let shared_context_pool = crate::pipeline::context_cache::PreparedContextPool::default();
+    let recorder = Arc::new(RecordingEvents::default());
+    let bus: crate::emit::EventBus = recorder.clone();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let result = runtime.block_on(run_parallel_wave(
+        &bus,
+        steps,
+        &settings,
+        &semaphore,
+        "",
+        &serde_json::Value::Null,
+        "",
+        "",
+        source.to_str().unwrap(),
+        "mixed",
+        "",
+        "{step_prompt}",
+        &Default::default(),
+        &Default::default(),
+        &Default::default(),
+        prior_outputs,
+        None,
+        &output_budget,
+        false,
+        &shared_context_pool,
+    ));
+    let passes = recorder
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(event, _)| event == "pipeline:pass")
+        .map(|(_, payload)| payload.clone())
+        .collect();
+    (result, passes)
+}
+
+#[test]
+fn fan_out_discovery_error_fails_only_its_own_step() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut fan = make_step("fan", Phase::Parallel);
+    fan.for_each = Some(crate::pipeline_config::ForEach {
+        glob: String::new(),
+        max: 20,
+        artifact: Some(crate::pipeline_config::ForEachArtifact {
+            step: "notes".into(),
+            pointer: "/items".into(),
+        }),
+    });
+    let mut sibling = make_step("sibling", Phase::Parallel);
+    sibling.for_each = Some(crate::pipeline_config::ForEach {
+        glob: "**/*.does-not-exist".into(),
+        max: 20,
+        artifact: None,
+    });
+    let notes = StepOutput {
+        step_id: "notes".into(),
+        step_label: "Notes".into(),
+        raw_text: "## Notes\n\nPlain Markdown, not JSON.".into(),
+        ..Default::default()
+    };
+
+    let (result, passes) = run_wave_recording(&[&fan, &sibling], &[notes], temp.path(), false);
+    let (outputs, failures, _) = result.expect("a discovery error must not abort the wave");
+
+    assert_eq!(outputs.len(), 1);
+    assert_eq!(outputs[0].step_id, "sibling");
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].step_id, "fan");
+    assert!(
+        failures[0].error.contains("needs structured JSON"),
+        "{}",
+        failures[0].error
+    );
+    assert!(passes.contains(&serde_json::json!({"name": "fan", "status": "error"})));
+}
+
+#[test]
+fn unit_that_stops_before_its_provider_call_reports_an_error_status() {
+    let temp = tempfile::tempdir().unwrap();
+    let solo = make_step("solo", Phase::Parallel);
+
+    let (result, passes) = run_wave_recording(&[&solo], &[], temp.path(), true);
+    let (outputs, failures, failed_calls) = result.unwrap();
+
+    assert!(outputs.is_empty());
+    assert!(failed_calls.is_empty(), "no provider call was made");
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].step_id, "solo");
+    assert_eq!(
+        passes,
+        [
+            serde_json::json!({"name": "solo", "status": "pending"}),
+            serde_json::json!({"name": "solo", "status": "error"}),
+        ]
+    );
+}
+
+#[test]
+fn unit_preparation_error_fails_only_its_own_unit() {
+    let temp = tempfile::tempdir().unwrap();
+    let first = make_step("first", Phase::Parallel);
+    let mut second = make_step("second", Phase::Parallel);
+    second.context.include.push(ArtifactSelector::Step {
+        step: "first".into(),
+        parts: Vec::new(),
+        glob: String::new(),
+    });
+
+    let (result, passes) = run_wave_recording(&[&first, &second], &[], temp.path(), true);
+    let (outputs, mut failures, _) =
+        result.expect("a unit that cannot be prepared must not abort the wave");
+
+    assert!(outputs.is_empty());
+    failures.sort_by(|a, b| a.step_id.cmp(&b.step_id));
+    let failed: Vec<_> = failures.iter().map(|f| f.step_id.as_str()).collect();
+    assert_eq!(failed, ["first", "second"]);
+    assert!(
+        failures[1]
+            .error
+            .contains("cannot consume another step's output"),
+        "{}",
+        failures[1].error
+    );
+    // The unit dispatched earlier still settles; the unprepared one is
+    // reported failed without being announced as queued.
+    assert!(passes.contains(&serde_json::json!({"name": "first", "status": "error"})));
+    assert!(passes.contains(&serde_json::json!({"name": "second", "status": "error"})));
+    assert!(!passes.contains(&serde_json::json!({"name": "second", "status": "pending"})));
+}
+
+#[test]
+fn abandoned_wave_settles_every_unfinished_unit() {
+    use super::super::parallel::{abandon, Announced, ParallelTaskResult};
+    let recorder = Arc::new(RecordingEvents::default());
+    let bus: crate::emit::EventBus = recorder.clone();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mut tasks: tokio::task::JoinSet<ParallelTaskResult> = tokio::task::JoinSet::new();
+        let mut announced = Announced::new();
+        let mut track = |task: &tokio::task::AbortHandle, key: &str| {
+            announced.insert(task.id(), (key.to_string(), key.to_uppercase()));
+        };
+        track(&tasks.spawn(std::future::pending()), "waiting");
+        let broken = tasks.spawn(async { panic!("unit bug") });
+        track(&broken, "broken");
+        // A unit that already reported its own terminal status.
+        let finished = tasks.spawn(async {
+            Err(crate::models::StepFailure {
+                step_id: "finished".into(),
+                step_label: "Finished".into(),
+                phase: "parallel".into(),
+                error: "Provider failed".into(),
+            }
+            .into())
+        });
+        track(&finished, "finished");
+        // Let the units that can end do so before the wave returns early.
+        while !(broken.is_finished() && finished.is_finished()) {
+            tokio::task::yield_now().await;
+        }
+        abandon(&bus, &mut tasks, &announced).await;
+        assert!(tasks.is_empty());
+    });
+    let passes: Vec<_> = recorder
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(event, _)| event == "pipeline:pass")
+        .map(|(_, payload)| payload.clone())
+        .collect();
+    assert_eq!(passes.len(), 2, "{passes:?}");
+    assert!(passes.contains(&serde_json::json!({"name": "waiting", "status": "error"})));
+    assert!(passes.contains(&serde_json::json!({"name": "broken", "status": "error"})));
 }
 
 #[test]

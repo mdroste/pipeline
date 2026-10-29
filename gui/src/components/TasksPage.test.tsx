@@ -12,9 +12,14 @@ import { template } from "../lib/taskTemplates";
 import { type TaskRun, type Receipt } from "../lib/taskTypes";
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
+  confirmDialog: vi.fn(),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+vi.mock("./DialogService", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./DialogService")>()),
+  confirmDialog: mocks.confirmDialog,
+}));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(
     async (name: string, callback: (event: { payload: unknown }) => void) => {
@@ -48,6 +53,7 @@ const run: TaskRun = {
 };
 beforeEach(() => {
   mocks.invoke.mockReset();
+  mocks.confirmDialog.mockReset();
   mocks.listeners.clear();
   localStorage.clear();
   mocks.invoke.mockImplementation(
@@ -302,4 +308,71 @@ it("reloads repeated task links and reports unsaved builder edits", async () => 
     ).toBeGreaterThan(count),
   );
   expect(dirty).toHaveBeenLastCalledWith(false);
+});
+
+it("asks before an in-page action discards an unsaved automation draft", async () => {
+  const summary = {
+    id: "test-run",
+    name: "Workspace follow-up",
+    state: "draft",
+    reason: null,
+    dueAt: null,
+  };
+  const implementation = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command, ...args) =>
+    command === "task_list"
+      ? Promise.resolve([summary])
+      : implementation(command, ...args),
+  );
+  render(<TasksPage initialSessionId="session" />);
+  await screen.findByRole("option", { name: "Research idea" });
+  fireEvent.change(screen.getByLabelText("Idea or instructions"), {
+    target: { value: "Keep this draft" },
+  });
+
+  mocks.confirmDialog.mockResolvedValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "Close new automation" }));
+  await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledTimes(1));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Workspace follow-up/ }),
+  );
+  await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledTimes(2));
+  fireEvent.click(screen.getByRole("tab", { name: "Research" }));
+  await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledTimes(3));
+  expect(screen.getByLabelText("Idea or instructions")).toHaveValue(
+    "Keep this draft",
+  );
+  expect(mocks.invoke).not.toHaveBeenCalledWith("task_get", expect.anything());
+
+  mocks.confirmDialog.mockResolvedValue(true);
+  fireEvent.click(screen.getByRole("button", { name: /Workspace follow-up/ }));
+  await screen.findByRole("region", { name: "Automation details" });
+  expect(screen.queryByLabelText("Idea or instructions")).toBeNull();
+});
+
+it("closes an untouched builder without asking", async () => {
+  render(<TasksPage initialSessionId="session" />);
+  await screen.findByRole("option", { name: "Research idea" });
+  fireEvent.click(screen.getByRole("button", { name: "Close new automation" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("region", { name: "New automation" })).toBeNull(),
+  );
+  expect(mocks.confirmDialog).not.toHaveBeenCalled();
+});
+
+it("brings the automation details into view when picked from the list", async () => {
+  const scrollIntoView = vi.fn();
+  const original = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = scrollIntoView;
+  try {
+    render(<TasksPage initialTaskId={run.id} />);
+    const details = await screen.findByRole("region", {
+      name: "Automation details",
+    });
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    expect(scrollIntoView.mock.contexts[0]).toBe(details.firstElementChild);
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+  } finally {
+    Element.prototype.scrollIntoView = original;
+  }
 });

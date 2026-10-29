@@ -6,18 +6,21 @@ import type {
   Phase,
 } from "../../lib/types";
 import useModalDialog from "../../hooks/useModalDialog";
+import AnalyzerChoice, { type AnalyzerSelection } from "./AnalyzerChoice";
 
 export type StepContextPreset =
   "standard" | "input" | "prior_reports" | "isolated";
 
 export interface AddStepDraft {
-  mode: "guided" | "adaptive" | "blank";
+  mode: "guided" | "adaptive" | "blank" | "check";
   label: string;
   instructions: string;
   phase: Phase;
   contextPreset: StepContextPreset;
   output: "report" | "issues";
   templateId?: string;
+  /** For `check`: the Pipeline check and whether it may use the network. */
+  analyzer?: AnalyzerSelection;
 }
 
 type AdaptiveCatalogTab = "subjects" | "methods";
@@ -146,6 +149,7 @@ function AddStepDialog({
   const [selectedRoleId, setSelectedRoleId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [analyzer, setAnalyzer] = useState<AnalyzerSelection | null>(null);
   const adaptiveSearchRef = useRef<HTMLInputElement>(null);
   const titleId = useId();
   const descriptionId = useId();
@@ -235,7 +239,9 @@ function AddStepDialog({
   const canCreate =
     mode === "adaptive"
       ? !!selectedRole
-      : !!label.trim() && (mode === "blank" || !!instructions.trim());
+      : mode === "check"
+        ? !!analyzer
+        : !!label.trim() && (mode === "blank" || !!instructions.trim());
 
   const submit = async () => {
     if (!canCreate || submitting) return;
@@ -250,6 +256,7 @@ function AddStepDialog({
         contextPreset,
         output,
         templateId: mode === "adaptive" ? selectedRole?.id : undefined,
+        analyzer: mode === "check" ? (analyzer ?? undefined) : undefined,
       });
     } catch (caught) {
       setSubmitError(caught instanceof Error ? caught.message : String(caught));
@@ -322,11 +329,22 @@ function AddStepDialog({
             >
               Blank step
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "check"}
+              onClick={() => setMode("check")}
+              className={`border-b-2 pb-2 text-xs font-medium ${mode === "check" ? "border-gray-900 text-gray-900 dark:border-gray-100 dark:text-gray-100" : "border-transparent text-gray-500"}`}
+            >
+              Pipeline check
+            </button>
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
-          {mode === "adaptive" ? (
+          {mode === "check" ? (
+            <AnalyzerChoice value={analyzer} onChange={setAnalyzer} />
+          ) : mode === "adaptive" ? (
             <div className="space-y-4">
               <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 dark:border-blue-900 dark:bg-blue-950/30">
                 <p className="text-xs font-medium text-blue-950 dark:text-blue-100">

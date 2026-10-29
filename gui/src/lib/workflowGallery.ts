@@ -320,6 +320,82 @@ const rubricReview: PipelineConfig = {
   ],
 };
 
+function check(
+  id: string,
+  label: string,
+  analyzer: string,
+  options?: Record<string, unknown>,
+): StepConfig {
+  // Sequential so its results can be published as the Review's findings.
+  return step({
+    id,
+    label,
+    prompt: "",
+    phase: "sequential",
+    kind: "analyzer",
+    analyzer: { id: analyzer, version: 1, ...(options ? { options } : {}) },
+  });
+}
+
+const referenceCheck: PipelineConfig = {
+  use_orientation: true,
+  orientation_prompt: "",
+  extraction: { method: "", input_mode: "document", extra_inputs: [] },
+  variables: [],
+  context_cache: { enabled: false },
+  parallel_context_template: genericParallelContext,
+  merge: { enabled: false, prompt: "", agents: [] },
+  outputs: {
+    primary_step: "reference_summary",
+    findings_step: "reference_check",
+  },
+  steps: [
+    check("reference_check", "Check References", "reference_audit", {
+      network: true,
+    }),
+    step({
+      id: "reference_summary",
+      label: "Reference Report",
+      phase: "sequential",
+      prompt:
+        "The reference check below was produced by Pipeline, not by a model. For each reference it flags, read where the manuscript cites that work and explain what the problem affects: a central claim, a method, data, or only background. Recommend the smallest correction. Do not re-judge references the check matched, and do not invent replacement citations. Return a short Markdown report.",
+      context: {
+        include: [
+          { kind: "primary", parts: ["text", "structure"] },
+          { kind: "step", step: "reference_check", parts: ["report"] },
+        ],
+      },
+    }),
+  ],
+};
+
+const replicationReadiness: PipelineConfig = {
+  use_orientation: true,
+  orientation_prompt: "",
+  extraction: { method: "", input_mode: "folder", extra_inputs: [] },
+  variables: [],
+  context_cache: { enabled: false },
+  parallel_context_template: genericParallelContext,
+  merge: { enabled: false, prompt: "", agents: [] },
+  outputs: { primary_step: "package_review", findings_step: "package_check" },
+  steps: [
+    check("package_check", "Check Package Files", "replication_static"),
+    step({
+      id: "package_review",
+      label: "Replication Package Review",
+      phase: "sequential",
+      prompt:
+        "The package check below was produced by Pipeline from the files alone; nothing was run. Read the README and the main code. For each warning or failure, say whether the files confirm it and what the authors should change. Then assess what the static check cannot: whether the data availability statements say how to obtain every dataset, whether each table and figure in the paper maps to a program and an output file, and whether the stated runtime and software versions are plausible. Return a Markdown report with a short checklist of required changes.",
+      context: {
+        include: [
+          { kind: "primary", parts: ["text", "source"] },
+          { kind: "step", step: "package_check", parts: ["report"] },
+        ],
+      },
+    }),
+  ],
+};
+
 export const WORKFLOW_GALLERY: WorkflowGalleryItem[] = [
   {
     id: "revision-response-check",
@@ -360,6 +436,27 @@ export const WORKFLOW_GALLERY: WorkflowGalleryItem[] = [
     inputs: "Submission and rubric",
     outcome: "Criterion-linked, evidence-backed issues",
     config: rubricReview,
+  },
+  {
+    id: "reference-check",
+    name: "Reference Check",
+    category: "Papers",
+    description:
+      "Find the bibliography and check each reference against Crossref for existence, matching details, other versions, retractions, and corrections, then explain what each problem affects.",
+    inputs: "Paper (PDF, Word, or LaTeX with .bib files)",
+    outcome:
+      "Reference ledger from Pipeline's own lookups, plus a short report",
+    config: referenceCheck,
+  },
+  {
+    id: "replication-package-readiness",
+    name: "Replication Package Readiness",
+    category: "Research",
+    description:
+      "Check a replication package folder against data-editor requirements (README sections, main script, paths, packages, seeds, missing files, exported outputs), then review what the files cannot show.",
+    inputs: "Replication package folder",
+    outcome: "Static check ledger and a checklist of required changes",
+    config: replicationReadiness,
   },
 ];
 

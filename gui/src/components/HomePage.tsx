@@ -24,6 +24,8 @@ export default function HomePage({
   onNewReview,
   onContinueReview,
   onNavigate,
+  onSetUp,
+  onExampleReview,
 }: {
   projects: RecentProject[];
   projectsLoading: boolean;
@@ -37,6 +39,10 @@ export default function HomePage({
   onNewReview: () => void;
   onContinueReview: () => void;
   onNavigate: (page: AppPage) => void;
+  /** Reopen the Get started guide. */
+  onSetUp?: () => void;
+  /** Open the bundled Example Review (no model call). */
+  onExampleReview?: () => void;
 }) {
   const actions = [
     {
@@ -146,6 +152,29 @@ export default function HomePage({
               </button>
             ))}
           </div>
+          {(onSetUp || onExampleReview) && (
+            <p className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-neutral-400">
+              <span>New to Pipeline?</span>
+              {onSetUp && (
+                <button
+                  type="button"
+                  onClick={onSetUp}
+                  className="font-semibold text-gray-700 underline decoration-gray-300 underline-offset-2 hover:text-gray-950 hover:decoration-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-neutral-200 dark:decoration-neutral-600 dark:hover:text-neutral-50"
+                >
+                  Set up Pipeline
+                </button>
+              )}
+              {onExampleReview && (
+                <button
+                  type="button"
+                  onClick={onExampleReview}
+                  className="font-semibold text-gray-700 underline decoration-gray-300 underline-offset-2 hover:text-gray-950 hover:decoration-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-neutral-200 dark:decoration-neutral-600 dark:hover:text-neutral-50"
+                >
+                  See an example Review
+                </button>
+              )}
+            </p>
+          )}
         </section>
 
         <div className="mt-12 max-w-3xl">

@@ -164,6 +164,10 @@ describe("Workbench DTO boundary", () => {
     expect(invoke).toHaveBeenLastCalledWith("workbench_run_execution", {
       request: runRequest,
     });
+    await executionClient.detectToolchains("workspace_fixture");
+    expect(invoke).toHaveBeenLastCalledWith("workbench_detect_toolchains", {
+      workspaceId: "workspace_fixture",
+    });
 
     await recipeClient.startRecipe({
       sessionId: "session_fixture",

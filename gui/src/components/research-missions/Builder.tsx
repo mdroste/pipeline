@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { taskClient } from "../../lib/taskClient";
 import { type SessionChoice } from "../../lib/taskTypes";
@@ -54,6 +54,7 @@ export default function MissionBuilder({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const choiceVersion = useRef(0);
+  const blockedId = useId();
   useEffect(() => {
     let live = true;
     void Promise.all([
@@ -111,12 +112,28 @@ export default function MissionBuilder({
     patch({ policy: { ...draft.definition.policy, ...update } });
   }
   const d = draft.definition;
+  // Criteria keep their raw lines while typing; blank lines are not criteria.
+  const criteria = d.criteria.map((c) => c.trim()).filter(Boolean);
+  const blocked = !draft.sessionId
+    ? "Choose a project conversation."
+    : !choices
+      ? error
+        ? "The conversation’s project settings could not be loaded."
+        : "Loading the conversation’s project settings…"
+      : !d.name.trim()
+        ? "Name the automation."
+        : !d.objective.trim()
+          ? "Describe the research question and scope."
+          : !criteria.length
+            ? "Add at least one completion criterion."
+            : "";
   async function prepare() {
+    if (blocked) return;
     setBusy(true);
     setError("");
     try {
       const m = await missionClient.prepare(
-        d,
+        { ...d, criteria },
         draft.sessionId,
         draft.operationId,
       );
@@ -526,17 +543,16 @@ export default function MissionBuilder({
       )}
       <button
         className="task-primary"
-        disabled={
-          busy ||
-          !choices ||
-          !d.name.trim() ||
-          !d.objective.trim() ||
-          !d.criteria.length ||
-          d.criteria.some((c) => !c.trim())
-        }
+        disabled={busy || Boolean(blocked)}
+        aria-describedby={blocked ? blockedId : undefined}
       >
         {busy ? "Preparing…" : "Preview research automation →"}
       </button>
+      {blocked && (
+        <p id={blockedId} className="task-muted">
+          {blocked}
+        </p>
+      )}
       <p className="task-muted">
         Review the preview before starting. Starting allows the automation to
         run actions within the limits above. Keep Pipeline running and this

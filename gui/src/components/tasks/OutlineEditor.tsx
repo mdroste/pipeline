@@ -16,6 +16,7 @@ import {
   STEP_KIND_LABELS,
 } from "./language";
 import { BindingPicker, ConditionEditor } from "./ConditionEditor";
+import { NumberField } from "./NumberField";
 
 const ADD_GROUPS: [string, Step["kind"][]][] = [
   [
@@ -231,13 +232,10 @@ function StepEditor({
       {step.kind === "delay" && (
         <label className="task-field">
           Wait (minutes)
-          <input
-            type="number"
+          <NumberField
             min={1}
             value={Math.round(step.seconds / 60)}
-            onChange={(event) =>
-              set({ seconds: Math.max(1, Number(event.target.value)) * 60 })
-            }
+            onChange={(minutes) => set({ seconds: minutes * 60 })}
           />
         </label>
       )}
@@ -268,19 +266,11 @@ function StepEditor({
         <>
           <label className="task-field">
             Maximum repetitions
-            <input
-              type="number"
+            <NumberField
               min={1}
               max={32}
               value={step.maxIterations}
-              onChange={(event) =>
-                set({
-                  maxIterations: Math.min(
-                    32,
-                    Math.max(1, Number(event.target.value)),
-                  ),
-                })
-              }
+              onChange={(maxIterations) => set({ maxIterations })}
             />
           </label>
           <ConditionEditor
@@ -311,19 +301,11 @@ function StepEditor({
           />
           <label className="task-field">
             Maximum items
-            <input
-              type="number"
+            <NumberField
               min={1}
               max={64}
               value={step.maxItems}
-              onChange={(event) =>
-                set({
-                  maxItems: Math.min(
-                    64,
-                    Math.max(1, Number(event.target.value)),
-                  ),
-                })
-              }
+              onChange={(maxItems) => set({ maxItems })}
             />
           </label>
         </>

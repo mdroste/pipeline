@@ -1,4 +1,5 @@
 import { useState, type RefObject } from "react";
+import { confirmDialog, promptDialog } from "../../components/DialogService";
 import { conversationClient } from "../../lib/workbench/conversationClient";
 import { newOperation } from "../../lib/workspaceSessionState";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
@@ -57,7 +58,15 @@ export function useWorkspaceSessionMutations({
   };
 
   const renameSession = async (session: WorkbenchSession) => {
-    const answer = window.prompt("Conversation title", session.title);
+    const answer = await promptDialog(
+      "Choose a new title for this conversation.",
+      {
+        title: "Rename conversation",
+        label: "Conversation title",
+        defaultValue: session.title,
+        confirmLabel: "Rename",
+      },
+    );
     if (answer === null) return;
     const title = answer.trim();
     if (!title || title === session.title) return;
@@ -79,9 +88,14 @@ export function useWorkspaceSessionMutations({
 
   const deleteSession = async (session: WorkbenchSession) => {
     if (
-      !window.confirm(
+      !(await confirmDialog(
         `Delete “${session.title}”? Its transcript and ChatGPT history are removed permanently. Research records it produced stay with their project.`,
-      )
+        {
+          title: "Delete conversation",
+          confirmLabel: "Delete",
+          destructive: true,
+        },
+      ))
     )
       return;
     await conversationClient.deleteSession({

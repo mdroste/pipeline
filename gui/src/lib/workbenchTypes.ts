@@ -1,5 +1,7 @@
 /** App-owned Workbench DTOs. Raw Codex protocol payloads never cross this boundary. */
 
+import type { ExecutionAdapter } from "./workbench/toolchains";
+
 export interface WorkbenchError {
   code: string;
   message: string;
@@ -177,6 +179,18 @@ export interface RateLimitBucket {
 export interface WorkspaceRateLimits {
   source: "perBucket" | "legacy";
   buckets: RateLimitBucket[];
+}
+
+/** The latest usage report from Claude Code in this app session. */
+export interface ClaudeRateLimit {
+  status: "allowed" | "allowed_warning" | "rejected";
+  /** Unix seconds. */
+  resetsAt: number | null;
+  rateLimitType: string | null;
+  usedPercent: number | null;
+  isUsingOverage: boolean;
+  /** Unix milliseconds when Pipeline received the report. */
+  observedAt: number;
 }
 
 export interface SendTurnRequest {
@@ -523,7 +537,7 @@ export interface ExecutionProfile {
   id: string;
   workspaceId: string;
   name: string;
-  adapter: "latex" | "stata" | "command";
+  adapter: ExecutionAdapter;
   argv: string[];
   cwd: string;
   environment: Record<string, string>;

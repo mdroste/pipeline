@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { router } from "./lib/router";
@@ -66,12 +66,24 @@ vi.mock("./hooks/usePipeline", () => ({
   }),
 }));
 vi.mock("./lib/platform", () => ({ isMac: false }));
-vi.mock(
-  "./components/PaperSelector",
-  async () =>
-    (await import("./test/appShellFixtures")).createAppComponentMocks(mocks)
-      .PaperSelector,
-);
+vi.mock("./components/PaperSelector", async () => {
+  const { default: Fixture } = (
+    await import("./test/appShellFixtures")
+  ).createAppComponentMocks(mocks).PaperSelector;
+  // Also shows the selection App holds, which must survive a remount.
+  return {
+    default: (
+      props: Parameters<typeof Fixture>[0] & {
+        selection?: { paths: string[] } | null;
+      },
+    ) => (
+      <>
+        <span>Shown input: {props.selection?.paths.join(", ") ?? "none"}</span>
+        <Fixture {...props} />
+      </>
+    ),
+  };
+});
 vi.mock(
   "./components/WorkflowPanel",
   async () =>
@@ -664,5 +676,174 @@ describe("App launch", () => {
     await act(async () => finish(queuedRun("late")));
     expect(screen.getByText("History workspace")).toBeVisible();
     expect(router.route).toEqual({ page: "history" });
+  });
+
+  it("keeps the chosen input visible after leaving the setup, and starts with it", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", { name: "Choose test paper" }),
+    );
+    expect(screen.getByText("Shown input: /tmp/test-paper.pdf")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Review designer" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Close workflow editor" }),
+    );
+
+    expect(
+      await screen.findByText("Shown input: /tmp/test-paper.pdf"),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Start review" }),
+      ).toBeEnabled(),
+    );
+    await user.click(screen.getByRole("button", { name: "Start review" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Generate report" }),
+    );
+    await waitFor(() =>
+      expect(enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({ paperPath: "/tmp/test-paper.pdf" }),
+      ),
+    );
+  });
+
+  it("reopens the run options with their values when the launch is refused", async () => {
+    const defaultInvoke = invoke.getMockImplementation()!;
+    invoke.mockImplementation(
+      (
+        command: string,
+        args?: { expectedProfileConfigSnapshotId?: string | null },
+      ) => {
+        if (command === "get_run_setup")
+          return Promise.resolve({
+            ...runSetup(),
+            variables: [{ key: "code", label: "Code" }],
+          });
+        if (
+          command === "get_execution_plan" &&
+          args?.expectedProfileConfigSnapshotId
+        )
+          return Promise.reject(
+            new Error("Code does not match the required format."),
+          );
+        return defaultInvoke(command, args);
+      },
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", { name: "Choose test paper" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Start review" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Report options",
+    });
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Code" }),
+      "abc",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+
+    const reopened = await screen.findByRole("dialog", {
+      name: "Report options",
+    });
+    expect(within(reopened).getByRole("alert")).toHaveTextContent(
+      "Code does not match the required format.",
+    );
+    expect(within(reopened).getByRole("textbox", { name: "Code" })).toHaveValue(
+      "abc",
+    );
+
+    await user.click(within(reopened).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByText("The review could not be started.")).toBeVisible();
+    expect(
+      screen.queryByText("Workflow setup could not be loaded."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start review" })).toBeEnabled();
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("reopens refused run options from the reloaded setup when the workflow changed", async () => {
+    const defaultInvoke = invoke.getMockImplementation()!;
+    let setupId = "first-config";
+    invoke.mockImplementation(
+      (
+        command: string,
+        args?: { expectedProfileConfigSnapshotId?: string | null },
+      ) => {
+        if (command === "get_run_setup")
+          return Promise.resolve({
+            ...runSetup("deep-review", setupId),
+            variables: [
+              { key: "code", label: "Code" },
+              ...(setupId === "second-config"
+                ? [{ key: "venue", label: "Venue" }]
+                : []),
+            ],
+          });
+        if (
+          command === "get_execution_plan" &&
+          args?.expectedProfileConfigSnapshotId === "first-config"
+        ) {
+          // The workflow is saved while the options are being filled in.
+          setupId = "second-config";
+          return Promise.reject(
+            new Error(
+              "The active profile or settings changed while run inputs were being collected. Reload the run setup and try again.",
+            ),
+          );
+        }
+        return defaultInvoke(command, args);
+      },
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", { name: "Choose test paper" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Start review" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Report options",
+    });
+    await user.type(
+      within(dialog).getByRole("textbox", { name: "Code" }),
+      "abc",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+
+    const reopened = await screen.findByRole("dialog", {
+      name: "Report options",
+    });
+    expect(within(reopened).getByRole("alert")).toHaveTextContent(
+      "The workflow changed while you were entering run options.",
+    );
+    expect(within(reopened).getByRole("alert")).not.toHaveTextContent(
+      "Reload the run setup",
+    );
+    expect(within(reopened).getByRole("textbox", { name: "Code" })).toHaveValue(
+      "abc",
+    );
+    await user.type(
+      within(reopened).getByRole("textbox", { name: "Venue" }),
+      "JPE",
+    );
+    await user.click(
+      within(reopened).getByRole("button", { name: "Continue" }),
+    );
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        "get_execution_plan",
+        expect.objectContaining({
+          expectedProfileConfigSnapshotId: "second-config",
+          variables: { code: "abc", venue: "JPE" },
+        }),
+      ),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Generate report" }),
+    ).toBeVisible();
   });
 });

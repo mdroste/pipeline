@@ -5,6 +5,8 @@ import { confirmDialog, notify } from "./DialogService";
 import ComparePage from "./ComparePage";
 import ErrorBoundary from "./ErrorBoundary";
 import ReportWorkspace from "./ReportWorkspace";
+import useListScrollMemory from "./history-page/useListScrollMemory";
+import useRefreshWhenRunsFinish from "./history-page/useRefreshWhenRunsFinish";
 import type {
   Project,
   RunSummary,
@@ -85,8 +87,13 @@ function fmtDate(iso: string): string {
   });
 }
 
+const isRunning = (run: RunSummary) => run.status === "running";
+const RUNNING_TITLE =
+  "This review is still running. Its report opens here when it finishes.";
+
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
+    running: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
     done: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
     degraded:
       "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
@@ -150,6 +157,37 @@ export default function HistoryPage({
     [],
   );
 
+  // The route can change while this page stays mounted, and App may supply
+  // the cited source just after the route commits.
+  useEffect(() => {
+    setOpenRunId(initialRunId ?? null);
+  }, [initialRunId]);
+  useEffect(() => {
+    setOpenSourceSelection(initialSourceSelection ?? null);
+  }, [initialSourceSelection]);
+
+  // Rows stay on screen during a reload; only the first load replaces them.
+  const showLoading = loading && runs.length === 0;
+  const scroll = useListScrollMemory(
+    [
+      pageNumber,
+      filter,
+      statusFilter,
+      providerFilter,
+      profileFilter,
+      projectFilter,
+      dateFilter,
+      sortOrder,
+    ].join("\0"),
+    !comparing && !openRunId && !showLoading,
+  );
+
+  const openRun = (runId: string) => {
+    scroll.remember();
+    setOpenSourceSelection(null);
+    setOpenRunId(runId);
+  };
+
   const toggleCompareId = (id: string) =>
     setCompareIds((prev) =>
       prev.includes(id)
@@ -166,6 +204,7 @@ export default function HistoryPage({
     const secondCreated = Date.parse(
       runs.find((run) => run.run_id === second)?.created ?? "",
     );
+    scroll.remember();
     if (
       Number.isFinite(firstCreated) &&
       Number.isFinite(secondCreated) &&
@@ -218,6 +257,8 @@ export default function HistoryPage({
   useEffect(() => {
     if (trashOpen) void refreshTrash();
   }, [trashOpen, refreshTrash]);
+
+  useRefreshWhenRunsFinish(runs, refresh);
 
   const needle = filter.trim().toLowerCase();
   const providers = useMemo(
@@ -406,7 +447,7 @@ export default function HistoryPage({
     const run = runs.find((r) => r.run_id === openRunId);
     return (
       // A rendering defect in one saved run must not take down History.
-      <ErrorBoundary>
+      <ErrorBoundary nested>
         <ReportWorkspace
           runId={openRunId}
           summary={run}
@@ -422,7 +463,7 @@ export default function HistoryPage({
 
   // ── List view ──
   return (
-    <div className="flex flex-col h-full">
+    <div ref={scroll.rootRef} className="flex flex-col h-full">
       <div className="flex flex-wrap items-center gap-3 px-4 sm:px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
           Review history
@@ -467,7 +508,7 @@ export default function HistoryPage({
           Compare
         </button>
         <button
-          onClick={refresh}
+          onClick={() => void refresh()}
           className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
           title="Reload"
         >
@@ -496,6 +537,7 @@ export default function HistoryPage({
           >
             <option value="all">All statuses</option>
             {[
+              "running",
               "done",
               "degraded",
               "partial",
@@ -653,13 +695,16 @@ export default function HistoryPage({
         </div>
       )}
 
-      <div className="flex-1 overflow-auto p-4">
-        {error && (
-          <div className="mb-3 p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400">
-            {error}
-          </div>
-        )}
-        {loading ? (
+      {error && (
+        <div
+          role="alert"
+          className="mx-4 mt-4 shrink-0 p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400"
+        >
+          {error}
+        </div>
+      )}
+      <div ref={scroll.listRef} className="flex-1 overflow-auto p-4">
+        {showLoading ? (
           <p className="text-gray-500 dark:text-gray-400 text-sm px-2">
             Loading…
           </p>
@@ -718,23 +763,28 @@ export default function HistoryPage({
                       <input
                         type="checkbox"
                         checked={compareIds.includes(r.run_id)}
+                        disabled={isRunning(r)}
                         onChange={() => toggleCompareId(r.run_id)}
                         className="mt-1 shrink-0"
                         aria-label={`Select ${r.title || r.input_name} for comparison`}
+                        title={isRunning(r) ? RUNNING_TITLE : undefined}
                       />
                     )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <button
-                          onClick={() => {
-                            setOpenSourceSelection(null);
-                            setOpenRunId(r.run_id);
-                          }}
-                          className="text-sm font-medium text-gray-900 dark:text-gray-100 hover:underline truncate"
-                          title="Open this report"
-                        >
-                          {r.title || r.input_name}
-                        </button>
+                        {isRunning(r) ? (
+                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                            {r.title || r.input_name}
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => openRun(r.run_id)}
+                            className="text-sm font-medium text-gray-900 dark:text-gray-100 hover:underline truncate"
+                            title="Open this report"
+                          >
+                            {r.title || r.input_name}
+                          </button>
+                        )}
                         <StatusBadge status={r.status} />
                         {r.tags.map((t) => (
                           <span
@@ -795,15 +845,16 @@ export default function HistoryPage({
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
-                        onClick={() => {
-                          setOpenSourceSelection(null);
-                          setOpenRunId(r.run_id);
-                        }}
-                        className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+                        onClick={() => openRun(r.run_id)}
+                        disabled={isRunning(r)}
+                        title={isRunning(r) ? RUNNING_TITLE : undefined}
+                        className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
                       >
                         Open
                       </button>
-                      {onRerun && r.resumable && (
+                      {/* A running review cannot be resumed, regenerated,
+                          renamed or moved to Trash until it finishes. */}
+                      {!isRunning(r) && onRerun && r.resumable && (
                         <button
                           onClick={() => onRerun(r.run_id, true)}
                           disabled={runInProgress}
@@ -817,42 +868,44 @@ export default function HistoryPage({
                           Resume
                         </button>
                       )}
-                      <details className="relative">
-                        <summary
-                          aria-label={`More actions for ${r.title || r.input_name}`}
-                          className="cursor-pointer list-none rounded px-2 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100"
-                        >
-                          •••
-                        </summary>
-                        <div className="absolute right-0 z-20 mt-1 min-w-36 rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-gray-900">
-                          {onRerun && (
+                      {!isRunning(r) && (
+                        <details className="relative">
+                          <summary
+                            aria-label={`More actions for ${r.title || r.input_name}`}
+                            className="cursor-pointer list-none rounded px-2 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+                          >
+                            •••
+                          </summary>
+                          <div className="absolute right-0 z-20 mt-1 min-w-36 rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                            {onRerun && (
+                              <button
+                                onClick={() => onRerun(r.run_id, false)}
+                                disabled={runInProgress}
+                                className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 disabled:opacity-40"
+                                title={
+                                  runInProgress
+                                    ? "A report is already being generated"
+                                    : "Run the current review design using the saved document and input assessment."
+                                }
+                              >
+                                Regenerate
+                              </button>
+                            )}
                             <button
-                              onClick={() => onRerun(r.run_id, false)}
-                              disabled={runInProgress}
-                              className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 disabled:opacity-40"
-                              title={
-                                runInProgress
-                                  ? "A report is already being generated"
-                                  : "Run the current review design using the saved document and input assessment."
-                              }
+                              onClick={() => startEdit(r)}
+                              className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
                             >
-                              Regenerate
+                              Rename and tag
                             </button>
-                          )}
-                          <button
-                            onClick={() => startEdit(r)}
-                            className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
-                          >
-                            Rename and tag
-                          </button>
-                          <button
-                            onClick={() => deleteRun(r)}
-                            className="block w-full rounded px-2 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
-                          >
-                            Move to Trash
-                          </button>
-                        </div>
-                      </details>
+                            <button
+                              onClick={() => deleteRun(r)}
+                              className="block w-full rounded px-2 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                            >
+                              Move to Trash
+                            </button>
+                          </div>
+                        </details>
+                      )}
                     </div>
                   </div>
                 )}

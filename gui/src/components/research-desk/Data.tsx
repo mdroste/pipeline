@@ -10,6 +10,8 @@ import {
 } from "../../lib/deskClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { addContextObject } from "../WorkspaceContextTray";
+import DataConnectors from "./DataConnectors";
+import DatasetDictionary from "./DatasetDictionary";
 import { button, input, card, muted, type DeskProps } from "./shared";
 export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
   const [metadata, setMetadata] = useState("");
@@ -30,8 +32,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
   const [weights, setWeights] = useState("");
   const [dateRange, setDateRange] = useState("");
   const [samplePrevious, setSamplePrevious] = useState("");
-  const [series, setSeries] = useState("");
-  const [key, setKey] = useState("");
+  const [sheet, setSheet] = useState("");
   const refresh = useCallback(async () => {
     const [d, s, p] = await Promise.all([
       deskClient.records<DatasetVersion>(workspaceId, "dataset"),
@@ -62,7 +63,10 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
       const path = await open({
         multiple: false,
         filters: [
-          { name: "Delimited data (up to 32 MiB)", extensions: ["csv", "tsv"] },
+          {
+            name: "CSV, TSV, Stata or Excel data",
+            extensions: ["csv", "tsv", "dta", "xlsx"],
+          },
         ],
       });
       if (typeof path !== "string") return;
@@ -82,6 +86,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
           transformation: null,
         },
         supersedes || null,
+        sheet.trim() || null,
       );
     });
   return (
@@ -106,7 +111,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
           <input
             aria-label="Data vintage"
             className={input}
-            placeholder="Vintage (YYYY-MM-DD for FRED)"
+            placeholder="Vintage or version (optional)"
             value={vintage}
             onChange={(e) => setVintage(e.target.value)}
           />
@@ -123,18 +128,27 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
               </option>
             ))}
           </select>
+          <input
+            aria-label="Excel sheet"
+            className={input}
+            placeholder="Excel sheet name (optional; first sheet by default)"
+            value={sheet}
+            onChange={(e) => setSheet(e.target.value)}
+          />
         </div>
         <button
           className={button}
           disabled={busy}
           onClick={() => void importData()}
         >
-          Import CSV / TSV
+          Import data file
         </button>
         <p className={muted}>
-          Save a copy of the data with a row count and detected variable types.
-          Missing values are preserved. For large files or other formats, import
-          metadata from an exporter.
+          Import CSV, TSV, Stata .dta (releases 8 and later) or Excel .xlsx
+          files up to 32 MiB. Pipeline saves a copy with the row count, variable
+          labels, value labels and missing-value codes. Stata files up to 2 GiB
+          are catalogued without keeping a copy, so their rows cannot be
+          previewed. For other formats, import metadata from an exporter.
         </p>
       </section>
       <details className={card}>
@@ -227,11 +241,16 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
               <tbody>
                 {preview.rows.map((r, i) => (
                   <tr key={i}>
-                    {r.map((v, j) => (
-                      <td key={j} className="px-2">
-                        {v ?? "Missing"}
-                      </td>
-                    ))}
+                    {r.map((v, j) => {
+                      const code = preview.missingCodes?.find(
+                        (m) => m.row === i && m.column === j,
+                      )?.code;
+                      return (
+                        <td key={j} className="px-2">
+                          {v ?? (code ? `Missing (${code})` : "Missing")}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
@@ -242,49 +261,12 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
           </button>
         </section>
       )}
-      <details className={card}>
-        <summary className="font-semibold">FRED / ALFRED vintage</summary>
-        <input
-          aria-label="FRED series ID"
-          className={input}
-          placeholder="Series ID, e.g. GDP"
-          value={series}
-          onChange={(e) => setSeries(e.target.value)}
-        />
-        <input
-          aria-label="FRED API key"
-          type="password"
-          autoComplete="off"
-          className={input}
-          placeholder="API key for this request only"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-        />
-        <p className={muted}>
-          Download the selected vintage in its original units. First allow data
-          downloads in Library. Pipeline uses the API key for this request only.
-        </p>
-        <button
-          className={button}
-          disabled={busy || !series || !vintage || !key}
-          onClick={() => {
-            const apiKey = key;
-            setKey("");
-            void run(async () => {
-              const receipt = await deskClient.fred(
-                workspaceId,
-                series,
-                vintage,
-                apiKey,
-              );
-              if (receipt.kind === "acquisition")
-                onError(String(receipt.body.error ?? "Acquisition failed"));
-            });
-          }}
-        >
-          Download this vintage
-        </button>
-      </details>
+      <DataConnectors
+        workspaceId={workspaceId}
+        busy={busy}
+        run={run}
+        onError={onError}
+      />
       {datasets.map((d) => (
         <article key={d.id} className={card}>
           <div className="flex gap-2">
@@ -312,28 +294,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
             columns · {d.body.diagnosticsCoverage} ·{" "}
             {d.body.acquisition.requestedVintage ?? "No vintage declared"}
           </p>
-          <div className="max-h-64 overflow-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr>
-                  <th>Variable</th>
-                  <th>Inferred type</th>
-                  <th>Missing</th>
-                  <th>Units</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.body.columns.map((c) => (
-                  <tr key={c.name}>
-                    <td>{c.name}</td>
-                    <td>{c.inferredType}</td>
-                    <td>{c.missing}</td>
-                    <td>{c.units ?? "Undeclared"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DatasetDictionary version={d.body} />
           <button
             className={button}
             onClick={() => addContextObject(workspaceId, reference(d))}

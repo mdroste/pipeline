@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Project,
@@ -164,33 +164,69 @@ export default function ProjectIssueLedgerPanel({
   const [severityFilter, setSeverityFilter] = useState("all");
   const [workflowFilter, setWorkflowFilter] = useState("all");
   const [runFilter, setRunFilter] = useState("all");
+  // The ledger whose notes the drafts were seeded from.
+  const ledgerRef = useRef<ProjectIssueLedger | null>(null);
+  // Only the latest refresh may install its ledger or report its outcome.
+  const refreshRef = useRef(0);
+  // Bumped when the collection or its reports change, so lifecycle, note
+  // and merge responses for the previous scope are discarded.
+  const scopeRef = useRef(0);
 
   const installLedger = (next: ProjectIssueLedger) => {
+    const previousNotes = new Map(
+      ledgerRef.current?.issues.map((issue) => [issue.id, issue.note]) ?? [],
+    );
+    ledgerRef.current = next;
     setLedger(next);
+    // A draft is an unsaved edit only while it differs from the note it
+    // was seeded from; otherwise show the note the backend now holds.
     setNoteDrafts((current) =>
       Object.fromEntries(
-        next.issues.map((issue) => [issue.id, current[issue.id] ?? issue.note]),
+        next.issues.map((issue) => {
+          const draft = current[issue.id];
+          return [
+            issue.id,
+            draft !== undefined && draft !== previousNotes.get(issue.id)
+              ? draft
+              : issue.note,
+          ];
+        }),
       ),
     );
   };
 
+  /** Forget drafts so the next ledger shows the stored notes. With `sent`,
+   *  keep a draft the user changed after it was sent. */
+  const dropDrafts = (issueIds: string[], sent?: string) =>
+    setNoteDrafts((current) => {
+      const next = { ...current };
+      issueIds.forEach((issueId) => {
+        if (sent === undefined || next[issueId] === sent) delete next[issueId];
+      });
+      return next;
+    });
+
   const refresh = async () => {
+    const request = ++refreshRef.current;
+    const isCurrent = () => request === refreshRef.current;
     setLoading(true);
     setError(null);
     try {
-      installLedger(
-        await invoke<ProjectIssueLedger>("sync_project_issue_ledger", {
-          projectId: project.id,
-        }),
+      const next = await invoke<ProjectIssueLedger>(
+        "sync_project_issue_ledger",
+        { projectId: project.id },
       );
+      if (isCurrent()) installLedger(next);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (isCurrent())
+        setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   };
 
   useEffect(() => {
+    ledgerRef.current = null;
     setLedger(null);
     setExpanded(new Set());
     setNoteDrafts({});
@@ -198,6 +234,10 @@ export default function ProjectIssueLedgerPanel({
     setWorkflowFilter("all");
     setRunFilter("all");
     void refresh();
+    return () => {
+      refreshRef.current += 1;
+      scopeRef.current += 1;
+    };
   }, [project.id, project.run_ids.join("\0")]);
 
   const runsById = useMemo(
@@ -295,19 +335,23 @@ export default function ProjectIssueLedgerPanel({
     note: string,
   ) => {
     if (pendingIssueId) return;
+    const scope = scopeRef.current;
     setPendingIssueId(issue.id);
     setError(null);
     try {
-      installLedger(
-        await invoke<ProjectIssueLedger>("update_project_issue", {
-          projectId: project.id,
-          issueId: issue.id,
-          status,
-          note,
-        }),
-      );
+      const updated = await invoke<ProjectIssueLedger>("update_project_issue", {
+        projectId: project.id,
+        issueId: issue.id,
+        status,
+        note,
+      });
+      if (scope !== scopeRef.current) return;
+      // The saved note may differ from the draft (the backend trims it).
+      dropDrafts([issue.id], note);
+      installLedger(updated);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (scope === scopeRef.current)
+        setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setPendingIssueId(null);
     }
@@ -316,16 +360,20 @@ export default function ProjectIssueLedgerPanel({
   const mergeIssue = async (issue: ProjectIssue) => {
     const targetIssueId = mergeTargets[issue.id];
     if (!targetIssueId || pendingIssueId) return;
+    const scope = scopeRef.current;
     setPendingIssueId(issue.id);
     setError(null);
     try {
-      installLedger(
-        await invoke<ProjectIssueLedger>("merge_project_issues", {
-          projectId: project.id,
-          sourceIssueId: issue.id,
-          targetIssueId,
-        }),
-      );
+      const merged = await invoke<ProjectIssueLedger>("merge_project_issues", {
+        projectId: project.id,
+        sourceIssueId: issue.id,
+        targetIssueId,
+      });
+      if (scope !== scopeRef.current) return;
+      // The merge rewrites the target's note; show it rather than the
+      // target's pre-merge draft.
+      dropDrafts([issue.id, targetIssueId]);
+      installLedger(merged);
       setExpanded((current) => {
         const next = new Set(current);
         next.delete(issue.id);
@@ -333,7 +381,8 @@ export default function ProjectIssueLedgerPanel({
         return next;
       });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (scope === scopeRef.current)
+        setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setPendingIssueId(null);
     }

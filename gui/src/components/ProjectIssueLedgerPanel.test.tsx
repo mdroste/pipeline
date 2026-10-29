@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ProjectIssueLedgerPanel from "./ProjectIssueLedgerPanel";
@@ -201,5 +201,162 @@ describe("ProjectIssueLedgerPanel", () => {
       "run_paper",
     );
     expect(screen.getByText("No issues match these filters.")).toBeVisible();
+  });
+
+  it("shows the merged note on the target and keeps it on the next lifecycle change", async () => {
+    const user = userEvent.setup();
+    const mergedNote = "Reappeared after the refactor.";
+    const merged = {
+      ...ledger,
+      issues: [
+        {
+          ...ledger.issues[0],
+          note: mergedNote,
+          occurrences: [
+            ...ledger.issues[0].occurrences,
+            ...ledger.issues[1].occurrences,
+          ],
+        },
+      ],
+    };
+    invoke.mockImplementation(
+      (command: string, args?: { status?: string; note?: string }) => {
+        if (command === "sync_project_issue_ledger")
+          return Promise.resolve(ledger);
+        if (command === "merge_project_issues") return Promise.resolve(merged);
+        if (command === "update_project_issue")
+          return Promise.resolve({
+            ...merged,
+            issues: [
+              {
+                ...merged.issues[0],
+                status: args?.status,
+                note: args?.note?.trim() ?? "",
+              },
+            ],
+          });
+        return Promise.reject(new Error(`unexpected command: ${command}`));
+      },
+    );
+    render(
+      <ProjectIssueLedgerPanel
+        project={project}
+        runs={runs}
+        onOpenRun={() => {}}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Review Retry loop has no bound",
+      }),
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Combine duplicate into" }),
+      "issue-paper",
+    );
+    await user.click(screen.getByRole("button", { name: "Combine" }));
+
+    const note = await screen.findByRole("textbox", {
+      name: "Collection note or decision rationale",
+    });
+    expect(note).toHaveValue(mergedNote);
+    expect(screen.getByRole("button", { name: "Save note" })).toBeDisabled();
+
+    await user.selectOptions(
+      screen.getByRole("combobox", {
+        name: "Lifecycle for Identification assumption is unstated",
+      }),
+      "addressed",
+    );
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("update_project_issue", {
+        projectId: project.id,
+        issueId: "issue-paper",
+        status: "addressed",
+        note: mergedNote,
+      }),
+    );
+  });
+
+  it("resets a saved draft to the stored note so Save note turns off", async () => {
+    const user = userEvent.setup();
+    render(
+      <ProjectIssueLedgerPanel
+        project={project}
+        runs={runs}
+        onOpenRun={() => {}}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Review Identification assumption is unstated",
+      }),
+    );
+    const note = screen.getByRole("textbox", {
+      name: "Collection note or decision rationale",
+    });
+    await user.type(note, "Check the appendix.  ");
+    invoke.mockImplementationOnce(
+      (_command: string, args?: { status?: string; note?: string }) =>
+        Promise.resolve({
+          ...ledger,
+          issues: ledger.issues.map((issue) =>
+            issue.id === "issue-paper"
+              ? { ...issue, note: args?.note?.trim() ?? "" }
+              : issue,
+          ),
+        }),
+    );
+    await user.click(screen.getByRole("button", { name: "Save note" }));
+
+    await waitFor(() => expect(note).toHaveValue("Check the appendix."));
+    expect(screen.getByRole("button", { name: "Save note" })).toBeDisabled();
+  });
+
+  it("ignores a slow ledger refresh for a collection that is no longer selected", async () => {
+    let resolveFirst: (value: unknown) => void = () => {};
+    const otherProject = {
+      ...project,
+      id: "other-project",
+      name: "Other project",
+      run_ids: ["run_code"],
+    };
+    const otherLedger = {
+      ...ledger,
+      project_id: otherProject.id,
+      issues: [ledger.issues[1]],
+    };
+    invoke.mockImplementation(
+      (command: string, args?: { projectId?: string }) => {
+        if (command !== "sync_project_issue_ledger")
+          return Promise.reject(new Error(`unexpected command: ${command}`));
+        if (args?.projectId === project.id)
+          return new Promise((resolve) => {
+            resolveFirst = resolve;
+          });
+        return Promise.resolve(otherLedger);
+      },
+    );
+    const { rerender } = render(
+      <ProjectIssueLedgerPanel
+        project={project}
+        runs={runs}
+        onOpenRun={() => {}}
+      />,
+    );
+    rerender(
+      <ProjectIssueLedgerPanel
+        project={otherProject}
+        runs={runs}
+        onOpenRun={() => {}}
+      />,
+    );
+    expect(await screen.findByText("Retry loop has no bound")).toBeVisible();
+
+    await act(async () => resolveFirst(ledger));
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeEnabled();
+    expect(
+      screen.queryByText("Identification assumption is unstated"),
+    ).not.toBeInTheDocument();
   });
 });

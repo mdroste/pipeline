@@ -5,12 +5,15 @@ use tauri::AppHandle;
 
 mod desktop;
 mod files;
+mod formats;
 mod manifest;
 mod package;
 mod print;
 mod types;
 
 pub(crate) use desktop::{cleanup_print_export, cleanup_stale_print_exports};
+pub use formats::ReportFormatExport;
+use formats::{save_report_format, ReportFormat};
 pub use types::{ExportMode, ExportPackageResult, ExportRunArtifactsResult, ExportSelection};
 
 #[cfg(test)]
@@ -35,6 +38,42 @@ pub async fn save_report_md(
     let clean = output::normalize_math_delimiters(&output::clean_export_markdown(&markdown));
     let name = suggested_name.as_deref().unwrap_or("report.md");
     save_via_dialog(&app, name, "Markdown", "md", clean.into_bytes()).await
+}
+
+/// Save a saved run's report as one self-contained, offline HTML file.
+#[tauri::command]
+pub async fn save_report_html(
+    app: AppHandle,
+    run_id: String,
+) -> Result<Option<ReportFormatExport>, String> {
+    save_report_format(app, run_id, ReportFormat::Html).await
+}
+
+/// Save a saved run's report and findings as a new Word document.
+#[tauri::command]
+pub async fn save_report_docx(
+    app: AppHandle,
+    run_id: String,
+) -> Result<Option<ReportFormatExport>, String> {
+    save_report_format(app, run_id, ReportFormat::Docx).await
+}
+
+/// Save a copy of the reviewed `.docx` with one Word comment per finding.
+#[tauri::command]
+pub async fn save_report_docx_comments(
+    app: AppHandle,
+    run_id: String,
+) -> Result<Option<ReportFormatExport>, String> {
+    save_report_format(app, run_id, ReportFormat::DocxComments).await
+}
+
+/// Save a copy of the reviewed PDF with highlights and notes per finding.
+#[tauri::command]
+pub async fn save_report_annotated_pdf(
+    app: AppHandle,
+    run_id: String,
+) -> Result<Option<ReportFormatExport>, String> {
+    save_report_format(app, run_id, ReportFormat::AnnotatedPdf).await
 }
 
 /// Export one durable run as a complete, self-contained directory. All files

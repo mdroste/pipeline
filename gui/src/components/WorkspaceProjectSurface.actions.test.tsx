@@ -198,3 +198,57 @@ it("debounces focus refreshes for 400ms and watches only at the existing 30-seco
   await act(async () => vi.advanceTimersByTime(400));
   expect(mocks.mutate).toHaveBeenCalledTimes(2);
 });
+async function focusRefresh() {
+  vi.useFakeTimers();
+  act(() => window.dispatchEvent(new Event("focus")));
+  await act(async () => vi.advanceTimersByTime(400));
+  vi.useRealTimers();
+}
+it("checks the folder on focus without disabling the project or clearing an error", async () => {
+  await mount("project-settings");
+  act(() => settingsProps().reportError("The earlier save failed."));
+  let finish!: (value: unknown) => void;
+  mocks.mutate.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await focusRefresh();
+  expect(mocks.mutate).toHaveBeenCalledWith("workspace", { action: "refresh" });
+  expect(document.querySelector("fieldset")).not.toBeDisabled();
+  expect(screen.queryByRole("status")).toBeNull();
+  await act(async () => finish({}));
+  await waitFor(() => expect(mocks.home).toHaveBeenCalledTimes(2));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "The earlier save failed.",
+  );
+  mocks.mutate.mockRejectedValueOnce(new Error("Folder unavailable"));
+  await focusRefresh();
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalledTimes(2));
+  expect(screen.getByRole("alert")).toHaveTextContent(
+    "The earlier save failed.",
+  );
+});
+it("starts a user action only after a focus check finishes", async () => {
+  await mount("project-settings");
+  let finish!: (value: unknown) => void;
+  mocks.mutate.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  await focusRefresh();
+  act(() => void settingsProps().saveSettings({ layout: "revision" }));
+  expect(screen.getByRole("status")).toHaveTextContent("Saving…");
+  expect(mocks.mutate).toHaveBeenCalledTimes(1);
+  await act(async () => finish({}));
+  await waitFor(() =>
+    expect(mocks.mutate).toHaveBeenLastCalledWith(
+      "workspace",
+      expect.objectContaining({ action: "saveHome" }),
+    ),
+  );
+  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
+});

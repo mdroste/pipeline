@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import {
   deskClient,
+  type DatasetVersion,
   type OpenResearchObject,
   type ResearchObject,
 } from "../../lib/deskClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import ReportViewer from "../ReportViewer";
 import { addContextObject } from "../WorkspaceContextTray";
+import ConnectorNotice, { datasetConnector } from "./ConnectorNotice";
 import { button, muted } from "./shared";
 export default function ObjectPane({
   workspaceId,
@@ -75,6 +77,9 @@ export default function ObjectPane({
           {source?.completeness}
         </p>
         <p className={`${muted} mb-4 break-all`}>Version {object.revision}</p>
+        {object.kind === "dataset" && record && (
+          <DatasetNotice record={record} />
+        )}
         {record && typeof record === "object" ? (
           <dl className="space-y-4">
             {Object.entries(record).map(([key, value]) => (
@@ -104,5 +109,19 @@ export default function ObjectPane({
         )}
       </div>
     </section>
+  );
+}
+/** Statistical sources require their notice wherever their data are shown. */
+function DatasetNotice({ record }: { record: Record<string, unknown> }) {
+  const version = record as unknown as DatasetVersion;
+  const connector = datasetConnector(version);
+  if (!connector) return null;
+  return (
+    <div className="mb-4">
+      <ConnectorNotice
+        connector={connector}
+        recorded={version.connector?.notice}
+      />
+    </div>
   );
 }

@@ -69,3 +69,8 @@
 .pdf-reader .pdfViewer {
   --viewer-container-height: 100%;
 }
+/* A host that sets its own minimum height lets the reader shrink to it. */
+.pdf-reader-host > .pdf-reader,
+.pdf-reader-host .pdf-positioner {
+  min-height: 0;
+}

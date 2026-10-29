@@ -1,4 +1,5 @@
 //! Resolve and fingerprint the same executable and environment used at launch.
+use super::adapters;
 use super::types::ExecutionProfile;
 use crate::workbench::research::papers::{hash_file, hash_resolved_file};
 use crate::workbench::store::{WorkbenchError, WorkbenchResult};
@@ -70,17 +71,20 @@ pub(crate) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Val
     };
     let (hash, size) = hash_file(&executable)?;
     let mut launch_files = Vec::new();
+    let document_extensions = adapters::launch_file_extensions(&profile.adapter);
     for argument in prefix.iter().chain(profile.argv.iter().skip(1)) {
         let path = Path::new(argument);
         if !path
             .extension()
             .and_then(|s| s.to_str())
             .is_some_and(|ext| {
+                let ext = ext.to_ascii_lowercase();
                 [
                     "sh", "bash", "zsh", "py", "r", "jl", "do", "pl", "rb", "tex", "js", "cjs",
                     "mjs",
                 ]
-                .contains(&ext.to_ascii_lowercase().as_str())
+                .contains(&ext.as_str())
+                    || document_extensions.contains(&ext.as_str())
             })
         {
             continue;
@@ -96,16 +100,33 @@ pub(crate) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Val
         }
     }
     let mut startup = Vec::new();
-    if profile.argv[0] == "/bin/zsh" {
-        if let Some(home) = profile
-            .environment
-            .get("ZDOTDIR")
-            .and_then(Value::as_str)
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("ZDOTDIR").map(PathBuf::from))
-            .or_else(dirs::home_dir)
-        {
-            for name in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
+    const ZSH_STARTUP: [&str; 4] = [".zshenv", ".zprofile", ".zshrc", ".zlogin"];
+    const BASH_STARTUP: [&str; 4] = [".bash_profile", ".bash_login", ".profile", ".bashrc"];
+    // `/bin/zsh` keeps its original identity for every adapter. Other launcher
+    // shells are recognized only for Stata custom launchers.
+    let startup_files = if profile.argv[0] == "/bin/zsh"
+        || (adapters::waits_for_stata_launcher(&profile.adapter, &profile.argv)
+            && profile.argv[0].ends_with("/zsh"))
+    {
+        Some((ZSH_STARTUP, true))
+    } else if adapters::waits_for_stata_launcher(&profile.adapter, &profile.argv) {
+        Some((BASH_STARTUP, false))
+    } else {
+        None
+    };
+    if let Some((names, honors_zdotdir)) = startup_files {
+        let zdotdir = honors_zdotdir
+            .then(|| {
+                profile
+                    .environment
+                    .get("ZDOTDIR")
+                    .and_then(Value::as_str)
+                    .map(PathBuf::from)
+                    .or_else(|| std::env::var_os("ZDOTDIR").map(PathBuf::from))
+            })
+            .flatten();
+        if let Some(home) = zdotdir.or_else(dirs::home_dir) {
+            for name in names {
                 let path = home.join(name);
                 startup.push(if path.is_file() {
                     let (_, hash, size) = hash_resolved_file(&path, "shell startup file")?;
@@ -116,7 +137,21 @@ pub(crate) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Val
             }
         }
     }
-    Ok(
-        json!({"executable":executable,"invocationPath":invocation_path,"prefixArgs":prefix,"path":path,"pathExt":pathext.map(|s| s.to_string_lossy().into_owned()),"pythonEnvironment":python_environment,"hash":hash,"size":size,"shellStartupFiles":startup,"launchFiles":launch_files,"coverage":"executable, directly referenced launch scripts, known shell startup files and declared inputs; shell-string and transitive dependencies require explicit input declarations"}),
-    )
+    let mut manifest = json!({"executable":executable,"invocationPath":invocation_path,"prefixArgs":prefix,"path":path,"pathExt":pathext.map(|s| s.to_string_lossy().into_owned()),"pythonEnvironment":python_environment,"hash":hash,"size":size,"shellStartupFiles":startup,"launchFiles":launch_files,"coverage":"executable, directly referenced launch scripts, known shell startup files and declared inputs; shell-string and transitive dependencies require explicit input declarations"});
+    // Structured adapters add their environment files. Profiles without one
+    // keep the exact launch identity they were authorized with.
+    if let Some(names) = adapters::environment_files(&profile.adapter, &profile.argv) {
+        if let Some(script) =
+            adapters::launch_script(&profile.adapter, &profile.argv, cfg!(windows))
+        {
+            if !Path::new(&profile.cwd).join(&script).is_file() {
+                return Err(WorkbenchError::invalid(format!(
+                    "{script} was not found in the working folder. Create it or correct the profile before reviewing the command."
+                )));
+            }
+        }
+        manifest["environmentIdentity"] =
+            super::toolchains::environment_identity(Path::new(&profile.cwd), names)?;
+    }
+    Ok(manifest)
 }

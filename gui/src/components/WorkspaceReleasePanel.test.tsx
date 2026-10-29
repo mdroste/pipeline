@@ -1,0 +1,150 @@
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import WorkspaceReleasePanel from "./WorkspaceReleasePanel";
+
+const mocks = vi.hoisted(() => ({
+  inspectResearchArchive: vi.fn(),
+  importResearchArchive: vi.fn(),
+  exportResearchArchive: vi.fn(),
+  performanceBudgets: vi.fn(),
+  open: vi.fn(),
+  save: vi.fn(),
+  confirmDialog: vi.fn(),
+  notify: vi.fn(),
+}));
+vi.mock("../lib/workbench/releaseClient", () => ({ releaseClient: mocks }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  open: mocks.open,
+  save: mocks.save,
+}));
+vi.mock("./DialogService", () => ({
+  confirmDialog: mocks.confirmDialog,
+  notify: mocks.notify,
+}));
+
+// jsdom has no modal dialog support; mirror the open attribute it toggles.
+const original = {
+  showModal: HTMLDialogElement.prototype.showModal,
+  close: HTMLDialogElement.prototype.close,
+};
+beforeAll(() => {
+  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+    this.setAttribute("open", "");
+  };
+  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+    this.removeAttribute("open");
+  };
+});
+afterAll(() => {
+  HTMLDialogElement.prototype.showModal = original.showModal;
+  HTMLDialogElement.prototype.close = original.close;
+});
+
+const onError = vi.fn();
+const run = (action: () => Promise<void>) =>
+  void action().catch((cause: Error) => onError(cause.message));
+const panel = () => (
+  <WorkspaceReleasePanel
+    view="backup"
+    selectedPaper={null}
+    busy={false}
+    onAction={run}
+    onError={onError}
+  />
+);
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.performanceBudgets.mockResolvedValue([]);
+  mocks.open.mockResolvedValue("/backups/research.pwrx");
+  mocks.inspectResearchArchive.mockResolvedValue({
+    workspaceRoots: ["/old/paper-a", "/old/paper-b"],
+    portabilityNote: "Command profiles must be tested again.",
+  });
+});
+
+it("maps archived project folders in a form instead of a native prompt", async () => {
+  mocks.confirmDialog.mockResolvedValue(true);
+  mocks.importResearchArchive.mockRejectedValue(
+    new Error("stop before reload"),
+  );
+  render(panel());
+  fireEvent.click(screen.getByRole("button", { name: "Restore archive" }));
+  await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalled());
+  expect(mocks.confirmDialog.mock.calls[0][0]).toContain("/old/paper-a");
+
+  mocks.open.mockResolvedValueOnce("/new/paper-a");
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Choose folder for /old/paper-a",
+    }),
+  );
+  const first = screen.getByRole("textbox", {
+    name: "Folder on this computer for /old/paper-a",
+  });
+  await waitFor(() => expect(first).toHaveValue("/new/paper-a"));
+  expect(mocks.open).toHaveBeenLastCalledWith({
+    directory: true,
+    multiple: false,
+  });
+
+  fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+  await waitFor(() =>
+    expect(mocks.importResearchArchive).toHaveBeenCalledWith(
+      "/backups/research.pwrx",
+      { "/old/paper-a": "/new/paper-a", "/old/paper-b": null },
+    ),
+  );
+  expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+  await waitFor(() =>
+    expect(onError).toHaveBeenCalledWith("stop before reload"),
+  );
+});
+
+it("rejects a relative folder path and lets the user cancel the restore", async () => {
+  mocks.confirmDialog.mockResolvedValue(true);
+  render(panel());
+  fireEvent.click(screen.getByRole("button", { name: "Restore archive" }));
+  const first = await screen.findByRole("textbox", {
+    name: "Folder on this computer for /old/paper-a",
+  });
+  fireEvent.change(first, { target: { value: "paper-a" } });
+  fireEvent.click(screen.getByRole("button", { name: "Restore" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Enter a full folder path",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("button", { name: "Restore" })).toBeNull(),
+  );
+  expect(mocks.importResearchArchive).not.toHaveBeenCalled();
+});
+
+it("stops before choosing folders when the restore warning is declined", async () => {
+  mocks.confirmDialog.mockResolvedValue(false);
+  render(panel());
+  fireEvent.click(screen.getByRole("button", { name: "Restore archive" }));
+  await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalled());
+  expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+  expect(mocks.importResearchArchive).not.toHaveBeenCalled();
+});
+
+it("reports a finished export without a native alert", async () => {
+  mocks.save.mockResolvedValue("/backups/out.pwrx");
+  mocks.exportResearchArchive.mockResolvedValue({
+    workspaceCount: 2,
+    sessionCount: 3,
+    blobCount: 4,
+    portabilityNote: "Folders are not included.",
+  });
+  render(panel());
+  fireEvent.click(
+    screen.getByRole("button", { name: "Export research backup" }),
+  );
+  await waitFor(() =>
+    expect(mocks.notify).toHaveBeenCalledWith(
+      expect.stringContaining("Exported 2 workspace(s)"),
+      "success",
+    ),
+  );
+});

@@ -223,3 +223,137 @@ it("opens the exact portfolio selected by a shell notification", async () => {
     id: "portfolio",
   });
 });
+
+it("keeps blank lines while typing input files and drops them at Start", async () => {
+  render(
+    <Builder
+      initialMode="unsupervised"
+      initialSessionId="source"
+      onStarted={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("Research topics and questions"), {
+    target: { value: "Study source transmission" },
+  });
+  const files = screen.getByLabelText("Research input files");
+  for (const value of ["data/a.csv\n", "data/a.csv\n\n data/b.csv "]) {
+    fireEvent.change(files, { target: { value } });
+    expect(files).toHaveValue(value);
+  }
+  fireEvent.click(
+    screen.getByRole("button", { name: "Start research discovery" }),
+  );
+  await waitFor(() =>
+    expect(
+      mocks.invoke.mock.calls.find((c) => c[0] === "discovery_start")?.[1]
+        .request.definition.inputPaths,
+    ).toEqual(["data/a.csv", "data/b.csv"]),
+  );
+});
+it("says why Start is unavailable", () => {
+  render(
+    <Builder
+      initialMode="unsupervised"
+      onStarted={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  const start = screen.getByRole("button", {
+    name: "Start research discovery",
+  });
+  expect(start).toBeDisabled();
+  expect(start).toHaveAccessibleDescription(
+    "Describe the topics or questions to research.",
+  );
+  fireEvent.change(screen.getByLabelText("Research topics and questions"), {
+    target: { value: "Study source transmission" },
+  });
+  fireEvent.change(screen.getByLabelText("Shortlisted projects"), {
+    target: { value: "3" },
+  });
+  expect(start).toBeDisabled();
+  expect(start).toHaveAccessibleDescription(
+    "Choose 1–9 papers, no more than the shortlist size.",
+  );
+});
+it("opens a paper in a bounded reader and focuses it", async () => {
+  const scroll = vi.fn();
+  const original = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = scroll;
+  const manuscript = {
+    title: "Transmission paper",
+    abstractText: "Abstract",
+    markdown: "# Transmission paper",
+    latex: "",
+    bibliography: "",
+    evidenceIds: [],
+    limitations: [],
+    responseToReview: [],
+    files: [],
+  };
+  mocks.invoke.mockImplementation(async (name: string) =>
+    name === "discovery_paper"
+      ? {
+          candidateId: 1,
+          state: "completed",
+          reason: "",
+          rounds: [],
+          challenges: [],
+          evidence: {},
+          assessment: null,
+          versions: [
+            {
+              version: 2,
+              hash: "h",
+              manuscript,
+              artifacts: {},
+              reviews: [],
+              externalReview: null,
+            },
+          ],
+        }
+      : null,
+  );
+  try {
+    render(
+      <Detail
+        run={{
+          ...run,
+          state: "completed",
+          papers: [
+            {
+              candidateId: 1,
+              title: "Transmission paper",
+              state: "completed",
+              reason: "",
+              rounds: 2,
+              versions: 2,
+              reviewCount: 0,
+              hash: "h",
+              assessment: null,
+            },
+          ],
+        }}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const opener = screen.getByRole("button", {
+      name: "Read paper and reviews",
+    });
+    fireEvent.click(opener);
+    const heading = await screen.findByRole("heading", {
+      name: "Transmission paper",
+      level: 3,
+    });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(scroll).toHaveBeenCalled();
+    const viewer = await screen.findByText("# Transmission paper");
+    expect(viewer.closest(".discovery-reader")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Close paper reader" }));
+    expect(opener).toHaveFocus();
+  } finally {
+    Element.prototype.scrollIntoView = original;
+  }
+});

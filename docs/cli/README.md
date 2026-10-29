@@ -110,6 +110,9 @@ This example requires a workflow declaring `journal`, `audience`, and
 requirements. It makes no model call and does not extract the document.
 Add `--json` to inspect the planned stages, selected reviewers, workflow
 fingerprint, and upper limits on step executions and provider attempts.
+`check` also prints a rough range of model calls and, for direct API
+connections, API list-price cost; `--json` includes it as `usage_estimate`
+with the Review limits that will apply.
 
 For PDF inputs:
 
@@ -138,7 +141,21 @@ report for each input. Pipeline checks for output-name collisions before
 starting; existing files require `--force` to replace.
 
 The batch keeps the workflow and settings selected at its start. Changes made
-in the app during execution apply to a later batch. A failed item does not stop
+in the app during execution apply to a later batch.
+
+## Limit cost, calls, or time
+
+`run` and `batch` accept `--max-cost <USD>`, `--max-calls <N>`, and
+`--max-minutes <N>`. They override **Settings → Reviews → Review limits** for
+that command only; in a batch they apply to each document's Review. When a
+limit is reached, steps already running finish, later steps are recorded as
+stopped at the limit, and the partial report is saved; the command then exits
+with a failure status. Cost counts direct API calls at API list prices;
+subscription calls count toward the call and time limits.
+
+```bash
+pipeline-cli run --input paper.pdf --max-cost 2 --max-minutes 30
+``` A failed item does not stop
 the remaining files, but the command exits with a failure status if any item
 fails.
 
@@ -170,6 +187,16 @@ or invalid dependencies, unsupported providers or tools, invalid file access,
 unbounded repeated steps, invalid output schemas, and definitions without an
 enabled Sequential report step. Supported older exports are converted to the
 current schema, version 8.
+
+A step with `"kind": "analyzer"` runs a Pipeline check instead of a model call.
+It names the check and its version, for example
+`"analyzer": {"id": "reference_audit", "version": 1, "options": {"network": true}}`,
+and must not set a prompt, providers, model, effort, output schema, or fan-out.
+The available checks are `reference_audit` (options `network`,
+`check_retractions`, `max_references`) and `replication_static` (option
+`max_files`); see [Pipeline checks](../reviews.md#pipeline-checks). Pipeline
+versions without analyzer steps reject such a workflow as having unknown
+fields rather than running it as a model step.
 
 Use a file directly without installing it:
 

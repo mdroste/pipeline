@@ -228,6 +228,70 @@ describe("EnginesPanel", () => {
     ).toHaveLength(1);
   });
 
+  it("polls an inherited install until it ends and then shows the result", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const running = engine({
+        installing: true,
+        install_progress: {
+          engine_id: "paddleocr-vl-parser",
+          phases: { runtime: "done", packages: "done", models: "running" },
+          log_lines: ["Downloading model weights in the background..."],
+        },
+      });
+      let status = running;
+      invoke.mockImplementation((cmd: string) =>
+        cmd === "list_engines" ? Promise.resolve([status]) : Promise.resolve(),
+      );
+      const onSystemChange = vi.fn();
+      const onEngineStatusChange = vi.fn();
+      render(
+        <EnginesPanel
+          onSystemChange={onSystemChange}
+          onEngineStatusChange={onEngineStatusChange}
+        />,
+      );
+      expect(
+        await screen.findByRole("button", { name: "Cancel" }),
+      ).toBeEnabled();
+
+      status = engine({ installed: true, version: "3.7.0" });
+      await act(() => vi.advanceTimersByTimeAsync(2500));
+
+      expect(await screen.findByText("installed v3.7.0")).toBeVisible();
+      expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+      expect(onSystemChange).toHaveBeenCalledTimes(1);
+      expect(onEngineStatusChange).toHaveBeenLastCalledWith([status]);
+      const polls = invoke.mock.calls.length;
+      await act(() => vi.advanceTimersByTimeAsync(10000));
+      expect(invoke.mock.calls).toHaveLength(polls);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports an inherited install that ended without installing", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      let status = engine({ installing: true });
+      invoke.mockImplementation((cmd: string) =>
+        cmd === "list_engines" ? Promise.resolve([status]) : Promise.resolve(),
+      );
+      render(<EnginesPanel />);
+      await screen.findByRole("button", { name: "Cancel" });
+      status = engine();
+      await act(() => vi.advanceTimersByTimeAsync(2500));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "PaddleOCR-VL 1.6 Full Parser was not installed.",
+      );
+      expect(
+        screen.getByRole("button", { name: /Install \(~2\.9 GB\)/ }),
+      ).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("cancel button invokes cancel_engine_install", async () => {
     invoke.mockImplementation((cmd: string) => {
       if (cmd === "list_engines") return Promise.resolve([engine()]);

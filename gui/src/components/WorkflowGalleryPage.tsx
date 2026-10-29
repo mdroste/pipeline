@@ -167,14 +167,21 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
             return (
               <article
                 key={item.id}
-                className="flex min-h-72 flex-col rounded-2xl border border-gray-200 bg-white p-5 shadow-sm dark:border-gray-800 dark:bg-gray-900/40"
+                // Guided setup links focus a template card by this id.
+                id={`gallery-${item.id}`}
+                tabIndex={-1}
+                aria-labelledby={`gallery-${item.id}-name`}
+                className="flex min-h-72 flex-col rounded-2xl border border-gray-200 bg-white p-5 shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:border-gray-800 dark:bg-gray-900/40"
               >
                 <div className="flex items-start gap-4">
                   <div className="min-w-0 flex-1">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-gray-500 dark:text-gray-400">
                       {item.category}
                     </span>
-                    <h2 className="mt-1 text-lg font-semibold text-gray-950 dark:text-gray-50">
+                    <h2
+                      id={`gallery-${item.id}-name`}
+                      className="mt-1 text-lg font-semibold text-gray-950 dark:text-gray-50"
+                    >
                       {item.name}
                     </h2>
                   </div>

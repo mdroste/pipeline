@@ -279,6 +279,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         .read_root
         .as_deref()
         .and_then(|path| crate::pipeline::claude::normalize_cli_root(&path.to_string_lossy()));
+    let usage_before_orientation = crate::pipeline::logging::run_usage();
     let orientation::OrientedDocument {
         orientation,
         orientation_path,
@@ -294,6 +295,13 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         &mut run_writer,
     )
     .await?;
+    // Review limits count document preparation and orientation too.
+    let budget_start = executor::budget::BudgetStart::after_orientation(
+        pipeline_start,
+        &usage_before_orientation,
+        &settings,
+    )
+    .await;
 
     // Adaptive reviews store only their stable core skeleton. Once the
     // validated router has selected allowlisted IDs, assemble this run's
@@ -360,22 +368,25 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         return Err("Pipeline cancelled".into());
     }
 
-    let result = executor::execute_steps(
-        app,
-        &execution_config,
-        &orientation_path,
-        &orientation,
-        &paper_text_path,
-        &document_bundle_path,
-        &scoped_source_path,
-        &paper_type,
-        &survey_hint,
-        &variables,
-        &resolved_inputs,
-        &runtime_extra_sources,
-        &std::collections::HashMap::new(), // no preloaded steps for a fresh run
-        artifact_write_dir.as_deref(),
-        &settings,
+    let result = executor::budget::counted_from(
+        budget_start,
+        executor::execute_steps(
+            app,
+            &execution_config,
+            &orientation_path,
+            &orientation,
+            &paper_text_path,
+            &document_bundle_path,
+            &scoped_source_path,
+            &paper_type,
+            &survey_hint,
+            &variables,
+            &resolved_inputs,
+            &runtime_extra_sources,
+            &std::collections::HashMap::new(), // no preloaded steps for a fresh run
+            artifact_write_dir.as_deref(),
+            &settings,
+        ),
     )
     .await?;
     drop(extra_tmps); // keep temp files alive until steps have run

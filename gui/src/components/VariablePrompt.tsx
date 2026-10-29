@@ -6,11 +6,53 @@ import useModalDialog from "../hooks/useModalDialog";
 interface Props {
   variables: VarSpec[];
   inputSlots?: InputSlot[];
+  /** Values submitted before, restored when a refused launch reopens them. */
+  initialValues?: Record<string, string>;
+  initialInputs?: Record<string, string>;
+  /** Why the last launch with these options failed. */
+  error?: string | null;
   onSubmit: (
     values: Record<string, string>,
     inputs: Record<string, string>,
   ) => void;
   onCancel: () => void;
+}
+
+const characters = (count: number) =>
+  `${count} character${count === 1 ? "" : "s"}`;
+
+/** The backend's rules for a variable value, checked here so a value is
+ *  corrected in the dialog instead of failing the launch. The backend stays
+ *  authoritative: a pattern this browser cannot read is left to it. */
+function variableError(variable: VarSpec, value: string): string | null {
+  if (!value) return null;
+  const { min_length, max_length, pattern } = variable.validation ?? {};
+  const length = Array.from(value).length;
+  if (min_length != null && length < min_length)
+    return `Enter at least ${characters(min_length)}.`;
+  if (max_length != null && length > max_length)
+    return `Enter no more than ${characters(max_length)}.`;
+  if (pattern) {
+    let expression: RegExp | null = null;
+    try {
+      expression = new RegExp(pattern, "u");
+    } catch {
+      expression = null;
+    }
+    if (expression && !expression.test(value))
+      return "This value does not match the format the workflow requires.";
+  }
+  return null;
+}
+
+const isChoice = (variable: VarSpec) =>
+  variable.kind === "choice" && !!variable.choices?.length;
+
+// A choice list shows only its options, so a value outside them (including
+// no default) starts unselected rather than silently showing the first one.
+function initialValue(variable: VarSpec): string {
+  const value = variable.default ?? "";
+  return isChoice(variable) && !variable.choices?.includes(value) ? "" : value;
 }
 
 /** Modal shown before a run when the active profile declares variables and/or
@@ -19,6 +61,9 @@ interface Props {
 export default function VariablePrompt({
   variables,
   inputSlots = [],
+  initialValues,
+  initialInputs,
+  error: launchError,
   onSubmit,
   onCancel,
 }: Props) {
@@ -27,9 +72,13 @@ export default function VariablePrompt({
   const descriptionId = `${idPrefix}-description`;
   const dialogRef = useModalDialog<HTMLDivElement>(onCancel);
   const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(variables.map((v) => [v.key, v.default ?? ""])),
+    Object.fromEntries(
+      variables.map((v) => [v.key, initialValues?.[v.key] ?? initialValue(v)]),
+    ),
   );
-  const [inputs, setInputs] = useState<Record<string, string>>({});
+  const [inputs, setInputs] = useState<Record<string, string>>(() => ({
+    ...initialInputs,
+  }));
   const [pickerError, setPickerError] = useState<string | null>(null);
 
   const set = (key: string, val: string) =>
@@ -83,6 +132,10 @@ export default function VariablePrompt({
     variables.some(
       (variable) => variable.required && !(values[variable.key] ?? "").trim(),
     );
+  const errors = Object.fromEntries(
+    variables.map((v) => [v.key, variableError(v, values[v.key] ?? "")]),
+  );
+  const invalid = Object.values(errors).some(Boolean);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
@@ -107,6 +160,14 @@ export default function VariablePrompt({
         >
           This workflow asks for a few values before generating the report.
         </p>
+        {launchError && (
+          <p
+            role="alert"
+            className="mb-3 break-words rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
+          >
+            {launchError}
+          </p>
+        )}
         {pickerError && (
           <p
             role="alert"
@@ -116,59 +177,83 @@ export default function VariablePrompt({
           </p>
         )}
         <div className="space-y-3">
-          {variables.map((v) => (
-            <div key={v.key}>
-              <label
-                htmlFor={`${idPrefix}-variable-${v.key}`}
-                className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
-              >
-                {v.label || v.key}
-                {v.required && (
-                  <span className="text-red-600 dark:text-red-400"> *</span>
-                )}
-              </label>
-              {v.kind === "choice" && v.choices && v.choices.length > 0 ? (
-                <select
-                  id={`${idPrefix}-variable-${v.key}`}
-                  value={values[v.key] ?? ""}
-                  onChange={(e) => set(v.key, e.target.value)}
-                  className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+          {variables.map((v) => {
+            const error = errors[v.key];
+            const errorId = `${idPrefix}-variable-${v.key}-error`;
+            const errorProps = {
+              "aria-invalid": error ? true : undefined,
+              "aria-describedby": error ? errorId : undefined,
+            };
+            return (
+              <div key={v.key}>
+                <label
+                  htmlFor={`${idPrefix}-variable-${v.key}`}
+                  className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1"
                 >
-                  {v.choices.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              ) : v.kind === "file" ? (
-                <div className="flex gap-2">
-                  <input
+                  {v.label || v.key}
+                  {v.required && (
+                    <span className="text-red-600 dark:text-red-400"> *</span>
+                  )}
+                </label>
+                {isChoice(v) && v.choices ? (
+                  <select
                     id={`${idPrefix}-variable-${v.key}`}
                     value={values[v.key] ?? ""}
                     onChange={(e) => set(v.key, e.target.value)}
-                    placeholder="path to a file"
-                    className="flex-1 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => pickFile(v)}
-                    className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+                    {...errorProps}
+                    className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
                   >
-                    Browse…
-                  </button>
-                </div>
-              ) : (
-                <input
-                  id={`${idPrefix}-variable-${v.key}`}
-                  type={v.secret ? "password" : "text"}
-                  aria-required={v.required || undefined}
-                  value={values[v.key] ?? ""}
-                  onChange={(e) => set(v.key, e.target.value)}
-                  className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
-                />
-              )}
-            </div>
-          ))}
+                    {!v.choices.includes(values[v.key] ?? "") && (
+                      <option value="" disabled>
+                        Choose…
+                      </option>
+                    )}
+                    {v.choices.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                ) : v.kind === "file" ? (
+                  <div className="flex gap-2">
+                    <input
+                      id={`${idPrefix}-variable-${v.key}`}
+                      value={values[v.key] ?? ""}
+                      onChange={(e) => set(v.key, e.target.value)}
+                      {...errorProps}
+                      placeholder="path to a file"
+                      className="flex-1 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => pickFile(v)}
+                      className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+                    >
+                      Browse…
+                    </button>
+                  </div>
+                ) : (
+                  <input
+                    id={`${idPrefix}-variable-${v.key}`}
+                    type={v.secret ? "password" : "text"}
+                    aria-required={v.required || undefined}
+                    value={values[v.key] ?? ""}
+                    onChange={(e) => set(v.key, e.target.value)}
+                    {...errorProps}
+                    className="w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200"
+                  />
+                )}
+                {error && (
+                  <p
+                    id={errorId}
+                    className="mt-1 text-xs text-red-600 dark:text-red-400"
+                  >
+                    {error}
+                  </p>
+                )}
+              </div>
+            );
+          })}
 
           {inputSlots.map((s) => (
             <div key={s.key}>
@@ -225,7 +310,7 @@ export default function VariablePrompt({
           <button
             type="button"
             onClick={() => onSubmit(values, inputs)}
-            disabled={missingRequired}
+            disabled={missingRequired || invalid}
             className="px-4 py-2 text-sm rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Continue

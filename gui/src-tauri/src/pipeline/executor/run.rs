@@ -1,4 +1,5 @@
 //! Run-level mutable execution state and completion ordering.
+use super::analyzer_step::{analyzer_result, AnalyzerInputs};
 use super::artifact_context::{
     prepare_selected_shared_context, resolve_artifact_context, ArtifactRuntime,
 };
@@ -14,7 +15,7 @@ use super::sequential::run_sequential_step;
 use super::step_call::is_cancellation_error;
 use crate::models::{StepFailure, StepOutput};
 use crate::pipeline::merge;
-use crate::pipeline_config::{Phase, PipelineConfig, StepConfig};
+use crate::pipeline_config::{Phase, PipelineConfig, StepConfig, StepKind};
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -22,6 +23,136 @@ use tokio::sync::Semaphore;
 pub struct ExecutionResult {
     pub outputs: Vec<StepOutput>,
     pub failed_steps: Vec<StepFailure>,
+    /// The Review limit that stopped scheduling, when one did.
+    pub budget_stop: Option<String>,
+}
+
+/// Records every step not yet started as stopped by the Review's limit.
+async fn stop_at_budget(
+    app: &crate::emit::EventBus,
+    write_dir: Option<&str>,
+    steps: &[&StepConfig],
+    reason: &str,
+) -> Result<Vec<StepFailure>, String> {
+    let failures = steps
+        .iter()
+        .map(|step| StepFailure {
+            step_id: step.id.clone(),
+            step_label: step.label.clone(),
+            phase: match step.phase {
+                Phase::Parallel => "parallel",
+                _ => "sequential",
+            }
+            .to_string(),
+            error: format!("{} {reason}.", super::budget::BUDGET_STOP_PREFIX),
+        })
+        .collect::<Vec<_>>();
+    for step in steps {
+        let _ = app.emit_event(
+            "pipeline:pass",
+            serde_json::json!({"name": step.id, "status": "error"}),
+        );
+    }
+    let _ = app.emit_event(
+        "pipeline:log",
+        serde_json::json!({ "line": format!(
+            "Stopped: this Review reached its {reason}. {} step(s) were not started; completed results are kept.",
+            steps.len()
+        ) }),
+    );
+    checkpoint_failures(app, write_dir, &failures).await?;
+    Ok(failures)
+}
+
+/// Marks every wave the scheduler will no longer start as skipped, so the
+/// progress view never shows steps that did not run as completed. Continues
+/// the readiness simulation of `execution_plan` from the current state, so the
+/// stage ids match the preflight plan. Call before any pass event for those
+/// steps, so the events cannot land in the last wave that did run.
+fn emit_unstarted_waves(
+    app: &crate::emit::EventBus,
+    merge_enabled: bool,
+    enabled: &[&StepConfig],
+    deps: &[std::collections::HashSet<String>],
+    remaining: &[usize],
+    done: &std::collections::HashSet<String>,
+    (mut schedule_index, mut parallel_number, mut sequential_number): (usize, usize, usize),
+) {
+    let mut remaining = remaining.to_vec();
+    let mut done = done.clone();
+    loop {
+        let ready = ready_indices(&remaining, deps, &done);
+        let Some(&first) = ready.iter().min() else {
+            return;
+        };
+        schedule_index += 1;
+        let parallel: Vec<usize> = ready
+            .iter()
+            .copied()
+            .filter(|&i| enabled[i].phase == Phase::Parallel)
+            .collect();
+        let wave = if parallel.is_empty() {
+            sequential_number += 1;
+            let step = enabled[first];
+            let _ = app.emit_event(
+                "pipeline:stage",
+                serde_json::json!({
+                    "stage": "synthesizing",
+                    "id": format!("wave-{schedule_index}-sequential"),
+                    "label": "Sequential agent wave",
+                    "stepIds": [step.id.clone()],
+                    "stepLabels": [if step.label.is_empty() {
+                        format!("Sequential step {sequential_number}")
+                    } else {
+                        step.label.clone()
+                    }],
+                    "skipped": true,
+                }),
+            );
+            vec![first]
+        } else {
+            parallel_number += 1;
+            let steps: Vec<&StepConfig> = parallel.iter().map(|&i| enabled[i]).collect();
+            let merged: Vec<&StepConfig> = steps
+                .iter()
+                .copied()
+                .filter(|step| step.agents.len() > 1)
+                .collect();
+            let ids =
+                |steps: &[&StepConfig]| steps.iter().map(|s| s.id.clone()).collect::<Vec<_>>();
+            let labels =
+                |steps: &[&StepConfig]| steps.iter().map(|s| s.label.clone()).collect::<Vec<_>>();
+            let _ = app.emit_event(
+                "pipeline:stage",
+                serde_json::json!({
+                    "stage": "dispatching",
+                    "id": format!("wave-{schedule_index}-parallel"),
+                    "label": "Parallel agent wave",
+                    "stepIds": ids(&steps),
+                    "stepLabels": labels(&steps),
+                    "mergeStepIds": ids(&merged),
+                    "mergeStepLabels": labels(&merged),
+                    "skipped": true,
+                }),
+            );
+            if merge_enabled && !merged.is_empty() {
+                let _ = app.emit_event(
+                    "pipeline:stage",
+                    serde_json::json!({
+                        "stage": "merging",
+                        "id": format!("wave-{schedule_index}-merge"),
+                        "label": format!("Merge parallel wave {parallel_number}"),
+                        "stepIds": ids(&merged),
+                        "stepLabels": labels(&merged),
+                        "skipped": true,
+                    }),
+                );
+            }
+            parallel
+        };
+        done.extend(wave.iter().map(|&i| enabled[i].id.clone()));
+        remaining.retain(|i| !wave.contains(i));
+    }
 }
 
 /// Execute all enabled steps in the pipeline.
@@ -30,7 +161,8 @@ pub struct ExecutionResult {
 /// order-only edges, while upstream step selectors contribute dataflow edges.
 /// A step's `run_if` guard can skip it; a skipped step still "completes" so its
 /// dependents proceed. A failed sequential step stops further execution but
-/// does not discard prior outputs.
+/// does not discard prior outputs. Review limits count from the start that
+/// `budget::counted_from` sets around this call, or from this call.
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_steps(
     app: &crate::emit::EventBus,
@@ -139,8 +271,31 @@ pub async fn execute_steps(
     let mut schedule_index = 0usize;
     let mut parallel_number = 0usize;
     let mut sequential_number = 0usize;
+    let mut ledger = super::budget::BudgetLedger::new(settings, super::budget::run_start());
+    let mut budget_stop = None;
+    let analyzer_inputs = AnalyzerInputs {
+        document_bundle_path,
+        paper_text_path,
+        source_path,
+    };
 
     while !remaining.is_empty() {
+        ledger.observe(&crate::pipeline::logging::run_usage());
+        if let Some(reason) = ledger.exhausted() {
+            emit_unstarted_waves(
+                app,
+                config.merge.enabled,
+                &enabled,
+                &deps,
+                &remaining,
+                &done,
+                (schedule_index, parallel_number, sequential_number),
+            );
+            let unstarted = remaining.iter().map(|&i| enabled[i]).collect::<Vec<_>>();
+            failed_steps.extend(stop_at_budget(app, write_dir, &unstarted, &reason).await?);
+            budget_stop = Some(reason);
+            break;
+        }
         let ready = ready_indices(&remaining, &deps, &done);
         if ready.is_empty() {
             let stuck: Vec<&str> = remaining
@@ -265,8 +420,47 @@ pub async fn execute_steps(
             }
             remaining.retain(|i| !ready_parallel.contains(i));
 
+            // Analyzer steps run on the host before the wave's model calls;
+            // steps in one wave never depend on each other.
+            let (analyzer_steps, to_run): (Vec<&StepConfig>, Vec<&StepConfig>) = to_run
+                .into_iter()
+                .partition(|step| step.kind == StepKind::Analyzer);
+            for step in analyzer_steps {
+                match analyzer_result(app, step, &analyzer_inputs).await? {
+                    Ok(output) => {
+                        output_budget.reserve(&output)?;
+                        checkpoint_outputs(
+                            app,
+                            write_dir,
+                            all_outputs.len(),
+                            std::slice::from_ref(&output),
+                        )
+                        .await?;
+                        let _ = app.emit_event(
+                            "pipeline:pass",
+                            serde_json::json!({"name": step.id, "status": "done"}),
+                        );
+                        checkpoint_wave(
+                            write_dir,
+                            all_outputs.len(),
+                            vec![step.id.clone()],
+                            std::slice::from_ref(&output),
+                        )
+                        .await?;
+                        done.insert(step.id.clone());
+                        successful.insert(step.id.clone());
+                        all_outputs.push(output);
+                    }
+                    Err(failure) => {
+                        checkpoint_failures(app, write_dir, std::slice::from_ref(&failure)).await?;
+                        failed_steps.push(failure);
+                        done.insert(step.id.clone());
+                    }
+                }
+            }
+
             if !to_run.is_empty() {
-                let (mut wave_outputs, wave_failures) = run_parallel_wave(
+                let (mut wave_outputs, wave_failures, failed_calls) = run_parallel_wave(
                     app,
                     &to_run,
                     settings,
@@ -405,6 +599,8 @@ pub async fn execute_steps(
                     &wave_outputs,
                 )
                 .await?;
+                ledger.record(&wave_outputs, settings);
+                ledger.record_failed_calls(&failed_calls, settings);
                 all_outputs.extend(wave_outputs);
             } else if planned_merge {
                 app.emit_event(
@@ -501,6 +697,51 @@ pub async fn execute_steps(
             }
         }
 
+        if step.kind == StepKind::Analyzer {
+            match analyzer_result(app, step, &analyzer_inputs).await? {
+                Ok(output) => {
+                    output_budget.reserve(&output)?;
+                    checkpoint_outputs(
+                        app,
+                        write_dir,
+                        all_outputs.len(),
+                        std::slice::from_ref(&output),
+                    )
+                    .await?;
+                    let _ = app.emit_event(
+                        "pipeline:pass",
+                        serde_json::json!({"name": step.id, "status": "done"}),
+                    );
+                    done.insert(step.id.clone());
+                    successful.insert(step.id.clone());
+                    checkpoint_wave(
+                        write_dir,
+                        all_outputs.len(),
+                        vec![step.id.clone()],
+                        std::slice::from_ref(&output),
+                    )
+                    .await?;
+                    all_outputs.push(output);
+                    continue;
+                }
+                Err(failure) => {
+                    checkpoint_failures(app, write_dir, std::slice::from_ref(&failure)).await?;
+                    failed_steps.push(failure);
+                    done.insert(step.id.clone());
+                    emit_unstarted_waves(
+                        app,
+                        config.merge.enabled,
+                        &enabled,
+                        &deps,
+                        &remaining,
+                        &done,
+                        (schedule_index, parallel_number, sequential_number),
+                    );
+                    break;
+                }
+            }
+        }
+
         let resolved = resolve_artifact_context(
             step,
             ArtifactRuntime {
@@ -560,6 +801,7 @@ pub async fn execute_steps(
                     std::slice::from_ref(&output),
                 )
                 .await?;
+                ledger.record(std::slice::from_ref(&output), settings);
                 all_outputs.push(output);
             }
             Err(e) => {
@@ -579,6 +821,16 @@ pub async fn execute_steps(
                 };
                 checkpoint_failures(app, write_dir, std::slice::from_ref(&failure)).await?;
                 failed_steps.push(failure);
+                done.insert(step.id.clone());
+                emit_unstarted_waves(
+                    app,
+                    config.merge.enabled,
+                    &enabled,
+                    &deps,
+                    &remaining,
+                    &done,
+                    (schedule_index, parallel_number, sequential_number),
+                );
                 break;
             }
         }
@@ -587,5 +839,6 @@ pub async fn execute_steps(
     Ok(ExecutionResult {
         outputs: all_outputs,
         failed_steps,
+        budget_stop,
     })
 }

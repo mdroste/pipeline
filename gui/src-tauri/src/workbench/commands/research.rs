@@ -184,6 +184,25 @@ pub async fn workbench_list_execution_profiles(
     .await
 }
 
+/// Read-only: looks in standard install folders, PATH and the project folder.
+/// Version probes run outside the database gate.
+#[tauri::command]
+pub async fn workbench_detect_toolchains(
+    workspace_id: Option<String>,
+) -> WorkbenchResult<crate::workbench::research::ToolchainReport> {
+    let root = match workspace_id {
+        Some(workspace_id) => {
+            run_store(move |store| Ok(store.workspace(&workspace_id)?.root)).await?
+        }
+        None => None,
+    };
+    tokio::task::spawn_blocking(move || {
+        crate::workbench::research::detect_toolchains(root.as_deref().map(std::path::Path::new))
+    })
+    .await
+    .map_err(|error| WorkbenchError::worker(format!("Toolchain detection stopped: {error}"), true))
+}
+
 #[tauri::command]
 pub async fn workbench_run_execution(
     request: crate::workbench::research::RunExecutionRequest,

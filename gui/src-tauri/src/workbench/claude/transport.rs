@@ -14,7 +14,9 @@ pub(super) struct Process {
 }
 
 impl Process {
-    pub async fn start(args: &[String]) -> Result<Self, String> {
+    /// `sandbox` adds Claude Code's command sandbox settings for a turn that
+    /// offers the Bash tool.
+    pub async fn start(args: &[String], sandbox: Option<&Value>) -> Result<Self, String> {
         let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
         let mut args = args.to_vec();
         // macOS has a small argv budget. Keep large profile/context text in
@@ -27,9 +29,14 @@ impl Process {
                 args[i + 1] = path.to_string_lossy().into_owned();
             }
         }
-        let mut command =
-            crate::agent_runtime::claude::subscription_command(&args, directory.path().to_str())
-                .await?;
+        let cwd = directory.path().to_str();
+        let mut command = match sandbox {
+            Some(sandbox) => {
+                crate::agent_runtime::claude::sandboxed_subscription_command(sandbox, &args, cwd)
+                    .await?
+            }
+            None => crate::agent_runtime::claude::subscription_command(&args, cwd).await?,
+        };
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -106,23 +113,14 @@ impl Process {
         }).await.map_err(|_| "Claude Code initialization timed out".to_string())?
     }
 
-    async fn control(
+    pub(super) async fn control(
         &mut self,
         value: &Value,
         specs: &[Value],
         turn: Option<&Turn>,
     ) -> Result<(), String> {
-        let request = &value["request"];
-        let response = match request["subtype"].as_str() {
-            Some("mcp_message") => tools::message(request, specs, turn).await?,
-            // No native tool or expanded permissions are available in this adapter.
-            Some("can_use_tool") => {
-                json!({"behavior":"deny","message":"Use Pipeline's scoped project tools; native tools are disabled."})
-            }
-            _ => return Err("Claude requested an unsupported control operation".into()),
-        };
-        self.write(&protocol::control_response(&value["request_id"], response))
-            .await
+        let answer = control_answer(value, specs, turn).await?;
+        self.write(&answer).await
     }
 
     pub async fn stop(&mut self) {
@@ -147,6 +145,69 @@ impl Drop for Process {
     }
 }
 
+/// Pipeline's control response frame for one of Claude's control requests.
+async fn control_answer(
+    value: &Value,
+    specs: &[Value],
+    turn: Option<&Turn>,
+) -> Result<Value, String> {
+    let request = &value["request"];
+    let response = match request["subtype"].as_str() {
+        Some("mcp_message") => tools::message(request, specs, turn).await?,
+        // Only sandboxed commands are pre-approved; nothing may expand that.
+        Some("can_use_tool") => {
+            json!({"behavior":"deny","message":"Only sandboxed shell commands and Pipeline's scoped project tools are available."})
+        }
+        _ => return Err("Claude requested an unsupported control operation".into()),
+    };
+    Ok(protocol::control_response(&value["request_id"], response))
+}
+
+/// Model time allowed for one turn, including exchanges with Claude's stdin
+/// and stdout. Time spent in Pipeline's project tools, including a local job
+/// that a research run waits for under its own profile timeout, is not counted.
+const MODEL_TIME_LIMIT: Duration = Duration::from_secs(15 * 60);
+const MODEL_TIMEOUT: &str = "Claude turn timed out after 15 minutes of model time. Time spent in project tools and local jobs is not counted.";
+/// Project-tool time allowed for one turn: two research runs at the longest
+/// profile timeout (7,200 seconds), or one that first waits behind another job.
+const HOST_TIME_LIMIT: Duration = Duration::from_secs(4 * 60 * 60);
+const HOST_TIMEOUT: &str = "Claude turn stopped after 4 hours in project tools and local jobs.";
+
+/// A turn deadline that stands still while Pipeline handles host work, which
+/// has its own allowance for the turn.
+pub(super) struct ModelClock {
+    deadline: tokio::time::Instant,
+    host_left: Duration,
+}
+
+impl ModelClock {
+    pub(super) fn new(model_limit: Duration, host_limit: Duration) -> Self {
+        Self {
+            deadline: tokio::time::Instant::now() + model_limit,
+            host_left: host_limit,
+        }
+    }
+
+    /// Waits for model output or input; `None` once the model time is used up.
+    pub(super) async fn model<T>(&self, work: impl std::future::Future<Output = T>) -> Option<T> {
+        tokio::time::timeout_at(self.deadline, work).await.ok()
+    }
+
+    /// Runs host work and moves the deadline by the time it took; `None`
+    /// once the turn's host time is used up.
+    pub(super) async fn host<T>(
+        &mut self,
+        work: impl std::future::Future<Output = T>,
+    ) -> Option<T> {
+        let started = tokio::time::Instant::now();
+        let result = tokio::time::timeout(self.host_left, work).await.ok();
+        let elapsed = started.elapsed();
+        self.deadline += elapsed;
+        self.host_left = self.host_left.saturating_sub(elapsed);
+        result
+    }
+}
+
 pub(super) async fn drive(
     process: &mut Process,
     app: &tauri::AppHandle,
@@ -156,6 +217,7 @@ pub(super) async fn drive(
     specs: Vec<Value>,
     mut cancel: watch::Receiver<bool>,
 ) -> Result<(), String> {
+    let mut clock = ModelClock::new(MODEL_TIME_LIMIT, HOST_TIME_LIMIT);
     let work = async {
         turn.emit(
             app,
@@ -168,12 +230,16 @@ pub(super) async fn drive(
         )
         .await?;
         turn.item(app, "user", "userMessage", user_text).await?;
-        process.write(&json!({"type":"user","message":{"role":"user","content":prompt.text},"parent_tool_use_id":null,"session_id":""})).await?;
+        let message = json!({"type":"user","message":{"role":"user","content":prompt.text},"parent_tool_use_id":null,"session_id":""});
+        clock
+            .model(process.write(&message))
+            .await
+            .ok_or(MODEL_TIMEOUT)??;
         let mut bytes = 0usize;
         let mut messages = 0;
         let mut calls = 0;
         loop {
-            let value = process.read().await?;
+            let value = clock.model(process.read()).await.ok_or(MODEL_TIMEOUT)??;
             bytes += value.to_string().len();
             if bytes > 64 * 1024 * 1024 {
                 return Err("Claude turn exceeded its output budget".into());
@@ -184,7 +250,16 @@ pub(super) async fn drive(
                     if calls > 128 {
                         return Err("Claude turn exceeded its tool/control request budget".into());
                     }
-                    process.control(&value, &specs, Some(turn)).await?;
+                    // Only the tool work is host time. Claude must still read
+                    // the answer within the model time.
+                    let answer = clock
+                        .host(control_answer(&value, &specs, Some(turn)))
+                        .await
+                        .ok_or(HOST_TIMEOUT)??;
+                    clock
+                        .model(process.write(&answer))
+                        .await
+                        .ok_or(MODEL_TIMEOUT)??;
                 }
                 Some("stream_event") if value["parent_tool_use_id"].is_null() => {
                     if let Some(delta) = value["event"]["delta"]["text"].as_str() {
@@ -215,6 +290,7 @@ pub(super) async fn drive(
                         messages += 1;
                     }
                 }
+                Some("rate_limit_event") => super::usage::record(&value),
                 Some("result") => {
                     if value["is_error"] != false || value["subtype"] != "success" {
                         return Err(value["result"].as_str().map(str::to_owned).unwrap_or_else(
@@ -234,7 +310,7 @@ pub(super) async fn drive(
         }
     };
     tokio::select! {
-        result = tokio::time::timeout(Duration::from_secs(900), work) => result.map_err(|_| "Claude turn timed out after 15 minutes".to_string())?,
+        result = work => result,
         _ = cancel.changed() => Err("interrupted".into()),
     }
 }
@@ -254,7 +330,7 @@ pub async fn workbench_claude_model_catalog() -> Result<super::super::codex::Mod
         "--no-session-persistence",
     ]
     .map(str::to_owned);
-    let mut process = Process::start(&args).await?;
+    let mut process = Process::start(&args, None).await?;
     let result = process.initialize(&[]).await;
     process.stop().await;
     let initialization = result?;

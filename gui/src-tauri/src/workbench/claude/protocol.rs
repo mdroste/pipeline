@@ -31,10 +31,12 @@ pub(super) fn prompt(store: &Store, session: &str, text: &str) -> WorkbenchResul
     Ok(Prompt { text, user_text })
 }
 
+/// `shell_root` offers the sandboxed Bash tool, reading that working root.
 pub(super) fn arguments(
     effective: &super::super::research::EffectiveHarness,
     model: Option<&str>,
     effort: Option<&str>,
+    shell_root: Option<&std::path::Path>,
 ) -> Vec<String> {
     let mut args = [
         "-p",
@@ -46,7 +48,7 @@ pub(super) fn arguments(
         "--include-partial-messages",
         "--no-session-persistence",
         "--tools",
-        "",
+        if shell_root.is_some() { "Bash" } else { "" },
         "--disable-slash-commands",
         "--no-chrome",
         "--strict-mcp-config",
@@ -65,7 +67,11 @@ pub(super) fn arguments(
     if let Some(base) = &effective.preset.base_instructions {
         args.extend(["--system-prompt".into(), base.clone()]);
     }
-    args.extend(["--append-system-prompt".into(), format!("{}\n\nProject tools are exposed through the pipeline MCP server. Use only these host-scoped tools. File edits require Edit access; shell execution is available only through authorized research profiles. Native shell, filesystem, browser and third-party tools are disabled. Conversation history is supplied by Pipeline on each turn. Never claim to have run a tool that is unavailable.", effective.developer_instructions)]);
+    let shell = match shell_root {
+        Some(root) => super::shell::instructions(root),
+        None => "Shell commands are available only through authorized research profiles.".into(),
+    };
+    args.extend(["--append-system-prompt".into(), format!("{}\n\nProject tools are exposed through the pipeline MCP server. File edits require Edit access and use project_edit. {shell} Native filesystem, browser and third-party tools are disabled. Conversation history is supplied by Pipeline on each turn. Never claim to have run a tool that is unavailable.", effective.developer_instructions)]);
     if let Some(model) = model.filter(|s| !s.is_empty()) {
         args.push(format!("--model={model}"));
     }

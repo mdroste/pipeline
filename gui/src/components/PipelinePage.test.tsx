@@ -667,7 +667,7 @@ describe("PipelinePage", () => {
     });
   });
 
-  it("preserves step-output access when a step changes phase", async () => {
+  it("removes step-output access when a step becomes parallel", async () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
@@ -678,6 +678,9 @@ describe("PipelinePage", () => {
       screen.getAllByRole("button", { name: "Consolidate Issues" })[0],
     );
     await user.click(screen.getByRole("tab", { name: "When it runs" }));
+    // Validation rejects parallel steps that read other steps' output, so the
+    // switch asks first and then gives the step the primary input instead.
+    confirmDialog.mockResolvedValueOnce(true);
     await user.click(
       screen.getByRole("button", { name: "Independently (parallel)" }),
     );
@@ -693,7 +696,12 @@ describe("PipelinePage", () => {
       expect(consolidate).toMatchObject({
         phase: "parallel",
         context: {
-          include: [{ kind: "step", step: "technical", parts: ["report"] }],
+          include: [
+            {
+              kind: "primary",
+              parts: ["text", "structure", "visuals", "source"],
+            },
+          ],
         },
       });
     });
@@ -1133,5 +1141,154 @@ describe("PipelinePage", () => {
     expect(
       screen.getByText(/Define result formats in the Schemas tab/),
     ).toBeInTheDocument();
+  });
+
+  it("shows and saves the undone schema after Undo in the schema editor", async () => {
+    const user = userEvent.setup();
+    const config = makeConfig();
+    config.steps[0].output_schema = {
+      type: "object",
+      required: ["result"],
+      properties: { result: { type: "string" } },
+    };
+    mockLoad(config);
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+    await useAdvancedEditor(user);
+    await user.click(screen.getByRole("tab", { name: "Schemas" }));
+    await user.click(
+      screen.getByRole("button", { name: "Technical output schema" }),
+    );
+    const editor = screen.getByRole("textbox", {
+      name: "Output JSON schema for Technical",
+    }) as HTMLTextAreaElement;
+    fireEvent.change(editor, {
+      target: {
+        value:
+          '{"type":"object","required":["score"],"properties":{"score":{"type":"number"}}}',
+      },
+    });
+    expect(editor.value).toContain('"score"');
+
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(editor.value).toContain('"result"');
+    expect(editor.value).not.toContain('"score"');
+
+    await user.click(screen.getByRole("button", { name: "Redo" }));
+    expect(editor.value).toContain('"score"');
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    // Undo leaves nothing to save; make an unrelated edit to enable Save.
+    await user.click(screen.getByRole("tab", { name: "Steps" }));
+    await user.type(screen.getByLabelText("Step label"), " proofs");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      const saveCall = invoke.mock.calls.find(
+        (call) => call[0] === "save_pipeline_config",
+      );
+      expect(saveCall?.[1].config.steps[0].output_schema).toEqual({
+        type: "object",
+        required: ["result"],
+        properties: { result: { type: "string" } },
+      });
+    });
+  });
+
+  it("keeps the last valid schema structure while the draft is invalid", async () => {
+    const user = userEvent.setup();
+    const config = makeConfig();
+    config.steps[0].output_schema = {
+      type: "object",
+      required: ["result"],
+      properties: { result: { type: "string" } },
+    };
+    mockLoad(config);
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+    await useAdvancedEditor(user);
+    await user.click(screen.getByRole("tab", { name: "Schemas" }));
+    await user.click(
+      screen.getByRole("button", { name: "Technical output schema" }),
+    );
+    expect(screen.getByLabelText("Schema structure")).toHaveTextContent(
+      "result",
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Output JSON schema for Technical" }),
+      { target: { value: '{"type":"object","properties":{"result":' } },
+    );
+    expect(screen.getByLabelText("Schema structure")).toHaveTextContent(
+      "result",
+    );
+    expect(
+      screen.getByText("Showing the last valid version"),
+    ).toBeInTheDocument();
+  });
+
+  it("saves a comma-separated list that is still being typed on Cmd+S", async () => {
+    const user = userEvent.setup();
+    const config = makeConfig();
+    config.variables = [
+      { key: "tone", label: "Tone", kind: "choice", default: "" },
+    ];
+    mockLoad(config);
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+    await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
+    const choices = screen.getByRole("textbox", {
+      name: "Variable Tone choices",
+    });
+    await user.type(choices, "Minor revision, Major revision");
+    await user.keyboard("{Meta>}s{/Meta}");
+
+    await waitFor(() => {
+      const saveCall = invoke.mock.calls.find(
+        (call) => call[0] === "save_pipeline_config",
+      );
+      expect(saveCall?.[1].config.variables).toEqual([
+        expect.objectContaining({
+          key: "tone",
+          choices: ["Minor revision", "Major revision"],
+        }),
+      ]);
+    });
+    expect(choices).toHaveFocus();
+  });
+
+  it("leaves Cmd+Z to text fields and open dialogs", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeConfig());
+    render(<PipelinePage onClose={() => {}} />);
+    await user.click((await screen.findAllByText("Technical"))[0]);
+    const label = await screen.findByLabelText("Step label");
+    await user.type(label, "!");
+    expect(label).toHaveValue("Technical!");
+
+    // Inside a text field the browser's own undo runs instead.
+    fireEvent.keyDown(label, { key: "z", metaKey: true });
+    expect(label).toHaveValue("Technical!");
+
+    // A dialog over the editor keeps the workflow unchanged.
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.keyDown(dialog, { key: "z", metaKey: true });
+    fireEvent.keyDown(dialog, { key: "s", metaKey: true });
+    expect(label).toHaveValue("Technical!");
+    expect(
+      invoke.mock.calls.some((call) => call[0] === "save_pipeline_config"),
+    ).toBe(false);
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+
+    // Outside fields and dialogs the shortcut undoes the workflow edit.
+    fireEvent.keyDown(document.body, { key: "z", metaKey: true });
+    expect(label).toHaveValue("Technical");
+    fireEvent.keyDown(document.body, {
+      key: "z",
+      metaKey: true,
+      shiftKey: true,
+    });
+    expect(label).toHaveValue("Technical!");
   });
 });

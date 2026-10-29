@@ -67,6 +67,7 @@ pub fn run() {
             let _ = runs::recover_resumable_runs();
             orchestration::start_if_present(app.handle().clone());
             workbench::programs::commands::start(app.handle().clone());
+            updates::start(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -124,6 +125,10 @@ pub fn run() {
             orchestration::commands::task_step_output,
             commands::run_entry::run_pipeline,
             commands::export::save_report_md,
+            commands::export::save_report_html,
+            commands::export::save_report_docx,
+            commands::export::save_report_docx_comments,
+            commands::export::save_report_annotated_pdf,
             commands::export::save_all_artifacts,
             commands::export::export_run_artifacts,
             commands::export::export_run_package,
@@ -240,6 +245,8 @@ pub fn run() {
             workbench::commands::workbench_acquire_candidate,
             workbench::commands::workbench_acquire_pdf,
             workbench::commands::workbench_acquire_fred,
+            workbench::commands::workbench_acquire_series,
+            workbench::commands::workbench_crossref_contact,
             workbench::commands::workbench_studio_mutate,
             workbench::commands::workbench_studio_export_file,
             workbench::commands::workbench_studio_records,
@@ -285,6 +292,7 @@ pub fn run() {
             workbench::commands::workbench_research_ledger,
             workbench::commands::workbench_save_execution_profile,
             workbench::commands::workbench_list_execution_profiles,
+            workbench::commands::workbench_detect_toolchains,
             workbench::commands::workbench_run_execution,
             workbench::commands::workbench_list_jobs,
             workbench::commands::workbench_job_log,
@@ -334,6 +342,7 @@ pub fn run() {
             workbench::claude::transport::workbench_claude_model_catalog,
             workbench::commands::workbench_codex_validate_model_selection,
             workbench::commands::workbench_codex_rate_limits,
+            workbench::claude::usage::workbench_claude_rate_limits,
             workbench::commands::workbench_codex_send_turn,
             workbench::commands::workbench_codex_interrupt_turn,
             workbench::commands::workbench_codex_reconcile_session,
@@ -349,6 +358,7 @@ pub fn run() {
             commands::config::resolve_orientation_schema_catalogs,
             commands::config::get_auto_review_specialist_step,
             commands::config::get_execution_plan,
+            pipeline::analyzers::registry::list_analyzers,
             commands::config::save_pipeline_config,
             commands::config::get_default_parallel_template,
             commands::config::get_default_prompt,
@@ -376,6 +386,8 @@ pub fn run() {
             commands::config::import_bundle,
             // Update check
             commands::config::check_for_update,
+            commands::config::update_status,
+            commands::config::update_set_automatic,
             commands::config::open_pipeline_dir,
             commands::config::get_storage_settings,
             commands::config::set_storage_directory,

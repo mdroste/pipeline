@@ -6,6 +6,7 @@ use super::profiles::get_execution_profile;
 use super::types::{
     CancelExecutionRequest, ExecutionProfile, HostExecutionPreview, RunExecutionRequest,
 };
+use super::{adapters, toolchains};
 use super::{
     cancelled_executions, get_execution, input_manifest, run_profile_process,
     validate_execution_outputs, ExecutionOutput, ResearchExecution,
@@ -277,7 +278,15 @@ pub(crate) fn finalize_execution(
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let observed = observed_dependencies(&profile);
-    let validation = json!({"observedDependencies":observed,"adapter":validation,"stdoutTruncated":output.stdout_truncated,"stderrTruncated":output.stderr_truncated,"executionBoundary":"explicitly_authorized_host","executionContainment":"host_access","capturedInputIdentity":manifest["snapshotConsistency"],"planId":request.plan_id,"authorizationFingerprint":authorization.fingerprint,"authorizedLaunch":authorization.launch,"dependencyCoverage":"declared_only","inputsChanged":inputs_changed,"unchangedPreexistingOutputs":stale_outputs,"stataWrapperReturnedAfterStop":output.wrapper_completed_after_stop,"processStarted":output.process_started,"stataCleanupRequired":profile.adapter=="stata" && output.process_started && outcome!="completed" && !output.wrapper_completed_after_stop});
+    // Direct Stata is stopped with its whole process group; only a custom
+    // launcher can leave machine state that needs checking after a forced stop.
+    let waits_for_launcher = adapters::waits_for_stata_launcher(&profile.adapter, &profile.argv);
+    let runtime_identity = if output.process_started {
+        toolchains::runtime_identity(&profile, &authorization.launch)
+    } else {
+        Value::Null
+    };
+    let validation = json!({"observedDependencies":observed,"adapter":validation,"stdoutTruncated":output.stdout_truncated,"stderrTruncated":output.stderr_truncated,"executionBoundary":"explicitly_authorized_host","executionContainment":"host_access","capturedInputIdentity":manifest["snapshotConsistency"],"planId":request.plan_id,"authorizationFingerprint":authorization.fingerprint,"authorizedLaunch":authorization.launch,"dependencyCoverage":"declared_only","inputsChanged":inputs_changed,"unchangedPreexistingOutputs":stale_outputs,"stataWrapperReturnedAfterStop":output.wrapper_completed_after_stop,"processStarted":output.process_started,"stataLaunchMode":adapters::stata_mode_label(&profile.adapter, &profile.argv),"stataCleanupRequired":waits_for_launcher && output.process_started && outcome!="completed" && !output.wrapper_completed_after_stop,"runtimeIdentity":runtime_identity});
     let ended = now();
     let journal = json!({"outcome":outcome,"endedAt":ended,"exitStatus":output.status,"stdout":stdout,"stderr":stderr,"outputs":outputs,"validation":validation,"testOnly":request.test_only,"profileId":profile.id,"profileRevision":profile.revision});
     open_connection(store)?

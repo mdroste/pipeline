@@ -1,4 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import { promptDialog } from "../DialogService";
 import { researchClient } from "../../lib/workbench/researchClient";
 import { operation } from "./useResearchPanelController";
 import { compactHash } from "./format";
@@ -59,15 +60,18 @@ export default function DocumentsTab({
                 ],
               });
               if (typeof path !== "string") return;
-              const title = window
-                .prompt(
-                  "Paper title",
-                  path
-                    .split(/[\\/]/)
-                    .pop()
-                    ?.replace(/\.[^.]+$/, "") ?? "Paper",
-                )
-                ?.trim();
+              const title = (
+                await promptDialog("Name this paper in the project.", {
+                  title: "Import paper",
+                  label: "Paper title",
+                  defaultValue:
+                    path
+                      .split(/[\\/]/)
+                      .pop()
+                      ?.replace(/\.[^.]+$/, "") ?? "Paper",
+                  confirmLabel: "Import",
+                })
+              )?.trim();
               if (!title) return;
               const result = await researchClient.importPaper({
                 workspaceId,
@@ -96,12 +100,14 @@ export default function DocumentsTab({
                 directory: true,
               });
               if (typeof path !== "string") return;
-              const title = window
-                .prompt(
-                  "Source-tree title",
-                  path.split(/[\\/]/).pop() ?? "TeX project",
-                )
-                ?.trim();
+              const title = (
+                await promptDialog("Name this source tree in the project.", {
+                  title: "Import source tree",
+                  label: "Source-tree title",
+                  defaultValue: path.split(/[\\/]/).pop() ?? "TeX project",
+                  confirmLabel: "Import",
+                })
+              )?.trim();
               if (!title) return;
               const result = await researchClient.importPaper({
                 workspaceId,
@@ -135,15 +141,18 @@ export default function DocumentsTab({
                 ],
               });
               if (typeof path !== "string") return;
-              const title = window
-                .prompt(
-                  "Source title",
-                  path
-                    .split(/[\\/]/)
-                    .pop()
-                    ?.replace(/\.[^.]+$/, "") ?? "Source",
-                )
-                ?.trim();
+              const title = (
+                await promptDialog("Name this source in the project.", {
+                  title: "Import source",
+                  label: "Source title",
+                  defaultValue:
+                    path
+                      .split(/[\\/]/)
+                      .pop()
+                      ?.replace(/\.[^.]+$/, "") ?? "Source",
+                  confirmLabel: "Import",
+                })
+              )?.trim();
               if (!title) return;
               const result = await researchClient.importSource({
                 workspaceId,

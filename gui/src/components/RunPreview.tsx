@@ -8,12 +8,17 @@ import {
   adaptiveAgentRange as getAdaptiveAgentRange,
   isAutoReview,
 } from "../lib/autoReview";
+import RunUsageEstimate from "./RunUsageEstimate";
+import type { UsageEstimate } from "../lib/usageEstimate";
+import type { HostCheck } from "../lib/analyzers";
 
 export interface RunPreviewPlan {
   profileId: string;
   inputMode: string;
   inputInterpretation: string;
   stages: ExecutionPlanStage[];
+  usageEstimate?: UsageEstimate;
+  hostChecks?: HostCheck[];
 }
 
 interface Props {
@@ -75,6 +80,17 @@ interface AccessRow {
 }
 
 function fixedAccessRow(step: StepConfig): AccessRow {
+  if (step.kind === "analyzer") {
+    return {
+      id: step.id,
+      label: step.label,
+      providers: ["Pipeline check (no model call)"],
+      unitLabel: "runs on this computer",
+      selectors: [],
+      tools: [],
+      conditional: !!step.run_if,
+    };
+  }
   const units = declaredUnits(step);
   return {
     id: step.id,
@@ -162,6 +178,8 @@ export default function RunPreview({
     let minimumUnits = 0;
     let maximumUnits = 0;
     for (const step of steps) {
+      // Pipeline checks run on this computer and make no provider call.
+      if (step.kind === "analyzer") continue;
       stepProviders(step).forEach((provider) => providers.add(provider));
       step.tools.forEach((tool) => tools.add(tool));
       const units = declaredUnits(step);
@@ -274,6 +292,35 @@ export default function RunPreview({
               value={summary.providers.join(", ") || "None"}
             />
           </div>
+
+          <RunUsageEstimate
+            estimate={plan.usageEstimate}
+            batchCount={batchCount}
+          />
+
+          {plan.hostChecks?.some(
+            (check) => check.networkServices.length > 0,
+          ) && (
+            <section
+              aria-label="Pipeline checks that use the network"
+              className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/25"
+            >
+              <h2 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                Lookups outside your AI provider
+              </h2>
+              <ul className="mt-1 space-y-1 text-xs leading-5 text-amber-800 dark:text-amber-300">
+                {plan.hostChecks
+                  .filter((check) => check.networkServices.length > 0)
+                  .map((check) => (
+                    <li key={check.stepId}>
+                      <span className="font-medium">{check.stepLabel}</span>{" "}
+                      contacts {check.networkServices.join(" and ")}. Sends:{" "}
+                      {check.networkPayload}
+                    </li>
+                  ))}
+              </ul>
+            </section>
+          )}
 
           <div
             className={`mt-5 rounded-xl border p-4 ${

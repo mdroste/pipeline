@@ -48,6 +48,17 @@ function statusColor(status: string): string {
   }
 }
 
+// A choice list shows only its options, so a value outside them (including
+// no default) starts unselected rather than silently showing the first one.
+function initialVariableValue(spec: VarSpec): string {
+  const value = spec.default ?? "";
+  return spec.kind === "choice" &&
+    spec.choices?.length &&
+    !spec.choices.includes(value)
+    ? ""
+    : value;
+}
+
 function representativeBatchPath(paths: string[]): string | null {
   return (
     paths.find((path) => !/\.(?:tex|docx)$/i.test(path)) ?? paths[0] ?? null
@@ -75,7 +86,7 @@ export default function BatchPanel({
   const [variables, setVariables] = useState<VarSpec[]>(initialSpecs);
   const [variableValues, setVariableValues] = useState<Record<string, string>>(
     Object.fromEntries(
-      initialSpecs.map((spec) => [spec.key, spec.default ?? ""]),
+      initialSpecs.map((spec) => [spec.key, initialVariableValue(spec)]),
     ),
   );
   const [inputSlots, setInputSlots] = useState<InputSlot[]>(
@@ -103,7 +114,9 @@ export default function BatchPanel({
     setInputMode(setup.configuredInputMode || setup.inputMode || "document");
     setVariables(specs);
     setVariableValues(
-      Object.fromEntries(specs.map((spec) => [spec.key, spec.default ?? ""])),
+      Object.fromEntries(
+        specs.map((spec) => [spec.key, initialVariableValue(spec)]),
+      ),
     );
     setInputSlots(setup.inputSlots ?? []);
     setExtraInputs({});
@@ -496,6 +509,13 @@ export default function BatchPanel({
                         }
                         className="min-w-0 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
                       >
+                        {!spec.choices.includes(
+                          variableValues[spec.key] ?? "",
+                        ) && (
+                          <option value="" disabled>
+                            Choose…
+                          </option>
+                        )}
                         {spec.choices.map((choice) => (
                           <option key={choice} value={choice}>
                             {choice}

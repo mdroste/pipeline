@@ -33,6 +33,75 @@ pub(super) struct RunArgs {
     pub(super) extra_inputs: HashMap<String, String>,
     pub(super) out: Option<String>,
     pub(super) force: bool,
+    pub(super) limits: LimitArgs,
+}
+
+/// `--max-cost`, `--max-calls`, `--max-minutes`, validated at parse time.
+/// Cost is kept in millionths of a dollar so the arguments stay comparable.
+#[derive(Debug, Default, PartialEq, Eq, Clone, Copy)]
+pub(super) struct LimitArgs {
+    pub(super) max_cost_micro_usd: Option<u64>,
+    pub(super) max_calls: Option<u32>,
+    pub(super) max_minutes: Option<u32>,
+}
+
+impl LimitArgs {
+    pub(super) fn overrides(self) -> pipeline_gui_lib::commands::ReviewLimitOverrides {
+        pipeline_gui_lib::commands::ReviewLimitOverrides {
+            max_cost_usd: self
+                .max_cost_micro_usd
+                .map(|micro| micro as f64 / 1_000_000.0),
+            max_calls: self.max_calls,
+            max_minutes: self.max_minutes,
+        }
+    }
+}
+
+fn set_limit<T>(slot: &mut Option<T>, value: T, flag: &str) -> Result<(), String> {
+    if slot.replace(value).is_some() {
+        return Err(format!("{flag} may be specified only once"));
+    }
+    Ok(())
+}
+
+/// Parses one limit flag; returns false when `flag` is not a limit flag.
+fn parse_limit(
+    flag: &str,
+    args: &[String],
+    index: &mut usize,
+    limits: &mut LimitArgs,
+    command: &str,
+) -> Result<bool, String> {
+    let count = |value: &str| -> Result<u32, String> {
+        value
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| format!("{command}: {flag} needs a whole number (0 means no limit)"))
+    };
+    match flag {
+        "--max-cost" => {
+            let value = next_value(args, index, flag)?;
+            let usd = value
+                .trim()
+                .trim_start_matches('$')
+                .parse::<f64>()
+                .ok()
+                .filter(|usd| usd.is_finite() && *usd >= 0.0 && *usd <= 1_000_000.0)
+                .ok_or_else(|| format!("{command}: --max-cost needs an amount in US dollars"))?;
+            let micro = (usd * 1_000_000.0).round() as u64;
+            set_limit(&mut limits.max_cost_micro_usd, micro, flag)?;
+        }
+        "--max-calls" => {
+            let value = count(&next_value(args, index, flag)?)?;
+            set_limit(&mut limits.max_calls, value, flag)?;
+        }
+        "--max-minutes" => {
+            let value = count(&next_value(args, index, flag)?)?;
+            set_limit(&mut limits.max_minutes, value, flag)?;
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -44,6 +113,7 @@ pub(super) struct BatchArgs {
     pub(super) extra_inputs: HashMap<String, String>,
     pub(super) out_dir: Option<String>,
     pub(super) force: bool,
+    pub(super) limits: LimitArgs,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -197,6 +267,7 @@ fn parse_run(args: &[String]) -> Result<ParseAction, String> {
             }
             "--force" if !parsed.force => parsed.force = true,
             "--force" => return Err("run: --force may be specified only once".to_string()),
+            flag if parse_limit(flag, args, &mut index, &mut parsed.limits, "run")? => {}
             unknown => return Err(format!("run: unknown argument '{unknown}'")),
         }
         index += 1;
@@ -244,6 +315,7 @@ fn parse_batch(args: &[String]) -> Result<ParseAction, String> {
             }
             "--force" if !parsed.force => parsed.force = true,
             "--force" => return Err("batch: --force may be specified only once".to_string()),
+            flag if parse_limit(flag, args, &mut index, &mut parsed.limits, "batch")? => {}
             unknown => return Err(format!("batch: unknown argument '{unknown}'")),
         }
         index += 1;

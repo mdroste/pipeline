@@ -6,6 +6,7 @@ import { Icon } from "../ui/icons";
 import { moveFocusInList } from "../ui/listKeys";
 import { runtimeClient } from "../lib/workbench/runtimeClient";
 import type {
+  ClaudeRateLimit,
   WorkspaceAccountState,
   WorkspaceModel,
   WorkspaceRateLimits,
@@ -37,6 +38,11 @@ export async function loadAccountSummary(): Promise<AccountSummary> {
   return { account, limits };
 }
 
+/** Claude Code reports usage during replies; `null` until it has. */
+export function loadClaudeUsage(): Promise<ClaudeRateLimit | null> {
+  return runtimeClient.claudeRateLimits().catch(() => null);
+}
+
 const accountLine = (account: WorkspaceAccountState | null) => {
   if (!account) return null;
   if (account.status === "signedOut") return "Not signed in to ChatGPT";
@@ -48,23 +54,50 @@ const accountLine = (account: WorkspaceAccountState | null) => {
   return [account.email ?? "Signed in", plan].filter(Boolean).join(" · ");
 };
 
+const clockTime = (at: Date) =>
+  at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+const resetsText = (resetsAt: number | null) => {
+  if (!resetsAt) return "";
+  // The account services report seconds; tolerate milliseconds.
+  const at = new Date(resetsAt < 1e12 ? resetsAt * 1000 : resetsAt);
+  const soon = at.getTime() - Date.now() < 24 * 60 * 60 * 1000;
+  return ` · resets ${
+    soon
+      ? clockTime(at)
+      : at.toLocaleDateString([], { month: "short", day: "numeric" })
+  }`;
+};
+
 const usageLine = (limits: WorkspaceRateLimits | null) => {
   const window = limits?.buckets.find((bucket) => bucket.primary)?.primary;
   if (!window) return null;
-  let resets = "";
-  if (window.resetsAt) {
-    // The account service reports seconds; tolerate milliseconds.
-    const at = new Date(
-      window.resetsAt < 1e12 ? window.resetsAt * 1000 : window.resetsAt,
-    );
-    const soon = at.getTime() - Date.now() < 24 * 60 * 60 * 1000;
-    resets = ` · resets ${
-      soon
-        ? at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
-        : at.toLocaleDateString([], { month: "short", day: "numeric" })
-    }`;
-  }
-  return `${Math.round(window.remainingPercent)}% of your usage limit left${resets}`;
+  return `${Math.round(window.remainingPercent)}% of your usage limit left${resetsText(window.resetsAt)}`;
+};
+
+const CLAUDE_WINDOWS: Record<string, string> = {
+  five_hour: "5-hour ",
+  seven_day: "weekly ",
+  seven_day_opus: "weekly Opus ",
+  seven_day_sonnet: "weekly Sonnet ",
+};
+
+/** `null` when there is no report, or its window has already reset. */
+export const claudeUsageLine = (
+  limit: ClaudeRateLimit | null,
+  now = Date.now(),
+) => {
+  if (!limit || (limit.resetsAt && limit.resetsAt * 1000 <= now)) return null;
+  const resets = resetsText(limit.resetsAt);
+  const window = CLAUDE_WINDOWS[limit.rateLimitType ?? ""] ?? "";
+  if (limit.status === "rejected") return `Usage limit reached${resets}`;
+  if (limit.isUsingOverage || limit.rateLimitType === "overage")
+    return `Using extra usage${resets}`;
+  if (limit.usedPercent !== null)
+    return `${Math.max(0, Math.round(100 - limit.usedPercent))}% of your ${window}limit left${resets}`;
+  if (limit.status === "allowed_warning")
+    return `Approaching your ${window}usage limit${resets}`;
+  return `Within your usage limit${resets}`;
 };
 
 const OPTION = '[role="option"]:not([aria-disabled="true"])';
@@ -84,6 +117,7 @@ export default function WorkspaceComposerControls({
   disabled,
   onChange,
   loadAccount,
+  loadClaudeUsage,
   runtime = "codex",
   onRuntimeChange,
 }: {
@@ -93,6 +127,7 @@ export default function WorkspaceComposerControls({
   disabled: boolean;
   onChange: (model: string, effort: string) => void;
   loadAccount?: () => Promise<AccountSummary>;
+  loadClaudeUsage?: () => Promise<ClaudeRateLimit | null>;
   runtime?: "codex" | "claude";
   onRuntimeChange?: (runtime: "codex" | "claude") => void;
 }) {
@@ -118,6 +153,22 @@ export default function WorkspaceComposerControls({
       live = false;
     };
   }, [open, loadAccount, runtime]);
+  // Undefined until loaded. Reread on every open: replies update the report.
+  const [claudeUsage, setClaudeUsage] = useState<
+    ClaudeRateLimit | null | undefined
+  >(undefined);
+  useEffect(() => {
+    if (!open || !loadClaudeUsage || runtime !== "claude") return;
+    let live = true;
+    void loadClaudeUsage()
+      .catch(() => null)
+      .then((value) => {
+        if (live) setClaudeUsage(value);
+      });
+    return () => {
+      live = false;
+    };
+  }, [open, loadClaudeUsage, runtime]);
 
   // Automatic may also include connection defaults; do not infer an effective
   // model from the catalog's isDefault flag when the connection has overrides.
@@ -157,6 +208,7 @@ export default function WorkspaceComposerControls({
 
   const account = accountLine(summary?.account ?? null);
   const usage = usageLine(summary?.limits ?? null);
+  const claudeLine = claudeUsage ? claudeUsageLine(claudeUsage) : null;
   const choose = (next: string) => {
     if (!disabled && next !== model) onChange(next, "");
   };
@@ -247,11 +299,33 @@ export default function WorkspaceComposerControls({
             />
             {runtime === "claude" && (
               <p className="mt-2 text-ui-meta text-ink-muted">
-                Uses your Claude Code subscription sign-in. Project files and
-                enabled research tools are available; commands require a
-                configured execution profile. Remaining usage and automatic
-                titles are unavailable.
+                Uses your Claude Code subscription sign-in. Claude can read
+                project files, use enabled research tools, and run read-only
+                shell commands in a sandbox on macOS and Linux.
               </p>
+            )}
+          </div>
+        )}
+        {runtime === "claude" && loadClaudeUsage && (
+          <div className="border-b border-line px-3 py-2.5">
+            <div className="text-ui-meta font-medium text-ink-muted">
+              Claude usage
+            </div>
+            {claudeUsage === undefined ? (
+              <Skeleton label="Loading usage" lines={1} className="mt-2" />
+            ) : claudeLine && claudeUsage ? (
+              <>
+                <div className="mt-0.5">{claudeLine}</div>
+                <div className="mt-0.5 text-ui-meta text-ink-muted">
+                  Reported by Claude Code at{" "}
+                  {clockTime(new Date(claudeUsage.observedAt))}
+                </div>
+              </>
+            ) : (
+              <div className="mt-0.5 text-ui-meta text-ink-muted">
+                Claude Code reports usage while it replies. It will appear here
+                after Claude&apos;s next reply.
+              </div>
             )}
           </div>
         )}

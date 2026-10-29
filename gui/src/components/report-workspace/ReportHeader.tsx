@@ -132,6 +132,7 @@ export default function ReportHeader({
               provenanceMarkdown={renderProvenanceMarkdown(provenance)}
               report={report}
               extractedText={extractedText}
+              inputPath={runManifest?.input_path}
             />
           </div>
         )}

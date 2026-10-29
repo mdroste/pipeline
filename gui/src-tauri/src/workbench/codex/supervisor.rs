@@ -527,7 +527,10 @@ impl AppServerSupervisor {
                     "threadId": thread_id,
                     "permissions": permissions,
                     "runtimeWorkspaceRoots": runtime_workspace_roots,
-                    "modelProvider": "openai"
+                    "modelProvider": "openai",
+                    // Only thread metadata is read here. History is paged
+                    // separately so its size never reaches the frame limit.
+                    "excludeTurns": true
                 }),
                 DEFAULT_REQUEST_TIMEOUT,
             )
@@ -560,32 +563,40 @@ impl AppServerSupervisor {
             .await
     }
 
+    /// The newest turns of a thread with their status but no items.
+    pub async fn recent_turns(&self, thread_id: &str) -> Result<Value, RequestError> {
+        validate_identifier("thread id", thread_id)?;
+        turns::recent(&self.native.client, thread_id).await
+    }
+
     pub async fn reconcile_thread(
         &self,
         workbench_binding_id: &str,
         thread_id: &str,
     ) -> Result<(), RequestError> {
         validate_identifier("Workbench binding id", workbench_binding_id)?;
-        let snapshot = self.read_thread(thread_id).await?;
-        let binding_id = workbench_binding_id.to_string();
-        let thread_id = thread_id.to_string();
-        let epoch = self.epoch;
-        crate::workbench::commands::run_store(move |store| {
-            reconcile_snapshot(&store, &binding_id, &thread_id, epoch, snapshot)
-        })
-        .await
-        .map_err(|error| RequestError::unavailable(error.message))
+        validate_identifier("thread id", thread_id)?;
+        turns::reconcile(
+            &self.native.client,
+            self.epoch,
+            workbench_binding_id,
+            thread_id,
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn start_turn(&self, request: StartTurnRequest) -> Result<String, RequestError> {
-        self.start_turn_with_acceptance(request, |_| {}).await
+        self.validate_turn(&request).await?;
+        self.dispatch_turn(request, |_| {}).await
     }
 
-    pub(crate) async fn start_turn_with_acceptance(
+    /// Checks a turn without sending it. At most the model catalog is read,
+    /// so a failure here proves App Server never received the message.
+    pub(crate) async fn validate_turn(
         &self,
-        request: StartTurnRequest,
-        accepted: impl FnOnce(&str),
-    ) -> Result<String, RequestError> {
+        request: &StartTurnRequest,
+    ) -> Result<(), RequestError> {
         validate_identifier("Workbench binding id", &request.workbench_binding_id)?;
         validate_identifier("thread id", &request.thread_id)?;
         validate_identifier("client user message id", &request.client_user_message_id)?;
@@ -598,6 +609,16 @@ impl AppServerSupervisor {
             self.validate_model_selection(model, request.effort.as_deref())
                 .await?;
         }
+        Ok(())
+    }
+
+    /// Sends a turn that `validate_turn` accepted. Once this starts, a
+    /// failure without a turn id leaves delivery uncertain.
+    pub(crate) async fn dispatch_turn(
+        &self,
+        request: StartTurnRequest,
+        accepted: impl FnOnce(&str),
+    ) -> Result<String, RequestError> {
         let result = self
             .native
             .client
@@ -665,6 +686,9 @@ impl AppServerSupervisor {
         let client = self.native.client.clone();
         let projected_thread_id = thread_id.clone();
         let task = tokio::spawn(async move {
+            // Turns that lost events while running, to a lag or a failed
+            // write. Each is re-read once when it ends.
+            let mut gaps = HashSet::new();
             loop {
                 match events.recv().await {
                     Ok(event) => {
@@ -674,52 +698,58 @@ impl AppServerSupervisor {
                             }
                             continue;
                         }
+                        let turn_id = turns::event_turn_id(&event).map(str::to_string);
+                        let ended = matches!(event, NormalizedEvent::TurnCompleted { .. });
                         let event_binding_id = binding_id.clone();
                         let result = crate::workbench::commands::run_store(move |store| {
                             store.project_codex_event(&event_binding_id, &event)
                         })
                         .await;
                         match result {
-                            Ok(_) => {}
-                            Err(error) => client.warn(format!(
-                                "Workbench could not persist a Codex event: {}",
-                                error.message
-                            )),
+                            Ok(_) => {
+                                let Some(turn_id) = turn_id.filter(|id| ended && gaps.remove(id))
+                                else {
+                                    continue;
+                                };
+                                if let Err(error) = turns::repair(
+                                    &client,
+                                    client.epoch(),
+                                    &binding_id,
+                                    &projected_thread_id,
+                                    &turn_id,
+                                )
+                                .await
+                                {
+                                    client.warn(format!(
+                                        "Workbench could not repair a turn's transcript: {}",
+                                        error.message
+                                    ));
+                                }
+                            }
+                            Err(error) => {
+                                client.warn(format!(
+                                    "Workbench could not persist a Codex event: {}",
+                                    error.message
+                                ));
+                                gaps.extend(turn_id);
+                            }
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
                         client.warn(format!(
-                            "Workbench projection lagged by {skipped} events; reconciling from thread/read"
+                            "Workbench projection lagged by {skipped} events; reconciling from thread/turns/list"
                         ));
-                        match client
-                            .request(
-                                "thread/read",
-                                json!({"threadId":projected_thread_id,"includeTurns":true}),
-                                DEFAULT_REQUEST_TIMEOUT,
-                            )
-                            .await
+                        match turns::reconcile(
+                            &client,
+                            client.epoch(),
+                            &binding_id,
+                            &projected_thread_id,
+                        )
+                        .await
                         {
-                            Ok(snapshot) => {
-                                let snapshot_binding_id = binding_id.clone();
-                                let snapshot_thread_id = projected_thread_id.clone();
-                                let epoch = client.epoch();
-                                let result = crate::workbench::commands::run_store(move |store| {
-                                    reconcile_snapshot(
-                                        &store,
-                                        &snapshot_binding_id,
-                                        &snapshot_thread_id,
-                                        epoch,
-                                        snapshot,
-                                    )
-                                })
-                                .await;
-                                if result.is_err() {
-                                    client
-                                        .warn("Workbench thread projection reconciliation failed");
-                                }
-                            }
+                            Ok(running) => gaps.extend(running),
                             Err(error) => client.warn(format!(
-                                "Workbench could not reload a lagged thread: {}",
+                                "Workbench could not reconcile a lagged thread: {}",
                                 error.message
                             )),
                         }
@@ -1027,52 +1057,6 @@ pub(crate) fn event_thread_id(event: &NormalizedEvent) -> Option<&str> {
     }
 }
 
-fn reconcile_snapshot(
-    store: &crate::workbench::store::Store,
-    binding_id: &str,
-    thread_id: &str,
-    epoch: u64,
-    snapshot: Value,
-) -> crate::workbench::store::WorkbenchResult<()> {
-    let turns = snapshot
-        .get("thread")
-        .and_then(|thread| thread.get("turns"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| crate::workbench::store::WorkbenchError {
-            code: "storage_error".to_string(),
-            message: "thread/read reconciliation response omitted thread.turns".to_string(),
-            retryable: true,
-            recovery: Some("Retry the Workbench session reload.".to_string()),
-        })?;
-    for turn in turns {
-        let Some(turn_id) = turn.get("id").and_then(Value::as_str) else {
-            continue;
-        };
-        let status = turn
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("inProgress");
-        let event = if matches!(status, "completed" | "failed" | "interrupted") {
-            NormalizedEvent::TurnCompleted {
-                epoch,
-                thread_id: thread_id.to_string(),
-                turn_id: turn_id.to_string(),
-                status: status.to_string(),
-                turn: turn.clone(),
-            }
-        } else {
-            NormalizedEvent::TurnStarted {
-                epoch,
-                thread_id: thread_id.to_string(),
-                turn_id: turn_id.to_string(),
-                turn: turn.clone(),
-            }
-        };
-        store.project_codex_event(binding_id, &event)?;
-    }
-    Ok(())
-}
-
 fn required_string(value: &Value, path: &[&str], context: &str) -> Result<String, RequestError> {
     let mut cursor = value;
     for key in path {
@@ -1106,6 +1090,7 @@ fn string_array(value: &Value, key: &str) -> Result<Vec<String>, RequestError> {
 
 #[cfg(test)]
 mod tests;
+mod turns;
 
 /// On dropped/failed background calls, stop the native connection before releasing
 /// the shared account lease. An unconfirmed turn must not outlive its account.

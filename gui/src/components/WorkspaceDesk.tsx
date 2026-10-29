@@ -14,6 +14,7 @@ import WorkspaceMenu from "./WorkspaceMenu";
 import WorkspaceIcon from "./WorkspaceIcon";
 import { MenuItem } from "../ui/Menu";
 import { Icon } from "../ui/icons";
+import { isMac } from "../lib/platform";
 import "./WorkspaceDesk.css";
 
 type DeskView = "project" | "assistant" | "split";
@@ -197,7 +198,13 @@ export default function WorkspaceDesk({
       className="workspace-desk-area"
       data-workspace-desk
     >
-      <div className="workspace-desk-toolbar" aria-label="Desk views">
+      {/* On macOS the toolbar's background also drags the window ("deep":
+          its buttons still take their own clicks). */}
+      <div
+        className="workspace-desk-toolbar"
+        aria-label="Desk views"
+        data-tauri-drag-region={isMac ? "deep" : undefined}
+      >
         <button
           ref={navigationButtonRef}
           type="button"

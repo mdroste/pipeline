@@ -5,7 +5,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { Project, ProjectsResponse, RunSummary } from "../../lib/types";
+import type { ArtifactSelectionTarget } from "../../lib/artifactTypes";
 import { router } from "../../lib/router";
+import { useOpenHistoryRun } from "../../hooks/app/historyRunOpener";
 import { underRoot } from "../../lib/projectOverview";
 import ProjectIssueLedgerPanel from "../ProjectIssueLedgerPanel";
 import EmptyState from "../../ui/EmptyState";
@@ -21,6 +23,7 @@ export default function ProjectReviews({
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
   const [collections, setCollections] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const openHistoryRun = useOpenHistoryRun();
   useEffect(() => {
     let stale = false;
     void Promise.all([
@@ -57,8 +60,9 @@ export default function ProjectReviews({
   const unfiled = collections.filter(
     (collection) => !collection.run_ids.some((id) => projectRunIds.has(id)),
   );
-  const openRun = (runId: string) =>
-    void router.navigate({ page: "history", runId });
+  // Evidence chips carry the cited source; the app shell opens the run there.
+  const openRun = (runId: string, source?: ArtifactSelectionTarget) =>
+    openHistoryRun(runId, source ?? null);
 
   if (error)
     return (

@@ -55,7 +55,7 @@ pub fn normalize_doi(value: &str) -> Option<String> {
         None
     }
 }
-fn client() -> WorkbenchResult<reqwest::Client> {
+pub(crate) fn client() -> WorkbenchResult<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .redirect(reqwest::redirect::Policy::none())
@@ -63,17 +63,13 @@ fn client() -> WorkbenchResult<reqwest::Client> {
         .build()
         .map_err(|_| WorkbenchError::invalid("Unable to initialize acquisition client"))
 }
-async fn bytes(request: reqwest::RequestBuilder, max: usize) -> WorkbenchResult<(Vec<u8>, String)> {
-    let mut response = request
+async fn send(request: reqwest::RequestBuilder) -> WorkbenchResult<reqwest::Response> {
+    request
         .send()
         .await
-        .map_err(|_| WorkbenchError::invalid("Acquisition connection failed or timed out"))?;
-    if !response.status().is_success() {
-        return Err(WorkbenchError::invalid(format!(
-            "Acquisition returned HTTP {}; no content was imported",
-            response.status().as_u16()
-        )));
-    }
+        .map_err(|_| WorkbenchError::invalid("Acquisition connection failed or timed out"))
+}
+async fn body(mut response: reqwest::Response, max: usize) -> WorkbenchResult<(Vec<u8>, String)> {
     if response.content_length().is_some_and(|n| n > max as u64) {
         return Err(WorkbenchError::invalid(
             "Acquisition response exceeds its byte limit",
@@ -100,7 +96,119 @@ async fn bytes(request: reqwest::RequestBuilder, max: usize) -> WorkbenchResult<
     }
     Ok((data, mime))
 }
+async fn bytes(request: reqwest::RequestBuilder, max: usize) -> WorkbenchResult<(Vec<u8>, String)> {
+    let response = send(request).await?;
+    if !response.status().is_success() {
+        return Err(WorkbenchError::invalid(format!(
+            "Acquisition returned HTTP {}; no content was imported",
+            response.status().as_u16()
+        )));
+    }
+    body(response, max).await
+}
+/// A bounded response of any status, so connectors can report service errors.
+pub(crate) struct Fetched {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+pub(crate) async fn fetch(
+    request: reqwest::RequestBuilder,
+    max: usize,
+) -> WorkbenchResult<Fetched> {
+    let response = send(request).await?;
+    let status = response.status().as_u16();
+    let (body, _) = body(response, max).await?;
+    Ok(Fetched { status, body })
+}
+const CROSSREF_CONTACT: &str = "crossref_contact";
+/// The researcher's own Crossref contact, sent as `mailto` when set.
+pub fn crossref_contact(store: &Store) -> WorkbenchResult<Option<String>> {
+    Ok(store
+        .preference(CROSSREF_CONTACT)?
+        .and_then(|v| v.as_str().map(str::to_string)))
+}
+pub fn set_crossref_contact(store: &Store, email: Option<&str>) -> WorkbenchResult<Option<String>> {
+    let email = email.map(str::trim).filter(|s| !s.is_empty());
+    if let Some(email) = email {
+        validate_contact(email)?;
+    }
+    store.set_preference(CROSSREF_CONTACT, &email.map_or(Value::Null, |e| json!(e)))?;
+    Ok(email.map(str::to_string))
+}
+/// A plausible personal address. Shared, example and placeholder addresses are
+/// refused because Crossref limits and may block requests per contact.
+pub(crate) fn validate_contact(email: &str) -> WorkbenchResult<()> {
+    let invalid = || {
+        WorkbenchError::invalid(
+            "Enter your own email address; Pipeline sends it to Crossref only as a contact",
+        )
+    };
+    if email.len() > 254
+        || email
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || "<>,;:\"()[]\\".contains(c))
+    {
+        return Err(invalid());
+    }
+    let (local, domain) = email.rsplit_once('@').ok_or_else(invalid)?;
+    let domain = domain.to_ascii_lowercase();
+    if local.is_empty()
+        || local.len() > 64
+        || local.contains('@')
+        || !domain.contains('.')
+        || domain.starts_with(['.', '-'])
+        || domain.ends_with(['.', '-'])
+        || domain.contains("..")
+        || !domain
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+    {
+        return Err(invalid());
+    }
+    let tld = domain.rsplit('.').next().unwrap_or("");
+    let reserved = [
+        "example.com",
+        "example.org",
+        "example.net",
+        "example.edu",
+        "domain.com",
+        "yourdomain.com",
+        "email.com",
+        "test.com",
+    ];
+    let local = local.to_ascii_lowercase();
+    if tld.len() < 2
+        || ["example", "test", "invalid", "localhost", "local"].contains(&tld)
+        || reserved
+            .iter()
+            .any(|r| domain == *r || domain.ends_with(&format!(".{r}")))
+        || [
+            "you",
+            "your.name",
+            "yourname",
+            "name",
+            "user",
+            "email",
+            "test",
+            "noreply",
+            "no-reply",
+        ]
+        .contains(&local.as_str())
+    {
+        return Err(WorkbenchError::invalid(
+            "Enter your own contact email; example and placeholder addresses are refused",
+        ));
+    }
+    Ok(())
+}
 pub async fn crossref(query: &str) -> WorkbenchResult<Vec<Candidate>> {
+    crossref_with_contact(query, None).await
+}
+/// Crossref lookup; `contact` selects Crossref's per-contact polite pool.
+pub async fn crossref_with_contact(
+    query: &str,
+    contact: Option<&str>,
+) -> WorkbenchResult<Vec<Candidate>> {
     desk::check_text(query, 1000)?;
     let client = client()?;
     let request = if let Some(doi) = normalize_doi(query) {
@@ -114,6 +222,10 @@ pub async fn crossref(query: &str) -> WorkbenchResult<Vec<Candidate>> {
         client
             .get("https://api.crossref.org/works")
             .query(&[("query.bibliographic", query), ("rows", "20")])
+    };
+    let request = match contact {
+        Some(contact) => request.query(&[("mailto", contact)]),
+        None => request,
     };
     let (body, mime) = bytes(request, 2 * 1024 * 1024).await?;
     if !mime.contains("json") {
@@ -353,88 +465,6 @@ pub fn record_pdf(
     };
     desk::insert(store, ws, "acquisition", title, body, None, operation)
 }
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FredRequest {
-    pub workspace_id: String,
-    pub series_id: String,
-    pub vintage: String,
-    pub api_key: String,
-    pub operation_id: String,
-}
-pub async fn fred(r: &FredRequest) -> WorkbenchResult<(Vec<u8>, super::data::DataAcquisition)> {
-    if r.series_id.is_empty()
-        || r.series_id.len() > 100
-        || !r
-            .series_id
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
-    {
-        return Err(WorkbenchError::invalid("Invalid FRED series ID"));
-    }
-    chrono::NaiveDate::parse_from_str(&r.vintage, "%Y-%m-%d")
-        .map_err(|_| WorkbenchError::invalid("Choose an exact vintage date (YYYY-MM-DD)"))?;
-    if r.api_key.len() != 32 || !r.api_key.bytes().all(|b| b.is_ascii_alphanumeric()) {
-        return Err(WorkbenchError::invalid(
-            "Enter a FRED API key; it is used only for this request",
-        ));
-    }
-    let client = client()?;
-    let params = [
-        ("series_id", r.series_id.as_str()),
-        ("api_key", r.api_key.as_str()),
-        ("file_type", "json"),
-        ("realtime_start", r.vintage.as_str()),
-        ("realtime_end", r.vintage.as_str()),
-    ];
-    let (meta, _) = bytes(
-        client
-            .get("https://api.stlouisfed.org/fred/series")
-            .query(&params),
-        1024 * 1024,
-    )
-    .await?;
-    let meta: Value = serde_json::from_slice(&meta)
-        .map_err(|_| WorkbenchError::invalid("Invalid FRED series metadata"))?;
-    let (observations, _) = bytes(
-        client
-            .get("https://api.stlouisfed.org/fred/series/observations")
-            .query(&params)
-            .query(&[("limit", "100000"), ("units", "lin")]),
-        16 * 1024 * 1024,
-    )
-    .await?;
-    let v: Value = serde_json::from_slice(&observations)
-        .map_err(|_| WorkbenchError::invalid("Invalid FRED observations"))?;
-    let rows = v["observations"]
-        .as_array()
-        .ok_or_else(|| WorkbenchError::invalid("FRED returned no observation array"))?;
-    if v["count"].as_u64() != Some(rows.len() as u64) {
-        return Err(WorkbenchError::invalid(
-            "FRED response is incomplete; this adapter refuses truncated series",
-        ));
-    }
-    let mut csv = String::from("date,value,realtime_start,realtime_end\n");
-    for row in rows {
-        let fields = ["date", "value", "realtime_start", "realtime_end"]
-            .map(|k| format!("\"{}\"", row[k].as_str().unwrap_or("").replace('"', "\"\"")));
-        csv.push_str(&fields.join(","));
-        csv.push('\n');
-    }
-    let info = &meta["seriess"][0];
-    let acquisition = super::data::DataAcquisition {
-        provider: "FRED/ALFRED".into(),
-        source: format!("https://fred.stlouisfed.org/series/{}", r.series_id),
-        retrieved_at: desk::now(),
-        requested_vintage: Some(r.vintage.clone()),
-        returned_vintage: v["realtime_start"].as_str().map(str::to_string),
-        series_ids: vec![r.series_id.clone()],
-        units: info["units"].as_str().map(str::to_string),
-        frequency: info["frequency"].as_str().map(str::to_string),
-        transformation: Some("lin (untransformed)".into()),
-    };
-    Ok((csv.into_bytes(), acquisition))
-}
 pub fn inbox_state(
     store: &Store,
     ws: &str,
@@ -488,5 +518,39 @@ mod tests {
         assert!(safe_url("file:///tmp/a.pdf").is_err());
         assert!(safe_url("https://user:secret@example.com/a.pdf").is_err());
         assert!(safe_url("https://127.0.0.1/a.pdf").is_err());
+    }
+    #[test]
+    fn crossref_contact_is_personal_optional_and_clearable() {
+        for good in ["jane.doe@econ.ucla.edu", "r.smith+crossref@lse.ac.uk"] {
+            assert!(validate_contact(good).is_ok(), "{good}");
+        }
+        for bad in [
+            "",
+            "jane",
+            "jane@localhost",
+            "you@example.com",
+            "user@university.edu",
+            "jane@dept.example.org",
+            "a b@uni.edu",
+            "jane@uni..edu",
+            "<jane@uni.edu>",
+            "jane@uni.test",
+        ] {
+            assert!(validate_contact(bad).is_err(), "{bad}");
+        }
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open_at(&temp.path().join("store")).unwrap();
+        assert_eq!(crossref_contact(&store).unwrap(), None);
+        assert_eq!(
+            set_crossref_contact(&store, Some(" jane.doe@econ.ucla.edu ")).unwrap(),
+            Some("jane.doe@econ.ucla.edu".into())
+        );
+        assert_eq!(
+            crossref_contact(&store).unwrap().as_deref(),
+            Some("jane.doe@econ.ucla.edu")
+        );
+        assert!(set_crossref_contact(&store, Some("you@example.com")).is_err());
+        assert_eq!(set_crossref_contact(&store, Some("  ")).unwrap(), None);
+        assert_eq!(crossref_contact(&store).unwrap(), None);
     }
 }

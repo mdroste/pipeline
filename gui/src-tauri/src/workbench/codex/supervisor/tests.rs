@@ -97,6 +97,7 @@ fn thread_lifecycle_uses_qualified_methods_and_exact_safe_defaults() {
                 assert_eq!(request["method"], expected);
                 if expected == "thread/resume" {
                     assert!(request["params"].get("baseInstructions").is_none(), "resume retains the persisted base prompt");
+                    assert_eq!(request["params"]["excludeTurns"], true, "resume reads metadata, not history");
                 }
                 let result = match expected {
                     "thread/start" => {
@@ -488,6 +489,73 @@ fn account_login_catalog_and_quota_use_the_pinned_protocol_contract() {
             58
         );
         server.await.unwrap();
+    });
+}
+
+#[test]
+fn turn_validation_reads_only_the_catalog_and_rejects_a_retired_model() {
+    runtime().block_on(async {
+        let temporary = tempfile::tempdir().unwrap();
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let (client_reader, client_writer) = tokio::io::split(client_io);
+        let (server_reader, mut server_writer) = tokio::io::split(server_io);
+        let server = tokio::spawn(async move {
+            let mut reader = BufReader::new(server_reader);
+            let mut methods = Vec::new();
+            let mut line = String::new();
+            while reader.read_line(&mut line).await.unwrap() > 0 {
+                let request: Value = serde_json::from_str(&line).unwrap();
+                line.clear();
+                methods.push(request["method"].as_str().unwrap().to_string());
+                let result = json!({"data":[model_fixture("model-a", true)],"nextCursor":null});
+                server_writer
+                    .write_all(
+                        format!("{}\n", json!({"id":request["id"],"result":result})).as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+            methods
+        });
+        let client = AppServerClient::from_io(10, client_reader, client_writer);
+        let supervisor = AppServerSupervisor::from_test_client(
+            10,
+            client,
+            InitializeResult {
+                user_agent: "codex_cli_rs/0.147.0".to_string(),
+                platform_family: "unix".to_string(),
+                platform_os: "macos".to_string(),
+                codex_home: temporary.path().display().to_string(),
+            },
+        );
+        let request = StartTurnRequest {
+            workbench_binding_id: "binding-test".to_string(),
+            thread_id: "thread-1".to_string(),
+            text: "Analyze the result.".to_string(),
+            client_user_message_id: "submission-1".to_string(),
+            model: Some("model-retired".to_string()),
+            effort: None,
+        };
+        let error = supervisor.validate_turn(&request).await.unwrap_err();
+        assert_eq!(error.code, "invalid_input");
+        let empty = StartTurnRequest {
+            text: String::new(),
+            ..request.clone()
+        };
+        assert_eq!(
+            supervisor.validate_turn(&empty).await.unwrap_err().code,
+            "invalid_input"
+        );
+        assert!(supervisor
+            .validate_turn(&StartTurnRequest {
+                model: Some("model-a".to_string()),
+                ..request
+            })
+            .await
+            .is_ok());
+        supervisor.shutdown().await;
+        drop(supervisor);
+        assert_eq!(server.await.unwrap(), ["model/list", "model/list"]);
     });
 }
 

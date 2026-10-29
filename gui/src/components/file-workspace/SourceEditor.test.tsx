@@ -78,6 +78,75 @@ it("uses explicit academic language grammars and project citation/label completi
 });
 
 it.each(["\n", "\r\n"])(
+  "keeps a second editor's cursor when the same file is edited elsewhere (%j)",
+  (separator) => {
+    const source = ["one", "two", "three 😀 end"].join(separator);
+    const editors = (value: string) => (
+      <>
+        <SourceEditor path="same.tex" label="First" value={value} />
+        <SourceEditor path="same.tex" label="Second" value={value} />
+      </>
+    );
+    const { rerender } = render(editors(source));
+    const [first, second] = ["First", "Second"].map((name) =>
+      EditorView.findFromDOM(screen.getByRole("textbox", { name }))!,
+    );
+    const cursor = second.state.doc.line(2).from + 1;
+    act(() => second.dispatch({ selection: { anchor: cursor } }));
+    act(() => first.dispatch({ changes: { from: 0, insert: "X" } }));
+    rerender(editors(first.state.sliceDoc()));
+    expect(second.state.sliceDoc()).toBe(`X${source}`);
+    expect(second.state.selection.main.head).toBe(cursor + 1);
+    // An emoji edit must not split the surrogate pair shared by both texts.
+    const emoji = first.state.doc.toString().indexOf("😀");
+    act(() =>
+      first.dispatch({
+        changes: { from: emoji, to: emoji + 2, insert: "😁" },
+      }),
+    );
+    rerender(editors(first.state.sliceDoc()));
+    expect(second.state.sliceDoc()).toBe(`X${source}`.replace("😀", "😁"));
+    expect(second.state.selection.main.head).toBe(cursor + 1);
+  },
+);
+
+it("reveals requested lines without taking focus, and focuses only for explicit Go to line", () => {
+  const ref = createRef<SourceEditorHandle>();
+  const value = "first\nsecond\nthird";
+  const { rerender } = render(
+    <>
+      <input aria-label="Source line" />
+      <SourceEditor ref={ref} path="paper.tex" value={value} />
+    </>,
+  );
+  const view = EditorView.findFromDOM(
+    screen.getByRole("textbox", { name: "Source editor" }),
+  )!;
+  const field = screen.getByLabelText("Source line");
+  act(() => field.focus());
+  expect(view.state.selection.main.head).toBe(0);
+  const request = { line: 3 };
+  const show = (reveal: { line: number }) => (
+    <>
+      <input aria-label="Source line" />
+      <SourceEditor ref={ref} path="paper.tex" value={value} reveal={reveal} />
+    </>
+  );
+  rerender(show(request));
+  expect(view.state.selection.main.head).toBe(13);
+  expect(field).toHaveFocus();
+  act(() => view.dispatch({ selection: { anchor: 0 } }));
+  rerender(show(request));
+  expect(view.state.selection.main.head).toBe(0);
+  rerender(show({ line: 3 }));
+  expect(view.state.selection.main.head).toBe(13);
+  expect(field).toHaveFocus();
+  act(() => ref.current?.goToLine(2));
+  expect(view.state.selection.main.head).toBe(6);
+  expect(view.hasFocus).toBe(true);
+});
+
+it.each(["\n", "\r\n"])(
   "preserves %j separators and exact Unicode selection offsets",
   async (separator) => {
     const source = `αlpha${separator}βeta 😀${separator}last${separator}`;

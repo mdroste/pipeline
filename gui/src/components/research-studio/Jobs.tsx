@@ -5,11 +5,20 @@ import {
 } from "../../lib/projectClient";
 import { studioClient, type JobStatus } from "../../lib/studioClient";
 import { executionClient } from "../../lib/workbench/executionClient";
+import {
+  STATA_CLEANUP_NOTICE,
+  stataUsesLauncher,
+} from "../../lib/workbench/toolchains";
 import type {
   ExecutionProfile,
   ResearchExecution,
 } from "../../lib/workbenchTypes";
 import { button, panel, ErrorNotice, Inspect, useAction } from "./shared";
+import JobLog, { ACTIVE_JOB_STATES } from "./JobLog";
+
+const ACTIVE_POLL_MS = 1500;
+const RUNNING_POLL_MS = 5000;
+const IDLE_POLL_MS = 10_000;
 export function JobLauncher({
   profile,
   onQueued,
@@ -95,74 +104,53 @@ export default function Jobs({
 }) {
   const [jobs, setJobs] = useState<JobStatus[]>([]);
   const [selected, setSelected] = useState("");
-  const [stream, setStream] = useState("stdout");
-  const [log, setLog] = useState("");
-  const [truncated, setTruncated] = useState(false);
+  const [open, setOpen] = useState(false);
   const { error, run, setError } = useAction();
-  const completed = useRef<string | null>(null);
+  // Survives hiding, so a job that ended meanwhile still triggers a refresh.
+  const completed = useRef<{ workspaceId: string; key: string } | null>(null);
   const callback = useRef(onCompleted);
   callback.current = onCompleted;
   useEffect(() => {
     if (!visible) return;
-    completed.current = null;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
+    let running = false;
     const refresh = async () => {
       try {
         const next = await studioClient.jobs(workspaceId);
         if (disposed) return;
         setJobs(next);
+        running = next.some((j) => ACTIVE_JOB_STATES.includes(j.state));
         const key = next.map((j) => `${j.execution.id}:${j.state}`).join("|");
-        if (completed.current !== null && key !== completed.current) {
+        const previous = completed.current;
+        if (previous?.workspaceId === workspaceId && key !== previous.key) {
           callback.current();
         }
-        completed.current = key;
+        completed.current = { workspaceId, key };
       } catch (e) {
         if (!disposed) setError(String(e));
       }
-      if (!disposed) timer = setTimeout(() => void refresh(), 1500);
+      // Collapsed, check less often: enough to notice a job ending or a
+      // newly queued one.
+      const delay = open
+        ? ACTIVE_POLL_MS
+        : running
+          ? RUNNING_POLL_MS
+          : IDLE_POLL_MS;
+      if (!disposed) timer = setTimeout(() => void refresh(), delay);
     };
     void refresh();
     return () => {
       disposed = true;
       clearTimeout(timer);
     };
-  }, [visible, workspaceId, setError]);
-  useEffect(() => {
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
-    let offset = 0;
-    setLog("");
-    setTruncated(false);
-    if (!selected || !visible) return;
-    const read = async () => {
-      try {
-        const page = await studioClient.log(
-          workspaceId,
-          selected,
-          stream,
-          offset,
-        );
-        if (disposed) return;
-        offset = page.nextOffset;
-        setLog((old) => (old + page.text).slice(-200000));
-        setTruncated((old) => old || page.truncated || offset > 200000);
-      } catch (e) {
-        if (!disposed) setError(String(e));
-      }
-      if (!disposed) timer = setTimeout(() => void read(), 750);
-    };
-    void read();
-    return () => {
-      disposed = true;
-      clearTimeout(timer);
-    };
-  }, [visible, workspaceId, selected, stream, setError]);
-  const active = jobs.filter((j) =>
-    ["queued", "running", "cancelling"].includes(j.state),
-  );
+  }, [visible, open, workspaceId, setError]);
+  const active = jobs.filter((j) => ACTIVE_JOB_STATES.includes(j.state));
   return (
-    <details className={`${panel} bg-gray-50/60 dark:bg-neutral-900/30`}>
+    <details
+      className={`${panel} bg-gray-50/60 dark:bg-neutral-900/30`}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
       <summary className="cursor-pointer text-sm font-semibold">
         Local jobs · {active.length} active · {jobs.length} retained
       </summary>
@@ -201,8 +189,9 @@ export default function Jobs({
             )}
             {j.state === "cancelling" && (
               <span>
-                {j.execution.adapter === "stata"
-                  ? "Allowing oldstata cleanup (up to 30s)"
+                {j.execution.adapter === "stata" &&
+                stataUsesLauncher(j.execution.command)
+                  ? "Allowing the Stata launcher to exit (up to 30s)"
                   : "Stopping descendants…"}
               </span>
             )}
@@ -240,7 +229,7 @@ export default function Jobs({
             )}
             {j.execution.validation.stataCleanupRequired === true && (
               <p role="alert" className="w-full text-red-700">
-                Verify that Legacy Time Off has completed before continuing.
+                {STATA_CLEANUP_NOTICE}
               </p>
             )}
           </div>
@@ -248,29 +237,13 @@ export default function Jobs({
       </div>
       {selected && (
         <>
-          <div className="flex gap-2">
-            {["stdout", "stderr"].map((s) => (
-              <button
-                className={button}
-                key={s}
-                aria-pressed={stream === s}
-                onClick={() => setStream(s)}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-          <pre
-            aria-label="Job log"
-            className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-neutral-950 p-3 text-xs text-neutral-100"
-          >
-            {log || "No output yet."}
-          </pre>
-          {truncated && (
-            <p className="text-xs">
-              Log limit reached. Up to 4 MiB is saved for each output stream.
-            </p>
-          )}
+          <JobLog
+            workspaceId={workspaceId}
+            executionId={selected}
+            job={jobs.find((j) => j.execution.id === selected)}
+            live={visible && open}
+            onError={setError}
+          />
           <Inspect
             value={jobs.find((j) => j.execution.id === selected)}
             label="Run details"

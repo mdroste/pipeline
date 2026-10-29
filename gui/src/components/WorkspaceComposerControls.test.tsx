@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import WorkspaceComposerControls from "./WorkspaceComposerControls";
+import WorkspaceComposerControls, {
+  claudeUsageLine,
+} from "./WorkspaceComposerControls";
 import type { WorkspaceModel } from "../lib/workbenchTypes";
 
 vi.mock("../lib/workbench/workspaceClient", () => ({ workspaceClient: {} }));
@@ -216,4 +218,76 @@ it("offers Claude subscription mode and hides ChatGPT account information", asyn
   expect(load).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("radio", { name: "ChatGPT" }));
   expect(change).toHaveBeenCalledWith("codex");
+});
+
+it("shows Claude usage once Claude Code has reported it", async () => {
+  const usage = vi.fn().mockResolvedValue({
+    status: "allowed_warning",
+    resetsAt: null,
+    rateLimitType: "five_hour",
+    usedPercent: 82.4,
+    isUsingOverage: false,
+    observedAt: Date.now(),
+  });
+  render(
+    <WorkspaceComposerControls
+      models={[]}
+      model=""
+      effort=""
+      disabled={false}
+      onChange={vi.fn()}
+      runtime="claude"
+      loadClaudeUsage={usage}
+    />,
+  );
+  expect(usage).not.toHaveBeenCalled();
+  open();
+  await screen.findByText("18% of your 5-hour limit left");
+  expect(screen.getByText(/Reported by Claude Code at/)).toBeVisible();
+});
+
+it("explains when Claude has not reported usage yet", async () => {
+  render(
+    <WorkspaceComposerControls
+      models={[]}
+      model=""
+      effort=""
+      disabled={false}
+      onChange={vi.fn()}
+      runtime="claude"
+      loadClaudeUsage={vi.fn().mockResolvedValue(null)}
+    />,
+  );
+  open();
+  await screen.findByText(/It will appear here after Claude's next reply/);
+});
+
+it("summarizes Claude usage reports without inventing percentages", () => {
+  const now = 1_000_000_000_000;
+  const report = {
+    status: "allowed" as const,
+    resetsAt: null,
+    rateLimitType: null,
+    usedPercent: null,
+    isUsingOverage: false,
+    observedAt: now,
+  };
+  expect(claudeUsageLine(null, now)).toBeNull();
+  expect(claudeUsageLine(report, now)).toBe("Within your usage limit");
+  expect(
+    claudeUsageLine(
+      { ...report, status: "allowed_warning", rateLimitType: "seven_day" },
+      now,
+    ),
+  ).toBe("Approaching your weekly usage limit");
+  expect(claudeUsageLine({ ...report, status: "rejected" }, now)).toBe(
+    "Usage limit reached",
+  );
+  expect(claudeUsageLine({ ...report, isUsingOverage: true }, now)).toBe(
+    "Using extra usage",
+  );
+  // A window that has already reset makes the report stale.
+  expect(
+    claudeUsageLine({ ...report, resetsAt: now / 1000 - 60 }, now),
+  ).toBeNull();
 });

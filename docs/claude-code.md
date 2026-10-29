@@ -27,6 +27,12 @@ Subscription calls use your Claude account's limits and billing settings,
 including any extra usage you have enabled. They do not fall back to a saved
 API key when the subscription is unavailable.
 
+The conversation model picker shows the most recent usage report that Claude
+Code sent during this app session and the time it arrived. Claude Code reports
+usage while it replies, so nothing is shown before Claude's first reply, and
+the figure can lag behind usage from other Claude apps. A report whose window
+has reset is no longer shown.
+
 Pipeline checks the sign-in before each conversation turn and on the first
 Claude call in a Review. An API or Console account does not satisfy the
 subscription check. If the check fails, follow the sign-in or update instruction
@@ -40,13 +46,28 @@ and stores its own sign-in.
 Claude receives the assistant instructions, selected project context, and
 enabled Pipeline tools. It can list and read project files. Editing existing
 source files requires **Allow edits** and checks that the file has not changed.
-Local commands use configured and authorized Pipeline research tools.
+Research jobs use configured and authorized Pipeline research tools.
+
+On macOS and Linux, Claude can also run shell commands for quick inspection
+and calculations. Claude Code's sandbox confines them: they can read the
+conversation's project folder but not your home folder, other projects, or
+Pipeline's data folder; they can write only to a temporary scratch folder that
+is deleted after the turn; and they have no network access. Shell commands
+cannot change project files, even with **Allow edits**, and **Internet access
+for commands** does not apply to them. On Linux the sandbox needs `bubblewrap`
+and `socat`; without them, Claude gets no shell. Windows has no Claude shell.
+
+After the first reply, Pipeline names a new Claude conversation with one
+additional, tool-free Claude Code call using the cheapest Claude model offered.
+The call receives only the first message and reply. Turn this off under
+**Settings → Conversations**; the title model chosen there applies to ChatGPT
+conversations.
 
 Pipeline keeps conversation messages and supplies recent text history on each
 turn, up to its context limit. Switching providers supplies the same limited
-history to the new provider. The Claude connection currently lacks native shell,
-browser, and subagent tools, automatic titles, remaining-quota reporting, and
-a project-wide provider default. Windows file editing remains unavailable.
+history to the new provider. The Claude connection currently lacks browser and
+subagent tools and a project-wide provider default. Windows file editing
+remains unavailable.
 
 Stopping a turn stops its Claude process and associated research jobs. An
 interrupted turn remains in history and is not automatically sent again after
@@ -112,19 +133,19 @@ OAuth credentials are not part of project archives. Stale accepted turns become
 interrupted after restart and are never automatically replayed.
 
 The model receives the resolved assistant instructions, selected context, and
-only the captured Pipeline tool catalog. Native CLI tools, slash commands,
-Chrome, hooks and discovered MCP configurations are disabled. The explicit
-`pipeline` MCP bridge exposes enabled research tools and scoped project file
-listing/reading. Existing source-file edits require Edit access, the current
-content hash, and the Studio's recoverable edit transaction. Paths use existing
-safe-root checks; a scoped role cannot redirect edits to the main project root.
-Commands require configured and authorized research execution profiles.
-Stopping a turn kills its process group and cancels its research jobs.
+only the captured Pipeline tool catalog. Native CLI tools other than sandboxed
+Bash, slash commands, Chrome, hooks and discovered MCP configurations are
+disabled. The explicit `pipeline` MCP bridge exposes enabled research tools and
+scoped project file listing/reading. Existing source-file edits require Edit access, the
+current content hash, and the Studio's recoverable edit transaction. Paths use
+existing safe-root checks; a scoped role cannot redirect edits to the main
+project root. Research jobs require configured and authorized execution
+profiles. Stopping a turn kills its process group and cancels its research jobs.
 
-Current limits: no native shell/browser/subagents, automatic conversation titles,
-Claude remaining-quota display, arbitrary filesystem mutations, or project-wide
-provider default. Windows file acceptance keeps the Studio's existing fail-closed
-restriction. These are capability limits, not a subscription prohibition.
+Current limits: no native browser or subagents, arbitrary filesystem mutations
+from the shell, or project-wide provider default. Windows has no Claude shell,
+and file acceptance keeps the Studio's existing fail-closed restriction. These
+are capability limits, not a subscription prohibition.
 
 ### Validation — October 24, 2026
 

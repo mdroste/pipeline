@@ -8,7 +8,7 @@ and notifications. Search by a setting's name or purpose to jump to its control.
 | General | Theme, text size, spacing, editor font and wrapping, and startup page |
 | Connections | ChatGPT sign-in, Claude subscription or API access, other API keys, and local model servers |
 | Conversations | Send shortcut and automatic conversation titles |
-| Reviews | Models and reasoning defaults, parallel calls, simultaneous reviews, timeouts, retries, and PDF extraction |
+| Reviews | Models and reasoning defaults, parallel calls, simultaneous reviews, per-Review cost, call, and time limits, timeouts, retries, and PDF extraction |
 | Data & Storage | Research data folder, storage usage, retention, cleanup, backups, and Trash |
 | Notifications | Completion, failure, and attention notices; desktop delivery and sound |
 | Advanced & About | Logging, research tools and diagnostics, app version, and update checks |
@@ -40,6 +40,9 @@ on Windows and Linux if you prefer a separate send shortcut.
 Pipeline normally restores the last project or conversation at startup.
 Opening Settings does not replace that remembered destination.
 
+**General → Startup → Guided setup** reopens the
+[Get started guide](README.md#get-started-in-pipeline).
+
 ## Storage and cleanup
 
 Choose a [research data folder](storage.md) under **Data & Storage**. Use the
@@ -69,6 +72,21 @@ Notifications and scheduled work require Pipeline to remain running. Closing
 the window can leave it running if **Keep running when the window closes** is
 enabled. These settings do not wake a sleeping computer.
 
+## Updates
+
+Pipeline installed from an official release checks GitHub for a newer version
+about a minute after it starts and then about once a day while it runs. When
+one is available, a banner offers **Download**, which opens the installer for
+your computer in your browser, and **What’s new**, which opens the release
+notes. Pipeline does not install updates itself; run the downloaded installer
+to upgrade. **Dismiss** hides the banner until a later version is released.
+
+Turn off **Check for updates automatically** under **Advanced & About** to stop
+these checks. **Check for updates** always works. Each check sends GitHub your
+network address and app version, nothing about your research. If GitHub is
+limiting requests from your network, Pipeline waits as long as GitHub asks
+before trying again. Copies built from source check only when you ask.
+
 ## Implementation notes
 
 Device presentation settings use the versioned `pipeline.ui.preferences`
@@ -90,6 +108,18 @@ partial Reviews and batches with failed items use the failure category.
 Desktop delivery uses the Tauri notification plugin. Only the explicit control
 requests OS permission. Sound uses an in-app tone and remains subject to
 browser audio activation and system policy.
+
+`src-tauri/src/updates.rs` is the update-check facade. `updates/schedule.rs`
+runs automatic checks only in builds compiled with
+`PIPELINE_OFFICIAL_RELEASE=1`, and `updates/github.rs` makes the bounded
+`releases/latest` request and selects this platform's installer by the names
+`scripts/release/draft-release.mjs` publishes; a release test keeps them
+aligned. The preference, last result, and rate-limit wait live in the
+device-local `~/.pipeline/updates.json`. An unreadable file turns automatic
+checks off until the researcher saves the setting again. `update_status` reads
+that file without a request, `update_set_automatic` saves the preference, and
+`check_for_update` checks immediately. Checks that find a newer version emit
+`update-available` for the banner.
 
 ## Validation — 2026-09-09
 

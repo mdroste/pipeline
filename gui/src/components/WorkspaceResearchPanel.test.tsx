@@ -332,3 +332,31 @@ it("retains a pending host execution preview when leaving and returning to Resul
     "profile",
   );
 });
+
+it("switches execution adapters with batch templates while keeping typed arguments", async () => {
+  render(projectPanel("results"));
+  const adapter = await screen.findByLabelText("Execution adapter");
+  const argv = screen.getByLabelText("Argument vector JSON");
+  fireEvent.change(adapter, { target: { value: "stata" } });
+  expect(argv).toHaveValue(JSON.stringify(["stata-mp", "-b", "do", "main.do"]));
+  expect(
+    screen.getByPlaceholderText("Expected output paths, one per line"),
+  ).toHaveValue("main.log");
+  expect(
+    screen.getByText(/batch mode \(-b on macOS and Linux/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Detect installed tools" }),
+  ).toBeInTheDocument();
+  fireEvent.change(adapter, { target: { value: "notebook" } });
+  expect(JSON.parse((argv as HTMLTextAreaElement).value)[1]).toBe("nbconvert");
+  expect(
+    screen.getByPlaceholderText("Expected output paths, one per line"),
+  ).toHaveValue("analysis.executed.ipynb");
+  fireEvent.change(argv, { target: { value: '["jupyter", "custom"]' } });
+  fireEvent.change(adapter, { target: { value: "python" } });
+  expect(argv).toHaveValue('["jupyter", "custom"]');
+  expect(
+    screen.getByPlaceholderText("Expected output paths, one per line"),
+  ).toHaveValue("");
+});

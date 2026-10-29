@@ -314,7 +314,10 @@ pub(super) fn required_providers(
         required.insert(preferred.clone());
     }
 
-    let enabled = config.steps.iter().filter(|step| step.enabled);
+    let enabled = config
+        .steps
+        .iter()
+        .filter(|step| step.enabled && step.kind.is_model());
     let mut needs_merge = false;
     for step in enabled {
         if step.agents.is_empty() {

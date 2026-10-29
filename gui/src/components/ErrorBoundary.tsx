@@ -1,7 +1,9 @@
-import { Component, ReactNode } from "react";
+import { Component, Fragment, ReactNode } from "react";
 
 interface Props {
   children: ReactNode;
+  /** Fill the enclosing pane instead of the window (boundaries inside the shell). */
+  nested?: boolean;
   /** Allows focused tests to disable details that are available only in development builds. */
   showTechnicalDetails?: boolean;
 }
@@ -29,8 +31,11 @@ export default class ErrorBoundary extends Component<Props, State> {
       const showTechnicalDetails =
         import.meta.env.DEV && this.props.showTechnicalDetails !== false;
       return (
-        <div className="h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950 p-8">
-          <div role="alert" className="max-w-md text-center">
+        <div
+          className={`${this.props.nested ? "h-full min-h-0 overflow-auto" : "h-screen"} flex bg-gray-50 dark:bg-gray-950 p-8`}
+        >
+          {/* Auto margins center the message without clipping a tall one. */}
+          <div role="alert" className="m-auto max-w-md text-center">
             <h1 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-2">
               Something went wrong
             </h1>
@@ -67,7 +72,8 @@ export default class ErrorBoundary extends Component<Props, State> {
       );
     }
 
-    // Use key to force remount children on retry, clearing corrupted state
-    return <div key={this.state.resetKey}>{this.props.children}</div>;
+    // The key remounts children on retry, clearing corrupted state. A Fragment
+    // adds no layout box, so children keep their parent's height chain.
+    return <Fragment key={this.state.resetKey}>{this.props.children}</Fragment>;
   }
 }

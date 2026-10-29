@@ -5,6 +5,7 @@ import {
   type AppPreferences,
 } from "../../lib/appPreferences";
 import type { ThemePreference } from "../../lib/theme";
+import { openGetStarted } from "../../lib/getStarted";
 import { isMac } from "../../lib/platform";
 import { SectionHeader, Toggle, selectClass } from "./controls";
 import { SettingRow, SaveFeedback } from "./SaveState";
@@ -199,6 +200,19 @@ export function StartupSettings() {
           <option value="home">Show Home overview</option>
         </select>
         <SaveFeedback {...feedback} />
+      </SettingRow>
+      <SettingRow
+        id="guided-setup"
+        label="Guided setup"
+        description="Check connections and tools on this computer, and open an example Review. Nothing in the guide changes your settings."
+      >
+        <button
+          type="button"
+          className="settings-button"
+          onClick={() => openGetStarted("setup")}
+        >
+          Set up Pipeline
+        </button>
       </SettingRow>
     </>
   );

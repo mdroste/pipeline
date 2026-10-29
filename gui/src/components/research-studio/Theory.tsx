@@ -8,6 +8,7 @@ import {
   studioClient,
   type ResearchDirection,
   type TheoryCheck,
+  type TheoryCheckRecord,
   type TheoryNote,
   type TheoryOverview,
 } from "../../lib/studioClient";
@@ -117,6 +118,10 @@ export default function Theory({
   const [kindFilter, setKindFilter] = useState("");
   const [noteId, setNoteId] = useState("");
   const [note, setNote] = useState(emptyNote);
+  // Raw list text stays local so typing spaces and new lines is not undone;
+  // it is normalized into lines only when the note is saved.
+  const [assumptionsText, setAssumptionsText] = useState("");
+  const [unresolvedText, setUnresolvedText] = useState("");
   const [checkId, setCheckId] = useState("");
   const [check, setCheck] = useState(emptyCheck(""));
   const [directionId, setDirectionId] = useState("");
@@ -160,9 +165,14 @@ export default function Theory({
   const anchorText = (id: string) =>
     data.anchors.find((a) => a.id === id)?.body.selection.quote.slice(0, 160) ??
     id;
+  const editNote = (body: TheoryNote) => {
+    setNote(body);
+    setAssumptionsText(body.assumptions.join("\n"));
+    setUnresolvedText(body.unresolvedSteps.join("\n"));
+  };
   const selectNote = (n: ProjectRecord<TheoryNote>) => {
     setNoteId(n.id);
-    setNote(n.body);
+    editNote(n.body);
     setCheckId("");
     setCheck(emptyCheck(n.id));
   };
@@ -196,7 +206,7 @@ export default function Theory({
             className={button}
             onClick={() => {
               setNoteId("");
-              setNote(emptyNote);
+              editNote(emptyNote);
               setCheckId("");
               setCheck(emptyCheck(""));
             }}
@@ -328,8 +338,8 @@ export default function Theory({
               aria-label="Assumptions"
               className={input}
               rows={2}
-              value={note.assumptions.join("\n")}
-              onChange={(e) => set("assumptions", lines(e.target.value))}
+              value={assumptionsText}
+              onChange={(e) => setAssumptionsText(e.target.value)}
             />
           </Field>
           <IdPicker
@@ -365,8 +375,8 @@ export default function Theory({
               aria-label="Unresolved steps"
               className={input}
               rows={2}
-              value={note.unresolvedSteps.join("\n")}
-              onChange={(e) => set("unresolvedSteps", lines(e.target.value))}
+              value={unresolvedText}
+              onChange={(e) => setUnresolvedText(e.target.value)}
             />
           </Field>
           {needsReason && (
@@ -400,11 +410,15 @@ export default function Theory({
                   action: "saveTheory",
                   id: noteId || null,
                   expectedRevision: current?.revision ?? 0,
-                  note,
+                  note: {
+                    ...note,
+                    assumptions: lines(assumptionsText),
+                    unresolvedSteps: lines(unresolvedText),
+                  },
                 });
                 await load();
                 setNoteId(saved.id);
-                setNote({ ...emptyNote, ...saved.body });
+                editNote({ ...emptyNote, ...saved.body });
                 setCheck((c) => ({ ...c, theoryId: saved.id }));
                 setNotice("Theory note saved.");
               })
@@ -569,12 +583,16 @@ export default function Theory({
                 disabled={busy || !check.summary.trim()}
                 onClick={() =>
                   void run(async () => {
-                    await studioClient.mutate(workspaceId, {
+                    const saved = await studioClient.mutate<
+                      ProjectRecord<TheoryCheckRecord>
+                    >(workspaceId, {
                       action: "saveCheck",
                       id: checkId || null,
                       expectedRevision: currentCheck?.revision ?? 0,
                       check,
                     });
+                    // Later saves update this record instead of adding another.
+                    setCheckId(saved.id);
                     await load();
                     setNotice("Check recorded.");
                   })

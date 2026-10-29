@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ReportWorkspace from "./ReportWorkspace";
 import {
@@ -359,6 +359,51 @@ describe("ReportWorkspace", () => {
     expect(sourcesTab).toHaveFocus();
     await user.keyboard("{ArrowLeft}");
     expect(issuesTab).toHaveFocus();
+  });
+
+  it("keeps a visited tab mounted so its reading position and settings survive tab switches", async () => {
+    const user = userEvent.setup();
+    render(
+      <ReportWorkspace
+        markdown={"# Referee Report\n\nBody."}
+        report={makeReport()}
+        extractedText="Extracted paper."
+      />,
+    );
+
+    const larger = await screen.findByRole(
+      "button",
+      { name: "Increase report text size" },
+      lazyPanelWait,
+    );
+    await user.click(larger);
+    const size = screen.getByRole("button", {
+      name: "Reset report text size",
+    }).textContent;
+    const scroller = larger.closest(".overflow-y-auto") as HTMLElement;
+    scroller.scrollTop = 320;
+    fireEvent.scroll(scroller);
+
+    await user.click(screen.getByRole("tab", { name: "Report details" }));
+    // Browsers drop the offset of content hidden with display:none.
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
+    // The hidden reader's find bar must not answer Ctrl/Cmd-F.
+    await user.keyboard("{Control>}f{/Control}");
+    expect(
+      screen.queryByRole("textbox", { name: "Find in report", hidden: true }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Report" }));
+    expect(
+      screen.getByRole("button", { name: "Reset report text size" }),
+    ).toHaveTextContent(size ?? "");
+    expect(scroller).toBe(
+      screen
+        .getByRole("button", { name: "Increase report text size" })
+        .closest(".overflow-y-auto"),
+    );
+    expect(scroller.scrollTop).toBe(320);
   });
 
   it("loads a historical report into the same workspace", async () => {

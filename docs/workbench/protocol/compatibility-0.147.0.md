@@ -51,7 +51,7 @@ runtime never falls back to `codex exec` for Workspace.
 | Dynamic tools | `initialize.capabilities.experimentalApi = true`; declarations in `thread/start.dynamicTools`; calls through server request `item/tool/call` | Experimental declaration accepted; an authenticated tool call is not yet observed |
 | Questions | Server request `item/tool/requestUserInput` | Stable schema; not yet observed |
 | Standalone command | `command/exec` plus qualified write/resize/terminate methods | Buffered/streaming execution, stdin write/close, PTY resize, and explicit terminate observed under the custom profile on macOS |
-| History | `thread/read` is stable; `thread/turns/list` and `thread/items/list` are experimental in this build | Mixed |
+| History | `thread/read` is stable; `thread/turns/list` and `thread/items/list` are experimental in this build. Workspace resumes with `excludeTurns` and reconciles through `thread/turns/list` (`itemsView` `notLoaded` for statuses, `full` per turn) | Mixed |
 | Shutdown | Close the Workspace-owned stdio connection; active connection-scoped commands must terminate; retain process-tree termination as bounded fallback | Clean exit and active-command PID cleanup after stdin close observed on macOS; host-forced descendant cleanup not yet exercised here |
 
 Requests and responses omit the `jsonrpc` member on the wire. Request IDs may
@@ -89,6 +89,12 @@ fixture exercises both forms.
 12. started a second streaming command, closed the owned stdio connection, and
     verified both that App Server exited successfully and that the second
     command PID was no longer running, without starting a model turn.
+
+The probe also checks the paged history reads that Workspace reconciliation
+uses: `thread/resume` with `excludeTurns` returns no turns, and
+`thread/turns/list` honors its page size and returns no items for
+`notLoaded`. Injected history creates no turns, so this confirms the request
+shape only; item paging over real turns needs an authenticated model turn.
 
 Observed result: isolated home verified, ambient account absent, a five-entry
 unauthenticated model catalog returned, and the account-independent thread

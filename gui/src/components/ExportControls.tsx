@@ -8,6 +8,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useMemo, useState } from "react";
 import type { PipelineReport } from "../lib/types";
 import { confirmDialog, notify } from "./DialogService";
+import ReportFormatItems from "./ReportFormatItems";
 
 interface Props {
   runId?: string | null;
@@ -16,6 +17,8 @@ interface Props {
   provenanceMarkdown?: string;
   report?: PipelineReport;
   extractedText?: string;
+  /** Saved input path; enables exports onto the reviewed .docx or PDF. */
+  inputPath?: string | null;
 }
 
 const SAFE_SELECTION: ExportSelection = {
@@ -43,6 +46,7 @@ export default function ExportControls({
   provenanceMarkdown,
   report,
   extractedText,
+  inputPath,
 }: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
@@ -206,6 +210,17 @@ export default function ExportControls({
         >
           {runId && (
             <>
+              <ReportFormatItems
+                runId={runId}
+                inputPath={inputPath}
+                busy={Boolean(progress)}
+                onStart={(next) => {
+                  setMenuOpen(false);
+                  setProgress(next);
+                }}
+                onFinish={() => setProgress(null)}
+              />
+              <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
               <button
                 role="menuitem"
                 onClick={() =>

@@ -1,5 +1,6 @@
 //! Authorized process launch, independent process groups, and bounded pipe draining.
 
+use super::adapters;
 use super::launch::launch_manifest;
 use super::types::{ExecutionOutput, ExecutionProfile};
 use serde_json::Value;
@@ -44,7 +45,10 @@ pub(crate) fn run_profile_process(
 ) -> Result<ExecutionOutput, String> {
     let launch = launch_manifest(profile).map_err(|e| e.message)?;
     if &launch != authorized_launch {
-        return Err("The launch program changed after authorization".into());
+        return Err(
+            "The launch program or its environment files changed after authorization; review the command again"
+                .into(),
+        );
     }
     let program = launch["invocationPath"]
         .as_str()
@@ -123,6 +127,7 @@ pub(crate) fn run_profile_process(
             .unwrap_or_default()
     });
     let started = Instant::now();
+    let waits_for_launcher = adapters::waits_for_stata_launcher(&profile.adapter, &profile.argv);
     let mut wait_error = None;
     let mut stop_requested: Option<(Instant, &str)> = None;
     let mut wrapper_completed_after_stop = false;
@@ -137,9 +142,11 @@ pub(crate) fn run_profile_process(
             stop_requested.get_or_insert((Instant::now(), "timed_out"));
         }
         if let Some((requested_at, reason)) = stop_requested {
-            // oldstata has no signal trap. Let it return normally through Legacy Time Off.
-            // Forced termination is explicitly recorded as requiring cleanup verification.
-            if profile.adapter != "stata" || requested_at.elapsed() >= Duration::from_secs(30) {
+            // A Stata custom launcher may restore machine state only on a normal
+            // return (the oldstata clock wrapper has no signal trap), so it gets
+            // 30 seconds before forced termination, which is recorded as
+            // requiring cleanup verification. Direct Stata stops immediately.
+            if !waits_for_launcher || requested_at.elapsed() >= Duration::from_secs(30) {
                 crate::commands::lifecycle::kill_independent_process(pid);
                 let _ = child.wait();
                 break (reason.to_string(), None);
@@ -148,7 +155,7 @@ pub(crate) fn run_profile_process(
         match child.try_wait() {
             Ok(Some(status)) => {
                 if let Some((_, reason)) = stop_requested {
-                    wrapper_completed_after_stop = profile.adapter == "stata";
+                    wrapper_completed_after_stop = waits_for_launcher;
                     break (reason.to_string(), status.code());
                 }
                 break (

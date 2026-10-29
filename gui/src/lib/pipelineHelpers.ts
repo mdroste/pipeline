@@ -233,6 +233,12 @@ export function lintCrossStepReferences(
   const withSchema = new Set(
     config.steps.filter((step) => !!step.output_schema).map((step) => step.id),
   );
+  // Analyzer checks always return a structured artifact.
+  const structuredSources = new Set(
+    config.steps
+      .filter((step) => !!step.output_schema || step.kind === "analyzer")
+      .map((step) => step.id),
+  );
 
   for (const step of config.steps.filter((step) => step.enabled)) {
     for (const match of step.prompt.matchAll(/\{step:([^}]*)\}/g)) {
@@ -294,7 +300,11 @@ export function lintCrossStepReferences(
       }
     }
     const artifact = step.for_each?.artifact;
-    if (artifact && ids.has(artifact.step) && !withSchema.has(artifact.step)) {
+    if (
+      artifact &&
+      ids.has(artifact.step) &&
+      !structuredSources.has(artifact.step)
+    ) {
       warnings.push({
         stepId: step.id,
         message: `fans out over step '${artifact.step}', which returns Markdown rather than a structured artifact`,

@@ -155,7 +155,15 @@ export default function Experiments({
                 setOutputs(p.outputs.join("\n"));
                 setTimeout(p.timeoutSeconds);
                 setArgv(JSON.stringify(p.argv, null, 2));
-                setLanguage(p.adapter === "stata" ? "oldstata" : "python3");
+                setLanguage(
+                  p.adapter === "stata"
+                    ? "oldstata"
+                    : p.adapter === "r"
+                      ? "Rscript"
+                      : p.adapter === "julia"
+                        ? "julia"
+                        : "python3",
+                );
               } else {
                 setArgv("");
                 setCwd(root);
@@ -220,7 +228,9 @@ export default function Experiments({
             />
           </details>
           <p className="text-xs text-gray-500">
-            Stata uses /bin/zsh -lic and oldstata. Include its log among
+            The oldstata choice runs that shell alias through /bin/zsh -lic. For
+            an installed Stata, enter the arguments under Advanced argv, such as
+            ["stata-mp", "-b", "do", "main.do"]. Include the Stata log among
             expected outputs. Export structured JSON for repeatable result
             comparisons.
           </p>
@@ -244,7 +254,13 @@ export default function Experiments({
                   profileId: profileId || null,
                   workspaceId,
                   name: profileName,
-                  adapter: language === "oldstata" ? "stata" : "command",
+                  // Keep a loaded profile's structured adapter (R, Python, …).
+                  adapter:
+                    language === "oldstata"
+                      ? "stata"
+                      : selectedProfile && selectedProfile.adapter !== "stata"
+                        ? selectedProfile.adapter
+                        : "command",
                   argv: command,
                   cwd: directory,
                   environment: {},

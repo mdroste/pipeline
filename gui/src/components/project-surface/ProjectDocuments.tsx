@@ -177,12 +177,14 @@ export default function ProjectDocuments(props: Props) {
           The pinned document stays open while you choose another one above.
         </p>
       )}
+      {/* Both readers can show the same revision, so each slot keeps its own
+          key namespace; a shared key would orphan the old primary reader. */}
       <div
         className={`flex min-h-0 flex-1 gap-3 ${layout === "revision" ? "flex-col xl:flex-row" : "flex-col 2xl:flex-row"}`}
       >
         <Suspense fallback={<p className="p-6 text-sm">Loading reader…</p>}>
           {revisionId ? (
-            <ResearchReaderBoundary key={revisionId}>
+            <ResearchReaderBoundary key={`primary:${revisionId}`}>
               <DocumentReader
                 key={`${revisionId}:${initialSelection?.start ?? ""}:${initialSelection?.page ?? ""}`}
                 workspaceId={workspaceId}
@@ -201,7 +203,7 @@ export default function ProjectDocuments(props: Props) {
             </p>
           )}
           {pinnedRevision && (
-            <ResearchReaderBoundary key={pinnedRevision}>
+            <ResearchReaderBoundary key={`pinned:${pinnedRevision}`}>
               <DocumentReader
                 key={`pinned-${pinnedRevision}:${pinnedSelection?.start ?? ""}:${pinnedSelection?.page ?? ""}`}
                 workspaceId={workspaceId}

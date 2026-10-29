@@ -28,11 +28,21 @@ pub(crate) fn configure_subscription(command: &mut Command) {
 /// Disable user/project API helpers and settings-provided environment keys.
 /// The native forced login method also rejects conflicting managed policies.
 pub(crate) fn subscription_args(args: &[String]) -> Vec<String> {
+    settings_args(None, args)
+}
+
+/// Claude Code reads one `--settings` value. A command sandbox is the only
+/// caller-supplied key, so it cannot replace the subscription-only overrides.
+fn settings_args(sandbox: Option<&Value>, args: &[String]) -> Vec<String> {
+    let mut settings = json!({"forceLoginMethod":"claudeai", "apiKeyHelper":"", "disableAllHooks":true, "autoMemoryEnabled":false});
+    if let Some(sandbox) = sandbox {
+        settings["sandbox"] = sandbox.clone();
+    }
     let mut result = vec![
         "--setting-sources".into(),
         String::new(),
         "--settings".into(),
-        json!({"forceLoginMethod":"claudeai", "apiKeyHelper":"", "disableAllHooks":true, "autoMemoryEnabled":false}).to_string(),
+        settings.to_string(),
     ];
     result.extend_from_slice(args);
     result
@@ -94,7 +104,15 @@ pub(crate) fn verified_subscription_command(
     args: &[String],
     cwd: Option<&str>,
 ) -> tokio::process::Command {
-    let mut command = resolved.command(subscription_args(args));
+    prompt_command(resolved, subscription_args(args), cwd)
+}
+
+fn prompt_command(
+    resolved: &crate::deps::ResolvedCommand,
+    args: Vec<String>,
+    cwd: Option<&str>,
+) -> tokio::process::Command {
+    let mut command = resolved.command(args);
     configure_subscription(&mut command);
     command.current_dir(
         cwd.map(std::path::PathBuf::from)
@@ -112,6 +130,20 @@ pub(crate) async fn subscription_command(
 ) -> Result<tokio::process::Command, String> {
     let resolved = verified_subscription().await?;
     Ok(verified_subscription_command(&resolved, args, cwd))
+}
+
+/// As [`subscription_command`], with Claude Code's command sandbox settings.
+pub(crate) async fn sandboxed_subscription_command(
+    sandbox: &Value,
+    args: &[String],
+    cwd: Option<&str>,
+) -> Result<tokio::process::Command, String> {
+    let resolved = verified_subscription().await?;
+    Ok(prompt_command(
+        &resolved,
+        settings_args(Some(sandbox), args),
+        cwd,
+    ))
 }
 
 #[cfg(test)]
@@ -171,5 +203,18 @@ mod tests {
         let settings: Value = serde_json::from_str(&args[3]).unwrap();
         assert_eq!(settings["forceLoginMethod"], "claudeai");
         assert_eq!(settings["apiKeyHelper"], "");
+        assert!(settings.get("sandbox").is_none());
+    }
+
+    #[test]
+    fn a_sandbox_cannot_replace_subscription_overrides() {
+        let sandbox = json!({"enabled":true,"forceLoginMethod":"console"});
+        let args = settings_args(Some(&sandbox), &["-p".into()]);
+        assert_eq!(args.iter().filter(|a| *a == "--settings").count(), 1);
+        let settings: Value = serde_json::from_str(&args[3]).unwrap();
+        assert_eq!(settings["forceLoginMethod"], "claudeai");
+        assert_eq!(settings["disableAllHooks"], true);
+        assert_eq!(settings["sandbox"], sandbox);
+        assert_eq!(args[4], "-p");
     }
 }

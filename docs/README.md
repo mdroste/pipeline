@@ -4,6 +4,36 @@ Start with the [README](../README.md) to install Pipeline, connect a provider,
 and run your first review. These guides describe the current source; the
 [release notes](../CHANGELOG.md) list changes by version.
 
+## Get started in Pipeline
+
+On a first launch, Pipeline opens a short **Get started** guide. Reopen it
+from Home (**Set up Pipeline**) or from **Settings → General → Guided setup**.
+The guide changes no settings.
+
+1. **What do you work with?** Choose the closest match, such as Stata and
+   LaTeX or Word and Zotero. The answer only chooses which tips and tools the
+   guide shows first. It is stored on this device.
+2. **Connections** shows whether ChatGPT is signed in, whether Claude Code is
+   installed and signed in, which API keys are saved, and whether a local model
+   server is running. ChatGPT and Claude Code serve Conversations and Reviews;
+   API keys and local servers serve Reviews only. Each row opens
+   **Settings → Connections**.
+3. **Tools on this computer** looks for Stata, R, Python, Jupyter, Julia,
+   Quarto, and MATLAB only when you choose **Check this computer**. It looks in
+   standard install folders and on your `PATH`, installs nothing, and does not
+   start Stata or MATLAB. Found tools can run as
+   [local checks](projects.md#run-local-checks) in a project. The step also
+   shows the bundled PDF tools and whether the optional Full Parser is
+   installed.
+4. **Next steps** opens the example Review, **New review**, the **Reference
+   Check** or **Replication Package Readiness** template in the gallery, or a
+   new project.
+
+The **example Review** (also on Home as **See an example Review**) shows sample
+findings on a fictional paper excerpt, with severity, categories, cited
+evidence, and quote checks. No model is called, and the example is not added to
+Review history; decisions you make in it are not saved.
+
 ## Using Pipeline
 
 | Guide | What it covers |

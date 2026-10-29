@@ -198,7 +198,10 @@ and verification status.
   and conversation runtime. The runtime keeps hydration, submission, terminal
   identity, streaming and its private native event bridge together.
   `useWorkspaceTranscript.ts` owns on-demand
-  transcript pages; `lib/workspaceSessionState.ts` merges metadata acknowledgements
+  transcript pages; `hooks/workspace/useTranscriptFollow.ts` owns following
+  the latest message (reading gestures stop it; size changes re-pin while
+  following) and keeps the reader's anchor across page changes;
+  `lib/workspaceSessionState.ts` merges metadata acknowledgements
   without replacing the draft or transcript. `WorkspaceDesk.tsx`
   owns the actual project/chat sizing; `WorkspaceProjectNavigation.tsx` and
   `lib/workspaceNavigation.ts` own named destinations and local pins.
@@ -312,7 +315,9 @@ active state. Drafts are persisted before transport and cleared only after the
 turn start is acknowledged. Ambiguous sends are never retried automatically.
 
 App Server events are projections, not the sole source of truth. On lag,
-reconnect, or restart, reconcile from `thread/read`; projections and replay must
+reconnect, or restart, reconcile from paged history: `thread/resume` excludes
+turns, and `thread/turns/list` reads turn statuses first and then the items of
+turns the store lacks or still holds as open. Projections and replay must
 remain idempotent. Pending approvals/questions are scoped by epoch, request ID,
 and method so a stale connection cannot authorize a new one.
 
@@ -332,8 +337,10 @@ and method so a stale connection cannot authorize a new one.
 - Execution uses locally configured profiles with explicit host authorization,
   including profile tests. These commands run outside the conversation sandbox;
   command/launch/input changes invalidate their grants. LaTeX forbids enabling
-  shell escape. On this Mac, Stata profiles must invoke `/bin/zsh -lic` with the
-  `oldstata` wrapper; direct Stata binaries are rejected.
+  shell escape. Stata, R, Python, Julia, notebook and Quarto adapters accept
+  one argument shape each and record environment identity; Stata runs an
+  installed executable in batch mode or a shell-alias custom launcher. See
+  [Run local checks](../projects.md#run-local-checks).
 
 ## Performance and UI rules
 

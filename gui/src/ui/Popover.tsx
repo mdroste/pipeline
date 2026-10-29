@@ -28,7 +28,8 @@ const FOCUSABLE = [
 export interface PopoverProps {
   open: boolean;
   onClose: () => void;
-  /** The control that opened the layer; focus returns here on Escape. */
+  /** The control that opened the layer; focus returns here on Escape (and on
+   *  Tab for closeOnFocusOut layers). */
   anchorRef: RefObject<HTMLElement | null>;
   label: string;
   role?: "dialog" | "menu" | "listbox" | "group";
@@ -185,7 +186,22 @@ export default function Popover({
       }}
       onKeyDown={(event) => {
         onKeyDown?.(event);
-        if (event.key !== "Escape" || event.defaultPrevented) return;
+        if (event.defaultPrevented) return;
+        if (
+          event.key === "Tab" &&
+          closeOnFocusOut &&
+          dismissible &&
+          layer.current?.contains(event.target as Node)
+        ) {
+          // The layer is portaled to the end of the page, so Tab from inside
+          // it would leave the app. Hand focus to the anchor first; the
+          // browser's own Tab then moves on from there, as with a native list.
+          // Keys from a nested layer are that layer's to handle.
+          anchorRef.current?.focus();
+          onClose();
+          return;
+        }
+        if (event.key !== "Escape") return;
         event.stopPropagation();
         if (!dismissible) return;
         event.preventDefault();

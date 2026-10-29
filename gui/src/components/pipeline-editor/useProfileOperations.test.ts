@@ -95,3 +95,31 @@ it("loads the saved workflow when recovery reads fail without deleting unread re
     remove.mockRestore();
   }
 });
+
+it("passes the saved workflow to the run setup so a same-mode input survives", async () => {
+  localStorage.clear();
+  const config = {
+    steps: [],
+    merge: { enabled: false, prompt: "saved", agents: [] },
+    extraction: { method: "", input_mode: "document" },
+    orientation_prompt: "",
+    parallel_context_template: "",
+  };
+  mocks.invoke.mockImplementation(async (cmd: string) => {
+    if (cmd === "get_pipeline_config") return config;
+    if (cmd === "get_active_profile") return "saved";
+    if (cmd === "list_profiles") return [];
+    if (cmd === "save_pipeline_config") return;
+    throw new Error(cmd);
+  });
+  const changed = vi.fn();
+  const { result } = renderHook(() => {
+    const editor = useWorkflowEditor();
+    return { editor, ops: useProfileOperations(editor, null, changed) };
+  });
+  await waitFor(() => expect(result.current.ops.loading).toBe(false));
+  await act(async () => await result.current.ops.handleSave());
+  expect(changed).toHaveBeenCalledTimes(1);
+  expect(changed.mock.calls[0][0]?.extraction.input_mode).toBe("document");
+  expect(changed.mock.calls[0][0]).toBe(result.current.editor.config);
+});

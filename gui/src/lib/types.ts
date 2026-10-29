@@ -71,6 +71,10 @@ export interface StepContext {
 export interface StepConfig {
   id: string;
   label: string;
+  /** "analyzer" steps run a Pipeline check and make no model call. */
+  kind?: "model" | "analyzer";
+  /** Required for analyzer steps. */
+  analyzer?: AnalyzerSpec | null;
   prompt: string;
   /** Literal trusted reviewer instructions; no template expansion. */
   system_prompt?: string;
@@ -95,6 +99,13 @@ export interface StepConfig {
   output_schema?: Record<string, unknown> | null;
   /** Fan-out: run once per matching file or upstream JSON-array item, with {item} bound. */
   for_each?: ForEach | null;
+}
+
+/** A pinned host analyzer and its options (mirrors AnalyzerSpec). */
+export interface AnalyzerSpec {
+  id: string;
+  version: number;
+  options?: Record<string, unknown>;
 }
 
 /** Fan-out (map) config for a step (mirrors ForEach). */
@@ -790,6 +801,10 @@ export interface Settings {
   max_retries: number;
   /** Queued reviews started at the same time (1–4). */
   max_concurrent_reviews: number;
+  /** Per-Review limits; 0 means no limit. */
+  review_max_cost_usd?: number;
+  review_max_calls?: number;
+  review_max_minutes?: number;
   /** Add an LLM revision reconciliation when a matching prior run exists. */
   auto_revision_reconciliation: boolean;
   /** Max past runs to keep on disk; 0 = keep all. */
@@ -850,6 +865,19 @@ export interface UpdateInfo {
   release_url: string;
   release_name: string;
   published_at: string | null;
+  /** This platform's installer, when the release includes one. */
+  download_url: string | null;
+  checked_at: string | null;
+}
+
+/** Saved update preference and last result (`update_status`). */
+export interface UpdateStatus {
+  automatic: boolean;
+  /** False for development and source builds, which check only on request. */
+  automatic_available: boolean;
+  last_checked_at: string | null;
+  info: UpdateInfo | null;
+  error: string | null;
 }
 
 export interface ProfileSummary {

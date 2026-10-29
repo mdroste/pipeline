@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   open: vi.fn(),
   save: vi.fn(),
+  confirmDialog: vi.fn(),
 }));
 vi.mock("../lib/workbench/researchClient", () => ({ researchClient: mocks }));
 vi.mock("../lib/workbench/executionClient", () => ({ executionClient: mocks }));
@@ -41,6 +42,10 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: mocks.open,
   save: mocks.save,
+}));
+vi.mock("./DialogService", () => ({
+  confirmDialog: mocks.confirmDialog,
+  notify: vi.fn(),
 }));
 
 const run = (action: () => Promise<void>) => void action();
@@ -93,7 +98,7 @@ it("previews a package with the selected kinds and all papers, never conversatio
   ).toBeInTheDocument();
 });
 
-it("defaults an import to a new separate project and records conflicts for review", async () => {
+function mockPackage() {
   mocks.open.mockResolvedValue("/tmp/coauthor.pwex");
   mocks.inspectProjectExchange.mockResolvedValue({
     path: "/tmp/coauthor.pwex",
@@ -110,6 +115,10 @@ it("defaults an import to a new separate project and records conflicts for revie
     limitations: [],
     ownExport: false,
   });
+}
+
+it("defaults an import to a new separate project and records conflicts for review", async () => {
+  mockPackage();
   mocks.previewProjectExchangeImport.mockResolvedValue({
     targetWorkspaceId: null,
     new: 2,
@@ -351,4 +360,77 @@ it("ignores a pending prune preview after its category selection changes", async
     }),
   );
   expect(screen.getByText("Move to trash")).toBeDisabled();
+});
+
+it("imports only into the target that was previewed", async () => {
+  mockPackage();
+  mocks.previewProjectExchangeImport.mockResolvedValue({
+    targetWorkspaceId: null,
+    new: 2,
+    identical: 0,
+    remapped: 0,
+    conflicts: [],
+    decisions: [],
+    blobCount: 0,
+    limitations: [],
+  });
+  render(<WorkspaceExchangePanel {...props()} />);
+  fireEvent.click(await screen.findByText("Inspect package…"));
+  fireEvent.click(await screen.findByText("Preview import"));
+  await screen.findByText(/2 new/);
+  expect(screen.getByText("Import")).toBeEnabled();
+
+  fireEvent.change(screen.getByLabelText("Import target"), {
+    target: { value: "existingWorkspace" },
+  });
+  expect(screen.getByText("Import")).toBeDisabled();
+  expect(screen.queryByText(/2 new/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText("Import"));
+
+  fireEvent.change(screen.getByLabelText("Import target"), {
+    target: { value: "newWorkspace" },
+  });
+  fireEvent.click(screen.getByText("Preview import"));
+  await waitFor(() => expect(screen.getByText("Import")).toBeEnabled());
+  fireEvent.change(screen.getByLabelText("New project name"), {
+    target: { value: "Renamed copy" },
+  });
+  expect(screen.getByText("Import")).toBeDisabled();
+  expect(mocks.importProjectExchange).not.toHaveBeenCalled();
+});
+
+it("empties trash only after an explicit in-app confirmation", async () => {
+  mocks.storageReport.mockResolvedValue({
+    root: "/r",
+    activeJobs: 0,
+    note: "",
+    trash: [
+      {
+        id: "t1",
+        category: "job_scratch",
+        sizeBytes: 10,
+        originalPath: "/r/jobs/a",
+      },
+    ],
+    categories: [],
+  });
+  mocks.emptyTrash.mockResolvedValue(undefined);
+  mocks.confirmDialog.mockResolvedValueOnce(false);
+  render(<WorkspaceExchangePanel {...props()} />);
+  fireEvent.click(await screen.findByText("Inspect disk use"));
+  fireEvent.click(await screen.findByText("Empty trash"));
+  await waitFor(() =>
+    expect(mocks.confirmDialog).toHaveBeenCalledWith(
+      "Permanently delete 1 trashed item(s)? This cannot be undone.",
+      expect.objectContaining({
+        confirmLabel: "Delete permanently",
+        destructive: true,
+      }),
+    ),
+  );
+  expect(mocks.emptyTrash).not.toHaveBeenCalled();
+
+  mocks.confirmDialog.mockResolvedValueOnce(true);
+  fireEvent.click(screen.getByText("Empty trash"));
+  await waitFor(() => expect(mocks.emptyTrash).toHaveBeenCalledTimes(1));
 });

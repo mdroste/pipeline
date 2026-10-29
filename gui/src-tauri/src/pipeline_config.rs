@@ -46,9 +46,9 @@ pub use profile::{
     ProfileSummary, CURRENT_SCHEMA_VERSION,
 };
 pub use step::{
-    apply_agent_defaults, ArtifactSelector, DependencyPolicy, ForEach, ForEachArtifact,
-    NamedInputArtifactPart, Phase, PrimaryArtifactPart, RunCondition, StepArtifactPart, StepConfig,
-    StepContext,
+    apply_agent_defaults, AnalyzerSpec, ArtifactSelector, DependencyPolicy, ForEach,
+    ForEachArtifact, NamedInputArtifactPart, Phase, PrimaryArtifactPart, RunCondition,
+    StepArtifactPart, StepConfig, StepContext, StepKind,
 };
 
 pub(crate) use persistence::load_profile;

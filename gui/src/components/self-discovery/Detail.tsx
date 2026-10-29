@@ -31,6 +31,9 @@ export default function Detail({
   const [error, setError] = useState("");
   const operation = useRef(crypto.randomUUID());
   const paperRequest = useRef(0);
+  const paperSection = useRef<HTMLElement>(null);
+  const paperHeading = useRef<HTMLHeadingElement>(null);
+  const paperOpener = useRef<HTMLElement | null>(null);
   const choosing = run.state === "awaitingSelection";
   useEffect(() => {
     setSelected(run.selection?.recommended ?? []);
@@ -60,6 +63,15 @@ export default function Detail({
     },
     [],
   );
+  useEffect(() => {
+    // The reader renders below the lists; bring it into view and focus.
+    if (!paper) return;
+    paperSection.current?.scrollIntoView?.({
+      block: "start",
+      behavior: "smooth",
+    });
+    paperHeading.current?.focus({ preventScroll: true });
+  }, [paper]);
   async function act(work: () => Promise<DiscoveryRun | unknown>) {
     setBusy(true);
     setError("");
@@ -337,8 +349,9 @@ export default function Detail({
                   <p>{rank?.reason || p.reason}</p>
                   {rank && <p className="task-muted">{rank.uncertainty}</p>}
                   <button
-                    onClick={() => {
+                    onClick={(e) => {
                       const request = ++paperRequest.current;
+                      paperOpener.current = e.currentTarget;
                       setError("");
                       void discoveryClient
                         .paper(run.id, p.candidateId)
@@ -359,15 +372,22 @@ export default function Detail({
         </section>
       )}
       {paper && (
-        <section className="discovery-paper" aria-label="Paper reader">
+        <section
+          ref={paperSection}
+          className="discovery-paper"
+          aria-label="Paper reader"
+        >
           <div className="task-section-heading">
-            <h3>
+            <h3 ref={paperHeading} tabIndex={-1}>
               {current?.manuscript.title || `Project ${paper.candidateId}`}
             </h3>
             <button
               onClick={() => {
                 paperRequest.current++;
                 setPaper(null);
+                const opener = paperOpener.current;
+                paperOpener.current = null;
+                if (opener?.isConnected) opener.focus();
               }}
               aria-label="Close paper reader"
             >
@@ -383,14 +403,17 @@ export default function Detail({
                   ? `${current.reviews.length} adversarial reviews`
                   : "Not yet critically reviewed"}
               </p>
-              <ResearchReaderBoundary>
-                <Suspense fallback={<p>Opening paper…</p>}>
-                  <ReportViewer
-                    markdown={current.manuscript.markdown}
-                    initialContentsOpen={false}
-                  />
-                </Suspense>
-              </ResearchReaderBoundary>
+              <div className="discovery-reader">
+                <ResearchReaderBoundary>
+                  <Suspense fallback={<p>Opening paper…</p>}>
+                    <ReportViewer
+                      key={`${paper.candidateId}:${current.version}`}
+                      markdown={current.manuscript.markdown}
+                      initialContentsOpen={false}
+                    />
+                  </Suspense>
+                </ResearchReaderBoundary>
+              </div>
               <details>
                 <summary>Referee reports and response</summary>
                 {current.reviews.map((r, i) => (

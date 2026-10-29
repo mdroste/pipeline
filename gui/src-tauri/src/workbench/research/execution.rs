@@ -5,6 +5,7 @@ use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
 use rusqlite::OptionalExtension as _;
 use serde_json::Value;
 
+mod adapters;
 mod authorization;
 mod launch;
 mod lifecycle;
@@ -12,6 +13,7 @@ mod outputs;
 mod process;
 mod profiles;
 mod results;
+mod toolchains;
 mod types;
 
 pub(crate) use authorization::input_manifest;
@@ -35,6 +37,10 @@ pub(crate) use results::validate_result;
 pub use results::{
     compare_results, list_structured_results, record_structured_result, verify_evidence_results,
 };
+pub use toolchains::{
+    detect_toolchains, DetectedToolchain, EnvironmentFile, ProjectEnvironment, PythonEnvironment,
+    ToolchainReport,
+};
 pub(crate) use types::ExecutionOutput;
 pub use types::{
     CancelExecutionRequest, CompareResultsRequest, ExecutionProfile, HostExecutionPreview,
@@ -43,6 +49,8 @@ pub use types::{
     VerifyEvidenceResultsRequest,
 };
 
+#[cfg(test)]
+mod adapter_tests;
 #[cfg(all(test, unix))]
 mod contract_tests;
 #[cfg(test)]

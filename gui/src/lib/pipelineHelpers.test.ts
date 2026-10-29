@@ -274,4 +274,24 @@ describe("lintCrossStepReferences", () => {
       true,
     );
   });
+
+  it("accepts analyzer steps as fan-out sources but flags Markdown steps", () => {
+    const fanOut = (step: string) => ({
+      glob: "",
+      max: 10,
+      artifact: { step, pointer: "/items" },
+    });
+    const config = baseConfig([
+      { id: "check", kind: "analyzer" },
+      { id: "notes" },
+      { id: "per_check", for_each: fanOut("check") },
+      { id: "per_note", for_each: fanOut("notes") },
+    ]);
+    const warnings = lintCrossStepReferences(config).filter((w) =>
+      w.message.includes("fans out over"),
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].stepId).toBe("per_note");
+    expect(warnings[0].message).toContain("returns Markdown");
+  });
 });

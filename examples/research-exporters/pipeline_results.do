@@ -1,4 +1,4 @@
-* Pipeline result export v1. Run only through /bin/zsh -lic 'oldstata ...'.
+* Pipeline result export v1. Run through a Pipeline Stata profile.
 * This scalar helper writes one explicitly named coefficient. No log scraping.
 capture program drop pipeline_coefficient
 program define pipeline_coefficient

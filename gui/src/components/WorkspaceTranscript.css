@@ -37,16 +37,27 @@
   max-width: 760px;
   margin: 0 auto;
 }
+/* A zero-height bar after the messages, stuck to the bottom of the
+   transcript. It takes no space, so showing it never moves the text being
+   read (WebKit has no scroll anchoring). Only its button takes clicks. */
 .workspace-latest-control {
-  display: flex;
-  justify-content: flex-end;
   position: sticky;
-  top: 0;
+  bottom: 0;
   z-index: 1;
-  margin-bottom: 8px;
+  height: 0;
+  max-width: 760px;
+  margin: 0 auto;
+  overflow: visible;
+  pointer-events: none;
 }
 .workspace-latest-control button {
+  position: absolute;
+  right: 0;
+  bottom: 8px;
+  border: 1px solid var(--ui-border);
   background: var(--ui-surface);
+  box-shadow: var(--ui-shadow-1);
+  pointer-events: auto;
 }
 
 .workspace-message {

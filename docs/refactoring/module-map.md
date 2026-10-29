@@ -16,8 +16,10 @@ splits after R0–R5; it does not establish release qualification.
 - `components/WorkspacePage.tsx` composes project and conversation views;
   `hooks/useWorkspacePageController.ts` composes navigation, transcript paging
   and grouped page contracts. `hooks/workspace/` owns Chrome, session mutations,
-  session persistence and the conversation runtime. Persistence has one write
-  lane for drafts and model selections. The runtime owns hydration, submission,
+  session persistence and the conversation runtime; `useTranscriptFollow.ts`
+  owns transcript following and paging anchors, and
+  `components/WorkspaceTranscriptMessage.tsx` renders memoized messages.
+  Persistence has one write lane for drafts and model selections. The runtime owns hydration, submission,
   terminal identity and its private event bridge; native subscription callbacks
   retain their original effect registration phase and 50 ms stream flush.
 - `ui/` is the shared interaction kit: `Popover`, `Menu`, `Select`,
@@ -43,11 +45,26 @@ splits after R0–R5; it does not establish release qualification.
   `project-surface/ProjectDestination.tsx` dispatches the retained destinations;
   `useProjectSurfaceData`, `useProjectReadingState` and
   `useProjectSelectionActions` retain loading, reading/focus and mutation gates.
+- `components/research-desk/Data.tsx` owns the data catalog and samples;
+  `DataConnectors.tsx` owns the FRED, DBnomics and World Bank forms,
+  `DatasetDictionary.tsx` the label/missing-code dictionary view, and
+  `ConnectorNotice.tsx` each source's required notice. Desk IPC uses
+  `lib/deskClient.ts`.
 - `components/TasksPage.tsx` owns task navigation, selection, refresh, and events.
   `components/tasks/` contains `Builder.tsx`, `Detail.tsx`, `Timing.tsx`,
   `ScheduleCard.tsx`, and shared presentation helpers. All task IPC is routed
   through `lib/taskClient.ts`; task types, templates and pure presentation live
   in `taskTypes.ts`, `taskTemplates.ts`, and `taskPresentation.ts`.
+- `lib/getStarted.ts` owns the device-local first-run record (closed date and
+  chosen kind of work) and open requests from Home and Settings.
+  `components/get-started/GetStartedHost.tsx` decides when the guide or the
+  Example Review is open and lazily loads `GetStartedSheet.tsx`
+  (`ConnectionsStep.tsx`, `ToolsStep.tsx`). `guide.ts` holds persona content
+  and pure connection, PDF-tool and toolchain summaries over existing readiness,
+  account, settings and `workbench_detect_toolchains` results. `ExampleReview.tsx`
+  renders the bundled `exampleReviewData.ts` sample through `IssuesTable` with no
+  run ID; it writes nothing to the run store. See
+  [Get started](../README.md#get-started-in-pipeline).
 
 Paths in this section are relative to `gui/src/`. These controller extractions
 do not merge the owning runtime or storage boundaries.
@@ -91,7 +108,11 @@ Under `gui/src-tauri/src/workbench/`:
   `research/types.rs` owns the public harness DTOs and `catalog.rs` owns stock
   modules and presets. `research/{papers,sources,notes,ledger,tools}.rs` own the
   corresponding services. `research/execution/` separates types, profiles,
-  authorization, process setup, outputs, lifecycle and results. Complete
+  authorization, process setup, outputs, lifecycle and results.
+  `execution/adapters.rs` owns each adapter's argv shape (Stata direct and
+  custom launcher, R, Python, Julia, notebook, Quarto) and environment-file
+  lists; `execution/toolchains/` owns read-only tool detection, environment
+  identity and runtime-version receipts. Complete
   prepare/start/wait/finalize operations retain ownership of their guards;
   `execution_plan.rs`, `jobs.rs` and `finalization.rs` remain separate owners.
 - `release.rs` is the explicit service facade for `release/recipes.rs`,
@@ -105,6 +126,14 @@ Under `gui/src-tauri/src/workbench/`:
 - `project/index.rs` and `project/index.sql` own the bounded, read-only project
   metadata query used by `workbench_project_index`; it does not load project
   artifacts, transcripts, or model runtimes.
+- `data/mod.rs` owns dataset DTOs, the data policy and `dictionary_text`.
+  `data/catalog.rs` owns capture (`prepare_local` outside database workers,
+  `commit` inside), previews, exporter dictionaries and samples;
+  `data/{csv,dta,xlsx}.rs` are the bounded format readers (`xlsx/sheet.rs`
+  streams one worksheet) and `data/profile.rs` their shared profile and preview
+  window. `data/connectors/` owns the `DataConnector` requests/capture split,
+  connector terms, and the FRED, DBnomics and World Bank adapters; HTTP
+  primitives and the Crossref contact remain in `acquisition.rs`.
 
 `project/{records,home,inventory,blobs}.rs` separate scoped records, project
 home/context, bounded file capture and immutable blobs. The project facade
@@ -130,6 +159,16 @@ Review exports retain their command boundary in `commands/export.rs`.
 `commands/export/{types,files,manifest,package,print,desktop}.rs` own command
 records, confined copying/publication, checksums, disclosure selection,
 self-contained HTML rendering, and session-scoped reveal/print cleanup.
+`commands/export/formats.rs` loads a finished run, verifies the reviewed
+manuscript against the run's content hash, and saves shareable report formats
+without writing to run storage. The pure renderers live in `output/formats/`:
+`model.rs` (format-neutral findings and evidence labels), `quote_match.rs`
+(quotation normalization and search), `html.rs` (offline HTML with a
+hash-pinned CSP), `docx_package.rs` and `docx_markdown.rs` (fresh Word report),
+`docx_scan.rs` and `docx_comments.rs` (comments anchored in a copy of the
+reviewed `.docx`), and `pdf_words.rs` and `pdf_annotate.rs` (Poppler word
+boxes and `lopdf` incremental-update highlights). Workspace tracked-change
+export is not part of this owner.
 The headless entry point is `bin/cli.rs`; its implementation lives in `cli/`
 (outside `bin/` to preserve bundler binary discovery), with pipe-safe output
 still in `cli_io.rs`.
@@ -260,6 +299,18 @@ private to the executor feature; sibling imports name their dependencies.
 | `checkpoints.rs` | Atomic completed/failed products, replacement/removal and run output budget |
 | `outputs.rs` | Step output construction and schema-safe merge acceptance |
 | `paths.rs` | Deterministic step identity and output directories |
+| `budget.rs` | Per-Review cost, call, and time limits checked before each wave; the preflight usage estimate shown in the run preview and `check` |
+| `analyzer_step.rs` | Runs analyzer steps on the host and records their outputs and failures like model steps |
+
+`pipeline/analyzers.rs` is the facade for deterministic host analyzers.
+`analyzers/quotes.rs` verifies every finding's quoted evidence after a run and
+writes the `evidence_verification` product; `analyzers/fold.rs` owns the
+documented text folding with offset maps. `analyzers/registry.rs` is the closed,
+versioned list of analyzer steps, their options, inputs, and network use.
+`analyzers/references.rs` (with `references/{bibtex,bibliography,crossref}.rs`)
+implements `reference_audit`; `analyzers/replication.rs` implements
+`replication_static`. Workflow validation of analyzer steps is in
+`pipeline_config/validation/steps.rs`.
 
 `pipeline/provenance.rs` shares call-record construction with `merge.rs`.
 Callers choose explicit roles and retain their existing accounting policy;
@@ -268,7 +319,7 @@ enter through `pipeline/call.rs`, with no changes to cancellation registries,
 credentials, stores, or Workspace lifecycle.
 
 Executor tests live in `executor/tests/{schedule,artifacts,findings,units,outputs,
-prompts,placeholders}.rs`, with shared fixtures in `executor/tests.rs`. Other
+prompts,placeholders,analyzers}.rs`, with shared fixtures in `executor/tests.rs`. Other
 large inline test modules moved beside their original source under
 `<source-stem>/tests.rs`. Command and profile tests are grouped by behavior.
 
@@ -338,7 +389,8 @@ the API-key readiness record labeled Google API.
 
 - `agent_runtime/claude.rs`: stateless CLI authentication and billing guard shared
   by Reviews and Workspace, with independently owned process supervision.
-- `workbench/claude/`: Workspace stream-json transport, lifecycle, and MCP bridge.
+- `workbench/claude/`: Workspace stream-json transport, lifecycle, and MCP bridge;
+  `shell.rs` sandbox policy, `title.rs` title process, `usage.rs` usage reports.
 - `workbench/history.rs`: bounded app-owned text history for independent turns
   and provider switches.
 - `workbench/project/assistant_files.rs`: scoped Claude file tools over the

@@ -3,6 +3,7 @@ import { conversationClient } from "../lib/workbench/conversationClient";
 import { executionClient } from "../lib/workbench/executionClient";
 import { recipeClient } from "../lib/workbench/recipeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
+import { promptDialog } from "./DialogService";
 import type {
   ConversationSnapshot,
   RecipeInputCheck,
@@ -41,6 +42,9 @@ export default function WorkspaceRecipesPanel({
   const [selectedId, setSelectedId] = useState("");
   const [recordedChecks, setRecordedChecks] = useState<
     Record<string, string[]>
+  >({});
+  const [unresolvedIssues, setUnresolvedIssues] = useState<
+    Record<string, string>
   >({});
   const [busy, setBusy] = useState(false);
 
@@ -207,9 +211,17 @@ export default function WorkspaceRecipesPanel({
           disabled={!selected || busy}
           onClick={() =>
             void act(async () => {
-              const name = window
-                .prompt("Name for recipe copy", `${selected!.name} copy`)
-                ?.trim();
+              const name = (
+                await promptDialog(
+                  "The copy is saved as a custom recipe you can edit.",
+                  {
+                    title: "Copy recipe",
+                    label: "Name for the copy",
+                    defaultValue: `${selected!.name} copy`,
+                    confirmLabel: "Create copy",
+                  },
+                )
+              )?.trim();
               if (!name) return;
               const created = await recipeClient.cloneRecipe({
                 workspaceId,
@@ -245,6 +257,9 @@ export default function WorkspaceRecipesPanel({
             Edit custom recipe
           </summary>
           <form
+            // Remount per recipe and revision so uncontrolled fields never
+            // carry another recipe's values into this save.
+            key={`${selected.id}:${selected.revision}`}
             className="mt-2 space-y-2"
             onSubmit={(event) => {
               event.preventDefault();
@@ -361,16 +376,28 @@ export default function WorkspaceRecipesPanel({
                       {check.replaceAll("_", " ")} actually checked
                     </label>
                   ))}
+                  <label className="block text-[11px]">
+                    Unresolved issues, one per line
+                    <textarea
+                      rows={3}
+                      value={unresolvedIssues[run.id] ?? ""}
+                      onChange={(event) =>
+                        setUnresolvedIssues((current) => ({
+                          ...current,
+                          [run.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="Leave empty if nothing is unresolved."
+                      className="mt-1 w-full rounded border bg-white p-2 text-xs dark:bg-neutral-950"
+                    />
+                  </label>
                   <button
                     type="button"
                     disabled={busy}
                     onClick={() =>
                       void act(async () => {
                         const unresolved = lines(
-                          window.prompt(
-                            "Unresolved issues, one per line",
-                            "",
-                          ) ?? "",
+                          unresolvedIssues[run.id] ?? "",
                         );
                         const completed = new Set(recordedChecks[run.id] ?? []);
                         const currentInputs =
@@ -413,6 +440,9 @@ export default function WorkspaceRecipesPanel({
                           unresolvedIssues: unresolved,
                           missingEvidence,
                         });
+                        setUnresolvedIssues(
+                          ({ [run.id]: _recorded, ...current }) => current,
+                        );
                       })
                     }
                     className="rounded border px-2 py-1 text-[11px]"

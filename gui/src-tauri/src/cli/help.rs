@@ -35,6 +35,7 @@ USAGE:
                        [--profile <ID> | --workflow <FILE|->]
                        [--var <KEY=VALUE>]...
                        [--extra-input <KEY=PATH>]... [--out <FILE>] [--force]
+                       [--max-cost <USD>] [--max-calls <N>] [--max-minutes <N>]
 
 OPTIONS:
   -i, --input <PATH>          Primary document or folder. Omit only for a
@@ -49,6 +50,10 @@ OPTIONS:
                               Named input; repeat for multiple inputs.
   -o, --out <FILE>            Write Markdown to FILE instead of stdout.
       --force                 Replace an existing --out file.
+      --max-cost <USD>        Stop starting new steps once estimated direct-API
+                              spend reaches USD (API list prices). 0 = no limit.
+      --max-calls <N>         Stop starting new steps after N model calls.
+      --max-minutes <N>       Stop starting new steps after N minutes.
   -h, --help                  Show this help.
 
 Progress goes to stderr. A non-zero exit status indicates invalid arguments,
@@ -62,6 +67,7 @@ USAGE:
   pipeline-cli batch --input-dir <DIR> [--profile <ID> | --workflow <FILE|->]
                      [--var <KEY=VALUE>]...
                      [--extra-input <KEY=PATH>]... [--out-dir <DIR>] [--force]
+                     [--max-cost <USD>] [--max-calls <N>] [--max-minutes <N>]
 
 OPTIONS:
   -i, --input-dir <DIR>       Folder containing PDF, TeX, or DOCX inputs.
@@ -73,10 +79,15 @@ OPTIONS:
                               Named input shared by every run; repeatable.
   -o, --out-dir <DIR>         Also write each Markdown report to DIR.
       --force                 Replace existing reports in --out-dir.
+      --max-cost <USD>        Stop starting new steps once estimated direct-API
+                              spend reaches USD (API list prices). 0 = no limit.
+      --max-calls <N>         Stop starting new steps after N model calls.
+      --max-minutes <N>       Stop starting new steps after N minutes.
   -h, --help                  Show this help.
 
 Folder discovery is non-recursive and skips hidden files. Every run is also
-saved in Pipeline's normal run store under ~/.pipeline/runs/.
+saved in Pipeline's normal run store under ~/.pipeline/runs/. Limits apply to
+each document's run and override Settings for this batch only.
 ";
 
 pub(super) const CHECK_HELP: &str = "\

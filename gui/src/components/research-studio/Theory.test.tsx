@@ -206,6 +206,108 @@ it("asks for a reason when abandoning and retains unresolved steps on save", asy
   );
 });
 
+it("keeps spaces and new lines while typing list fields and splits them on save", async () => {
+  mocks.theory.mockResolvedValue(
+    overview({
+      notes: [note("t1", "proposition", { assumptions: ["a > 0"] })],
+      evidence: { t1: { label: "No checks recorded." } as never },
+    }),
+  );
+  render(<Theory {...props()} />);
+  fireEvent.click(await screen.findByText("Edit / checks"));
+  const assumptions = screen.getByLabelText("Assumptions");
+  expect(assumptions).toHaveValue("a > 0");
+  for (const value of ["a > 0\n", "a > 0\nx ", "a > 0\nx is positive\n"]) {
+    fireEvent.change(assumptions, { target: { value } });
+    expect(assumptions).toHaveValue(value);
+  }
+  fireEvent.change(screen.getByLabelText("Unresolved steps"), {
+    target: { value: "Show continuity \n\n" },
+  });
+  expect(screen.getByLabelText("Unresolved steps")).toHaveValue(
+    "Show continuity \n\n",
+  );
+  fireEvent.click(screen.getByText("Save theory note"));
+  await waitFor(() =>
+    expect(mocks.mutate).toHaveBeenCalledWith(
+      "ws",
+      expect.objectContaining({
+        action: "saveTheory",
+        id: "t1",
+        note: expect.objectContaining({
+          assumptions: ["a > 0", "x is positive"],
+          unresolvedSteps: ["Show continuity"],
+        }),
+      }),
+    ),
+  );
+  fireEvent.click(screen.getByText("New note"));
+  expect(screen.getByLabelText("Assumptions")).toHaveValue("");
+  expect(screen.getByLabelText("Unresolved steps")).toHaveValue("");
+});
+
+it("updates the recorded check when it is saved again", async () => {
+  const recorded = {
+    id: "c1",
+    workspaceId: "ws",
+    kind: "check",
+    revision: 1,
+    updatedAt: "",
+    body: {
+      check: {
+        theoryId: "t1",
+        method: "analytical_argument",
+        outcome: "passed",
+        summary: "Grid serach",
+        domain: "",
+        tolerance: null,
+        precision: null,
+        executionId: null,
+        recipeRunId: null,
+        anchorIds: [],
+        claimsGenerality: false,
+        origin: "manual",
+      },
+      scope: "general",
+      label: "Analytical argument",
+    },
+  };
+  const withNote = {
+    notes: [note("t1", "proposition")],
+    evidence: { t1: { label: "No checks recorded." } as never },
+  };
+  mocks.theory
+    .mockResolvedValueOnce(overview(withNote))
+    .mockResolvedValue(overview({ ...withNote, checks: [recorded] }));
+  mocks.mutate.mockResolvedValue(recorded);
+  render(<Theory {...props()} />);
+  fireEvent.click(await screen.findByText("Edit / checks"));
+  fireEvent.change(screen.getByLabelText("Summary"), {
+    target: { value: "Grid serach" },
+  });
+  fireEvent.click(screen.getByText("Record check"));
+  await screen.findByText("Check recorded.");
+  expect(mocks.mutate).toHaveBeenLastCalledWith(
+    "ws",
+    expect.objectContaining({ id: null, expectedRevision: 0 }),
+  );
+  fireEvent.change(screen.getByLabelText("Summary"), {
+    target: { value: "Grid search" },
+  });
+  await waitFor(() => expect(screen.getByText("Record check")).toBeEnabled());
+  fireEvent.click(screen.getByText("Record check"));
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalledTimes(2));
+  expect(mocks.mutate).toHaveBeenLastCalledWith(
+    "ws",
+    expect.objectContaining({
+      action: "saveCheck",
+      id: "c1",
+      expectedRevision: 1,
+      check: expect.objectContaining({ summary: "Grid search" }),
+    }),
+  );
+});
+
 it("opens a proposition and its proof side by side through saved selections", async () => {
   mocks.theory.mockResolvedValue(
     overview({

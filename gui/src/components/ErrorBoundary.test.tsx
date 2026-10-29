@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { useState } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ErrorBoundary from "./ErrorBoundary";
@@ -10,6 +11,16 @@ function Boom({ fail }: { fail: boolean }) {
     throw error;
   }
   return <div>child-ok</div>;
+}
+
+function Clicker({ fail }: { fail: boolean }) {
+  const [clicks, setClicks] = useState(0);
+  if (fail) throw new Error("kaboom");
+  return (
+    <button onClick={() => setClicks((count) => count + 1)}>
+      clicks {clicks}
+    </button>
+  );
 }
 
 describe("ErrorBoundary", () => {
@@ -87,5 +98,57 @@ describe("ErrorBoundary", () => {
     await user.click(screen.getByRole("button", { name: /try again/i }));
     expect(screen.getByText("child-ok")).toBeInTheDocument();
     expect(screen.queryByText("Something went wrong")).not.toBeInTheDocument();
+  });
+
+  it("adds no layout box, so children keep the parent's height chain", () => {
+    const { container } = render(
+      <ErrorBoundary>
+        <Boom fail={false} />
+      </ErrorBoundary>,
+    );
+    expect(container.firstChild).toBe(screen.getByText("child-ok"));
+  });
+
+  it("remounts children with fresh state after Try Again", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ErrorBoundary nested>
+        <Clicker fail={false} />
+      </ErrorBoundary>,
+    );
+    await user.click(screen.getByRole("button", { name: "clicks 0" }));
+    expect(screen.getByRole("button", { name: "clicks 1" })).toBeVisible();
+
+    rerender(
+      <ErrorBoundary nested>
+        <Clicker fail={true} />
+      </ErrorBoundary>,
+    );
+    rerender(
+      <ErrorBoundary nested>
+        <Clicker fail={false} />
+      </ErrorBoundary>,
+    );
+    await user.click(screen.getByRole("button", { name: /try again/i }));
+    expect(screen.getByRole("button", { name: "clicks 0" })).toBeVisible();
+  });
+
+  it("fills the window at the root and its pane when nested", () => {
+    const { unmount } = render(
+      <ErrorBoundary>
+        <Boom fail={true} />
+      </ErrorBoundary>,
+    );
+    expect(screen.getByRole("alert").parentElement).toHaveClass("h-screen");
+    unmount();
+
+    render(
+      <ErrorBoundary nested>
+        <Boom fail={true} />
+      </ErrorBoundary>,
+    );
+    const fallback = screen.getByRole("alert").parentElement;
+    expect(fallback).toHaveClass("h-full", "min-h-0", "overflow-auto");
+    expect(fallback).not.toHaveClass("h-screen");
   });
 });

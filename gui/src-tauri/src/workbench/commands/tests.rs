@@ -119,13 +119,17 @@ fn acknowledged_turn_keeps_permit_on_bookkeeping_failure() {
 }
 
 #[test]
-fn lag_recovery_requires_the_exact_native_thread_and_terminal_turn() {
-    let snapshot = json!({"thread":{"id":"thread","turns":[
-        {"id":"old","status":"completed"}, {"id":"current","status":"inProgress"}
-    ]}});
-    assert!(codex::recovered_terminal(&snapshot, "thread", "current").is_none());
-    assert!(codex::recovered_terminal(&snapshot, "other-thread", "old").is_none());
-    let complete =
-        json!({"thread":{"id":"thread","turns":[{"id":"current","status":"completed"}]}});
-    assert!(codex::recovered_terminal(&complete, "thread", "current").is_some());
+fn lag_recovery_requires_the_exact_terminal_turn() {
+    let recent = json!({"data":[
+        {"id":"current","status":"inProgress","items":[],"itemsView":"notLoaded"},
+        {"id":"old","status":"completed","items":[],"itemsView":"notLoaded"}
+    ]});
+    assert!(codex::recovered_terminal(&recent, "current").is_none());
+    assert!(codex::recovered_terminal(&recent, "missing").is_none());
+    assert!(codex::recovered_terminal(&json!({}), "current").is_none());
+    let complete = json!({"data":[{"id":"current","status":"interrupted","items":[]}]});
+    assert_eq!(
+        codex::recovered_terminal(&complete, "current").unwrap()["status"],
+        "interrupted"
+    );
 }

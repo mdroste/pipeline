@@ -9,6 +9,7 @@ import {
   type TaskRun,
   type Trigger,
 } from "../../lib/taskTypes";
+import { NumberField } from "./NumberField";
 import OutlineEditor from "./OutlineEditor";
 import { Timing } from "./Timing";
 
@@ -228,16 +229,11 @@ export default function Builder({
                 </label>
                 <label>
                   Maximum reviews
-                  <input
-                    type="number"
+                  <NumberField
                     min={1}
                     max={32}
                     value={rounds}
-                    onChange={(e) =>
-                      setRounds(
-                        Math.min(32, Math.max(1, Number(e.target.value) || 1)),
-                      )
-                    }
+                    onChange={setRounds}
                   />
                 </label>
               </div>
@@ -342,38 +338,27 @@ export default function Builder({
         <div className="task-form-row">
           <label>
             Action limit
-            <input
-              type="number"
+            <NumberField
               min={1}
               max={64}
               value={chain.limits.maxActions}
-              onChange={(e) =>
+              onChange={(maxActions) =>
                 setChain({
                   ...chain,
-                  limits: {
-                    ...chain.limits,
-                    maxActions: Math.min(
-                      64,
-                      Math.max(1, Number(e.target.value)),
-                    ),
-                  },
+                  limits: { ...chain.limits, maxActions },
                 })
               }
             />
           </label>
           <label>
             Deadline (hours)
-            <input
-              type="number"
+            <NumberField
               min={1}
               value={chain.limits.deadlineHours}
-              onChange={(e) =>
+              onChange={(deadlineHours) =>
                 setChain({
                   ...chain,
-                  limits: {
-                    ...chain.limits,
-                    deadlineHours: Math.max(1, Number(e.target.value)),
-                  },
+                  limits: { ...chain.limits, deadlineHours },
                 })
               }
             />

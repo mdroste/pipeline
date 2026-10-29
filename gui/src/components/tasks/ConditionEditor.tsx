@@ -2,6 +2,7 @@
 // sentence; the raw definition stays visible in the builder's advanced view.
 
 import { useMemo } from "react";
+import useDraftText from "../../hooks/useDraftText";
 import type {
   Binding,
   Chain,
@@ -217,6 +218,28 @@ interface EditableModel {
   leaves: Leaf[];
 }
 
+// "equals" text is a plain string unless it reads as a JSON number, boolean,
+// null, quoted string, object or array. A string that would read as one of
+// those displays quoted, so text and value round-trip exactly.
+const JSON_LITERAL =
+  /^(-?\d+(\.\d+)?([eE][+-]?\d+)?|true|false|null|".*"|\{.*\}|\[.*\])$/s;
+
+function parseEqualsText(text: string): Json {
+  const trimmed = text.trim();
+  if (!JSON_LITERAL.test(trimmed)) return text;
+  try {
+    return JSON.parse(trimmed) as Json;
+  } catch {
+    return text;
+  }
+}
+
+function equalsText(value: Json): string {
+  if (typeof value === "string" && parseEqualsText(value) === value)
+    return value;
+  return JSON.stringify(value);
+}
+
 function leafFromCondition(condition: Condition): Leaf | null {
   let negate = false;
   let inner = condition;
@@ -234,7 +257,7 @@ function leafFromCondition(condition: Condition): Leaf | null {
       negate,
       binding: inner.left,
       comparison: "equals",
-      value: JSON.stringify(inner.right),
+      value: equalsText(inner.right),
     };
   }
   if (inner.op === "lessThan")
@@ -261,14 +284,8 @@ export function modelFromCondition(condition: Condition): EditableModel | null {
 }
 
 function leafToCondition(leaf: Leaf): Condition {
-  let parsed: Json = leaf.value;
-  if (leaf.comparison === "equals") {
-    try {
-      parsed = JSON.parse(leaf.value) as Json;
-    } catch {
-      parsed = leaf.value;
-    }
-  }
+  const parsed =
+    leaf.comparison === "equals" ? parseEqualsText(leaf.value) : leaf.value;
   const inner: Condition =
     leaf.comparison === "isTrue"
       ? { op: "equals", left: leaf.binding, right: true }
@@ -293,6 +310,32 @@ export function modelToCondition(model: EditableModel): Condition {
     op: model.combine,
     conditions: model.leaves.map(leafToCondition),
   };
+}
+
+/** Keeps typed text local; the condition updates on blur or Enter. */
+function LeafValueInput({
+  leaf,
+  label,
+  onCommit,
+}: {
+  leaf: Leaf;
+  label: string;
+  onCommit: (value: string) => void;
+}) {
+  const below = leaf.comparison === "below";
+  const draft = useDraftText(leaf.value, (text) => {
+    // A threshold must be a finite number; anything else reverts.
+    if (below && (!text.trim() || !Number.isFinite(Number(text)))) return;
+    onCommit(below ? String(Number(text)) : text);
+  });
+  return (
+    <input
+      aria-label={label}
+      inputMode={below ? "decimal" : undefined}
+      placeholder={below ? "1" : "value"}
+      {...draft}
+    />
+  );
 }
 
 export function ConditionEditor({
@@ -378,18 +421,18 @@ export function ConditionEditor({
             <option value="not-exists">does not exist</option>
           </select>
           {(leaf.comparison === "equals" || leaf.comparison === "below") && (
-            <input
-              aria-label={`${label} comparison value ${index + 1}`}
-              value={leaf.value}
-              onChange={(event) =>
+            <LeafValueInput
+              key={leaf.comparison}
+              leaf={leaf}
+              label={`${label} comparison value ${index + 1}`}
+              onCommit={(value) =>
                 update({
                   ...model,
                   leaves: model.leaves.map((l, i) =>
-                    i === index ? { ...l, value: event.target.value } : l,
+                    i === index ? { ...l, value } : l,
                   ),
                 })
               }
-              placeholder={leaf.comparison === "below" ? "1" : "value"}
             />
           )}
           {model.leaves.length > 1 && (

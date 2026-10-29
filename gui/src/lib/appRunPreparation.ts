@@ -8,6 +8,8 @@ import type {
   BatchJob,
 } from "./types";
 import type { ExecutionPlanStage } from "./pipelineHelpers";
+import type { UsageEstimate } from "./usageEstimate";
+import type { HostCheck } from "./analyzers";
 
 export interface RunProfileSnapshot {
   profileId: string;
@@ -35,6 +37,8 @@ export interface ExecutionPlanEnvelope {
   stages: ExecutionPlanStage[];
   parallelAgents?: string[];
   mergeAgent?: string | null;
+  usageEstimate?: UsageEstimate;
+  hostChecks?: HostCheck[];
 }
 
 export interface PreparedLaunch {

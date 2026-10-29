@@ -95,24 +95,80 @@ export interface DataAcquisition {
   frequency: string | null;
   transformation: string | null;
 }
+export interface VariableDefinition {
+  name: string;
+  inferredType: string;
+  missing: number;
+  units: string | null;
+  description: string | null;
+  origin: string;
+  /** Variable label declared by the file, for example a Stata variable label. */
+  label?: string | null;
+  /** Declared storage type, for example `double`, `str12` or `strL`. */
+  storageType?: string | null;
+  /** Display or cell number format, for example `%td` or `yyyy-mm-dd`. */
+  displayFormat?: string | null;
+  /** Name of the attached value-label set. */
+  valueLabels?: string | null;
+  /** Counts per missing code, such as `.`, `.a`, `#N/A` or `empty`. */
+  missingCodes?: Record<string, number>;
+}
+export interface ValueLabelSet {
+  name: string;
+  labels: { value: string; label: string }[];
+  omitted?: number;
+}
+export interface SourceFormat {
+  kind: string;
+  release?: string | null;
+  label?: string | null;
+  timestamp?: string | null;
+  sheet?: string | null;
+  sheets?: string[];
+  dateSystem?: string | null;
+}
+export type ConnectorId = "fred" | "dbnomics" | "world_bank";
+export interface ConnectorProvenance {
+  connector: ConnectorId;
+  query: Record<string, unknown>;
+  requestUrls: string[];
+  lastUpdated: string | null;
+  licence: string;
+  notice: string | null;
+  citation: string;
+  termsUrl: string;
+  termsReviewed: string;
+}
 export interface DatasetVersion {
   schemaVersion: number;
   artifactId: string | null;
   contentHash: string;
   externalReference: string | null;
   rows: number;
-  columns: {
-    name: string;
-    inferredType: string;
-    missing: number;
-    units: string | null;
-    description: string | null;
-    origin: string;
-  }[];
+  columns: VariableDefinition[];
   acquisition: DataAcquisition;
   diagnosticsCoverage: string;
   delimiter: string;
   limitations: string[];
+  valueLabels?: ValueLabelSet[];
+  sourceFormat?: SourceFormat | null;
+  connector?: ConnectorProvenance | null;
+}
+export type SeriesQuery =
+  | { connector: "dbnomics"; seriesId: string }
+  | {
+      connector: "world_bank";
+      indicator: string;
+      countries: string;
+      dateRange: string | null;
+    };
+export interface RowPreview {
+  columns: string[];
+  rows: (string | null)[][];
+  start: number;
+  totalRows: number;
+  coverage: string;
+  missingCodes?: { row: number; column: number; code: string }[];
 }
 export interface SampleDefinition {
   datasets: OpenResearchObject[];
@@ -234,6 +290,7 @@ export const deskClient = {
     path: string,
     acquisition: DataAcquisition,
     supersedes: string | null = null,
+    sheet: string | null = null,
   ) =>
     invoke<DeskRecord<DatasetVersion>>("workbench_import_dataset", {
       request: {
@@ -243,6 +300,7 @@ export const deskClient = {
         acquisition,
         supersedes,
         operationId: operation(),
+        sheet,
       },
     }),
   sample: (
@@ -301,6 +359,14 @@ export const deskClient = {
         operationId: operation(),
       },
     }),
+  /** Keyless DBnomics or World Bank capture; failures return an acquisition receipt. */
+  series: (workspaceId: string, query: SeriesQuery) =>
+    invoke<DeskRecord>("workbench_acquire_series", {
+      request: { workspaceId, query, operationId: operation() },
+    }),
+  /** Read the optional Crossref contact email, or save it (`null` clears it). */
+  crossrefContact: (email: string | null = null, save = false) =>
+    invoke<string | null>("workbench_crossref_contact", { email, save }),
   capture: (
     profileId: string,
     parameters: Record<string, unknown>,
@@ -327,13 +393,11 @@ export const deskClient = {
       request: { workspaceId, title, version, operationId: operation() },
     }),
   rows: (workspaceId: string, datasetId: string, start = 0) =>
-    invoke<{
-      columns: string[];
-      rows: (string | null)[][];
-      start: number;
-      totalRows: number;
-      coverage: string;
-    }>("workbench_dataset_rows", { workspaceId, datasetId, start }),
+    invoke<RowPreview>("workbench_dataset_rows", {
+      workspaceId,
+      datasetId,
+      start,
+    }),
   inboxState: (workspaceId: string, receiptId: string, state: string) =>
     invoke<DeskRecord>("workbench_reading_inbox_state", {
       workspaceId,

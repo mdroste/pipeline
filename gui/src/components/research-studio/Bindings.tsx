@@ -5,6 +5,7 @@ import {
   type BindingCoverage,
   type NumericBinding,
 } from "../../lib/studioClient";
+import type { ProjectRecord } from "../../lib/projectClient";
 import { executionClient } from "../../lib/workbench/executionClient";
 import type { ResearchResultV1 } from "../../lib/workbenchTypes";
 import {
@@ -256,12 +257,16 @@ export default function Bindings({
             disabled={busy || !binding.anchorId || !binding.result.resultId}
             onClick={() =>
               void run(async () => {
-                await studioClient.mutate(workspaceId, {
+                const saved = await studioClient.mutate<
+                  ProjectRecord<NumericBinding>
+                >(workspaceId, {
                   action: "bindNumber",
                   id: selected || null,
                   expectedRevision: current?.record.revision ?? 0,
                   binding,
                 });
+                // Later saves update this binding instead of adding another.
+                setSelected(saved.id);
                 setCoverage(await studioClient.coverage(workspaceId));
                 await onRefresh();
               })

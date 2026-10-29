@@ -5,6 +5,65 @@ the first public release was not tracked as a stable release series.
 
 ## Unreleased
 
+- Reviews now check every quoted passage against the extracted document or the
+  cited source file. Each piece of evidence is labeled **Quote found**,
+  **Partial match**, **Quote not found**, or **Not checkable**, and the quality
+  summary counts them. A found quote shows the passage exists where cited, not
+  that the comment is correct. Details are saved as
+  `products/evidence_verification.json`.
+- Workflows can include **Pipeline checks**, steps that Pipeline runs itself
+  without a model call. **Reference check** finds the bibliography and reports
+  undefined citation keys, duplicates, and malformed DOIs; with lookups turned
+  on it checks each reference against Crossref for missing records, mismatched
+  details, other versions, retractions, expressions of concern, and
+  corrections. **Replication package check** reads a package folder against
+  data-editor requirements without running it. New gallery templates
+  **Reference Check** and **Replication Package Readiness** use them. Portable
+  workflow JSON gains `kind` and `analyzer` step fields; older versions reject
+  such workflows instead of running them.
+- The Review preview shows a rough range of model calls, tokens, and API
+  list-price cost. **Settings → Reviews → Review limits** sets a per-Review
+  cost, call, or time limit; when one is reached, running steps finish, later
+  steps are recorded as stopped, and the partial report is saved.
+  `pipeline-cli run` and `batch` accept `--max-cost`, `--max-calls`, and
+  `--max-minutes`, and `check` prints the estimate.
+- Reviews can be exported as one offline HTML file, as a new Word document, as
+  a copy of the reviewed `.docx` with each finding as a Word comment on the
+  passage it quotes, or as a copy of the reviewed PDF with each quoted passage
+  highlighted and a note attached. Comments and highlights are added only to
+  the unchanged reviewed file, and findings that cannot be placed are listed
+  separately.
+- Local checks can run Stata do-files with an installed Stata on macOS,
+  Windows, and Linux; a shell alias such as `stata` still works as a custom
+  launcher. New R, Python, Julia, Jupyter notebook, and Quarto or R Markdown
+  check types validate their arguments, leave notebooks unchanged, and record
+  the runtime version and lockfile hashes with each run. **Detect installed
+  tools** finds Stata, R, Python, Julia, Quarto, Jupyter, and MATLAB without
+  installing or starting licensed software.
+- Data & samples imports Stata `.dta` files (Stata 8 and later) and Excel
+  `.xlsx` worksheets with variable labels, value labels, formats, and Stata
+  extended missing values as separate codes. Stata files up to 2 GiB can be
+  catalogued without keeping a copy. New keyless downloads from DBnomics
+  (IMF, OECD, Eurostat, ECB, central banks, and more) and the World Bank record
+  each dataset's licence, required notice, and suggested citation.
+- A **Get started** guide opens on a fresh installation: choose what you work
+  with, see which model connections are ready, check this computer for Stata,
+  R, Python, Jupyter, Julia, Quarto, and MATLAB, and pick a first step. Reopen
+  it from Home or **Settings → General → Guided setup**; it changes no
+  settings. An **Example Review** shows sample findings on a fictional paper,
+  with severity, categories, cited evidence, and quote checks, without calling
+  a model or adding to Review history.
+- FRED data now shows the notice the FRED® API Terms of Use require, with a
+  link to the terms. An optional **Crossref contact email** in the Acquisition
+  inbox sends your own address with literature lookups; Pipeline never uses a
+  shared address.
+
+- Pipeline now checks for a newer version about once a day while it runs, not
+  only at startup. The update banner's **Download** button opens the installer
+  for your computer. A new **Check for updates automatically** setting under
+  **Advanced & About** turns the checks off. When GitHub limits requests from a
+  shared network, Pipeline waits as long as GitHub asks before trying again.
+
 - Rewritten README and public guides explain setup, reviews, projects, and
   automations in plain language. Privacy and security documentation now reflects
   the shared ChatGPT sign-in, recoverable Trash, and current release checks.
@@ -38,8 +97,11 @@ the first public release was not tracked as a stable release series.
   choose **Claude Code** in the conversation's model-and-thinking picker. The
   choice is saved per conversation, and existing conversations stay on ChatGPT.
   Claude works with the selected project context, enabled research tools, and
-  scoped project file tools; file edits require Edit access. Native Claude shell
-  tools, automatic titles, and quota reporting are not yet available.
+  scoped project file tools; file edits require Edit access. On macOS and
+  Linux, Claude can run shell commands in Claude Code's sandbox, which can
+  read the project but cannot change it or reach the network. New Claude
+  conversations are titled automatically, and the model picker shows the
+  latest Claude usage report.
 - Claude subscription calls in Reviews and conversations first confirm a
   first-party Claude subscription sign-in, once per Review and before each
   conversation turn. They remove inherited API credentials

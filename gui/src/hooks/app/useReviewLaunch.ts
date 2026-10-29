@@ -18,13 +18,25 @@ type ReviewQueue = Pick<
   ReturnType<typeof usePipeline>,
   "enqueue" | "enqueueBatch" | "enqueueRerun"
 >;
+
+/** A launch that failed after the workflow setup loaded. When run options
+ *  were filled in, they are kept so the options can reopen with them. */
+export interface LaunchFailure {
+  message: string;
+  submitted?: {
+    snapshot: PendingRun;
+    values: Record<string, string>;
+    inputs: Record<string, string>;
+  };
+}
+
 export function useReviewLaunch(
   setup: ReviewSetup,
   queue: ReviewQueue,
-  navigation: Pick<AppNavigation, "setPage" | "setHistorySourceSelection">,
+  navigation: Pick<AppNavigation, "setPage" | "clearHistorySourceSelection">,
 ) {
   const { enqueue, enqueueBatch, enqueueRerun } = queue;
-  const { setPage, setHistorySourceSelection } = navigation;
+  const { setPage, clearHistorySourceSelection } = navigation;
   const {
     paperPath,
     setPaperPath,
@@ -39,6 +51,7 @@ export function useReviewLaunch(
     setShowDeps,
     setRunConfigError,
     loadRunSetup,
+    pendingRun,
     setPendingRun,
     setSelectionKey,
   } = setup;
@@ -47,10 +60,77 @@ export function useReviewLaunch(
   >({});
   const [preparingRun, setPreparingRun] = useState(false);
   const [runPreview, setRunPreview] = useState<PreparedLaunch | null>(null);
+  // Separate from the setup error: a refused launch leaves the workflow
+  // usable, so it neither blocks Start review nor discards entered values.
+  const [launchError, setLaunchError] = useState<LaunchFailure | null>(null);
   const launchActive = useRef(false);
   const openRun = useCallback(async (runKey: string) => {
     await router.navigate({ page: "main", runKey });
   }, []);
+
+  const rejectLaunch = async (
+    message: string,
+    snapshot: PendingRun,
+    variables?: Record<string, string>,
+    extraInputs?: Record<string, string>,
+  ) => {
+    const submitted =
+      variables || extraInputs
+        ? { snapshot, values: variables ?? {}, inputs: extraInputs ?? {} }
+        : undefined;
+    setLaunchError({ message, submitted });
+    // Reopen the run options with the submitted values, unless the user has
+    // moved on from the new-review setup in the meantime.
+    const inNewReview = () => {
+      const current = router.route;
+      return current.page === "main" && !current.runKey;
+    };
+    if (!submitted || !inNewReview()) return;
+    // The refusal may mean the workflow changed after its setup loaded; the
+    // same options would then be refused again. Reload the setup first.
+    const latest = await loadRunSetup();
+    if (!latest || !inNewReview()) return;
+    if (latest.profileConfigSnapshotId === snapshot.profileConfigSnapshotId) {
+      setPendingRun(snapshot);
+      return;
+    }
+    const pending: PendingRun = {
+      ...latest,
+      paperPath: snapshot.paperPath,
+      inputSelection: snapshot.inputSelection,
+    };
+    const reopen =
+      latest.inputMode === snapshot.inputMode &&
+      (latest.variables.length > 0 || latest.inputSlots.length > 0);
+    if (!reopen) {
+      setLaunchError({
+        message:
+          "The workflow changed while you were entering run options. Start the review again to use the updated workflow.",
+      });
+      return;
+    }
+    // Carry over the values for options the updated workflow still declares.
+    const declared = (values: Record<string, string>, keys: string[]) =>
+      Object.fromEntries(
+        Object.entries(values).filter(([key]) => keys.includes(key)),
+      );
+    setLaunchError({
+      message:
+        "The workflow changed while you were entering run options. Check them against the updated workflow, then continue.",
+      submitted: {
+        snapshot: pending,
+        values: declared(
+          submitted.values,
+          latest.variables.map((variable) => variable.key),
+        ),
+        inputs: declared(
+          submitted.inputs,
+          latest.inputSlots.map((slot) => slot.key),
+        ),
+      },
+    });
+    setPendingRun(pending);
+  };
 
   const launch = async (
     snapshot: PendingRun,
@@ -59,6 +139,7 @@ export function useReviewLaunch(
   ) => {
     if (launchActive.current) return;
     launchActive.current = true;
+    setLaunchError(null);
     setPreparingRun(true);
     try {
       // Read the editable profile immediately before asking the backend to
@@ -139,10 +220,13 @@ export function useReviewLaunch(
         parallelOverrides,
       });
     } catch (error) {
-      setRunConfigError(
+      await rejectLaunch(
         `The workflow execution plan could not be prepared: ${
           error instanceof Error ? error.message : String(error)
         }`,
+        snapshot,
+        variables,
+        extraInputs,
       );
     } finally {
       launchActive.current = false;
@@ -193,8 +277,11 @@ export function useReviewLaunch(
       if (queued[0] && current.page === "main" && !current.runKey)
         router.apply({ page: "main", runKey: queued[0].key });
     } catch (error) {
-      setRunConfigError(
+      await rejectLaunch(
         `The review could not be queued: ${error instanceof Error ? error.message : String(error)}`,
+        prepared.snapshot,
+        prepared.variables,
+        prepared.extraInputs,
       );
     } finally {
       launchActive.current = false;
@@ -204,6 +291,7 @@ export function useReviewLaunch(
 
   const handleGenerate = async () => {
     if (preparingRun || runConfigLoading || !runProfileConfigSnapshotId) return;
+    setLaunchError(null);
     setPreparingRun(true);
     try {
       const expectedProfileConfigSnapshotId = runProfileConfigSnapshotId;
@@ -252,6 +340,7 @@ export function useReviewLaunch(
     setPaperPath(handoff.stagedPath);
     setInputSelection(selection);
     setRunConfigError(null);
+    setLaunchError(null);
     setPreparingRun(true);
     try {
       const setup = await loadRunSetup();
@@ -276,8 +365,9 @@ export function useReviewLaunch(
     setPaperPath(null);
     setInputSelection(null);
     setRunPreview(null);
-    setHistorySourceSelection(null);
+    clearHistorySourceSelection();
     setPendingRun(null);
+    setLaunchError(null);
     setParallelOverrides(null);
     setSelectionKey((key) => key + 1);
   };
@@ -294,10 +384,20 @@ export function useReviewLaunch(
     }
   };
 
+  // The refused values and message for the run options now open, when they
+  // reopened after that launch failed.
+  const launchRetry =
+    launchError?.submitted && launchError.submitted.snapshot === pendingRun
+      ? { ...launchError.submitted, message: launchError.message }
+      : null;
+
   return {
     preparingRun,
     runPreview,
     setRunPreview,
+    launchError: launchError?.message ?? null,
+    launchRetry,
+    clearLaunchError: () => setLaunchError(null),
     launch,
     startPreparedLaunch,
     handleGenerate,

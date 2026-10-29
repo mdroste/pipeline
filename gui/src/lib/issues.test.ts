@@ -102,6 +102,30 @@ describe("issues parsing", () => {
     ]);
   });
 
+  it("keeps only host evidence verification statuses", () => {
+    const issues = parseIssues(
+      JSON.stringify({
+        issues: [
+          {
+            title: "Checked issue",
+            evidence: [
+              { page: 2, quote: "a", verification_status: "verified" },
+              { page: 3, quote: "b", verification_status: "not_found" },
+              { page: 4, quote: "c", verification_status: "trust me" },
+              { page: 5, quote: "d", verification_status: "unverified" },
+            ],
+          },
+        ],
+      }),
+    )!;
+    expect(issues[0].evidence?.map((item) => item.verificationStatus)).toEqual([
+      "verified",
+      "not_found",
+      undefined,
+      undefined,
+    ]);
+  });
+
   it("continues past valid non-issue JSON to a later issue candidate", () => {
     const issues = parseIssues(
       'metadata: {"model":"x"}\nresult: {"issues":[{"title":"Actual issue","severity":"major"}]}',

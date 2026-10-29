@@ -25,12 +25,13 @@ import {
 
 import SchemaEditorPanel from "./pipeline-editor/SchemaEditorPanel";
 import WaveDiagram from "./WaveDiagram";
+import type { PipelineConfig } from "../lib/types";
 
 interface Props {
   onClose: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   onOpenGallery?: () => void;
-  onProfileChange?: () => void;
+  onProfileChange?: (config?: PipelineConfig) => void;
   showBack?: boolean;
 }
 
@@ -184,7 +185,7 @@ export default function PipelinePage({
         showBack={showBack}
       />
       {/* Right panel — independently memoizable editors */}
-      <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0">
         {navigatorView === "schemas" ? (
           <SchemaEditorPanel
             scopeKey={`${activeProfile}:${schemaEditorEpoch}`}

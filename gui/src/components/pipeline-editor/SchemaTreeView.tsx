@@ -159,7 +159,7 @@ export default function SchemaTreeView({
   return (
     <div
       aria-label="Schema structure"
-      className="overflow-x-auto rounded-xl border border-gray-200 bg-white p-4 text-sm dark:border-gray-700 dark:bg-gray-900"
+      className="max-h-80 overflow-auto rounded-xl border border-gray-200 bg-white p-4 text-sm dark:border-gray-700 dark:bg-gray-900"
     >
       <SchemaNode name={null} schema={schema} required={false} depth={0} />
     </div>

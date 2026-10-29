@@ -4,6 +4,7 @@ import WorkspaceMenu from "./WorkspaceMenu";
 import WorkspaceToolPicker from "./WorkspaceToolPicker";
 import WorkspaceComposerControls, {
   loadAccountSummary,
+  loadClaudeUsage,
 } from "./WorkspaceComposerControls";
 import RetainedWorkspaceView from "./RetainedWorkspaceView";
 import WorkspaceProjectNavigation from "./WorkspaceProjectNavigation";
@@ -17,6 +18,7 @@ import { workbenchErrorMessage } from "../lib/workbenchError";
 import "./WorkspaceNavigation.css";
 import "./WorkspaceInspector.css";
 import RequestCard from "./WorkspaceRequestCard";
+import WorkspaceBackgroundTurnNotice from "./WorkspaceBackgroundTurnNotice";
 import useComposerFileDrop from "../hooks/useComposerFileDrop";
 import IconButton from "../ui/IconButton";
 import Select from "../ui/Select";
@@ -141,6 +143,9 @@ export default function WorkspacePage({
       send,
       resolve,
       visibleRequests,
+      requestItem,
+      backgroundTurn,
+      notice,
       acceptSnapshot,
       setSubmitting,
       sessionRef,
@@ -377,6 +382,13 @@ export default function WorkspacePage({
                   className="min-w-0 flex-1 rounded-lg px-2 py-2.5 text-left text-sm disabled:opacity-40"
                 >
                   <span className="block truncate">{session.title}</span>
+                  {backgroundTurn?.sessionId === session.id && (
+                    <span className="block text-xs text-amber-700 dark:text-amber-300">
+                      {backgroundTurn.waiting
+                        ? "Needs your approval"
+                        : "Responding…"}
+                    </span>
+                  )}
                   {session.archivedAt && (
                     <span className="text-xs text-gray-500 dark:text-gray-400">
                       Archived
@@ -513,7 +525,7 @@ export default function WorkspacePage({
         toolLabel={workspaceDestinations[destination].label}
         onTools={workspaceId ? () => setToolPickerOpen(true) : undefined}
         toolsDisabled={contextBusy || harnessEditor}
-        attentionCount={visibleRequests.length}
+        attentionCount={visibleRequests.length + (backgroundTurn?.waiting ?? 0)}
         active={Boolean(active) || submitting}
         onStop={active ? () => void stopCurrent() : undefined}
         stopping={stopping}
@@ -877,6 +889,9 @@ export default function WorkspacePage({
                 loadAccount={
                   runtime === "codex" ? loadAccountSummary : undefined
                 }
+                loadClaudeUsage={
+                  runtime === "claude" ? loadClaudeUsage : undefined
+                }
                 onRuntimeChange={(next) => {
                   setRuntime(next);
                   setModel("");
@@ -921,6 +936,7 @@ export default function WorkspacePage({
             transcriptRef={transcriptRef}
             messageRef={messageRef}
             error={error}
+            notice={notice}
             draft={draft}
             disabled={
               !sessionId ||
@@ -939,16 +955,30 @@ export default function WorkspacePage({
             onLatest={latest}
             onEarlier={() => void loadEarlier()}
             onNewer={() => setTranscriptPage((v) => Math.max(0, v - 1))}
-            onFollow={(value) => {
-              followLatestRef.current = value;
-            }}
-            requests={visibleRequests.map((request) => (
-              <RequestCard
-                key={String(request.requestId)}
-                event={request}
-                onResolve={resolve}
-              />
-            ))}
+            followLatestRef={followLatestRef}
+            requests={
+              <>
+                {backgroundTurn && (
+                  <WorkspaceBackgroundTurnNotice
+                    title={backgroundTurn.title}
+                    waiting={backgroundTurn.waiting}
+                    onOpen={() =>
+                      void selectSession(backgroundTurn.sessionId).catch(
+                        (cause) => setError(workbenchErrorMessage(cause)),
+                      )
+                    }
+                  />
+                )}
+                {visibleRequests.map((request) => (
+                  <RequestCard
+                    key={String(request.requestId)}
+                    event={request}
+                    item={requestItem(request)}
+                    onResolve={resolve}
+                  />
+                ))}
+              </>
+            }
             contextTray={
               <>
                 {snapshot?.workspace && (

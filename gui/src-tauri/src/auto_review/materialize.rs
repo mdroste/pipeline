@@ -221,10 +221,12 @@ pub fn materialize_config(
         ));
     }
 
+    // Pipeline checks are not reviewers: specialists copy a model step's
+    // artifact access and agents.
     let donor = materialized
         .steps
         .iter()
-        .find(|step| step.enabled && step.phase == Phase::Parallel)
+        .find(|step| step.enabled && step.phase == Phase::Parallel && step.kind.is_model())
         .cloned()
         .ok_or_else(|| {
             "Auto Review needs at least one enabled parallel core step to define specialist artifact access"
@@ -233,7 +235,7 @@ pub fn materialize_config(
     let core_ids = materialized
         .steps
         .iter()
-        .filter(|step| step.enabled && step.phase == Phase::Parallel)
+        .filter(|step| step.enabled && step.phase == Phase::Parallel && step.kind.is_model())
         .map(|step| step.id.clone())
         .collect::<Vec<_>>();
     let mut selected_steps = Vec::with_capacity(selected_ids.len());

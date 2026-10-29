@@ -6,6 +6,7 @@ import type {
   ResultComparison,
   VerificationRecord,
 } from "../workbenchTypes";
+import type { ToolchainReport } from "./toolchains";
 
 export const executionClient = {
   saveExecutionProfile(request: {
@@ -28,6 +29,12 @@ export const executionClient = {
   },
   listExecutionProfiles(workspaceId: string) {
     return invoke<ExecutionProfile[]>("workbench_list_execution_profiles", {
+      workspaceId,
+    });
+  },
+  /** Read-only: standard install folders, PATH and the project folder. */
+  detectToolchains(workspaceId: string | null) {
+    return invoke<ToolchainReport>("workbench_detect_toolchains", {
       workspaceId,
     });
   },

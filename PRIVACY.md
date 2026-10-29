@@ -81,10 +81,14 @@ Pipeline runs in the background.
 
 Pipeline may also:
 
-- check GitHub Releases for an update;
+- check GitHub Releases for a newer version about once a day, which you can
+  turn off in Settings. GitHub receives your network address and app version,
+  nothing about your research;
 - complete provider sign-in and retrieve available models or account limits;
 - use web search when supported and enabled;
-- query Crossref when literature search or a saved literature check is enabled;
+- query Crossref when literature search or a saved literature check is enabled,
+  or when a Review's reference check has lookups turned on (it sends each
+  reference's text as written in the bibliography);
 - download the optional PDF parser and model weights when you choose Install;
 - fetch a workflow from a URL you choose to import; and
 - fetch repository updates when you choose **Check GitHub** or **Check host**

@@ -8,11 +8,12 @@ import {
 import ProvenancePanel from "./report-workspace/ProvenancePanel";
 import LocalSources from "./report-workspace/LocalSources";
 import ReportHeader from "./report-workspace/ReportHeader";
+import KeptTabPanel from "./report-workspace/KeptTabPanel";
 import useReportResources from "./report-workspace/useReportResources";
 import type { WorkspaceTab, OutputView } from "./report-workspace/types";
 import useTabList from "../hooks/useTabList";
 import RunMarkdown from "./file-workspace/RunMarkdown";
-import { lazy, Suspense, useMemo, useState } from "react";
+import { Fragment, lazy, useMemo, useState } from "react";
 import { detectReportIssues, type IssueEvidence } from "../lib/issues";
 import { buildRunProvenance } from "../lib/runProvenance";
 import {
@@ -182,6 +183,184 @@ export default function ReportWorkspace({
     setTab("sources");
   };
   const tabList = useTabList(availableTabs, tab, setTab);
+  const activeTab = availableTabs.includes(tab) ? tab : "report";
+  // Tabs opened since this report loaded. Their panels stay mounted; a newly
+  // loaded report starts over with fresh panels.
+  const [panels, setPanels] = useState({
+    runId,
+    report,
+    generation: 0,
+    visited: [activeTab],
+  });
+  if (panels.runId !== runId || panels.report !== report) {
+    setPanels({
+      runId,
+      report,
+      generation: panels.generation + 1,
+      visited: [activeTab],
+    });
+  } else if (!panels.visited.includes(activeTab)) {
+    setPanels({ ...panels, visited: [...panels.visited, activeTab] });
+  }
+
+  const panelContent = (id: WorkspaceTab) => {
+    if (id === "issues")
+      return (
+        issues && (
+          <div className="h-full overflow-auto">
+            <IssuesTable
+              issues={issues}
+              runId={runId ?? null}
+              onOpenEvidence={runId ? openEvidence : undefined}
+            />
+          </div>
+        )
+      );
+    if (id === "provenance")
+      return (
+        provenance && (
+          <div className="h-full">
+            <ProvenancePanel
+              provenance={provenance}
+              quality={report?.quality}
+            />
+          </div>
+        )
+      );
+    if (id === "sources")
+      return (
+        <div className="h-full">
+          {runId ? (
+            <ArtifactExplorer
+              runId={runId}
+              fallbackMarkdown={markdown}
+              deferInitialArtifact
+              selectionRequest={sourceRequest}
+            />
+          ) : report ? (
+            <LocalSources
+              ReportViewer={ReportViewer}
+              extractedText={extractedText ?? ""}
+              report={report}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center p-8 text-sm text-gray-500 dark:text-gray-400">
+              No local source material is available.
+            </div>
+          )}
+        </div>
+      );
+    return (
+      <div className="h-full overflow-hidden">
+        <div className="flex h-full min-h-0 flex-col">
+          {presentation.preamble && (
+            <div
+              role="status"
+              className="flex shrink-0 items-center gap-3 border-b border-amber-200 bg-amber-50/80 px-6 py-2
+                               text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300"
+            >
+              <span className="font-semibold">Output-quality warning</span>
+              <span className="min-w-0 flex-1 truncate">
+                Clean view hides the model’s process commentary.
+              </span>
+              <div className="flex rounded-md border border-amber-300/80 p-0.5 dark:border-amber-800">
+                {(["clean", "raw"] as OutputView[]).map((view) => (
+                  <button
+                    key={view}
+                    type="button"
+                    onClick={() => setOutputView(view)}
+                    className={`rounded px-2 py-0.5 text-[11px] font-medium ${
+                      outputView === view
+                        ? "bg-amber-900 text-white dark:bg-amber-200 dark:text-amber-950"
+                        : "hover:bg-amber-100 dark:hover:bg-amber-900/50"
+                    }`}
+                  >
+                    {view === "clean" ? "Clean view" : "Raw output"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="min-h-0 flex-1 overflow-hidden">
+            {reportProblem ? (
+              <div className="flex h-full items-center justify-center p-8 text-center">
+                <div role="alert" className="max-w-lg">
+                  <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+                    <svg
+                      aria-hidden="true"
+                      className="h-5 w-5"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={1.8}
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M12 9v4m0 4h.01M10.3 3.6 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0Z"
+                      />
+                    </svg>
+                  </div>
+                  <p className="mt-3 font-medium text-gray-800 dark:text-gray-100">
+                    No final report was produced.
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+                    {canonicalProblemMessage(reportProblem)}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={openAgentReports}
+                    className="mt-4 rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+                  >
+                    Inspect preserved outputs
+                  </button>
+                </div>
+              </div>
+            ) : markdown.trim() ? (
+              runId ? (
+                <RunMarkdown
+                  runId={runId}
+                  onOpen={(location) => {
+                    setSourceRequest({
+                      key: Date.now(),
+                      relPath: location.path,
+                      ...location,
+                    });
+                    setTab("sources");
+                  }}
+                >
+                  <ReportViewer markdown={visibleMarkdown} />
+                </RunMarkdown>
+              ) : (
+                <ReportViewer markdown={visibleMarkdown} />
+              )
+            ) : (
+              <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                <div>
+                  <p className="font-medium text-gray-700 dark:text-gray-200">
+                    The final report is unavailable.
+                  </p>
+                  <p className="mt-1 max-w-md text-xs">
+                    Open Agent reports to read all saved responses, including
+                    attempts that failed checks.
+                  </p>
+                  {runId && (
+                    <button
+                      type="button"
+                      onClick={openAgentReports}
+                      className="mt-3 rounded border border-gray-300 px-3 py-1.5 text-xs font-medium hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800"
+                    >
+                      View agent reports
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   if (loading) {
     return (
@@ -317,169 +496,17 @@ export default function ReportWorkspace({
         />
       </div>
 
-      {availableTabs
-        .filter((id) => id !== tab)
-        .map((id) => (
-          <div key={id} {...tabList.panelProps(id)} hidden />
+      <Fragment key={panels.generation}>
+        {availableTabs.map((id) => (
+          <KeptTabPanel
+            key={id}
+            active={id === activeTab}
+            panelProps={tabList.panelProps(id)}
+          >
+            {panels.visited.includes(id) && panelContent(id)}
+          </KeptTabPanel>
         ))}
-      <div {...tabList.panelProps(tab)} className="min-h-0 flex-1">
-        <Suspense
-          fallback={
-            <div className="flex h-full items-center justify-center text-sm text-gray-500 dark:text-gray-400">
-              Loading workspace…
-            </div>
-          }
-        >
-          {tab === "issues" && issues ? (
-            <div className="h-full overflow-auto">
-              <IssuesTable
-                issues={issues}
-                runId={runId ?? null}
-                onOpenEvidence={runId ? openEvidence : undefined}
-              />
-            </div>
-          ) : tab === "provenance" && provenance ? (
-            <div className="h-full">
-              <ProvenancePanel
-                provenance={provenance}
-                quality={report?.quality}
-              />
-            </div>
-          ) : tab === "sources" ? (
-            <div className="h-full">
-              {runId ? (
-                <ArtifactExplorer
-                  runId={runId}
-                  fallbackMarkdown={markdown}
-                  deferInitialArtifact
-                  selectionRequest={sourceRequest}
-                />
-              ) : report ? (
-                <LocalSources
-                  ReportViewer={ReportViewer}
-                  extractedText={extractedText ?? ""}
-                  report={report}
-                />
-              ) : (
-                <div className="flex h-full items-center justify-center p-8 text-sm text-gray-500 dark:text-gray-400">
-                  No local source material is available.
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="h-full overflow-hidden">
-              <div className="flex h-full min-h-0 flex-col">
-                {presentation.preamble && (
-                  <div
-                    role="status"
-                    className="flex shrink-0 items-center gap-3 border-b border-amber-200 bg-amber-50/80 px-6 py-2
-                               text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300"
-                  >
-                    <span className="font-semibold">
-                      Output-quality warning
-                    </span>
-                    <span className="min-w-0 flex-1 truncate">
-                      Clean view hides the model’s process commentary.
-                    </span>
-                    <div className="flex rounded-md border border-amber-300/80 p-0.5 dark:border-amber-800">
-                      {(["clean", "raw"] as OutputView[]).map((view) => (
-                        <button
-                          key={view}
-                          type="button"
-                          onClick={() => setOutputView(view)}
-                          className={`rounded px-2 py-0.5 text-[11px] font-medium ${
-                            outputView === view
-                              ? "bg-amber-900 text-white dark:bg-amber-200 dark:text-amber-950"
-                              : "hover:bg-amber-100 dark:hover:bg-amber-900/50"
-                          }`}
-                        >
-                          {view === "clean" ? "Clean view" : "Raw output"}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div className="min-h-0 flex-1 overflow-hidden">
-                  {reportProblem ? (
-                    <div className="flex h-full items-center justify-center p-8 text-center">
-                      <div role="alert" className="max-w-lg">
-                        <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
-                          <svg
-                            aria-hidden="true"
-                            className="h-5 w-5"
-                            fill="none"
-                            viewBox="0 0 24 24"
-                            stroke="currentColor"
-                            strokeWidth={1.8}
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M12 9v4m0 4h.01M10.3 3.6 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.6a2 2 0 0 0-3.4 0Z"
-                            />
-                          </svg>
-                        </div>
-                        <p className="mt-3 font-medium text-gray-800 dark:text-gray-100">
-                          No final report was produced.
-                        </p>
-                        <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-                          {canonicalProblemMessage(reportProblem)}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={openAgentReports}
-                          className="mt-4 rounded border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
-                        >
-                          Inspect preserved outputs
-                        </button>
-                      </div>
-                    </div>
-                  ) : markdown.trim() ? (
-                    runId ? (
-                      <RunMarkdown
-                        runId={runId}
-                        onOpen={(location) => {
-                          setSourceRequest({
-                            key: Date.now(),
-                            relPath: location.path,
-                            ...location,
-                          });
-                          setTab("sources");
-                        }}
-                      >
-                        <ReportViewer markdown={visibleMarkdown} />
-                      </RunMarkdown>
-                    ) : (
-                      <ReportViewer markdown={visibleMarkdown} />
-                    )
-                  ) : (
-                    <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-500 dark:text-gray-400">
-                      <div>
-                        <p className="font-medium text-gray-700 dark:text-gray-200">
-                          The final report is unavailable.
-                        </p>
-                        <p className="mt-1 max-w-md text-xs">
-                          Open Agent reports to read all saved responses,
-                          including attempts that failed checks.
-                        </p>
-                        {runId && (
-                          <button
-                            type="button"
-                            onClick={openAgentReports}
-                            className="mt-3 rounded border border-gray-300 px-3 py-1.5 text-xs font-medium hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800"
-                          >
-                            View agent reports
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </Suspense>
-      </div>
+      </Fragment>
     </div>
   );
 }

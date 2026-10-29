@@ -53,11 +53,7 @@ fn validate_profile_request(
 ) -> WorkbenchResult<(PathBuf, Value, String, String)> {
     validate_id("workspace id", &request.workspace_id)?;
     let name = validate_text("Execution profile name", &request.name, 300)?;
-    if !matches!(request.adapter.as_str(), "latex" | "stata" | "command") {
-        return Err(WorkbenchError::invalid(
-            "Execution adapter must be latex, stata, or command",
-        ));
-    }
+    super::adapters::check_adapter_name(&request.adapter)?;
     if request.argv.is_empty()
         || request.argv.len() > 64
         || request.argv.iter().any(|argument| {
@@ -104,39 +100,12 @@ fn validate_profile_request(
     }) {
         return Err(WorkbenchError::invalid("Execution environment must contain string values and cannot persist credential variables"));
     }
-    let program_name = Path::new(&request.argv[0])
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    if [
-        "stata", "stata-mp", "stata-se", "statamp", "statase", "stataic",
-    ]
-    .contains(&program_name.as_str())
-    {
-        return Err(WorkbenchError::invalid("Direct Stata executables are not permitted. Configure the Stata adapter with /bin/zsh -lic and oldstata."));
-    }
-    if request.adapter != "stata"
-        && request
-            .argv
-            .iter()
-            .any(|a| a.trim_start().starts_with("oldstata "))
-    {
-        return Err(WorkbenchError::invalid("oldstata commands require the Stata adapter so log validation and cleanup handling remain active."));
-    }
-    if request.adapter == "stata"
-        && (request.argv.len() != 3
-            || request.argv[0] != "/bin/zsh"
-            || request.argv[1] != "-lic"
-            || !request.argv[2].trim_start().starts_with("oldstata ")
-            || [";", "&&", "||", "|", "\n", "`", "$("]
-                .iter()
-                .any(|token| request.argv[2].contains(token)))
-    {
-        return Err(WorkbenchError::invalid(
-            "Stata profiles on this Mac must invoke /bin/zsh -lic with an oldstata command",
-        ));
-    }
+    super::adapters::validate_adapter_argv(
+        &request.adapter,
+        &request.argv,
+        &request.outputs,
+        cfg!(windows),
+    )?;
     if request.adapter == "latex"
         && (latex_engine(&request.argv[0], cfg!(windows)).is_none()
             || request.argv.iter().any(|argument| {

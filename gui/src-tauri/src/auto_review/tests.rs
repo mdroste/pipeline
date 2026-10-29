@@ -762,3 +762,40 @@ fn every_discipline_fallback_materializes_and_the_run_stays_bounded() {
         ]
     );
 }
+
+#[test]
+fn specialists_copy_a_reviewer_step_rather_than_a_pipeline_check() {
+    let mut config = configured_auto_review();
+    config.steps.insert(
+        0,
+        crate::pipeline_config::StepConfig {
+            id: "refs".into(),
+            label: "Check References".into(),
+            phase: crate::pipeline_config::Phase::Parallel,
+            kind: crate::pipeline_config::StepKind::Analyzer,
+            analyzer: Some(crate::pipeline_config::AnalyzerSpec {
+                id: "reference_audit".into(),
+                version: 1,
+                options: serde_json::Value::Null,
+            }),
+            ..Default::default()
+        },
+    );
+    let materialized = materialize_config(&config, &valid_orientation()).unwrap();
+    let specialist = materialized
+        .steps
+        .iter()
+        .find(|step| step.id == "formal_proofs")
+        .unwrap();
+    assert!(specialist.kind.is_model());
+    assert!(!specialist.context.include.is_empty());
+    let synthesis = materialized
+        .steps
+        .iter()
+        .find(|step| step.id == "auto_synthesis")
+        .unwrap();
+    assert!(!synthesis
+        .dependency_policy
+        .required
+        .contains(&"refs".to_string()));
+}

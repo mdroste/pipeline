@@ -49,6 +49,13 @@
 .discovery-paper {
   border-top: 2px solid var(--task-line);
   padding-top: 20px;
+  scroll-margin-top: 16px;
+}
+/* The reader scrolls inside a bounded pane, like the mission brief. */
+.discovery-reader {
+  height: 70vh;
+  min-height: 350px;
+  overflow: hidden;
 }
 .discovery-detail summary,
 .discovery-builder summary {

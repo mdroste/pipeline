@@ -35,7 +35,11 @@ import { workspaceClient } from "../lib/workbench/workspaceClient";
 import { conversationClient } from "../lib/workbench/conversationClient";
 import { runtimeClient } from "../lib/workbench/runtimeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import type { WorkbenchSession, Workspace } from "../lib/workbenchTypes";
+import type {
+  WorkbenchEvent,
+  WorkbenchSession,
+  Workspace,
+} from "../lib/workbenchTypes";
 
 export function useWorkspacePageController({
   entryTarget,
@@ -126,6 +130,10 @@ export function useWorkspacePageController({
     setRequests,
     error,
     setError,
+    notice,
+    setNotice,
+    submissionOwner,
+    fileChangesRef,
     sessionRef,
     snapshotRef,
     activeRef,
@@ -167,6 +175,7 @@ export function useWorkspacePageController({
     setSessions,
     setSessionId,
     showArchived,
+    setError,
   );
 
   useEffect(() => {
@@ -246,15 +255,26 @@ export function useWorkspacePageController({
     setTranscriptPage(0);
     setSelectedMessage(null);
     setJumpTarget(null);
+    setNotice(null);
     followLatestRef.current = true;
+    // A slow reconcile for a conversation the user has already left must
+    // neither report its error here nor start a load.
+    let cancelled = false;
+    const current = () => !cancelled && sessionRef.current === sessionId;
     void runtimeClient
       .reconcileSession(sessionId)
-      .catch((cause) =>
-        setError(
-          `Could not refresh the conversation. Showing the saved transcript: ${workbenchErrorMessage(cause)}`,
-        ),
-      )
-      .finally(() => void hydrate(sessionId));
+      .catch((cause) => {
+        if (current())
+          setError(
+            `Could not refresh the conversation. Showing the saved transcript: ${workbenchErrorMessage(cause)}`,
+          );
+      })
+      .finally(() => {
+        if (current()) void hydrate(sessionId);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [hydrate, sessionId]);
 
   useWorkspaceDraftAutosave(conversation, persistence, contextBusy);
@@ -476,7 +496,6 @@ export function useWorkspacePageController({
     renderedItems,
     transcriptStart,
     transcriptEnd,
-    transcriptPage,
     setTranscriptPage,
     loadEarlier,
     loadingEarlier,
@@ -521,11 +540,7 @@ export function useWorkspacePageController({
       setJumpTarget(null);
     }
   }, [jumpTarget, renderedItems]);
-  useEffect(() => {
-    if (transcriptPage !== 0 || !followLatestRef.current || jumpTarget) return;
-    const container = transcriptRef.current;
-    if (container) container.scrollTop = container.scrollHeight;
-  }, [stream, pendingUser, renderedItems, transcriptPage, jumpTarget]);
+  // WorkspaceConversationView keeps the latest message pinned while following.
   const latest = () => {
     setTranscriptPage(0);
     setSelectedMessage(null);
@@ -539,6 +554,32 @@ export function useWorkspacePageController({
       request.params?.threadId === snapshot?.activeBinding?.providerThreadId ||
       request.params?.threadId === active?.threadId,
   );
+  /** The pending file change an approval refers to: live events, then the saved transcript. */
+  const requestItem = (request: WorkbenchEvent) => {
+    const itemId = request.params?.itemId;
+    if (typeof itemId !== "string") return null;
+    return (
+      fileChangesRef.current.get(itemId) ??
+      snapshot?.items.find((item) => item.providerItemId === itemId)?.payload ??
+      null
+    );
+  };
+  // A message still running in a conversation the researcher has left.
+  const elsewhere =
+    submissionOwner && submissionOwner.sessionId !== sessionId
+      ? submissionOwner
+      : null;
+  const backgroundTurn = elsewhere && {
+    sessionId: elsewhere.sessionId,
+    title:
+      sessions.find((session) => session.id === elsewhere.sessionId)?.title ??
+      null,
+    waiting: elsewhere.threadId
+      ? requests.filter(
+          (request) => request.params?.threadId === elsewhere.threadId,
+        ).length
+      : 0,
+  };
   useWorkspaceRouteEntry(
     entryRequest,
     entryTarget,
@@ -671,6 +712,9 @@ export function useWorkspacePageController({
       send,
       resolve,
       visibleRequests,
+      requestItem,
+      backgroundTurn,
+      notice,
       acceptSnapshot,
       setSubmitting,
       sessionRef,

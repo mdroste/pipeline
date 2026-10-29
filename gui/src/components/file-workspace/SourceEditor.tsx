@@ -63,9 +63,40 @@ export const stataMode: StreamParser<{ block: boolean }> = {
     return null;
   },
 };
+const surrogate = (code: number, low: boolean) =>
+  code >= (low ? 0xdc00 : 0xd800) && code <= (low ? 0xdfff : 0xdbff);
+/** The smallest replacement that turns `current` into `next`, or null. */
+function changedSpan(current: string, next: string) {
+  if (current === next) return null;
+  const shorter = Math.min(current.length, next.length);
+  let from = 0;
+  while (from < shorter && current[from] === next[from]) from++;
+  if (from > 0 && surrogate(current.charCodeAt(from - 1), false)) from--;
+  let same = 0;
+  while (
+    same < shorter - from &&
+    current[current.length - 1 - same] === next[next.length - 1 - same]
+  )
+    same++;
+  if (same > 0 && surrogate(current.charCodeAt(current.length - same), true))
+    same--;
+  return {
+    from,
+    to: current.length - same,
+    insert: next.slice(from, next.length - same),
+  };
+}
 export interface SourceEditorHandle {
   goToLine: (line: number) => void;
   focus: () => void;
+}
+/**
+ * A request to reveal a source line. Each new object is applied once, without
+ * moving focus, so keep the same object between renders. An explicit user
+ * action that should focus the editor uses the handle's goToLine instead.
+ */
+export interface SourceLineRequest {
+  line?: number;
 }
 interface Props {
   value: string;
@@ -74,7 +105,7 @@ interface Props {
   readOnly?: boolean;
   label?: string;
   onSave?: () => void;
-  line?: number;
+  reveal?: SourceLineRequest | null;
   completionTexts?: string[];
   onSelection?: (selection: {
     text: string;
@@ -115,7 +146,7 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
         `${editorFontSize}px`,
       );
     }, [editorFontSize]);
-    const goToLine = (n: number) => {
+    const goToLine = (n: number, { focus = true } = {}) => {
       const editor = view.current;
       if (!editor) return;
       const line = editor.state.doc.line(
@@ -125,10 +156,10 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
         selection: { anchor: line.from },
         effects: EditorView.scrollIntoView(line.from, { y: "center" }),
       });
-      editor.focus();
+      if (focus) editor.focus();
     };
     useImperativeHandle(ref, () => ({
-      goToLine,
+      goToLine: (line) => goToLine(line),
       focus: () => view.current?.focus(),
     }));
     useEffect(() => {
@@ -218,19 +249,27 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
     }, [path]);
     useEffect(() => {
       const editor = view.current;
-      if (editor && value !== editor.state.sliceDoc())
-        editor.dispatch({
-          changes: {
-            from: 0,
-            to: editor.state.doc.length,
-            insert: Text.of(value.split(/\r\n|\r|\n/)),
-          },
+      if (!editor || value === editor.state.sliceDoc()) return;
+      // Another editor on the same file, a reload or a discarded draft changes
+      // the value. Replace only the differing span so this editor keeps its
+      // scroll position and selection.
+      const change = changedSpan(
+        editor.state.doc.toString(),
+        value.replace(/\r\n?/g, "\n"),
+      );
+      const separator =
+        value.match(/\r\n|\r|\n/)?.[0] ?? editor.state.lineBreak;
+      if (!change && separator === editor.state.lineBreak) return;
+      editor.dispatch({
+        ...(change && {
+          changes: { ...change, insert: Text.of(change.insert.split("\n")) },
+        }),
+        ...(separator !== editor.state.lineBreak && {
           effects: configuration.lineSeparator.reconfigure(
-            EditorState.lineSeparator.of(
-              value.match(/\r\n|\r|\n/)?.[0] ?? editor.state.lineBreak,
-            ),
+            EditorState.lineSeparator.of(separator),
           ),
-        });
+        }),
+      });
     }, [value, path]);
     useEffect(() => {
       view.current?.dispatch({
@@ -311,8 +350,8 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
       });
     }, [completionTexts, language, configuration, path]);
     useEffect(() => {
-      if (props.line) goToLine(props.line);
-    }, [props.line, path]);
+      if (props.reveal?.line) goToLine(props.reveal.line, { focus: false });
+    }, [props.reveal]);
     return (
       <div className="file-source-editor">
         <div className="file-toolbar">

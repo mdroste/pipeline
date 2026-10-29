@@ -12,5 +12,6 @@ import "./paddle-parser-lock.test.mjs";
 import "./python.test.mjs";
 
 import "./draft-release.test.mjs";
+import "./update-check-assets.test.mjs";
 
 import "./release-fixes.test.mjs";

@@ -41,6 +41,13 @@ const mocks = vi.hoisted(() => ({
   effectiveHarness: vi.fn(),
   importPaper: vi.fn(),
   open: vi.fn(),
+  confirmDialog: vi.fn(),
+  promptDialog: vi.fn(),
+}));
+vi.mock("./DialogService", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./DialogService")>()),
+  confirmDialog: mocks.confirmDialog,
+  promptDialog: mocks.promptDialog,
 }));
 vi.mock("./WorkspaceProjectSurface", () => ({
   default: () => (
@@ -735,7 +742,7 @@ const openMenu = () => {
 
 it("renames a conversation from its row menu", async () => {
   await mount();
-  vi.spyOn(window, "prompt").mockReturnValue("  Identification strategy  ");
+  mocks.promptDialog.mockResolvedValue("  Identification strategy  ");
   openMenu();
   fireEvent.click(screen.getByRole("menuitem", { name: "Rename…" }));
   await waitFor(() =>
@@ -752,11 +759,12 @@ it("renames a conversation from its row menu", async () => {
 
 it("deletes a conversation only after confirmation and clears the open transcript", async () => {
   await mount();
-  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  mocks.confirmDialog.mockResolvedValue(false);
   openMenu();
   fireEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
+  await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledTimes(1));
   expect(mocks.deleteSession).not.toHaveBeenCalled();
-  confirm.mockReturnValue(true);
+  mocks.confirmDialog.mockResolvedValue(true);
   mocks.deleteSession.mockResolvedValue(7);
   mocks.listSessions.mockResolvedValue({ sessions: [] });
   openMenu();

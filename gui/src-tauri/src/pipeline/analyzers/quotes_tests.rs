@@ -94,7 +94,8 @@ fn exact_quote_at_cited_node_is_verified_with_its_byte_range() {
 #[test]
 fn typographic_differences_verify_with_normalization() {
     let paper = paper();
-    let mut item = evidence("\u{201c}the firm-level evidence is consistent with monopsony models\u{201d}");
+    let mut item =
+        evidence("\u{201c}the firm-level evidence is consistent with monopsony models\u{201d}");
     item.page = Some(2);
     let outcome = check(&paper, &item);
     assert_eq!(outcome.status, VERIFIED_NORMALIZED);
@@ -148,6 +149,37 @@ fn ordered_ellipsis_segments_verify_with_normalization() {
     let outcome = check(&paper, &reversed);
     assert_ne!(outcome.method, "ellipsis");
     assert!(![VERIFIED, VERIFIED_NORMALIZED].contains(&outcome.status));
+}
+
+#[test]
+fn leading_and_trailing_ellipses_verify_the_remaining_text() {
+    let paper = paper();
+    for quote in [
+        "\u{2026}an elasticity of \u{2212}0.12 with a standard error",
+        "an elasticity of \u{2212}0.12 with a standard error...",
+        "\u{201c}[...] an elasticity of \u{2212}0.12 with a standard error [\u{2026}]\u{201d}",
+        // Shorter than an interior ellipsis segment may be.
+        "... had small",
+    ] {
+        let mut item = evidence(quote);
+        item.page = if quote.contains("small") {
+            Some(3)
+        } else {
+            Some(2)
+        };
+        let outcome = check(&paper, &item);
+        assert_eq!(outcome.status, VERIFIED_NORMALIZED, "{quote}");
+        assert_eq!(outcome.method, "ellipsis", "{quote}");
+    }
+    // The cited location still governs the status.
+    let mut elsewhere = evidence("...We conclude that the policy had small effects.");
+    elsewhere.page = Some(1);
+    let outcome = check(&paper, &elsewhere);
+    assert_eq!(outcome.status, PARTIAL);
+    assert_eq!(outcome.reason, "locator_mismatch");
+    // Removing an ellipsis never promotes text that is not in the paper.
+    assert_eq!(check(&paper, &evidence("... had large")).status, NOT_FOUND);
+    assert_eq!(check(&paper, &evidence(" \u{2026} ")).reason, "no_quote");
 }
 
 #[test]

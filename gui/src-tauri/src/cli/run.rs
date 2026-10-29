@@ -52,12 +52,27 @@ pub(super) async fn cmd_run(args: RunArgs) -> i32 {
         input_interpretation: args.input_interpretation,
         variables: args.variables,
         extra_inputs,
+        limits: args.limits.overrides(),
     };
     let bus: EventBus = Arc::new(CliEvents);
     match run_with_interrupt(bus, options, None).await {
         Ok(value) => finish_single_run(&value, args.out.as_deref(), args.force),
         Err(error) => report_run_error(&error),
     }
+}
+
+/// One-line rough usage estimate for `check`.
+fn usage_line(estimate: &pipeline_gui_lib::pipeline::executor::budget::UsageEstimate) -> String {
+    let calls = if estimate.calls_low == estimate.calls_high {
+        estimate.calls_low.to_string()
+    } else {
+        format!("{}-{}", estimate.calls_low, estimate.calls_high)
+    };
+    let cost = match (estimate.api_cost_low, estimate.api_cost_high) {
+        (Some(low), Some(high)) => format!("; API list price ${low:.2}-${high:.2}"),
+        _ => String::new(),
+    };
+    format!("Estimated use (rough): {calls} model calls{cost}")
 }
 
 pub(super) async fn cmd_check(args: CheckArgs) -> i32 {
@@ -93,6 +108,7 @@ pub(super) async fn cmd_check(args: CheckArgs) -> i32 {
         input_interpretation: args.input_interpretation,
         variables: args.variables,
         extra_inputs,
+        limits: Default::default(),
     };
     let plan = match commands::check_headless_plan(&options).await {
         Ok(report) => report,
@@ -118,6 +134,7 @@ pub(super) async fn cmd_check(args: CheckArgs) -> i32 {
             plan.budget.step_units_upper_bound,
             plan.budget.provider_attempts_upper_bound
         ));
+        emit_stdout(&usage_line(&plan.usage_estimate));
         let required = plan
             .readiness
             .deps
@@ -227,6 +244,7 @@ pub(super) async fn cmd_batch(args: BatchArgs) -> i32 {
             input_interpretation: Some("document".to_string()),
             variables: args.variables.clone(),
             extra_inputs: extra_inputs.clone(),
+            limits: args.limits.overrides(),
         };
         match run_with_interrupt(bus, options, Some(&snapshot)).await {
             Ok(value) => {

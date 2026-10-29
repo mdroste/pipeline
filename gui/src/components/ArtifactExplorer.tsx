@@ -1,5 +1,5 @@
 // Manifest-driven Workflow artifact surface. Reads stay behind the run-owned client.
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense, useCallback, useMemo } from "react";
 import type { ArtifactExplorerProps } from "../lib/artifactTypes";
 export type {
   ArtifactContent,
@@ -54,6 +54,15 @@ export default function ArtifactExplorer({
       ),
     [runId, manifest],
   );
+  // A choice in the file list or a preview shows that file, so it leaves the
+  // file tabs, which would otherwise cover it.
+  const showArtifact = useCallback(
+    (next: string) => {
+      setFileTab(null);
+      selectArtifact(next);
+    },
+    [selectArtifact, setFileTab],
+  );
 
   // Graceful degradation: no manifest → plain report view.
   if (manifestError) {
@@ -100,11 +109,12 @@ export default function ArtifactExplorer({
         manifest={manifest}
         artifactsByGroup={artifactsByGroup}
         selected={selected}
-        selectArtifact={selectArtifact}
+        selectArtifact={showArtifact}
       />
       {/* Viewer */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {selected && !selected.startsWith(PAGE_SELECTION_PREFIX) && (
+        {(fileTab ||
+          (selected && !selected.startsWith(PAGE_SELECTION_PREFIX))) && (
           <div className="file-toolbar">
             <button
               onClick={() => setFileTab(fileTab ? null : { path: selected })}
@@ -181,7 +191,7 @@ export default function ArtifactExplorer({
                   content={content}
                   artifacts={manifest.artifacts}
                   pageArtifacts={manifest.page_artifacts}
-                  onSelectArtifact={selectArtifact}
+                  onSelectArtifact={showArtifact}
                 />
               </RunMarkdown>
             ) : (

@@ -277,6 +277,11 @@ pub struct ExecutionPlanResponse {
     pub stages: Vec<executor::ExecutionPlanStage>,
     pub parallel_agents: Vec<String>,
     pub merge_agent: Option<String>,
+    /// Rough preflight range of calls, tokens, and API list-price cost, with
+    /// the Review limits that will apply.
+    pub usage_estimate: executor::budget::UsageEstimate,
+    /// Analyzer steps, with what each reads and any service it contacts.
+    pub host_checks: Vec<crate::pipeline::analyzers::registry::HostCheck>,
 }
 
 /// Return the canonical scheduler timeline for one immutable active-profile
@@ -369,6 +374,12 @@ pub async fn get_execution_plan(
             .unwrap_or_else(|| snapshot.settings.merge_agent().to_string())
     });
     let mut stages = executor::execution_plan(&planning_config)?;
+    let usage_estimate = executor::budget::preview_estimate(
+        &planning_config,
+        &snapshot.settings,
+        paper_path.as_deref(),
+    )
+    .await;
     if let Some(stage) = stages.iter_mut().find(|stage| stage.kind == "extracting") {
         stage.label = executor::input_processing_label(&resolved_interpretation).to_string();
     }
@@ -388,6 +399,8 @@ pub async fn get_execution_plan(
         stages,
         parallel_agents: snapshot.settings.parallel_agents(),
         merge_agent,
+        usage_estimate,
+        host_checks: crate::pipeline::analyzers::registry::host_checks(&planning_config),
     })
 }
 
@@ -636,8 +649,23 @@ pub async fn import_bundle(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn check_for_update() -> Result<crate::updates::UpdateInfo, String> {
-    crate::updates::check().await
+pub async fn check_for_update(app: AppHandle) -> Result<crate::updates::UpdateInfo, String> {
+    crate::updates::check_now(&crate::emit::from_app(app)).await
+}
+
+/// Saved update preference and last result; sends no request.
+#[tauri::command]
+pub async fn update_status() -> Result<crate::updates::UpdateStatus, String> {
+    tokio::task::spawn_blocking(crate::updates::status)
+        .await
+        .map_err(|e| format!("Update status task failed: {e}"))
+}
+
+#[tauri::command]
+pub async fn update_set_automatic(enabled: bool) -> Result<crate::updates::UpdateStatus, String> {
+    tokio::task::spawn_blocking(move || crate::updates::set_automatic(enabled))
+        .await
+        .map_err(|e| format!("Update preference task failed: {e}"))?
 }
 
 // --- Managed local engines ---

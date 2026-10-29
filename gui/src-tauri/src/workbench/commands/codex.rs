@@ -149,6 +149,10 @@ pub(crate) async fn submit_turn(
     }
 
     let mut dispatched_supervisor = None;
+    // Set when the message leaves submission setup: handed to the Claude
+    // runtime or about to be written to App Server. A failure before then
+    // proves the message was not sent.
+    let mut handed_off = false;
     let mut result: Result<SendTurnResult, RuntimeCommandError> = async {
         if !automated {
         let draft_operation = format!("send-draft-{}", request.client_submission_id);
@@ -198,6 +202,7 @@ pub(crate) async fn submit_turn(
         })
         .await?;
         if use_claude {
+            handed_off = true;
             return crate::workbench::claude::submit(app, request, binding, prepared, automated).await;
         }
         let transferred_history = if binding.as_ref().is_some_and(|b| b.runtime_namespace == crate::workbench::claude::NAMESPACE) {
@@ -263,16 +268,22 @@ pub(crate) async fn submit_turn(
             store.set_binding_harness(&binding_for_snapshot, &fingerprint, &instruction_sources)
         })
         .await?;
+        let turn_request = crate::workbench::codex::StartTurnRequest {
+            workbench_binding_id: binding_id.clone(),
+            thread_id: connection.thread_id.clone(),
+            text: request.text,
+            client_user_message_id: request.client_submission_id.clone(),
+            model: request.model,
+            effort: request.effort,
+        };
+        // Validation (including the live model catalog check) writes nothing
+        // to App Server, so its failures must not be treated as an uncertain
+        // dispatch that tears the connection down.
+        supervisor.validate_turn(&turn_request).await?;
+        handed_off = true;
         dispatched_supervisor = Some(supervisor.clone());
         let turn_id = supervisor
-            .start_turn_with_acceptance(crate::workbench::codex::StartTurnRequest {
-                workbench_binding_id: binding_id.clone(),
-                thread_id: connection.thread_id.clone(),
-                text: request.text,
-                client_user_message_id: request.client_submission_id.clone(),
-                model: request.model,
-                effort: request.effort,
-            }, |turn_id| {
+            .dispatch_turn(turn_request, |turn_id| {
                 active_turn_state().lock().unwrap_or_else(|error| error.into_inner()).turn_id = Some(turn_id.to_owned());
             })
             .await?;
@@ -320,6 +331,11 @@ pub(crate) async fn submit_turn(
         })
     }
     .await;
+    if !handed_off {
+        if let Err(error) = &mut result {
+            error.code = TURN_NOT_SENT.into();
+        }
+    }
     // An unacknowledged dispatch retains ownership until its connection is reaped.
     let unacknowledged = result.is_err()
         && active_turn_state()
@@ -346,6 +362,11 @@ pub(crate) async fn submit_turn(
     state.finish_setup(result.is_err());
     result
 }
+
+/// Code for a submission that failed before the message left Pipeline. The
+/// message was definitely not sent, so the renderer can restore it as an
+/// unsent draft instead of reporting an uncertain delivery.
+const TURN_NOT_SENT: &str = "turn_not_sent";
 
 #[tauri::command]
 pub async fn workbench_codex_interrupt_turn(
@@ -683,7 +704,7 @@ pub(super) fn ensure_event_bridge(
                             if status == "completed" {
                                 spawn_title_generation(
                                     app.clone(),
-                                    supervisor.clone(),
+                                    TitleRuntime::Codex(supervisor.clone()),
                                     thread_id.clone(),
                                     turn_id.clone(),
                                 );
@@ -728,8 +749,10 @@ async fn reconcile_active_turn(
     let Some((thread, turn)) = identity else {
         return;
     };
-    if let Ok(snapshot) = supervisor.read_thread(&thread).await {
-        if let Some(native_turn) = recovered_terminal(&snapshot, &thread, &turn) {
+    // Status only: the heartbeat runs every few seconds for the whole turn,
+    // so it must not reread the conversation's items.
+    if let Ok(recent) = supervisor.recent_turns(&thread).await {
+        if let Some(native_turn) = recovered_terminal(&recent, &turn) {
             complete_active_turn(epoch, &thread, &turn);
             // The same loss that hid completion from the permit owner can hide
             // it from the renderer. Re-emit the authoritative terminal identity.
@@ -747,15 +770,9 @@ async fn reconcile_active_turn(
     }
 }
 
-pub(super) fn recovered_terminal<'a>(
-    snapshot: &'a Value,
-    thread: &str,
-    turn: &str,
-) -> Option<&'a Value> {
-    if snapshot["thread"]["id"] != thread {
-        return None;
-    }
-    snapshot["thread"]["turns"].as_array()?.iter().find(|t| {
+/// The terminal native turn with this id in a `thread/turns/list` page.
+pub(super) fn recovered_terminal<'a>(recent: &'a Value, turn: &str) -> Option<&'a Value> {
+    recent["data"].as_array()?.iter().find(|t| {
         t["id"] == turn
             && matches!(
                 t["status"].as_str(),

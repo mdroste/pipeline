@@ -20,13 +20,18 @@ pub struct Folded {
 }
 
 fn zero_width(c: char) -> bool {
-    matches!(c, '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}')
+    matches!(
+        c,
+        '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{2060}' | '\u{feff}'
+    )
 }
 
 fn typographic(c: char) -> Option<&'static str> {
     Some(match c {
         '\u{2018}' | '\u{2019}' | '\u{201a}' | '\u{201b}' | '\u{2032}' | '\u{b4}' | '`' => "'",
-        '\u{201c}' | '\u{201d}' | '\u{201e}' | '\u{201f}' | '\u{2033}' | '\u{ab}' | '\u{bb}' => "\"",
+        '\u{201c}' | '\u{201d}' | '\u{201e}' | '\u{201f}' | '\u{2033}' | '\u{ab}' | '\u{bb}' => {
+            "\""
+        }
         '\u{2010}' | '\u{2011}' | '\u{2012}' | '\u{2013}' | '\u{2014}' | '\u{2015}'
         | '\u{2212}' | '\u{2043}' => "-",
         '\u{2026}' => "...",
@@ -224,7 +229,10 @@ mod tests {
     #[test]
     fn typographic_fold_handles_ligatures_quotes_dashes_and_hyphenation() {
         let folded = fold("The \u{fb01}rm\u{2019}s inter-\n  national \u{201c}Effect\u{201d} \u{2014} large\u{2026}", Fold::Typographic);
-        assert_eq!(folded.text, "the firm's international \"effect\" - large...");
+        assert_eq!(
+            folded.text,
+            "the firm's international \"effect\" - large..."
+        );
     }
 
     #[test]

@@ -13,8 +13,10 @@ import { confirmDialog, notify } from "../DialogService";
 import { type AddStepDraft } from "./AddStepDialog";
 
 import { defaultStepContext, primaryPartsForMode } from "./utils";
+import { contextForParallel } from "./parallelContext";
 
 import { ISSUES_SCHEMA } from "./stepTemplates";
+import { analyzerStep } from "../../lib/analyzers";
 
 import type { WorkflowEditor } from "./useWorkflowEditor";
 import {
@@ -46,7 +48,24 @@ export function useStepActions(
     setDirty(true);
   };
 
-  const updateStepPhase = (id: string, phase: Phase) => {
+  const updateStepPhase = async (id: string, phase: Phase) => {
+    if (!config) return;
+    const inputMode = config.extraction?.input_mode || "document";
+    const target = config.steps.find((step) => step.id === id);
+    const parallel =
+      phase === "parallel" && target
+        ? contextForParallel(target.context, inputMode)
+        : null;
+    if (
+      parallel &&
+      parallel.removed > 0 &&
+      !(await confirmDialog(
+        `This step reads results from ${parallel.removed} other step${parallel.removed === 1 ? "" : "s"}. Parallel steps run independently, so switching removes that access${parallel.addsPrimary ? " and lets the step read the primary input instead" : ""}. Continue?`,
+        { destructive: true },
+      ))
+    ) {
+      return;
+    }
     setConfig((current) => {
       if (!current) return current;
       const outputs = { ...(current.outputs ?? {}) };
@@ -58,7 +77,15 @@ export function useStepActions(
         ...current,
         outputs,
         steps: current.steps.map((step) =>
-          step.id === id ? { ...step, phase } : step,
+          step.id !== id
+            ? step
+            : phase === "parallel"
+              ? {
+                  ...step,
+                  phase,
+                  context: contextForParallel(step.context, inputMode).context,
+                }
+              : { ...step, phase },
         ),
       };
     });
@@ -193,6 +220,33 @@ export function useStepActions(
 
   const addStep = async (draft: AddStepDraft) => {
     if (!config) return;
+    if (draft.mode === "check") {
+      if (!draft.analyzer) throw new Error("Select a Pipeline check.");
+      let checkId = draft.analyzer.info.id;
+      let checkSuffix = 2;
+      while (config.steps.some((step) => step.id === checkId)) {
+        checkId = `${draft.analyzer.info.id}_${checkSuffix++}`;
+      }
+      const check = analyzerStep(
+        draft.analyzer.info,
+        checkId,
+        draft.analyzer.network,
+      );
+      const firstSequential = config.steps.findIndex(
+        (candidate) => candidate.phase === "sequential",
+      );
+      const steps = config.steps.slice();
+      steps.splice(
+        firstSequential < 0 ? steps.length : firstSequential,
+        0,
+        check,
+      );
+      setConfig({ ...config, steps });
+      onStepAdded();
+      setEditing(checkId);
+      setDirty(true);
+      return;
+    }
     const inputMode = config.extraction?.input_mode || "document";
     let template: StepConfig | null = null;
     if (draft.mode === "adaptive") {

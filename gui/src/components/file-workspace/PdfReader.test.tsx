@@ -37,7 +37,15 @@ vi.mock("pdfjs-dist/legacy/web/pdf_viewer.mjs", () => {
     }
   }
   class Viewer {
-    currentScaleValue = "page-width";
+    scaleValue = "page-width";
+    scaleAssignments: string[] = [];
+    get currentScaleValue() {
+      return this.scaleValue;
+    }
+    set currentScaleValue(value: string) {
+      this.scaleValue = value;
+      this.scaleAssignments.push(value);
+    }
     pagesRotation = 0;
     pagesCount = 2;
     currentScale = 1;
@@ -63,6 +71,8 @@ vi.mock("pdfjs-dist/legacy/web/pdf_viewer.mjs", () => {
       return this.page;
     }
     set currentPageNumber(n: number) {
+      // PDF.js rejects fractional page numbers the same way.
+      if (!Number.isInteger(n)) throw new Error("Invalid page number.");
       this.page = n;
       this.bus.dispatch("pagechanging", {});
     }
@@ -114,16 +124,26 @@ beforeEach(() => {
   mocks.destroy.mockResolvedValue(undefined);
   localStorage.clear();
   mocks.getDocument.mockReturnValue({
-    promise: Promise.resolve({
-      numPages: 2,
-      getPageLabels: async () => ["i", "1"],
-      getOutline: async () => [
-        { title: "Introduction", dest: "intro", items: [] },
-      ],
-    }),
+    promise: Promise.resolve(pdfDocument(2, ["i", "1"])),
     destroy: mocks.destroy,
   });
 });
+function pdfDocument(numPages: number, labels: string[] | null = null) {
+  return {
+    numPages,
+    getPageLabels: async () => labels,
+    getOutline: async () => [
+      { title: "Introduction", dest: "intro", items: [] },
+    ],
+    getPage: () => new Promise(() => {}),
+  };
+}
+type ViewerProbe = {
+  page: number;
+  scaleValue: string;
+  scaleAssignments: string[];
+};
+const viewer = () => last(mocks.viewers) as unknown as ViewerProbe;
 it("loads only supplied bytes with text and annotation layers, and routes external links", async () => {
   const { container, unmount } = render(
     <PdfReader
@@ -284,4 +304,109 @@ it("attaches selected text with its page and normalized PDF region", async () =>
       region: [0.1, 0.1, 0.2, 0.1],
     }),
   );
+});
+
+it("goes to a typed page only on Enter or blur, and ignores fractional pages", async () => {
+  render(
+    <PdfReader
+      documentKey="typed"
+      title="Paper"
+      initialPage={1.5}
+      load={async () => "JVBERg=="}
+    />,
+  );
+  await screen.findByText("of 2");
+  const box = screen.getByLabelText("PDF page number");
+  await waitFor(() => expect(box).toHaveValue("1"));
+  expect(viewer().page).toBe(2);
+  fireEvent.change(box, { target: { value: "" } });
+  expect(box).toHaveValue("");
+  fireEvent.change(box, { target: { value: "2.5" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(viewer().page).toBe(2);
+  expect(box).toHaveValue("1");
+  fireEvent.change(box, { target: { value: "i" } });
+  expect(viewer().page).toBe(2);
+  fireEvent.blur(box);
+  expect(viewer().page).toBe(1);
+  expect(box).toHaveValue("i");
+  fireEvent.change(box, { target: { value: "2" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  expect(viewer().page).toBe(2);
+});
+
+it("starts thumbnails and search afresh for a different document", async () => {
+  mocks.getDocument.mockReturnValue({
+    promise: Promise.resolve(pdfDocument(30)),
+    destroy: mocks.destroy,
+  });
+  const load = async () => "JVBERg==";
+  const { rerender } = render(
+    <PdfReader documentKey="long" title="Paper" load={load} />,
+  );
+  await screen.findByText("of 30");
+  fireEvent.click(screen.getByRole("button", { name: "Thumbnails" }));
+  fireEvent.click(screen.getByRole("button", { name: "Next 12" }));
+  fireEvent.click(screen.getByRole("button", { name: "Next 12" }));
+  expect(screen.getByLabelText("Open page 25")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Find in PDF"), {
+    target: { value: "Euler" },
+  });
+  mocks.getDocument.mockReturnValue({
+    promise: Promise.resolve(pdfDocument(5)),
+    destroy: mocks.destroy,
+  });
+  rerender(<PdfReader documentKey="short" title="Paper" load={load} />);
+  await screen.findByText("of 5");
+  expect(screen.getByLabelText("Find in PDF")).toHaveValue("");
+  expect(screen.getAllByLabelText(/^Open page/)).toHaveLength(5);
+  expect(screen.getByRole("button", { name: "Previous 12" })).toBeDisabled();
+});
+
+it("fits a reader opened in a hidden pane once it is shown, and refits on resize", async () => {
+  let notify: ResizeObserverCallback | undefined;
+  const disconnect = vi.fn();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        notify = callback;
+      }
+      observe() {}
+      disconnect = disconnect;
+    },
+  );
+  const resize = (width: number, height: number) =>
+    act(async () => {
+      notify!(
+        [{ contentRect: { width, height } }] as ResizeObserverEntry[],
+        {} as ResizeObserver,
+      );
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+  try {
+    const { unmount } = render(
+      <PdfReader
+        documentKey="hidden"
+        title="Paper"
+        load={async () => "JVBERg=="}
+      />,
+    );
+    await screen.findByText("of 2");
+    // The jsdom container has no width, like a reader in a hidden pane.
+    expect(viewer().scaleAssignments).toEqual([]);
+    await resize(0, 0);
+    expect(viewer().scaleAssignments).toEqual([]);
+    await resize(600, 800);
+    expect(viewer().scaleAssignments).toEqual(["page-width"]);
+    await resize(450, 800);
+    expect(viewer().scaleAssignments).toEqual(["page-width", "page-width"]);
+    viewer().scaleValue = "1.5";
+    await resize(500, 800);
+    expect(viewer().scaleAssignments).toHaveLength(2);
+    unmount();
+    expect(disconnect).toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

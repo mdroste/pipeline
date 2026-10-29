@@ -2,6 +2,8 @@ import { memo, useState } from "react";
 import type { ModelCatalog, Settings, StepConfig } from "../../lib/types";
 import {
   decodeModelSelection,
+  defaultParallelAgents,
+  defaultSequentialAgent,
   effortOptions,
   encodeModelSelection,
   providerTransport,
@@ -25,12 +27,17 @@ function ModelOverrides({
     Object.keys(step.effort_overrides ?? {}).length
   );
   const [open, setOpen] = useState(hasOverride);
+  // A step without its own agents runs on the Settings default for its phase.
+  const defaultAgents = !settings
+    ? ["claude"]
+    : step.phase === "parallel"
+      ? defaultParallelAgents(settings)
+      : [defaultSequentialAgent(settings)];
   const providers = Array.from(
     new Set(
-      (step.agents?.length
-        ? step.agents
-        : [settings?.preferred_provider || "claude"]
-      ).map((provider) => provider || "claude"),
+      (step.agents?.length ? step.agents : defaultAgents).map(
+        (provider) => provider || "claude",
+      ),
     ),
   );
 

@@ -15,13 +15,18 @@ export default function Discovery({ workspaceId, onOpen, onError }: DeskProps) {
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [citation, setCitation] = useState("");
+  const [contact, setContact] = useState("");
+  const [savedContact, setSavedContact] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const refresh = useCallback(async () => {
-    const [network, items] = await Promise.all([
+    const [network, items, email] = await Promise.all([
       deskClient.network(workspaceId),
       deskClient.records<Acquisition>(workspaceId, "acquisition"),
+      deskClient.crossrefContact(),
     ]);
     setEnabled(network);
+    setSavedContact(email);
+    setContact(email ?? "");
     setReceipts(
       items.filter(
         (item) => !items.some((next) => next.supersedes === item.id),
@@ -92,6 +97,37 @@ export default function Discovery({ workspaceId, onOpen, onError }: DeskProps) {
         <p className={muted}>
           Queries go to the selected provider. This setting is separate from
           conversation web search.
+        </p>
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(() =>
+              deskClient.crossrefContact(contact.trim() || null, true),
+            );
+          }}
+        >
+          <input
+            aria-label="Crossref contact email"
+            type="email"
+            autoComplete="email"
+            className={input}
+            value={contact}
+            onChange={(e) => setContact(e.target.value)}
+            placeholder="Your email for Crossref (optional)"
+          />
+          <button
+            className={button}
+            disabled={busy || contact.trim() === (savedContact ?? "")}
+          >
+            {contact.trim() ? "Save contact" : "Remove contact"}
+          </button>
+        </form>
+        <p className={muted}>
+          Optional. Crossref asks API users for a contact address and may limit
+          requests per address. When set, Pipeline sends your own email to
+          Crossref with each literature lookup from this computer; it never uses
+          a shared address. Leave it empty to search without a contact.
         </p>
         <form
           className="flex gap-2"

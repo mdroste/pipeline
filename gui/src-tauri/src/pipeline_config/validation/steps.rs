@@ -36,8 +36,119 @@ pub fn validate_unique_step_ids(steps: &[StepConfig]) -> Result<(), String> {
     Ok(())
 }
 
+/// Analyzer steps run one registered host check; every model-call field must
+/// be empty so a saved analyzer step can never silently become a model call.
+fn validate_analyzer_step(step: &StepConfig) -> Result<(), String> {
+    use super::super::StepKind;
+    match (step.kind, step.analyzer.as_ref()) {
+        (StepKind::Model, None) => Ok(()),
+        (StepKind::Model, Some(_)) => Err(format!(
+            "Step '{}' names an analyzer but is not an analyzer step",
+            step.id
+        )),
+        (StepKind::Analyzer, None) => Err(format!(
+            "Analyzer step '{}' must name an analyzer and version",
+            step.id
+        )),
+        (StepKind::Analyzer, Some(spec)) => {
+            let info = crate::pipeline::analyzers::registry::find(&spec.id, spec.version)
+                .ok_or_else(|| {
+                    format!(
+                        "Step '{}' uses unknown analyzer '{}' version {}",
+                        step.id, spec.id, spec.version
+                    )
+                })?;
+            let model_fields = [
+                (!step.prompt.trim().is_empty(), "a prompt"),
+                (!step.system_prompt.trim().is_empty(), "system instructions"),
+                (!step.agents.is_empty(), "providers"),
+                (
+                    !step.model.trim().is_empty() || !step.model_overrides.is_empty(),
+                    "a model",
+                ),
+                (
+                    !step.effort.trim().is_empty() || !step.effort_overrides.is_empty(),
+                    "an effort level",
+                ),
+                (step.output_schema.is_some(), "an output schema"),
+                (step.for_each.is_some(), "fan-out"),
+            ];
+            if let Some((_, field)) = model_fields.iter().find(|(set, _)| *set) {
+                return Err(format!(
+                    "Analyzer step '{}' cannot have {field}; it makes no model call",
+                    step.id
+                ));
+            }
+            crate::pipeline::analyzers::registry::validate_options(info, &spec.options)
+                .map_err(|error| format!("Analyzer step '{}': {error}", step.id))
+        }
+    }
+}
+
+/// Artifact fan-out reads structured JSON, so its source must declare an
+/// output schema (or be an analyzer, which always returns JSON). With a
+/// schema, the pointer must be able to select an array.
+fn validate_fan_out_source(
+    step: &StepConfig,
+    source: &StepConfig,
+    pointer: &str,
+) -> Result<(), String> {
+    let Some(schema) = &source.output_schema else {
+        if source.kind == super::super::StepKind::Analyzer {
+            return Ok(());
+        }
+        return Err(format!(
+            "Step '{}' fans out over step '{}', which has no output schema; fan-out needs a step that returns structured JSON",
+            step.id, source.id
+        ));
+    };
+    // An unresolvable schema is reported by the source step's own checks.
+    let Ok(resolved) = crate::pipeline::structured::resolve_schema_reference(schema) else {
+        return Ok(());
+    };
+    if schema_selects_array(&resolved, pointer) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Step '{}' fan-out pointer '{}' does not select an array in the output schema of step '{}'",
+            step.id, pointer, source.id
+        ))
+    }
+}
+
+/// Whether an RFC 6901 `pointer` can select an array in a value conforming to
+/// the resolved `schema`. Untyped nodes and objects without declared
+/// properties pass; an undeclared field, a scalar, or a final non-array type
+/// cannot hold an array.
+fn schema_selects_array(schema: &serde_json::Value, pointer: &str) -> bool {
+    let mut node = schema;
+    for token in pointer.split('/').skip(1) {
+        let token = token.replace("~1", "/").replace("~0", "~");
+        let child = match node.get("type").and_then(serde_json::Value::as_str) {
+            None => return true,
+            Some("object") => match node.get("properties").and_then(|p| p.as_object()) {
+                Some(properties) if !properties.is_empty() => properties.get(&token),
+                _ => return true,
+            },
+            Some("array") => match node.get("items") {
+                None => return true,
+                Some(items) => token.parse::<usize>().is_ok().then_some(items),
+            },
+            Some(_) => None,
+        };
+        match child {
+            Some(child) => node = child,
+            None => return false,
+        }
+    }
+    node.get("type")
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(|kind| kind == "array")
+}
+
 pub fn validate_workflow_semantics(steps: &[StepConfig]) -> Result<(), String> {
     for step in steps {
+        validate_analyzer_step(step)?;
         if step.phase == Phase::Sequential && step.agents.len() > 1 {
             return Err(format!(
                 "Sequential step '{}' selects multiple agents, but sequential multi-agent execution is unsupported.",
@@ -54,21 +165,33 @@ pub fn validate_workflow_semantics(steps: &[StepConfig]) -> Result<(), String> {
     Ok(())
 }
 
-/// Require a terminal-capable workflow without making legacy invalid profiles
-/// impossible to open and repair. Call this at explicit save/import and run
-/// boundaries, rather than from the structural load validator.
+/// Require a terminal-capable workflow, and fan-out sources that return
+/// structured JSON, without making legacy invalid profiles impossible to open
+/// and repair. Call this at explicit save/import and run boundaries, rather
+/// than from the structural load validator.
 pub fn validate_enabled_sequential_step(steps: &[StepConfig]) -> Result<(), String> {
-    if steps
+    if !steps
         .iter()
         .any(|step| step.enabled && step.phase == Phase::Sequential)
     {
-        Ok(())
-    } else {
-        Err(
+        return Err(
             "A workflow must have at least one enabled Sequential step to produce a final report."
                 .to_string(),
-        )
+        );
     }
+    for step in steps {
+        let Some(artifact) = step.for_each.as_ref().and_then(|fe| fe.artifact.as_ref()) else {
+            continue;
+        };
+        // Unknown sources are reported by the structural validator.
+        if let Some(source) = steps
+            .iter()
+            .find(|candidate| candidate.id == artifact.step.trim() && candidate.id != step.id)
+        {
+            validate_fan_out_source(step, source, &artifact.pointer)?;
+        }
+    }
+    Ok(())
 }
 
 pub(in crate::pipeline_config) fn validate_profile_steps(

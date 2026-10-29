@@ -83,6 +83,21 @@ Provider limits may delay calls even when Pipeline has a free slot. Cost
 figures use API list-price estimates. For subscription calls, they are a
 comparison measure rather than a bill from Pipeline.
 
+### Estimated use and limits
+
+The run preview shows a rough range of model calls, tokens, and, for direct
+API connections, API list-price cost. The range comes from the input's size
+(page count for PDFs) and the planned steps; retries, tool reads, and the
+specialists Paper Review selects change actual use.
+
+**Settings → Reviews → Review limits** sets a cost, call, or time limit for
+each Review; 0 means no limit. Pipeline checks the limits before it starts each
+group of steps. Steps already running finish, steps not yet started are
+listed as stopped at the limit, and the completed results are saved as a
+partial report. The cost limit counts only direct API connections at list
+prices. Subscription calls count toward the call and time limits. The preview
+warns when the high end of the estimate is above a limit.
+
 Web search depends on the connection. The Anthropic and Google API adapters
 support it; OpenAI Chat Completions and local-server connections do not.
 Check the selected provider's available tools when configuring a step.
@@ -103,6 +118,78 @@ settings, logs, and usage under the research data folder's `runs/` directory.
 The default is `~/.pipeline/runs/`. Export a report when you want a separate
 copy. Deleting a run moves it to Trash, where it can be restored until you
 permanently delete it.
+
+### Share the results with coauthors
+
+The report's **Export** menu offers formats that open without Pipeline. Each
+one is a new file in a location you choose. Pipeline never changes the saved
+run or your manuscript.
+
+| Format | What it contains | Limits |
+| --- | --- | --- |
+| **Export as HTML** | One file with the report, each finding's severity, confidence, and category, the quoted evidence with its location and check result, and filters by severity, category, and evidence status | Opens offline in any browser and loads nothing from the internet. Equations appear as LaTeX source. Images in model output are replaced by their descriptions |
+| **Export as Word** | A new `.docx` with the report, the findings, the quoted evidence, and the recorded limitations | Works for any input. Formatting is simple: headings, lists, quotations, and tables |
+| **Word with comments on the original** | A copy of the reviewed `.docx` in which each finding is a Word comment on the passage it quotes. Findings whose quotations cannot be found are listed in one comment on the first paragraph | Available when the reviewed file is a `.docx`. Only the body text is searched; quotations in footnotes, text boxes, or headers are listed in the summary comment instead |
+| **PDF with highlights** | A copy of the reviewed PDF with each quoted passage highlighted and a note attached. Findings whose quotations cannot be found become a note on the cited page | Available when the reviewed file is a PDF. Scanned PDFs without a text layer receive notes only. Highlights are added as a revision appended to the file, so the original content and any signatures are unchanged |
+
+Quotations are matched after ignoring differences in spacing, letter case,
+curly and straight quotation marks, dash styles, soft hyphens, and line-break
+hyphenation. A quotation shorter than about a dozen letters is not placed,
+because it could match the wrong passage. When a finding cites one page but
+its quotation appears on another, the highlight goes where the text is and the
+note says so.
+
+Each piece of evidence carries Pipeline's check result, using the labels in
+[How Pipeline checks quotes](#how-pipeline-checks-quotes): **Quote found**,
+**Quote found (formatting differs)**, **Partial match**, **Quote not found**,
+**Not checkable**, or **Not checked** for runs made before quotes were checked.
+Comments and highlights show this label; it is not a judgment on whether the
+finding is correct.
+
+Pipeline adds comments and highlights only to the exact version of the
+manuscript that was reviewed. If the file has been edited or moved since the
+run, export the report as Word or HTML instead, or run the review again.
+Exported files contain quotations from your manuscript and model-written text;
+share them accordingly.
+
+## How Pipeline checks quotes
+
+After each Review, Pipeline looks for every quoted passage in the extracted
+document, or in the cited source file for a folder input. Each piece of
+evidence is labeled:
+
+| Label | Meaning |
+| --- | --- |
+| Quote found | The text is at the cited page, passage, or file, ignoring line breaks. Exports add "(formatting differs)" when it matched only after ignoring punctuation style, letter case, hyphenation, LaTeX markup, or an ellipsis |
+| Partial match | The text is elsewhere in the document, the cited passage does not exist, or only a close paraphrase was found |
+| Quote not found | The text is not in the extracted document. Check the source before relying on the comment |
+| Not checkable | There is no quote, the evidence cites an outside source, or the cited file was not saved with the run |
+
+A found quote shows that the passage exists where the comment says. It does
+not show that the comment is correct. Extraction problems, such as a PDF with
+lost equations, can prevent a real quote from being found. The run saves the
+details as `products/evidence_verification.json`, and the quality summary
+counts each label.
+
+## Pipeline checks
+
+A workflow can include checks that Pipeline runs itself, without a model call.
+Add one from the designer with **Add step → Pipeline check**, or start from a
+gallery template:
+
+| Check | What it does | Network |
+| --- | --- | --- |
+| Reference check | Finds the bibliography (the `.bib` files beside a LaTeX source, or the references section of a PDF or Word file) and reports undefined citation keys, duplicate entries, and malformed DOIs. With lookups on, it checks each reference against Crossref: found, details that do not match, another version (for example a working paper later published), retracted or withdrawn, expression of concern, or corrected | Off unless you turn on lookups for the step |
+| Replication package check | Reads a package folder and checks README sections against the Social Science Data Editors template, a main script, absolute or backslash paths, package installation, random seeds, files read by code but missing, exported tables and figures, very large files, and a license. It does not run the code | None |
+
+The **Reference Check** and **Replication Package Readiness** templates pair
+each check with a model step that explains the problems the check found. A
+check's own results become the Review's findings. A reference that Crossref
+cannot find may be a book, report, or dataset outside Crossref, or have errors
+in its details; it is not evidence that the work does not exist. With lookups
+on, the preview names the service and what is sent: each reference's text as
+written in the bibliography, and no other manuscript text. Lookups are paced
+to Crossref's public limits, about one reference per second.
 
 ## Customize a review
 

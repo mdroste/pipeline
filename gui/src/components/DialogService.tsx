@@ -8,10 +8,26 @@ interface ConfirmOptions {
   destructive?: boolean;
 }
 
-interface ConfirmRequest extends ConfirmOptions {
-  message: string;
-  resolve: (value: boolean) => void;
+interface PromptOptions extends ConfirmOptions {
+  /** Visible label for the text field; the message stays as its description. */
+  label?: string;
+  defaultValue?: string;
+  placeholder?: string;
 }
+
+type DialogRequest =
+  | (ConfirmOptions & {
+      kind: "confirm";
+      id: number;
+      message: string;
+      resolve: (value: boolean) => void;
+    })
+  | (PromptOptions & {
+      kind: "prompt";
+      id: number;
+      message: string;
+      resolve: (value: string | null) => void;
+    });
 
 interface Toast {
   id: number;
@@ -20,17 +36,44 @@ interface Toast {
   action?: { label: string; run: () => void };
 }
 
-let confirmHandler: ((request: ConfirmRequest) => void) | null = null;
+let dialogHandler: ((request: DialogRequest) => void) | null = null;
 let toastHandler: ((toast: Toast) => void) | null = null;
 let nextToastId = 1;
+let nextDialogId = 1;
 
 export function confirmDialog(
   message: string,
   options: ConfirmOptions = {},
 ): Promise<boolean> {
-  if (!confirmHandler) return Promise.resolve(false);
+  if (!dialogHandler) return Promise.resolve(false);
   return new Promise((resolve) =>
-    confirmHandler?.({ message, resolve, ...options }),
+    dialogHandler?.({
+      ...options,
+      kind: "confirm",
+      id: nextDialogId++,
+      message,
+      resolve,
+    }),
+  );
+}
+
+/**
+ * In-app replacement for window.prompt, which returns null in the macOS
+ * webview. Resolves to the entered text, or null when cancelled.
+ */
+export function promptDialog(
+  message: string,
+  options: PromptOptions = {},
+): Promise<string | null> {
+  if (!dialogHandler) return Promise.resolve(null);
+  return new Promise((resolve) =>
+    dialogHandler?.({
+      ...options,
+      kind: "prompt",
+      id: nextDialogId++,
+      message,
+      resolve,
+    }),
   );
 }
 
@@ -47,13 +90,17 @@ export default function DialogService({
 }: {
   children: React.ReactNode;
 }) {
-  const [request, setRequest] = useState<ConfirmRequest | null>(null);
+  // Requests wait in order so a second caller never strands the first one's
+  // promise or replaces text the user is typing.
+  const [queue, setQueue] = useState<DialogRequest[]>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const priorFocus = useRef<HTMLElement | null>(null);
+  const request = queue[0] ?? null;
 
   useEffect(() => {
-    confirmHandler = setRequest;
+    dialogHandler = (next) => setQueue((current) => [...current, next]);
     toastHandler = (toast) => {
       setToasts((current) => [...current.slice(-3), toast]);
       window.setTimeout(() => {
@@ -63,7 +110,7 @@ export default function DialogService({
       }, 6000);
     };
     return () => {
-      confirmHandler = null;
+      dialogHandler = null;
       toastHandler = null;
     };
   }, []);
@@ -71,18 +118,29 @@ export default function DialogService({
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog || !request) return;
-    priorFocus.current =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    if (!dialog.open) dialog.showModal();
+    if (!dialog.open) {
+      priorFocus.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      dialog.showModal();
+    }
+    if (request.kind === "prompt") {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
   }, [request]);
 
-  const finish = (result: boolean) => {
+  const finish = (accepted: boolean) => {
     const active = request;
+    if (!active) return;
+    const text = inputRef.current?.value ?? "";
+    setQueue((current) => (current[0] === active ? current.slice(1) : current));
+    if (active.kind === "confirm") active.resolve(accepted);
+    else active.resolve(accepted ? text : null);
+    // The next queued request reuses the open dialog.
+    if (queue.length > 1) return;
     dialogRef.current?.close();
-    setRequest(null);
-    active?.resolve(result);
     window.setTimeout(() => priorFocus.current?.focus(), 0);
   };
 
@@ -101,12 +159,19 @@ export default function DialogService({
       >
         {request && (
           <form
+            key={request.id}
             method="dialog"
             className="p-6"
-            onSubmit={(event) => event.preventDefault()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (request.kind === "prompt") finish(true);
+            }}
           >
             <h2 id="pipeline-confirm-title" className="text-lg font-semibold">
-              {request.title || "Please confirm"}
+              {request.title ||
+                (request.kind === "prompt"
+                  ? "Enter a value"
+                  : "Please confirm")}
             </h2>
             <p
               id="pipeline-confirm-description"
@@ -114,9 +179,21 @@ export default function DialogService({
             >
               {request.message}
             </p>
+            {request.kind === "prompt" && (
+              <label className="mt-4 block text-sm font-medium">
+                {request.label && <span>{request.label}</span>}
+                <input
+                  ref={inputRef}
+                  aria-label={request.label ? undefined : request.message}
+                  defaultValue={request.defaultValue ?? ""}
+                  placeholder={request.placeholder}
+                  className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal dark:border-gray-700 dark:bg-gray-950"
+                />
+              </label>
+            )}
             <div className="mt-6 flex justify-end gap-2">
               <button
-                autoFocus
+                autoFocus={request.kind === "confirm"}
                 type="button"
                 onClick={() => finish(false)}
                 className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium dark:border-gray-700"
@@ -124,15 +201,18 @@ export default function DialogService({
                 {request.cancelLabel || "Cancel"}
               </button>
               <button
-                type="button"
-                onClick={() => finish(true)}
+                type={request.kind === "prompt" ? "submit" : "button"}
+                onClick={
+                  request.kind === "confirm" ? () => finish(true) : undefined
+                }
                 className={`rounded-lg px-3 py-2 text-sm font-medium text-white ${
                   request.destructive
                     ? "bg-red-600 hover:bg-red-700"
                     : "bg-gray-900 hover:bg-gray-800 dark:bg-gray-100 dark:text-gray-900"
                 }`}
               >
-                {request.confirmLabel || "Continue"}
+                {request.confirmLabel ||
+                  (request.kind === "prompt" ? "OK" : "Continue")}
               </button>
             </div>
           </form>

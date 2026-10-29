@@ -46,7 +46,9 @@ supplied as part of that review.
 The application links Rust crates and ships a compiled JavaScript frontend.
 Their exact versions and package checksums are locked in `Cargo.lock` and
 `package-lock.json`; their upstream license declarations remain the governing
-terms.
+terms. PDF highlight export uses the `lopdf` crate (MIT); its added
+dependencies are MIT or Apache-2.0 licensed, and `unicode-normalization` also
+carries the Unicode-3.0 data license.
 
 ## Optional managed extraction engines
 

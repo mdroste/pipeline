@@ -94,6 +94,13 @@ export function settingsSearchEntries(
     p.startup === "restore" ? "Continue where I left off" : "Home overview",
   );
   add(
+    "general",
+    "guided-setup",
+    "Guided setup",
+    "Get started, set up Pipeline, check connections and installed tools, example Review",
+    "Set up Pipeline",
+  );
+  add(
     "conversations",
     "send-shortcut",
     "Send message with",
@@ -245,6 +252,19 @@ export function settingsSearchEntries(
   );
   add(
     "workflow",
+    "review-limits",
+    "Review limits",
+    "Cost limit, spending cap, budget, maximum calls, time limit, stop a review",
+    [
+      s.review_max_cost_usd ? `$${s.review_max_cost_usd}` : "",
+      s.review_max_calls ? `${s.review_max_calls} calls` : "",
+      s.review_max_minutes ? `${s.review_max_minutes} minutes` : "",
+    ]
+      .filter(Boolean)
+      .join(" · ") || "No limits",
+  );
+  add(
+    "workflow",
     "workflow-extraction",
     "PDF Extraction",
     "OCR, document reading, extraction method, PaddleOCR, pdftotext",
@@ -345,7 +365,7 @@ export function settingsSearchEntries(
     "advanced",
     "app-version",
     "Version & updates",
-    "About Pipeline, check for update, release notes",
+    "About Pipeline, check for update, automatic updates, download, release notes",
     "Check installed version",
   );
   add(

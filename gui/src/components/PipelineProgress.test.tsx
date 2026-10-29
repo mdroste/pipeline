@@ -1,8 +1,15 @@
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { act, render, screen } from "@testing-library/react";
 import PipelineProgress from "./PipelineProgress";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
 import type { RuntimeStage } from "../lib/reviewRuntimeTypes";
+import {
+  applyPass,
+  applyStage,
+  completeRun,
+  emptyRunView,
+} from "../lib/runViews";
+import type { PipelineResult } from "../lib/types";
 
 const autoReviewPlan: ExecutionPlanStage[] = [
   {
@@ -268,6 +275,43 @@ describe("PipelineProgress", () => {
     const elapsed = screen.getByText("0s");
     expect(elapsed).toHaveClass("text-gray-500", "dark:text-gray-400");
     expect(elapsed).not.toHaveClass("text-gray-400", "dark:text-gray-600");
+  });
+
+  it("announces stage changes without reading the ticking clocks aloud", () => {
+    vi.useFakeTimers();
+    try {
+      const startedAt = Date.now();
+      const view = render(
+        <PipelineProgress
+          state={{ kind: "extracting" }}
+          runStartedAt={startedAt}
+        />,
+      );
+      const status = screen.getByRole("status");
+      expect(status).toHaveTextContent("Processing inputs in progress.");
+      expect(document.querySelector("[aria-live]")).toBeNull();
+      expect(status).not.toContainElement(screen.getByText("0s"));
+
+      act(() => {
+        vi.advanceTimersByTime(3_000);
+      });
+      expect(screen.getByText("3s")).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Processing inputs in progress.",
+      );
+
+      view.rerender(
+        <PipelineProgress
+          state={{ kind: "error", message: "boom", failedAt: "extracting" }}
+          runStartedAt={startedAt}
+        />,
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Processing inputs failed.",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("formats pass keys into readable labels during dispatch", () => {
@@ -546,6 +590,99 @@ describe("PipelineProgress", () => {
       "data-status",
       "active",
     );
+  });
+
+  it("shows waves stopped by a Review limit as skipped after the run completes", () => {
+    const plan: ExecutionPlanStage[] = [
+      {
+        id: "extracting",
+        kind: "extracting",
+        label: "Creating document bundle",
+        stepIds: [],
+      },
+      {
+        id: "wave-1-parallel",
+        kind: "dispatching",
+        label: "Parallel agent wave",
+        stepIds: ["methods"],
+        stepLabels: ["Methods review"],
+      },
+      {
+        id: "wave-2-sequential",
+        kind: "synthesizing",
+        label: "Sequential agent wave",
+        stepIds: ["consolidate"],
+        stepLabels: ["Consolidate Feedback"],
+      },
+      {
+        id: "wave-3-sequential",
+        kind: "synthesizing",
+        label: "Sequential agent wave",
+        stepIds: ["validate"],
+        stepLabels: ["Validate Feedback"],
+      },
+      { id: "done", kind: "done", label: "Complete", stepIds: [] },
+    ];
+    let view = emptyRunView(0);
+    view = applyStage(view, {
+      stage: "extracting",
+      id: "extracting",
+      label: "Creating document bundle",
+      stepIds: [],
+    });
+    view = applyStage(view, {
+      stage: "dispatching",
+      id: "wave-1-parallel",
+      label: "Parallel agent wave",
+      stepIds: ["methods"],
+      stepLabels: ["Methods review"],
+    });
+    view = applyPass(view, { name: "methods", status: "done" }, 1);
+    // The executor's events when the limit stops scheduling: a skipped stage
+    // for every unstarted wave, then the not-started errors.
+    view = applyStage(view, {
+      stage: "synthesizing",
+      id: "wave-2-sequential",
+      label: "Sequential agent wave",
+      stepIds: ["consolidate"],
+      stepLabels: ["Consolidate Feedback"],
+      skipped: true,
+    });
+    view = applyStage(view, {
+      stage: "synthesizing",
+      id: "wave-3-sequential",
+      label: "Sequential agent wave",
+      stepIds: ["validate"],
+      stepLabels: ["Validate Feedback"],
+      skipped: true,
+    });
+    view = applyPass(view, { name: "consolidate", status: "error" }, 2);
+    view = applyPass(view, { name: "validate", status: "error" }, 2);
+    view = completeRun(view, {
+      markdown: "",
+      extracted_text: "",
+      report: {},
+    } as unknown as PipelineResult);
+
+    render(
+      <PipelineProgress
+        state={view.state}
+        plan={plan}
+        stageHistory={view.stageHistory}
+      />,
+    );
+    expect(
+      screen.getByText("Methods review").closest("[data-status]"),
+    ).toHaveAttribute("data-status", "done");
+    expect(
+      screen.getByText("Consolidate Feedback").closest("[data-status]"),
+    ).toHaveAttribute("data-status", "skipped");
+    expect(
+      screen.getByText("Validate Feedback").closest("[data-status]"),
+    ).toHaveAttribute("data-status", "skipped");
+    // The errors did not land in the parallel wave that ran before them.
+    expect(screen.queryByText("Consolidate")).toBeNull();
+    expect(screen.queryByText("Validate")).toBeNull();
   });
 
   it("shows an explicitly skipped planned stage without shifting a later same-kind stage", () => {

@@ -97,7 +97,7 @@ pub fn capture(store: &Store, r: CapturePlanRequest) -> WorkbenchResult<DeskReco
     // silently rewriting arbitrary shell strings would change their meaning.
     for arg in profile.argv.iter().skip(1) {
         if arg.contains(&profile.cwd) {
-            return Err(WorkbenchError::invalid("Use paths relative to the profile cwd before capture, including inside oldstata commands"));
+            return Err(WorkbenchError::invalid("Use paths relative to the profile cwd before capture, including inside Stata launcher commands"));
         }
     }
     let launch = launch_manifest(&profile)?;

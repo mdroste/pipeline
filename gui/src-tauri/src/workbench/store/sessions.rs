@@ -136,6 +136,12 @@ impl Store {
         })
     }
 
+    /// Lists the most recently updated conversations, newest first.
+    ///
+    /// The list is capped at `MAX_SESSIONS_PER_LIST` rows. Older
+    /// conversations past the cap are omitted rather than failing the whole
+    /// list, so a project flooded by recurring automations still opens and
+    /// the user can archive or delete conversations from it.
     pub fn list_sessions(
         &self,
         workspace_id: Option<&str>,
@@ -155,18 +161,12 @@ impl Store {
             .map_err(|error| WorkbenchError::storage("Failed to prepare session list", error))?;
         let sessions = statement
             .query_map(
-                params![workspace_id, (MAX_SESSIONS_PER_LIST + 1) as i64],
+                params![workspace_id, MAX_SESSIONS_PER_LIST as i64],
                 read_session_row,
             )
             .map_err(|error| WorkbenchError::storage("Failed to list sessions", error))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| WorkbenchError::storage("Failed to decode sessions", error))?;
-        if sessions.len() > MAX_SESSIONS_PER_LIST {
-            return Err(WorkbenchError::storage(
-                "Session list exceeds its safety limit",
-                MAX_SESSIONS_PER_LIST,
-            ));
-        }
         Ok(SessionList {
             sessions,
             sequence: current_sequence(&connection)?,
@@ -313,6 +313,30 @@ impl Store {
         Ok(sequence)
     }
 
+    /// Native turns already projected for a binding's thread, keyed by
+    /// provider turn id, with whether their newest projection is terminal.
+    /// Every incarnation of the conversation on that thread counts, matching
+    /// the transcript view's newest-incarnation rule, so reconciliation can
+    /// skip native history the store already holds.
+    pub(crate) fn projected_turn_states(
+        &self,
+        binding_id: &str,
+    ) -> WorkbenchResult<std::collections::HashMap<String, bool>> {
+        validate_id("binding id", binding_id)?;
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT t.provider_turn_id, t.terminal_at IS NOT NULL FROM session_bindings current JOIN session_bindings b ON b.session_id = current.session_id AND b.provider_thread_id = current.provider_thread_id JOIN turns t ON t.binding_id = b.id WHERE current.id = ?1 AND t.provider_turn_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turns newer JOIN session_bindings nb ON nb.id = newer.binding_id WHERE nb.session_id = b.session_id AND newer.provider_turn_id = t.provider_turn_id AND nb.incarnation > b.incarnation)",
+            )
+            .map_err(|error| WorkbenchError::storage("Failed to prepare projected turns", error))?;
+        let states = statement
+            .query_map([binding_id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .map_err(|error| WorkbenchError::storage("Failed to read projected turns", error))?
+            .collect::<Result<_, _>>()
+            .map_err(|error| WorkbenchError::storage("Failed to decode projected turns", error))?;
+        Ok(states)
+    }
+
     /// The conversation currently bound to a live native thread, if any.
     pub(crate) fn session_for_thread(
         &self,
@@ -329,5 +353,99 @@ impl Store {
             )
             .optional()
             .map_err(|error| WorkbenchError::storage("Failed to resolve thread binding", error))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_sessions_returns_the_newest_rows_past_its_cap() {
+        let temporary = tempfile::tempdir().unwrap();
+        let store = Store::open_at(&temporary.path().join("workbench-store")).unwrap();
+        let mut connection = store.connection().unwrap();
+        let transaction = connection.transaction().unwrap();
+        let total = MAX_SESSIONS_PER_LIST + 3;
+        for index in 0..total {
+            let timestamp = format!("2026-01-01T00:00:00.{index:06}+00:00");
+            transaction
+                .execute(
+                    "INSERT INTO sessions (id, workspace_id, title, overrides_json, draft, revision, created_at, updated_at) VALUES (?1, NULL, 'Recurring follow-up', '{}', '', 1, ?2, ?2)",
+                    params![format!("session_{index:04}"), timestamp],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+
+        let listed = store.list_sessions(None, false).unwrap().sessions;
+        assert_eq!(listed.len(), MAX_SESSIONS_PER_LIST);
+        assert_eq!(listed[0].id, format!("session_{:04}", total - 1));
+        assert_eq!(listed.last().unwrap().id, "session_0003");
+        assert_eq!(
+            store.list_sessions(None, true).unwrap().sessions.len(),
+            MAX_SESSIONS_PER_LIST
+        );
+    }
+
+    #[test]
+    fn projected_turn_states_follow_the_newest_incarnation_of_the_thread() {
+        use crate::workbench::codex::NormalizedEvent;
+        let temporary = tempfile::tempdir().unwrap();
+        let store = Store::open_at(&temporary.path().join("workbench-store")).unwrap();
+        let session = store
+            .create_session(CreateSessionRequest {
+                workspace_id: None,
+                title: "Identification notes".to_string(),
+                operation_id: "session-create".to_string(),
+            })
+            .unwrap()
+            .record;
+        let project = |binding: &str, epoch: u64, turn: &str, status: &str| {
+            let thread_id = "thread-1".to_string();
+            let turn_id = turn.to_string();
+            let payload = json!({ "id": turn, "status": status, "items": [] });
+            let event = if status == "inProgress" {
+                NormalizedEvent::TurnStarted {
+                    epoch,
+                    thread_id,
+                    turn_id,
+                    turn: payload,
+                }
+            } else {
+                NormalizedEvent::TurnCompleted {
+                    epoch,
+                    thread_id,
+                    turn_id,
+                    status: status.to_string(),
+                    turn: payload,
+                }
+            };
+            store.project_codex_event(binding, &event).unwrap();
+        };
+        let first = store
+            .bind_session(&session.id, "codex-0-147-0-epoch-1", "thread-1")
+            .unwrap();
+        project(&first.id, 1, "turn-a", "completed");
+        project(&first.id, 1, "turn-b", "inProgress");
+        let second = store
+            .bind_session(&session.id, "codex-0-147-0-epoch-2", "thread-1")
+            .unwrap();
+        project(&second.id, 2, "turn-a", "inProgress");
+        project(&second.id, 2, "turn-c", "interrupted");
+
+        let states = store.projected_turn_states(&second.id).unwrap();
+        assert_eq!(states.len(), 3);
+        assert!(!states["turn-a"]);
+        assert!(!states["turn-b"]);
+        assert!(states["turn-c"]);
+
+        let successor = store
+            .bind_session(&session.id, "codex-0-147-0-epoch-3", "thread-2")
+            .unwrap();
+        assert!(store
+            .projected_turn_states(&successor.id)
+            .unwrap()
+            .is_empty());
     }
 }

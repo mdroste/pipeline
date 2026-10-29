@@ -86,6 +86,7 @@ pub(super) struct StepCallRequest<'a> {
     pub(super) shared_context: Option<Arc<crate::pipeline::context_cache::PreparedContext>>,
 }
 
+#[derive(Default)]
 pub(super) struct StepCallResult {
     pub(super) text: String,
     pub(super) duration_secs: u64,
@@ -93,6 +94,14 @@ pub(super) struct StepCallResult {
     pub(super) attempt_count: u32,
     pub(super) usage_limit_fallbacks: Vec<crate::pipeline::call::UsageLimitFallback>,
     pub(super) effective_fallback: Option<crate::pipeline::call::UsageLimitFallback>,
+}
+
+/// A step call that ended without an accepted response. `spent` describes
+/// every provider attempt it made, with empty text, so the Review's cost
+/// limit can count attempts that left no output.
+pub(super) struct StepCallFailure {
+    pub(super) error: String,
+    pub(super) spent: StepCallResult,
 }
 
 pub(super) async fn capture_response(
@@ -140,6 +149,29 @@ pub(super) async fn finish_response_capture(
 pub(super) async fn execute_step_call(
     request: StepCallRequest<'_>,
 ) -> Result<StepCallResult, String> {
+    execute_metered_step_call(request)
+        .await
+        .map_err(|failure| failure.error)
+}
+
+/// [`execute_step_call`], keeping the usage of a call that fails.
+pub(super) async fn execute_metered_step_call(
+    request: StepCallRequest<'_>,
+) -> Result<StepCallResult, StepCallFailure> {
+    let mut spent = StepCallResult::default();
+    match run_step_call_attempts(request, &mut spent).await {
+        Ok(text) => Ok(StepCallResult { text, ..spent }),
+        Err(error) => Err(StepCallFailure { error, spent }),
+    }
+}
+
+/// Runs the attempts of one step call and returns the accepted text. Every
+/// attempt's duration, usage and fallbacks accumulate in `spent`, whatever
+/// the outcome.
+async fn run_step_call_attempts(
+    request: StepCallRequest<'_>,
+    spent: &mut StepCallResult,
+) -> Result<String, String> {
     let timeout = request.settings.step_timeout_secs.max(60);
     let max_retries = request.settings.max_retries;
     let text_artifact_schema = request
@@ -151,9 +183,6 @@ pub(super) async fn execute_step_call(
         .or(text_artifact_schema.as_ref())
         .expect("every step artifact has a terminal JSON schema");
     let mut last_error = String::new();
-    let mut total_duration_secs = 0u64;
-    let mut total_usage = crate::pipeline::logging::CallUsage::default();
-    let mut usage_limit_fallbacks = Vec::new();
 
     for attempt in 0..=max_retries {
         let attempt_number = attempt.saturating_add(1);
@@ -217,11 +246,16 @@ pub(super) async fn execute_step_call(
             shared_context: request.shared_context.clone(),
         })
         .await;
-        total_duration_secs = total_duration_secs.saturating_add(call.duration_secs);
-        total_usage.add_usage(call.usage);
-        let call_fallback = call.usage_limit_fallback.clone();
-        if let Some(fallback) = call_fallback.clone() {
-            usage_limit_fallbacks.push(fallback);
+        spent.duration_secs = spent.duration_secs.saturating_add(call.duration_secs);
+        spent.usage.add_usage(call.usage);
+        spent.attempt_count =
+            u32::try_from(spent.usage.provider_attempts.max(u64::from(attempt_number)))
+                .unwrap_or(u32::MAX);
+        spent
+            .effective_fallback
+            .clone_from(&call.usage_limit_fallback);
+        if let Some(fallback) = call.usage_limit_fallback.clone() {
+            spent.usage_limit_fallbacks.push(fallback);
         }
 
         let compatibility_file = ingest_report_file(request.write_dir, request.report_rel).await;
@@ -467,19 +501,7 @@ pub(super) async fn execute_step_call(
         )
         .await?;
 
-        return Ok(StepCallResult {
-            text,
-            duration_secs: total_duration_secs,
-            usage: total_usage,
-            attempt_count: u32::try_from(
-                total_usage
-                    .provider_attempts
-                    .max(u64::from(attempt.saturating_add(1))),
-            )
-            .unwrap_or(u32::MAX),
-            usage_limit_fallbacks,
-            effective_fallback: call_fallback,
-        });
+        return Ok(text);
     }
 
     Err(if last_error.is_empty() {

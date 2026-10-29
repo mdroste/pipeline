@@ -1,7 +1,11 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { releaseClient } from "../lib/workbench/releaseClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
+import { confirmDialog, notify } from "./DialogService";
+import WorkspaceRestoreRootsDialog, {
+  type RootMappings,
+} from "./WorkspaceRestoreRootsDialog";
 import type {
   ConversationSnapshot,
   PaperWithRevision,
@@ -13,21 +17,6 @@ const ExchangePanel = lazy(() => import("./WorkspaceExchangePanel"));
 
 function operation(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
-}
-
-function parseRootMappings(value: string): Record<string, string | null> {
-  const parsed: unknown = JSON.parse(value);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Workspace root mappings must be a JSON object.");
-  }
-  for (const [root, replacement] of Object.entries(parsed)) {
-    if (!root || (replacement !== null && typeof replacement !== "string")) {
-      throw new Error(
-        "Each root mapping must use a nonempty path and a string or null value.",
-      );
-    }
-  }
-  return parsed as Record<string, string | null>;
 }
 
 interface WorkspaceReleasePanelProps {
@@ -53,6 +42,25 @@ export default function WorkspaceReleasePanel({
 }: WorkspaceReleasePanelProps) {
   const workspaceId = projectId ?? snapshot?.session.workspaceId ?? null;
   const [budgets, setBudgets] = useState<PerformanceBudget[]>([]);
+  const [restoreRoots, setRestoreRoots] = useState<string[] | null>(null);
+  const rootMappingAnswer = useRef<
+    ((value: RootMappings | null) => void) | null
+  >(null);
+
+  useEffect(() => () => rootMappingAnswer.current?.(null), []);
+
+  const chooseRootMappings = (roots: string[]) =>
+    new Promise<RootMappings | null>((resolve) => {
+      rootMappingAnswer.current = resolve;
+      setRestoreRoots(roots);
+    });
+
+  const finishRootMappings = (mappings: RootMappings | null) => {
+    const answer = rootMappingAnswer.current;
+    rootMappingAnswer.current = null;
+    setRestoreRoots(null);
+    answer?.(mappings);
+  };
 
   useEffect(() => {
     if (view !== "all" && view !== "diagnostics") return;
@@ -69,8 +77,9 @@ export default function WorkspaceReleasePanel({
     });
     if (!path) return;
     const report = await releaseClient.exportResearchArchive(path);
-    window.alert(
+    notify(
       `Exported ${report.workspaceCount} workspace(s), ${report.sessionCount} conversation(s), and ${report.blobCount} file(s).\n\n${report.portabilityNote}`,
+      "success",
     );
   };
 
@@ -85,23 +94,17 @@ export default function WorkspaceReleasePanel({
       ? inspection.workspaceRoots.map((root) => `• ${root}`).join("\n")
       : "• No registered Workspace roots";
     if (
-      !window.confirm(
-        `You can restore only when Workspace has no saved research data. Restoring does not run any tools. Conversations restart from saved context, and command profiles must be tested again.\n\nProject folders in this backup:\n${roots}\n\n${inspection.portabilityNote}\n\nContinue?`,
-      )
+      !(await confirmDialog(
+        `You can restore only when Workspace has no saved research data. Restoring does not run any tools. Conversations restart from saved context, and command profiles must be tested again.\n\nProject folders in this backup:\n${roots}\n\n${inspection.portabilityNote}`,
+        { title: "Restore research backup", confirmLabel: "Continue" },
+      ))
     )
       return;
-    const defaultMappings = Object.fromEntries(
-      inspection.workspaceRoots.map((root) => [root, null]),
-    );
-    const mappingText = window.prompt(
-      `Choose a new absolute path for every archived Workspace root, or leave its value null to detach it.\n\nArchived roots:\n${roots}`,
-      JSON.stringify(defaultMappings, null, 2),
-    );
-    if (mappingText === null) return;
-    const report = await releaseClient.importResearchArchive(
-      path,
-      parseRootMappings(mappingText),
-    );
+    const mappings = inspection.workspaceRoots.length
+      ? await chooseRootMappings(inspection.workspaceRoots)
+      : {};
+    if (!mappings) return;
+    const report = await releaseClient.importResearchArchive(path, mappings);
     window.alert(
       `Restored ${report.workspaceCount} workspace(s) and ${report.sessionCount} conversation(s).\n\n${report.portabilityNote}`,
     );
@@ -122,6 +125,12 @@ export default function WorkspaceReleasePanel({
 
   return (
     <div className="space-y-4">
+      {restoreRoots && (
+        <WorkspaceRestoreRootsDialog
+          roots={restoreRoots}
+          onDone={finishRootMappings}
+        />
+      )}
       {(view === "all" || view === "backup") && (
         <section>
           <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">

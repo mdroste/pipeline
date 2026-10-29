@@ -131,13 +131,8 @@ export function useAppController() {
     const queued = runQueue.runs.find(
       (run) => run.runId === id && run.resultAvailable,
     );
-    const allowed = await router.navigate(
-      queued
-        ? { page: "main", runKey: queued.key }
-        : { page: "history", runId: id },
-    );
-    if (!allowed) return;
-    if (!queued) navigation.setHistorySourceSelection(null);
+    if (queued) await router.navigate({ page: "main", runKey: queued.key });
+    else await navigation.openHistoryRun(id, null);
   };
 
   useReviewDependencyWarning(setup, page);

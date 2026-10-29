@@ -86,8 +86,11 @@ export default function WorkspaceExchangePanel({
     "newWorkspace" | "existingWorkspace"
   >("newWorkspace");
   const [targetName, setTargetName] = useState("");
-  const [importPreview, setImportPreview] =
-    useState<ExchangeImportPreview | null>(null);
+  // The preview keeps the package and target it was computed for; Import uses
+  // exactly those and stays disabled once the selection differs.
+  const [importPreview, setImportPreview] = useState<
+    (ExchangeImportPreview & { path: string; target: ExchangeTarget }) | null
+  >(null);
   const [conflicts, setConflicts] = useState<ExchangeConflict[]>([]);
   const [home, setHome] = useState<ProjectHome | null>(null);
   const [runs, setRuns] = useState<RecipeRun[]>([]);
@@ -156,6 +159,10 @@ export default function WorkspaceExchangePanel({
           root: null,
         }
       : { kind: "existingWorkspace", workspaceId };
+  const previewMatchesTarget =
+    importPreview !== null &&
+    importPreview.path === inspection?.path &&
+    JSON.stringify(importPreview.target) === JSON.stringify(target());
 
   return (
     <div className="space-y-5">
@@ -355,9 +362,10 @@ export default function WorkspaceExchangePanel({
                 aria-label="Import target"
                 className={input}
                 value={targetKind}
-                onChange={(e) =>
-                  setTargetKind(e.target.value as typeof targetKind)
-                }
+                onChange={(e) => {
+                  setTargetKind(e.target.value as typeof targetKind);
+                  setImportPreview(null);
+                }}
               >
                 <option value="newWorkspace">
                   Into a new separate project (default)
@@ -371,7 +379,10 @@ export default function WorkspaceExchangePanel({
                   aria-label="New project name"
                   className={input}
                   value={targetName}
-                  onChange={(e) => setTargetName(e.target.value)}
+                  onChange={(e) => {
+                    setTargetName(e.target.value);
+                    setImportPreview(null);
+                  }}
                 />
               )}
               <button
@@ -379,14 +390,19 @@ export default function WorkspaceExchangePanel({
                 className={button}
                 disabled={busy}
                 onClick={() =>
-                  onAction(async () =>
-                    setImportPreview(
+                  onAction(async () => {
+                    const previewTarget = target();
+                    const result =
                       await releaseClient.previewProjectExchangeImport(
                         inspection.path,
-                        target(),
-                      ),
-                    ),
-                  )
+                        previewTarget,
+                      );
+                    setImportPreview({
+                      ...result,
+                      path: inspection.path,
+                      target: previewTarget,
+                    });
+                  })
                 }
               >
                 Preview import
@@ -394,12 +410,13 @@ export default function WorkspaceExchangePanel({
               <button
                 type="button"
                 className={button}
-                disabled={busy || !importPreview}
+                disabled={busy || !importPreview || !previewMatchesTarget}
                 onClick={() =>
                   onAction(async () => {
+                    if (!importPreview || !previewMatchesTarget) return;
                     const report = await releaseClient.importProjectExchange(
-                      inspection.path,
-                      target(),
+                      importPreview.path,
+                      importPreview.target,
                       `exchange-${crypto.randomUUID()}`,
                     );
                     setNotice(
@@ -414,7 +431,7 @@ export default function WorkspaceExchangePanel({
                 Import
               </button>
             </div>
-            {importPreview && (
+            {importPreview && previewMatchesTarget && (
               <p>
                 {importPreview.new} new · {importPreview.remapped} remapped from
                 another namespace · {importPreview.identical} identical

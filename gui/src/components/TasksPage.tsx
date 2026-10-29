@@ -15,6 +15,7 @@ import {
   type TaskRun,
   type TaskSummary,
 } from "../lib/taskTypes";
+import { confirmDialog } from "./DialogService";
 import Builder from "./tasks/Builder";
 import Detail from "./tasks/Detail";
 import ScheduleCard from "./tasks/ScheduleCard";
@@ -46,8 +47,14 @@ export default function TasksPage({
     views,
     view,
     (id) => {
-      setView(id);
-      setOffset(0);
+      // Only the Research view unmounts the builder; other views keep it.
+      void (id === "missions" ? discardDraft() : Promise.resolve(true)).then(
+        (ok) => {
+          if (!ok) return;
+          setView(id);
+          setOffset(0);
+        },
+      );
     },
     "manual",
   );
@@ -58,6 +65,33 @@ export default function TasksPage({
   const [creating, setCreating] = useState(
     Boolean((initialSessionId || initialAutomatePath) && !initialTaskId),
   );
+  const builderDirty = useRef(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const handleDirtyChange = useCallback(
+    (dirty: boolean) => {
+      builderDirty.current = dirty;
+      onDirtyChange?.(dirty);
+    },
+    [onDirtyChange],
+  );
+  /** Ask before an in-page action throws away an unsaved builder draft. */
+  const discardDraft = async () => {
+    if (!creating || !builderDirty.current) return true;
+    const discard = await confirmDialog(
+      "This automation has not been previewed or saved. Discard it?",
+      {
+        title: "Discard automation draft?",
+        confirmLabel: "Discard",
+        cancelLabel: "Keep editing",
+        destructive: true,
+      },
+    );
+    if (discard) {
+      setCreating(false);
+      handleDirtyChange(false);
+    }
+    return discard;
+  };
   const [error, setError] = useState("");
   const [background, setBackground] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -138,6 +172,17 @@ export default function TasksPage({
     setCreating(false);
     void refresh();
   };
+  // The side pane renders at the top of its column (or below the list in the
+  // narrow layout). Bring its heading into view when it opens from a scrolled
+  // list; "nearest" leaves an already visible pane where it is.
+  const paneKey = creating ? "new" : (selected?.id ?? null);
+  useEffect(() => {
+    if (!paneKey) return;
+    const pane = contentRef.current?.querySelector(
+      ":scope > .task-builder, :scope > .task-detail",
+    );
+    pane?.firstElementChild?.scrollIntoView?.({ block: "nearest" });
+  }, [paneKey]);
   return (
     <main className="tasks-page">
       <header className="tasks-header">
@@ -209,6 +254,7 @@ export default function TasksPage({
               onConversation={onConversation}
               onTask={async (id) => {
                 const run = await taskClient.get(id);
+                if (!(await discardDraft())) return;
                 setView("active");
                 select(run);
               }}
@@ -216,6 +262,7 @@ export default function TasksPage({
           </Suspense>
         ) : (
           <div
+            ref={contentRef}
             className={`tasks-content ${creating || selected ? "tasks-content--split" : ""}`}
           >
             <section className="task-list">
@@ -243,7 +290,8 @@ export default function TasksPage({
                     <button
                       className={`task-list-row ${selected?.id === run.id ? "is-selected" : ""}`}
                       key={run.id}
-                      onClick={() => {
+                      onClick={async () => {
+                        if (!(await discardDraft())) return;
                         selectedRef.current = run.id;
                         setCreating(false);
                         void taskClient
@@ -312,11 +360,15 @@ export default function TasksPage({
             {creating ? (
               <Builder
                 key={`${entryRequest}:${initialSessionId ?? ""}:${initialAutomatePath ?? ""}`}
-                onDirtyChange={onDirtyChange}
+                onDirtyChange={handleDirtyChange}
                 initialSessionId={initialSessionId}
                 initialPath={initialAutomatePath}
                 onPrepared={select}
-                onClose={() => setCreating(false)}
+                onClose={() =>
+                  void discardDraft().then((ok) => {
+                    if (ok) setCreating(false);
+                  })
+                }
               />
             ) : (
               selected && (

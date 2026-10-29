@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import type { Issue, IssueEvidence } from "../lib/issues";
 import { severityRank } from "../lib/issues";
 import SafeMarkdownLink from "./SafeMarkdownLink";
+import { EvidenceVerificationBadge } from "./report-workspace/EvidenceVerificationBadge";
 
 interface Props {
   issues: Issue[];
@@ -341,131 +342,97 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
 
   return (
     <div className="max-w-4xl mx-auto p-6">
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          Issues ({issues.length})
-        </h2>
-        <div className="flex items-center gap-1 ml-2">
-          {severities.map((s) => (
-            <button
-              key={s}
-              onClick={() => setSeverityFilter(s)}
-              aria-pressed={severityFilter === s}
-              className={`px-2 py-0.5 rounded text-xs capitalize transition-colors ${
-                severityFilter === s
-                  ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
-                  : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
-              }`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-        <select
-          aria-label="Filter by decision"
-          value={verdictFilter}
-          onChange={(event) => setVerdictFilter(event.target.value)}
-          className="rounded border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
-        >
-          <option value="all">All decisions</option>
-          <option value="unreviewed">Unreviewed ({counts[""]})</option>
-          <option value="accept">Accepted</option>
-          <option value="reject">Rejected</option>
-          <option value="done">Done</option>
-        </select>
-        <input
-          aria-label="Search issues"
-          value={issueSearch}
-          onChange={(event) => setIssueSearch(event.target.value)}
-          placeholder="Search title, text, reviewer…"
-          className="min-w-48 rounded border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
-        />
-        <div className="ml-auto flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-          {counts.accept > 0 && (
-            <span className="text-green-700 dark:text-green-400">
-              {counts.accept} accepted
-            </span>
-          )}
-          {counts.reject > 0 && (
-            <span className="text-red-600 dark:text-red-400">
-              {counts.reject} rejected
-            </span>
-          )}
-          {saved && (
-            <span className="text-gray-500 dark:text-gray-400">saved ✓</span>
-          )}
-          {!annotationsLoaded && <span role="status">Loading decisions…</span>}
-          <button
-            onClick={exportDecisions}
-            disabled={!annotationsLoaded || issues.length === 0}
-            className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Export all decisions
-          </button>
-        </div>
-      </div>
-
-      {selected.size > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs dark:border-gray-800 dark:bg-gray-900/60">
-          <span className="font-medium">{selected.size} selected</span>
+      {/* Filters, export and save errors stay in view while the list scrolls. */}
+      <div className="sticky top-0 z-10 -mx-6 mb-2 bg-white/95 px-6 py-2 backdrop-blur dark:bg-gray-950/95">
+        <div className="flex items-center gap-2 flex-wrap">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            Issues ({issues.length})
+          </h2>
+          <div className="flex items-center gap-1 ml-2">
+            {severities.map((s) => (
+              <button
+                key={s}
+                onClick={() => setSeverityFilter(s)}
+                aria-pressed={severityFilter === s}
+                className={`px-2 py-0.5 rounded text-xs capitalize transition-colors ${
+                  severityFilter === s
+                    ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
+                    : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
+                }`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
           <select
-            aria-label="Bulk decision"
-            value={bulkVerdict}
-            onChange={(event) =>
-              setBulkVerdict(event.target.value as Exclude<Verdict, "">)
-            }
-            className="rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
+            aria-label="Filter by decision"
+            value={verdictFilter}
+            onChange={(event) => setVerdictFilter(event.target.value)}
+            className="rounded border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
           >
-            <option value="accept">Accept</option>
-            <option value="reject">Reject</option>
+            <option value="all">All decisions</option>
+            <option value="unreviewed">Unreviewed ({counts[""]})</option>
+            <option value="accept">Accepted</option>
+            <option value="reject">Rejected</option>
             <option value="done">Done</option>
           </select>
-          <textarea
-            rows={2}
-            aria-label="Bulk decision rationale"
-            value={bulkRationale}
-            onChange={(event) => setBulkRationale(event.target.value)}
-            placeholder="Required rationale"
-            className="min-w-56 flex-1 rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
+          <input
+            aria-label="Search issues"
+            value={issueSearch}
+            onChange={(event) => setIssueSearch(event.target.value)}
+            placeholder="Search title, text, reviewer…"
+            className="min-w-48 rounded border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
           />
-          <button
-            onClick={applyBulkDecision}
-            disabled={!bulkRationale.trim() || !annotationsLoaded}
-            className="rounded bg-gray-900 px-2 py-1 text-white disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900"
-          >
-            Apply decision
-          </button>
-          <button
-            onClick={() => setSelected(new Set())}
-            className="px-2 py-1 text-gray-500"
-          >
-            Clear
-          </button>
-        </div>
-      )}
-
-      {persistenceError && (
-        <div
-          role="alert"
-          className="mb-4 rounded border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3 text-xs text-red-700 dark:text-red-300"
-        >
-          <span className="font-medium">
-            {persistenceError.operation === "export"
-              ? "Decision export failed:"
-              : `Annotation ${persistenceError.operation} failed:`}
-          </span>{" "}
-          {persistenceError.message}
-          {persistenceError.operation !== "export" && (
+          <div className="ml-auto flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+            {counts.accept > 0 && (
+              <span className="text-green-700 dark:text-green-400">
+                {counts.accept} accepted
+              </span>
+            )}
+            {counts.reject > 0 && (
+              <span className="text-red-600 dark:text-red-400">
+                {counts.reject} rejected
+              </span>
+            )}
+            {saved && (
+              <span className="text-gray-500 dark:text-gray-400">saved ✓</span>
+            )}
+            {!annotationsLoaded && (
+              <span role="status">Loading decisions…</span>
+            )}
             <button
-              type="button"
-              onClick={retryPersistence}
-              className="ml-2 rounded border border-red-300 dark:border-red-800 px-2 py-0.5 hover:bg-red-100 dark:hover:bg-red-900/40"
+              onClick={exportDecisions}
+              disabled={!annotationsLoaded || issues.length === 0}
+              className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Retry
+              Export all decisions
             </button>
-          )}
+          </div>
         </div>
-      )}
+
+        {persistenceError && (
+          <div
+            role="alert"
+            className="mt-2 rounded border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3 text-xs text-red-700 dark:text-red-300"
+          >
+            <span className="font-medium">
+              {persistenceError.operation === "export"
+                ? "Decision export failed:"
+                : `Annotation ${persistenceError.operation} failed:`}
+            </span>{" "}
+            {persistenceError.message}
+            {persistenceError.operation !== "export" && (
+              <button
+                type="button"
+                onClick={retryPersistence}
+                className="ml-2 rounded border border-red-300 dark:border-red-800 px-2 py-0.5 hover:bg-red-100 dark:hover:bg-red-900/40"
+              >
+                Retry
+              </button>
+            )}
+          </div>
+        )}
+      </div>
 
       <div className="space-y-1.5">
         {visible.map((issue) => {
@@ -615,6 +582,9 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                                 ) : (
                                   location
                                 )}
+                                <EvidenceVerificationBadge
+                                  status={evidence.verificationStatus}
+                                />
                                 {evidence.description &&
                                   evidence.description !== label && (
                                     <span>{evidence.description}</span>
@@ -655,6 +625,51 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
           </p>
         )}
       </div>
+
+      {/* Pinned to the bottom so it appears in view wherever the issue was
+          selected, without shifting the rows above it. */}
+      {selected.size > 0 && (
+        <div
+          role="group"
+          aria-label="Decision for selected issues"
+          className="sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs shadow-md dark:border-gray-800 dark:bg-gray-900"
+        >
+          <span className="font-medium">{selected.size} selected</span>
+          <select
+            aria-label="Bulk decision"
+            value={bulkVerdict}
+            onChange={(event) =>
+              setBulkVerdict(event.target.value as Exclude<Verdict, "">)
+            }
+            className="rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
+          >
+            <option value="accept">Accept</option>
+            <option value="reject">Reject</option>
+            <option value="done">Done</option>
+          </select>
+          <textarea
+            rows={2}
+            aria-label="Bulk decision rationale"
+            value={bulkRationale}
+            onChange={(event) => setBulkRationale(event.target.value)}
+            placeholder="Required rationale"
+            className="min-w-56 flex-1 rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
+          />
+          <button
+            onClick={applyBulkDecision}
+            disabled={!bulkRationale.trim() || !annotationsLoaded}
+            className="rounded bg-gray-900 px-2 py-1 text-white disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900"
+          >
+            Apply decision
+          </button>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="px-2 py-1 text-gray-500"
+          >
+            Clear
+          </button>
+        </div>
+      )}
       {!runId && (
         <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-4">
           Annotations aren't saved for this view (no saved report).

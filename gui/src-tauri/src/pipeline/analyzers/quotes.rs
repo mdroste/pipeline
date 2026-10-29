@@ -8,8 +8,8 @@
 //! - `verified`: the quote occurs at its cited node, page, or source file once
 //!   whitespace is collapsed (extraction line breaks are not differences).
 //! - `verified_with_normalization`: it occurs there only after typographic
-//!   folding (see `fold.rs`), after LaTeX markup is removed, or as ordered
-//!   segments around an ellipsis.
+//!   folding (see `fold.rs`), after LaTeX markup is removed, as ordered
+//!   segments around an ellipsis, or without a leading or trailing ellipsis.
 //! - `partially_verified`: it occurs elsewhere in the document
 //!   (`locator_mismatch`), its cited node does not exist (`locator_unknown`),
 //!   or only a close paraphrase was found (`paraphrase_suspected`).
@@ -213,20 +213,60 @@ impl<'a> DocumentIndex<'a> {
     }
 }
 
-/// Quote text without wrapping quotation marks or surrounding whitespace.
-fn trimmed_quote(quote: &str) -> &str {
-    quote.trim().trim_matches(|c: char| {
-        matches!(
-            c,
-            '"' | '\'' | '\u{201c}' | '\u{201d}' | '\u{2018}' | '\u{2019}' | '\u{ab}' | '\u{bb}'
-        )
-    })
+const ELLIPSES: [&str; 4] = ["[...]", "[\u{2026}]", "...", "\u{2026}"];
+
+/// Quote text without wrapping quotation marks, surrounding whitespace, or
+/// leading and trailing ellipses. The flag reports whether an ellipsis was
+/// removed.
+fn trimmed_quote(quote: &str) -> (&str, bool) {
+    let mut rest = quote;
+    let mut elided = false;
+    loop {
+        let before = rest.len();
+        rest = rest.trim().trim_matches(|c: char| {
+            matches!(
+                c,
+                '"' | '\''
+                    | '\u{201c}'
+                    | '\u{201d}'
+                    | '\u{2018}'
+                    | '\u{2019}'
+                    | '\u{ab}'
+                    | '\u{bb}'
+            )
+        });
+        for marker in ELLIPSES {
+            if let Some(stripped) = rest.strip_prefix(marker) {
+                rest = stripped;
+                elided = true;
+            }
+            if let Some(stripped) = rest.strip_suffix(marker) {
+                rest = stripped;
+                elided = true;
+            }
+        }
+        if rest.len() == before {
+            return (rest, elided);
+        }
+    }
+}
+
+/// A quote that matched only after a leading or trailing ellipsis was removed
+/// is a normalized match, like one matched as ellipsis segments.
+fn mark_elided(mut outcome: Outcome, elided: bool) -> Outcome {
+    if elided && matches!(outcome.method, "exact" | "normalized" | "latex_markup") {
+        outcome.method = "ellipsis";
+        if outcome.status == VERIFIED {
+            outcome.status = VERIFIED_NORMALIZED;
+        }
+    }
+    outcome
 }
 
 /// The segments a reviewer kept verbatim around ellipses.
 fn ellipsis_segments(quote: &str) -> Vec<&str> {
     let mut parts = vec![quote];
-    for marker in ["[...]", "[\u{2026}]", "...", "\u{2026}"] {
+    for marker in ELLIPSES {
         parts = parts
             .into_iter()
             .flat_map(|part| part.split(marker))
@@ -295,7 +335,8 @@ fn locate(
 ) -> MatchLocation {
     let first = scope.piece_at(start);
     let last = scope.piece_at(end.saturating_sub(1)).max(first);
-    let start_offset = original_offset(pieces[first].text, mode, start - scope.starts[first], false);
+    let start_offset =
+        original_offset(pieces[first].text, mode, start - scope.starts[first], false);
     let end_offset = original_offset(pieces[last].text, mode, end - scope.starts[last], true);
     MatchLocation {
         scope: label,
@@ -341,7 +382,11 @@ fn search(
         };
         if let Some((start, end, by_segments)) = find_folded(&scope.text, &needle, &segments) {
             return Some(Outcome {
-                status: if by_segments { VERIFIED_NORMALIZED } else { status },
+                status: if by_segments {
+                    VERIFIED_NORMALIZED
+                } else {
+                    status
+                },
                 method: if by_segments { "ellipsis" } else { method },
                 reason: "",
                 matched: Some(locate(pieces, scope, *mode, (start, end), label)),
@@ -413,8 +458,8 @@ fn verify_document(index: &DocumentIndex<'_>, evidence: &FindingEvidence, quote:
         return Outcome::plain(NOT_CHECKABLE, "document_too_large");
     }
     let modes = modes(index.latex);
-    let node_unknown =
-        !evidence.node_id.is_empty() && !index.node_positions.contains_key(evidence.node_id.as_str());
+    let node_unknown = !evidence.node_id.is_empty()
+        && !index.node_positions.contains_key(evidence.node_id.as_str());
     let cited: Option<(Vec<Piece<'_>>, &'static str)> =
         if let Some(position) = index.node_positions.get(evidence.node_id.as_str()) {
             let end = (position + 1 + NODE_SPILL).min(index.pieces.len());
@@ -488,7 +533,7 @@ pub fn verify_evidence(
     evidence: &FindingEvidence,
     read_source: &mut dyn FnMut(&str) -> Option<String>,
 ) -> Outcome {
-    let quote = trimmed_quote(&evidence.quote);
+    let (quote, elided) = trimmed_quote(&evidence.quote);
     if quote.is_empty() {
         return Outcome::plain(NOT_CHECKABLE, "no_quote");
     }
@@ -501,7 +546,10 @@ pub fn verify_evidence(
             return Outcome::plain(NOT_CHECKABLE, "source_not_captured");
         }
         return match read_source(&evidence.artifact_path) {
-            Some(text) => verify_source(&text, &evidence.source_path, evidence, quote),
+            Some(text) => mark_elided(
+                verify_source(&text, &evidence.source_path, evidence, quote),
+                elided,
+            ),
             None => Outcome::plain(NOT_CHECKABLE, "source_not_captured"),
         };
     }
@@ -513,7 +561,7 @@ pub fn verify_evidence(
     if matches!(kind, "external" | "call") || (external && !located) {
         return Outcome::plain(NOT_CHECKABLE, "external_locator");
     }
-    verify_document(index, evidence, quote)
+    mark_elided(verify_document(index, evidence, quote), elided)
 }
 
 #[derive(Serialize)]
@@ -577,6 +625,67 @@ pub fn verify_products(
         sensitivity: String::new(),
         content,
     });
+}
+
+/// Reads a captured source file by its run-relative path. Only regular files
+/// inside the run directory are read; links, special files, and oversized
+/// files are treated as not captured.
+fn read_captured(run_dir: &std::path::Path, relative: &str) -> Option<String> {
+    let relative = std::path::Path::new(relative);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|part| !matches!(part, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    let root = run_dir.canonicalize().ok()?;
+    let path = root.join(relative);
+    let metadata = std::fs::symlink_metadata(&path).ok()?;
+    if !metadata.is_file() || metadata.len() > MAX_SOURCE_BYTES {
+        return None;
+    }
+    if !path.canonicalize().ok()?.starts_with(&root) {
+        return None;
+    }
+    String::from_utf8(std::fs::read(&path).ok()?).ok()
+}
+
+/// Verifies a finished run's evidence against its DocumentBundle, or its
+/// extracted text when no bundle exists. Called before the quality ledger is
+/// built so verified evidence is counted.
+pub fn verify_run(
+    products: &mut RunProducts,
+    bundle: Option<&DocumentBundle>,
+    extraction: &crate::models::ExtractionResult,
+    run_dir: Option<&std::path::Path>,
+) {
+    if products
+        .findings
+        .as_ref()
+        .is_none_or(|findings| findings.findings.is_empty())
+    {
+        return;
+    }
+    let mut read_source = |relative: &str| run_dir.and_then(|dir| read_captured(dir, relative));
+    match bundle {
+        Some(bundle) => verify_products(
+            products,
+            &DocumentIndex::from_bundle(bundle),
+            &bundle.bundle_id,
+            &mut read_source,
+        ),
+        None => {
+            let lower = extraction.source_path.to_ascii_lowercase();
+            let latex = extraction.method == "latex" || lower.ends_with(".tex");
+            verify_products(
+                products,
+                &DocumentIndex::from_text(&extraction.text, latex),
+                "",
+                &mut read_source,
+            )
+        }
+    }
 }
 
 #[cfg(test)]

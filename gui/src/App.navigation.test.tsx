@@ -150,9 +150,37 @@ describe("App navigation", () => {
     expect(
       screen.getByRole("button", { name: "Review designer" }),
     ).toBeVisible();
+    // A first launch (no earlier interface state) also offers guided setup.
+    await screen.findByRole("dialog", { name: "Get started with Pipeline" });
+    await user.click(screen.getByRole("button", { name: "Skip for now" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /Review a paper/ }));
     expect(await screen.findByTestId("run-setup-panel")).toBeVisible();
+  });
+
+  it("reopens guided setup and the example Review from Home", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("pipeline.ui.page", "home");
+    render(<App />);
+    await screen.findByRole("heading", { name: "What would you like to do?" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Set up Pipeline" }));
+    await screen.findByRole("dialog", { name: "Get started with Pipeline" });
+    await user.keyboard("{Escape}");
+    await user.click(
+      screen.getByRole("button", { name: "See an example Review" }),
+    );
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Example Review — sample data, no model was called",
+      }),
+    ).toBeVisible();
+    expect(invoke).not.toHaveBeenCalledWith(
+      "save_annotations",
+      expect.anything(),
+    );
   });
 
   it("opens Projects as an index even when a project was previously selected", async () => {

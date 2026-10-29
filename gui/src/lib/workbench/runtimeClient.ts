@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ClaudeRateLimit,
   WorkbenchCodexStatus,
   WorkspaceAccountState,
   WorkspaceModel,
@@ -44,6 +45,9 @@ export const runtimeClient = {
   },
   rateLimits() {
     return invoke<WorkspaceRateLimits>("workbench_codex_rate_limits");
+  },
+  claudeRateLimits() {
+    return invoke<ClaudeRateLimit | null>("workbench_claude_rate_limits");
   },
   sendTurn(request: SendTurnRequest) {
     return invoke<SendTurnResult>("workbench_codex_send_turn", { request });

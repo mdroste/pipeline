@@ -139,6 +139,7 @@ pub(super) async fn rerun_run_inner(
     let orientation_error =
         orientation_contract_error(&config, &orientation_value, &parent.input_mode).err();
     let orientation_rebuilt = orientation_error.is_some();
+    let usage_before_orientation = crate::pipeline::logging::run_usage();
     if let Some(contract_error) = orientation_error {
         let orientation_label = if crate::auto_review::uses_auto_review_contract(&config) {
             "Creating orientation map & review plan"
@@ -188,6 +189,14 @@ pub(super) async fn rerun_run_inner(
             return Err("Pipeline cancelled".into());
         }
     }
+    // Review limits count from the start of the re-run, including a rebuilt
+    // orientation.
+    let budget_start = executor::budget::BudgetStart::after_orientation(
+        start,
+        &usage_before_orientation,
+        &settings,
+    )
+    .await;
 
     // Reconstruct the same bounded Auto Review workflow before deciding what
     // can be reused. Dynamic specialist IDs are ordinary steps from here on.
@@ -334,22 +343,25 @@ pub(super) async fn rerun_run_inner(
     let survey_hint = crate::models::survey_hint(&orientation_value);
     let variables = parent.variables.clone();
 
-    let result = executor::execute_steps(
-        app,
-        &execution_config,
-        &orientation_path,
-        &orientation_value,
-        &paper_text_path,
-        &document_bundle_path,
-        &scoped_source_path,
-        &paper_type,
-        &survey_hint,
-        &variables,
-        &resolved_inputs,
-        &runtime_extra_sources,
-        &preloaded,
-        artifact_write_dir.as_deref(),
-        &settings,
+    let result = executor::budget::counted_from(
+        budget_start,
+        executor::execute_steps(
+            app,
+            &execution_config,
+            &orientation_path,
+            &orientation_value,
+            &paper_text_path,
+            &document_bundle_path,
+            &scoped_source_path,
+            &paper_type,
+            &survey_hint,
+            &variables,
+            &resolved_inputs,
+            &runtime_extra_sources,
+            &preloaded,
+            artifact_write_dir.as_deref(),
+            &settings,
+        ),
     )
     .await?;
     drop(extra_tmps);
@@ -368,6 +380,12 @@ pub(super) async fn rerun_run_inner(
             );
         }
     }
+    crate::pipeline::analyzers::quotes::verify_run(
+        &mut products,
+        report_bundle.as_ref(),
+        &resumed_extraction,
+        run_writer.as_ref().map(|writer| writer.dir()),
+    );
     let quality = output::build_report_quality(
         &resumed_extraction,
         report_bundle.as_ref(),

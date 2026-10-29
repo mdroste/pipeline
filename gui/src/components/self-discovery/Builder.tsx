@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { taskClient } from "../../lib/taskClient";
 import { type SessionChoice } from "../../lib/taskTypes";
@@ -34,6 +34,7 @@ export default function Builder({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const mounted = useRef(true);
+  const blockedId = useId();
   useEffect(() => {
     mounted.current = true;
     let live = true;
@@ -59,8 +60,8 @@ export default function Builder({
     setDefinition((d) => ({ ...d, ...update }));
     setOperation(crypto.randomUUID());
   }
+  const invalid = discoveryError(definition);
   async function start() {
-    const invalid = discoveryError(definition);
     if (invalid) {
       setError(invalid);
       return;
@@ -69,7 +70,12 @@ export default function Builder({
     setError("");
     try {
       const result = await discoveryClient.start(
-        definition,
+        {
+          ...definition,
+          inputPaths: definition.inputPaths
+            .map((p) => p.trim())
+            .filter(Boolean),
+        },
         session || null,
         operation,
       );
@@ -220,12 +226,9 @@ export default function Builder({
               disabled={!session}
               value={definition.inputPaths.join("\n")}
               placeholder="One file path per line, relative to the selected project folder"
+              // Raw lines round-trip while typing; blank lines are dropped at Start.
               onChange={(e) =>
-                patch({
-                  inputPaths: e.target.value
-                    .split("\n")
-                    .filter((p) => p.trim()),
-                })
+                patch({ inputPaths: e.target.value.split("\n") })
               }
             />
           </label>
@@ -335,10 +338,16 @@ export default function Builder({
       )}
       <button
         className="task-primary"
-        disabled={busy || Boolean(discoveryError(definition))}
+        disabled={busy || Boolean(invalid)}
+        aria-describedby={invalid ? blockedId : undefined}
       >
         {busy ? "Starting…" : "Start research discovery"}
       </button>
+      {invalid && (
+        <p id={blockedId} className="task-muted">
+          {invalid}
+        </p>
+      )}
       <p className="task-muted">
         {definition.mode === "supervised"
           ? "The automation pauses for your project selection, then continues through the papers."

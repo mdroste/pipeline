@@ -64,3 +64,21 @@ it("handles an empty search result and restores focus and background access on d
   expect(trigger).toHaveFocus();
   trigger.remove();
 });
+
+it("ignores the Enter that confirms an IME composition", () => {
+  const choose = vi.fn();
+  render(
+    <WorkspaceToolPicker
+      workspaceId="project"
+      current="overview"
+      onChoose={choose}
+      onClose={vi.fn()}
+    />,
+  );
+  const search = screen.getByRole("combobox", { name: "Find a project view" });
+  fireEvent.keyDown(search, { key: "Enter", keyCode: 229 });
+  fireEvent.keyDown(search, { key: "Enter", isComposing: true });
+  expect(choose).not.toHaveBeenCalled();
+  fireEvent.keyDown(search, { key: "Enter" });
+  expect(choose).toHaveBeenCalledOnce();
+});

@@ -53,23 +53,28 @@ function ChangePreview({
   onError: (message: string) => void;
   onAccepted: () => Promise<void>;
 }) {
-  const [sides, setSides] = useState<
-    [SnapshotPreview | null, SnapshotPreview | null] | null
-  >(null);
+  // Every project refresh delivers a new checkpoint object, so the preview
+  // reloads only when this file's snapshots change. The previous diff stays
+  // on screen meanwhile, keeping hunk choices and the scroll position.
+  const baseHash = checkpoint.base[path]?.hash;
+  const proposedHash = checkpoint.proposed[path]?.hash;
+  const [loaded, setLoaded] = useState<{
+    path: string;
+    sides: [SnapshotPreview | null, SnapshotPreview | null];
+  } | null>(null);
   useEffect(() => {
     let disposed = false;
-    setSides(null);
     void Promise.all(
-      [checkpoint.base[path]?.hash, checkpoint.proposed[path]?.hash].map(
-        (hash) =>
-          hash
-            ? projectClient.preview(workspaceId, hash)
-            : Promise.resolve(null),
+      [baseHash, proposedHash].map((hash) =>
+        hash ? projectClient.preview(workspaceId, hash) : Promise.resolve(null),
       ),
     )
       .then((result) => {
         if (!disposed)
-          setSides(result as [SnapshotPreview | null, SnapshotPreview | null]);
+          setLoaded({
+            path,
+            sides: result as [SnapshotPreview | null, SnapshotPreview | null],
+          });
       })
       .catch((error) => {
         if (!disposed) onError(workbenchErrorMessage(error));
@@ -77,7 +82,8 @@ function ChangePreview({
     return () => {
       disposed = true;
     };
-  }, [checkpoint, onError, path, workspaceId]);
+  }, [baseHash, proposedHash, onError, path, workspaceId]);
+  const sides = loaded?.path === path ? loaded.sides : null;
   const diff = useMemo(
     () =>
       sides && sides.every((side) => side === null || side.text !== null)

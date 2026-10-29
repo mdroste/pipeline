@@ -17,6 +17,8 @@ import SourceEditor from "./SourceEditor";
 import SourceDiff from "./SourceDiff";
 import ReportViewer from "../ReportViewer";
 import ResearchTablePreview from "../ResearchTablePreview";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import { confirmDialog } from "../DialogService";
 import "./files.css";
 const PdfReader = lazy(() => import("./PdfReader"));
 interface Buffer {
@@ -134,7 +136,7 @@ export default function FileWorkspace({
               status =
                 file.hash === base.hash
                   ? "Restored unsaved draft"
-                  : "Restored draft; the file changed externally. Compare or reload before saving.";
+                  : "Restored draft; the file changed externally. Compare with the current file or reload before saving.";
             }
           } catch {
             /* Invalid draft ignored. */
@@ -284,9 +286,60 @@ export default function FileWorkspace({
       }));
       onSaved?.();
     } catch (e) {
-      setError(String(e));
+      if ((e as { code?: unknown } | null)?.code !== "storage_conflict") {
+        setError(workbenchErrorMessage(e));
+        return;
+      }
+      // A conflict means either a newer copy of the file or a save refused
+      // while a response runs; the file's current hash tells them apart.
+      let changed: boolean;
+      try {
+        changed = (await adapter.read(path)).hash !== buffer.file.hash;
+      } catch (readError) {
+        if (alive.current) setError(workbenchErrorMessage(readError));
+        return;
+      }
+      if (!alive.current) return;
+      setBuffers((old) =>
+        old[path]
+          ? {
+              ...old,
+              [path]: {
+                ...old[path],
+                status: changed
+                  ? "The file changed elsewhere after you opened it. Compare with the current file to keep your draft, or reload to discard it."
+                  : "Stop the running response before saving.",
+              },
+            }
+          : old,
+      );
     } finally {
       setSaving(null);
+    }
+  };
+  // Adopt the file's current bytes as the base and keep the draft, so Changes
+  // shows the draft against the current file and Save can replace it.
+  const compareWithCurrent = async (path: string) => {
+    setError("");
+    try {
+      const current = await adapter.read(path);
+      if (!alive.current) return;
+      setBuffers((old) =>
+        old[path]
+          ? {
+              ...old,
+              [path]: {
+                ...old[path],
+                file: current,
+                status:
+                  "Changes now compares your draft with the current file. Saving replaces the current file with your draft.",
+              },
+            }
+          : old,
+      );
+      setModes((old) => ({ ...old, [path]: "diff" }));
+    } catch (e) {
+      if (alive.current) setError(workbenchErrorMessage(e));
     }
   };
   const navigation = useMemo(
@@ -389,7 +442,7 @@ export default function FileWorkspace({
         path={`${adapter.id}/${file.path}`}
         label={`Source editor: ${file.path}`}
         readOnly={!file.editable}
-        line={location.line}
+        reveal={location}
         completionTexts={completionTexts}
         onSave={() => void save(file.path)}
         onChange={(draft) =>
@@ -427,7 +480,7 @@ export default function FileWorkspace({
           root: file.scopeRoot ?? undefined,
         }}
       >
-        <div className="file-pane" tabIndex={0}>
+        <div key={file.path} className="file-pane" tabIndex={0}>
           <div className="file-toolbar">
             <strong className="mr-auto break-all">
               {file.path}
@@ -478,13 +531,33 @@ export default function FileWorkspace({
                 >
                   Discard draft
                 </button>
+                {dirty && (
+                  <button
+                    disabled={saving !== null}
+                    onClick={() => void compareWithCurrent(file.path)}
+                  >
+                    Compare with current file
+                  </button>
+                )}
               </>
             )}
             <button
-              disabled={dirty && file.editable}
-              onClick={() =>
-                void load(file.path, true).catch((e) => setError(String(e)))
-              }
+              onClick={async () => {
+                if (
+                  dirty &&
+                  file.editable &&
+                  !(await confirmDialog(
+                    `Reload ${file.path} from the project and discard your unsaved draft?`,
+                    {
+                      title: "Discard unsaved draft",
+                      confirmLabel: "Discard and reload",
+                      destructive: true,
+                    },
+                  ))
+                )
+                  return;
+                void load(file.path, true).catch((e) => setError(String(e)));
+              }}
             >
               Reload
             </button>

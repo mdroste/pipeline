@@ -23,6 +23,12 @@ interface Props {
 
 type LevelFilter = "all" | "warn" | "error";
 
+/** The first rendered line while paused, under the filter it was taken with. */
+interface WindowAnchor {
+  entry: LogEntry;
+  filter: string;
+}
+
 const DEFAULT_CONSOLE_HEIGHT = 192;
 const MIN_CONSOLE_HEIGHT = 96;
 const CONSOLE_VIEWPORT_MARGIN = 96;
@@ -55,7 +61,11 @@ export default function Console({ logs, usage, active = true }: Props) {
   const [copyError, setCopyError] = useState<string | null>(null);
   // Auto-follow the tail unless the user scrolls up.
   const [follow, setFollow] = useState(true);
-  const [showFirstError, setShowFirstError] = useState(false);
+  // While paused, the rendered window starts at this line, so appended lines
+  // neither slide the text being read nor push it out of the window.
+  const [anchor, setAnchor] = useState<WindowAnchor | null>(null);
+  // Each "jump to first error" request scrolls exactly once.
+  const [errorJump, setErrorJump] = useState(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -158,24 +168,32 @@ export default function Console({ logs, usage, active = true }: Props) {
     });
   }, [logs, activeSession, level, needle]);
 
-  const renderedLogs = useMemo(() => {
-    if (visibleLogs.length <= MAX_RENDERED_LOG_LINES) return visibleLogs;
-    if (showFirstError) {
-      const firstError = visibleLogs.findIndex(isError);
-      if (firstError >= 0) {
-        const start = Math.min(
-          firstError,
-          visibleLogs.length - MAX_RENDERED_LOG_LINES,
-        );
-        return visibleLogs.slice(start, start + MAX_RENDERED_LOG_LINES);
-      }
-    }
-    return visibleLogs.slice(-MAX_RENDERED_LOG_LINES);
-  }, [showFirstError, visibleLogs]);
+  // Following shows the newest lines. Paused, the window stays at its anchor;
+  // a filter change re-anchors at the new tail.
+  const filterKey = JSON.stringify([activeSession, level, needle]);
+  const anchorEntry =
+    !follow && anchor?.filter === filterKey ? anchor.entry : null;
+  const windowStart = useMemo(() => {
+    const overflow = visibleLogs.length - MAX_RENDERED_LOG_LINES;
+    if (overflow <= 0) return 0;
+    if (!anchorEntry) return overflow;
+    const index = visibleLogs.indexOf(anchorEntry);
+    // The anchor can drop out of the bounded log buffer. Keep the oldest
+    // retained lines in view rather than jumping to the tail.
+    return index < 0 ? 0 : Math.min(index, overflow);
+  }, [visibleLogs, anchorEntry]);
+  const renderedLogs = useMemo(
+    () => visibleLogs.slice(windowStart, windowStart + MAX_RENDERED_LOG_LINES),
+    [visibleLogs, windowStart],
+  );
+  const laterLines = visibleLogs.length - windowStart - renderedLogs.length;
 
+  // Pin the window where following stopped (scrolling up, choosing a session,
+  // or filtering while paused).
   useEffect(() => {
-    setShowFirstError(false);
-  }, [activeSession, level, needle]);
+    if (!follow && !anchorEntry && renderedLogs.length > 0)
+      setAnchor({ entry: renderedLogs[0], filter: filterKey });
+  }, [follow, anchorEntry, renderedLogs, filterKey]);
 
   // Auto-scroll to the tail when following; disabled once the user scrolls up.
   useEffect(() => {
@@ -183,26 +201,41 @@ export default function Console({ logs, usage, active = true }: Props) {
     if (open && follow && element) element.scrollTop = element.scrollHeight;
   }, [renderedLogs, open, follow]);
 
+  // Only on request: new log lines must not pull the reader back to the error.
   useEffect(() => {
-    if (!showFirstError) return;
+    if (errorJump === 0) return;
     scrollRef.current
       ?.querySelector<HTMLElement>("[data-error='1']")
       ?.scrollIntoView?.({ block: "center" });
-  }, [renderedLogs, showFirstError]);
+  }, [errorJump]);
+
+  const resumeFollowing = useCallback(() => {
+    setFollow(true);
+    setAnchor(null);
+  }, []);
 
   const onScroll = useCallback(() => {
     const el = scrollRef.current;
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-    setFollow(atBottom);
-    if (atBottom) setShowFirstError(false);
-  }, []);
+    if (atBottom) resumeFollowing();
+    else setFollow(false);
+  }, [resumeFollowing]);
 
   const jumpToFirstError = useCallback(() => {
-    if (!visibleLogs.some(isError)) return;
+    const firstError = visibleLogs.findIndex(isError);
+    if (firstError < 0) return;
+    // Start the window at the error, or at the final full window when the
+    // error is among the newest lines.
+    const start = Math.max(
+      0,
+      Math.min(firstError, visibleLogs.length - MAX_RENDERED_LOG_LINES),
+    );
+    setOpen(true);
     setFollow(false);
-    setShowFirstError(true);
-  }, [visibleLogs]);
+    setAnchor({ entry: visibleLogs[start], filter: filterKey });
+    setErrorJump((count) => count + 1);
+  }, [visibleLogs, filterKey]);
 
   const visibleText = useCallback(
     () =>
@@ -467,7 +500,7 @@ export default function Console({ logs, usage, active = true }: Props) {
           <pre className="font-mono text-xs leading-relaxed whitespace-pre-wrap">
             {renderedLogs.map((entry, i) => (
               <span
-                key={i}
+                key={windowStart + i}
                 data-error={isError(entry) ? "1" : undefined}
                 className={`group flex gap-2 ${logLineClass(entry)}`}
               >
@@ -490,14 +523,13 @@ export default function Console({ logs, usage, active = true }: Props) {
           </pre>
           {!follow && (
             <button
-              onClick={() => {
-                setShowFirstError(false);
-                setFollow(true);
-              }}
+              onClick={resumeFollowing}
               className="sticky bottom-2 left-1/2 float-right mr-2 -translate-x-1/2 rounded-full border border-gray-300 bg-white px-3 py-1 text-xs text-gray-700 shadow-lg transition-colors hover:bg-gray-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 dark:hover:bg-gray-700"
               title="Follow new log messages"
             >
               ↓ Follow
+              {laterLines > 0 &&
+                ` · ${laterLines} more ${laterLines === 1 ? "line" : "lines"}`}
             </button>
           )}
         </div>

@@ -67,8 +67,9 @@ The job surface distinguishes queued, running, cancelling, completed, failed,
 cancelled, timed out and unknown. The older execution receipt continues to use
 `interrupted`/`outcome_unknown` for compatibility. Cancellation is a request,
 not an early successful terminal receipt. Owned descendants are stopped before
-capture threads join. `oldstata` gets its existing 30-second cooperative cleanup
-grace; forced termination keeps cleanup verification visible.
+capture threads join. A Stata custom launcher such as `oldstata` gets a
+30-second cooperative cleanup grace; direct Stata stops at once. Forced
+termination of a launcher keeps cleanup verification visible.
 
 UI launch explicitly selects detached ownership: jobs continue when a research
 turn stops, while Pipeline stays open. Model-initiated executions are turn-owned
@@ -160,8 +161,10 @@ versions are retained; older clients without an instance ID also use content
 hashes to distinguish imports. No write authorization, key storage, attachment
 fetch or library write-back is implemented. Live Zotero collection import has not
 yet been qualified.
-Online source discovery/acquisition remains disabled pending capability
-qualification. Local bibliography and source work needs neither service.
+Online discovery and acquisition (Crossref lookups and explicit PDF downloads)
+are available in Library → Acquisition inbox once a project allows downloads;
+see the [research desk guide](research-desk.md). Local bibliography and source
+work needs neither service.
 
 ## Theory notes, checks and research directions
 

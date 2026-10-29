@@ -26,6 +26,12 @@ pub(super) fn assemble_report(
             );
         }
     }
+    crate::pipeline::analyzers::quotes::verify_run(
+        &mut products,
+        document_bundle.as_ref(),
+        extraction,
+        run_writer.as_ref().map(|writer| writer.dir()),
+    );
     let quality = output::build_report_quality(
         extraction,
         document_bundle.as_ref(),

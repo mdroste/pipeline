@@ -10,7 +10,11 @@ import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type { ExecutionProfile } from "../../lib/workbenchTypes";
 import Jobs from "../research-studio/Jobs";
 import { button, input, card, muted, type DeskProps } from "./shared";
-export default function Plans({ workspaceId, onError }: DeskProps) {
+export default function Plans({
+  workspaceId,
+  onError,
+  active = true,
+}: DeskProps & { active?: boolean }) {
   const [inputs, setInputs] = useState<DeskRecord[]>([]);
   const [selectedInputs, setSelectedInputs] = useState<string[]>([]);
   const [profiles, setProfiles] = useState<ExecutionProfile[]>([]);
@@ -221,6 +225,7 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
       )}
       <Jobs
         workspaceId={workspaceId}
+        visible={active}
         onCompleted={() => {
           void refresh();
           if (preview)

@@ -117,7 +117,9 @@ export default function ProjectDestination({
     <fieldset disabled={busy} className="contents">
       {object && (
         <div className="flex min-h-0 flex-1 gap-3 p-4">
-          <ResearchReaderBoundary key={object.id + object.revision}>
+          <ResearchReaderBoundary
+            key={`object:${object.id}:${object.revision}`}
+          >
             <ObjectPane
               workspaceId={workspaceId}
               object={object}
@@ -127,7 +129,9 @@ export default function ProjectDestination({
             />
           </ResearchReaderBoundary>
           {comparison && (
-            <ResearchReaderBoundary key={comparison.id + comparison.revision}>
+            <ResearchReaderBoundary
+              key={`comparison:${comparison.id}:${comparison.revision}`}
+            >
               <ObjectPane
                 workspaceId={workspaceId}
                 object={comparison}
@@ -179,6 +183,7 @@ export default function ProjectDestination({
                     workspaceId={workspaceId}
                     onOpen={openObject}
                     onError={reportError}
+                    active={!object && tab === view}
                   />
                 )}
               </Suspense>

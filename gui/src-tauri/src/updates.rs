@@ -1,18 +1,34 @@
 //! Checks GitHub Releases for a newer version of the app.
 //!
-//! The check is lightweight: it hits the public releases API, compares the
-//! tag (stripped of a leading `v`) to `CARGO_PKG_VERSION`, and returns what
-//! it found. The frontend decides whether to surface a banner, and the user
-//! downloads/installs updates manually from the release page.
+//! Pipeline only notifies: researchers download and install a new version
+//! themselves. Official builds check automatically at most once a day unless
+//! the device preference is off; manual checks work in every build. Timing
+//! and backoff live in `schedule`, the bounded request in `github`, and the
+//! preference and cached result in `state`.
 
+mod github;
+mod schedule;
+mod state;
+mod version;
+
+use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use serde::Serialize;
 
-const OWNER: &str = "mdroste";
-const REPO: &str = "pipeline";
-const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-const MAX_RELEASE_RESPONSE_BYTES: usize = 1024 * 1024;
+use crate::emit::EventBus;
+use github::Release;
 
-#[derive(Debug, Serialize)]
+pub use schedule::start;
+
+/// Emitted with an [`UpdateInfo`] when a check finds a newer stable release.
+pub const UPDATE_AVAILABLE_EVENT: &str = "update-available";
+const CURRENT: &str = env!("CARGO_PKG_VERSION");
+/// A manual check right after another check reuses its result.
+const RECENT_CHECK_SECONDS: i64 = 30;
+
+/// Keeps scheduled and manual checks from sending overlapping requests.
+static CHECK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[derive(Debug, Clone, Serialize)]
 pub struct UpdateInfo {
     pub current: String,
     pub latest: String,
@@ -20,210 +36,190 @@ pub struct UpdateInfo {
     pub release_url: String,
     pub release_name: String,
     pub published_at: Option<String>,
+    /// This platform's installer on the release, when one is attached.
+    pub download_url: Option<String>,
+    pub checked_at: Option<String>,
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct GithubRelease {
-    tag_name: String,
-    name: Option<String>,
-    html_url: String,
-    published_at: Option<String>,
-    #[serde(default)]
-    draft: bool,
-    #[serde(default)]
-    prerelease: bool,
+#[derive(Debug, Serialize)]
+pub struct UpdateStatus {
+    pub automatic: bool,
+    /// False for development and source builds, which check only on request.
+    pub automatic_available: bool,
+    pub last_checked_at: Option<String>,
+    /// The last successful check, compared with the running version.
+    pub info: Option<UpdateInfo>,
+    /// Present when the saved preference could not be read.
+    pub error: Option<String>,
 }
 
-pub async fn check() -> Result<UpdateInfo, String> {
-    let current = env!("CARGO_PKG_VERSION").to_string();
-    let url = format!("https://api.github.com/repos/{OWNER}/{REPO}/releases/latest");
+fn timestamp(value: DateTime<Utc>) -> String {
+    value.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
 
-    let client = reqwest::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .user_agent(concat!("pipeline-gui/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| format!("http client: {e}"))?;
-
-    let resp = client
-        .get(&url)
-        .header("Accept", "application/vnd.github+json")
-        .send()
-        .await
-        .map_err(|e| format!("request failed: {e}"))?;
-
-    // Unauthenticated GitHub API calls are rate-limited per IP; 403/429 here
-    // means "try again later", not a real failure worth alarming anyone over.
-    if resp.status() == reqwest::StatusCode::FORBIDDEN
-        || resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS
-    {
-        return Err("GitHub API rate limit reached; update check skipped".to_string());
-    }
-    if !resp.status().is_success() {
-        return Err(format!("GitHub returned {}", resp.status()));
-    }
-
-    if resp
-        .content_length()
-        .is_some_and(|length| length > MAX_RELEASE_RESPONSE_BYTES as u64)
-    {
-        return Err("GitHub update response exceeded the safety limit".to_string());
-    }
-    let mut resp = resp;
-    let mut bytes = Vec::with_capacity(
-        resp.content_length()
-            .unwrap_or(0)
-            .min(MAX_RELEASE_RESPONSE_BYTES as u64) as usize,
-    );
-    while let Some(chunk) = resp
-        .chunk()
-        .await
-        .map_err(|e| format!("response read failed: {e}"))?
-    {
-        if chunk.len() > MAX_RELEASE_RESPONSE_BYTES.saturating_sub(bytes.len()) {
-            return Err("GitHub update response exceeded the safety limit".to_string());
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    let release: GithubRelease =
-        serde_json::from_slice(&bytes).map_err(|e| format!("parse error: {e}"))?;
-
-    // Skip drafts and prereleases — we only care about shipped stable builds.
-    if release.draft || release.prerelease {
-        return Ok(UpdateInfo {
-            current: current.clone(),
-            latest: current,
+fn info(latest: Option<&Release>, checked_at: Option<DateTime<Utc>>) -> UpdateInfo {
+    let checked_at = checked_at.map(timestamp);
+    let Some(release) = latest else {
+        return UpdateInfo {
+            current: CURRENT.to_string(),
+            latest: CURRENT.to_string(),
             update_available: false,
-            release_url: release.html_url,
-            release_name: release.name.unwrap_or_default(),
-            published_at: release.published_at,
-        });
-    }
-
-    let latest_tag = strip_v(&release.tag_name).to_string();
-    let update_available = is_newer(&latest_tag, &current);
-
-    Ok(UpdateInfo {
-        current,
-        latest: latest_tag,
-        update_available,
-        release_url: release.html_url,
-        release_name: release.name.unwrap_or_else(|| release.tag_name.clone()),
-        published_at: release.published_at,
-    })
-}
-
-fn strip_v(tag: &str) -> &str {
-    tag.strip_prefix('v').unwrap_or(tag)
-}
-
-/// Compare the stable release candidate returned by GitHub with the running
-/// build. Pipeline has one stable update channel: prerelease candidates are
-/// never offered, while a stable release with the same core version replaces
-/// a locally installed prerelease build.
-fn is_newer(candidate: &str, current: &str) -> bool {
-    let Some(candidate) = parse_version(candidate) else {
-        return false;
+            release_url: github::releases_page(),
+            release_name: String::new(),
+            published_at: None,
+            download_url: None,
+            checked_at,
+        };
     };
-    let Some(current) = parse_version(current) else {
-        return false;
-    };
-    if candidate.prerelease {
-        return false;
-    }
-    match candidate.core.cmp(&current.core) {
-        std::cmp::Ordering::Greater => true,
-        std::cmp::Ordering::Less => false,
-        std::cmp::Ordering::Equal => current.prerelease,
+    UpdateInfo {
+        current: CURRENT.to_string(),
+        latest: release.version.clone(),
+        update_available: version::is_newer(&release.version, CURRENT),
+        // Cached URLs are revalidated: the file is outside the app bundle.
+        release_url: github::release_page_or_default(&release.release_url),
+        release_name: release.name.clone(),
+        published_at: release.published_at.clone(),
+        download_url: release
+            .download_url
+            .clone()
+            .filter(|url| github::is_download_url(url, &release.version)),
+        checked_at,
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-struct ParsedVersion {
-    core: [u64; 3],
-    prerelease: bool,
+fn status_from(saved: Result<state::State, String>) -> UpdateStatus {
+    let automatic_available = schedule::automatic_supported();
+    match saved {
+        Ok(saved) => UpdateStatus {
+            automatic: saved.automatic,
+            automatic_available,
+            last_checked_at: saved.last_checked_at.map(timestamp),
+            info: saved
+                .last_checked_at
+                .map(|at| info(saved.latest.as_ref(), Some(at))),
+            error: None,
+        },
+        Err(error) => UpdateStatus {
+            automatic: false,
+            automatic_available,
+            last_checked_at: None,
+            info: None,
+            error: Some(error),
+        },
+    }
 }
 
-fn parse_version(value: &str) -> Option<ParsedVersion> {
-    let value = strip_v(value.trim());
-    let without_build = match value.split_once('+') {
-        Some((_, "")) => return None,
-        Some((core, _)) => core,
-        None => value,
-    };
-    let (core, prerelease) = match without_build.split_once('-') {
-        Some((_, "")) => return None,
-        Some((core, _)) => (core, true),
-        None => (without_build, false),
-    };
-    let components = core.split('.').collect::<Vec<_>>();
-    if components.len() != 3
-        || components.iter().any(|component| {
-            component.is_empty()
-                || !component
-                    .chars()
-                    .all(|character| character.is_ascii_digit())
-                || component.len() > 1 && component.starts_with('0')
-        })
-    {
-        return None;
+/// Saved preference and last result. Sends no request.
+pub fn status() -> UpdateStatus {
+    status_from(state::load())
+}
+
+pub fn set_automatic(enabled: bool) -> Result<UpdateStatus, String> {
+    Ok(status_from(Ok(state::set_automatic(enabled)?)))
+}
+
+/// Check now because the researcher asked.
+pub async fn check_now(bus: &EventBus) -> Result<UpdateInfo, String> {
+    let _flight = CHECK.lock().await;
+    let now = Utc::now();
+    // An unreadable state file must not block a check the researcher asked for.
+    if let Ok(saved) = state::load() {
+        if let Some(until) = saved.rate_limited_until.filter(|until| *until > now) {
+            return Err(github::rate_limited_message(until, now));
+        }
+        if saved
+            .last_checked_at
+            .is_some_and(|at| at <= now && now - at < Duration::seconds(RECENT_CHECK_SECONDS))
+        {
+            return Ok(info(saved.latest.as_ref(), saved.last_checked_at));
+        }
     }
-    let parts = components
-        .into_iter()
-        .map(str::parse::<u64>)
-        .collect::<Result<Vec<_>, _>>()
-        .ok()?;
-    let core: [u64; 3] = parts.try_into().ok()?;
-    Some(ParsedVersion { core, prerelease })
+    fetch_and_record(bus, now).await
+}
+
+async fn run_automatic(bus: &EventBus) {
+    let _flight = CHECK.lock().await;
+    let now = Utc::now();
+    let Ok(saved) = state::load() else {
+        return;
+    };
+    if schedule::automatic_due(&saved, now) {
+        let _ = fetch_and_record(bus, now).await;
+    }
+}
+
+async fn fetch_and_record(bus: &EventBus, now: DateTime<Utc>) -> Result<UpdateInfo, String> {
+    let outcome = github::fetch_latest().await;
+    let saved = state::update(|state| schedule::apply_outcome(state, &outcome, now));
+    match outcome {
+        Ok(latest) => {
+            let found = info(latest.as_ref(), Some(now));
+            if found.update_available {
+                if let Ok(payload) = serde_json::to_value(&found) {
+                    let _ = bus.emit_event(UPDATE_AVAILABLE_EVENT, payload);
+                }
+            }
+            Ok(found)
+        }
+        Err(error) => {
+            let until = saved.ok().and_then(|saved| saved.rate_limited_until);
+            Err(error.message(until, now))
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn strip_v_handles_both_forms() {
-        assert_eq!(strip_v("v1.2.3"), "1.2.3");
-        assert_eq!(strip_v("1.2.3"), "1.2.3");
-        assert_eq!(strip_v(""), "");
+    fn release(version: &str) -> Release {
+        Release {
+            version: version.into(),
+            name: format!("Pipeline v{version}"),
+            release_url: format!("https://github.com/mdroste/pipeline/releases/tag/v{version}"),
+            download_url: Some("https://example.com/Pipeline.dmg".into()),
+            published_at: None,
+        }
     }
 
     #[test]
-    fn is_newer_detects_patch_minor_major_bumps() {
-        assert!(is_newer("1.0.1", "1.0.0"));
-        assert!(is_newer("1.1.0", "1.0.9"));
-        assert!(is_newer("2.0.0", "1.99.99"));
+    fn cached_release_is_compared_with_the_running_version() {
+        assert!(info(Some(&release("999.0.0")), None).update_available);
+        let same = info(Some(&release(CURRENT)), None);
+        assert!(!same.update_available);
+        assert_eq!(same.latest, CURRENT);
     }
 
     #[test]
-    fn is_newer_false_when_same_or_older() {
-        assert!(!is_newer("1.0.0", "1.0.0"));
-        assert!(!is_newer("1.0.0", "1.0.1"));
-        assert!(!is_newer("0.9.0", "1.0.0"));
+    fn cached_urls_are_revalidated() {
+        let mut cached = release("999.0.0");
+        cached.release_url = "https://example.com/phish".into();
+        let found = info(Some(&cached), None);
+        assert_eq!(found.release_url, github::releases_page());
+        assert_eq!(found.download_url, None);
     }
 
     #[test]
-    fn is_newer_ignores_leading_v() {
-        assert!(is_newer("v1.2.0", "1.1.0"));
-        assert!(is_newer("1.2.0", "v1.1.0"));
+    fn no_stable_release_reports_up_to_date() {
+        let found = info(None, None);
+        assert!(!found.update_available);
+        assert_eq!(found.latest, CURRENT);
+        assert_eq!(found.release_url, github::releases_page());
     }
 
     #[test]
-    fn is_newer_rejects_incomplete_or_malformed_versions() {
-        assert!(!is_newer("1.0", "1.0.0"));
-        assert!(!is_newer("1.0.1", "1.0"));
-        assert!(!is_newer("2", "1.99.99"));
-        assert!(!is_newer("latest", "1.0.0"));
+    fn unreadable_state_reports_automatic_checks_off() {
+        let status = status_from(Err("damaged".into()));
+        assert!(!status.automatic);
+        assert_eq!(status.error.as_deref(), Some("damaged"));
+        assert!(status.info.is_none());
     }
 
     #[test]
-    fn is_newer_never_offers_prereleases() {
-        assert!(!is_newer("1.2.3-rc1", "1.2.3"));
-        assert!(!is_newer("1.2.4-rc1", "1.2.3"));
-    }
-
-    #[test]
-    fn stable_release_replaces_the_same_core_prerelease() {
-        assert!(is_newer("1.2.3", "1.2.3-rc.1"));
-        assert!(!is_newer("1.2.2", "1.2.3-rc.1"));
+    fn status_omits_info_before_the_first_check() {
+        let status = status_from(Ok(state::State::default()));
+        assert!(status.automatic);
+        assert!(status.info.is_none());
+        assert!(status.last_checked_at.is_none());
     }
 }

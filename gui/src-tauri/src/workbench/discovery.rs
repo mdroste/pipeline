@@ -293,13 +293,18 @@ pub fn role(
 }
 pub async fn acquire(workspace: String, query: String, operation: String) -> Result<Value, String> {
     let ws = workspace.clone();
-    let enabled = super::commands::run_store(move |s| super::acquisition::network_enabled(&s, &ws))
-        .await
-        .map_err(|e| e.message)?;
+    let (enabled, contact) = super::commands::run_store(move |s| {
+        Ok((
+            super::acquisition::network_enabled(&s, &ws)?,
+            super::acquisition::crossref_contact(&s)?,
+        ))
+    })
+    .await
+    .map_err(|e| e.message)?;
     if !enabled {
         return Err("Project literature acquisition is disabled".into());
     }
-    let result = super::acquisition::crossref(&query).await;
+    let result = super::acquisition::crossref_with_contact(&query, contact.as_deref()).await;
     super::commands::run_store(move|s|{
         if !super::acquisition::network_enabled(&s,&workspace)?{return Err(WorkbenchError::invalid("Acquisition access was revoked"));}
         let record=super::acquisition::record_lookup(&s,&workspace,&query,result,&operation)?;

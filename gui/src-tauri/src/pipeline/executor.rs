@@ -6,7 +6,9 @@
 //! Artifact selection, prompts, findings and checkpoint products have separate
 //! owners within this feature. None share writable Workspace runtime state.
 
+mod analyzer_step;
 mod artifact_context;
+pub mod budget;
 mod checkpoints;
 mod findings;
 mod outputs;

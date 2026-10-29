@@ -10,7 +10,7 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 15;
+pub const CURRENT_SCHEMA_VERSION: u32 = 16;
 const MAX_WORKSPACE_NAME_BYTES: usize = 300;
 const MAX_SESSION_TITLE_BYTES: usize = 300;
 const MAX_DRAFT_BYTES: usize = 1_000_000;

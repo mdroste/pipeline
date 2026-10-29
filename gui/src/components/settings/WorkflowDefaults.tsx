@@ -12,7 +12,7 @@ import {
 import ModelStage from "./ModelStage";
 import AgentDefaultsControl from "../AgentDefaultsControl";
 
-import { selectClass, SectionHeader, Field } from "./controls";
+import { selectClass, inputClass, SectionHeader, Field } from "./controls";
 export function ModelDefaultsSection({
   settings,
   setSettings,
@@ -267,6 +267,36 @@ export function ModelDefaultsSection({
   );
 }
 
+function LimitInput({
+  label,
+  step,
+  value,
+  onChange,
+}: {
+  label: string;
+  step: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="flex flex-col gap-1 text-xs text-gray-600 dark:text-neutral-400">
+      {label}
+      <input
+        aria-label={`Review limit: ${label}`}
+        type="number"
+        min={0}
+        step={step}
+        value={value}
+        onChange={(event) => {
+          const parsed = Number(event.target.value);
+          onChange(Number.isFinite(parsed) && parsed > 0 ? parsed : 0);
+        }}
+        className={inputClass}
+      />
+    </label>
+  );
+}
+
 export function WorkflowSection({
   settings,
   setSettings,
@@ -372,6 +402,44 @@ export function WorkflowSection({
             <option value={3}>3</option>
             <option value={4}>4</option>
           </select>
+        </Field>
+
+        <Field
+          label="Review limits"
+          help="Stop a Review before it starts new steps once it reaches a limit. Steps already running finish, and completed results are saved as a partial report. Cost counts direct API connections at list prices; subscriptions are limited by calls and time. Leave a field at 0 for no limit."
+        >
+          <div id="review-limits" className="grid gap-2 sm:grid-cols-3">
+            <LimitInput
+              label="Cost (USD)"
+              step="0.5"
+              value={settings.review_max_cost_usd ?? 0}
+              onChange={(value) =>
+                setSettings({ ...settings, review_max_cost_usd: value })
+              }
+            />
+            <LimitInput
+              label="Model calls"
+              step="1"
+              value={settings.review_max_calls ?? 0}
+              onChange={(value) =>
+                setSettings({
+                  ...settings,
+                  review_max_calls: Math.round(value),
+                })
+              }
+            />
+            <LimitInput
+              label="Minutes"
+              step="5"
+              value={settings.review_max_minutes ?? 0}
+              onChange={(value) =>
+                setSettings({
+                  ...settings,
+                  review_max_minutes: Math.round(value),
+                })
+              }
+            />
+          </div>
         </Field>
       </div>
     </>

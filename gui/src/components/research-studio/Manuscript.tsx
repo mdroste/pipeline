@@ -1,5 +1,6 @@
 import SourceEditor, {
   type SourceEditorHandle,
+  type SourceLineRequest,
 } from "../file-workspace/SourceEditor";
 import SourceDiff from "../file-workspace/SourceDiff";
 import { workspaceFileAdapter } from "../../lib/fileWorkspaceClient";
@@ -97,7 +98,14 @@ export default function Manuscript({
   const [syncCandidates, setSyncCandidates] = useState<
     import("../../lib/studioClient").SyncResult["candidates"]
   >([]);
-  const [sourceLine, setSourceLine] = useState(1);
+  // The Source line field stays local; only explicit actions move the editor.
+  const [sourceLine, setSourceLine] = useState("1");
+  const sourceLineNumber = Number(sourceLine);
+  const validSourceLine =
+    Number.isInteger(sourceLineNumber) && sourceLineNumber > 0;
+  const [sourceRequest, setSourceRequest] = useState<SourceLineRequest | null>(
+    null,
+  );
   const [pdfPage, setPdfPage] = useState(1);
   const [pdfX, setPdfX] = useState(0);
   const [pdfY, setPdfY] = useState(0);
@@ -240,10 +248,14 @@ export default function Manuscript({
       }
     });
   const jumpLine = (line: number) => editor.current?.goToLine(line);
+  // Reveal a line without taking focus from the control that asked for it.
+  const revealLine = (line: number) => {
+    setSourceLine(String(line));
+    setSourceRequest({ line });
+  };
   const navigateSource = async (target: string, line: number) => {
     if (file?.path === target) {
-      setSourceLine(line);
-      jumpLine(line);
+      revealLine(line);
       return;
     }
     if (dirty && file)
@@ -262,7 +274,7 @@ export default function Manuscript({
     setPath(target);
     setFile(retained?.file ?? next);
     setDraft(retained?.draft ?? next.content);
-    setSourceLine(line);
+    revealLine(line);
     setNotice(
       "Opened the source location recorded in this build. The file may have changed since then. Unsaved drafts are still available for each file.",
     );
@@ -409,10 +421,10 @@ export default function Manuscript({
                   ref={editor}
                   label="Manuscript source editor"
                   readOnly={busy}
-                  path={`${workspaceId}/${checkpoint || "working"}/${file.path}`}
+                  path={`${workspaceId}/${file.checkpointId ?? "working"}/${file.path}`}
                   value={draft}
                   onChange={setDraft}
-                  line={sourceLine}
+                  reveal={sourceRequest}
                   onSave={() => saveButton.current?.click()}
                   completionTexts={completionTexts}
                 />
@@ -741,23 +753,26 @@ export default function Manuscript({
                       type="number"
                       min={1}
                       value={sourceLine}
-                      onChange={(e) => setSourceLine(Number(e.target.value))}
+                      onChange={(e) => setSourceLine(e.target.value)}
                     />
                   </Field>
                   <button
                     className={button}
-                    onClick={() => jumpLine(sourceLine)}
+                    disabled={!file || !validSourceLine}
+                    onClick={() => jumpLine(sourceLineNumber)}
                   >
                     Go to line
                   </button>
                   <button
                     className={button}
-                    disabled={busy || !receipt.mappingArtifactId}
+                    disabled={
+                      busy || !receipt.mappingArtifactId || !validSourceLine
+                    }
                     onClick={() =>
                       void run(async () =>
                         showSync({
                           sourcePath: file?.path ?? path,
-                          line: sourceLine,
+                          line: sourceLineNumber,
                         }),
                       )
                     }
@@ -814,8 +829,9 @@ export default function Manuscript({
                         className={button}
                         onClick={() => {
                           setPath(c.sourcePath!);
-                          setSourceLine(c.line!);
-                          if (file?.path === c.sourcePath) jumpLine(c.line!);
+                          setSourceLine(String(c.line));
+                          if (file?.path === c.sourcePath)
+                            setSourceRequest({ line: c.line! });
                           setNotice(
                             `Exact build maps to ${c.sourcePath}:${c.line}. Working source may have changed; reload only after preserving your draft.`,
                           );

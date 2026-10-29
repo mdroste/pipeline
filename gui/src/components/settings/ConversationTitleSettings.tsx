@@ -71,7 +71,9 @@ export default function ConversationTitleSettings() {
         <h2 className="font-semibold">Conversation titles</h2>
         <p className="text-gray-500 dark:text-neutral-400">
           Generate a short title after the first reply. This uses an additional
-          model call, with the cheapest available model by default. Rename or
+          model call, with the cheapest available model by default. The model
+          choice below applies to ChatGPT conversations; Claude Code
+          conversations use the cheapest Claude model offered. Rename or
           regenerate titles from the conversation list.
         </p>
         {titles ? (

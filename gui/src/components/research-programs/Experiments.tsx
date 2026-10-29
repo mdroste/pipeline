@@ -412,6 +412,7 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
       )}
       <Jobs
         workspaceId={workspaceId}
+        visible={props.active !== false}
         onCompleted={() => {
           void p.refresh().catch(onError);
         }}

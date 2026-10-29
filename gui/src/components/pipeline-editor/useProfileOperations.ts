@@ -18,7 +18,9 @@ import type { WorkflowEditor } from "./useWorkflowEditor";
 export function useProfileOperations(
   editor: WorkflowEditor,
   settings: Settings | null,
-  onProfileChange?: () => void,
+  /** Called after any change to the active workflow. A save passes the saved
+   *  configuration, so the run setup can keep an input that still fits. */
+  onProfileChange?: (config?: PipelineConfig) => void,
 ) {
   const {
     config,
@@ -346,7 +348,9 @@ export function useProfileOperations(
         setDirty(false);
       }
       await refreshProfiles();
-      onProfileChange?.();
+      onProfileChange?.(
+        activeProfileRef.current === profileToSave ? configToSave : undefined,
+      );
       if (isCurrentVersion) setTimeout(() => setSaved(false), 2000);
       return isCurrentVersion;
     } catch (e) {

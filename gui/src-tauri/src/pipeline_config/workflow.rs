@@ -183,6 +183,8 @@ fn validate_step(value: &serde_json::Value, path: &str) -> Result<(), String> {
         &[
             "id",
             "label",
+            "kind",
+            "analyzer",
             "prompt",
             "system_prompt",
             "enabled",
@@ -203,6 +205,13 @@ fn validate_step(value: &serde_json::Value, path: &str) -> Result<(), String> {
     )?;
     if let Some(overrides) = value.get("model_overrides") {
         validate_model_map(overrides, &format!("{path}.model_overrides"))?;
+    }
+    if let Some(analyzer) = value.get("analyzer") {
+        reject_unknown(
+            analyzer,
+            &format!("{path}.analyzer"),
+            &["id", "version", "options"],
+        )?;
     }
     if let Some(policy) = value.get("dependency_policy") {
         reject_unknown(
@@ -582,6 +591,8 @@ pub fn workflow_json_schema() -> serde_json::Value {
                 "properties": {
                     "id": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$" },
                     "label": { "type": "string" }, "prompt": { "type": "string" }, "system_prompt": { "type": "string" },
+                    "kind": { "enum": ["model", "analyzer"] },
+                    "analyzer": { "type": "object", "additionalProperties": false, "required": ["id", "version"], "properties": { "id": { "type": "string", "pattern": "^[a-z0-9_]{1,64}$" }, "version": { "type": "integer", "minimum": 1 }, "options": { "type": "object" } } },
                     "enabled": { "type": "boolean" }, "phase": { "enum": ["parallel", "sequential"] },
                     "tools": { "type": "array", "uniqueItems": true, "items": { "enum": ALLOWED_TOOLS } },
                     "agents": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/agent" } },

@@ -19,8 +19,9 @@ Reviews, annotations, saved workflows, Automations, and their logs. Original
 manuscripts and datasets stay in the project folders where you keep them.
 Exports go to the location you choose when saving.
 
-Device settings, API keys, provider sign-ins and session files, managed tools,
-and disposable caches stay under the local `~/.pipeline/` directory. In
+Device settings (including the update-check preference in `updates.json`), API
+keys, provider sign-ins and session files, managed tools, and disposable caches
+stay under the local `~/.pipeline/` directory. In
 particular, the shared ChatGPT account remains under
 `~/.pipeline/providers/chatgpt/`. Research backups exclude credentials.
 
