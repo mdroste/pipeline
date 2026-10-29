@@ -313,8 +313,8 @@ export default function Bindings({
             Create a TeX macro from this value
           </h3>
           <p className="text-xs">
-            Uses the selected result’s estimate. The file is staged in a task
-            copy for review in Changes.
+            Uses the selected result’s estimate. The file is added to the edit’s
+            working copy. Check it in Review edits.
           </p>
           <Select
             label="Task change set"

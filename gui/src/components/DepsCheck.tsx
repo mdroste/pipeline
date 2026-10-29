@@ -18,7 +18,7 @@ type StatusTone = "success" | "warning" | "danger" | "neutral";
 const PROVIDER_LABELS: Record<string, string> = {
   "Claude CLI": "Claude",
   "Codex CLI": "ChatGPT",
-  "Workflow ChatGPT": "ChatGPT",
+  "ChatGPT (reviews)": "ChatGPT",
   "Google API": "Gemini",
   "Local LLM server": "Local model",
 };
@@ -195,9 +195,10 @@ function DependencyHint({
 }) {
   const pdfSettingsLabel = "Settings → Reviews → PDF Extraction";
   // Older dependency reports use the previous Settings navigation labels.
-  const hint = dep.hint
-    .replace(/Settings → (?:Workflows → )?PDF Extraction/g, pdfSettingsLabel)
-    .replaceAll("Workflow ChatGPT", "ChatGPT");
+  const hint = dep.hint.replace(
+    /Settings → (?:Workflows → )?PDF Extraction/g,
+    pdfSettingsLabel,
+  );
   const pdfSettingsIndex = hint.indexOf(pdfSettingsLabel);
   const linksToPdfSettings =
     /paddleocr-vl/i.test(dep.name) &&

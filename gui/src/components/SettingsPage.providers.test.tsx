@@ -111,7 +111,7 @@ describe("SettingsPage providers", () => {
     expect(invoke).not.toHaveBeenCalledWith("workflow_codex_status");
   });
 
-  it("refreshes dependency readiness when the Workflow ChatGPT account changes", async () => {
+  it("refreshes dependency readiness when the ChatGPT account for reviews changes", async () => {
     const settings = {
       ...makeSettings(),
       codex_backend: "app_server" as const,

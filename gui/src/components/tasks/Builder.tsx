@@ -335,12 +335,13 @@ export default function Builder({
             onChange={(e) => setInputs(e.target.value)}
           />
         </label>
+        {/* Same ranges as validate() in orchestration/definition.rs. */}
         <div className="task-form-row">
           <label>
             Action limit
             <NumberField
               min={1}
-              max={64}
+              max={1024}
               value={chain.limits.maxActions}
               onChange={(maxActions) =>
                 setChain({
@@ -354,6 +355,7 @@ export default function Builder({
             Deadline (hours)
             <NumberField
               min={1}
+              max={8760}
               value={chain.limits.deadlineHours}
               onChange={(deadlineHours) =>
                 setChain({

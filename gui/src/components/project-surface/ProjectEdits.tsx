@@ -231,9 +231,12 @@ function StartEdit({ api }: { api: SurfaceApi }) {
       </p>
       {!workspace?.root && (
         <p className={notice}>
-          Attach a folder on the Overview tab first.{" "}
-          <button className={linkButton} onClick={() => setTab("overview")}>
-            Go to Overview
+          Attach a folder in Project settings first.{" "}
+          <button
+            className={linkButton}
+            onClick={() => setTab("project-settings")}
+          >
+            Go to Project settings
           </button>
         </p>
       )}
@@ -288,7 +291,7 @@ function StartEdit({ api }: { api: SurfaceApi }) {
               <p className={`p-3 ${muted}`}>
                 {data.inventory
                   ? "No files match."
-                  : "Refresh the file list on the Overview tab to see the folder’s files."}
+                  : "Refresh the file list in Project settings to see the folder’s files."}
               </p>
             )}
             {files.slice(0, 200).map((f) => (

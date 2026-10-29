@@ -162,12 +162,14 @@ describe("App launch", () => {
           ready,
           deps: [
             {
-              name: "Workflow ChatGPT",
+              name: "ChatGPT (reviews)",
               found: true,
               required: true,
               version: "0.153.4",
               path: "",
-              hint: ready ? "" : "Sign in to the Workflow connection.",
+              hint: ready
+                ? ""
+                : "Sign in with a ChatGPT account in Settings → Connections → OpenAI.",
               authenticated: ready,
             },
           ],

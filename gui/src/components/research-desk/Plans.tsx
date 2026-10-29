@@ -87,9 +87,8 @@ export default function Plans({
           ))}
         </select>
         <p className={muted}>
-          Configure profiles in conversation Research → Results, or the
-          execution setup tool. Use relative script paths and declare every
-          input and package lockfile.
+          Set up profiles in Analyze → Command settings. Use relative script
+          paths and declare every input and package lockfile.
         </p>
         <fieldset className="space-y-1">
           <legend className="text-xs">

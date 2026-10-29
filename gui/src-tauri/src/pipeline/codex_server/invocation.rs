@@ -239,7 +239,7 @@ pub(super) async fn run_connected(
         None => None,
     };
     if !c.recovery.lock().await.is_empty() {
-        return Err("[codex-outcome-unknown] An earlier Workflow attempt requires review in Settings → Connections → OpenAI before another run".into());
+        return Err("[codex-outcome-unknown] Review the unresolved ChatGPT attempt in Settings → Connections → OpenAI before another run".into());
     }
     if c.native
         .client
@@ -250,7 +250,7 @@ pub(super) async fn run_connected(
         != crate::agent_runtime::codex::AccountStatus::Chatgpt
     {
         return Err(
-            "[codex-auth] Sign in to the Workflow ChatGPT App Server connection in Settings".into(),
+            "[codex-auth] Sign in with a ChatGPT account in Settings → Connections → OpenAI".into(),
         );
     }
     let model = overrides.model.filter(|s| !s.is_empty());

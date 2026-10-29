@@ -27,7 +27,7 @@ describe("DepsCheck", () => {
           ready: true,
           deps: [
             dep({
-              name: "Workflow ChatGPT",
+              name: "ChatGPT (reviews)",
               authenticated: true,
               cli_auth_status: undefined,
             }),
@@ -44,14 +44,14 @@ describe("DepsCheck", () => {
 
   it("highlights a required connection failure even when another provider is ready", () => {
     const hint =
-      "Workflow ChatGPT connection is in use by another Pipeline process";
+      "The ChatGPT connection for reviews is in use by another Pipeline process";
     render(
       <DepsCheck
         report={{
           ready: false,
           deps: [
             dep({ authenticated: true, required: false }),
-            dep({ name: "Workflow ChatGPT", authenticated: false, hint }),
+            dep({ name: "ChatGPT (reviews)", authenticated: false, hint }),
             dep({ name: "Google API", found: false, required: false }),
           ],
         }}
@@ -64,11 +64,7 @@ describe("DepsCheck", () => {
       "text-red-700",
     );
     expect(within(models).getByText("Not set up")).toHaveClass("text-gray-500");
-    expect(
-      within(models).getByText(
-        "ChatGPT connection is in use by another Pipeline process",
-      ),
-    ).toBeVisible();
+    expect(within(models).getByText(hint)).toBeVisible();
     // An unused provider that is not set up needs no remedy.
     expect(within(models).queryByText(/install it/)).not.toBeInTheDocument();
   });

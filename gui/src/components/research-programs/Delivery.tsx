@@ -334,8 +334,8 @@ export default function Delivery(props: DeskProps) {
           Main manuscript and supporting documents
         </h3>
         <p className={muted}>
-          A main deliverable is optional. Existing manuscript selection remains
-          available in Project brief.
+          A main deliverable is optional. Choose the current version of the
+          paper in Project settings.
         </p>
         <Field label="Deliverable role">
           <select

@@ -350,6 +350,17 @@ it("asks before an in-page action discards an unsaved automation draft", async (
   expect(screen.queryByLabelText("Idea or instructions")).toBeNull();
 });
 
+it("offers the full action limit the automation validator accepts", async () => {
+  render(<TasksPage initialSessionId="session" />);
+  await screen.findByRole("option", { name: "Research idea" });
+  const limit = screen.getByRole("spinbutton", { name: "Action limit" });
+  fireEvent.change(limit, { target: { value: "1024" } });
+  fireEvent.blur(limit);
+  expect(limit).toHaveValue(1024);
+  fireEvent.change(limit, { target: { value: "5000" } });
+  fireEvent.blur(limit);
+  expect(limit).toHaveValue(1024);
+});
 it("closes an untouched builder without asking", async () => {
   render(<TasksPage initialSessionId="session" />);
   await screen.findByRole("option", { name: "Research idea" });

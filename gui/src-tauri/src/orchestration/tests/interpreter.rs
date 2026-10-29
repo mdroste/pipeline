@@ -10,6 +10,20 @@ fn strict_chain_roundtrip() {
 }
 
 #[test]
+fn limits_match_the_builder_ranges() {
+    // The automation builder offers these same maximums.
+    let mut c = chain(vec![delay("a")]);
+    c.limits.max_actions = 1024;
+    c.limits.deadline_hours = 8760;
+    validate(&c).unwrap();
+    c.limits.max_actions = 1025;
+    assert!(validate(&c).is_err());
+    c.limits.max_actions = 1024;
+    c.limits.deadline_hours = 8761;
+    assert!(validate(&c).is_err());
+}
+
+#[test]
 fn missing_findings_are_unknown() {
     let condition = Condition::LessThan {
         left: output("review", "/highPriorityCount"),

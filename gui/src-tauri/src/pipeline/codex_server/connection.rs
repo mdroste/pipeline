@@ -95,7 +95,8 @@ impl Connection {
             }
             let lock = options.open(lock_path).map_err(|e| e.to_string())?;
             lock.try_lock_exclusive().map_err(|_| {
-                "Workflow ChatGPT connection is in use by another Pipeline process".to_string()
+                "The ChatGPT connection for reviews is in use by another Pipeline process"
+                    .to_string()
             })?;
             let home = root.join("codex");
             let cwd = root.join("empty");
@@ -141,7 +142,7 @@ pub(super) async fn connect() -> Result<Arc<Connection>, String> {
             return Ok(connection.clone());
         }
         if Arc::strong_count(connection) > 1 {
-            return Err("[codex-outcome-unknown] Previous Workflow connection is still reconciling; try again after its calls stop".into());
+            return Err("[codex-outcome-unknown] The previous ChatGPT connection for reviews is still finishing. Try again after its calls stop.".into());
         }
         connection.native.shutdown().await;
     }
@@ -233,7 +234,7 @@ pub async fn workflow_codex_rate_limits() -> Result<RateLimits, String> {
 pub async fn workflow_codex_acknowledge_attempt(id: String, epoch: u64) -> Result<(), String> {
     let c = connect().await?;
     if c.native.client.epoch() != epoch {
-        return Err("The Workflow connection changed; refresh status".into());
+        return Err("The ChatGPT connection for reviews changed. Refresh its status.".into());
     }
     let _permit = c
         .activity
@@ -256,7 +257,7 @@ pub async fn workflow_codex_reconcile_attempt(
     use serde_json::json;
     let c = connect().await?;
     if c.native.client.epoch() != epoch {
-        return Err("The Workflow connection changed; refresh status".into());
+        return Err("The ChatGPT connection for reviews changed. Refresh its status.".into());
     }
     let _permit = c.activity.read().await;
     if !c

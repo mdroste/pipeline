@@ -21,7 +21,7 @@ try {
   if(await dismiss.isExisting())await dismiss.click();
   await app.$('button=Automations').click();
   await app.$('[role="tab"]=Research').click();
-  await app.$('button=Full self-discovery (supervised)').click();
+  await app.$('button=Research discovery — choose projects yourself').click();
   await field("Research topics and questions").setValue("Synthetic qualification: investigate historical source transmission");
   await field("Candidate projects").setValue("50");
   await field("Shortlisted projects").setValue("3");
@@ -31,9 +31,9 @@ try {
   await field("Paper reviewers per round").setValue("1");
   const acquisition=await app.$('//label[contains(. ,"Search public literature records")]/input');
   if(await acquisition.isSelected())await acquisition.click();
-  await app.$('button=Start self-discovery').scrollIntoView();
+  await app.$('button=Start research discovery').scrollIntoView();
   await app.saveScreenshot("/private/tmp/pipeline-discovery-start.png");
-  await app.$('button=Start self-discovery').click();
+  await app.$('button=Start research discovery').click();
   await app.waitUntil(async()=>(await invoke("discovery_list",{offset:0})).length>0,{timeout:15000});
   const id=(await invoke("discovery_list",{offset:0}))[0].id;
   const selection=await reached(id,r=>r.state==="awaitingSelection");

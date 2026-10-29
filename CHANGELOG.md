@@ -101,6 +101,9 @@ public release was not tracked as a stable release series.
   the open built-in's own version. It no longer removes **Paper Review
   (Fast)**'s limit of two method reviewers, and **Slide Review** keeps its
   slide-deck setup.
+- The automation builder's **Action limit** goes up to 1,024 actions, the
+  limit Pipeline accepts when it checks an automation. It previously stopped
+  at 64.
 
 ### Security
 

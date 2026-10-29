@@ -162,9 +162,15 @@ it("explains that a folder is needed before an edit can start", async () => {
     target: { value: "edits" },
   });
   expect(
-    screen.getByText(/Attach a folder on the Overview tab first/),
+    screen.getByText(/Attach a folder in Project settings first/),
   ).toBeInTheDocument();
   expect(screen.queryByLabelText("Action item for this edit")).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Go to Project settings" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Project settings" }),
+  ).toBeInTheDocument();
 });
 it("opens a research conversation only when explicitly requested", async () => {
   const conversation = vi.fn().mockResolvedValue(undefined);

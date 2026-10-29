@@ -35,7 +35,7 @@ fn workflow_dependency_uses_live_connection_instead_of_cli_probe() {
     };
     run_context::apply_workflow_codex_status(&mut dep, Ok(status(AccountStatus::Chatgpt, false)));
     assert!(dependency_ready(&dep));
-    assert_eq!(dep.name, "Workflow ChatGPT");
+    assert_eq!(dep.name, "ChatGPT (reviews)");
     assert_eq!(dep.cli_auth_status, None);
     assert!(dep.hint.is_empty());
 
@@ -49,9 +49,9 @@ fn workflow_dependency_uses_live_connection_instead_of_cli_probe() {
     }
     run_context::apply_workflow_codex_status(&mut dep, Ok(status(AccountStatus::Chatgpt, true)));
     assert!(!dependency_ready(&dep));
-    assert!(dep.hint.contains("Complete Workflow ChatGPT sign-in"));
+    assert!(dep.hint.contains("Complete ChatGPT sign-in"));
 
-    let error = "Workflow ChatGPT connection is in use by another Pipeline process";
+    let error = "The ChatGPT connection for reviews is in use by another Pipeline process";
     run_context::apply_workflow_codex_status(&mut dep, Err(error.into()));
     assert!(!dependency_ready(&dep));
     assert_eq!(dep.hint, error);

@@ -451,7 +451,7 @@ pub(super) fn apply_workflow_codex_status(
 ) {
     use crate::agent_runtime::codex::AccountStatus;
 
-    codex.name = "Workflow ChatGPT".into();
+    codex.name = "ChatGPT (reviews)".into();
     // This account belongs to the managed Workflow connection. Ambient CLI
     // authentication (and Workspace's separate account) cannot establish it.
     codex.cli_auth_status = None;
@@ -468,9 +468,9 @@ pub(super) fn apply_workflow_codex_status(
             );
             codex.version = status.version;
             codex.hint = if !status.unresolved_attempts.is_empty() {
-                "Review the unresolved Workflow ChatGPT attempt in Settings → Connections → OpenAI before another run.".into()
+                "Review the unresolved ChatGPT attempt in Settings → Connections → OpenAI before another run.".into()
             } else if status.login_in_progress {
-                "Complete Workflow ChatGPT sign-in in your browser, or cancel it in Settings → Connections → OpenAI.".into()
+                "Complete ChatGPT sign-in in your browser, or cancel it in Settings → Connections → OpenAI.".into()
             } else if status.account.status != AccountStatus::Chatgpt {
                 "Sign in with a ChatGPT account in Settings → Connections → OpenAI. The legacy Codex CLI keeps its own sign-in.".into()
             } else {

@@ -296,7 +296,7 @@ const depsReport = {
     depsAttention
       ? { name: "Claude CLI", found: true, version: "2.1.14", path: "/usr/local/bin/claude", required: true, hint: "Claude CLI is installed but not signed in. Run `claude auth login` to authenticate.", authenticated: false, cli_auth_status: "signed_out" }
       : { name: "Claude CLI", found: true, version: "2.1.14", path: "/usr/local/bin/claude", required: true, hint: "", authenticated: true, cli_auth_status: "signed_in" },
-    { name: "Workflow ChatGPT", found: true, version: "0.153.4", path: "/usr/local/bin/codex", required: true, hint: "", authenticated: true },
+    { name: "ChatGPT (reviews)", found: true, version: "0.153.4", path: "/usr/local/bin/codex", required: true, hint: "", authenticated: true },
     depsAttention
       ? { name: "Google API", found: true, version: "direct API", path: "", required: false, hint: "API key configured.", authenticated: true }
       : { name: "Google API", found: false, version: "direct API", path: "", required: false, hint: "Add a Google AI API key in Settings → Providers → Google.", authenticated: false },
