@@ -121,8 +121,7 @@ or new synthesized research summary is required.
 The full frontend suite passed (97 files, 716 tests), as did the Rust suite
 (959 tests passed, 10 ignored). Production build, frontend formatting, Rust
 formatting, Clippy with warnings denied, source-size checks, and Git whitespace
-checks passed. The Markdown link check reports only pre-existing references to
-missing temporary logs in `ASTRA_SEP7_BUGREPORT.md`; new documentation links resolve.
+checks passed. New documentation links resolve.
 
 Native regression tests cover project scoping, archive exclusion, exact latest
 conversation selection, accepted-note provenance, Unicode preview bounds,

@@ -117,8 +117,7 @@ Roles stay out of normal conversation and automation-source lists. Existing
 runtime/store/credential ownership remains as described in [Tasks](tasks.md)
 and the [Workspace guide](workbench/README.md).
 
-The broader [design record](self-discovery-design.md) also proposes features
-not yet implemented: user editing of shortlisted briefs, replacement-shortlist
+Not yet implemented: user editing of shortlisted briefs, replacement-shortlist
 feedback, quality presets, automatic dataset/full-text acquisition and a
 cross-field scientific evaluation program.
 

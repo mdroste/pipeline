@@ -1,8 +1,7 @@
 # Workflow Codex App Server migration
 
 Implementation status: default subscription connection, September 7, 2026;
-live and packaged release qualification remains incomplete. This is the Codex
-implementation of [MIGRATE_SDK.md](../MIGRATE_SDK.md). Claude continues to use
+live and packaged release qualification remains incomplete. Claude continues to use
 its existing CLI/API adapters. Existing installations migrate the former
 legacy Codex default to App Server. Legacy CLI remains an explicit advanced
 compatibility option.
@@ -254,8 +253,6 @@ Validation on macOS arm64 with Codex 0.153.4:
 - The first frontend suite run passed 715 tests and timed out in the existing
   large-report search test. That entire 25-test file passed in isolation; a
   subsequent full run passed all 716 frontend tests.
-- The Markdown link checker reports missing historical `/tmp` audit artifacts
-  in `ASTRA_SEP7_BUGREPORT.md`; none concern the new documentation links.
 
 These checks do not qualify authenticated model turns, browser sign-in, or
 packaged/cross-platform operation. The subsequent [shared-account change](chatgpt-account.md) supersedes this

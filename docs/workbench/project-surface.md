@@ -1,6 +1,6 @@
 # Project home, reading, and isolated tasks
 
-This document describes PI-00–PI-03 from `PIPELINE_IMPROVEMENT.md`. Release
+This document describes project-surface items PI-00–PI-03. Release
 claims belong to [release-qualification.md](release-qualification.md); the
 [local evidence record](project-surface-qualification.json) contains observed
 outcomes and measurements, with unqualified cases stated separately.

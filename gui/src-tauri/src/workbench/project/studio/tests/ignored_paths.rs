@@ -1,4 +1,4 @@
-//! Finding 13 (docs/bug-triage-2026-10.md): paths that task capture ignores
+//! October 2026 triage finding 13: paths that task capture ignores
 //! cannot be edited or checkpointed, so acceptance never unlinks them.
 use super::*;
 

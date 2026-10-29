@@ -1,6 +1,6 @@
 # Research desk — NF-01 through NF-06
 
-Implemented September 7, 2026 against the current Workspace architecture. This is the implementation and usage guide for the bounded first slices in [SEP7_ASTRA_NEWFEATURES.md](../../notes/SEP7_ASTRA_NEWFEATURES.md). It supplements [project-surface.md](project-surface.md), [research-studio.md](research-studio.md), and [release-qualification.md](release-qualification.md). It is not a packaged-release qualification record.
+Implemented September 7, 2026 against the current Workspace architecture. This is the implementation and usage guide for their bounded first slices. It supplements [project-surface.md](project-surface.md), [research-studio.md](research-studio.md), and [release-qualification.md](release-qualification.md). It is not a packaged-release qualification record.
 
 ## Find the features
 

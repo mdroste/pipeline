@@ -59,7 +59,7 @@ the first public release was not maintained as a stable release series.
 
 ## 1.1.0 — 2026-10-15
 
-Fixes from the October 2026 pre-release audit (`docs/bug-triage-2026-10.md`):
+Fixes from the October 2026 pre-release audit:
 findings 1–13 held this release; findings 14–44 follow below.
 
 - A conversation message whose send is rejected after dispatch (for example
@@ -162,7 +162,7 @@ never released: a complete set of installers could not be packaged from them.
 
 - Patch rustls and affected frontend test-tool dependency versions. Remaining
   upstream WebdriverIO advisories and release qualification gaps are tracked in
-  [the October 2 audit](ASTRA_PIPELINE_OCT2.md).
+  the October 2 audit.
 
 - Research backups now include app-owned conversation working files in `.pwrx`
   format 2. This build can still restore format-1 backups; older builds cannot

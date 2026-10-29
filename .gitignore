@@ -57,4 +57,6 @@ Thumbs.db
 CLAUDE.md
 AGENTS.md
 /.claude/settings.local.json
-FABLE_SEP30_UIUX_PLAN.md
+
+# Agent-written audits, plans, and progress reports stay on the local machine.
+/reports/

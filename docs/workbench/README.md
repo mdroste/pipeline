@@ -14,9 +14,7 @@ remains a saved dependency graph; code and storage names are unchanged.
 | Recipe                                    | Optional versioned conversation instructions, input requirements, and completion checks; not a scheduler |
 | Review handoff                            | Explicit copy of one immutable Workspace paper revision into the normal Workflow launch preview          |
 
-This page is the current implementation map. The older WB milestone plan is
-retained as historical context in
-[`../../notes/workbench_plan.md`](../../notes/workbench_plan.md). Canonical
+This page is the current implementation map. Canonical
 repository-wide architecture remains in [`../../CLAUDE.md`](../../CLAUDE.md).
 
 ## Product boundary
@@ -92,8 +90,6 @@ they do not change project permissions. Research tools mount on first visit
 and retain unsaved edits when switching destinations; polling stops for hidden
 job, grid, check and execution views. These drafts remain scoped to the current
 project/conversation and do not substitute for saving before leaving it.
-
-See [the redesign plan and qualification record](workspace-ui-plan.md).
 
 ## Agent profiles
 

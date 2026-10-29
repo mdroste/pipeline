@@ -1,6 +1,6 @@
 # Research programs — NF-07 through NF-14
 
-Implemented September 7, 2026 as the bounded first slices in [SEP7_ASTRA_NEWFEATURES.md](../../notes/SEP7_ASTRA_NEWFEATURES.md). These features build on the [research desk](research-desk.md), the [research studio](research-studio.md), and captured execution. This guide describes implementation and development checks, not a packaged-release qualification.
+Implemented September 7, 2026 as bounded first slices. These features build on the [research desk](research-desk.md), the [research studio](research-studio.md), and captured execution. This guide describes implementation and development checks, not a packaged-release qualification.
 
 ## Navigation
 

@@ -113,9 +113,6 @@ serves/copies the PDF resources. Workspace reads live in
 `runs/artifacts.rs`. `file_viewer.rs` contains only the neutral native reveal
 helper. No new model protocol, credential store, scheduler or migration is added.
 
-The historical full-editor exclusion in `notes/workbench_plan.md` is superseded for
-this feature by the user's explicit implementation request.
-
 Verification covers scoped reads, retained-file tampering, the existing
 16-character Workflow digest, academic languages, exact diff application,
 per-file draft restoration/conflicts/concurrent saves, Markdown navigation,

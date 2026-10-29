@@ -123,8 +123,6 @@ On macOS arm64 with Codex 0.153.4:
   stale cancellation IDs/epochs, and private refresh routing outside product
   events. UI tests cover one account panel, account-change updates, cancellation
   after remount, migration choice, active-work errors, and Review recovery.
-- The Markdown link check still reports historical missing `/tmp` audit files
-  in `ASTRA_SEP7_BUGREPORT.md`; no new documentation links are missing.
 
 The shared-account native test can be repeated without a real account or model
 turn from `gui/src-tauri/`:

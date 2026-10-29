@@ -106,8 +106,7 @@ Stata result-export qualification until the required wrapper can be run again.
 
 ## September 20 audit remediation
 
-The [September 20 audit](../../PIPELINE_CODE_AUDIT_ASTRA_SEP20.md#implementation-follow-up--september-20-2026)
-records the scoped fixes and their validation. Registered project roots are checked
+Registered project roots are checked
 again before native dispatch. Existing Windows registrations using pathname-only
 identities require explicit folder re-registration; the new identity uses the
 volume and file index. Transcript reads now use 200-item / 8 MiB payload pages;

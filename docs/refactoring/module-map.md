@@ -3,9 +3,7 @@
 Use this map to find an owner before reading an entire feature. Preserve public
 APIs, IPC command names, stored JSON, provider supervision, and the separate
 product runtimes. This map follows the current checkout, including
-splits after R0–R5; it does not establish release qualification. The
-[R0–R5 implementation record](r0-r5-progress.md) contains evidence for that
-stage; the [full plan](../refactoring-plan.md) tracks the broader work.
+splits after R0–R5; it does not establish release qualification.
 
 ## App, Workspace, and Tasks presentation
 
