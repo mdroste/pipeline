@@ -42,7 +42,7 @@ fn err(e: impl std::fmt::Display) -> WorkbenchError {
     WorkbenchError::storage("Project exchange failed", e)
 }
 fn hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 fn hash_file(path: &Path) -> WorkbenchResult<(String, u64)> {
     let mut file = File::open(path).map_err(err)?;
@@ -57,7 +57,7 @@ fn hash_file(path: &Path) -> WorkbenchResult<(String, u64)> {
         total += read as u64;
         hasher.update(&buffer[..read]);
     }
-    Ok((format!("{:x}", hasher.finalize()), total))
+    Ok((hex::encode(hasher.finalize()), total))
 }
 fn random_id(prefix: &str) -> WorkbenchResult<String> {
     let mut bytes = [0; 16];

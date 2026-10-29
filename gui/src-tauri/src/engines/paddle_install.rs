@@ -339,7 +339,7 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
         }
         let inventory_bytes = std::fs::read(&package_inventory)
             .map_err(|error| format!("Failed to read parser package inventory: {error}"))?;
-        let inventory_sha256 = format!("{:x}", Sha256::digest(&inventory_bytes));
+        let inventory_sha256 = hex::encode(Sha256::digest(&inventory_bytes));
 
         let script = target.join("paddle_parser_sidecar.py");
         std::fs::write(&script, PADDLE_PARSER_SCRIPT)
@@ -416,7 +416,7 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
             "uv": UV_VERSION,
             "lock_sha256": lock_sha256,
             "runtime_lock_sha256": runtime_lock_sha256,
-            "sidecar_sha256": format!("{:x}", Sha256::digest(PADDLE_PARSER_SCRIPT.as_bytes())),
+            "sidecar_sha256": hex::encode(Sha256::digest(PADDLE_PARSER_SCRIPT.as_bytes())),
             "sidecar_contract": 2,
             "packages_sha256": inventory_sha256,
             "layout_model": "PP-DocLayoutV3",

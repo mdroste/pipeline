@@ -87,24 +87,20 @@ enum Frame {
     Other,
 }
 
-fn is_skipped_container(name: &[u8]) -> bool {
+fn is_skipped_container(name: &str) -> bool {
     matches!(
         name,
-        b"w:txbxContent" | b"mc:AlternateContent" | b"w:del" | b"w:moveFrom"
+        "w:txbxContent" | "mc:AlternateContent" | "w:del" | "w:moveFrom"
     )
 }
 
-fn is_math_root(name: &[u8]) -> bool {
-    matches!(name, b"m:oMathPara" | b"m:oMath")
+fn is_math_root(name: &str) -> bool {
+    matches!(name, "m:oMathPara" | "m:oMath")
 }
 
 pub(super) fn numeric_id(element: &BytesStart<'_>) -> Option<u64> {
     let attribute = element.try_get_attribute("w:id").ok().flatten()?;
-    std::str::from_utf8(&attribute.value)
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
+    attribute.value.trim().parse().ok()
 }
 
 /// Decode a `w:t` body, keeping each character's raw byte range. Returns
@@ -212,16 +208,16 @@ impl Scanner<'_> {
         }
         let name = element.name();
         let name = name.as_ref();
-        if name == b"w:body" {
+        if name == "w:body" {
             self.saw_body = true;
         }
         let parent = self.parent();
         if empty {
             if let (Some(Frame::Run(run)), true) = (parent, self.in_paragraph()) {
                 let character = match name {
-                    b"w:tab" | b"w:ptab" => Some('\t'),
-                    b"w:br" | b"w:cr" => Some('\n'),
-                    b"w:noBreakHyphen" => Some('-'),
+                    "w:tab" | "w:ptab" => Some('\t'),
+                    "w:br" | "w:cr" => Some('\n'),
+                    "w:noBreakHyphen" => Some('-'),
                     _ => None,
                 };
                 if let Some(character) = character.filter(|_| self.math_depth == 0) {
@@ -232,7 +228,7 @@ impl Scanner<'_> {
                     };
                     self.push_char(character, source);
                 }
-                if name == b"w:rPr" {
+                if name == "w:rPr" {
                     self.document.runs[run].properties = Some((before, after));
                 }
             }
@@ -248,26 +244,26 @@ impl Scanner<'_> {
         } else if is_math_root(name) {
             self.math_depth += 1;
             Frame::Math
-        } else if name == b"w:p" {
+        } else if name == "w:p" {
             Frame::Paragraph { first_char: None }
-        } else if name == b"w:r" && self.math_depth == 0 {
+        } else if name == "w:r" && self.math_depth == 0 {
             self.document.runs.push(RunSpan {
                 start: before,
                 end: before,
                 ..RunSpan::default()
             });
             Frame::Run(self.document.runs.len() - 1)
-        } else if name == b"w:rPr" && matches!(parent, Some(Frame::Run(_))) {
+        } else if name == "w:rPr" && matches!(parent, Some(Frame::Run(_))) {
             let Some(Frame::Run(run)) = parent else {
                 unreachable!()
             };
             Frame::RunProperties(run)
-        } else if matches!(name, b"w:t" | b"m:t") {
+        } else if matches!(name, "w:t" | "m:t") {
             let preserves_space = element
                 .try_get_attribute("xml:space")
                 .ok()
                 .flatten()
-                .is_some_and(|value| value.value.as_ref() == b"preserve");
+                .is_some_and(|value| value.value.as_ref() == "preserve");
             self.document.texts.push(TextSpan {
                 tag_start: before,
                 tag_end: after,
@@ -398,13 +394,11 @@ pub(super) fn scan_document(xml: &str) -> Result<ScannedDocument, String> {
         match event {
             Event::Start(element) | Event::Empty(element) if !saw_root => {
                 saw_root = true;
-                if element.name().as_ref() != b"w:document" {
+                if element.name().as_ref() != "w:document" {
                     return Err("The Word document's main part has an unexpected root".into());
                 }
                 let namespace = element.try_get_attribute("xmlns:w").ok().flatten();
-                if namespace.as_ref().map(|value| value.value.as_ref())
-                    != Some(WORD_MAIN_NS.as_bytes())
-                {
+                if namespace.as_ref().map(|value| value.value.as_ref()) != Some(WORD_MAIN_NS) {
                     return Err("This Word file uses Strict Open XML or an unusual namespace layout, which Pipeline cannot annotate yet. Save it from Word as a standard .docx and run the Review again.".into());
                 }
                 scanner.stack.push(Frame::Other);

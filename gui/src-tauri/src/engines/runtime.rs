@@ -270,7 +270,7 @@ pub(super) fn verified_parser_runtime_at(root: &Path) -> Option<VerifiedParserRu
         return None;
     }
     let package_bytes = std::fs::read(&packages).ok()?;
-    let package_digest = format!("{:x}", Sha256::digest(&package_bytes));
+    let package_digest = hex::encode(Sha256::digest(&package_bytes));
     if manifest
         .get("packages_sha256")
         .and_then(serde_json::Value::as_str)
@@ -319,8 +319,8 @@ pub(super) fn verified_parser_sidecar_at(
     // The sidecar is code this app executes, so unlike the provisioned
     // runtime it must match this binary's bundled copy exactly.
     let script_bytes = std::fs::read(&script).ok()?;
-    let script_digest = format!("{:x}", Sha256::digest(&script_bytes));
-    let expected_script_digest = format!("{:x}", Sha256::digest(PADDLE_PARSER_SCRIPT.as_bytes()));
+    let script_digest = hex::encode(Sha256::digest(&script_bytes));
+    let expected_script_digest = hex::encode(Sha256::digest(PADDLE_PARSER_SCRIPT.as_bytes()));
     if script_digest != expected_script_digest {
         return None;
     }
@@ -404,10 +404,10 @@ pub(super) fn refresh_paddle_parser_sidecar_locked(root: &Path) -> Result<Sideca
     let version_root = root.join("versions").join(PADDLE_PARSER_RELEASE);
     let script = version_root.join("paddle_parser_sidecar.py");
     let manifest_path = version_root.join("install.json");
-    let expected_digest = format!("{:x}", Sha256::digest(PADDLE_PARSER_SCRIPT.as_bytes()));
+    let expected_digest = hex::encode(Sha256::digest(PADDLE_PARSER_SCRIPT.as_bytes()));
     let installed_digest = std::fs::read(&script)
         .ok()
-        .map(|bytes| format!("{:x}", Sha256::digest(&bytes)));
+        .map(|bytes| hex::encode(Sha256::digest(&bytes)));
     let mut manifest: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&manifest_path)
             .map_err(|error| format!("Failed to read parser manifest: {error}"))?,

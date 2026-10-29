@@ -53,7 +53,7 @@ pub(super) fn settings_for_snapshot_fingerprint(
             secret_hash.update(label.as_bytes());
             secret_hash.update(b"\0");
             secret_hash.update(secret.as_bytes());
-            *secret = format!("<digest:{:x}>", secret_hash.finalize());
+            *secret = format!("<digest:{}>", hex::encode(secret_hash.finalize()));
         }
     }
     fingerprint_settings
@@ -90,7 +90,7 @@ pub(super) fn stable_snapshot_fingerprint<T: serde::Serialize>(
     let mut canonical = serde_json::to_value(value)?;
     sort_object_keys(&mut canonical);
     let encoded = serde_json::to_vec(&canonical)?;
-    let digest = format!("{:x}", Sha256::digest(encoded));
+    let digest = hex::encode(Sha256::digest(encoded));
     Ok(digest[..16].to_string())
 }
 

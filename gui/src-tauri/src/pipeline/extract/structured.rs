@@ -497,7 +497,7 @@ pub(super) const EXTRACTION_CACHE_SCHEMA: u32 = 3;
 
 pub(super) fn cache_fingerprint(value: &serde_json::Value) -> String {
     let bytes = serde_json::to_vec(value).unwrap_or_default();
-    format!("{:x}", Sha256::digest(bytes))[..16].to_string()
+    hex::encode(Sha256::digest(bytes))[..16].to_string()
 }
 
 pub(super) fn atomic_write_cache(path: &Path, content: &[u8]) -> Result<(), String> {

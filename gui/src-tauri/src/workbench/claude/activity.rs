@@ -27,7 +27,11 @@ impl Activity {
             let Some(native_id) = native_id.filter(|id| !id.is_empty() && id.len() <= 512) else {
                 continue;
             };
-            let item_id = format!("{}-tool-{:x}", turn.id, Sha256::digest(native_id));
+            let item_id = format!(
+                "{}-tool-{}",
+                turn.id,
+                hex::encode(Sha256::digest(native_id))
+            );
             let item = if completed {
                 let Some(mut item) = self.calls.remove(native_id) else {
                     continue;

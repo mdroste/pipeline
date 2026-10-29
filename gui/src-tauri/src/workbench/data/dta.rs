@@ -237,7 +237,7 @@ impl<R: Read> Input<R> {
         if self.pos != self.len || !matches!(self.inner.read(&mut probe), Ok(0)) {
             return Err(bad("it has unexpected bytes after its last section"));
         }
-        Ok(format!("{:x}", self.hasher.finalize()))
+        Ok(hex::encode(self.hasher.finalize()))
     }
 }
 

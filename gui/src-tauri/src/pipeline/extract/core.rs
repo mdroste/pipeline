@@ -326,11 +326,11 @@ pub(super) fn compute_hash(path: &Path) -> Result<String, String> {
         }
         hasher.update(&chunk[..count]);
     }
-    Ok(format!("{:x}", hasher.finalize())[..16].to_string())
+    Ok(hex::encode(hasher.finalize())[..16].to_string())
 }
 
 pub(super) fn content_hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))[..16].to_string()
+    hex::encode(Sha256::digest(bytes))[..16].to_string()
 }
 
 /// PDFs get their own staging budget and message — the LaTeX source-closure

@@ -79,7 +79,7 @@ fn zip_parts(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
             let mut entry = archive.by_index(index).unwrap();
             let mut content = Vec::new();
             entry.read_to_end(&mut content).unwrap();
-            (entry.name().to_string(), content)
+            (entry.name().unwrap().into_owned(), content)
         })
         .collect()
 }

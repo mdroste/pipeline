@@ -87,7 +87,7 @@ fn read_bounded(path: &Path, limit: u64, label: &str) -> Result<Vec<u8>, String>
 
 fn short_hash(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest(bytes))[..16].to_string()
+    hex::encode(Sha256::digest(bytes))[..16].to_string()
 }
 
 fn file_name(path: &str) -> String {

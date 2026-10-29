@@ -204,7 +204,7 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
         text.push_str(&format!("\n> {note}\n"));
         quality_notes.push(note);
     }
-    let hash = format!("{:x}", hasher.finalize())[..16].to_string();
+    let hash = hex::encode(hasher.finalize())[..16].to_string();
     Ok(ExtractionResult {
         text,
         method: "folder".to_string(),
@@ -226,7 +226,7 @@ pub async fn ingest_folder_async(root: &str) -> Result<ExtractionResult, String>
 /// Context for a workflow that takes no input at all.
 pub fn ingest_none() -> ExtractionResult {
     let stamp = chrono::Local::now().to_rfc3339();
-    let hash = format!("{:x}", Sha256::digest(stamp.as_bytes()))[..16].to_string();
+    let hash = hex::encode(Sha256::digest(stamp.as_bytes()))[..16].to_string();
     ExtractionResult {
         text: "(This workflow runs from its step prompts alone; there is no input document.)"
             .to_string(),

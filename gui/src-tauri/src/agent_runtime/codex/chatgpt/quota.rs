@@ -41,7 +41,10 @@ pub(super) async fn read(owner: &ChatgptAccount) -> Result<RateLimits, String> {
 }
 
 fn cache_path(root: &std::path::Path, identity: &str) -> std::path::PathBuf {
-    root.join(format!("usage-{:x}.json", Sha256::digest(identity)))
+    root.join(format!(
+        "usage-{}.json",
+        hex::encode(Sha256::digest(identity))
+    ))
 }
 fn cached(path: &std::path::Path) -> Option<RateLimits> {
     std::fs::symlink_metadata(path)

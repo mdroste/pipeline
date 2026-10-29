@@ -12,10 +12,9 @@ pub fn id() -> String {
 }
 pub fn hash(value: &impl Serialize) -> Result<String> {
     use sha2::{Digest, Sha256};
-    Ok(format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(value).map_err(err)?)
-    ))
+    Ok(hex::encode(Sha256::digest(
+        serde_json::to_vec(value).map_err(err)?,
+    )))
 }
 pub fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
@@ -74,7 +73,8 @@ impl Store {
             if version == 1 {
                 let backup = root.join("tasks-before-missions-v2.sqlite3");
                 if !backup.exists() {
-                    c.backup(rusqlite::MAIN_DB, &backup, None).map_err(err)?;
+                    c.backup(rusqlite::MAIN_DB, &backup, rusqlite::backup::NO_PROGRESS)
+                        .map_err(err)?;
                 }
             }
             c.execute_batch(include_str!("missions/schema.sql"))
@@ -84,7 +84,8 @@ impl Store {
             if version > 0 {
                 let backup = root.join("tasks-before-discovery-v3.sqlite3");
                 if !backup.exists() {
-                    c.backup(rusqlite::MAIN_DB, &backup, None).map_err(err)?;
+                    c.backup(rusqlite::MAIN_DB, &backup, rusqlite::backup::NO_PROGRESS)
+                        .map_err(err)?;
                 }
             }
             c.execute_batch(include_str!("discovery/schema.sql"))

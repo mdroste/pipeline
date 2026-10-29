@@ -52,7 +52,7 @@ fn rewrite_entries(path: &Path, mut rewrite: impl FnMut(&str, Vec<u8>) -> Vec<u8
         let mut entry = archive.by_index(i).unwrap();
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes).unwrap();
-        entries.push((entry.name().to_string(), bytes));
+        entries.push((entry.name().unwrap().into_owned(), bytes));
     }
     drop(archive);
     let mut zip = zip::ZipWriter::new(File::create(path).unwrap());
@@ -71,6 +71,36 @@ fn replace_entry(path: &Path, target: &str, replacement: &[u8]) {
         }
     });
 }
+
+#[test]
+fn inspection_rejects_duplicate_names_after_legacy_zip_decoding() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("duplicate.pwrx");
+    let mut zip = zip::ZipWriter::new(File::create(&path).unwrap());
+    for name in ["cafe.txt", "café.txt"] {
+        zip.start_file(name, SimpleFileOptions::default()).unwrap();
+    }
+    zip.finish().unwrap();
+    // The local and central headers use CP437 for the first name, UTF-8 for
+    // the second. Both decode to the same path and must not bypass deduplication.
+    let mut bytes = fs::read(&path).unwrap();
+    let offsets: Vec<_> = bytes
+        .windows(8)
+        .enumerate()
+        .filter_map(|(offset, name)| (name == b"cafe.txt").then_some(offset))
+        .collect();
+    assert_eq!(offsets.len(), 2);
+    for offset in offsets {
+        bytes[offset + 3] = 0x82;
+    }
+    fs::write(&path, bytes).unwrap();
+    let error = inspect_archive(ExportArchiveRequest {
+        path: path.to_string_lossy().into_owned(),
+    })
+    .unwrap_err();
+    assert!(error.message.contains("duplicate"), "{}", error.message);
+}
+
 /// Patch the uncompressed size both headers declare for `name`, leaving the
 /// deflate stream (and its CRC) intact: the shape of a decompression bomb.
 fn declare_uncompressed_size(path: &Path, name: &str, size: u32) {
@@ -115,15 +145,29 @@ fn lying_entry_sizes_are_rejected_before_the_stream_is_expanded() {
         path: path.to_string_lossy().into(),
     };
     let error = inspect_archive(request).unwrap_err();
-    assert!(error.message.contains("exceeds 4 MiB"), "{}", error.message);
+    // The ZIP reader rejects the false header before the app's 4 MiB limit.
+    assert!(
+        error
+            .message
+            .contains("larger than its declared uncompressed size"),
+        "{}",
+        error.message
+    );
     let empty = tempfile::tempdir().unwrap();
     let store = Store::open_at(empty.path()).unwrap();
     let error = import(&store, &path).unwrap_err();
     assert!(
-        error.message.contains("size does not match"),
+        error
+            .message
+            .contains("larger than its declared uncompressed size"),
         "{}",
         error.message
     );
+    let mut archive = zip::ZipArchive::new(File::open(&path).unwrap()).unwrap();
+    let mut entry = archive.by_name("manifest.json").unwrap();
+    let mut extracted = tempfile::NamedTempFile::new().unwrap();
+    assert!(super::copy_entry(&mut entry, extracted.as_file_mut()).is_err());
+    assert!(extracted.as_file().metadata().unwrap().len() <= 1024);
 }
 #[test]
 fn restore_rejects_blob_references_that_traverse_out_of_the_store() {

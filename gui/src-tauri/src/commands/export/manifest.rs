@@ -28,7 +28,7 @@ struct ExportManifest {
 
 fn full_sha256(bytes: &[u8]) -> String {
     use sha2::{Digest as _, Sha256};
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 pub(in crate::commands) fn enumerate_export_files(
@@ -86,7 +86,7 @@ pub(in crate::commands) fn enumerate_export_files(
             Ok(ExportFileRecord {
                 path: relative,
                 bytes: byte_count,
-                sha256: format!("{:x}", digest.finalize()),
+                sha256: hex::encode(digest.finalize()),
             })
         })
         .collect()

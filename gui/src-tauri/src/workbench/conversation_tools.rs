@@ -145,8 +145,8 @@ fn prepare(store: &Store, input: &Value) -> WorkbenchResult<Admission> {
         .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
         .map_err(err)?;
     let receipt = format!(
-        "conversation-{:x}",
-        Sha256::digest(format!("{binding}\0{turn}\0{call}"))
+        "conversation-{}",
+        hex::encode(Sha256::digest(format!("{binding}\0{turn}\0{call}")))
     );
     let previous: Option<(String, String, Option<String>)> = transaction.query_row("SELECT tool_name,arguments_json,result_json FROM conversation_tool_receipts WHERE id=?1",[&receipt],|r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(err)?;
     if let Some((old_tool, old_args, result)) = previous {

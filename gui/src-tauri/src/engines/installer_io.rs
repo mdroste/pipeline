@@ -256,7 +256,7 @@ pub(super) async fn download_verified(
     output
         .sync_all()
         .map_err(|error| format!("Failed to sync {label}: {error}"))?;
-    let actual = format!("{:x}", hasher.finalize());
+    let actual = hex::encode(hasher.finalize());
     if actual != expected_sha256 {
         return Err(format!(
             "{label} checksum mismatch (expected {expected_sha256}, got {actual}). \
@@ -657,7 +657,14 @@ pub(super) fn unpack_uv_archive(
             let mut entry = archive
                 .by_index(index)
                 .map_err(|error| format!("Invalid uv zip entry: {error}"))?;
-            if entry.name().replace('\\', "/").rsplit('/').next() != Some("uv.exe") {
+            if entry
+                .name()
+                .map_err(|error| format!("Invalid uv zip entry name: {error}"))?
+                .replace('\\', "/")
+                .rsplit('/')
+                .next()
+                != Some("uv.exe")
+            {
                 continue;
             }
             if entry.size() > MAX_UV_EXTRACTED_BYTES {
@@ -761,7 +768,7 @@ pub(super) fn sha256_regular_file(path: &Path, max_bytes: u64) -> Result<String,
         }
         hasher.update(&chunk[..count]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex::encode(hasher.finalize()))
 }
 
 pub(super) fn managed_path() -> std::ffi::OsString {

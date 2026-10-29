@@ -51,7 +51,7 @@ pub(in crate::pipeline_config) fn matches_prior_stock_full_review(
 
 pub(in crate::pipeline_config) fn prompt_digest(prompt: &str) -> String {
     use sha2::{Digest as _, Sha256};
-    format!("{:x}", Sha256::digest(prompt.as_bytes()))
+    hex::encode(Sha256::digest(prompt.as_bytes()))
 }
 
 pub(in crate::pipeline_config) fn migrate_shipped_prompt_defaults(

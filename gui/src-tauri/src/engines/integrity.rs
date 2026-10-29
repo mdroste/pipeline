@@ -140,7 +140,7 @@ pub(super) fn collect_integrity_entries(
                 path: relative,
                 kind: IntegrityEntryKind::Symlink,
                 size: bytes.len() as u64,
-                sha256: format!("{:x}", Sha256::digest(bytes)),
+                sha256: hex::encode(Sha256::digest(bytes)),
                 permissions,
             });
         } else if metadata.is_file() {
@@ -238,7 +238,7 @@ pub(super) fn write_install_integrity(root: &Path, scopes: &[&str]) -> Result<St
     }
     std::fs::write(root.join("integrity.json"), &bytes)
         .map_err(|error| format!("Failed to write runtime integrity manifest: {error}"))?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Ok(hex::encode(Sha256::digest(bytes)))
 }
 
 pub(super) fn metadata_time_nanos(value: std::io::Result<std::time::SystemTime>) -> u128 {
@@ -298,7 +298,7 @@ pub(super) fn integrity_metadata_digest(
             digest.update(info.nFileIndexLow.to_le_bytes());
         }
     }
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(hex::encode(digest.finalize()))
 }
 
 pub(super) fn verify_install_integrity(
@@ -318,7 +318,7 @@ pub(super) fn verify_install_integrity(
     let bytes = std::fs::read(&manifest_path)
         .map_err(|error| format!("Failed to read runtime integrity manifest: {error}"))?;
     if bytes.len() as u64 > MAX_INTEGRITY_MANIFEST_BYTES
-        || format!("{:x}", Sha256::digest(&bytes)) != expected_manifest_sha256
+        || hex::encode(Sha256::digest(&bytes)) != expected_manifest_sha256
     {
         return Err("Runtime integrity manifest does not match install.json".to_string());
     }
@@ -396,7 +396,7 @@ pub(super) fn verify_install_integrity(
                 sha256_regular_file(&path, MAX_INTEGRITY_FILE_BYTES)?
             }
             IntegrityEntryKind::Symlink if metadata.file_type().is_symlink() => {
-                format!("{:x}", Sha256::digest(symlink_target_bytes(&path)?))
+                hex::encode(Sha256::digest(symlink_target_bytes(&path)?))
             }
             _ => {
                 return Err(format!(

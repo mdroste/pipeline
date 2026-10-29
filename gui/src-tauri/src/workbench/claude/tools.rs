@@ -38,7 +38,10 @@ pub(super) async fn message(
             let turn_id = turn.id.clone();
             // MCP request IDs are untrusted and not suitable database IDs.
             use sha2::{Digest, Sha256};
-            let call_id = format!("claude-{:x}", Sha256::digest(format!("{turn_id}:{}", id)));
+            let call_id = format!(
+                "claude-{}",
+                hex::encode(Sha256::digest(format!("{turn_id}:{}", id)))
+            );
             let params = json!({"threadId":thread,"turnId":turn_id,"callId":call_id,"tool":name,"arguments":input});
             let response = if super::super::conversation_tools::owns(&name) {
                 super::super::conversation_tools::handle(params).await

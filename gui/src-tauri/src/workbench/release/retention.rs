@@ -404,7 +404,7 @@ pub fn prune_storage(store: &Store, mut request: PruneRequest) -> WorkbenchResul
     for entry in &entries {
         fingerprint_tree(Path::new(&entry.path), &mut digest, &mut budget)?;
     }
-    let preview_token = format!("{:x}", digest.finalize());
+    let preview_token = hex::encode(digest.finalize());
     if !request.apply {
         return Ok(PrunePlan {
             entries,

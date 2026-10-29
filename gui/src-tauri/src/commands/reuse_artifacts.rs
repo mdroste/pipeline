@@ -129,7 +129,7 @@ fn source_fingerprint(root: &Path) -> Result<String, String> {
             hash.update(bytes);
         }
     }
-    Ok(format!("{:x}", hash.finalize()))
+    Ok(hex::encode(hash.finalize()))
 }
 
 pub(super) fn retain_source(

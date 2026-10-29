@@ -225,7 +225,7 @@ fn reproducibility_hash(
         "products": products,
     });
     let bytes = serde_json::to_vec(&payload).unwrap_or_default();
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 
 #[cfg(test)]

@@ -88,17 +88,14 @@ pub(super) fn account_key(status: &Value) -> Option<String> {
     if user.is_empty() {
         return None;
     }
-    Some(format!(
-        "{:x}",
-        Sha256::digest(format!(
-            "{}\0{}",
-            user,
-            status["orgId"]
-                .as_str()
-                .or_else(|| status["organizationId"].as_str())
-                .unwrap_or_default()
-        ))
-    ))
+    Some(hex::encode(Sha256::digest(format!(
+        "{}\0{}",
+        user,
+        status["orgId"]
+            .as_str()
+            .or_else(|| status["organizationId"].as_str())
+            .unwrap_or_default()
+    ))))
 }
 
 fn path(key: &str) -> Option<std::path::PathBuf> {

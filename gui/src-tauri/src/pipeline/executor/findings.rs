@@ -54,7 +54,7 @@ pub(super) fn normalized_finding_hash(value: &serde_json::Value) -> Result<Strin
     sort(&mut normalized);
     let bytes = serde_json::to_vec(&normalized)
         .map_err(|error| format!("could not hash finding: {error}"))?;
-    Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+    Ok(format!("sha256:{}", hex::encode(Sha256::digest(bytes))))
 }
 
 pub(super) fn finding_lineage(text: &str) -> Option<Vec<PreservedFinding>> {

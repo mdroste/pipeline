@@ -131,7 +131,7 @@ fn export_closes_dependencies_and_excludes_private_state() {
     assert_eq!(report.object_count, 4);
     let mut archive = zip::ZipArchive::new(File::open(&path).unwrap()).unwrap();
     let names: Vec<String> = (0..archive.len())
-        .map(|i| archive.by_index(i).unwrap().name().to_string())
+        .map(|i| archive.by_index(i).unwrap().name().unwrap().into_owned())
         .collect();
     assert!(names.iter().any(|n| n == "README.md"));
     assert!(names
@@ -328,7 +328,7 @@ fn corrupt_and_foreign_packages_are_rejected() {
         let mut zip = zip::ZipWriter::new(File::create(&tampered).unwrap());
         for i in 0..archive.len() {
             let mut entry = archive.by_index(i).unwrap();
-            let name = entry.name().to_string();
+            let name = entry.name().unwrap().into_owned();
             let mut bytes = Vec::new();
             entry.read_to_end(&mut bytes).unwrap();
             if name.starts_with("blobs/") {

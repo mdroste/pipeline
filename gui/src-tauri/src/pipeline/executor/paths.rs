@@ -36,7 +36,7 @@ pub(crate) fn step_slug(step_key: &str) -> String {
     } else {
         readable
     };
-    let digest = format!("{:x}", Sha256::digest(step_key.as_bytes()));
+    let digest = hex::encode(Sha256::digest(step_key.as_bytes()));
     format!("{readable}--{}", &digest[..12])
 }
 

@@ -81,7 +81,7 @@ mod tests {
     fn sha256(bytes: &[u8]) -> String {
         let mut digest = Sha256::new();
         digest.update(bytes);
-        format!("{:x}", digest.finalize())
+        hex::encode(digest.finalize())
     }
 
     #[test]

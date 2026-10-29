@@ -219,7 +219,7 @@ fn catalog_credential_fingerprint(provider: &str, transport: &str, settings: &Se
     digest.update(transport.as_bytes());
     digest.update(b"\0");
     digest.update(credential.as_bytes());
-    format!("{:x}", digest.finalize())
+    hex::encode(digest.finalize())
 }
 
 fn cache_matches_context(
@@ -263,7 +263,7 @@ fn bundled_policy() -> Policy {
 
 fn bundled_policy_fingerprint() -> String {
     use sha2::{Digest as _, Sha256};
-    format!("{:x}", Sha256::digest(BUNDLED_POLICY.as_bytes()))
+    hex::encode(Sha256::digest(BUNDLED_POLICY.as_bytes()))
 }
 
 async fn response_bytes_limited(

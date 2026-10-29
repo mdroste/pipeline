@@ -42,7 +42,7 @@ pub(super) struct LocatedQuote {
 
 fn attribute_f32(element: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<f32> {
     let value = element.try_get_attribute(name).ok().flatten()?;
-    std::str::from_utf8(&value.value).ok()?.trim().parse().ok()
+    value.value.trim().parse().ok()
 }
 
 /// Parse `pdftotext -bbox-layout` XHTML. `first_page` is the page number of
@@ -61,7 +61,7 @@ pub fn parse_bbox_layout(xhtml: &str, first_page: u32) -> Result<Vec<PageWords>,
         let after = reader.buffer_position() as usize;
         match event {
             Event::Start(element) => match element.local_name().as_ref() {
-                b"page" => {
+                "page" => {
                     let number = first_page + pages.len() as u32;
                     pages.push(PageWords {
                         number,
@@ -69,8 +69,8 @@ pub fn parse_bbox_layout(xhtml: &str, first_page: u32) -> Result<Vec<PageWords>,
                     });
                     line = 0;
                 }
-                b"line" => line += 1,
-                b"word" => {
+                "line" => line += 1,
+                "word" => {
                     let box_value = |name| attribute_f32(&element, name).unwrap_or(0.0);
                     word = Some((
                         Word {
@@ -86,7 +86,7 @@ pub fn parse_bbox_layout(xhtml: &str, first_page: u32) -> Result<Vec<PageWords>,
                 }
                 _ => {}
             },
-            Event::End(element) if element.local_name().as_ref() == b"word" => {
+            Event::End(element) if element.local_name().as_ref() == "word" => {
                 if let (Some((mut current, content_start)), Some(page)) =
                     (word.take(), pages.last_mut())
                 {

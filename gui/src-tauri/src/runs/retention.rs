@@ -94,7 +94,7 @@ fn retention_preview_token(
     }
     digest.update(remaining_count.to_le_bytes());
     digest.update(remaining_bytes.to_le_bytes());
-    format!("{:x}", digest.finalize())
+    hex::encode(digest.finalize())
 }
 
 pub(super) fn retention_plan_from_state(

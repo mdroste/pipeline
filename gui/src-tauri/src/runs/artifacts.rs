@@ -146,7 +146,7 @@ pub fn read_pdf_artifact_bytes(run_id: &str, rel_path: &str) -> Result<String, S
 
 fn verify_pdf_identity(bytes: &[u8], identity: &str) -> Result<(), String> {
     use sha2::{Digest, Sha256};
-    let digest = format!("{:x}", Sha256::digest(bytes));
+    let digest = hex::encode(Sha256::digest(bytes));
     let expected = match identity.len() {
         16 => &digest[..16],
         64 => &digest,

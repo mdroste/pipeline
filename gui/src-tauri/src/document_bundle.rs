@@ -206,7 +206,7 @@ fn source_kind(extraction: &ExtractionResult) -> String {
 
 fn stable_suffix(value: &str) -> String {
     let digest = Sha256::digest(value.as_bytes());
-    format!("{digest:x}")[..12].to_string()
+    hex::encode(digest)[..12].to_string()
 }
 
 fn mime_type(path: &Path) -> &'static str {

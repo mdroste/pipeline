@@ -85,7 +85,7 @@ fn safe_component(value: &str) -> String {
     } else {
         readable
     };
-    let digest = format!("{:x}", Sha256::digest(value.as_bytes()));
+    let digest = hex::encode(Sha256::digest(value.as_bytes()));
     format!("{readable}--{}", &digest[..12])
 }
 

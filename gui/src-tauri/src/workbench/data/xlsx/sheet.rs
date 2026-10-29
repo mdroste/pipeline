@@ -311,8 +311,8 @@ pub(super) fn worksheet(
             Event::Start(e) | Event::Empty(e) => {
                 let open = matches!(event, Event::Start(_));
                 match e.local_name().as_ref() {
-                    b"row" => {
-                        row = match attr(e, b"r")? {
+                    "row" => {
+                        row = match attr(e, "r")? {
                             Some(r) => r
                                 .parse()
                                 .map_err(|_| bad(format!("row number {r} is invalid")))?,
@@ -324,8 +324,8 @@ pub(super) fn worksheet(
                             sheet.row(row, std::mem::take(&mut cells))?;
                         }
                     }
-                    b"c" => {
-                        let col = match attr(e, b"r")? {
+                    "c" => {
+                        let col = match attr(e, "r")? {
                             Some(r) => reference_column(&r)?,
                             None => next_col,
                         };
@@ -335,8 +335,8 @@ pub(super) fn worksheet(
                         next_col = col + 1;
                         let state = CellState {
                             col,
-                            kind: attr(e, b"t")?,
-                            style: attr(e, b"s")?.and_then(|s| s.parse().ok()).unwrap_or(0),
+                            kind: attr(e, "t")?,
+                            style: attr(e, "s")?.and_then(|s| s.parse().ok()).unwrap_or(0),
                             ..CellState::default()
                         };
                         if open {
@@ -345,26 +345,26 @@ pub(super) fn worksheet(
                             cells.push((col, Value::Empty));
                         }
                     }
-                    b"v" => {
+                    "v" => {
                         if let Some(c) = cell.as_mut() {
                             c.has_value = true;
                             in_value = open;
                         }
                     }
-                    b"f" => {
+                    "f" => {
                         if let Some(c) = cell.as_mut() {
                             c.formula = true;
                         }
                     }
-                    b"is" => in_inline = open,
-                    b"rPh" => phonetic = open,
-                    b"t" => in_t = open && in_inline && !phonetic,
+                    "is" => in_inline = open,
+                    "rPh" => phonetic = open,
+                    "t" => in_t = open && in_inline && !phonetic,
                     _ => {}
                 }
             }
             Event::End(e) => match e.local_name().as_ref() {
-                b"row" => sheet.row(row, std::mem::take(&mut cells))?,
-                b"c" => {
+                "row" => sheet.row(row, std::mem::take(&mut cells))?,
+                "c" => {
                     if let Some(c) = cell.take() {
                         let at = format!("{}{row}", column_letters(c.col));
                         sheet.formulas += usize::from(c.formula);
@@ -373,10 +373,10 @@ pub(super) fn worksheet(
                     }
                     (in_value, in_inline, in_t, phonetic) = (false, false, false, false);
                 }
-                b"v" => in_value = false,
-                b"is" => in_inline = false,
-                b"rPh" => phonetic = false,
-                b"t" => in_t = false,
+                "v" => in_value = false,
+                "is" => in_inline = false,
+                "rPh" => phonetic = false,
+                "t" => in_t = false,
                 _ => {}
             },
             Event::Text(_) | Event::CData(_) | Event::GeneralRef(_) if in_value || in_t => {

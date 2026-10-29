@@ -70,7 +70,7 @@ impl PreparedContext {
             "\n\nA task-specific instruction follows separately. Answer that task using this shared context.",
         )?;
 
-        let digest = format!("{:x}", Sha256::digest(content.as_bytes()));
+        let digest = hex::encode(Sha256::digest(content.as_bytes()));
         let workspace = tempfile::Builder::new()
             .prefix("pipeline_shared_context_")
             .tempdir()
@@ -119,7 +119,7 @@ impl PreparedContext {
             digest.update([0]);
             digest.update(part.as_bytes());
         }
-        let digest = format!("{:x}", digest.finalize());
+        let digest = hex::encode(digest.finalize());
         format!("{provider}:{}", &digest[..32])
     }
 

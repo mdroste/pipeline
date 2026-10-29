@@ -47,7 +47,7 @@ fn hash_reader(mut reader: impl Read) -> WorkbenchResult<String> {
         }
         digest.update(&buffer[..read]);
     }
-    Ok(format!("{:x}", digest.finalize()))
+    Ok(hex::encode(digest.finalize()))
 }
 
 pub(super) fn safe_archive_name(name: &str) -> bool {
@@ -59,9 +59,9 @@ pub(super) fn safe_archive_name(name: &str) -> bool {
             .all(|component| matches!(component, Component::Normal(_)))
 }
 
-/// Extract one entry. Deflate streams are bounded only by their compressed
-/// size, so cap the copy at the declared size (+1 so an honest entry still
-/// reaches EOF and its CRC check) and refuse entries whose header lies.
+/// Keep an application-owned copy bound alongside the ZIP reader's size checks.
+/// The extra byte lets an honest entry reach EOF and its CRC check, while
+/// still refusing a stream whose length differs from its declared size.
 /// Shared by .pwrx restore and .pwex import as archive mechanics only.
 pub(super) fn copy_entry(
     entry: &mut zip::read::ZipFile<'_, File>,

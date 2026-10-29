@@ -6,7 +6,7 @@ fn fingerprint_discovery_value(domain: &[u8], value: &str) -> String {
     digest.update(domain);
     digest.update(b"\0");
     digest.update(value.as_bytes());
-    format!("{:x}", digest.finalize())
+    hex::encode(digest.finalize())
 }
 
 fn normalized_discovery_endpoint(provider: &str, transport: &str, settings: &Settings) -> String {

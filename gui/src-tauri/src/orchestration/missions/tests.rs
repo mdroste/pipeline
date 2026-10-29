@@ -545,7 +545,35 @@ fn mission_migration_preserves_existing_tasks_and_keeps_a_v1_backup() {
         backup
             .query_row(
                 "SELECT COUNT(*) FROM runs WHERE id=?1",
-                [ordinary.id],
+                [&ordinary.id],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        1
+    );
+    let discovery_backup =
+        rusqlite::Connection::open(s.root.join("tasks-before-discovery-v3.sqlite3")).unwrap();
+    assert_eq!(
+        discovery_backup
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        discovery_backup
+            .query_row(
+                "SELECT name FROM sqlite_master WHERE name='missions'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+        "missions"
+    );
+    assert_eq!(
+        discovery_backup
+            .query_row(
+                "SELECT COUNT(*) FROM runs WHERE id=?1",
+                [&ordinary.id],
                 |r| r.get::<_, i64>(0)
             )
             .unwrap(),

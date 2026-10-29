@@ -77,7 +77,7 @@ fn part(archive: &mut Archive, name: &str, limit: u64) -> WorkbenchResult<Option
     .map_err(|_| bad(format!("{name} is unreadable or exceeds its limit")))?;
     Ok(Some(data))
 }
-fn attr(e: &BytesStart, name: &[u8]) -> WorkbenchResult<Option<String>> {
+fn attr(e: &BytesStart, name: &str) -> WorkbenchResult<Option<String>> {
     for a in e.attributes() {
         let a = a.map_err(|_| bad("an XML attribute is malformed"))?;
         if a.key.local_name().as_ref() == name {
@@ -93,14 +93,14 @@ fn attr(e: &BytesStart, name: &[u8]) -> WorkbenchResult<Option<String>> {
 fn push_text(out: &mut String, event: &Event) -> WorkbenchResult<()> {
     let malformed = || bad("cell text is malformed");
     match event {
-        Event::Text(t) => out.push_str(&t.xml10_content().map_err(|_| malformed())?),
-        Event::CData(t) => out.push_str(&t.decode().map_err(|_| malformed())?),
+        Event::Text(t) => out.push_str(&t.xml10_content()),
+        Event::CData(t) => out.push_str(t),
         Event::GeneralRef(r) => match r.resolve_char_ref().map_err(|_| malformed())? {
             Some(c) => out.push(c),
             None => {
-                let name = r.decode().map_err(|_| malformed())?;
+                let name: &str = r;
                 out.push_str(
-                    quick_xml::escape::resolve_predefined_entity(&name)
+                    quick_xml::escape::resolve_predefined_entity(name)
                         .ok_or_else(|| bad("it uses an undefined XML entity"))?,
                 );
             }
@@ -137,11 +137,11 @@ fn elements(
 fn relationships(xml: &[u8]) -> WorkbenchResult<Vec<(String, String, String)>> {
     let mut out = Vec::new();
     elements(xml, |e, _| {
-        if e.local_name().as_ref() == b"Relationship"
-            && attr(e, b"TargetMode")?.as_deref() != Some("External")
+        if e.local_name().as_ref() == "Relationship"
+            && attr(e, "TargetMode")?.as_deref() != Some("External")
         {
             if let (Some(id), Some(kind), Some(target)) =
-                (attr(e, b"Id")?, attr(e, b"Type")?, attr(e, b"Target")?)
+                (attr(e, "Id")?, attr(e, "Type")?, attr(e, "Target")?)
             {
                 out.push((id, kind, target));
             }
@@ -260,15 +260,14 @@ fn styles(xml: &[u8]) -> WorkbenchResult<Vec<String>> {
             .map_err(|_| bad("xl/styles.xml is not well-formed XML"))?;
         match &event {
             Event::Start(e) | Event::Empty(e) => match e.local_name().as_ref() {
-                b"numFmt" => {
-                    if let (Some(id), Some(code)) = (attr(e, b"numFmtId")?, attr(e, b"formatCode")?)
-                    {
+                "numFmt" => {
+                    if let (Some(id), Some(code)) = (attr(e, "numFmtId")?, attr(e, "formatCode")?) {
                         custom.insert(id.parse::<u32>().unwrap_or(u32::MAX), code);
                     }
                 }
-                b"cellXfs" => in_cell_xfs = matches!(event, Event::Start(_)),
-                b"xf" if in_cell_xfs => {
-                    let id = attr(e, b"numFmtId")?
+                "cellXfs" => in_cell_xfs = matches!(event, Event::Start(_)),
+                "xf" if in_cell_xfs => {
+                    let id = attr(e, "numFmtId")?
                         .and_then(|s| s.parse::<u32>().ok())
                         .unwrap_or(0);
                     formats.push(
@@ -284,7 +283,7 @@ fn styles(xml: &[u8]) -> WorkbenchResult<Vec<String>> {
                 }
                 _ => {}
             },
-            Event::End(e) if e.local_name().as_ref() == b"cellXfs" => in_cell_xfs = false,
+            Event::End(e) if e.local_name().as_ref() == "cellXfs" => in_cell_xfs = false,
             Event::DocType(_) => return Err(bad("it contains a DTD")),
             Event::Eof => return Ok(formats),
             _ => {}
@@ -307,24 +306,24 @@ fn shared_strings(entry: impl Read) -> WorkbenchResult<Vec<String>> {
             .map_err(|_| bad("the shared-string table is malformed or exceeds its limit"))?;
         match &event {
             Event::Start(e) => match e.local_name().as_ref() {
-                b"si" => current.clear(),
-                b"rPh" => phonetic = true,
-                b"t" => in_t = !phonetic,
+                "si" => current.clear(),
+                "rPh" => phonetic = true,
+                "t" => in_t = !phonetic,
                 _ => {}
             },
             Event::End(e) => match e.local_name().as_ref() {
-                b"si" => {
+                "si" => {
                     total += current.len();
                     if out.len() >= MAX_SHARED_COUNT || total > MAX_SHARED_TEXT {
                         return Err(bad("the shared-string table exceeds its limit"));
                     }
                     out.push(std::mem::take(&mut current));
                 }
-                b"rPh" => phonetic = false,
-                b"t" => in_t = false,
+                "rPh" => phonetic = false,
+                "t" => in_t = false,
                 _ => {}
             },
-            Event::Empty(e) if e.local_name().as_ref() == b"si" => out.push(String::new()),
+            Event::Empty(e) if e.local_name().as_ref() == "si" => out.push(String::new()),
             Event::Text(_) | Event::CData(_) | Event::GeneralRef(_) if in_t => {
                 push_text(&mut current, &event)?
             }
@@ -357,13 +356,13 @@ pub(super) fn read(
     let mut date1904 = false;
     elements(&workbook, |e, _| {
         match e.local_name().as_ref() {
-            b"sheet" => {
-                if let (Some(name), Some(id)) = (attr(e, b"name")?, attr(e, b"id")?) {
+            "sheet" => {
+                if let (Some(name), Some(id)) = (attr(e, "name")?, attr(e, "id")?) {
                     sheets.push((name, id));
                 }
             }
-            b"workbookPr" => {
-                date1904 = matches!(attr(e, b"date1904")?.as_deref(), Some("1" | "true"));
+            "workbookPr" => {
+                date1904 = matches!(attr(e, "date1904")?.as_deref(), Some("1" | "true"));
             }
             _ => {}
         }
@@ -514,4 +513,28 @@ pub(super) fn read(
         limitations,
     };
     Ok((profile, state.window))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_strings_preserve_unicode_cdata_entities_and_xml_line_endings() {
+        let xml = "<sst><si><t>α\r\nβ<![CDATA[<γ>&\r\nδ]]>&amp;&#x1F600;</t></si><si><t>東京</t></si></sst>";
+        assert_eq!(
+            shared_strings(xml.as_bytes()).unwrap(),
+            ["α\nβ<γ>&\r\nδ&😀", "東京"]
+        );
+    }
+
+    #[test]
+    fn shared_strings_reject_invalid_utf8_and_unknown_entities() {
+        for xml in [
+            &b"<sst><si><t>\xff</t></si></sst>"[..],
+            &b"<sst><si><t>&unknown;</t></si></sst>"[..],
+        ] {
+            assert!(shared_strings(xml).is_err());
+        }
+    }
 }

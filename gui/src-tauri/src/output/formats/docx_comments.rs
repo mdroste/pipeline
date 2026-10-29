@@ -457,9 +457,9 @@ fn comments_max_id(xml: &str) -> Result<u64, String> {
                 if !saw_root {
                     saw_root = true;
                     let namespace = element.try_get_attribute("xmlns:w").ok().flatten();
-                    if element.name().as_ref() != b"w:comments"
+                    if element.name().as_ref() != "w:comments"
                         || namespace.as_ref().map(|value| value.value.as_ref())
-                            != Some(WORD_MAIN_NS.as_bytes())
+                            != Some(WORD_MAIN_NS)
                     {
                         return Err("The Word document's existing comments use a layout Pipeline cannot extend".into());
                     }
@@ -522,7 +522,7 @@ fn parse_relationships(xml: &str) -> Result<Vec<Relationship>, String> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(element) | Event::Empty(element))
-                if element.local_name().as_ref() == b"Relationship" =>
+                if element.local_name().as_ref() == "Relationship" =>
             {
                 relationships.push(Relationship {
                     id: attribute(&element, "Id"),
@@ -597,13 +597,13 @@ fn add_comments_content_type(content_types: &str) -> Result<Option<String>, Stri
     loop {
         match reader.read_event() {
             Ok(Event::Start(element) | Event::Empty(element))
-                if element.local_name().as_ref() == b"Override" =>
+                if element.local_name().as_ref() == "Override" =>
             {
                 let part = element
                     .try_get_attribute("PartName")
                     .ok()
                     .flatten()
-                    .map(|value| String::from_utf8_lossy(&value.value).to_ascii_lowercase());
+                    .map(|value| value.value.to_ascii_lowercase());
                 if part.as_deref() == Some("/word/comments.xml") {
                     return Ok(None);
                 }
@@ -640,7 +640,13 @@ fn rewrite_package<R: Read + std::io::Seek>(
     for index in 0..archive.len() {
         let (name, modified) = {
             let entry = archive.by_index_raw(index).map_err(failed)?;
-            (entry.name().to_string(), entry.last_modified())
+            (
+                entry
+                    .name()
+                    .map_err(|error| format!("Invalid DOCX entry name: {error}"))?
+                    .into_owned(),
+                entry.last_modified(),
+            )
         };
         if let Some((_, content)) = replacements.iter().find(|(part, _)| *part == name) {
             let options = match modified {

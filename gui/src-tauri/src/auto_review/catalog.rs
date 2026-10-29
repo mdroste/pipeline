@@ -113,7 +113,7 @@ pub fn catalog_revision() -> &'static str {
                 digest.update(b"\0");
             }
         }
-        format!("sha256:{:x}", digest.finalize())
+        format!("sha256:{}", hex::encode(digest.finalize()))
     });
     REVISION.as_str()
 }

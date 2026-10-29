@@ -47,7 +47,7 @@ impl WorkflowDocument {
 
 fn workflow_fingerprint(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    format!("sha256:{digest:x}")
+    format!("sha256:{}", hex::encode(digest))
 }
 
 fn sort_json(value: &mut serde_json::Value) {
@@ -622,6 +622,18 @@ pub fn workflow_json_schema() -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fingerprints_preserve_full_lowercase_sha256_bytes() {
+        assert_eq!(
+            workflow_fingerprint(b""),
+            "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            workflow_fingerprint(b"abc"),
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
 
     #[test]
     fn template_round_trips_through_strict_parser() {

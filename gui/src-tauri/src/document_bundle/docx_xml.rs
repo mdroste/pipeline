@@ -9,32 +9,28 @@ pub(super) fn text(xml: &str) -> String {
     loop {
         match reader.read_event() {
             Ok(Event::Start(e)) => match e.name().as_ref() {
-                b"w:t" | b"m:t" => in_text = true,
-                b"w:tab" => output.push('\t'),
-                b"w:br" | b"w:cr" => output.push('\n'),
+                "w:t" | "m:t" => in_text = true,
+                "w:tab" => output.push('\t'),
+                "w:br" | "w:cr" => output.push('\n'),
                 _ => {}
             },
             Ok(Event::Empty(e)) => match e.name().as_ref() {
-                b"w:tab" => output.push('\t'),
-                b"w:br" | b"w:cr" => output.push('\n'),
+                "w:tab" => output.push('\t'),
+                "w:br" | "w:cr" => output.push('\n'),
                 _ => {}
             },
-            Ok(Event::End(e)) if matches!(e.name().as_ref(), b"w:t" | b"m:t") => in_text = false,
+            Ok(Event::End(e)) if matches!(e.name().as_ref(), "w:t" | "m:t") => in_text = false,
             Ok(Event::Text(e)) if in_text => {
-                if let Ok(value) = e.decode() {
-                    output.push_str(&value);
-                }
+                output.push_str(&e);
             }
             Ok(Event::CData(e)) if in_text => {
-                if let Ok(value) = e.decode() {
-                    output.push_str(&value);
-                }
+                output.push_str(&e);
             }
             Ok(Event::GeneralRef(e)) if in_text => {
                 if let Ok(Some(c)) = e.resolve_char_ref() {
                     output.push(c);
-                } else if let Ok(name) = e.decode() {
-                    let encoded = format!("&{name};");
+                } else {
+                    let encoded = format!("&{};", &*e);
                     if let Ok(value) = quick_xml::escape::unescape(&encoded) {
                         output.push_str(&value);
                     }
@@ -66,11 +62,8 @@ pub(super) fn equations(
                 let mut scope = namespaces.last().cloned().unwrap_or_default();
                 for attr in e.attributes() {
                     let attr = attr.map_err(|e| format!("Invalid DOCX attribute: {e}"))?;
-                    if attr.key.as_ref() == b"xmlns" || attr.key.as_ref().starts_with(b"xmlns:") {
-                        scope.insert(
-                            String::from_utf8_lossy(attr.key.as_ref()).into_owned(),
-                            String::from_utf8_lossy(&attr.value).into_owned(),
-                        );
+                    if attr.key.as_ref() == "xmlns" || attr.key.as_ref().starts_with("xmlns:") {
+                        scope.insert(attr.key.as_ref().to_owned(), attr.value.into_owned());
                     }
                 }
                 if namespaces.len() >= 512
@@ -84,15 +77,15 @@ pub(super) fn equations(
                     return Err("DOCX XML exceeds nesting or namespace limits".into());
                 }
                 namespaces.push(scope);
-                if capture.is_none() && matches!(e.name().as_ref(), b"m:oMath" | b"m:oMathPara") {
+                if capture.is_none() && matches!(e.name().as_ref(), "m:oMath" | "m:oMathPara") {
                     let mut start = e.to_owned();
                     let present: Vec<_> = start
                         .attributes()
                         .filter_map(Result::ok)
-                        .map(|a| a.key.as_ref().to_vec())
+                        .map(|a| a.key.as_ref().to_owned())
                         .collect();
                     for (key, value) in namespaces.last().unwrap() {
-                        if !present.iter().any(|k| k == key.as_bytes()) {
+                        if !present.iter().any(|k| k == key) {
                             start.push_attribute((key.as_str(), value.as_str()));
                         }
                     }
@@ -151,6 +144,13 @@ mod tests {
         assert_eq!(
             text("<w:r><w:t>con</w:t></w:r><w:r><w:t>tiguous</w:t></w:r>"),
             "contiguous"
+        );
+    }
+    #[test]
+    fn preserves_unicode_cdata_and_literal_line_endings() {
+        assert_eq!(
+            text("<w:p><w:t>α\r\nβ<![CDATA[<γ>&\r\nδ]]>&amp;&#x1F600;</w:t><w:tab/><m:t>η</m:t></w:p>"),
+            "α\r\nβ<γ>&\r\nδ&😀\tη"
         );
     }
     #[test]

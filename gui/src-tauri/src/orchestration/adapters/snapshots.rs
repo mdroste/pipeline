@@ -36,7 +36,7 @@ pub fn snapshot(store: &Store, scope: &Scope, input: Value, filename: &str) -> R
         return Err("Snapshot exceeds 64 MiB".into());
     }
     use sha2::{Digest, Sha256};
-    let digest = format!("{:x}", Sha256::digest(&bytes));
+    let digest = hex::encode(Sha256::digest(&bytes));
     let dir = store.root.join("blobs").join(&digest);
     let path = dir.join(filename);
     crate::orchestration::durable::publish(&path, &bytes)?;
@@ -78,7 +78,7 @@ pub fn artifact_path(store: &Store, value: &Value) -> Result<String> {
         .read_to_end(&mut bytes)
         .map_err(err)?;
     use sha2::{Digest, Sha256};
-    if bytes.len() > 64 * 1024 * 1024 || format!("{:x}", Sha256::digest(bytes)) != digest {
+    if bytes.len() > 64 * 1024 * 1024 || hex::encode(Sha256::digest(bytes)) != digest {
         return Err("Review input changed after it was captured".into());
     }
     Ok(canonical.to_string_lossy().into_owned())
@@ -86,7 +86,7 @@ pub fn artifact_path(store: &Store, value: &Value) -> Result<String> {
 
 fn tree_manifest(files: &[(String, Vec<u8>)]) -> Value {
     use sha2::{Digest, Sha256};
-    json!(files.iter().map(|(path,bytes)|json!({"path":path,"hash":format!("{:x}",Sha256::digest(bytes)),"bytes":bytes.len()})).collect::<Vec<_>>())
+    json!(files.iter().map(|(path,bytes)|json!({"path":path,"hash":hex::encode(Sha256::digest(bytes)),"bytes":bytes.len()})).collect::<Vec<_>>())
 }
 
 fn snapshot_tree(store: &Store, files: Vec<(String, Vec<u8>)>) -> Result<Value> {

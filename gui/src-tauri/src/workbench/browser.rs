@@ -126,7 +126,7 @@ impl Process {
         use sha2::{Digest, Sha256};
         let profile = root
             .join("profiles")
-            .join(format!("{:x}", Sha256::digest(session)));
+            .join(hex::encode(Sha256::digest(session)));
         crate::agent_runtime::codex::session::private_directory(&profile).map_err(err)?;
         let node =
             crate::deps::resolve_command("node").ok_or_else(|| err("Node.js is unavailable"))?;

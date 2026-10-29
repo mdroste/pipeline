@@ -146,7 +146,7 @@ impl Drop for Attempt {
 }
 
 fn hash(text: &str) -> String {
-    format!("{:x}", Sha256::digest(text.as_bytes()))
+    hex::encode(Sha256::digest(text.as_bytes()))
 }
 
 #[allow(clippy::too_many_arguments)] // Matches the existing provider dispatcher contract.

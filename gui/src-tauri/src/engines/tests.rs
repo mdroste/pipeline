@@ -24,7 +24,7 @@ fn checksums_are_well_formed() {
             assert!(checksum.chars().all(|c| c.is_ascii_hexdigit()));
         }
         assert_eq!(
-            format!("{:x}", Sha256::digest(artifact.lock.as_bytes())),
+            hex::encode(Sha256::digest(artifact.lock.as_bytes())),
             artifact.lock_sha256,
             "{}",
             artifact.target
@@ -435,12 +435,12 @@ fn parser_sidecar_refresh_reuses_only_a_verified_pinned_runtime() {
         "python_artifact_sha256": artifact.sha256,
         "uv": UV_VERSION,
         "lock_sha256": artifact.lock_sha256,
-        "runtime_lock_sha256": format!("{:x}", Sha256::digest(PADDLE_PARSER_RUNTIME_LOCK.as_bytes())),
+        "runtime_lock_sha256": hex::encode(Sha256::digest(PADDLE_PARSER_RUNTIME_LOCK.as_bytes())),
         "layout_model_artifact_sha256": PADDLE_LAYOUT_MODEL_SHA256,
         "layout_ready": true,
         "offline_model_runtime": true,
         "recognition_backend": "managed llama.cpp",
-        "packages_sha256": format!("{:x}", Sha256::digest(packages)),
+        "packages_sha256": hex::encode(Sha256::digest(packages)),
         "integrity_schema": INSTALL_INTEGRITY_SCHEMA,
         "integrity_sha256": integrity_sha256,
     });
@@ -508,13 +508,13 @@ fn parser_runtime_provisioned_by_an_older_app_build_still_verifies() {
         "python_build_release": "20240101",
         "python_artifact_sha256": "0".repeat(64),
         "uv": "0.0.1",
-        "lock_sha256": format!("{:x}", Sha256::digest(legacy_lock)),
-        "runtime_lock_sha256": format!("{:x}", Sha256::digest(legacy_runtime_lock)),
+        "lock_sha256": hex::encode(Sha256::digest(legacy_lock)),
+        "runtime_lock_sha256": hex::encode(Sha256::digest(legacy_runtime_lock)),
         "layout_model_artifact_sha256": "1".repeat(64),
         "layout_ready": true,
         "offline_model_runtime": true,
         "recognition_backend": "managed llama.cpp",
-        "packages_sha256": format!("{:x}", Sha256::digest(packages)),
+        "packages_sha256": hex::encode(Sha256::digest(packages)),
         "integrity_schema": INSTALL_INTEGRITY_SCHEMA,
         "integrity_sha256": integrity_sha256,
     });
@@ -551,7 +551,7 @@ fn install_integrity_detects_same_size_file_replacement() {
     // Opening ~/.pipeline/ in Finder may add this inert metadata file.
     // It must neither enter nor invalidate the executable inventory.
     std::fs::write(runtime.join(".DS_Store"), b"finder metadata").unwrap();
-    let expected_file_sha256 = format!("{:x}", Sha256::digest(b"trusted"));
+    let expected_file_sha256 = hex::encode(Sha256::digest(b"trusted"));
     let manifest_sha256 = write_install_integrity(root.path(), &["runtime"]).unwrap();
     verify_install_integrity(
         root.path(),

@@ -98,7 +98,7 @@ pub fn detect_kind(rel_path: &str, head: &[u8]) -> &'static str {
 
 pub(super) fn short_sha256(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
-    format!("{:x}", digest)[..16].to_string()
+    hex::encode(digest)[..16].to_string()
 }
 
 pub(super) fn inspect_file(path: &Path) -> Result<(Vec<u8>, u64, String), String> {
@@ -126,7 +126,7 @@ pub(super) fn inspect_file(path: &Path) -> Result<(Vec<u8>, u64, String), String
     Ok((
         head,
         total,
-        format!("{:x}", hasher.finalize())[..16].to_string(),
+        hex::encode(hasher.finalize())[..16].to_string(),
     ))
 }
 

@@ -74,7 +74,7 @@ fn now() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 fn id(prefix: &str) -> WorkbenchResult<String> {
     let mut bytes = [0; 16];
