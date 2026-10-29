@@ -26,6 +26,31 @@ const files = explicit.length
   : [...discovered, ...localGuides.filter((file) => existsSync(resolve(repository, file)))];
 const failures = [];
 
+// GitHub heading anchors: lowercase, punctuation removed, spaces as hyphens,
+// and a numeric suffix for repeated headings.
+const anchorCache = new Map();
+function anchors(path) {
+  if (!anchorCache.has(path)) {
+    const seen = new Map();
+    const found = new Set();
+    let fenced = false;
+    for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+      if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+      if (fenced) continue;
+      for (const id of line.matchAll(/<a\s+(?:name|id)="([^"]+)"/g)) found.add(id[1]);
+      const heading = line.match(/^#{1,6}\s+(.*?)\s*#*\s*$/);
+      if (!heading) continue;
+      const text = heading[1].replace(/\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/[`*]/g, "");
+      const base = text.toLowerCase().replace(/[^\p{L}\p{N}\p{M} _-]/gu, "").replace(/ /g, "-");
+      const count = seen.get(base) ?? 0;
+      seen.set(base, count + 1);
+      found.add(count ? `${base}-${count}` : base);
+    }
+    anchorCache.set(path, found);
+  }
+  return anchorCache.get(path);
+}
+
 for (const file of new Set(files)) {
   const absolute = resolve(repository, file);
   if (!existsSync(absolute) || !statSync(absolute).isFile()) {
@@ -38,7 +63,14 @@ for (const file of new Set(files)) {
   while ((match = links.exec(markdown))) {
     const line = markdown.slice(0, match.index).split(/\r?\n/).length;
     let target = match[1].trim().replace(/^<|>$/g, "");
-    if (!target || /^(?:https?:|mailto:|codex:|#)/.test(target)) continue;
+    if (target.startsWith("#")) {
+      if (!anchors(absolute).has(decodeURIComponent(target.slice(1)))) {
+        failures.push(`${file}:${line}: missing heading ${match[1]}`);
+      }
+      continue;
+    }
+    if (!target || /^(?:https?:|mailto:|codex:)/.test(target)) continue;
+    const fragment = target.includes("#") ? target.slice(target.indexOf("#") + 1) : "";
     target = target.split("#", 1)[0];
     try {
       target = decodeURIComponent(target);
@@ -54,6 +86,8 @@ for (const file of new Set(files)) {
     if (localGuides.includes(relative(repository, resolved))) continue;
     if (!existsSync(resolved)) {
       failures.push(`${file}:${line}: missing ${match[1]}`);
+    } else if (fragment && resolved.endsWith(".md") && !anchors(resolved).has(decodeURIComponent(fragment))) {
+      failures.push(`${file}:${line}: missing heading ${match[1]}`);
     }
   }
 }
