@@ -95,7 +95,8 @@ Each module's header comment has the details.
 | `workbench/commands.rs` | Conversation commands, database gate, turn permit |
 | `workbench/store/`, `workbench/migrations/` | Private SQLite store and migrations |
 | `workbench/codex/` | Conversation app server supervisor and probe |
-| `workbench/claude/` | Claude Code conversations and the MCP bridge |
+| `workbench/claude/` | Claude Code conversations, WSL2 transport, and the MCP bridge |
+| `workbench/capabilities.rs`, `conversation_tools.rs`, `web.rs`, `browser/` | Shared conversation access, receipts, public retrieval, and the optional browser |
 | `workbench/research/` | Harness, sources, notes, evidence, tools, local jobs |
 | `workbench/project/` | Project files, working copies, edit acceptance |
 | `workbench/release/` | Backups, project packages, retention, recipes |
@@ -174,6 +175,21 @@ stream-json. Before each turn, `agent_runtime/claude.rs` requires a
 first-party subscription sign-in. It strips inherited `ANTHROPIC_*` and
 `CLAUDE_*` variables and never falls back to an API key. Pipeline supplies up
 to 128 KiB of recent history from its own transcript store.
+
+**Conversation tools.** Both providers resolve the same file, web, and browser
+capabilities. Ordinary Edit conversations use the project acceptance journal;
+shell writes require a task copy. Codex thread-local configuration travels on
+start and resume. Claude receives sandbox settings and an allowlisted native
+tool catalog. Windows Claude uses a separately authenticated WSL2 environment
+when qualified dependencies are present. Workspace owns its browser processes
+and per-conversation profiles independently of Review runtimes.
+
+File and web tools journal admission before acting, compare the captured
+configuration with current access, and never repeat an ambiguous call. Network
+waits release database workers. Public retrieval validates and pins DNS at each
+redirect. Browser page requests use the same public-address policy. Account
+services retain identity-scoped quota observations with individual reset times;
+observations are not fresh account balances.
 
 **One active turn.** One turn runs at a time across the app, for either
 provider. The permit in `workbench/commands.rs` spans setup, submission, and
@@ -342,7 +358,10 @@ absolute path before `npm run tauri dev`. Release builds ignore it.
 CLI but no sign-in. It checks the handshake, permission profiles, thread
 lifecycle, sandbox rules, and process cleanup without a model turn. The
 `workflow_codex_probe` example checks the review connection. Run both after
-changing Codex transport, sandbox, or process code.
+changing Codex transport, sandbox, or process code. Set
+`PIPELINE_PROBE_NETWORK=1` for the optional public-domain, denial, and proxy-bypass
+checks. Browser transport tests run with
+`node --test gui/src-tauri/src/workbench/browser/public-request.test.mjs`.
 
 **Opt-in tests** are marked `#[ignore]`. Run one with
 `cargo test --locked --lib <name> -- --ignored`.

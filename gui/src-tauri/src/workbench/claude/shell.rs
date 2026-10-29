@@ -1,7 +1,7 @@
-//! Claude Code's Bash tool, confined by Claude Code's own OS sandbox: read-only
-//! access to the conversation's working root, writes only to the turn's private
-//! scratch folder and temporary files, and no network. Project edits still go
-//! through `project_edit`; research jobs still need an authorized profile.
+//! Claude's sandbox confines Bash to the conversation root. Ordinary projects
+//! are read-only; isolated working copies may be writable in Edit mode. Command
+//! networking uses the conversation's domain policy independently of hosted web
+//! tools. Research jobs retain their separate authorized execution profiles.
 //!
 //! Bash is never in `--allowedTools`. Under `dontAsk`, only the sandbox's own
 //! auto-approval runs it, so a command that would leave the sandbox is denied.
@@ -37,7 +37,7 @@ pub(super) fn available() -> bool {
             .iter()
             .all(|tool| crate::deps::resolve_command(tool).is_some())
     } else {
-        false
+        super::wsl::detect().is_some()
     }
 }
 
@@ -63,7 +63,11 @@ fn denied_reads() -> Vec<String> {
 
 /// Settings for one turn. Starting fails rather than running unconfined, and
 /// the model cannot ask to leave the sandbox.
-pub(super) fn sandbox(root: &Path, access: &crate::workbench::capabilities::ConversationCapabilities, network: bool) -> Value {
+pub(super) fn sandbox(
+    root: &Path,
+    access: &crate::workbench::capabilities::ConversationCapabilities,
+    network: bool,
+) -> Value {
     let root = root.to_string_lossy().into_owned();
     let mut denied = denied_reads();
     denied.extend(SECRET_PATHS.map(str::to_owned));

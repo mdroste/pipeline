@@ -498,8 +498,10 @@ it("shows the inheritance table with the winning scope and writes to global, wor
     within(table).queryByLabelText("Web search (Global)"),
   ).not.toBeInTheDocument();
   expect(
-    screen.getByText(/Web search is not available in Workspace yet/),
-  ).toBeInTheDocument();
+    within(table).getByRole("button", {
+      name: "Override Web search for Global",
+    }),
+  ).toBeEnabled();
 });
 
 it("offers to switch an inspect conversation to Edit beside an execution module", async () => {

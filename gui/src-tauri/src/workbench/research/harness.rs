@@ -237,6 +237,22 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
             text,
         });
     }
+    if has_workspace {
+        let text = if mode == "edit" && in_task_copy {
+            "Work in the isolated project working copy. Shell writes stay in this copy; Pipeline captures changes for review and acceptance. Use project_create and project_edit for recoverable file operations."
+        } else if mode == "edit" {
+            "Use project_read, project_edit and project_create for project file changes. They preserve recovery and detect concurrent edits. Shell commands can read the project; shell writes require an isolated working copy. Use authorized research execution tools for tested local jobs."
+        } else {
+            "Project access is Inspect: read files and explain findings. File changes require Edit access."
+        };
+        developer.push_str("\n\n");
+        developer.push_str(text);
+        sections.push(InstructionSection {
+            id: "project_access".into(),
+            label: "Project access".into(),
+            text: text.into(),
+        });
+    }
     let tools = dynamic_tools(&enabled);
     let requested_web_search = values
         .get("webSearch")
@@ -273,10 +289,17 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
         .get("commandNetwork")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let capabilities = crate::workbench::capabilities::ConversationCapabilities::resolve(&values, mode == "edit" && in_task_copy)?;
+    let capabilities = crate::workbench::capabilities::ConversationCapabilities::resolve(
+        &values,
+        mode == "edit" && in_task_copy,
+    )?;
     let permission_profile =
         if let Some((writer, _)) = crate::workbench::discovery::role_policy(store, session_id)? {
-            if command_network || requested_web_search || capabilities.browser || mode != if writer { "edit" } else { "inspect" } {
+            if command_network
+                || requested_web_search
+                || capabilities.browser
+                || mode != if writer { "edit" } else { "inspect" }
+            {
                 return Err(WorkbenchError::invalid(
                     "Self-discovery role access cannot be changed outside its saved scope",
                 ));

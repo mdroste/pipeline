@@ -883,7 +883,7 @@ fn schema_13_custom_profiles_migrate_to_inheriting_the_native_default() {
     let connection = fixture.store.connection().unwrap();
     connection
         .execute_batch(
-            "DROP TABLE discovery_roles; ALTER TABLE presets DROP COLUMN base_instructions; PRAGMA user_version = 13;",
+            "DROP TABLE conversation_tool_receipts; DROP TABLE discovery_roles; ALTER TABLE presets DROP COLUMN base_instructions; PRAGMA user_version = 13;",
         )
         .unwrap();
     drop(connection);

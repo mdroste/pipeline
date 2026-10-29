@@ -192,8 +192,8 @@ fn layered_harness_and_context_snapshot_match_frozen_contract() {
     );
     assert!(effective.context_truncated);
     assert_eq!(effective.context_budget_bytes, 4096);
-    assert_eq!(effective.permission_profile, "workbench-edit-network");
-    assert_eq!(effective.diagnostics.len(), 3);
+    assert_eq!(effective.permission_profile, "workbench-inspect-network");
+    assert_eq!(effective.diagnostics.len(), 2);
     assert_eq!(effective.value_sources["mode"], "conversation");
     assert_eq!(effective.value_sources["commandNetwork"], "workspace");
     assert!(effective

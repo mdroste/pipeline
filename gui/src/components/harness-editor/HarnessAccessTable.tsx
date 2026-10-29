@@ -36,10 +36,35 @@ interface Props {
 const controlClass =
   "rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200";
 
-function DomainInput({ value, label, disabled, save }: { value: string; label: string; disabled: boolean; save: (value: string) => void }) {
-  const [draft,setDraft] = useState(value);
-  useEffect(() => setDraft(value),[value]);
-  return <input className={controlClass} aria-label={label} value={draft} disabled={disabled} placeholder="All public sites" onChange={e=>setDraft(e.target.value)} onBlur={()=>{if(draft!==value)save(draft);}} onKeyDown={e=>{if(e.key==="Enter") e.currentTarget.blur();}} />;
+function DomainInput({
+  value,
+  label,
+  disabled,
+  save,
+}: {
+  value: string;
+  label: string;
+  disabled: boolean;
+  save: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <input
+      className={controlClass}
+      aria-label={label}
+      value={draft}
+      disabled={disabled}
+      placeholder="All public sites"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft !== value) save(draft);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+    />
+  );
 }
 
 function Cell({
@@ -98,7 +123,12 @@ function Cell({
     }
     const control =
       row.kind === "text" ? (
-        <DomainInput value={String(value)} label={`${row.label} (${scopeLabel})`} disabled={busy} save={value=>onSet(scope,row.key,value)} />
+        <DomainInput
+          value={String(value)}
+          label={`${row.label} (${scopeLabel})`}
+          disabled={busy}
+          save={(value) => onSet(scope, row.key, value)}
+        />
       ) : row.kind === "boolean" ? (
         <label className="inline-flex items-center gap-1 text-xs">
           <input

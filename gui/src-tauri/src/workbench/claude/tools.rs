@@ -43,7 +43,10 @@ pub(super) async fn message(
             let response = if super::super::conversation_tools::owns(&name) {
                 super::super::conversation_tools::handle(params).await
             } else {
-                run_store(move |store| super::super::research::handle_dynamic_tool_call(&store, &params)).await
+                run_store(move |store| {
+                    super::super::research::handle_dynamic_tool_call(&store, &params)
+                })
+                .await
             };
             super::super::research::jobs::launch_pending();
             let mut response = match response {

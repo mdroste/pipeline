@@ -95,6 +95,9 @@ fn thread_lifecycle_uses_qualified_methods_and_exact_safe_defaults() {
                 server_reader.read_line(&mut line).await.unwrap();
                 let request: Value = serde_json::from_str(&line).unwrap();
                 assert_eq!(request["method"], expected);
+                if matches!(expected,"thread/start"|"thread/resume") {
+                    assert_eq!(request["params"]["config"]["web_search"],"disabled");
+                }
                 if expected == "thread/resume" {
                     assert!(request["params"].get("baseInstructions").is_none(), "resume retains the persisted base prompt");
                     assert_eq!(request["params"]["excludeTurns"], true, "resume reads metadata, not history");

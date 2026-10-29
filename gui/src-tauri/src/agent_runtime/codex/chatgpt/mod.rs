@@ -10,6 +10,7 @@
 //! Review sign-ins from being re-imported after an intentional sign-out.
 mod commands;
 mod credentials;
+mod quota;
 mod refresh;
 #[cfg(test)]
 mod tests;

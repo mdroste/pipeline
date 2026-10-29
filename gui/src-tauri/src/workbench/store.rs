@@ -195,6 +195,7 @@ fn validate_overrides(overrides: &Value) -> WorkbenchResult<String> {
             ));
         }
     }
+    super::capabilities::ConversationCapabilities::resolve(overrides.as_object().unwrap(), false)?;
     let encoded = serde_json::to_string(overrides)
         .map_err(|error| WorkbenchError::invalid(format!("Invalid session overrides: {error}")))?;
     if encoded.len() > MAX_OVERRIDES_BYTES {

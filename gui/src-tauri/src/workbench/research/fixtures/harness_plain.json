@@ -16,6 +16,11 @@
   "mode": "inspect",
   "webSearch": false,
   "commandNetwork": false,
+  "capabilities": {
+    "commandDomains": [],
+    "browser": false,
+    "shellWrite": false
+  },
   "permissionProfile": "workbench-inspect",
   "contextBudgetBytes": 65536,
   "enabledModules": [],
@@ -25,8 +30,10 @@
   "contextPreview": "",
   "contextTruncated": false,
   "dynamicTools": [],
-  "fingerprint": "3cee85663163523407d7d4fd1cbf661bc7aef94cdd8727c30ac53f043d69d3f9",
+  "fingerprint": "a1880efa0b9665bab8c89574085fd15be905e4407fda230356d802c28e833994",
   "valueSources": {
+    "browser": "builtIn",
+    "commandDomains": "builtIn",
     "commandNetwork": "builtIn",
     "contextBudgetBytes": "builtIn",
     "mode": "builtIn",

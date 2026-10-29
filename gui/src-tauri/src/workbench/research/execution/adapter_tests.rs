@@ -895,6 +895,7 @@ fn migration_16_keeps_profiles_and_accepts_structured_adapters() {
              INSERT INTO execution_profiles SELECT * FROM old_profiles;
              DROP TABLE old_profiles;
              CREATE INDEX execution_profiles_workspace ON execution_profiles(workspace_id, name);
+             DROP TABLE conversation_tool_receipts;
              PRAGMA user_version=15;",
         )
         .unwrap();

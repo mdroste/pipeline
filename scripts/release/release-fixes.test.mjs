@@ -4,9 +4,46 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { cliSigningPlan } from "./sign-macos-cli.mjs";
 import { inventoryFiles, verifyInventory } from "./poppler-inventory.mjs";
 import { qualify, requiredPlatforms, requiredScenarios } from "./qualify-release.mjs";
+test("generated package notices link to the bundled Pipeline license", () => {
+  const repository = fileURLToPath(new URL("../../", import.meta.url));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-package-notices-"));
+  try {
+    for (const relative of [
+      "scripts/release/prepare-package-notices.mjs",
+      "scripts/release/poppler-inventory.mjs",
+      "scripts/release/validate-release-identity.mjs",
+      "scripts/release/poppler-lock.json",
+      "gui/package.json",
+      "gui/package-lock.json",
+      "gui/src-tauri/Cargo.toml",
+      "gui/src-tauri/Cargo.lock",
+      "gui/src-tauri/tauri.conf.json",
+      "LICENSE",
+      "THIRD_PARTY_LICENSES.md",
+    ]) {
+      const destination = path.join(root, relative);
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      fs.copyFileSync(path.join(repository, relative), destination);
+    }
+    execFileSync(process.execPath, [path.join(root, "scripts/release/prepare-package-notices.mjs")], {
+      env: { ...process.env, PIPELINE_OFFICIAL_RELEASE: "0" },
+    });
+    const output = path.join(root, "gui/src-tauri/resources/notices");
+    const notices = fs.readFileSync(path.join(output, "THIRD_PARTY_LICENSES.md"), "utf8");
+    assert.match(notices, /\[MIT License\]\(PIPELINE_LICENSE\.txt\)/);
+    assert.equal(
+      fs.readFileSync(path.join(output, "PIPELINE_LICENSE.txt"), "utf8"),
+      fs.readFileSync(path.join(root, "LICENSE"), "utf8"),
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 test("unsigned local macOS builds need no release identity; official builds do", () => {
   assert.equal(cliSigningPlan({platform:"darwin",env:{},root:"/repo"}), null);
   assert.throws(() => cliSigningPlan({platform:"darwin",env:{PIPELINE_OFFICIAL_RELEASE:"1"},root:"/repo"}), /required/);

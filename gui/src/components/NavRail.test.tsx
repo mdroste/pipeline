@@ -129,11 +129,12 @@ describe("NavRail", () => {
     const onOpenRun = vi.fn();
     const onCancelRun = vi.fn();
     const onDismissRuns = vi.fn();
+    const finishedAt = Date.now() - 30_000;
     const runs = [
-      run("finished", "done"),
+      run("finished", "done", { finishedAt }),
       run("waiting", "queued"),
       run("active", "running"),
-      run("broken", "failed", { error: "provider exploded" }),
+      run("broken", "failed", { error: "provider exploded", finishedAt }),
     ];
     renderRail({
       activePage: "main",

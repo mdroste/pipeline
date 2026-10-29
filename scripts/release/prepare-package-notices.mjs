@@ -17,9 +17,10 @@ if (fs.existsSync(path.join(poppler, process.platform === "win32" ? "pdftotext.e
   writeInventory(poppler, process.env.PIPELINE_BUNDLE_PLATFORM || process.platform);
 else if (process.env.PIPELINE_OFFICIAL_RELEASE === "1") throw new Error("Official releases require a bundled Poppler inventory");
 fs.copyFileSync(path.join(root, "LICENSE"), path.join(output, "PIPELINE_LICENSE.txt"));
-fs.copyFileSync(
-  path.join(root, "THIRD_PARTY_LICENSES.md"),
+fs.writeFileSync(
   path.join(output, "THIRD_PARTY_LICENSES.md"),
+  fs.readFileSync(path.join(root, "THIRD_PARTY_LICENSES.md"), "utf8")
+    .replaceAll("](LICENSE)", "](PIPELINE_LICENSE.txt)"),
 );
 fs.writeFileSync(
   path.join(output, "NOTICE.txt"),

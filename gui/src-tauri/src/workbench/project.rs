@@ -53,6 +53,8 @@ pub use tasks::*;
 #[cfg(test)]
 mod acceptance_tests;
 #[cfg(test)]
+mod assistant_files_tests;
+#[cfg(test)]
 mod home_tests;
 #[cfg(test)]
 mod test_support;

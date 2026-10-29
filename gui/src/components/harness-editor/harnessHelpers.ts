@@ -244,7 +244,12 @@ export function availabilityFor(
 
 export type AccessScope = "builtIn" | "global" | "workspace" | "conversation";
 export type AccessKey =
-  "mode" | "commandNetwork" | "commandDomains" | "browser" | "contextBudgetBytes" | "webSearch";
+  | "mode"
+  | "commandNetwork"
+  | "commandDomains"
+  | "browser"
+  | "contextBudgetBytes"
+  | "webSearch";
 
 export const ACCESS_SCOPES: Array<{ id: AccessScope; label: string }> = [
   { id: "builtIn", label: "Built-in" },
@@ -285,14 +290,20 @@ export const ACCESS_ROWS: AccessRow[] = [
     kind: "boolean",
   },
   {
-    key: "commandDomains", label: "Allowed command sites",
-    description: "With command internet access on: leave blank for public internet, or list domains separated by commas (for example, pypi.org, *.pythonhosted.org).",
-    builtIn: "", kind: "text",
+    key: "commandDomains",
+    label: "Allowed command sites",
+    description:
+      "With command internet access on: leave blank for public internet, or list domains separated by commas (for example, pypi.org, *.pythonhosted.org).",
+    builtIn: "",
+    kind: "text",
   },
   {
-    key: "browser", label: "Browser interaction",
-    description: "Use a visible browser with a separate profile for this conversation. Requires one-time browser setup; sign in directly in its window.",
-    builtIn: false, kind: "boolean",
+    key: "browser",
+    label: "Browser interaction",
+    description:
+      "Use a visible browser with a separate profile for this conversation. Requires one-time browser setup; sign in directly in its window.",
+    builtIn: false,
+    kind: "boolean",
   },
   {
     key: "contextBudgetBytes",
@@ -311,10 +322,10 @@ export const ACCESS_ROWS: AccessRow[] = [
   {
     key: "webSearch",
     label: "Web search",
-    description: "Search the web, read public pages, and download files when Edit is enabled. Independent of command internet access.",
+    description:
+      "Search the web, read public pages, and download files when Edit is enabled. Independent of command internet access.",
     builtIn: false,
     kind: "boolean",
-
   },
 ];
 

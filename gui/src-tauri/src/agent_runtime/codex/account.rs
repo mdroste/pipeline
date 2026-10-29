@@ -87,7 +87,7 @@ impl ModelCatalog {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RateLimitWindow {
     pub used_percent: i32,
@@ -96,7 +96,7 @@ pub struct RateLimitWindow {
     pub resets_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RateLimitBucket {
     pub limit_id: Option<String>,
@@ -106,16 +106,20 @@ pub struct RateLimitBucket {
     pub secondary: Option<RateLimitWindow>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum RateLimitSource {
     PerBucket,
     Legacy,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RateLimits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<i64>,
+    #[serde(default)]
+    pub cached: bool,
     pub source: RateLimitSource,
     pub buckets: Vec<RateLimitBucket>,
 }
@@ -350,11 +354,15 @@ pub(crate) fn parse_rate_limits(value: Value) -> Result<RateLimits, RequestError
             .collect();
         buckets.sort_by(|left, right| left.limit_id.cmp(&right.limit_id));
         return Ok(RateLimits {
+            observed_at: None,
+            cached: false,
             source: RateLimitSource::PerBucket,
             buckets,
         });
     }
     Ok(RateLimits {
+        observed_at: None,
+        cached: false,
         source: RateLimitSource::Legacy,
         buckets: vec![wire.rate_limits.into()],
     })

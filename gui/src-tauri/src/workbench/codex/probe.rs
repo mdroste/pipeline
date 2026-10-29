@@ -14,6 +14,7 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 
+mod capabilities;
 mod config;
 mod discovery;
 mod history;
@@ -58,6 +59,8 @@ pub struct QualificationProbeReport {
     pub experimental_thread_lifecycle_verified: bool,
     pub dynamic_tool_declaration_accepted: bool,
     pub read_only_sandbox_verified: bool,
+    pub conversation_capabilities_accepted: bool,
+    pub command_domain_policy_verified: Option<bool>,
     pub discovery_permissions_verified: bool,
     pub paged_turn_history_verified: bool,
     pub runtime_workspace_roots_verified: bool,
@@ -797,6 +800,7 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
         .await?;
         let resumed = response_for(&mut reader, &resume_id).await?;
         history::verify(&mut stdin, &mut reader, &provider_thread_id, &resumed).await?;
+        capabilities::verify(&mut stdin, &mut reader, &fixture_root).await?;
 
         let allowed_read_id = json!(8);
         send(
@@ -1208,6 +1212,8 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
         // requires an authenticated opt-in model turn.
         dynamic_tool_declaration_accepted: true,
         read_only_sandbox_verified,
+        conversation_capabilities_accepted: true,
+        command_domain_policy_verified: std::env::var_os("PIPELINE_PROBE_NETWORK").map(|_| true),
         discovery_permissions_verified: true,
         paged_turn_history_verified: true,
         runtime_workspace_roots_verified,

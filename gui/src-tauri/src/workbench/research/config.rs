@@ -52,7 +52,11 @@ pub fn save_config(
     if let Some(id) = request.workspace_id.as_deref() {
         validate_id("workspace id", id)?;
     }
-    let (_body, encoded) = json_object("Workspace configuration", request.body, 256 * 1024)?;
+    let (body, encoded) = json_object("Workspace configuration", request.body, 256 * 1024)?;
+    crate::workbench::capabilities::ConversationCapabilities::resolve(
+        body.as_object().unwrap(),
+        false,
+    )?;
     let mut connection = open_connection(store)?;
     let transaction = connection
         .transaction_with_behavior(TransactionBehavior::Immediate)

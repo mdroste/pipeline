@@ -35,12 +35,12 @@ pub(crate) fn configure_subscription(command: &mut Command) {
 /// Disable user/project API helpers and settings-provided environment keys.
 /// The native forced login method also rejects conflicting managed policies.
 pub(crate) fn subscription_args(args: &[String]) -> Vec<String> {
-    settings_args(None, args)
+    sandbox_subscription_args(None, args)
 }
 
 /// Claude Code reads one `--settings` value. A command sandbox is the only
 /// caller-supplied key, so it cannot replace the subscription-only overrides.
-fn settings_args(sandbox: Option<&Value>, args: &[String]) -> Vec<String> {
+pub(crate) fn sandbox_subscription_args(sandbox: Option<&Value>, args: &[String]) -> Vec<String> {
     let mut settings = json!({"forceLoginMethod":"claudeai", "apiKeyHelper":"", "disableAllHooks":true, "autoMemoryEnabled":false});
     if let Some(sandbox) = sandbox {
         settings["sandbox"] = sandbox.clone();
@@ -94,13 +94,29 @@ pub(crate) fn subscription_status(command: &crate::deps::ResolvedCommand) -> Res
 /// Resolve `claude` and check that this executable is signed in with a Claude
 /// subscription. Prompts must be sent to the returned executable.
 pub(crate) async fn verified_subscription() -> Result<crate::deps::ResolvedCommand, String> {
+    verified_subscription_with_status()
+        .await
+        .map(|(resolved, _)| resolved)
+}
+
+pub(crate) async fn verified_subscription_with_status(
+) -> Result<(crate::deps::ResolvedCommand, Value), String> {
     let resolved = crate::deps::resolve_command("claude")
         .ok_or("Install Claude Code and run `claude auth login` in Terminal first.")?;
     let probe = resolved.clone();
-    tokio::task::spawn_blocking(move || subscription_status(&probe))
+    let status = tokio::task::spawn_blocking(move || subscription_status(&probe))
         .await
         .map_err(|e| format!("Claude authentication check failed: {e}"))??;
-    Ok(resolved)
+    Ok((resolved, status))
+}
+
+pub(crate) fn verified_sandboxed_command(
+    resolved: &crate::deps::ResolvedCommand,
+    sandbox: Option<&Value>,
+    args: &[String],
+    cwd: Option<&str>,
+) -> tokio::process::Command {
+    prompt_command(resolved, sandbox_subscription_args(sandbox, args), cwd)
 }
 
 /// Build a prompt command for an executable returned by
@@ -137,20 +153,6 @@ pub(crate) async fn subscription_command(
 ) -> Result<tokio::process::Command, String> {
     let resolved = verified_subscription().await?;
     Ok(verified_subscription_command(&resolved, args, cwd))
-}
-
-/// As [`subscription_command`], with Claude Code's command sandbox settings.
-pub(crate) async fn sandboxed_subscription_command(
-    sandbox: &Value,
-    args: &[String],
-    cwd: Option<&str>,
-) -> Result<tokio::process::Command, String> {
-    let resolved = verified_subscription().await?;
-    Ok(prompt_command(
-        &resolved,
-        settings_args(Some(sandbox), args),
-        cwd,
-    ))
 }
 
 #[cfg(test)]
@@ -216,7 +218,7 @@ mod tests {
     #[test]
     fn a_sandbox_cannot_replace_subscription_overrides() {
         let sandbox = json!({"enabled":true,"forceLoginMethod":"console"});
-        let args = settings_args(Some(&sandbox), &["-p".into()]);
+        let args = sandbox_subscription_args(Some(&sandbox), &["-p".into()]);
         assert_eq!(args.iter().filter(|a| *a == "--settings").count(), 1);
         let settings: Value = serde_json::from_str(&args[3]).unwrap();
         assert_eq!(settings["forceLoginMethod"], "claudeai");

@@ -426,6 +426,7 @@ pub fn import_archive(
         })?;
     imported.execute("UPDATE turns SET state='interrupted',terminal_at=?1,updated_at=?1,error_json=COALESCE(error_json,?2) WHERE terminal_at IS NULL", params![now(), json!({"message":"Imported unfinished turn: outcome is unknown; no work was replayed."}).to_string()])
         .map_err(|error| WorkbenchError::storage("Failed to reconcile imported unfinished turns", error))?;
+    imported.execute("UPDATE conversation_tool_receipts SET state='outcome_unknown',ended_at=?1 WHERE state='running'",[now()]).map_err(|error|WorkbenchError::storage("Failed to reconcile imported conversation tools",error))?;
     let retired=imported.execute("UPDATE session_bindings SET retired_at=COALESCE(retired_at,?1), retirement_reason=COALESCE(retirement_reason,'imported_native_binding_unavailable') WHERE retired_at IS NULL",[now()]).map_err(|error| WorkbenchError::storage("Failed to retire nonportable native bindings", error))?;
     imported
         .execute(

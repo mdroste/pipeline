@@ -132,11 +132,12 @@ Uninstalling the app leaves your research data in place. See
 - Each model's input limit caps document length, and your account's limits
   cap how many calls run at once. Past that cap, more parallel reviewers
   won't help.
-- On macOS and Linux, Claude conversations can run shell commands that read
-  the project folder but can't change it or reach the internet. Claude has no
-  shell on Windows and no browser tools in any conversation.
-  Remaining Claude usage appears after Claude's first reply in each app
-  session.
+- Conversation shell writes need an isolated working copy. Web search,
+  command internet access, and browser interaction have separate settings.
+  Browser interaction needs an optional browser download; Claude shell access
+  on Windows needs WSL2. See [conversation access](docs/connections.md#conversation-access).
+- Usage displays the latest account report and its time. Claude needs a reply
+  before its first report is available; saved reports carry across app sessions.
 
 ## Command line and source builds
 

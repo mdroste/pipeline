@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import WorkspaceComposerControls, {
   claudeUsageLine,
+  usageLine,
 } from "./WorkspaceComposerControls";
 import type { WorkspaceModel } from "../lib/workbenchTypes";
 
@@ -192,7 +193,7 @@ it("shows the account and remaining usage once the picker opens", async () => {
   expect(load).not.toHaveBeenCalled();
   open();
   await screen.findByText("researcher@example.edu · Plus");
-  expect(screen.getByText("62% of your usage limit left")).toBeVisible();
+  expect(screen.getByText("62% of your 5-hour limit left")).toBeVisible();
 });
 
 it("offers Claude subscription mode and hides ChatGPT account information", async () => {
@@ -290,4 +291,72 @@ it("summarizes Claude usage reports without inventing percentages", () => {
   expect(
     claudeUsageLine({ ...report, resetsAt: now / 1000 - 60 }, now),
   ).toBeNull();
+});
+
+it("distinguishes usage windows and never treats an expired report as a fresh balance", () => {
+  const now = 2_000_000_000_000;
+  const summary = usageLine(
+    {
+      source: "perBucket",
+      observedAt: now - 60_000,
+      cached: true,
+      buckets: [
+        {
+          limitId: "codex",
+          limitName: "Codex",
+          planType: null,
+          primary: {
+            usedPercent: 30,
+            remainingPercent: 70,
+            windowDurationMins: 300,
+            resetsAt: now / 1000 - 1,
+          },
+          secondary: {
+            usedPercent: 20,
+            remainingPercent: 80,
+            windowDurationMins: 10080,
+            resetsAt: null,
+          },
+        },
+      ],
+    },
+    now,
+  );
+  expect(summary).toContain("5-hour usage needs a fresh report");
+  expect(summary).toContain("80% of your weekly limit left");
+  expect(summary).not.toContain("70%");
+});
+
+it("shows each Claude window with its own observation time", async () => {
+  const report = {
+    status: "allowed",
+    resetsAt: null,
+    rateLimitType: "five_hour",
+    usedPercent: 40,
+    isUsingOverage: false,
+    observedAt: Date.now(),
+  };
+  const weekly = {
+    ...report,
+    rateLimitType: "seven_day",
+    usedPercent: 10,
+    observedAt: Date.now() - 3600_000,
+  };
+  render(
+    <WorkspaceComposerControls
+      models={[]}
+      model=""
+      effort=""
+      disabled={false}
+      onChange={vi.fn()}
+      runtime="claude"
+      loadClaudeUsage={vi
+        .fn()
+        .mockResolvedValue({ ...report, windows: [report, weekly] })}
+    />,
+  );
+  open();
+  await screen.findByText("60% of your 5-hour limit left");
+  expect(screen.getByText("90% of your weekly limit left")).toBeVisible();
+  expect(screen.getAllByText(/Reported by Claude Code at/)).toHaveLength(2);
 });

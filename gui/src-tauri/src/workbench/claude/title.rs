@@ -69,7 +69,7 @@ async fn reply(
         let frame = process.read().await?;
         match frame["type"].as_str() {
             Some("control_request") => process.control(&frame, &[], None).await?,
-            Some("rate_limit_event") => usage::record(&frame),
+            Some("rate_limit_event") => usage::record(&frame, process.usage_account.as_deref()),
             Some("assistant") if frame["parent_tool_use_id"].is_null() => {
                 for part in frame["message"]["content"].as_array().into_iter().flatten() {
                     if let Some(part) = part["text"].as_str().filter(|_| part["type"] == "text") {

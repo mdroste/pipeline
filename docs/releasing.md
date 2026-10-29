@@ -96,6 +96,18 @@ Before you publish, test the candidate by hand:
   signature and notarization.
 - Sign in to each provider and run real conversations and reviews, including
   tool calls and approvals.
+- For both conversation providers, create and undo files, edit in a working
+  copy, interrupt commands, and inspect the captured changes before accepting
+  them. Check that concurrent changes are preserved.
+- Check web search, downloads, and each command internet setting. Verify that
+  allowed sites work, denied sites fail, and commands cannot bypass the site
+  restriction. Install the optional browser, sign in directly, and confirm
+  that stopping the turn closes it. Check private-address and redirect denial.
+- On Windows, test Claude inside WSL2 with paths containing spaces and Unicode,
+  a separate Linux sign-in, and cancellation that stops Linux child processes.
+  Check native ChatGPT commands and native research jobs separately.
+- Restart the app and switch accounts to check saved usage reports. Check both
+  usage windows, their reporting times, and the display after a window resets.
 - Run the 20 tasks in
   [`research-evaluation-v1.json`](../gui/src-tauri/tests/fixtures/research-evaluation-v1.json)
   with the same files, model, and effort in each conversation mode. Have a

@@ -11,6 +11,8 @@ pub(super) struct Process {
     stdout: BufReader<ChildStdout>,
     pid: u32,
     _directory: tempfile::TempDir,
+    pub(super) usage_account: Option<String>,
+    wsl: Option<super::wsl::OwnedGroup>,
 }
 
 impl Process {
@@ -30,13 +32,29 @@ impl Process {
             }
         }
         let cwd = directory.path().to_str();
-        let mut command = match sandbox {
-            Some(sandbox) => {
-                crate::agent_runtime::claude::sandboxed_subscription_command(sandbox, &args, cwd)
-                    .await?
-            }
-            None => crate::agent_runtime::claude::subscription_command(&args, cwd).await?,
+        let (mut command, status, wsl) = if let Some(environment) = super::wsl::detect_async().await
+        {
+            let sandbox = sandbox.cloned();
+            let args = args.clone();
+            let directory = directory.path().to_owned();
+            let (command, status, group) = tokio::task::spawn_blocking(move || {
+                environment.prepare(sandbox.as_ref(), &args, &directory)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            (command, status, Some(group))
+        } else {
+            let (resolved, status) =
+                crate::agent_runtime::claude::verified_subscription_with_status().await?;
+            (
+                crate::agent_runtime::claude::verified_sandboxed_command(
+                    &resolved, sandbox, &args, cwd,
+                ),
+                status,
+                None,
+            )
         };
+        let usage_account = super::usage::account_key(&status);
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -70,6 +88,8 @@ impl Process {
             stdout,
             pid,
             _directory: directory,
+            usage_account,
+            wsl,
         })
     }
 
@@ -124,6 +144,9 @@ impl Process {
     }
 
     pub async fn stop(&mut self) {
+        if let Some(group) = self.wsl.take() {
+            let _ = tokio::task::spawn_blocking(move || group.stop()).await;
+        }
         let _ = self.stdin.shutdown().await;
         if self.pid > 0 {
             crate::commands::lifecycle::kill_independent_process(self.pid);
@@ -137,6 +160,9 @@ impl Process {
 
 impl Drop for Process {
     fn drop(&mut self) {
+        if let Some(group) = self.wsl.take() {
+            group.stop();
+        }
         if self.pid > 0 {
             crate::commands::lifecycle::kill_independent_process(self.pid);
             let _ = self.child.start_kill();
@@ -238,12 +264,14 @@ pub(super) async fn drive(
         let mut bytes = 0usize;
         let mut messages = 0;
         let mut calls = 0;
+        let mut activity = super::activity::Activity::default();
         loop {
             let value = clock.model(process.read()).await.ok_or(MODEL_TIMEOUT)??;
             bytes += value.to_string().len();
             if bytes > 64 * 1024 * 1024 {
                 return Err("Claude turn exceeded its output budget".into());
             }
+            activity.observe(&value, turn, app).await?;
             match value["type"].as_str() {
                 Some("control_request") => {
                     calls += 1;
@@ -290,7 +318,9 @@ pub(super) async fn drive(
                         messages += 1;
                     }
                 }
-                Some("rate_limit_event") => super::usage::record(&value),
+                Some("rate_limit_event") => {
+                    super::usage::record(&value, process.usage_account.as_deref())
+                }
                 Some("result") => {
                     if value["is_error"] != false || value["subtype"] != "success" {
                         return Err(value["result"].as_str().map(str::to_owned).unwrap_or_else(

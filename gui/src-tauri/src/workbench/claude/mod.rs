@@ -8,6 +8,7 @@
 //! are disabled; Pipeline tools arrive only through the scoped MCP bridge. A
 //! stale accepted turn becomes interrupted on restart and is never replayed.
 
+mod activity;
 mod protocol;
 mod shell;
 #[cfg(test)]
@@ -16,6 +17,7 @@ pub(crate) mod title;
 mod tools;
 pub(crate) mod transport;
 pub(crate) mod usage;
+mod wsl;
 
 use super::codex::NormalizedEvent;
 use super::commands::{run_store, RuntimeCommandError, SendTurnRequest, SendTurnResult};
@@ -63,7 +65,6 @@ pub(super) struct Turn {
     pub thread: String,
     pub id: String,
     pub binding: String,
-    pub session: String,
     pub model: Option<String>,
 }
 
@@ -103,7 +104,9 @@ pub(crate) async fn submit(
 ) -> Result<SendTurnResult, RuntimeCommandError> {
     let session = request.session_id.clone();
     let text = request.text.clone();
-    let shell = shell::available();
+    let shell = tokio::task::spawn_blocking(shell::available)
+        .await
+        .unwrap_or(false);
     let (prompt, root) = run_store(move |store| {
         let root = if shell {
             Some(store.runtime_root(&session)?)
@@ -120,7 +123,13 @@ pub(crate) async fn submit(
         request.effort.as_deref(),
         root.as_deref(),
     );
-    let sandbox = root.as_deref().map(|root| shell::sandbox(root, &prepared.effective.capabilities, prepared.effective.command_network));
+    let sandbox = root.as_deref().map(|root| {
+        shell::sandbox(
+            root,
+            &prepared.effective.capabilities,
+            prepared.effective.command_network,
+        )
+    });
     // CLI auth, configuration and handshake all finish before sending a prompt.
     let mut process = transport::Process::start(&args, sandbox.as_ref())
         .await
@@ -165,7 +174,6 @@ pub(crate) async fn submit(
         thread: thread.clone(),
         id: id.clone(),
         binding: bound.id,
-        session: request.session_id.clone(),
         model: request.model,
     };
     super::commands::accept_claude_turn(epoch, &thread, &id);
@@ -189,10 +197,8 @@ pub(crate) async fn submit(
         )
         .await;
         process.stop().await;
-        super::conversation_tools::cancel(&task_turn.thread, &task_turn.id);
-        crate::workbench::browser::stop().await;
-        let capture_session = task_turn.session.clone();
-        let _ = run_store(move |store| super::project::assistant_files::capture_session(&store, &capture_session)).await;
+        let capture = super::conversation_tools::finish(&task_turn.thread, &task_turn.id).await;
+        let result = result.and(capture.map_err(|error| error.message));
         let cleanup_thread = thread.clone();
         let cleanup_turn = id.clone();
         let _ = run_store(move |store| {

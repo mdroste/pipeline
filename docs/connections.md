@@ -14,8 +14,8 @@ least one connection under **Settings → Connections**.
 | Google Gemini API | A Gemini API key | No | Yes | Yes |
 | Local or custom server | The address of an OpenAI-compatible server | No | Yes | No |
 
-Web search is available in reviews only, on steps where you turn on **Web
-search** in the review designer.
+Turn on **Web search** in **Assistant settings** for a conversation, or on
+individual steps in the review designer.
 
 ChatGPT and Claude Code use your subscription. If you're signed out,
 Pipeline asks you to sign in again instead of switching to an API key.
@@ -93,31 +93,20 @@ ChatGPT. An automation that uses the conversation uses the same provider. If
 you switch providers partway through, the new one receives the recent
 history.
 
-In a conversation, Claude can:
+Claude uses the assistant instructions, selected project context, and research
+tools enabled for the conversation. File, web, and browser access use the same
+settings as ChatGPT; see [Conversation access](#conversation-access).
 
-- use the assistant instructions, the project context you select, and the
-  research tools you've turned on;
-- list project files and read text files up to 256 KB;
-- edit existing text files when **Allow edits** is on in **Assistant
-  settings**. Claude must read a file before editing it, and the edit fails if
-  the file changed in the meantime. Edits appear in **Review edits**, where
-  you can undo them;
-- in a conversation on a working copy, leave its edits there until you accept
-  them; and
-- run shell commands for quick checks and calculations, on macOS and Linux.
+On macOS, Claude uses the system command sandbox. On Linux, install
+`bubblewrap` and `socat` to enable shell commands. On Windows, follow
+[Claude shell on Windows](#claude-shell-on-windows).
 
-Shell commands can read the project folder, but not your home folder, other
-projects, or Pipeline's data. They can write only to a temporary folder that
-is deleted after each reply. They can't change project files or reach the
-network, even when **Internet access for commands** is on. On Linux, the
-shell needs `bubblewrap` and `socat` installed. Claude has no shell on
-Windows.
-
-Claude conversations have no web search, browser, or subagents.
-
-**Claude usage** in the model picker shows the latest usage report from Claude
-Code and when it arrived. It appears after Claude's first reply in the current
-session.
+**Claude usage** in the model picker shows saved reports for your current
+account, including separate hourly and weekly windows when Claude reports
+them. Each report shows its time. Reports survive app restarts. After a window
+resets, Pipeline asks for a fresh report instead of displaying the old balance.
+The first report arrives with a Claude reply. Other Claude sessions may have
+used more since the displayed report.
 
 Pipeline titles a new Claude conversation with one extra call to the
 cheapest model your plan offers, using short excerpts of the first message and
@@ -130,7 +119,62 @@ messages stay in the conversation but aren't sent.
 Stopping a turn stops Claude and any research jobs it started. A turn
 interrupted by quitting Pipeline stays in the history and isn't sent again.
 
-### Provider terms
+## Conversation access
+
+These settings apply to both ChatGPT and Claude Code. Open **Assistant
+settings** in the conversation. Project and global settings supply defaults;
+a conversation can override them.
+
+| Setting | What it permits |
+| --- | --- |
+| **Access mode → Inspect** | Read project files and explain findings. |
+| **Access mode → Edit** | Create files and edit existing files through the recoverable editor. Shell writes require an isolated working copy. |
+| **Internet access for commands** | Let shell commands reach the internet. |
+| **Allowed command sites** | Restrict command internet access to listed domains, separated by commas. For example, `pypi.org, *.pythonhosted.org`. Blank means public internet. |
+| **Web search** | Search the web and read public pages. With Edit access and a project, download files into new project paths. |
+| **Browser interaction** | Open and operate a separate, visible browser for this conversation. |
+
+File reads return a content fingerprint. Edits fail if the file has changed
+since it was read. New files can include new folders and never replace an
+existing file. Changes in the main project appear in **Review edits** and can
+be undone. Changes in an isolated working copy wait for acceptance, including
+files produced by shell commands.
+
+Web search, command internet access, and browser interaction are independent.
+**Allowed command sites** applies to commands; it does not restrict web search
+or the browser. Web downloads are limited to 32 MB per file. Pipeline keeps
+the source URL, retrieval time, and file fingerprint with the download result.
+Web page reads return up to 128 KB of text from a response of up to 2 MB.
+These web tools accept public HTTP and HTTPS addresses on standard ports.
+
+After enabling **Browser interaction**, choose **Install browser**. Setup needs
+Node.js 22 or later and downloads Chromium. Linux may also need
+[Playwright's browser system dependencies](https://playwright.dev/docs/browsers#install-system-dependencies).
+Each conversation has its own browser profile, which remembers its sign-ins.
+Enter passwords and complete CAPTCHA prompts directly in the visible window.
+The browser closes when the turn stops; its profile stays on this device.
+Browser downloads use the conversation's file download tool.
+
+The ChatGPT model picker shows both usage windows when available. If refresh
+fails, it shows a saved report for the signed-in account, with its time. Expired
+reports ask for a fresh reading. These reports reflect account-wide use.
+
+## Claude shell on Windows
+
+Install [WSL2](https://learn.microsoft.com/windows/wsl/install) and set the
+Linux distribution you want to use as the default. Inside that distribution,
+install Python 3, `bubblewrap`, `socat`, and Claude Code. Make `claude` available
+in `~/.local/bin`, `/usr/local/bin`, or `/usr/bin`. Sign in there with
+`claude auth login`; this sign-in is separate from native Windows Claude Code.
+
+Pipeline uses the default WSL2 distribution when these dependencies are ready.
+It maps the project and working-copy folders into Linux and uses the same
+access settings as on macOS and Linux. Windows projects must be accessible
+from that distribution. Native Windows research commands in **Command settings**
+continue to run on Windows. Without WSL2, Claude retains project and research
+tools but has no shell.
+
+## Provider terms
 
 Anthropic lets a product run the unmodified Claude Code tool when:
 

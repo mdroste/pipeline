@@ -417,15 +417,19 @@ async fn claude_sandboxed_shell_probe() {
     let effective = super::super::research::resolve_harness(&f.store, &f.session).unwrap();
     let root = f.store.runtime_root(&f.session).unwrap();
     let args = protocol::arguments(&effective, Some("haiku"), None, Some(&root));
-    let mut process = transport::Process::start(&args, Some(&shell::sandbox(&root, &Default::default(), false)))
-        .await
-        .unwrap();
+    let mut process = transport::Process::start(
+        &args,
+        Some(&shell::sandbox(&root, &Default::default(), false)),
+    )
+    .await
+    .unwrap();
     process.initialize(&[]).await.unwrap();
     let commands = [
         format!("cat {}", root.join("marker.txt").display()),
         format!("cat {}", outside.path().join("secret.txt").display()),
         format!("echo changed > {}", root.join("written.txt").display()),
-        "curl -sS -m 5 https://example.com".to_string(),
+        "curl --fail -sS -m 5 https://example.org > /dev/null && echo PIPELINE_UNEXPECTED_NETWORK"
+            .to_string(),
     ];
     let prompt = format!("Use the Bash tool to run each of these commands exactly, one Bash call each, even if one fails. Do not retry or change them. Then reply DONE.\n{}", commands.join("\n"));
     let result = tokio::time::timeout(std::time::Duration::from_secs(180), async {
@@ -461,8 +465,108 @@ async fn claude_sandboxed_shell_probe() {
         !root.join("written.txt").exists(),
         "Project write was allowed"
     );
-    assert!(!outputs.contains("Example Domain"), "Network was allowed");
+    assert!(
+        !outputs.contains("PIPELINE_UNEXPECTED_NETWORK"),
+        "Network was allowed"
+    );
     println!(
         "Sandboxed shell read the root and was denied home reads, project writes and network."
     );
+}
+
+#[tokio::test]
+#[ignore = "Uses subscription quota for one small model turn with writable sandbox and domain checks"]
+async fn claude_working_copy_network_probe() {
+    assert!(shell::available());
+    let f = fixture();
+    select(&f, "edit");
+    let mut effective = super::super::research::resolve_harness(&f.store, &f.session).unwrap();
+    effective.capabilities.shell_write = true;
+    effective.capabilities.command_domains = vec!["example.org".into()];
+    effective.command_network = true;
+    let root = f.store.runtime_root(&f.session).unwrap();
+    let args = protocol::arguments(&effective, Some("haiku"), None, Some(&root));
+    let mut process = transport::Process::start(
+        &args,
+        Some(&shell::sandbox(&root, &effective.capabilities, true)),
+    )
+    .await
+    .unwrap();
+    process.initialize(&[]).await.unwrap();
+    let commands=[format!("printf PIPELINE_COPY_WRITE > {}/created.txt",root.display()),"curl --fail -sS -m 10 https://example.org > /dev/null && echo PIPELINE_ALLOWED_DOMAIN".into(),"curl --fail -sS -m 5 https://example.com > /dev/null && echo PIPELINE_DENIED_DOMAIN".into(),"curl --noproxy '*' --fail -sS -m 5 https://example.org > /dev/null && echo PIPELINE_BYPASSED_PROXY".into()];
+    let prompt=format!("Use Bash to run each command exactly once, one call each, even if one fails. Do not retry, change commands, or use other tools. Reply DONE.\n{}",commands.join("\n"));
+    let result=tokio::time::timeout(std::time::Duration::from_secs(180),async {
+        process.write(&json!({"type":"user","message":{"role":"user","content":prompt},"parent_tool_use_id":null,"session_id":""})).await?;
+        let mut outputs=String::new();
+        loop {
+            let frame=process.read().await?;
+            match frame["type"].as_str() {
+                Some("control_request")=>process.control(&frame,&[],None).await?,
+                Some("user")=>outputs.push_str(&frame["message"]["content"].to_string()),
+                Some("result")=>return Ok::<_,String>(outputs),
+                _=>{}
+            }
+        }
+    }).await;
+    process.stop().await;
+    let outputs = result.unwrap().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("created.txt")).unwrap(),
+        "PIPELINE_COPY_WRITE"
+    );
+    assert!(
+        outputs.contains("PIPELINE_ALLOWED_DOMAIN"),
+        "Allowed site failed: {outputs}"
+    );
+    assert!(
+        !outputs.contains("PIPELINE_DENIED_DOMAIN"),
+        "Domain restriction failed: {outputs}"
+    );
+    assert!(
+        !outputs.contains("PIPELINE_BYPASSED_PROXY"),
+        "Direct network escaped the proxy: {outputs}"
+    );
+}
+
+#[test]
+fn shared_web_access_does_not_grant_shell_network_or_main_project_writes() {
+    let f = fixture();
+    select(&f, "edit");
+    super::super::research::save_config(
+        &f.store,
+        super::super::research::SaveWorkspaceConfigRequest {
+            workspace_id: None,
+            expected_revision: Some(0),
+            body: json!({"webSearch":true,"browser":true}),
+            operation_id: "web-access".into(),
+        },
+    )
+    .unwrap();
+    let effective = super::super::research::resolve_harness(&f.store, &f.session).unwrap();
+    assert!(effective.web_search && effective.capabilities.browser);
+    assert!(!effective.command_network && !effective.capabilities.shell_write);
+    for name in ["project_create", "web_fetch", "web_download", "browser"] {
+        assert!(effective
+            .dynamic_tools
+            .iter()
+            .any(|spec| spec["name"] == name));
+    }
+    let args = protocol::arguments(&effective, None, None, Some(&f.root));
+    assert_eq!(
+        args[args.iter().position(|v| v == "--tools").unwrap() + 1],
+        "Bash,WebSearch,WebFetch"
+    );
+    assert_eq!(
+        shell::sandbox(&f.root, &effective.capabilities, effective.command_network)["network"]
+            ["allowedDomains"],
+        json!([])
+    );
+    let codex = effective.capabilities.codex_config(
+        effective.web_search,
+        effective.command_network,
+        &effective.permission_profile,
+    );
+    assert_eq!(codex["web_search"], "live");
+    assert!(codex.get("features.network_proxy").is_none());
+    assert_eq!(effective.permission_profile, "workbench-inspect");
 }

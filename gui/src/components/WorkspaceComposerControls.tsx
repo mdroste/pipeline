@@ -38,7 +38,7 @@ export async function loadAccountSummary(): Promise<AccountSummary> {
   return { account, limits };
 }
 
-/** Claude Code reports usage during replies; `null` until it has. */
+/** Returns saved account-scoped observations, including reports from earlier app sessions. */
 export function loadClaudeUsage(): Promise<ClaudeRateLimit | null> {
   return runtimeClient.claudeRateLimits().catch(() => null);
 }
@@ -69,10 +69,37 @@ const resetsText = (resetsAt: number | null) => {
   }`;
 };
 
-const usageLine = (limits: WorkspaceRateLimits | null) => {
-  const window = limits?.buckets.find((bucket) => bucket.primary)?.primary;
-  if (!window) return null;
-  return `${Math.round(window.remainingPercent)}% of your usage limit left${resetsText(window.resetsAt)}`;
+export const usageLine = (
+  limits: WorkspaceRateLimits | null,
+  now = Date.now(),
+) => {
+  if (!limits) return null;
+  const lines = limits.buckets.flatMap((bucket) =>
+    [bucket.primary, bucket.secondary].flatMap((window) => {
+      if (!window) return [];
+      const minutes = window.windowDurationMins;
+      const label =
+        minutes === 10080
+          ? "weekly"
+          : minutes && minutes % 60 === 0
+            ? `${minutes / 60}-hour`
+            : minutes
+              ? `${minutes}-minute`
+              : "usage";
+      const prefix = bucket.limitName ? `${bucket.limitName}: ` : "";
+      const reset = window.resetsAt
+        ? window.resetsAt < 1e12
+          ? window.resetsAt * 1000
+          : window.resetsAt
+        : null;
+      if (reset && reset <= now)
+        return [`${prefix}${label} usage needs a fresh report`];
+      return [
+        `${prefix}${Math.round(window.remainingPercent)}% of your ${label} limit left${resetsText(window.resetsAt)}`,
+      ];
+    }),
+  );
+  return lines.length ? lines.join(" · ") : null;
 };
 
 const CLAUDE_WINDOWS: Record<string, string> = {
@@ -208,7 +235,6 @@ export default function WorkspaceComposerControls({
 
   const account = accountLine(summary?.account ?? null);
   const usage = usageLine(summary?.limits ?? null);
-  const claudeLine = claudeUsage ? claudeUsageLine(claudeUsage) : null;
   const choose = (next: string) => {
     if (!disabled && next !== model) onChange(next, "");
   };
@@ -300,8 +326,9 @@ export default function WorkspaceComposerControls({
             {runtime === "claude" && (
               <p className="mt-2 text-ui-meta text-ink-muted">
                 Uses your Claude Code subscription sign-in. Claude can read
-                project files, use enabled research tools, and run read-only
-                shell commands in a sandbox on macOS and Linux.
+                project files, use enabled research and web tools, and run
+                sandboxed commands. Edit access permits shell writes in working
+                copies.
               </p>
             )}
           </div>
@@ -313,12 +340,22 @@ export default function WorkspaceComposerControls({
             </div>
             {claudeUsage === undefined ? (
               <Skeleton label="Loading usage" lines={1} className="mt-2" />
-            ) : claudeLine && claudeUsage ? (
+            ) : claudeUsage ? (
               <>
-                <div className="mt-0.5">{claudeLine}</div>
+                {(claudeUsage.windows ?? [claudeUsage]).map((window, index) => (
+                  <div className="mt-0.5" key={window.rateLimitType ?? index}>
+                    <div>
+                      {claudeUsageLine(window) ??
+                        `${CLAUDE_WINDOWS[window.rateLimitType ?? ""] ?? ""}usage needs a fresh report`}
+                    </div>
+                    <div className="text-ui-meta text-ink-muted">
+                      Reported by Claude Code at{" "}
+                      {new Date(window.observedAt).toLocaleString()}.
+                    </div>
+                  </div>
+                ))}
                 <div className="mt-0.5 text-ui-meta text-ink-muted">
-                  Reported by Claude Code at{" "}
-                  {clockTime(new Date(claudeUsage.observedAt))}
+                  Other Claude sessions may have used more since these reports.
                 </div>
               </>
             ) : (
@@ -344,6 +381,13 @@ export default function WorkspaceComposerControls({
                   {usage && (
                     <div className="mt-0.5 text-ui-meta text-ink-muted">
                       {usage}
+                    </div>
+                  )}
+                  {summary?.limits?.observedAt && (
+                    <div className="text-ui-meta text-ink-muted">
+                      Reported{" "}
+                      {new Date(summary.limits.observedAt).toLocaleString()}
+                      {summary.limits.cached ? "; refresh unavailable." : "."}
                     </div>
                   )}
                 </>

@@ -91,14 +91,21 @@ pub(crate) fn call(
                         studio::StudioAction::CreateFile {
                             checkpoint_id: checkpoint.map(str::to_owned),
                             path: argument("path")?.into(),
-                            base64: if tool == "project_artifact" { argument("base64")?.to_string() } else { base64::engine::general_purpose::STANDARD.encode(argument("content")?) },
+                            base64: if tool == "project_artifact" {
+                                argument("base64")?.to_string()
+                            } else {
+                                base64::engine::general_purpose::STANDARD
+                                    .encode(argument("content")?)
+                            },
                         }
-                    } else { studio::StudioAction::SaveText {
-                        checkpoint_id: checkpoint.map(str::to_owned),
-                        path: argument("path")?.into(),
-                        expected_hash: argument("expectedHash")?.into(),
-                        content: argument("content")?.into(),
-                    } },
+                    } else {
+                        studio::StudioAction::SaveText {
+                            checkpoint_id: checkpoint.map(str::to_owned),
+                            path: argument("path")?.into(),
+                            expected_hash: argument("expectedHash")?.into(),
+                            content: argument("content")?.into(),
+                        }
+                    },
                 },
             )
         }
@@ -107,17 +114,39 @@ pub(crate) fn call(
 }
 
 /// Called only inside studio_mutate's durable operation and project lock.
-pub(super) fn create_file(store: &Store, ws: &str, checkpoint: Option<&str>, path: &str, bytes: &[u8]) -> WorkbenchResult<Value> {
+pub(super) fn create_file(
+    store: &Store,
+    ws: &str,
+    checkpoint: Option<&str>,
+    path: &str,
+    bytes: &[u8],
+) -> WorkbenchResult<Value> {
     files::relative(path)?;
     if bytes.len() as u64 > MAX_FILE || ignored(path, &[]) {
-        return Err(WorkbenchError::invalid("Choose a file outside build/cache folders, no larger than 32 MiB"));
+        return Err(WorkbenchError::invalid(
+            "Choose a file outside build/cache folders, no larger than 32 MiB",
+        ));
     }
-    let root = match checkpoint { Some(cp) => session_task_root(store, ws, cp)?, None => super::root(store, ws)? };
+    let root = match checkpoint {
+        Some(cp) => session_task_root(store, ws, cp)?,
+        None => super::root(store, ws)?,
+    };
     if files::SafeRoot::open(&root)?.optional_read(path)?.is_some() {
-        return Err(WorkbenchError::conflict("This file already exists; read it and use project_edit"));
+        return Err(WorkbenchError::conflict(
+            "This file already exists; read it and use project_edit",
+        ));
     }
-    let (cp, task) = if let Some(cp) = checkpoint { (cp.to_owned(), None) } else {
-        let task = tasks::create_task(store, ws, format!("Create {path}"), None, vec![path.into()], vec![])?;
+    let (cp, task) = if let Some(cp) = checkpoint {
+        (cp.to_owned(), None)
+    } else {
+        let task = tasks::create_task(
+            store,
+            ws,
+            format!("Create {path}"),
+            None,
+            vec![path.into()],
+            vec![],
+        )?;
         let cp = tasks::checkpoint(store, ws, &task.id, vec![], "copy")?.id;
         (cp, Some(task))
     };
@@ -131,13 +160,20 @@ pub(super) fn create_file(store: &Store, ws: &str, checkpoint: Option<&str>, pat
         tasks::update_task(store, ws, &task.id, task.revision, "completed")?;
         tasks::discard_copy(store, ws, &cp)?;
         Some(applied)
-    } else { None };
-    Ok(json!({"created":true,"path":path,"hash":hash(bytes),"bytes":bytes.len(),"checkpointId":cp,"application":application}))
+    } else {
+        None
+    };
+    Ok(
+        json!({"created":true,"path":path,"hash":hash(bytes),"bytes":bytes.len(),"checkpointId":cp,"application":application}),
+    )
 }
 
 pub(crate) fn capture_session(store: &Store, session: &str) -> WorkbenchResult<()> {
     let snapshot = store.session_snapshot(session)?;
-    if let (Some(ws), Some(cp)) = (snapshot.session.workspace_id.as_deref(), snapshot.session.overrides["projectCheckpointId"].as_str()) {
+    if let (Some(ws), Some(cp)) = (
+        snapshot.session.workspace_id.as_deref(),
+        snapshot.session.overrides["projectCheckpointId"].as_str(),
+    ) {
         let _guard = lock(store, ws)?;
         tasks::capture_changes(store, ws, cp)?;
     }

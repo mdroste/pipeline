@@ -451,7 +451,11 @@ pub async fn workbench_codex_reconcile_session(
             &binding.provider_thread_id,
             permission_profile,
             vec![root.to_string_lossy().into_owned()],
-            Some(harness.capabilities.codex_config(harness.web_search, harness.command_network, permission_profile)),
+            Some(harness.capabilities.codex_config(
+                harness.web_search,
+                harness.command_network,
+                permission_profile,
+            )),
         )
         .await?;
     let binding_id = connection
@@ -561,6 +565,7 @@ pub(super) fn ensure_event_bridge(
             }
             if !recovery.status().connected {
                 recovery.shutdown().await;
+                crate::workbench::conversation_tools::stop_all().await;
                 close_active_connection(epoch);
                 break;
             }
@@ -597,10 +602,17 @@ pub(super) fn ensure_event_bridge(
                             let tool_supervisor = supervisor.clone();
                             let tool_app = app.clone();
                             tokio::spawn(async move {
-                                let response = if crate::workbench::conversation_tools::owns(params["tool"].as_str().unwrap_or_default()) {
+                                let response = if crate::workbench::conversation_tools::owns(
+                                    params["tool"].as_str().unwrap_or_default(),
+                                ) {
                                     crate::workbench::conversation_tools::handle(params).await
                                 } else {
-                                    run_store(move |store| crate::workbench::research::handle_dynamic_tool_call(&store, &params)).await
+                                    run_store(move |store| {
+                                        crate::workbench::research::handle_dynamic_tool_call(
+                                            &store, &params,
+                                        )
+                                    })
+                                    .await
                                 };
                                 crate::workbench::research::jobs::launch_pending();
                                 let mut response = match response {
@@ -693,6 +705,7 @@ pub(super) fn ensure_event_bridge(
                             // Transport failure alone does not prove the native
                             // process stopped. Reap it before releasing account use.
                             supervisor.shutdown().await;
+                            crate::workbench::conversation_tools::stop_all().await;
                             close_active_connection(*epoch);
                         }
                         crate::workbench::codex::NormalizedEvent::TurnCompleted {
@@ -702,15 +715,12 @@ pub(super) fn ensure_event_bridge(
                             status,
                             ..
                         } => {
-                            crate::workbench::conversation_tools::cancel(thread_id, turn_id);
-        crate::workbench::browser::stop().await;
-                            let capture_thread = thread_id.clone();
-                            let _ = run_store(move |store| {
-                                use rusqlite::OptionalExtension as _;
-                                let session: Option<String> = store.connection()?.query_row("SELECT session_id FROM session_bindings WHERE provider_thread_id=?1 AND retired_at IS NULL", [&capture_thread], |r| r.get(0)).optional().map_err(|e| WorkbenchError::storage("Capture conversation files", e))?;
-                                if let Some(session) = session { crate::workbench::project::assistant_files::capture_session(&store, &session)?; }
-                                Ok(())
-                            }).await;
+                            if let Err(error) =
+                                crate::workbench::conversation_tools::finish(thread_id, turn_id)
+                                    .await
+                            {
+                                let _ = app.emit("workbench:event", crate::workbench::codex::NormalizedEvent::ProtocolWarning {epoch:*epoch,message:format!("The working copy could not be captured: {}. Its files are retained; refresh the working copy before accepting changes.",error.message)});
+                            }
                             complete_active_turn(*epoch, thread_id, turn_id);
                             if status == "completed" {
                                 spawn_title_generation(
@@ -734,6 +744,7 @@ pub(super) fn ensure_event_bridge(
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                     supervisor.shutdown().await;
+                    crate::workbench::conversation_tools::stop_all().await;
                     close_active_connection(epoch);
                     return;
                 }
@@ -764,6 +775,9 @@ async fn reconcile_active_turn(
     // so it must not reread the conversation's items.
     if let Ok(recent) = supervisor.recent_turns(&thread).await {
         if let Some(native_turn) = recovered_terminal(&recent, &turn) {
+            if let Err(error) = crate::workbench::conversation_tools::finish(&thread, &turn).await {
+                let _ = app.emit("workbench:event", crate::workbench::codex::NormalizedEvent::ProtocolWarning {epoch,message:format!("The working copy could not be captured: {}. Its files are retained; refresh before accepting changes.",error.message)});
+            }
             complete_active_turn(epoch, &thread, &turn);
             // The same loss that hid completion from the permit owner can hide
             // it from the renderer. Re-emit the authoritative terminal identity.

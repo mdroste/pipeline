@@ -5,7 +5,17 @@ public release was not tracked as a stable release series.
 
 ## Unreleased
 
+## 1.2.0 — 2026-10-29
+
 ### Added
+
+- ChatGPT and Claude conversations share recoverable file creation, public page
+  reads and downloads, and optional browser interaction. Assistant settings
+  separately control web search, command internet access, allowed command sites,
+  and browser interaction. Commands can write inside isolated working copies.
+- Claude can use the command sandbox inside a configured WSL2 distribution on
+  Windows. Usage reports for both providers are saved per account and show
+  their reporting time and separate usage windows.
 
 - Reviews check every quoted passage against your document or the cited source
   file and label it **Quote found**, **Partial match**, **Quote not found**, or
