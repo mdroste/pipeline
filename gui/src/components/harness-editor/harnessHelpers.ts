@@ -244,7 +244,7 @@ export function availabilityFor(
 
 export type AccessScope = "builtIn" | "global" | "workspace" | "conversation";
 export type AccessKey =
-  "mode" | "commandNetwork" | "contextBudgetBytes" | "webSearch";
+  "mode" | "commandNetwork" | "commandDomains" | "browser" | "contextBudgetBytes" | "webSearch";
 
 export const ACCESS_SCOPES: Array<{ id: AccessScope; label: string }> = [
   { id: "builtIn", label: "Built-in" },
@@ -258,7 +258,7 @@ export interface AccessRow {
   label: string;
   description: string;
   builtIn: string | number | boolean;
-  kind: "select" | "boolean";
+  kind: "select" | "boolean" | "text";
   options?: Array<{ value: string | number; label: string }>;
   /** When set, no scope may override the value; the text explains why. */
   locked?: string;
@@ -269,7 +269,7 @@ export const ACCESS_ROWS: AccessRow[] = [
     key: "mode",
     label: "Access mode",
     description:
-      "Inspect lets commands read the registered folder. Edit also lets them write to it and enables execution modules.",
+      "Inspect lets the assistant read project files. Edit enables recoverable file changes and research jobs. Commands can write inside isolated working copies.",
     builtIn: "inspect",
     kind: "select",
     options: [
@@ -283,6 +283,16 @@ export const ACCESS_ROWS: AccessRow[] = [
     description: "Whether commands the model runs may reach the network.",
     builtIn: false,
     kind: "boolean",
+  },
+  {
+    key: "commandDomains", label: "Allowed command sites",
+    description: "With command internet access on: leave blank for public internet, or list domains separated by commas (for example, pypi.org, *.pythonhosted.org).",
+    builtIn: "", kind: "text",
+  },
+  {
+    key: "browser", label: "Browser interaction",
+    description: "Use a visible browser with a separate profile for this conversation. Requires one-time browser setup; sign in directly in its window.",
+    builtIn: false, kind: "boolean",
   },
   {
     key: "contextBudgetBytes",
@@ -301,10 +311,10 @@ export const ACCESS_ROWS: AccessRow[] = [
   {
     key: "webSearch",
     label: "Web search",
-    description: "Let the assistant search the web during a conversation.",
+    description: "Search the web, read public pages, and download files when Edit is enabled. Independent of command internet access.",
     builtIn: false,
     kind: "boolean",
-    locked: "Web search is not available in Workspace yet.",
+
   },
 ];
 
@@ -357,6 +367,10 @@ export function effectiveAccessValue(
       return effective.mode;
     case "commandNetwork":
       return effective.commandNetwork;
+    case "commandDomains":
+      return effective.capabilities?.commandDomains.join(", ") ?? "";
+    case "browser":
+      return effective.capabilities?.browser ?? false;
     case "contextBudgetBytes":
       return effective.contextBudgetBytes;
     case "webSearch":

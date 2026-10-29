@@ -120,7 +120,7 @@ pub(crate) async fn submit(
         request.effort.as_deref(),
         root.as_deref(),
     );
-    let sandbox = root.as_deref().map(shell::sandbox);
+    let sandbox = root.as_deref().map(|root| shell::sandbox(root, &prepared.effective.capabilities, prepared.effective.command_network));
     // CLI auth, configuration and handshake all finish before sending a prompt.
     let mut process = transport::Process::start(&args, sandbox.as_ref())
         .await
@@ -189,6 +189,10 @@ pub(crate) async fn submit(
         )
         .await;
         process.stop().await;
+        super::conversation_tools::cancel(&task_turn.thread, &task_turn.id);
+        crate::workbench::browser::stop().await;
+        let capture_session = task_turn.session.clone();
+        let _ = run_store(move |store| super::project::assistant_files::capture_session(&store, &capture_session)).await;
         let cleanup_thread = thread.clone();
         let cleanup_turn = id.clone();
         let _ = run_store(move |store| {

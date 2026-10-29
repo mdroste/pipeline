@@ -229,6 +229,7 @@ pub(crate) async fn submit_turn(
                     &binding.provider_thread_id,
                     permission_profile,
                     vec![root],
+                    Some(prepared.effective.capabilities.codex_config(prepared.effective.web_search, prepared.effective.command_network, permission_profile)),
                 )
                 .await?
         } else {
@@ -243,6 +244,7 @@ pub(crate) async fn submit_turn(
                     model: request.model.clone(),
                     effort: request.effort.clone(),
                     dynamic_tools: prepared.effective.dynamic_tools.clone(),
+                    config: Some(prepared.effective.capabilities.codex_config(prepared.effective.web_search, prepared.effective.command_network, permission_profile)),
                 })
                 .await?
         };
@@ -449,6 +451,7 @@ pub async fn workbench_codex_reconcile_session(
             &binding.provider_thread_id,
             permission_profile,
             vec![root.to_string_lossy().into_owned()],
+            Some(harness.capabilities.codex_config(harness.web_search, harness.command_network, permission_profile)),
         )
         .await?;
     let binding_id = connection
@@ -594,12 +597,11 @@ pub(super) fn ensure_event_bridge(
                             let tool_supervisor = supervisor.clone();
                             let tool_app = app.clone();
                             tokio::spawn(async move {
-                                let response = run_store(move |store| {
-                                    crate::workbench::research::handle_dynamic_tool_call(
-                                        &store, &params,
-                                    )
-                                })
-                                .await;
+                                let response = if crate::workbench::conversation_tools::owns(params["tool"].as_str().unwrap_or_default()) {
+                                    crate::workbench::conversation_tools::handle(params).await
+                                } else {
+                                    run_store(move |store| crate::workbench::research::handle_dynamic_tool_call(&store, &params)).await
+                                };
                                 crate::workbench::research::jobs::launch_pending();
                                 let mut response = match response {
                                     Ok(value) => value,
@@ -700,6 +702,15 @@ pub(super) fn ensure_event_bridge(
                             status,
                             ..
                         } => {
+                            crate::workbench::conversation_tools::cancel(thread_id, turn_id);
+        crate::workbench::browser::stop().await;
+                            let capture_thread = thread_id.clone();
+                            let _ = run_store(move |store| {
+                                use rusqlite::OptionalExtension as _;
+                                let session: Option<String> = store.connection()?.query_row("SELECT session_id FROM session_bindings WHERE provider_thread_id=?1 AND retired_at IS NULL", [&capture_thread], |r| r.get(0)).optional().map_err(|e| WorkbenchError::storage("Capture conversation files", e))?;
+                                if let Some(session) = session { crate::workbench::project::assistant_files::capture_session(&store, &session)?; }
+                                Ok(())
+                            }).await;
                             complete_active_turn(*epoch, thread_id, turn_id);
                             if status == "completed" {
                                 spawn_title_generation(

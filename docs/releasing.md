@@ -1,6 +1,6 @@
 # Releasing
 
-A release is built by starting [release.yml](.github/workflows/release.yml) by
+A release is built by starting [release.yml](../.github/workflows/release.yml) by
 hand on a signed, annotated version tag. Pushing a tag doesn't start the
 build. The workflow creates a draft release, which you review and publish
 yourself.
@@ -28,8 +28,8 @@ produce an AppImage.
    `gui/package-lock.json`, `gui/src-tauri/Cargo.toml`, and
    `gui/src-tauri/Cargo.lock` together. Keep the app identifier
    `com.pipeline.report`.
-2. Update the [changelog](CHANGELOG.md), the guides, and the notices. Run
-   every check in [Contributing](CONTRIBUTING.md), and review dependency
+2. Update the [changelog](../CHANGELOG.md), the guides, and the notices. Run
+   every check in [Contributing](../.github/CONTRIBUTING.md), and review dependency
    advisories.
 3. Create and push a signed, annotated tag for that commit:
 
@@ -63,7 +63,7 @@ step until every platform is built.
 builds:
 
 - `gui/src-tauri/resources/notices/` gets Pipeline's license, the
-  [third-party notice](THIRD_PARTY_LICENSES.md), and a short versioned
+  [third-party notice](../THIRD_PARTY_LICENSES.md), and a short versioned
   notice. Tauri bundles only these three files.
 - `gui/src-tauri/resources/poppler/` gets `pdftoppm`, `pdftotext`, the
   libraries they load, Poppler's data, and its license files.
@@ -77,8 +77,8 @@ builds:
 `resources/poppler/BUNDLE_INVENTORY.json` records the Poppler version and the
 hash of every bundled file. The release cache reuses a bundled Poppler folder
 only when every hash matches. See
-[bundle-poppler.sh](scripts/release/bundle-poppler.sh) and the
-[Tauri configuration](gui/src-tauri/tauri.conf.json) for the exact inputs.
+[bundle-poppler.sh](../scripts/release/bundle-poppler.sh) and the
+[Tauri configuration](../gui/src-tauri/tauri.conf.json) for the exact inputs.
 
 The release produces four installers and four checksum files. It doesn't
 produce a software bill of materials, build attestations, or Windows
@@ -97,14 +97,14 @@ Before you publish, test the candidate by hand:
 - Sign in to each provider and run real conversations and reviews, including
   tool calls and approvals.
 - Run the 20 tasks in
-  [`research-evaluation-v1.json`](docs/workbench/research-evaluation-v1.json)
+  [`research-evaluation-v1.json`](../gui/src-tauri/tests/fixtures/research-evaluation-v1.json)
   with the same files, model, and effort in each conversation mode. Have a
   researcher score correctness and traceability.
 - Measure startup, first message, streaming, long conversations,
   cancellation, and idle CPU and memory on each platform.
 - Stop a running Stata job and confirm its processes are cleaned up.
 - Quit the packaged app at each point in the crash and recovery table in
-  [Architecture](docs/architecture.md#crash-and-recovery), and confirm it
+  [Architecture](architecture.md#crash-and-recovery), and confirm it
   recovers.
 - Check that the third-party notices cover what's actually bundled, and that
   GPL source obligations for Poppler are met. The Windows Poppler archive
@@ -112,7 +112,7 @@ Before you publish, test the candidate by hand:
   notices.
 
 Record the results in an evidence file based on
-[`docs/releases/1.1.0-qualification.json`](docs/releases/1.1.0-qualification.json),
+[`docs/releases/1.1.0-qualification.json`](releases/1.1.0-qualification.json),
 with the final commit, tool and provider versions, platforms, outcomes, and
 the hashes of the evidence and installers. Then run:
 
@@ -122,7 +122,7 @@ node scripts/release/qualify-release.mjs /absolute/path/evidence.json <candidate
 
 It fails if a scenario is missing or pending, the commit differs, or a file
 changed. The evidence must cover all four platforms. Dropping a platform also
-means updating [Support](SUPPORT.md) and the release checks.
+means updating [Support](../.github/SUPPORT.md) and the release checks.
 
 ## Publish
 

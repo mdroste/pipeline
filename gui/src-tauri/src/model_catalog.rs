@@ -19,7 +19,7 @@ const CACHE_SCHEMA_VERSION: u32 = 3;
 const MAX_CATALOG_BYTES: usize = 4 * 1024 * 1024;
 const MAX_DISCOVERY_VERSION_BYTES: usize = 64 * 1024;
 const MAX_DISCOVERY_LINE_BYTES: usize = 1024 * 1024;
-const BUNDLED_POLICY: &str = include_str!("../../../model-policy.json");
+const BUNDLED_POLICY: &str = include_str!("../model-policy.json");
 
 const MAX_DISCOVERY_FLIGHTS: usize = 64;
 const DISCOVERY_FLIGHT_TTL: Duration = Duration::from_secs(15 * 60);

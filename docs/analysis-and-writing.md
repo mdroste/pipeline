@@ -34,7 +34,7 @@ restart on their own.
 - **Saved results** imports a results file from a completed run with
   **Import research-results-v1 / v2**. Pipeline records which run and file
   each value came from. Write the file with the
-  [result exporters](../examples/research-exporters/README.md).
+  [result exporters](examples/research-exporters/README.md).
 - **Compare results** shows estimates, uncertainty, and sample sizes side by
   side, with signed and absolute changes. An alternative specification needs a
   **Comparison rationale**. Relative change appears only when you mark the
@@ -74,7 +74,7 @@ to add one:
 Password-protected workbooks, `.xls`, and `.xlsb` files can't be imported.
 For Parquet, SPSS, SAS, or data stored elsewhere, use
 **Import a data dictionary** instead. See
-[Register a dataset without importing it](../examples/research-exporters/README.md#register-a-dataset-without-importing-it).
+[Register a dataset without importing it](examples/research-exporters/README.md#register-a-dataset-without-importing-it).
 
 Empty cells and the text NA, N/A, NaN, null, and `.` count as missing. In
 Stata files, `.` and `.a` to `.z` count as missing, each tallied separately.

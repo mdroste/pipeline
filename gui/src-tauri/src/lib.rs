@@ -343,6 +343,8 @@ pub fn run() {
             workbench::commands::workbench_codex_validate_model_selection,
             workbench::commands::workbench_codex_rate_limits,
             workbench::claude::usage::workbench_claude_rate_limits,
+            workbench::browser::workbench_browser_status,
+            workbench::browser::workbench_browser_install,
             workbench::commands::workbench_codex_send_turn,
             workbench::commands::workbench_codex_interrupt_turn,
             workbench::commands::workbench_codex_reconcile_session,

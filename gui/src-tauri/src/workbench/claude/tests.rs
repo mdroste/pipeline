@@ -378,7 +378,7 @@ fn turns_offer_bash_only_with_a_sandbox_root() {
 #[test]
 fn shell_sandbox_is_read_only_offline_and_fails_closed() {
     let root = std::path::Path::new("/research/project");
-    let sandbox = shell::sandbox(root);
+    let sandbox = shell::sandbox(root, &Default::default(), false);
     assert_eq!(sandbox["enabled"], true);
     assert_eq!(sandbox["failIfUnavailable"], true);
     assert_eq!(sandbox["allowUnsandboxedCommands"], false);
@@ -417,7 +417,7 @@ async fn claude_sandboxed_shell_probe() {
     let effective = super::super::research::resolve_harness(&f.store, &f.session).unwrap();
     let root = f.store.runtime_root(&f.session).unwrap();
     let args = protocol::arguments(&effective, Some("haiku"), None, Some(&root));
-    let mut process = transport::Process::start(&args, Some(&shell::sandbox(&root)))
+    let mut process = transport::Process::start(&args, Some(&shell::sandbox(&root, &Default::default(), false)))
         .await
         .unwrap();
     process.initialize(&[]).await.unwrap();

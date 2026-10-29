@@ -40,7 +40,7 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "../../prompts/*",
+      "prompts/*",
       "resources/poppler/**/*",
       "resources/notices/NOTICE.txt",
       "resources/notices/PIPELINE_LICENSE.txt",

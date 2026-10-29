@@ -246,7 +246,7 @@ edit the original.
 The repository includes a `pipeline-workflow` skill for Codex and Claude that
 creates workflows from a plain request, using the template, schema,
 validation, and run check. See
-[the skill instructions](../.agents/skills/pipeline-workflow/SKILL.md).
+[the skill instructions](skills/pipeline-workflow/SKILL.md).
 
 ## Install the optional PDF parser
 

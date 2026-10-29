@@ -264,7 +264,7 @@ pub(super) fn checkpoint(
     if !files::REPLACEMENT {
         return Err(WorkbenchError::invalid("Task file isolation is unavailable on this platform; safe replacement has not been qualified."));
     }
-    if !["copy", "git"].contains(&backend) || paths.is_empty() || paths.len() > MAX_FILES {
+    if !["copy", "git"].contains(&backend) || paths.len() > MAX_FILES {
         return Err(WorkbenchError::invalid(
             "Select files and either a local copy or Git worktree",
         ));

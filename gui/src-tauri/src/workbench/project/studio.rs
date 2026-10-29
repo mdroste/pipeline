@@ -47,6 +47,11 @@ fn scoped_record(
     deny_unknown_fields
 )]
 pub enum StudioAction {
+    CreateFile {
+        checkpoint_id: Option<String>,
+        path: String,
+        base64: String,
+    },
     SaveText {
         checkpoint_id: Option<String>,
         path: String,
@@ -172,6 +177,11 @@ pub fn studio_mutate(store: &Store, request: StudioMutation) -> WorkbenchResult<
     store.connection()?.execute("INSERT INTO project_operations VALUES(?1,?2,?3,?4)",params![request.operation_id,digest,json!({"outcome":"unknown","recovery":"Refresh and inspect records; no automatic retry"}).to_string(),now()]).map_err(err)?;
     let ws = &request.workspace_id;
     let value = match request.action {
+        StudioAction::CreateFile { checkpoint_id, path, base64 } => {
+            use base64::Engine as _;
+            let bytes = base64::engine::general_purpose::STANDARD.decode(base64).map_err(err)?;
+            super::assistant_files::create_file(store, ws, checkpoint_id.as_deref(), &path, &bytes)?
+        }
         StudioAction::SaveText {
             checkpoint_id,
             path,

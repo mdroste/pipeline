@@ -48,4 +48,4 @@ A project package (`.pwex`) includes raw data only if you turn on **Allow raw
 data in sharing packages** under **Analyze → Data & samples**. A research
 backup (`.pwrx`) is a private copy of your whole library, including captured
 data, so don't use it to share with coauthors. See
-[Back up and share](../../docs/projects.md#back-up-and-share).
+[Back up and share](../../projects.md#back-up-and-share).

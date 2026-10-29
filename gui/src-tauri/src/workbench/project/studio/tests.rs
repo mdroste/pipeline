@@ -790,7 +790,7 @@ fn live_studio_result_exporters() {
         let f = fixture();
         fs::copy(
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../docs/workbench/fixtures/research-studio")
+                .join("tests/fixtures/research-studio")
                 .join(filename),
             f.root.join(filename),
         )

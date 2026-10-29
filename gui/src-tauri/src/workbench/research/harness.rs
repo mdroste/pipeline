@@ -25,6 +25,8 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
         ("mode", json!("inspect")),
         ("webSearch", json!(false)),
         ("commandNetwork", json!(false)),
+        ("commandDomains", json!("")),
+        ("browser", json!(false)),
         ("contextBudgetBytes", json!(DEFAULT_CONTEXT_BYTES)),
     ] {
         values.insert(key.to_string(), value);
@@ -256,9 +258,6 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
             ));
         }
     }
-    if requested_web_search {
-        diagnostics.push("Native web-search control is unavailable in the pinned App Server protocol; it remains disabled.".to_string());
-    }
     if preset
         .modules
         .iter()
@@ -274,9 +273,10 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
         .get("commandNetwork")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let capabilities = crate::workbench::capabilities::ConversationCapabilities::resolve(&values, mode == "edit" && in_task_copy)?;
     let permission_profile =
         if let Some((writer, _)) = crate::workbench::discovery::role_policy(store, session_id)? {
-            if command_network || mode != if writer { "edit" } else { "inspect" } {
+            if command_network || requested_web_search || capabilities.browser || mode != if writer { "edit" } else { "inspect" } {
                 return Err(WorkbenchError::invalid(
                     "Self-discovery role access cannot be changed outside its saved scope",
                 ));
@@ -287,10 +287,10 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
                 "discovery-inspect"
             }
         } else {
-            match (mode, command_network) {
-                ("edit", true) => "workbench-edit-network",
-                ("edit", false) => "workbench-edit",
-                ("inspect", true) => "workbench-inspect-network",
+            match (capabilities.shell_write, command_network) {
+                (true, true) => "workbench-edit-network",
+                (true, false) => "workbench-edit",
+                (false, true) => "workbench-inspect-network",
                 _ => "workbench-inspect",
             }
         };
@@ -300,8 +300,9 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
         workspace_id: snapshot.session.workspace_id,
         preset,
         mode: mode.to_string(),
-        web_search: false,
+        web_search: requested_web_search,
         command_network,
+        capabilities,
         permission_profile: permission_profile.to_string(),
         context_budget_bytes: budget,
         enabled_modules: enabled,
@@ -316,6 +317,8 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
         module_availability: Vec::new(),
         instruction_sections: Vec::new(),
     };
+    let conversation_tools = crate::workbench::conversation_tools::catalog(&effective);
+    effective.dynamic_tools.extend(conversation_tools);
     // The renamed default is a display change. Preserve existing native bindings
     // by retaining its legacy display metadata in the fingerprint only.
     let mut fingerprint_view = effective.clone();

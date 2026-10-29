@@ -608,7 +608,7 @@ fn unsafe_archive_names_are_rejected() {
 #[test]
 fn evaluation_fixture_has_twenty_known_recipe_cases() {
     let fixture: Value = serde_json::from_str(include_str!(
-        "../../../../../docs/workbench/research-evaluation-v1.json"
+        "../../../tests/fixtures/research-evaluation-v1.json"
     ))
     .unwrap();
     assert_eq!(fixture["schemaVersion"], 1);

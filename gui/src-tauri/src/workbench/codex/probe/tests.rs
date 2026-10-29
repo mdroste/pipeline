@@ -51,7 +51,7 @@ fn secret_environment_denylist_covers_supported_provider_keys() {
 #[test]
 fn generated_experimental_bundle_accepts_probe_requests() {
     let bundle: Value = serde_json::from_str(include_str!(
-        "../../../../../../docs/workbench/protocol/0.147.0/experimental.schemas.json"
+        "../../../../codex-protocol/0.147.0/experimental.schemas.json"
     ))
     .unwrap();
     let definitions = bundle["definitions"].clone();

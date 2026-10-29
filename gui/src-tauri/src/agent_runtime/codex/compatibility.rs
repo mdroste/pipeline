@@ -6,7 +6,7 @@
 //! and approval policy. A failed check disables that runtime; never weaken
 //! permissions or fall back to `codex exec`.
 //!
-//! The pinned bundles in docs/workbench/protocol/<version>/ are the field
+//! The pinned bundles in gui/src-tauri/codex-protocol/<version>/ are the field
 //! reference, not an allowlist. Regenerate for review with
 //! `codex app-server generate-json-schema [--experimental] --out <dir>`. Moving
 //! the reference needs new bundles, updated constants, and new test paths.
@@ -110,11 +110,9 @@ mod tests {
 
     #[test]
     fn checked_in_schema_bundles_match_the_compatibility_constants() {
-        let stable =
-            include_bytes!("../../../../../docs/workbench/protocol/0.147.0/stable.schemas.json");
-        let experimental = include_bytes!(
-            "../../../../../docs/workbench/protocol/0.147.0/experimental.schemas.json"
-        );
+        let stable = include_bytes!("../../../codex-protocol/0.147.0/stable.schemas.json");
+        let experimental =
+            include_bytes!("../../../codex-protocol/0.147.0/experimental.schemas.json");
         assert_eq!(sha256(stable), STABLE_SCHEMA_SHA256);
         assert_eq!(sha256(experimental), EXPERIMENTAL_SCHEMA_SHA256);
     }

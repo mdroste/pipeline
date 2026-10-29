@@ -10,9 +10,9 @@ import type {
   HarnessPreset,
   BasePromptUpdate,
 } from "../src/lib/workbenchTypes";
-import writing from "../../prompts/agent_profiles/writing.md?raw";
-import review from "../../prompts/agent_profiles/code_review.md?raw";
-import econ from "../../prompts/agent_profiles/econ_research.md?raw";
+import writing from "../src-tauri/prompts/agent_profiles/writing.md?raw";
+import review from "../src-tauri/prompts/agent_profiles/code_review.md?raw";
+import econ from "../src-tauri/prompts/agent_profiles/econ_research.md?raw";
 import "../src/App.css";
 
 const profile = (

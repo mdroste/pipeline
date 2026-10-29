@@ -68,6 +68,12 @@ only as copies.
 
 ## Where code lives
 
+The repository root holds `gui/` (the React app in `gui/src/`, the Rust crate
+and CLI in `gui/src-tauri/`), `docs/`, `scripts/` for checks and release
+tooling, and `.github/` for CI and community files. Inside the crate,
+`prompts/` and `model-policy.json` are compiled into the app, `codex-protocol/`
+holds the pinned schema reference, and `tests/fixtures/` holds test inputs.
+
 Paths are relative to `gui/src-tauri/src/` unless they start with `gui/`.
 Each module's header comment has the details.
 
@@ -134,11 +140,11 @@ needs a new major version and a migrator. New extractors produce the same
 bundle, so later steps never branch on the engine.
 
 **Specialist catalog.** Automatic paper review picks roles from
-`prompts/auto_review/catalog/`. `gui/src-tauri/build.rs` checks each manifest
+`gui/src-tauri/prompts/auto_review/catalog/`. `build.rs` checks each manifest
 against `specialist.schema.json` and generates the Rust catalog, so a malformed
 role fails the build. The model returns only IDs. Pipeline supplies each role's
 prompt, tools, and file access. See the
-[catalog README](../prompts/auto_review/catalog/README.md).
+[catalog README](../gui/src-tauri/prompts/auto_review/catalog/README.md).
 
 **Model calls.** Every provider call goes through
 [`pipeline/call.rs`](../gui/src-tauri/src/pipeline/call.rs). Provider modules
@@ -155,7 +161,7 @@ its own folder.
 
 - Reject malformed version output and builds older than 0.147.0. Admit newer
   builds.
-- Treat the checksum-pinned schemas in `docs/workbench/protocol/0.147.0/` as
+- Treat the checksum-pinned schemas in `gui/src-tauri/codex-protocol/0.147.0/` as
   the field reference. Never edit them.
 - After every thread start or resume, check the returned provider, working
   folder, roots, permission profile, and approval policy. Reject a substituted
@@ -310,16 +316,16 @@ binds each plan to a local toolchain. Limits are 64 MiB in total and 8 MiB per
 entry.
 
 **Results files** use `research-results-v1` or `research-results-v2`. See the
-[exporters README](../examples/research-exporters/README.md).
+[exporters README](examples/research-exporters/README.md).
 
 ## Testing
 
-[Contributing](../CONTRIBUTING.md) lists the standard checks. Only the tests
-marked "uses quota" below make a signed-in model turn.
-[Releasing](../RELEASING.md) covers packaged builds.
+[Contributing](../.github/CONTRIBUTING.md) lists the standard checks. Only the
+tests marked "uses quota" below make a signed-in model turn.
+[Releasing](releasing.md) covers packaged builds.
 
-**Fixtures.** `docs/workbench/fixtures/` holds TeX, Stata, and Python sources
-for real-tool tests. `docs/workbench/research-evaluation-v1.json` defines
+**Fixtures.** `gui/src-tauri/tests/fixtures/` holds TeX, Stata, and Python
+sources for real-tool tests, and `research-evaluation-v1.json` there defines
 scored evaluation tasks. Harness snapshots are in
 `workbench/research/fixtures/`.
 

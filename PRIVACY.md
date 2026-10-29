@@ -136,4 +136,4 @@ provider's terms.
 ## Reporting a problem
 
 Remove confidential research and credentials from public bug reports. Report
-security problems privately, as described in [Security](SECURITY.md).
+security problems privately, as described in [Security](.github/SECURITY.md).

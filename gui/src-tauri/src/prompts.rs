@@ -2,32 +2,31 @@ use std::path::PathBuf;
 
 // Default prompts compiled into the binary.
 // Referee (Parallel) prompts:
-const DEFAULT_CONTRIBUTION: &str = include_str!("../../../prompts/contribution.md");
-const DEFAULT_TECHNICAL: &str = include_str!("../../../prompts/technical.md");
-const DEFAULT_EMPIRICAL: &str = include_str!("../../../prompts/empirical.md");
-const DEFAULT_CONSISTENCY: &str = include_str!("../../../prompts/consistency.md");
-const DEFAULT_EXPOSITION: &str = include_str!("../../../prompts/exposition.md");
+const DEFAULT_CONTRIBUTION: &str = include_str!("../prompts/contribution.md");
+const DEFAULT_TECHNICAL: &str = include_str!("../prompts/technical.md");
+const DEFAULT_EMPIRICAL: &str = include_str!("../prompts/empirical.md");
+const DEFAULT_CONSISTENCY: &str = include_str!("../prompts/consistency.md");
+const DEFAULT_EXPOSITION: &str = include_str!("../prompts/exposition.md");
 // Grant Proposal Review profile prompts:
-const DEFAULT_GRANT_AIMS: &str = include_str!("../../../prompts/grant_aims.md");
-const DEFAULT_GRANT_FEASIBILITY: &str = include_str!("../../../prompts/grant_feasibility.md");
-const DEFAULT_GRANT_CLARITY: &str = include_str!("../../../prompts/grant_clarity.md");
-const DEFAULT_GRANT_CONSISTENCY: &str = include_str!("../../../prompts/grant_consistency.md");
-const DEFAULT_GRANT_SYNTHESIS: &str = include_str!("../../../prompts/grant_synthesis.md");
-const DEFAULT_GRANT_VALIDATE: &str = include_str!("../../../prompts/grant_validate.md");
+const DEFAULT_GRANT_AIMS: &str = include_str!("../prompts/grant_aims.md");
+const DEFAULT_GRANT_FEASIBILITY: &str = include_str!("../prompts/grant_feasibility.md");
+const DEFAULT_GRANT_CLARITY: &str = include_str!("../prompts/grant_clarity.md");
+const DEFAULT_GRANT_CONSISTENCY: &str = include_str!("../prompts/grant_consistency.md");
+const DEFAULT_GRANT_SYNTHESIS: &str = include_str!("../prompts/grant_synthesis.md");
+const DEFAULT_GRANT_VALIDATE: &str = include_str!("../prompts/grant_validate.md");
 // Pipeline-level prompts (wrap, merge, consolidate, validate):
-const DEFAULT_PARALLEL_CONTEXT: &str = include_str!("../../../prompts/parallel_context.md");
+const DEFAULT_PARALLEL_CONTEXT: &str = include_str!("../prompts/parallel_context.md");
 const DEFAULT_PARALLEL_CONTEXT_GENERIC: &str =
-    include_str!("../../../prompts/parallel_context_generic.md");
-const DEFAULT_MERGE: &str = include_str!("../../../prompts/merge.md");
-const DEFAULT_EDITOR_SYNTHESIS: &str = include_str!("../../../prompts/editor_synthesis.md");
-const DEFAULT_EDITOR_SYNTHESIS_ISSUES: &str =
-    include_str!("../../../prompts/editor_synthesis_issues.md");
-const DEFAULT_VALIDATE_FEEDBACK: &str = include_str!("../../../prompts/validate_feedback.md");
+    include_str!("../prompts/parallel_context_generic.md");
+const DEFAULT_MERGE: &str = include_str!("../prompts/merge.md");
+const DEFAULT_EDITOR_SYNTHESIS: &str = include_str!("../prompts/editor_synthesis.md");
+const DEFAULT_EDITOR_SYNTHESIS_ISSUES: &str = include_str!("../prompts/editor_synthesis_issues.md");
+const DEFAULT_VALIDATE_FEEDBACK: &str = include_str!("../prompts/validate_feedback.md");
 // Preprocessing prompts:
-const DEFAULT_ORIENTATION: &str = include_str!("../../../prompts/orientation.md");
-const DEFAULT_ORIENTATION_GENERIC: &str = include_str!("../../../prompts/orientation_generic.md");
-const DEFAULT_ORIENTATION_GRANT: &str = include_str!("../../../prompts/orientation_grant.md");
-const DEFAULT_ORIENTATION_FOLDER: &str = include_str!("../../../prompts/orientation_folder.md");
+const DEFAULT_ORIENTATION: &str = include_str!("../prompts/orientation.md");
+const DEFAULT_ORIENTATION_GENERIC: &str = include_str!("../prompts/orientation_generic.md");
+const DEFAULT_ORIENTATION_GRANT: &str = include_str!("../prompts/orientation_grant.md");
+const DEFAULT_ORIENTATION_FOLDER: &str = include_str!("../prompts/orientation_folder.md");
 
 /// Get user prompt overrides in the active research data directory.
 fn user_prompts_dir() -> Result<PathBuf, String> {

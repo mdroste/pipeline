@@ -2,15 +2,7 @@
 use super::*;
 
 pub(super) fn catalog(effective: &super::super::research::EffectiveHarness) -> Vec<Value> {
-    let mut specs = effective.dynamic_tools.iter().map(|v| json!({"name":v["name"],"description":v["description"],"inputSchema":v["inputSchema"]})).collect::<Vec<_>>();
-    if effective.workspace_id.is_some() {
-        specs.push(json!({"name":"project_files","description":"List up to 200 project files within this conversation's working root.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}}));
-        specs.push(json!({"name":"project_read","description":"Read a UTF-8 file within the project (up to 256 KiB); returns a content hash needed to edit it.","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}));
-        if effective.mode == "edit" {
-            specs.push(json!({"name":"project_edit","description":"Save new contents of an existing project text file. Read first and supply its exact hash. Uses Pipeline's recoverable editor transaction and preserves concurrent changes. Available only in Edit access mode.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"expectedHash":{"type":"string"},"content":{"type":"string"}},"required":["path","expectedHash","content"],"additionalProperties":false}}));
-        }
-    }
-    specs
+    effective.dynamic_tools.iter().map(|v| json!({"name":v["name"],"description":v["description"],"inputSchema":v["inputSchema"]})).collect()
 }
 
 pub(super) async fn message(
@@ -42,21 +34,17 @@ pub(super) async fn message(
                 return Err("Tool arguments must be an object through 256 KiB".into());
             }
             let name = name.to_owned();
-            let session = turn.session.clone();
             let thread = turn.thread.clone();
             let turn_id = turn.id.clone();
             // MCP request IDs are untrusted and not suitable database IDs.
             use sha2::{Digest, Sha256};
             let call_id = format!("claude-{:x}", Sha256::digest(format!("{turn_id}:{}", id)));
-            let operation = call_id.clone();
-            let response = run_store(move |store| {
-                if name.starts_with("project_") {
-                    super::super::project::assistant_files::call(&store, &session, &name, &input, &operation)
-                        .map(|v| json!({"success":true,"contentItems":[{"type":"inputText","text":v.to_string()}]}))
-                } else {
-                    super::super::research::handle_dynamic_tool_call(&store, &json!({"threadId":thread,"turnId":turn_id,"callId":call_id,"tool":name,"arguments":input}))
-                }
-            }).await;
+            let params = json!({"threadId":thread,"turnId":turn_id,"callId":call_id,"tool":name,"arguments":input});
+            let response = if super::super::conversation_tools::owns(&name) {
+                super::super::conversation_tools::handle(params).await
+            } else {
+                run_store(move |store| super::super::research::handle_dynamic_tool_call(&store, &params)).await
+            };
             super::super::research::jobs::launch_pending();
             let mut response = match response {
                 Ok(value) => value,

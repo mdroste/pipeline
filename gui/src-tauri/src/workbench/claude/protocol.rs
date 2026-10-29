@@ -38,6 +38,12 @@ pub(super) fn arguments(
     effort: Option<&str>,
     shell_root: Option<&std::path::Path>,
 ) -> Vec<String> {
+    let native_tools = match (shell_root.is_some(), effective.web_search) {
+        (true, true) => "Bash,WebSearch,WebFetch",
+        (true, false) => "Bash",
+        (false, true) => "WebSearch,WebFetch",
+        (false, false) => "",
+    };
     let mut args = [
         "-p",
         "--input-format",
@@ -48,14 +54,14 @@ pub(super) fn arguments(
         "--include-partial-messages",
         "--no-session-persistence",
         "--tools",
-        if shell_root.is_some() { "Bash" } else { "" },
+        native_tools,
         "--disable-slash-commands",
         "--no-chrome",
         "--strict-mcp-config",
         "--permission-mode",
         "dontAsk",
         "--allowedTools",
-        "mcp__pipeline__*",
+        if effective.web_search { "mcp__pipeline__*,WebSearch,WebFetch" } else { "mcp__pipeline__*" },
     ]
     .into_iter()
     .map(str::to_owned)
@@ -68,10 +74,10 @@ pub(super) fn arguments(
         args.extend(["--system-prompt".into(), base.clone()]);
     }
     let shell = match shell_root {
-        Some(root) => super::shell::instructions(root),
+        Some(root) => super::shell::instructions(root, effective.capabilities.shell_write, effective.command_network),
         None => "Shell commands are available only through authorized research profiles.".into(),
     };
-    args.extend(["--append-system-prompt".into(), format!("{}\n\nProject tools are exposed through the pipeline MCP server. File edits require Edit access and use project_edit. {shell} Native filesystem, browser and third-party tools are disabled. Conversation history is supplied by Pipeline on each turn. Never claim to have run a tool that is unavailable.", effective.developer_instructions)]);
+    args.extend(["--append-system-prompt".into(), format!("{}\n\nProject tools are exposed through the pipeline MCP server. File edits require Edit access and use project_edit. {shell} Native filesystem and third-party tools are disabled; browser access, when enabled, uses Pipeline tools. Conversation history is supplied by Pipeline on each turn. Never claim to have run a tool that is unavailable.", effective.developer_instructions)]);
     if let Some(model) = model.filter(|s| !s.is_empty()) {
         args.push(format!("--model={model}"));
     }

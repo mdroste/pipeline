@@ -148,6 +148,7 @@ fn thread_lifecycle_uses_qualified_methods_and_exact_safe_defaults() {
         let root = workspace.display().to_string();
         let thread = supervisor
             .start_thread(StartThreadRequest {
+                config: Some(json!({"web_search":"disabled"})),
                 base_instructions: Some("You are an economics research partner.".into()),
                 workbench_session_id: "session-test".to_string(),
                 cwd: root.clone(),
@@ -186,6 +187,7 @@ fn thread_lifecycle_uses_qualified_methods_and_exact_safe_defaults() {
                 &thread.thread_id,
                 "pipeline-workbench",
                 vec![root],
+                Some(json!({"web_search":"disabled"})),
             )
             .await
             .unwrap();

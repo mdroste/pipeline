@@ -38,15 +38,12 @@ fn rust_string(value: &str) -> String {
 }
 
 fn catalog_path(manifest_dir: &Path, suffix: impl AsRef<Path>) -> PathBuf {
-    manifest_dir
-        .join("../..")
-        .join("prompts/auto_review")
-        .join(suffix)
+    manifest_dir.join("prompts/auto_review").join(suffix)
 }
 
 fn relative_prompt(suffix: &str) -> String {
     format!(
-        "include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../../prompts/auto_review/{suffix}\"))"
+        "include_str!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/prompts/auto_review/{suffix}\"))"
     )
 }
 

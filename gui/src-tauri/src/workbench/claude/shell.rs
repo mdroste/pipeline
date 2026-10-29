@@ -63,7 +63,7 @@ fn denied_reads() -> Vec<String> {
 
 /// Settings for one turn. Starting fails rather than running unconfined, and
 /// the model cannot ask to leave the sandbox.
-pub(super) fn sandbox(root: &Path) -> Value {
+pub(super) fn sandbox(root: &Path, access: &crate::workbench::capabilities::ConversationCapabilities, network: bool) -> Value {
     let root = root.to_string_lossy().into_owned();
     let mut denied = denied_reads();
     denied.extend(SECRET_PATHS.map(str::to_owned));
@@ -76,10 +76,11 @@ pub(super) fn sandbox(root: &Path) -> Value {
         "filesystem": {
             "denyRead": denied,
             "allowRead": [root],
-            "denyWrite": [root],
+            "denyWrite": if access.shell_write { vec![] } else { vec![root.clone()] },
+            "allowWrite": if access.shell_write { vec![root.clone()] } else { vec![] },
         },
         "network": {
-            "allowedDomains": [],
+            "allowedDomains": if !network { vec![] } else if access.command_domains.is_empty() { vec!["*".to_string()] } else { access.command_domains.clone() },
             "strictAllowlist": true,
             "allowLocalBinding": false,
             "allowUnixSockets": [],
@@ -89,9 +90,11 @@ pub(super) fn sandbox(root: &Path) -> Value {
 }
 
 /// Appended to the assistant instructions when the shell is offered.
-pub(super) fn instructions(root: &Path) -> String {
+pub(super) fn instructions(root: &Path, writable: bool, network: bool) -> String {
     format!(
-        "A Bash tool runs commands in a sandbox. It can read the project folder {}, write only to the current scratch folder and temporary files, and has no network access. Use it to inspect files or run quick computations. It cannot change project files: use project_edit for edits. Run research jobs through authorized research profiles.",
-        root.display()
+        "Bash runs in a sandbox rooted at {}. {} {} Use project_read, project_edit and project_create for recoverable file changes. Run host research jobs through authorized research profiles. Never write outside the supplied roots.",
+        root.display(),
+        if writable { "Commands may write in this isolated working copy; changes stay there until accepted." } else { "The project folder is read-only to commands; only scratch and temporary files are writable." },
+        if network { "Command internet access follows the conversation domain policy." } else { "Commands have no internet access." }
     )
 }

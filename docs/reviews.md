@@ -233,4 +233,4 @@ For batches, workflow files, and scripting, see the
 | Calls are queued or rate-limited | Check your provider's limits and run fewer reviews at once |
 | The run was interrupted | Open the saved run, check which steps finished, and use the recovery options it offers |
 
-To report a bug, see [Support](../SUPPORT.md).
+To report a bug, see [Support](../.github/SUPPORT.md).

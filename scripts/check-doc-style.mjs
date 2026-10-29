@@ -18,16 +18,22 @@ const files = explicit.length
       "rg",
       [
         "--files",
+        // Community files such as CONTRIBUTING.md live in .github/.
+        "--hidden",
+        "-g",
+        "!.git",
         "-g",
         "*.md",
         "-g",
-        "!prompts/**",
+        "!gui/src-tauri/prompts/**",
         "-g",
-        "prompts/auto_review/catalog/README.md",
+        "gui/src-tauri/prompts/auto_review/catalog/README.md",
         "-g",
-        "!.agents/**",
+        "!docs/skills/**",
         "-g",
-        "!docs/workbench/protocol/**",
+        "!gui/src-tauri/codex-protocol/**",
+        "-g",
+        "!.github/pull_request_template.md",
         // Local agent guides are gitignored and not published.
         "-g",
         "!CLAUDE.md",
@@ -41,8 +47,8 @@ const files = explicit.length
 
 // Researcher-facing pages use the app's words, not implementation terms.
 const userPages = (file) =>
-  ["README.md", "PRIVACY.md", "SUPPORT.md", "SECURITY.md", "examples/research-exporters/README.md"].includes(file) ||
-  (file.startsWith("docs/") && file !== "docs/architecture.md");
+  ["README.md", "PRIVACY.md", ".github/SUPPORT.md", ".github/SECURITY.md"].includes(file) ||
+  (file.startsWith("docs/") && !["docs/architecture.md", "docs/releasing.md"].includes(file));
 
 const month = "(?:January|February|March|April|May|June|July|August|September|October|November|December)";
 const rules = [

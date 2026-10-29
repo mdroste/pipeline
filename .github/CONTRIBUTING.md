@@ -12,12 +12,12 @@ described in [Security](SECURITY.md).
 
 Keep each pull request to one change. Explain what users will notice, why it's
 needed, and how you checked it. For changes users will notice, update the
-guides and add an entry under Unreleased in the [changelog](CHANGELOG.md).
+guides and add an entry under Unreleased in the [changelog](../CHANGELOG.md).
 
 ## Set up a development build
 
-Use Node.js 24.18.0 (from [`gui/.nvmrc`](gui/.nvmrc)) and Rust 1.97.1 (from
-[`rust-toolchain.toml`](rust-toolchain.toml)). Then, from a checkout:
+Use Node.js 24.18.0 (from [`gui/.nvmrc`](../gui/.nvmrc)) and Rust 1.97.1 (from
+[`rust-toolchain.toml`](../rust-toolchain.toml)). Then, from a checkout:
 
 ```bash
 cd gui
@@ -27,7 +27,7 @@ npm run tauri dev
 
 Install your platform's native build tools. Linux also needs the WebKitGTK,
 application indicator, and SVG development libraries listed in
-[the CI workflow](.github/workflows/build.yml). `npm run tauri build` puts
+[the CI workflow](workflows/build.yml). `npm run tauri build` puts
 installers in `gui/src-tauri/target/release/bundle/`.
 
 Release tests need Python 3.11 or later. The test launcher tries `python3`,
@@ -46,7 +46,7 @@ browser fixtures in `gui/e2e/` load sample projects with `?project=rich`,
 Rust handles native services and saved data, and React with TypeScript
 handles the interface. Pipeline has three parts that keep separate state:
 projects and conversations, reviews, and automations. They share the ChatGPT
-sign-in and some presentation code. Read [Architecture](docs/architecture.md)
+sign-in and some presentation code. Read [Architecture](../docs/architecture.md)
 before you change a feature, and the header comment of each module you touch.
 
 Saved settings, workflows, and reports must stay readable after an upgrade.
@@ -92,14 +92,14 @@ type are in `scripts/source-size-policy.json`. To see the full report, run
 
 Add a regression test for each bug fix. Use made-up documents and test
 credentials. Changes to installers, signing, native dependencies, or release
-workflows also need the checks in [Releasing](RELEASING.md). If a check
+workflows also need the checks in [Releasing](../docs/releasing.md). If a check
 fails, find out why before you change it.
 
 ## Writing documentation
 
 The guides in `docs/` are for researchers using the app.
-[Architecture](docs/architecture.md) is for contributors, and
-[Releasing](RELEASING.md) is for the maintainer. Put details about one module
+[Architecture](../docs/architecture.md) is for contributors, and
+[Releasing](../docs/releasing.md) is for the maintainer. Put details about one module
 in that module's header comment, not in a guide.
 
 - **Describe what the reader does and what happens.** Name controls in bold,
@@ -149,4 +149,4 @@ Don't commit `node_modules`, Rust `target` output, release bundles, generated
 notices, bundled Poppler binaries, `.env` files, machine-specific agent
 settings, confidential documents, or real credentials.
 
-Contributions are licensed under the repository's [MIT License](LICENSE).
+Contributions are licensed under the repository's [MIT License](../LICENSE).

@@ -51,11 +51,11 @@ Thumbs.db
 .env.local
 .env.*.local
 
-# Agent instruction files (local only)
+# Agent instructions, skill links, and app settings (local only)
 CLAUDE.md
 AGENTS.md
-/.claude/settings.local.json
-/.claude/worktrees/
+/.claude/
+/.agents/
 
 # Agent-written audits, plans, and progress reports stay on the local machine.
 /reports/

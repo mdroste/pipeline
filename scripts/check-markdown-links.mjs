@@ -10,10 +10,14 @@ const discovered = execFileSync(
   "rg",
   [
     "--files",
+    // Community files such as CONTRIBUTING.md live in .github/.
+    "--hidden",
+    "-g",
+    "!.git",
     "-g",
     "*.md",
     "-g",
-    "!docs/workbench/protocol/**",
+    "!gui/src-tauri/codex-protocol/**",
   ],
   { cwd: repository, encoding: "utf8" },
 )

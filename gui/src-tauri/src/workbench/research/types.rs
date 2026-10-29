@@ -39,6 +39,8 @@ pub struct EffectiveHarness {
     pub mode: String,
     pub web_search: bool,
     pub command_network: bool,
+    #[serde(default)]
+    pub capabilities: crate::workbench::capabilities::ConversationCapabilities,
     pub permission_profile: String,
     pub context_budget_bytes: usize,
     pub enabled_modules: Vec<String>,

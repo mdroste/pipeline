@@ -29,7 +29,7 @@ If one exposes data or bypasses a permission, report it privately instead.
 
 Pipeline encrypts saved API keys but stores research files and conversations
 as ordinary files. Protect your computer account, backups, and exports. See
-[Privacy](PRIVACY.md) for what's stored where.
+[Privacy](../PRIVACY.md) for what's stored where.
 
 A document or model response can contain text that tries to steer the
 assistant. Give an assistant or an imported workflow only the files and
@@ -42,5 +42,5 @@ permission to run commands.
 Releases are built by GitHub Actions from a signed version tag, after the
 automated checks pass. macOS installers are signed and notarized. Windows
 installers aren't signed. Every installer has a published checksum. See
-[Releasing](RELEASING.md) for the full process. Accepted dependency advisories
-are listed in the [Cargo audit configuration](gui/src-tauri/.cargo/audit.toml).
+[Releasing](../docs/releasing.md) for the full process. Accepted dependency advisories
+are listed in the [Cargo audit configuration](../gui/src-tauri/.cargo/audit.toml).

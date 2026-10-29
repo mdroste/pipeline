@@ -158,6 +158,10 @@ pub(in crate::workbench) fn migrate(connection: &mut Connection, from: u32) -> W
                 .execute_batch(include_str!("../migrations/016_execution_adapters.sql"))
                 .map_err(|e| WorkbenchError::storage("Failed to migrate execution adapters", e))?;
         }
+        if from < 17 {
+            transaction.execute_batch(include_str!("../migrations/017_conversation_tools.sql"))
+                .map_err(|error| WorkbenchError::storage("Failed to apply Workbench migration 17", error))?;
+        }
         transaction
             .pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION)
             .map_err(|error| {

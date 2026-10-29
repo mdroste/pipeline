@@ -185,4 +185,4 @@ address is on your computer. Some local models can't read attached files.
 ## If a connection fails
 
 Choose **Check connection** on the provider's card and read the message. For
-common problems, see [Support](../SUPPORT.md#common-problems).
+common problems, see [Support](../.github/SUPPORT.md#common-problems).

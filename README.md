@@ -22,7 +22,7 @@ writing and review tasks.
 
 [Download](https://github.com/mdroste/pipeline/releases/latest) ·
 [User guides](docs/README.md) · [Changelog](CHANGELOG.md) ·
-[Privacy](PRIVACY.md) · [Contributing](CONTRIBUTING.md)
+[Privacy](PRIVACY.md) · [Contributing](.github/CONTRIBUTING.md)
 
 ## Install
 
@@ -36,7 +36,7 @@ release page, choose **More info → Run anyway**.
 
 The app includes the Poppler PDF tools, and you don't need Python. Pipeline
 checks for new releases and lets you decide when to install them. See
-[Support](SUPPORT.md) for system requirements.
+[Support](.github/SUPPORT.md) for system requirements.
 
 On first launch, a short **Get started** guide shows which connections are
 ready and finds research tools on your computer, such as Stata, R, and
@@ -125,7 +125,7 @@ Uninstalling the app leaves your research data in place. See
 ## Current limitations
 
 - Reviews are the most mature part of Pipeline, and macOS is the
-  best-supported platform. See [Support](SUPPORT.md) for Windows and Linux.
+  best-supported platform. See [Support](.github/SUPPORT.md) for Windows and Linux.
 - PDF extraction can lose equations, table structure, or reading order. Check
   **Sources** when these matter, or see the
   [extraction options](docs/reviews.md#pdf-extraction).
@@ -153,7 +153,7 @@ npm ci
 npm run tauri dev
 ```
 
-`npm run tauri build` creates an installer. See [Contributing](CONTRIBUTING.md)
+`npm run tauri build` creates an installer. See [Contributing](.github/CONTRIBUTING.md)
 for platform dependencies and tests.
 
 ## License

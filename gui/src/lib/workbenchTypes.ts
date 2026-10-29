@@ -363,6 +363,7 @@ export interface EffectiveHarness {
   mode: "inspect" | "edit";
   webSearch: boolean;
   commandNetwork: boolean;
+  capabilities?: { commandDomains: string[]; browser: boolean; shellWrite: boolean };
   permissionProfile: string;
   contextBudgetBytes: number;
   enabledModules: string[];

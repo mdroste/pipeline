@@ -52,6 +52,8 @@ pub struct StartThreadRequest {
     pub effort: Option<String>,
     #[serde(default)]
     pub dynamic_tools: Vec<Value>,
+    #[serde(skip_deserializing)]
+    pub(crate) config: Option<Value>,
 }
 
 /// One host-owned side call: an ephemeral thread without dynamic tools or
@@ -298,7 +300,7 @@ impl AppServerSupervisor {
                 reasoning_effort: request.effort.as_deref(),
                 ephemeral,
                 service_name: "pipeline_workbench",
-                config: None,
+                config: request.config,
             })
             .await?;
         let connection = parse_thread_connection(result)?;
@@ -371,6 +373,7 @@ impl AppServerSupervisor {
                     model: request.model.clone(),
                     effort: request.effort.clone(),
                     dynamic_tools: Vec::new(),
+                    config: Some(json!({"web_search":"disabled"})),
                 },
                 true,
             )
@@ -512,6 +515,7 @@ impl AppServerSupervisor {
         thread_id: &str,
         permissions: &str,
         runtime_workspace_roots: Vec<String>,
+        config: Option<Value>,
     ) -> Result<ThreadConnection, RequestError> {
         validate_identifier("Workbench session id", workbench_session_id)?;
         validate_identifier("thread id", thread_id)?;
@@ -530,7 +534,8 @@ impl AppServerSupervisor {
                     "modelProvider": "openai",
                     // Only thread metadata is read here. History is paged
                     // separately so its size never reaches the frame limit.
-                    "excludeTurns": true
+                    "excludeTurns": true,
+                    "config": config
                 }),
                 DEFAULT_REQUEST_TIMEOUT,
             )

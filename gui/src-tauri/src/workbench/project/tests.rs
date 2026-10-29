@@ -420,7 +420,7 @@ fn qualify_run(f: &Fixture, profile: &research::ExecutionProfile) -> research::R
 }
 fn qualification_file(f: &Fixture, name: &str) {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/workbench/fixtures/project-surface")
+        .join("tests/fixtures/project-surface")
         .join(name);
     fs::copy(fixture, f.root.join(name)).unwrap();
 }

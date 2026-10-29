@@ -13,9 +13,9 @@ review. The [changelog](../CHANGELOG.md) lists what changed in each version.
 | [Settings](settings.md) | Appearance, the research data folder, storage, notifications, and updates |
 | [Command line](cli.md) | Running and sharing workflows without the desktop app |
 
-For help, see [Support](../SUPPORT.md). [Privacy](../PRIVACY.md) explains what
+For help, see [Support](../.github/SUPPORT.md). [Privacy](../PRIVACY.md) explains what
 Pipeline stores and what it sends to AI providers. To report a vulnerability,
-see [Security](../SECURITY.md).
+see [Security](../.github/SECURITY.md).
 
-To work on Pipeline itself, start with [Contributing](../CONTRIBUTING.md) and
+To work on Pipeline itself, start with [Contributing](../.github/CONTRIBUTING.md) and
 [Architecture](architecture.md).
