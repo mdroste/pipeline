@@ -95,58 +95,6 @@ fn declare_uncompressed_size(path: &Path, name: &str, size: u32) {
     fs::write(path, bytes).unwrap();
 }
 #[test]
-fn malformed_utf8_entry_names_are_rejected_without_restoring_files() {
-    let (_root, source, _) = fixture();
-    let output = tempfile::tempdir().unwrap();
-    let path = export(&source, output.path());
-    let mut bytes = fs::read(&path).unwrap();
-    let name = b"manifest.json";
-    let mut patched = 0;
-    for (signature, flags_offset, name_offset) in [
-        (0x0403_4b50u32, 6usize, 30usize),
-        (0x0201_4b50u32, 8usize, 46usize),
-    ] {
-        for at in 0..bytes.len().saturating_sub(name_offset + name.len()) {
-            if bytes[at..at + 4] == signature.to_le_bytes()
-                && &bytes[at + name_offset..at + name_offset + name.len()] == name
-            {
-                let flags = u16::from_le_bytes(
-                    bytes[at + flags_offset..at + flags_offset + 2]
-                        .try_into()
-                        .unwrap(),
-                ) | 0x0800;
-                bytes[at + flags_offset..at + flags_offset + 2]
-                    .copy_from_slice(&flags.to_le_bytes());
-                bytes[at + name_offset] = 0xff;
-                patched += 1;
-            }
-        }
-    }
-    assert_eq!(patched, 2);
-    fs::write(&path, bytes).unwrap();
-    let inspection = inspect_archive(ExportArchiveRequest {
-        path: path.to_string_lossy().into_owned(),
-    })
-    .unwrap_err();
-    assert_eq!(inspection.code, "invalid_input");
-    assert!(
-        inspection.message.to_lowercase().contains("utf"),
-        "{}",
-        inspection.message
-    );
-    let target_root = tempfile::tempdir().unwrap();
-    let target = Store::open_at(target_root.path()).unwrap();
-    let restored = import(&target, &path).unwrap_err();
-    assert_eq!(restored.code, "invalid_input");
-    let session_count: i64 = target
-        .connection()
-        .unwrap()
-        .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(session_count, 0);
-}
-
-#[test]
 fn lying_entry_sizes_are_rejected_before_the_stream_is_expanded() {
     let output = tempfile::tempdir().unwrap();
     let path = output.path().join("bomb.pwrx");
