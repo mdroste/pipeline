@@ -83,6 +83,49 @@ fn isolated_roles_are_idempotent_private_and_revocable() {
 }
 
 #[test]
+fn roles_keep_the_source_conversation_provider() {
+    let temporary = tempfile::tempdir().unwrap();
+    let store = Store::open_at(&temporary.path().join("store")).unwrap();
+    let session = source(&store, "claude-start", "Claude sources", false).unwrap();
+    let current = store.session_snapshot(&session).unwrap().session;
+    store
+        .update_session(UpdateSessionRequest {
+            session_id: session.clone(),
+            expected_revision: current.revision,
+            operation_id: "select-claude".into(),
+            title: None,
+            draft: None,
+            overrides: Some(
+                json!({"runtime":"claude","model":"sonnet","effort":"high","mode":"edit"}),
+            ),
+            archived: None,
+            preset_id: None,
+            paper_id: None,
+            clear_paper: None,
+        })
+        .unwrap();
+    let binding = tasks::binding(&store, &session).unwrap();
+    let scope = Scope {
+        session_id: Some(session),
+        workspace_id: binding.workspace_id,
+        ..Scope::default()
+    };
+    let deadline = chrono::Utc::now().timestamp() + 3600;
+    for (role_key, writer, mode) in [("paper-1", true, "edit"), ("referee-1", false, "inspect")] {
+        let (scope, _) = role(&store, &scope, "portfolio", role_key, writer, deadline).unwrap();
+        let overrides = store
+            .session_snapshot(scope.session_id.as_ref().unwrap())
+            .unwrap()
+            .session
+            .overrides;
+        assert!(super::super::claude::selected(&overrides).unwrap());
+        assert_eq!(overrides["model"], "sonnet");
+        assert_eq!(overrides["effort"], "high");
+        assert_eq!(overrides["mode"], mode);
+    }
+}
+
+#[test]
 fn partial_setup_recovers_and_expired_grants_cannot_be_reused() {
     let temporary = tempfile::tempdir().unwrap();
     let store = Store::open_at(&temporary.path().join("store")).unwrap();

@@ -244,8 +244,8 @@ pub fn role(
         }
         let current = store.session_snapshot(&session.id)?.session;
         let mut overrides = json!({"mode":if writer{"edit"}else{"inspect"},"commandNetwork":false,"webSearch":false});
-        // Preserve explicitly selected model/effort, but not inherited write roots or domain presets.
-        for k in ["model", "effort"] {
+        // Preserve the selected provider, model and effort, but not inherited write roots or domain presets.
+        for k in ["runtime", "model", "effort"] {
             if let Some(v) = source_snapshot.session.overrides.get(k) {
                 overrides[k] = v.clone();
             }
