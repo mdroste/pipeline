@@ -73,6 +73,10 @@ jobs:
         working-directory: gui
         run: npm run check:links
 
+      - name: Check documentation style
+        working-directory: gui
+        run: npm run check:docs
+
       - name: Check Rust formatting
         working-directory: gui/src-tauri
         run: cargo fmt --all -- --check

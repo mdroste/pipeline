@@ -46,7 +46,8 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
     "check:source-size": "node ../scripts/source-size-report.mjs --check",
-    "check:links": "node ../scripts/check-markdown-links.mjs"
+    "check:links": "node ../scripts/check-markdown-links.mjs",
+    "check:docs": "node ../scripts/check-doc-style.mjs"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",
