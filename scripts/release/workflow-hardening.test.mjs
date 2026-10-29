@@ -98,7 +98,7 @@ test("Tauri packages only the GUI and avoids persistent incremental caches", () 
   ]);
 });
 
-test("real parser qualification and Dependabot remain manual and infrequent", () => {
+test("real parser qualification stays manual and Dependabot stays monthly", () => {
   const parser = readText(".github", "workflows", "paddle-parser-qualification.yml");
   assert.ok(parser.includes("workflow_dispatch:"));
   assert.ok(parser.includes("runs-on: ubuntu-22.04"));
@@ -106,4 +106,16 @@ test("real parser qualification and Dependabot remain manual and infrequent", ()
 
   const dependabot = readText(".github", "dependabot.yml");
   assert.equal([...dependabot.matchAll(/interval:\s+monthly/g)].length, 3);
+});
+
+test("Dependabot isolates Rust minor and major upgrades from the patch group", () => {
+  const dependabot = readText(".github", "dependabot.yml");
+  const cargo = dependabot.split("  - package-ecosystem: cargo\n")[1]?.split("\n  - package-ecosystem:")[0];
+  assert.ok(cargo, "Cargo updates must remain enabled");
+  const rust = cargo.split("      rust:\n")[1]?.split(/\n      \S/)[0];
+  assert.ok(rust, "Rust patch updates must remain grouped");
+  const updateTypes = rust.split("        update-types:\n")[1]?.split(/\n        \S/)[0];
+  assert.ok(updateTypes, "An unrestricted group includes incompatible Rust upgrades");
+  assert.deepEqual([...updateTypes.matchAll(/^          - "?(\w+)"?\s*$/gm)].map((match) => match[1]), ["patch"]);
+  assert.doesNotMatch(cargo, /^    ignore:/m, "Migration PRs must remain available individually");
 });

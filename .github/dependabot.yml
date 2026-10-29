@@ -1,7 +1,6 @@
 version: 2
 
-# One grouped pull request per ecosystem, once a month. CI is manual-only, so
-# Dependabot cannot trigger paid runners merely by opening or updating a PR.
+# Check each ecosystem once a month. Pull requests run the normal CI checks.
 #
 # Caveat: Dependabot security updates are OFF for this repository, so these
 # scheduled version bumps are the only automatic route for a vulnerability fix
@@ -45,3 +44,7 @@ updates:
       rust:
         patterns:
           - "*"
+        # Cargo's 0.x minor releases can break APIs. Group only patches;
+        # leave minor and major upgrades as individual migration PRs.
+        update-types:
+          - "patch"
