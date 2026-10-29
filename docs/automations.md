@@ -131,8 +131,9 @@ edits** on. Edits stay in the working copy until you accept them in
 ## Research discovery
 
 Research discovery turns a topic into proposals, investigations, and reviewed
-paper drafts. It uses your ChatGPT connection. Open **Automations → Research**
-and choose:
+paper drafts. It uses the same provider as the project conversation you
+choose, or ChatGPT for a new project. Open **Automations → Research** and
+choose:
 
 - **Research discovery — choose projects yourself** pauses at a shortlist.
   Pick proposals under **Choose projects to develop**, then choose **Develop
