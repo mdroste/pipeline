@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AdvancedSettings from "./AdvancedSettings";
+import { version as appVersion } from "../../../package.json";
 import { makeSettings } from "../../test/settingsFixtures";
 import type { UpdateInfo, UpdateStatus } from "../../lib/types";
 
@@ -9,7 +10,7 @@ const invoke = vi.hoisted(() => vi.fn());
 const openUrl = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/app", () => ({
-  getVersion: () => Promise.resolve("1.1.1"),
+  getVersion: () => Promise.resolve(appVersion),
 }));
 vi.mock("@tauri-apps/plugin-shell", () => ({ open: openUrl }));
 vi.mock("../../lib/projectClient", () => ({
@@ -17,14 +18,14 @@ vi.mock("../../lib/projectClient", () => ({
 }));
 
 const available: UpdateInfo = {
-  current: "1.1.1",
-  latest: "1.2.0",
+  current: appVersion,
+  latest: "1.3.0",
   update_available: true,
-  release_url: "https://github.com/mdroste/pipeline/releases/tag/v1.2.0",
-  release_name: "Pipeline v1.2.0",
+  release_url: "https://github.com/mdroste/pipeline/releases/tag/v1.3.0",
+  release_name: "Pipeline v1.3.0",
   published_at: null,
   download_url:
-    "https://github.com/mdroste/pipeline/releases/download/v1.2.0/Pipeline-1.2.0-Windows.exe",
+    "https://github.com/mdroste/pipeline/releases/download/v1.3.0/Pipeline-1.3.0-Windows.exe",
   checked_at: "2026-10-28T12:00:00Z",
 };
 
@@ -113,11 +114,11 @@ describe("AdvancedSettings updates", () => {
     renderSettings();
 
     expect(
-      await screen.findByText("Version 1.2.0 is available."),
+      await screen.findByText("Version 1.3.0 is available."),
     ).toBeInTheDocument();
     expect(screen.getByText(/Last checked/)).toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "Download version 1.2.0" }),
+      screen.getByRole("button", { name: "Download version 1.3.0" }),
     );
     expect(openUrl).toHaveBeenCalledWith(available.download_url);
     await user.click(
@@ -133,7 +134,7 @@ describe("AdvancedSettings updates", () => {
       update_status: () => status(),
       check_for_update: () => ({
         ...available,
-        latest: "1.1.1",
+        latest: appVersion,
         update_available: false,
       }),
     });

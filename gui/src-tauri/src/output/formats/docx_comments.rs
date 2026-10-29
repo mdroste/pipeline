@@ -641,10 +641,7 @@ fn rewrite_package<R: Read + std::io::Seek>(
         let (name, modified) = {
             let entry = archive.by_index_raw(index).map_err(failed)?;
             (
-                entry
-                    .name()
-                    .map_err(|error| format!("Invalid DOCX entry name: {error}"))?
-                    .into_owned(),
+                entry.name().map_err(failed)?.into_owned(),
                 entry.last_modified(),
             )
         };

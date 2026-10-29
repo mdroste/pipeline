@@ -36,7 +36,7 @@ pub(super) fn extract(path: &str) -> WorkbenchResult<Extracted> {
         let name = entry
             .name()
             .map_err(|error| {
-                WorkbenchError::invalid(format!("Invalid archive entry name: {error}"))
+                WorkbenchError::invalid(format!("Invalid package entry name: {error}"))
             })?
             .into_owned();
         if !safe_archive_name(&name)

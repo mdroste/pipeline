@@ -491,7 +491,7 @@ pub(super) fn copy_docx_media_with_limits(
             .map_err(|error| format!("Failed to inspect DOCX media: {error}"))?;
         let name = entry
             .name()
-            .map_err(|error| format!("Invalid DOCX entry name: {error}"))?
+            .map_err(|error| format!("Invalid DOCX media name: {error}"))?
             .into_owned();
         if !name.starts_with("word/media/") || entry.is_dir() {
             continue;

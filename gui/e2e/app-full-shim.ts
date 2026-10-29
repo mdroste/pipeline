@@ -3,6 +3,8 @@
 // credentials, files, commands, or model calls are used or reachable.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { version as appVersion } from "../package.json";
+
 const now = "2026-09-29T17:20:00Z";
 const params = new URLSearchParams(window.location.search);
 
@@ -339,7 +341,7 @@ const analyzers = [
 ];
 
 // `?update=available` shows the update banner and Settings offer.
-const updateInfo = params.get("update") === "available" ? { current: "1.1.0", latest: "1.2.0", update_available: true, release_url: "https://github.com/mdroste/pipeline/releases/tag/v1.2.0", release_name: "Pipeline v1.2.0", published_at: now, download_url: "https://github.com/mdroste/pipeline/releases/download/v1.2.0/Pipeline-1.2.0-macOS-AppleSilicon.dmg", checked_at: now } : null;
+const updateInfo = params.get("update") === "available" ? { current: appVersion, latest: "1.3.0", update_available: true, release_url: "https://github.com/mdroste/pipeline/releases/tag/v1.3.0", release_name: "Pipeline v1.3.0", published_at: now, download_url: "https://github.com/mdroste/pipeline/releases/download/v1.3.0/Pipeline-1.3.0-macOS-AppleSilicon.dmg", checked_at: now } : null;
 const updateStatus = (automatic = true) => ({ automatic, automatic_available: true, last_checked_at: updateInfo?.checked_at ?? null, info: updateInfo, error: null });
 
 const commandData: Record<string, unknown> = {
@@ -348,7 +350,7 @@ const commandData: Record<string, unknown> = {
   list_analyzers: analyzers,
   get_settings: settings,
   save_settings: true,
-  check_for_update: { current: "1.1.0", latest: "1.1.0", update_available: false, release_url: "", release_name: "", published_at: null, download_url: null, checked_at: null },
+  check_for_update: { current: appVersion, latest: appVersion, update_available: false, release_url: "", release_name: "", published_at: null, download_url: null, checked_at: null },
   list_run_queue: { limit: 2, runs: [] },
   update_status: () => updateStatus(),
   update_set_automatic: (args: { enabled: boolean }) => updateStatus(args.enabled),
@@ -510,6 +512,7 @@ let callbackId = 1;
   unregisterCallback: () => {},
   convertFileSrc: (p: string) => p,
   invoke: async (command: string, _args?: unknown) => {
+    if (command === "plugin:app|version") return appVersion;
     if (command.startsWith("plugin:event|")) return callbackId++;
     if (command.startsWith("plugin:")) return null;
     if (command in commandData) {

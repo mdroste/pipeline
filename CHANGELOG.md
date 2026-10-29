@@ -79,6 +79,9 @@ public release was not tracked as a stable release series.
 
 ### Changed
 
+- Updated dependencies used for document rendering, downloads, encrypted
+  connections, and archive handling to address security advisories.
+
 - Automatic Paper Review (Full) is now **Paper Review** (`auto-paper-review`),
   and Automatic Paper Review (Quick) is now **Paper Review (Fast)**
   (`auto-paper-review-fast`). Your copies and edits move over on first launch

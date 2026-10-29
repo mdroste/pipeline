@@ -19,7 +19,7 @@ pub(super) async fn capture_named_inputs(
     run_input_dir: &tempfile::TempDir,
     run_writer: &mut Option<crate::runs::RunWriter>,
 ) -> Result<NamedInputs, String> {
-    // Extra named inputs (1.2.4): extract each declared slot's file through the
+    // Extra named inputs: extract each declared slot's file through the
     // same cascade, write the text to a temp file, and expose its path to
     // prompts as {input:key}. Temp files are held alive until the run finishes.
     let mut resolved_inputs: std::collections::HashMap<String, String> =
