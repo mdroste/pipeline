@@ -46,6 +46,15 @@ test("automatic CI gates production builds and all native targets", () => {
     assert.ok(contents.includes(required), required);
 });
 
+test("clean checkouts retain a Poppler resource for native test builds", () => {
+  const directory = path.join(ROOT, "gui", "src-tauri", "resources", "poppler");
+  assert.ok(
+    [".gitkeep", "pdftotext", "pdftotext.exe"].some((name) =>
+      fs.existsSync(path.join(directory, name))),
+    "Tauri's Poppler resource glob must match a file before native tests can compile",
+  );
+});
+
 test("release has one draft coordinator behind quality gates and no publication or overwrite", () => {
   const contents = readText(".github", "workflows", "release.yml");
   for (const required of ["workflow_dispatch:", "needs: quality", "needs: prepare", "needs: package", "fetch-depth: 0",
