@@ -262,12 +262,21 @@ describe("Get started sheet", () => {
     ]);
     expect(within(steps).getByText(/LaTeX project folder/)).toBeVisible();
 
+    // The mocked navigation must provide the destination that receives focus.
+    render(
+      <button id="gallery-replication-package-readiness">
+        Replication package template
+      </button>,
+    );
     await user.click(
       within(steps).getByRole("button", {
         name: "View Replication Package Readiness in the gallery",
       }),
     );
     expect(navigate).toHaveBeenCalledWith({ page: "gallery" });
+    expect(
+      screen.getByRole("button", { name: "Replication package template" }),
+    ).toHaveFocus();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     act(() => openGetStarted());
