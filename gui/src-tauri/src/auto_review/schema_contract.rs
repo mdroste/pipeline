@@ -1,4 +1,10 @@
 //! Host-owned shape checks for the Auto Review orientation schema.
+//!
+//! The saved schema names the subject, method and genre catalogs by reference
+//! instead of listing every ID, so adding a role never requires a schema edit.
+//! Before the provider call, the host expands those references to plain enums and
+//! validates the response against that same expanded schema. A schema that drops
+//! a required field or catalog reference is rejected before any call.
 
 use super::catalog::{GENRES, RESEARCH_ARTICLE_GENRE};
 use super::{

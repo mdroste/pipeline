@@ -150,7 +150,7 @@ function HelpContent({
             badgeColor="text-red-700 bg-red-50 dark:text-red-300 dark:bg-red-900/30"
             title="An AI provider"
           >
-            Sign in to ChatGPT in Settings → Providers or through Claude Code;
+            Sign in to ChatGPT in Settings → Connections or through Claude Code;
             add an Anthropic, OpenAI, or Google API key in Settings; or connect
             a local OpenAI-compatible server. A Claude or ChatGPT subscription
             works without an API key; Google always uses a Gemini API key. The

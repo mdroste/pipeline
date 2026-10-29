@@ -1,3 +1,8 @@
+// Project and assistant panes for one project. The split view needs 848 px of
+// working width. Below that, one pane shows at a time and both stay mounted, so
+// drafts survive; widening restores the saved choice. View and assistant width
+// are per-project device preferences and grant no access.
+
 import {
   useEffect,
   useId,

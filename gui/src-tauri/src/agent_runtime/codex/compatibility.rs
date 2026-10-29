@@ -1,3 +1,16 @@
+//! Codex App Server version admission, shared by Workspace and Reviews.
+//!
+//! The version check only rules out builds older than the implemented protocol
+//! generation. Each owner still validates the live handshake and, after every
+//! thread start or resume, the returned provider, cwd, roots, permission profile
+//! and approval policy. A failed check disables that runtime; never weaken
+//! permissions or fall back to `codex exec`.
+//!
+//! The pinned bundles in docs/workbench/protocol/<version>/ are the field
+//! reference, not an allowlist. Regenerate for review with
+//! `codex app-server generate-json-schema [--experimental] --out <dir>`. Moving
+//! the reference needs new bundles, updated constants, and new test paths.
+
 use serde::Serialize;
 
 /// Oldest App Server contract implemented by Workspace. Newer builds are

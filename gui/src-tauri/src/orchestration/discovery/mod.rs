@@ -1,4 +1,11 @@
 //! Durable portfolio research, dispatched exclusively through the existing task adapters.
+//!
+//! Workspace owns the role conversations (`workbench::discovery`), and this module
+//! never reads the Workspace store. Roles use the discovery permission profiles
+//! with network off and approval policy `never`, so a request beyond their scope
+//! is declined rather than shown to the researcher. Referees see the research
+//! record and a frozen manuscript version, never the author's chat or proposal
+//! scores. Role grants are revoked when the run ends.
 mod artifacts;
 use artifacts::{check_artifacts, consume, materialize};
 pub mod commands;

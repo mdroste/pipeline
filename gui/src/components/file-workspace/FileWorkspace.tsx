@@ -1,3 +1,10 @@
+// Shared file tabs for project files, Review sources and imported captures.
+// Each caller passes its owning adapter, and this component never widens access.
+// Links resolve through lib/fileLinks.ts: relative links stay inside the owning
+// root or capture, absolute links open only after the backend validates them,
+// and Git or task metadata, unsafe schemes and uncaptured assets never resolve.
+// Saves go through the adapter with the expected content hash.
+
 import useTabList from "../../hooks/useTabList";
 import SplitView from "../SplitView";
 import {

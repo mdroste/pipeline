@@ -1,3 +1,9 @@
+//! Readiness probes behind the dependency check.
+//!
+//! A provider is required only when the selected workflow uses it. Google Reviews
+//! call the Gemini API under the saved provider ID `antigravity`; that ID stays for
+//! settings compatibility and has no CLI behind it.
+
 use super::*;
 
 struct ProbeResult {
@@ -109,7 +115,7 @@ pub(super) fn google_dependency(settings: &crate::settings::Settings, required: 
         hint: if configured {
             "API key configured.".into()
         } else {
-            "Add a Google AI API key in Settings → Providers → Google.".into()
+            "Add a Gemini API key in Settings → Connections → Google.".into()
         },
         help_url: None,
         authenticated: Some(configured),
@@ -417,7 +423,7 @@ fn check_all_for(
             ("API key configured — CLI not required.".to_string(), None)
         } else if claude_api_mode {
             (
-                "Claude API mode is selected, but no Anthropic API key is configured. Add one in Settings → API Keys or switch to Subscription mode."
+                "Claude API mode is selected, but no Anthropic API key is configured. Add one in Settings → Connections or switch to Subscription mode."
                     .to_string(),
                 None,
             )
@@ -473,7 +479,7 @@ fn check_all_for(
             ("API key configured — CLI not required.".to_string(), None)
         } else if codex_api_mode {
             (
-                "ChatGPT API mode is selected, but no OpenAI API key is configured. Add one in Settings → API Keys or switch to Subscription mode."
+                "ChatGPT API mode is selected, but no OpenAI API key is configured. Add one in Settings → Connections or switch to Subscription mode."
                     .to_string(),
                 None,
             )

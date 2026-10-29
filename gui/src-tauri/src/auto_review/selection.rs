@@ -1,4 +1,11 @@
 //! Ordered schema/count and review-plan admission checks.
+//!
+//! The model chooses IDs only; the host supplies prompts, tools and file access.
+//! A discipline fallback can't be combined with one of its own subfields. Every
+//! selected specialist needs exactly one non-empty selection note, and notes may
+//! name only selected specialists. Genre classifies the document and takes no
+//! specialist slot. Selection reasons are quoted model text and never change a
+//! step's permissions or configuration.
 use super::catalog::{SubjectLevel, GENRES, METHODS, RESEARCH_ARTICLE_GENRE, SUBJECTS};
 use super::schema_contract::validate_auto_review_schema_contract;
 use super::{ADAPTIVE_AGENT_COUNT_KEY, AUTO_REVIEW_CONTRACT};

@@ -1,4 +1,7 @@
 //! Bounded concurrent JSONL transport for one Codex App Server connection.
+//! Token-refresh requests are answered through the account service and never
+//! broadcast. The per-thread request sink is lossless, so a Review's tool calls
+//! survive event-queue lag; ordinary events may lag and must be reconciled.
 
 use super::wire::{
     normalize_notification, parse_frame, IncomingFrame, InitializeResult, NormalizedEvent,

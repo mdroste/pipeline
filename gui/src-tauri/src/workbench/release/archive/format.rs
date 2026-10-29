@@ -1,4 +1,10 @@
 //! Portable research archive format, limits, and command DTOs.
+//!
+//! Version 2 adds conversation working files; version 1 archives stay readable
+//! and must list none. Restore is whole-store into an empty destination and never
+//! shares import policy or transactions with `.pwex`. Archives exclude external
+//! project folders, Review and automation stores, Trash, the Codex home and
+//! credentials.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

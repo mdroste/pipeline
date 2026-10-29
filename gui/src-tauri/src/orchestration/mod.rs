@@ -1,4 +1,12 @@
 //! Durable, local task orchestration. Product runtimes retain their ownership.
+//!
+//! `owner.lock` lets one Pipeline process run tasks; a second instance gets an
+//! error instead of a shared store. The coordinator saves before it dispatches
+//! and advances only after an action's response is journaled. An interrupted
+//! action is marked uncertain and never replayed. Conversations and Reviews are
+//! reached only through `adapters`, which pin profiles at preparation and resolve
+//! Review credentials at dispatch. Leaf actions stay within the app-wide limits
+//! of one Workspace turn and one Review run.
 pub(crate) mod adapters;
 pub(crate) mod background;
 pub mod commands;

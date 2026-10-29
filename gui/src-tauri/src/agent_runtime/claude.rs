@@ -1,5 +1,12 @@
 //! Claude Code subscription authentication. No credential files or tokens cross
 //! this boundary. Reviews and Workspace own their processes independently.
+//!
+//! If the CLI's authentication behavior changes, fail and requalify; never
+//! restore subscription mode by supplying a key. `--bare` stays off because bare
+//! mode skips subscription authentication. This guard prevents API-key billing
+//! only: paid extra usage enabled on the subscription still applies. The status
+//! probe has its own process owner, so Review cancellation can't kill a
+//! conversation's check.
 
 use serde_json::{json, Value};
 use std::process::Command;

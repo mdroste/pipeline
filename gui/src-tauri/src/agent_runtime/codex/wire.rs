@@ -1,4 +1,9 @@
 //! Exact 0.147.0 wire parsing and app-owned event normalization.
+//!
+//! Frames carry no `jsonrpc` member in either direction. Pipeline's own request
+//! IDs are unsigned integers, so a response with any other ID is a protocol error.
+//! Server-request IDs may be numbers or strings: keep the raw JSON value and echo
+//! it back unchanged, never coerced.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

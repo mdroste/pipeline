@@ -468,11 +468,11 @@ pub(super) fn apply_workflow_codex_status(
             );
             codex.version = status.version;
             codex.hint = if !status.unresolved_attempts.is_empty() {
-                "Review the unresolved Workflow ChatGPT attempt in Settings → Providers → ChatGPT before another run.".into()
+                "Review the unresolved Workflow ChatGPT attempt in Settings → Connections → OpenAI before another run.".into()
             } else if status.login_in_progress {
-                "Complete Workflow ChatGPT sign-in in your browser, or cancel it in Settings → Providers → ChatGPT.".into()
+                "Complete Workflow ChatGPT sign-in in your browser, or cancel it in Settings → Connections → OpenAI.".into()
             } else if status.account.status != AccountStatus::Chatgpt {
-                "Sign in with a ChatGPT account in Settings → Providers → ChatGPT. Workspace and the legacy Codex CLI keep separate sign-ins.".into()
+                "Sign in with a ChatGPT account in Settings → Connections → OpenAI. The legacy Codex CLI keeps its own sign-in.".into()
             } else {
                 String::new()
             };

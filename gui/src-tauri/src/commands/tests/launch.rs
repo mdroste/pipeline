@@ -45,7 +45,7 @@ fn workflow_dependency_uses_live_connection_instead_of_cli_probe() {
         run_context::apply_workflow_codex_status(&mut dep, Ok(status(account, false)));
         assert!(!dependency_ready(&dep));
         assert_eq!(dep.cli_auth_status, None);
-        assert!(dep.hint.contains("Settings → Providers → ChatGPT"));
+        assert!(dep.hint.contains("Settings → Connections → OpenAI"));
     }
     run_context::apply_workflow_codex_status(&mut dep, Ok(status(AccountStatus::Chatgpt, true)));
     assert!(!dependency_ready(&dep));

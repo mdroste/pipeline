@@ -1,3 +1,13 @@
+//! Isolated task copies of a project and their acceptance.
+//!
+//! A task writes only inside its own copy; changes reach the project only through
+//! review and acceptance. The Git backend requires the repository root and refuses
+//! submodules and tracked symlinks. It adds a `--no-checkout` worktree on a new
+//! branch, then writes the captured working bytes (staged, unstaged and untracked),
+//! so filters and hooks never run and the source index and branch stay unchanged.
+//! Discarding reclaims only the copy backend's folder; removing a Git worktree is
+//! left to the researcher.
+
 use super::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

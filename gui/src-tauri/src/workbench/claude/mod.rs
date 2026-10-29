@@ -1,5 +1,12 @@
 //! Workspace-owned Claude Code conversations. The native binary authenticates;
 //! app-owned transcripts supply bounded history to independent `claude -p` turns.
+//!
+//! The Workspace turn permit covers Claude turns too. Claude bindings use their
+//! own namespace, and their IDs are never sent to Codex resume; switching
+//! providers starts a new binding with the same bounded history, and truncation
+//! is disclosed in the supplied context. Native tools other than sandboxed Bash
+//! are disabled; Pipeline tools arrive only through the scoped MCP bridge. A
+//! stale accepted turn becomes interrupted on restart and is never replayed.
 
 mod protocol;
 mod shell;

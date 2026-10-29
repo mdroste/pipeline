@@ -1,4 +1,12 @@
 //! Adaptive research planning above the deterministic task coordinator.
+//!
+//! A mission adds goals, planning and challenge rounds; it never adds a second
+//! executor. Completion is an assessment against the researcher's criteria, not
+//! a verified result. Missions never accept manuscript edits, confirm evidence,
+//! or widen execution authority. Each child action is tied to its mission and
+//! reserves budget before dispatch, and all descendants share that budget.
+//! Captured experiments choose only among prepared variants; changed inputs or
+//! grants need attention. Prompt text never authorizes a host command.
 mod accounting;
 mod assessment;
 mod brief;

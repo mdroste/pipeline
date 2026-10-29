@@ -14,7 +14,7 @@ type DependencyGroup = "models" | "pdf";
 type StatusTone = "success" | "warning" | "danger" | "neutral";
 
 // Provider rows are named for the model family, whichever access mode the
-// report checked; Settings → Providers uses the same names.
+// report checked; Settings → Connections uses the same names.
 const PROVIDER_LABELS: Record<string, string> = {
   "Claude CLI": "Claude",
   "Codex CLI": "ChatGPT",
@@ -352,7 +352,7 @@ export default function DepsCheck({
     !modelAccessReady && !pdfReady
       ? "Model access and PDF parsing need attention."
       : !modelAccessReady
-        ? "Check the required model connections in Settings → Providers."
+        ? "Check the required model connections in Settings → Connections."
         : bundledPdfUnavailable
           ? "Bundled PDF tools are unavailable. Reinstall Pipeline."
           : !pdfReady

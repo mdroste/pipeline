@@ -1,6 +1,12 @@
 //! Device-local selection of the research data directory. The active location
 //! is fixed for the lifetime of the process; saving a selection never switches
 //! an open store or moves files. Credentials, settings, and engines stay local.
+//!
+//! `storage.json` holds only `directory`: an absolute path, or null for the
+//! default. Selection rejects a folder that overlaps the local tree or sits inside
+//! the active data folder, and is written atomically so a failure keeps the old
+//! choice. A missing custom folder is an error; never recreate a mount point or
+//! write to the default folder in its place.
 
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};

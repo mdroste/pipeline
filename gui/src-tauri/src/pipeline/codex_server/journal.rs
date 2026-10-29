@@ -1,3 +1,12 @@
+//! Private per-call receipts under ~/.pipeline/providers/workflows/attempts/.
+//!
+//! A receipt holds the exact prompt, instructions, roots and runtime version, so
+//! it can contain unpublished research; receipts stay local and out of exports.
+//! An unfinished receipt blocks new Workflow model calls until the researcher
+//! checks the saved result (a `thread/read`, never a new turn) or acknowledges
+//! it. Acknowledging records abandonment; it doesn't erase usage or imply the
+//! request never ran. Receipts stay until archived by hand.
+
 use crate::agent_runtime::codex::session::private_write;
 use serde::Serialize;
 use serde_json::{json, Value};

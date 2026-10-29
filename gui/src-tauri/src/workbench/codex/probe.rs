@@ -1,3 +1,8 @@
+//! Development-only, no-model probe (`cargo run --locked --example workbench_probe`).
+//! It uses a temporary Codex home and never signs in or starts a turn. Read and
+//! resume use history from `thread/inject_items`, because `thread/start` alone
+//! creates no readable rollout. Rerun after transport, sandbox or permission changes.
+
 use super::compatibility::{
     detected_version, DetectedCodexVersion, EXPERIMENTAL_SCHEMA_SHA256, STABLE_SCHEMA_SHA256,
 };

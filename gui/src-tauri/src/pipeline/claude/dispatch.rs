@@ -205,7 +205,7 @@ pub async fn call_llm(
         match provider {
             "claude" if transport == "api" => {
                 if settings.anthropic_api_key.trim().is_empty() {
-                    return Err("Claude API mode is selected, but no Anthropic API key is configured. Add the key in Settings → API Keys or switch Claude to Subscription mode.".to_string());
+                    return Err("Claude API mode is selected, but no Anthropic API key is configured. Add the key in Settings → Connections or switch Claude to Subscription mode.".to_string());
                 }
                 return crate::pipeline::api_anthropic::call_anthropic_api(
                     app,
@@ -222,7 +222,7 @@ pub async fn call_llm(
             }
             "codex" if transport == "api" => {
                 if settings.openai_api_key.trim().is_empty() {
-                    return Err("ChatGPT API mode is selected, but no OpenAI API key is configured. Add the key in Settings → API Keys or switch ChatGPT to Subscription mode.".to_string());
+                    return Err("ChatGPT API mode is selected, but no OpenAI API key is configured. Add the key in Settings → Connections or switch ChatGPT to Subscription mode.".to_string());
                 }
                 return crate::pipeline::api_openai::call_openai_api(
                     app,
@@ -239,7 +239,7 @@ pub async fn call_llm(
             }
             "antigravity" => {
                 if settings.google_api_key.trim().is_empty() {
-                    return Err("No Google AI API key is configured. Google runs through the Gemini API — add the key in Settings → API Keys.".to_string());
+                    return Err("No Google AI API key is configured. Google runs through the Gemini API — add the key in Settings → Connections.".to_string());
                 }
                 return crate::pipeline::api_google::call_google_api(
                     app,

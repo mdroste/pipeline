@@ -1,4 +1,13 @@
 //! One application-owned ChatGPT account; execution runtimes retain separate homes.
+//!
+//! `account.lock` stops a second Pipeline process from owning the account. Codex
+//! owns browser OAuth and refresh-token rotation; this service reads only the
+//! access token, account ID and plan, and hands them to each runtime in memory.
+//! Runtimes use the ephemeral credential store, so they never write credentials
+//! or receive the refresh token. A call holds a read lease for its whole life,
+//! including uncertain-outcome cleanup; login, sign-out and account choice take
+//! the write lease. The `account-migration-v1` marker stops old Conversation or
+//! Review sign-ins from being re-imported after an intentional sign-out.
 mod commands;
 mod credentials;
 mod refresh;

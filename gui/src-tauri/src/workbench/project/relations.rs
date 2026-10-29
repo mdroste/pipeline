@@ -1,4 +1,10 @@
 //! Revision-specific decisions and explainable, bounded change propagation.
+//!
+//! Impact traversal follows declared dependencies with a visited set and stops at
+//! its depth, object and live-hashing budgets. A stopped traversal reports
+//! incomplete coverage; never present it as clean. Each impact keeps the path and
+//! reason that reached it. A changed assumption asks for a recheck; it doesn't
+//! mean a dependent conclusion is false.
 use crate::workbench::{
     desk::{self, err, DeskRecord, ResearchObjectRef},
     store::{Store, WorkbenchError, WorkbenchResult},

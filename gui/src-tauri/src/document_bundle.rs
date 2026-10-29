@@ -4,6 +4,12 @@
 //! profiles. `DocumentBundle` is the durable source of truth for new runs: it
 //! preserves page images, semantic blocks, equations, tables, figures, and
 //! provenance without forcing every source format through Markdown.
+//!
+//! Validation accepts only the current schema version. Add optional fields with
+//! Serde defaults and keep the version. A breaking change needs a new major
+//! version and a migrator, and readers reject a major they don't know. Asset
+//! paths stay run-relative; absolute paths appear only in origin and provenance.
+//! New extractors produce or enrich this bundle, so consumers never branch on engine.
 
 use crate::models::{ExtractionResult, OrientationMap};
 use regex::Regex;

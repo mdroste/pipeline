@@ -1,4 +1,11 @@
 //! Selective exchange wire records and format bounds.
+//!
+//! A `.pwex` package is a zip of `manifest.json`, a readable `README.md`,
+//! `objects/<kind>/<id>.json` and `blobs/`, so it is readable without Pipeline.
+//! Bump the format version for any change an older build would misread; readers
+//! reject other versions. The import ID rules (insert, compare by fingerprint, or
+//! remap from the source namespace) live in `import_plan`. Conversations,
+//! credentials, execution settings and declared inputs are never packaged.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;

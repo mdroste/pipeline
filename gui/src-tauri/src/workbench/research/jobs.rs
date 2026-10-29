@@ -1,4 +1,11 @@
 //! Workspace-owned local queue. No database gate or worker spans a process wait.
+//!
+//! A job is owned by its turn (it stops with the turn) or detached (stopped from
+//! the job view). Each job records the process instance that started it. A queued
+//! or running job from another instance becomes `outcome_unknown` and never
+//! restarts. Reconciling applies a completed finalization journal only after
+//! re-hashing every adopted blob. Shutdown cancels jobs and waits long enough for
+//! a Stata launcher's 30-second cooperative stop.
 use super::execution::*;
 use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -1,3 +1,13 @@
+//! One Review call on the shared Workflow App Server connection.
+//!
+//! The attempt receipt is written before `turn/start` and finalized with output
+//! and usage. A timeout, disconnect or lost acknowledgement never resubmits: the
+//! `Attempt` guard's Drop hands cleanup to a task that outlives the call. That
+//! task interrupts the exact turn and stops the connection if it can't confirm
+//! termination. Only an item marked `final_answer` becomes the report. Cumulative
+//! usage replaces earlier totals instead of being summed. An oversized prompt,
+//! result or output fails the call; nothing falls back to the legacy CLI adapter.
+
 use super::connection::{connect, Connection, PROFILE};
 use super::tools::HostTools;
 use crate::agent_runtime::codex::invocation::{NativeThreadStart, TextTurnStart};
@@ -229,7 +239,7 @@ pub(super) async fn run_connected(
         None => None,
     };
     if !c.recovery.lock().await.is_empty() {
-        return Err("[codex-outcome-unknown] An earlier Workflow attempt requires review in Settings → API Keys → ChatGPT before another run".into());
+        return Err("[codex-outcome-unknown] An earlier Workflow attempt requires review in Settings → Connections → OpenAI before another run".into());
     }
     if c.native
         .client
