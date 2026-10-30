@@ -47,7 +47,7 @@ test("release verifies installed Windows signatures before upload and cannot use
 
 const powershell = process.env.PIPELINE_TEST_PWSH || "pwsh";
 const available = spawnSync(powershell, ["-NoProfile", "-Command", "exit 0"]).status === 0;
-test("Windows signature gate rejects unsigned, untrusted, wrong-publisher, and untimestamped files", {
+test("Windows installer paths and signature rejection gates preserve their boundary contracts", {
   skip: !available && process.platform !== "win32" ? "PowerShell is not installed" : false,
 }, () => {
   assert.ok(available, "Windows release tests require PowerShell");

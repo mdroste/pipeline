@@ -5,6 +5,10 @@ public release was not tracked as a stable release series.
 
 ## Unreleased
 
+## 1.2.2 — 2026-10-29
+
+- Correct Windows release verification for installation paths with mixed separators.
+
 ## 1.2.1 — 2026-10-29
 
 - Windows release builds sign the application and installer with Azure Artifact

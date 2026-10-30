@@ -1,11 +1,28 @@
 # Exercise the signature gate without Azure or a signing certificate.
 param([Parameter(Mandatory = $true)][string]$Target)
 $ErrorActionPreference = 'Stop'
-foreach ($script in @('windows-sign.ps1', 'verify-windows-package.ps1')) {
+foreach ($script in @('windows-sign.ps1', 'windows-installer.ps1', 'verify-windows-package.ps1')) {
     $tokens = $null
     $errors = $null
     [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot $script), [ref]$tokens, [ref]$errors) | Out-Null
     if ($errors.Count) { throw ($errors | Out-String) }
+}
+. (Join-Path $PSScriptRoot 'windows-installer.ps1')
+foreach ($case in @(
+    @{ Input = 'D:\a\_temp/pipeline-signature-check'; Expected = 'D:\a\_temp\pipeline-signature-check' },
+    @{ Input = 'C:/a path with spaces/Pipeline'; Expected = 'C:\a path with spaces\Pipeline' },
+    @{ Input = 'D:\already\normalized'; Expected = 'D:\already\normalized' }
+)) {
+    $plan = Get-NsisInstallPlan -Directory $case.Input
+    if ($plan.Directory -cne $case.Expected -or $plan.Arguments.Count -ne 2 -or
+        $plan.Arguments[0] -cne '/S' -or $plan.Arguments[1] -cne "/D=$($case.Expected)") {
+        throw "NSIS plan does not preserve the requested directory: $($case.Input)"
+    }
+}
+foreach ($invalid in @('relative/path', 'C:\quoted"path', "C:\line`nbreak", 'C:\bad:name', 'C:\bad|name')) {
+    $rejected = $false
+    try { Get-NsisInstallPlan -Directory $invalid | Out-Null } catch { $rejected = $true }
+    if (-not $rejected) { throw "Accepted invalid NSIS install directory: $invalid" }
 }
 function Get-AuthenticodeSignature { param($LiteralPath) return $global:FixtureSignature }
 function Import-Module { throw 'Verification must never import the signing module' }

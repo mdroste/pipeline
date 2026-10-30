@@ -3,6 +3,9 @@
 param([Parameter(Mandatory = $true)][string]$InstallDirectory)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'windows-installer.ps1')
+$installPlan = Get-NsisInstallPlan -Directory $InstallDirectory
+$InstallDirectory = $installPlan.Directory
 $root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $bundle = Join-Path $root 'gui/src-tauri/target/release/bundle/nsis'
 $installers = @(Get-ChildItem -LiteralPath $bundle -Filter '*setup.exe' -File)
@@ -12,8 +15,12 @@ $verify = Join-Path $PSScriptRoot 'windows-sign.ps1'
 & $verify -FilePath $installers[0].FullName -VerifyOnly
 if (-not $?) { throw 'Installer signature verification failed' }
 
-$installer = Start-Process -FilePath $installers[0].FullName -ArgumentList @('/S', "/D=$InstallDirectory") -Wait -PassThru
+$installer = Start-Process -FilePath $installers[0].FullName -ArgumentList $installPlan.Arguments -Wait -PassThru
 if ($installer.ExitCode -ne 0) { throw "Installer failed: $($installer.ExitCode)" }
+if (-not (Test-Path -LiteralPath $InstallDirectory -PathType Container)) {
+    throw "Installer returned success but did not create the requested directory: $InstallDirectory"
+}
+Write-Host "Installed package in: $InstallDirectory"
 foreach ($name in @('pipeline-gui.exe', 'pipeline-cli.exe', 'uninstall.exe')) {
     & $verify -FilePath (Join-Path $InstallDirectory $name) -VerifyOnly
     if (-not $?) { throw "Installed signature verification failed: $name" }
