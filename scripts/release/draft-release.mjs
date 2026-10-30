@@ -37,7 +37,7 @@ export function manageDraft(mode, tag, file, gh = args => execFileSync("gh", arg
       // A single coordinator owns creation. Any network/API failure still
       // fails closed if create cannot prove the tag and create the draft.
       gh(["release", "create", tag, "--draft", "--verify-tag", "--title", `Pipeline ${tag}`,
-        "--notes", "Candidate installers. macOS is signed and notarized; Windows is unsigned. Publish only after complete-draft and manual qualification checks."]);
+        "--notes", "Candidate installers. macOS builds are signed and notarized; Windows builds use Azure Artifact Signing. Publish only after complete-draft and manual qualification checks."]);
       release = view();
     }
     requireDraft(release);

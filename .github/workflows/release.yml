@@ -36,7 +36,9 @@ jobs:
     if: github.ref_type == 'tag'
     needs: quality
     runs-on: ubuntu-22.04
-    environment: release
+    environment:
+      name: release
+      deployment: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -57,7 +59,12 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
-    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    environment:
+      name: ${{ matrix.id == 'windows' && 'windows-signing' || 'release' }}
+      deployment: false
     strategy:
       fail-fast: false
       matrix:
@@ -161,13 +168,67 @@ jobs:
         run: npm run tauri -- build ${{ matrix.tauri_args }} --bundles ${{ matrix.bundle }} -- --locked
 
       - name: Build unsigned package
-        if: ${{ !startsWith(matrix.id, 'macos-') }}
+        if: matrix.id == 'linux'
         working-directory: gui
         env:
           PIPELINE_OFFICIAL_RELEASE: "1"
           PIPELINE_BUNDLE_PLATFORM: ${{ matrix.id }}
           NO_STRIP: ${{ matrix.id == 'linux' && '1' || '' }}
         run: npm run tauri -- build ${{ matrix.tauri_args }} --bundles ${{ matrix.bundle }} -- --locked
+
+      - name: Compile Windows application before signing login
+        if: matrix.id == 'windows'
+        working-directory: gui
+        env:
+          PIPELINE_OFFICIAL_RELEASE: "1"
+          PIPELINE_BUNDLE_PLATFORM: windows
+        run: npm run tauri -- build --no-bundle -- --locked
+
+      - name: Authenticate Windows signing to Azure
+        if: matrix.id == 'windows'
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Prepare Windows signing and sign bundled Poppler
+        if: matrix.id == 'windows'
+        shell: pwsh
+        env:
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Install-Module ArtifactSigning -RequiredVersion 0.1.8 -Scope CurrentUser -Repository PSGallery -Force
+          Get-ChildItem gui/src-tauri/resources/poppler -Recurse -File |
+            Where-Object { $_.Extension -in @('.exe', '.dll') } |
+            ForEach-Object {
+              & ./scripts/release/windows-sign.ps1 -FilePath $_.FullName
+              if (-not $?) { throw "Poppler signing failed: $($_.FullName)" }
+            }
+          node scripts/release/poppler-inventory.mjs windows
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inventory signed Poppler' }
+          node scripts/release/prepare-windows-signing.mjs "$env:RUNNER_TEMP/windows-signing.json"
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot prepare signing configuration' }
+
+      - name: Build signed Windows package
+        if: matrix.id == 'windows'
+        working-directory: gui
+        shell: pwsh
+        env:
+          PIPELINE_OFFICIAL_RELEASE: "1"
+          PIPELINE_BUNDLE_PLATFORM: windows
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+        run: npm run tauri -- bundle --config "$env:RUNNER_TEMP/windows-signing.json" --bundles nsis
+
+      - name: Verify Windows installer and installed signatures
+        if: matrix.id == 'windows'
+        shell: pwsh
+        run: ./scripts/release/verify-windows-package.ps1 -InstallDirectory "$env:RUNNER_TEMP/pipeline-signature-check"
 
       - name: Upload immutable installer to draft
         shell: bash
@@ -205,7 +266,9 @@ jobs:
     name: Verify complete draft release
     needs: package
     runs-on: ubuntu-22.04
-    environment: release
+    environment:
+      name: release
+      deployment: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0

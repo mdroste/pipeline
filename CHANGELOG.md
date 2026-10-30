@@ -5,6 +5,11 @@ public release was not tracked as a stable release series.
 
 ## Unreleased
 
+## 1.2.1 — 2026-10-29
+
+- Windows release builds sign the application and installer with Azure Artifact
+  Signing and verify the installed files before uploading the release.
+
 ## 1.2.0 — 2026-10-29
 
 ### Added

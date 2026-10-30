@@ -13,7 +13,7 @@ body:
     attributes:
       label: Pipeline version
       description: Find this in Settings → Advanced & About.
-      placeholder: "1.2.0"
+      placeholder: "1.2.1"
     validations:
       required: true
   - type: dropdown

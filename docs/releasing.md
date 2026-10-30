@@ -5,6 +5,10 @@ hand on a signed, annotated version tag. Pushing a tag doesn't start the
 build. The workflow creates a draft release, which you review and publish
 yourself.
 
+Build progress and history are available in **Actions**, and installers are
+listed in **Releases**. Windows packaging uses the `windows-signing` environment;
+other release jobs use `release`. Build jobs don't create deployment records.
+
 ## Repository setup
 
 - Create a `release` GitHub environment with a required reviewer, limited to
@@ -14,9 +18,19 @@ yourself.
   `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, and
   `APPLE_TEAM_ID`.
 - Register your tag signing key with GitHub.
+- Create a `windows-signing` environment limited to `v*` tags. Add environment
+  secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`,
+  and variables `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE`, and
+  `AZURE_SIGNING_ENDPOINT`.
+- In Azure, give the Windows signing app a federated credential matching
+  GitHub's exact subject for this repository and the `windows-signing`
+  environment. Use issuer `https://token.actions.githubusercontent.com` and
+  audience `api://AzureADTokenExchange`. Grant the app **Artifact Signing
+  Certificate Profile Signer** access to the signing account or profile.
+  The workflow uses OpenID Connect; it doesn't require a client secret.
 
-Windows installers aren't signed, so they need no secret. They include the
-WebView2 bootstrapper, which downloads WebView2 during installation if it's
+Windows releases use Azure Artifact Signing with publisher **Michael Droste**.
+They include the WebView2 bootstrapper, which downloads WebView2 during installation if it's
 missing. Tauri blocks installing an older version over a newer one. macOS
 builds require macOS 15 or later. Linux builds run on Ubuntu 22.04 and
 produce an AppImage.
@@ -55,8 +69,11 @@ It then checks that the version matches, that GitHub verifies the tag
 signature, and that the tag points at the workflow's commit. It creates a
 draft, or reuses one, and stops if that release is already published.
 
-Each platform job bundles Poppler, builds the installer, signs and notarizes
-it on macOS, and uploads it with a SHA-256 checksum file. An asset that's
+Each platform job bundles Poppler and builds the installer. macOS builds are
+signed and notarized. Windows builds sign the bundled tools, application,
+CLI, uninstaller, and installer. Before upload, the Windows job installs the
+package and verifies its signatures, timestamps, publisher, and Poppler
+inventory. Each installer is uploaded with a SHA-256 checksum file. An asset that's
 already uploaded is never replaced. A retry with identical bytes passes, and
 different bytes need a new version. A final job downloads all four
 installers and checks their checksums, so a single-platform run fails this
@@ -77,7 +94,8 @@ builds:
   - Linux uses the runner's Ubuntu packages and the shared libraries the
     AppImage needs.
   - Windows downloads the archive pinned in
-    `scripts/release/poppler-lock.json` and checks its hash.
+    `scripts/release/poppler-lock.json`, checks its hash, and signs the
+    executables and libraries before recording their bundled hashes.
 
 `resources/poppler/BUNDLE_INVENTORY.json` records the Poppler version and the
 hash of every bundled file. The release cache reuses a bundled Poppler folder
@@ -86,8 +104,8 @@ only when every hash matches. See
 [Tauri configuration](../gui/src-tauri/tauri.conf.json) for the exact inputs.
 
 The release produces four installers and four checksum files. It doesn't
-produce a software bill of materials, build attestations, or Windows
-signatures. Runner images and signing services change over time, so
+produce a software bill of materials or build attestations.
+Runner images and signing services change over time, so
 rebuilding the same source can produce different bytes.
 
 ## Manual checks before publishing
@@ -99,6 +117,9 @@ Before you publish, test the candidate by hand:
   previous release with existing data, WebView2 setup on Windows, the
   AppImage on a Linux machine with FUSE 2, and that macOS accepts the
   signature and notarization.
+- On Windows, confirm the installer and installed application show **Michael
+  Droste** as the verified publisher. Signing doesn't guarantee that every
+  SmartScreen reputation warning disappears immediately.
 - Sign in to each provider and run real conversations and reviews, including
   tool calls and approvals.
 - For both conversation providers, create and undo files, edit in a working

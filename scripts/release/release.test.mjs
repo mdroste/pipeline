@@ -15,3 +15,4 @@ import "./draft-release.test.mjs";
 import "./update-check-assets.test.mjs";
 
 import "./release-fixes.test.mjs";
+import "./windows-signing.test.mjs";

@@ -1,7 +1,7 @@
-# Pipeline 1.2.0
+# Pipeline 1.2.1
 
 [![CI](https://github.com/mdroste/pipeline/actions/workflows/build.yml/badge.svg)](https://github.com/mdroste/pipeline/actions/workflows/build.yml)
-[![Version 1.2.0](https://img.shields.io/badge/version-1.2.0-blue)](CHANGELOG.md)
+[![Version 1.2.1](https://img.shields.io/badge/version-1.2.1-blue)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/github/license/mdroste/pipeline)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](#install)
 [![Windows](https://img.shields.io/badge/Windows-0078D4)](#install)
