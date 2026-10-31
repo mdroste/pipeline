@@ -196,6 +196,7 @@ pub(crate) async fn submit_turn(
         let session_id = request.session_id.clone();
         let (binding, runtime_root, prepared, runtime) = run_store(move |store| {
             if store.session_snapshot(&session_id)?.session.workspace_id.as_deref().is_some_and(crate::workbench::research::jobs::workspace_active) {return Err(WorkbenchError::conflict("This project has a local job holding its write resources. Finish or stop it before starting a research turn."));}
+            if !automated { crate::workbench::project::conversation_copy::prepare(&store, &session_id)?; }
             Ok::<_, WorkbenchError>((
                 store.active_binding(&session_id)?,
                 store.runtime_root(&session_id)?,

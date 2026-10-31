@@ -32,6 +32,7 @@ pub use records::{anchor_read, record, records, ProjectRecord};
 use records::{decode, put, read_record};
 
 pub(crate) mod assistant_files;
+pub(crate) mod conversation_copy;
 mod discovery_files;
 mod documents;
 mod file_workspace;

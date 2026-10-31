@@ -40,7 +40,7 @@ produce an AppImage.
 1. Choose a reviewed commit and a stable `X.Y.Z` version newer than every
    earlier stable tag. Update the version in `gui/package.json`,
    `gui/package-lock.json`, `gui/src-tauri/Cargo.toml`, and
-   `gui/src-tauri/Cargo.lock` together. Update the README heading and badge,
+   `gui/src-tauri/Cargo.lock` together. Update the README version badge,
    issue templates, release metadata, and current-version fixtures and browser
    shims. Verify that About, Settings, the built app, and the CLI show that
    version. Keep Tauri's version sourced from `gui/package.json` and the app
@@ -133,14 +133,15 @@ Before you publish, test the candidate by hand:
   them. Check that concurrent changes are preserved. Run an automation with a
   saved model, and confirm discovery authors can edit their paper folders
   while referees remain read-only.
-- Install the API command engine on macOS and Linux. Verify read-only and
+- Let Pipeline prepare command tools on macOS and Linux. Verify read-only and
   working-copy access, protected-file denial, and child-process cleanup after
   interruption and normal completion. On Windows, confirm its unavailable
   state leaves project, research, web, and browser tools usable.
 - Check web search, downloads, and each command internet setting. Verify that
   allowed sites work, denied sites fail, and commands cannot bypass the site
-  restriction. Install the optional browser, sign in directly, and confirm
-  that stopping the turn closes it. Check private-address and redirect denial.
+  restriction. Enable **Browser interaction** and let setup finish. Sign in
+  directly, and confirm that stopping the turn closes it. Check private-address
+  and redirect denial.
 - On Windows, test Claude inside WSL2 with paths containing spaces and Unicode,
   a separate Linux sign-in, and cancellation that stops Linux child processes.
   Check native ChatGPT commands and native research jobs separately.

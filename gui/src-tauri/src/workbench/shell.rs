@@ -1,7 +1,5 @@
-//! Optional, Workspace-owned command engine for direct API providers. Only an
-//! explicit installation command downloads a pinned engine. Each call receives
-//! immutable sandbox policy, a clean environment and a bounded process group;
-//! cancellation kills descendants. No subscription or Review process is used.
+//! Workspace-owned API command engine, provisioned lazily with a private runtime.
+//! Each call keeps sandbox policy, bounded output, and descendant cancellation.
 use super::store::{WorkbenchError, WorkbenchResult};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -14,7 +12,7 @@ use tokio::io::AsyncReadExt;
 const VERSION: &str = "0.0.81";
 const PACKAGE: &str = "node_modules/@anthropic-ai/sandbox-runtime";
 fn root() -> Result<PathBuf, String> {
-    Ok(crate::storage::local_root()?.join("native/conversation-shell"))
+    super::tool_setup::root()
 }
 fn err(e: impl std::fmt::Display) -> WorkbenchError {
     WorkbenchError::invalid(e.to_string())
@@ -27,76 +25,36 @@ pub struct ShellStatus {
     node_available: bool,
     platform_available: bool,
     version: &'static str,
+    setup_phase: Option<String>,
 }
 
 #[tauri::command]
 pub fn workbench_shell_status() -> Result<ShellStatus, String> {
-    let root = root()?;
-    let package = crate::safety::open_regular_file(&root.join(PACKAGE).join("package.json"))
-        .ok()
-        .and_then(|file| {
-            use std::io::Read;
-            let mut bytes = Vec::new();
-            file.take(64 * 1024).read_to_end(&mut bytes).ok()?;
-            serde_json::from_slice::<Value>(&bytes).ok()
-        });
     Ok(ShellStatus {
-        installed: package.is_some_and(|v| v["version"] == VERSION)
-            && root.join(PACKAGE).join("dist/cli.js").is_file(),
-        node_available: crate::deps::resolve_command("node").is_some(),
-        platform_available: cfg!(target_os = "macos")
-            || cfg!(target_os = "linux")
-                && ["bwrap", "socat"]
-                    .iter()
-                    .all(|name| crate::deps::resolve_command(name).is_some()),
+        installed: super::tool_setup::ready() && available(),
+        node_available: super::tool_setup::ready(),
+        platform_available: available(),
         version: VERSION,
+        setup_phase: super::tool_setup::phase(),
     })
 }
 
 #[tauri::command]
 pub async fn workbench_shell_install() -> Result<ShellStatus, String> {
-    static INSTALL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    let _guard = INSTALL.lock().await;
-    if !workbench_shell_status()?.platform_available {
-        return Err(
-            "Sandboxed API commands require macOS, or Linux with bubblewrap and socat.".into(),
-        );
+    if !available() {
+        return Err("Commands require macOS, or Linux with bubblewrap and socat.".into());
     }
-    tokio::task::spawn_blocking(|| {
-        let root = root()?;
-        crate::agent_runtime::codex::session::private_directory(&root)?;
-        let npm = crate::deps::resolve_command("npm").ok_or("Install Node.js 22.12 or later")?;
-        let mut command = npm.command([
-            "install",
-            "--prefix",
-            root.to_str().ok_or("Invalid installation path")?,
-            "--no-audit",
-            "--no-fund",
-            "--ignore-scripts",
-            "--save-exact",
-            &format!("@anthropic-ai/sandbox-runtime@{VERSION}"),
-        ]);
-        command
-            .env("PATH", crate::env::full_path())
-            .current_dir(&root);
-        let output = crate::process::run_bounded_independent(
-            &mut command,
-            Duration::from_secs(180),
-            64 * 1024,
-        )?;
-        if !output.status.success() {
-            return Err(
-                "Command engine installation failed. Check Node.js and internet access.".into(),
-            );
-        }
-        workbench_shell_status()
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    super::tool_setup::ensure().await?;
+    workbench_shell_status()
 }
 
 pub(crate) fn available() -> bool {
-    workbench_shell_status().is_ok_and(|s| s.installed && s.node_available && s.platform_available)
+    super::tool_setup::supported()
+        && (cfg!(target_os = "macos")
+            || cfg!(target_os = "linux")
+                && ["bwrap", "socat"]
+                    .iter()
+                    .all(|name| crate::deps::resolve_command(name).is_some()))
 }
 
 pub(crate) fn catalog() -> Value {
@@ -104,10 +62,7 @@ pub(crate) fn catalog() -> Value {
 }
 
 pub(crate) async fn call(session: &str, input: Value) -> WorkbenchResult<Value> {
-    let status = workbench_shell_status().map_err(err)?;
-    if !status.installed || !status.platform_available {
-        return Err(err("Install the command engine in Assistant settings. API commands require macOS or Linux with bubblewrap and socat."));
-    }
+    workbench_shell_install().await.map_err(err)?;
     let command = input["command"]
         .as_str()
         .filter(|s| !s.is_empty() && s.len() <= 32768 && !s.contains('\0'))
@@ -123,6 +78,7 @@ pub(crate) async fn call(session: &str, input: Value) -> WorkbenchResult<Value> 
     })
     .await?;
     run(
+        &super::tool_setup::node().map_err(err)?,
         &root().map_err(err)?.join(PACKAGE).join("dist/cli.js"),
         &cwd,
         &policy,
@@ -168,7 +124,13 @@ async fn capture(mut reader: impl tokio::io::AsyncRead + Unpin) -> Result<(Strin
     Ok((String::from_utf8_lossy(&bytes).into_owned(), truncated))
 }
 
-async fn run(cli: &Path, cwd: &Path, policy: &Value, command_text: &str) -> WorkbenchResult<Value> {
+async fn run(
+    node: &Path,
+    cli: &Path,
+    cwd: &Path,
+    policy: &Value,
+    command_text: &str,
+) -> WorkbenchResult<Value> {
     use std::io::Write;
     let mut config = tempfile::NamedTempFile::new().map_err(err)?;
     let mut config_body = json!({"filesystem":policy["filesystem"],"network":policy["network"]});
@@ -177,8 +139,8 @@ async fn run(cli: &Path, cwd: &Path, policy: &Value, command_text: &str) -> Work
         .write_all(&serde_json::to_vec(&config_body).map_err(err)?)
         .map_err(err)?;
     config.as_file().sync_all().map_err(err)?;
-    let node = crate::deps::resolve_command("node").ok_or_else(|| err("Node.js is unavailable"))?;
-    let mut command = node.command([
+    let mut command = std::process::Command::new(node);
+    command.args([
         cli.as_os_str(),
         std::ffi::OsStr::new("--settings"),
         config.path().as_os_str(),
@@ -246,10 +208,13 @@ mod tests {
     #[tokio::test]
     #[ignore = "Requires the pinned sandbox engine, OS sandbox, and unsandboxed test runner"]
     async fn real_engine_confines_commands_and_cancellation_kills_descendants() {
-        let cli = PathBuf::from(
-            std::env::var("PIPELINE_SANDBOX_PROBE_CLI")
-                .expect("Set PIPELINE_SANDBOX_PROBE_CLI to the pinned dist/cli.js"),
-        );
+        let (_runtime, runtime_root) = super::super::tool_setup::fixture_runtime().await;
+        let node = runtime_root.join(if cfg!(windows) {
+            "runtime/node.exe"
+        } else {
+            "runtime/bin/node"
+        });
+        let cli = runtime_root.join(PACKAGE).join("dist/cli.js");
         let directory = tempfile::tempdir().unwrap();
         let cwd = directory.path().join("project");
         std::fs::create_dir(&cwd).unwrap();
@@ -263,6 +228,7 @@ mod tests {
             .unwrap()
             .push(json!(secret));
         let result = run(
+            &node,
             &cli,
             &cwd,
             &policy,
@@ -283,6 +249,7 @@ mod tests {
             "paper"
         );
         let denied = run(
+            &node,
             &cli,
             &cwd,
             &policy,
@@ -294,7 +261,7 @@ mod tests {
         let mut writable = access;
         writable.shell_write = true;
         let policy = super::super::shell_policy::sandbox(&cwd, &writable, false);
-        let result = run(&cli, &cwd, &policy, "echo revised > paper.txt")
+        let result = run(&node, &cli, &cwd, &policy, "echo revised > paper.txt")
             .await
             .unwrap();
         assert_eq!(result["exitCode"], 0, "{result}");
@@ -303,6 +270,7 @@ mod tests {
             "revised\n"
         );
         let returned = run(
+            &node,
             &cli,
             &cwd,
             &policy,
@@ -317,6 +285,7 @@ mod tests {
             let cwd = cwd.clone();
             async move {
                 run(
+                    &node,
                     &cli,
                     &cwd,
                     &policy,

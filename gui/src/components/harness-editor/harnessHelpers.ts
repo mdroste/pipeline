@@ -245,6 +245,7 @@ export function availabilityFor(
 export type AccessScope = "builtIn" | "global" | "workspace" | "conversation";
 export type AccessKey =
   | "mode"
+  | "fileMode"
   | "commandNetwork"
   | "commandDomains"
   | "browser"
@@ -274,12 +275,24 @@ export const ACCESS_ROWS: AccessRow[] = [
     key: "mode",
     label: "Access mode",
     description:
-      "Inspect lets the assistant read project files. Edit enables recoverable file changes and research jobs. Commands can write inside isolated working copies.",
+      "Inspect reads project files. Edit allows file changes using the method selected below.",
     builtIn: "inspect",
     kind: "select",
     options: [
       { value: "inspect", label: "Inspect" },
       { value: "edit", label: "Edit" },
+    ],
+  },
+  {
+    key: "fileMode",
+    label: "File changes",
+    description:
+      "Review copy prepares a separate copy automatically; accept or discard changes in Review edits. Direct edits supports configured research jobs and undo; general commands can only read project files. Finish reviewing an existing copy before switching.",
+    builtIn: "review",
+    kind: "select",
+    options: [
+      { value: "review", label: "Review copy" },
+      { value: "direct", label: "Direct edits" },
     ],
   },
   {
@@ -301,7 +314,7 @@ export const ACCESS_ROWS: AccessRow[] = [
     key: "browser",
     label: "Browser interaction",
     description:
-      "Use a visible browser with a separate profile for this conversation. Requires one-time browser setup; sign in directly in its window.",
+      "Use a visible browser with a separate profile. Pipeline downloads the browser when needed; sign in directly in its window.",
     builtIn: false,
     kind: "boolean",
   },
@@ -376,6 +389,8 @@ export function effectiveAccessValue(
   switch (key) {
     case "mode":
       return effective.mode;
+    case "fileMode":
+      return effective.fileMode ?? "review";
     case "commandNetwork":
       return effective.commandNetwork;
     case "commandDomains":

@@ -24,6 +24,11 @@ export default function useWorkspaceEntry({
   setProjectDialog: Dispatch<SetStateAction<boolean>>;
 }) {
   useEffect(() => {
+    return appEvents.on("workspace-destination", (detail) => {
+      if (detail.workspaceId === workspaceId) setSurface("project");
+    });
+  }, [workspaceId, setSurface]);
+  useEffect(() => {
     return appEvents.on("open-file", (detail) => {
       if (detail.workspaceId === workspaceId) setSurface("project");
     });

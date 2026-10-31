@@ -3,6 +3,7 @@ import { createRef, type ComponentProps } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import WorkspaceConversationView from "./WorkspaceConversationView";
 import type { TranscriptItem } from "../lib/workbenchTypes";
+import { appEvents } from "../lib/appEvents";
 
 const markdown = vi.hoisted(() => ({ rendered: [] as string[] }));
 vi.mock("react-markdown", () => ({
@@ -117,6 +118,35 @@ const snapshot = {
   turns: [],
   items: [],
 } as never;
+
+it("opens Review edits for an automatically prepared copy", () => {
+  const destination = vi.fn();
+  const off = appEvents.on("workspace-destination", destination);
+  render(
+    view({
+      snapshot: {
+        workspace: { id: "project", root: "/research" },
+        session: {
+          id: "chat",
+          overrides: {
+            automaticWorkingCopy: true,
+            projectCheckpointId: "copy",
+          },
+        },
+        sequence: 1,
+        activeBinding: null,
+        turns: [],
+        items: [],
+      } as never,
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Review edits" }));
+  expect(destination).toHaveBeenCalledWith({
+    workspaceId: "project",
+    tab: "edits",
+  });
+  off();
+});
 /** jsdom has no layout: give the transcript fixed scroll metrics. */
 function metrics(node: HTMLElement, size: { height: number; client: number }) {
   Object.defineProperty(node, "scrollHeight", {

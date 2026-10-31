@@ -23,6 +23,7 @@
     "revision": 1
   },
   "mode": "edit",
+  "fileMode": "review",
   "webSearch": true,
   "commandNetwork": true,
   "capabilities": {
@@ -524,12 +525,13 @@
       "name": "web_download"
     }
   ],
-  "fingerprint": "034ff4dee27ac20e4b7c84f1bdfaf580390eb78f1e9e19b6619666fb423faec3",
+  "fingerprint": "ceb7c1177483250cab5e8788604a7d02d261b9fda1bd05eeee40ae8016cdaccb",
   "valueSources": {
     "browser": "builtIn",
     "commandDomains": "builtIn",
     "commandNetwork": "workspace",
     "contextBudgetBytes": "conversation",
+    "fileMode": "builtIn",
     "mode": "conversation",
     "recipeId": "conversation",
     "runtime": "conversation",

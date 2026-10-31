@@ -1,35 +1,38 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import ShellSetup from "./ShellSetup";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
-it("downloads the optional command engine only after Install command engine is selected", async () => {
+it("prepares commands with a managed runtime", async () => {
   vi.mocked(invoke).mockImplementation(async (command) =>
     command === "workbench_shell_status"
-      ? {
-          installed: false,
-          nodeAvailable: true,
-          platformAvailable: true,
-          version: "test",
-        }
-      : {
-          installed: true,
-          nodeAvailable: true,
-          platformAvailable: true,
-          version: "test",
-        },
+      ? { installed: false, nodeAvailable: false, platformAvailable: true }
+      : { installed: true, platformAvailable: true },
   );
   render(<ShellSetup disabled={false} />);
-  await screen.findByRole("button", { name: "Install command engine" });
-  expect(invoke).not.toHaveBeenCalledWith("workbench_shell_install");
-  await vi.waitFor(() =>
-    expect(
-      screen.getByRole("button", { name: "Install command engine" }),
-    ).toBeEnabled(),
-  );
-  fireEvent.click(
-    screen.getByRole("button", { name: "Install command engine" }),
-  );
-  await screen.findByText(/Command engine installed/);
+  await screen.findByText(/Commands ready/);
   expect(invoke).toHaveBeenCalledWith("workbench_shell_install");
+});
+it("does not attempt unsupported installation", async () => {
+  vi.mocked(invoke).mockClear();
+  vi.mocked(invoke).mockResolvedValue({
+    installed: false,
+    platformAvailable: false,
+  });
+  render(<ShellSetup disabled={false} />);
+  await screen.findByText(/General commands require/);
+  expect(invoke).not.toHaveBeenCalledWith("workbench_shell_install");
+});
+it("waits until settings are saved before starting setup", async () => {
+  vi.mocked(invoke).mockClear();
+  vi.mocked(invoke).mockImplementation(async (command) =>
+    command === "workbench_shell_status"
+      ? { installed: false, platformAvailable: true }
+      : { installed: true, platformAvailable: true },
+  );
+  const view = render(<ShellSetup disabled={true} />);
+  await screen.findByText(/downloads and prepares/);
+  expect(invoke).not.toHaveBeenCalledWith("workbench_shell_install");
+  view.rerender(<ShellSetup disabled={false} />);
+  await screen.findByText(/Commands ready/);
 });

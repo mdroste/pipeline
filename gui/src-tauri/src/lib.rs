@@ -347,6 +347,7 @@ pub fn run() {
             workbench::commands::workbench_codex_rate_limits,
             workbench::claude::usage::workbench_claude_rate_limits,
             workbench::browser::workbench_browser_status,
+            workbench::tool_setup::workbench_tool_setup_cancel,
             workbench::shell::workbench_shell_status,
             workbench::shell::workbench_shell_install,
             workbench::browser::workbench_browser_install,

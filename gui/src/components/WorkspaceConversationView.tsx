@@ -126,12 +126,18 @@ export default function WorkspaceConversationView({
     const sessionId = snapshot?.session.id;
     if (!sessionId) return null;
     const workspaceId = snapshot?.workspace?.id;
-    const adapter = workspaceId ? workspaceFileAdapter({ workspaceId }) : null;
+    const checkpointId = snapshot.session.overrides?.projectCheckpointId;
+    const adapter = workspaceId
+      ? workspaceFileAdapter({
+          workspaceId,
+          checkpointId: typeof checkpointId === "string" ? checkpointId : null,
+        })
+      : null;
     return {
       path: "conversation.md",
       root: snapshot.workspace?.root ?? undefined,
       open: (location: import("../lib/fileLinks").FileLocation) => {
-        if (!workspaceId || !snapshot.workspace?.root)
+        if (!workspaceId || !snapshot.workspace?.root || checkpointId)
           return conversationClient.openConversationFile(
             sessionId,
             location.path,
@@ -157,6 +163,7 @@ export default function WorkspaceConversationView({
     snapshot?.session.id,
     snapshot?.workspace?.id,
     snapshot?.workspace?.root,
+    snapshot?.session.overrides?.projectCheckpointId,
   ]);
   const { sendShortcut } = useAppPreferences();
   const shortcut =
@@ -190,6 +197,23 @@ export default function WorkspaceConversationView({
   return (
     <FileNavigationContext.Provider value={fileNavigation}>
       {header}
+      {snapshot?.session.overrides?.automaticWorkingCopy === true &&
+        snapshot.workspace && (
+          <div className="border-b border-line px-4 py-2 text-ui-meta">
+            Changes stay in a separate copy until you accept them.{" "}
+            <button
+              className="underline"
+              onClick={() =>
+                appEvents.emit("workspace-destination", {
+                  workspaceId: snapshot.workspace!.id,
+                  tab: "edits",
+                })
+              }
+            >
+              Review edits
+            </button>
+          </div>
+        )}
       {inspector && (
         <div hidden={!inspectorOpen} className="workspace-assistant-inspector">
           {inspector}

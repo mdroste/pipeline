@@ -61,12 +61,12 @@ repository.
 
 ## Optional conversation tools
 
-These tools are downloaded separately when you choose **Install browser** or
-**Install command engine** in **Assistant settings**. Their packages and
+Pipeline downloads these tools when command or browser setup is needed. Their packages and
 license notices stay under `~/.pipeline/native/` on this computer.
 
 | Component | License |
 | --- | --- |
+| Node.js, including npm | MIT and other component licenses; see the runtime's LICENSE and npm package notices |
 | Playwright | Apache-2.0 |
 | Chromium and its bundled libraries | BSD-style and other component licenses; see the downloaded distribution’s notices |
 | Anthropic Sandbox Runtime (`@anthropic-ai/sandbox-runtime`) | Apache-2.0 |

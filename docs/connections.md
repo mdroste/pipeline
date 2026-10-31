@@ -149,31 +149,51 @@ a conversation can override them.
 | Setting | What it permits |
 | --- | --- |
 | **Access mode → Inspect** | Read project files and explain findings. |
-| **Access mode → Edit** | Create files and edit existing files through the recoverable editor. Shell writes require an isolated working copy. |
-| **Internet access for commands** | Let shell commands reach the internet. |
+| **Access mode → Edit** | Create and edit project files using the method selected under **File changes**. |
+| **File changes → Review copy** | Prepare a separate copy automatically when you send a message. Review changes before copying them into your project. |
+| **File changes → Direct edits** | Edit the project directly with changes you can undo, and use configured research commands. General commands can only read project files. |
+| **Internet access for commands** | Let commands reach the internet, for example to download data or install packages. |
 | **Allowed command sites** | Restrict command internet access to listed domains, separated by commas. For example, `pypi.org, *.pythonhosted.org`. Blank means public internet. |
 | **Web search** | Search the web and read public pages. With Edit access and a project, download files into new project paths. |
 | **Browser interaction** | Open and operate a separate, visible browser for this conversation. |
 
-File reads return a content fingerprint. Edits fail if the file has changed
-since it was read. New files can include new folders and never replace an
-existing file. Changes in the main project appear in **Review edits** and can
-be undone. Changes in an isolated working copy wait for acceptance, including
-files produced by shell commands.
+The assistant checks that a file has not changed since it read it before
+saving an edit. Creating a file never replaces an existing one. Changes in
+the main project appear in **Review edits** and can be undone.
+
+**Review copy** is the default for Edit conversations. Pipeline prepares the
+copy before your message starts and keeps it for subsequent messages in the
+same conversation. It collects changes when the assistant finishes or stops.
+Open [Review edits](analysis-and-writing.md#review-edits) to accept or discard
+them, including files created by commands. After you settle the copy, your next
+message prepares a fresh one from the project. Conversation history stays available.
+
+Copies exclude Git metadata, build output, caches, and dependency folders.
+Each file must fit within 32 MB, and the copy within 256 MB and 5,000 files.
+If a project cannot be copied completely, select files in **Review edits**,
+exclude large data folders in **Project settings**, or choose **Direct edits**.
+Accept or discard an existing copy before switching to direct edits.
+Automations and conversations started from **Review edits** keep their chosen file scope.
 
 The shared web search tool sends queries to Bing and returns links and
 snippets. Subscription providers can also use their native search tools. Read
 the original pages before relying on search results.
 
-Web search, command internet access, and browser interaction are independent.
+Turning on **Web search** lets the assistant find and read public pages without
+installing a browser. It does not give commands internet access or let the
+assistant click and type on websites. Enable those separately with
+**Internet access for commands** and **Browser interaction**.
 **Allowed command sites** applies to commands; it does not restrict web search
 or the browser. Web downloads are limited to 32 MB per file. Pipeline keeps
 the source URL, retrieval time, and file fingerprint with the download result.
 Web page reads return up to 128 KB of text from a response of up to 2 MB.
 These web tools accept public HTTP and HTTPS addresses on standard ports.
 
-After enabling **Browser interaction**, choose **Install browser**. Setup needs
-Node.js 22 or later and downloads Chromium. Linux may also need
+Enabling **Browser interaction** starts browser setup. Pipeline downloads and
+manages the required software; you do not need to install Node.js separately.
+Setup also runs automatically the first time a browser tool is used.
+**Assistant settings** shows progress, **Cancel setup**, and a retry button if
+setup fails. Linux may also need
 [Playwright's browser system dependencies](https://playwright.dev/docs/browsers#install-system-dependencies).
 Each conversation has its own browser profile, which remembers its sign-ins.
 Enter passwords and complete CAPTCHA prompts directly in the visible window.
@@ -253,13 +273,19 @@ supports function calling. Browser screenshots and paper images require a
 model that accepts images. Models without function calling can chat in a
 conversation with no project or enabled tools.
 
-Choose **Install command engine** in **Assistant settings** to enable sandboxed
-commands on macOS, or Linux with `bubblewrap` and `socat`. Setup requires
-Node.js 22.12 or later. Commands follow **Internet access for commands** and
-its allowed sites. Project files are read-only to commands; Edit access lets
-commands write in an isolated working copy. Use the project file tools for
-recoverable changes to the main project. On Windows, use configured research
-commands for local analysis; API conversations have no general shell.
+Pipeline prepares command software automatically when an API or local model
+first runs a command, or when you open its **Assistant settings**. The first
+setup needs internet access. Later use works offline once setup is complete.
+Pipeline supplies its own runtime and restricts which files and websites commands
+can access. General commands require macOS, or Linux with `bubblewrap` and `socat`.
+
+Commands follow **Internet access for commands** and its allowed sites. With
+**Access mode → Edit** and **File changes → Review copy**, commands can change
+files in the automatically prepared copy. **Direct edits** uses Pipeline's
+file tools for changes to the main project and lets you undo those changes.
+
+On Windows, API and local models can run research commands you configure in
+[Command settings](analysis-and-writing.md#command-settings), but cannot run general commands.
 Project, research, web, and browser tools remain available.
 
 Replies stream as they arrive; a custom server that returns a complete reply

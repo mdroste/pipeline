@@ -37,6 +37,8 @@ pub struct EffectiveHarness {
     pub workspace_id: Option<String>,
     pub preset: HarnessPreset,
     pub mode: String,
+    #[serde(default = "default_file_mode")]
+    pub file_mode: String,
     pub web_search: bool,
     pub command_network: bool,
     #[serde(default)]
@@ -56,6 +58,10 @@ pub struct EffectiveHarness {
     pub module_availability: Vec<ModuleAvailability>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instruction_sections: Vec<InstructionSection>,
+}
+
+fn default_file_mode() -> String {
+    "review".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

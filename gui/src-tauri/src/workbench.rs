@@ -23,6 +23,7 @@ pub mod store;
 pub(crate) mod submission;
 pub(crate) mod tasks;
 pub mod titles;
+pub(crate) mod tool_setup;
 pub(crate) mod web;
 
 pub mod acquisition;

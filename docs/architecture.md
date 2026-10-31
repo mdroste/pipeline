@@ -128,6 +128,7 @@ Each module's header comment has the details.
 | `workbench/claude/` | Claude Code conversations, WSL2 transport, and the MCP bridge |
 | `workbench/capabilities.rs`, `conversation_tools.rs`, `web.rs`, `browser.rs`, `browser/` | Conversation access, receipts, web transport error mapping, and the optional browser |
 | `workbench/shell.rs`, `shell_policy.rs` | Optional API command engine and stateless sandbox policy shared with Claude Code |
+| `workbench/tool_setup.rs`, `tool_setup/` | Managed Node, locked conversation packages, cancellable staging and publication |
 | `workbench/research/` | Harness, sources, notes, evidence, tools, local jobs |
 | `workbench/project/` | Project files, working copies, edit acceptance |
 | `workbench/release/` | Backups, project packages, retention, recipes |
@@ -226,13 +227,22 @@ the final answer. Claude's successful result completes its last assistant item
 as the final answer. Automations read that answer separately from tool updates.
 
 **Conversation tools.** All providers resolve the same file, web, and browser
-capabilities. Ordinary Edit conversations use the project acceptance journal.
-Shell writes require a task copy. Codex thread-local configuration travels on
+capabilities. Interactive Edit turns use `project/conversation_copy.rs` to
+prepare or reuse a task copy in the existing conversation. Direct edits retain
+the project acceptance journal. Automation scopes and manually prepared copies
+remain fixed. Shell writes require a task copy. Copy identity participates in
+the harness fingerprint so a replacement copy gets a successor native thread
+with app-owned history. Codex thread-local configuration travels on
 start and resume. Claude receives sandbox settings and an allowlisted native
 tool catalog. Windows Claude uses a separately authenticated WSL2 environment
 when qualified dependencies are present. Workspace owns its browser processes
 and per-conversation profiles independently of Review runtimes. API commands
-use the optional pinned sandbox engine in `workbench/shell.rs`. The stateless
+use the pinned sandbox engine in `workbench/shell.rs`. `tool_setup/` provisions
+a checksum-pinned Node runtime and integrity-locked npm packages in private,
+versioned directories. Setup publishes only completed staging directories;
+failed or cancelled downloads leave installed versions intact. Browser setup
+uses the same managed runtime and retains conversation profiles across updates.
+The stateless
 policy in `workbench/shell_policy.rs` is shared with Claude Code. Public web
 search uses the same bounded retrieval policy as page reads. Discovery writer
 file tools journal changes in their role folder and retain immutable versions.

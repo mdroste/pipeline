@@ -1,5 +1,6 @@
-//! Optional Workspace-owned Playwright process. Installation is a user action;
+//! Workspace-owned Playwright process with managed first-use setup;
 //! conversations never download or execute model-selected packages or scripts.
+mod setup;
 use super::store::{WorkbenchError, WorkbenchResult};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -31,63 +32,71 @@ pub struct BrowserStatus {
     pub installed: bool,
     pub node_available: bool,
     pub version: &'static str,
+    pub platform_available: bool,
+    pub setup_phase: Option<String>,
 }
 
 #[tauri::command]
 pub fn workbench_browser_status() -> Result<BrowserStatus, String> {
     let root = root()?;
-    let read_json = |path: PathBuf| {
-        let metadata = std::fs::symlink_metadata(&path).ok()?;
-        if !metadata.is_file() || metadata.len() > 64 * 1024 {
-            return None;
-        }
-        std::fs::read(path)
-            .ok()
-            .and_then(|v| serde_json::from_slice::<Value>(&v).ok())
-    };
-    let package = read_json(root.join("node_modules/playwright/package.json"));
-    let marker = read_json(root.join("installed-version"));
-    let ready = marker.is_some_and(|m| {
-        m["version"] == VERSION
-            && m["executable"].as_str().is_some_and(|path| {
-                std::path::Path::new(path).starts_with(root.join("browsers"))
-                    && std::path::Path::new(path).is_file()
-            })
-    });
+    let installed = super::tool_setup::ready() && executable(&root).is_some();
     Ok(BrowserStatus {
-        installed: package.is_some_and(|v| v["version"] == VERSION) && ready,
-        node_available: crate::deps::resolve_command("node").is_some(),
+        installed,
+        node_available: super::tool_setup::ready(),
         version: VERSION,
+        platform_available: super::tool_setup::supported(),
+        setup_phase: super::tool_setup::phase().or_else(|| {
+            BROWSER_PHASE
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+        }),
     })
+}
+
+static BROWSER_PHASE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+struct SetupProgress;
+impl Drop for SetupProgress {
+    fn drop(&mut self) {
+        *BROWSER_PHASE.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+fn browser_root(root: &std::path::Path) -> PathBuf {
+    root.join(format!("browsers-{VERSION}"))
+}
+fn executable(root: &std::path::Path) -> Option<PathBuf> {
+    use std::io::Read;
+    let directory = browser_root(root);
+    let file = crate::safety::open_regular_file(&directory.join("complete")).ok()?;
+    let mut value = String::new();
+    file.take(8192).read_to_string(&mut value).ok()?;
+    let relative = std::path::Path::new(&value);
+    if !relative
+        .components()
+        .all(|c| matches!(c, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    let path = directory.join(relative);
+    crate::safety::open_regular_file(&path).ok()?;
+    Some(path)
 }
 
 #[tauri::command]
 pub async fn workbench_browser_install() -> Result<BrowserStatus, String> {
-    let _guard = INSTALL.get_or_init(|| Mutex::new(())).lock().await;
-    stop().await;
-    tokio::task::spawn_blocking(|| {
-        let root=root()?;
-        crate::agent_runtime::codex::session::private_directory(&root)?;
-        let _=std::fs::remove_file(root.join("installed-version"));
-        if std::fs::symlink_metadata(&root).map_err(|e|e.to_string())?.file_type().is_symlink() { return Err("Browser installation folder must not be a symlink".into()); }
-        let npm=crate::deps::resolve_command("npm").ok_or("Install Node.js 22 or later to set up the browser")?;
-        let node=crate::deps::resolve_command("node").ok_or("Install Node.js 22 or later to set up the browser")?;
-        let mut command=npm.command(["install","--prefix",root.to_str().ok_or("Browser path is not UTF-8")?,"--no-audit","--no-fund","--ignore-scripts","--save-exact",&format!("playwright@{VERSION}")]);
-        command.env("PATH",crate::env::full_path()).current_dir(&root);
-        let result=crate::process::run_bounded_independent(&mut command,Duration::from_secs(300),64*1024)?;
-        if !result.status.success() { return Err("Playwright installation failed; check internet access and your Node.js installation".into()); }
-        let mut command=node.command([root.join("node_modules/playwright/cli.js").as_os_str(),std::ffi::OsStr::new("install"),std::ffi::OsStr::new("chromium")]);
-        command.env("PLAYWRIGHT_BROWSERS_PATH",root.join("browsers")).env("PATH",crate::env::full_path()).current_dir(&root);
-        let result=crate::process::run_bounded_independent(&mut command,Duration::from_secs(300),64*1024)?;
-        if !result.status.success() { return Err("Chromium installation failed. On Linux, install Playwright's system dependencies and retry".into()); }
-        let mut verify=node.command(["-e","const p=require('playwright').chromium.executablePath(); if(!require('node:fs').existsSync(p)) process.exit(1); process.stdout.write(p)"]);
-        verify.env("PLAYWRIGHT_BROWSERS_PATH",root.join("browsers")).current_dir(&root);
-        let result=crate::process::run_bounded_independent(&mut verify,Duration::from_secs(15),8192)?;
-        if !result.status.success() || result.stdout_truncated { return Err("Chromium is missing after installation".into()); }
-        let executable=String::from_utf8(result.stdout).map_err(|e|e.to_string())?;
-        crate::agent_runtime::codex::session::private_write(&root.join("installed-version"),&serde_json::to_vec(&json!({"version":VERSION,"executable":executable})).map_err(|e|e.to_string())?)?;
+    super::tool_setup::cancellable(async {
+        let _guard = INSTALL.get_or_init(|| Mutex::new(())).lock().await;
+        if workbench_browser_status()?.installed {
+            return workbench_browser_status();
+        }
+        super::tool_setup::ensure().await?;
+        if executable(&root()?).is_some() {
+            return workbench_browser_status();
+        }
+        setup::install(root()?, &super::tool_setup::root()?).await?;
         workbench_browser_status()
-    }).await.map_err(|e|e.to_string())?
+    })
+    .await
 }
 
 struct Process {
@@ -108,29 +117,19 @@ impl Process {
     async fn start(session: &str) -> WorkbenchResult<Self> {
         if !workbench_browser_status().map_err(err)?.installed {
             return Err(err(
-                "Install the browser in Assistant settings before using browser tools",
+                "Browser setup is incomplete. Retry in Assistant settings",
             ));
         }
         let root = root().map_err(err)?;
-        // Generated from the installed application's source, never conversation text.
-        crate::agent_runtime::codex::session::private_write(
-            &root.join("driver.mjs"),
-            include_str!("browser/driver.mjs").as_bytes(),
-        )
-        .map_err(err)?;
-        crate::agent_runtime::codex::session::private_write(
-            &root.join("public-request.mjs"),
-            include_str!("browser/public-request.mjs").as_bytes(),
-        )
-        .map_err(err)?;
         use sha2::{Digest, Sha256};
         let profile = root
             .join("profiles")
             .join(format!("{:x}", Sha256::digest(session)));
         crate::agent_runtime::codex::session::private_directory(&profile).map_err(err)?;
-        let node =
-            crate::deps::resolve_command("node").ok_or_else(|| err("Node.js is unavailable"))?;
-        let mut command = node.command([root.join("driver.mjs"), profile]);
+        let mut command = std::process::Command::new(super::tool_setup::node().map_err(err)?);
+        command
+            .arg(super::tool_setup::root().map_err(err)?.join("driver.mjs"))
+            .arg(profile);
         // Keep display/runtime variables, while removing model/provider and cloud secrets.
         for (key, _) in std::env::vars_os() {
             let upper = key.to_string_lossy().to_ascii_uppercase();
@@ -148,7 +147,7 @@ impl Process {
             }
         }
         command
-            .env("PLAYWRIGHT_BROWSERS_PATH", root.join("browsers"))
+            .env("PLAYWRIGHT_BROWSERS_PATH", browser_root(&root))
             .env("PATH", crate::env::full_path())
             .current_dir(&root);
         crate::process::configure_isolation(&mut command);
@@ -215,6 +214,7 @@ impl Process {
 }
 
 pub(crate) async fn call(session: &str, args: Value) -> WorkbenchResult<Value> {
+    workbench_browser_install().await.map_err(err)?;
     let _installation = INSTALL
         .get_or_init(|| Mutex::new(()))
         .try_lock()

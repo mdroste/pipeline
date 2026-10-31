@@ -23,6 +23,7 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
     let mut sources = Map::new();
     for (key, value) in [
         ("mode", json!("inspect")),
+        ("fileMode", json!("review")),
         ("webSearch", json!(false)),
         ("commandNetwork", json!(false)),
         ("commandDomains", json!("")),
@@ -57,6 +58,15 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
         .get("contextBudgetBytes")
         .and_then(Value::as_u64)
         .unwrap_or(DEFAULT_CONTEXT_BYTES as u64) as usize;
+    let file_mode = values
+        .get("fileMode")
+        .and_then(Value::as_str)
+        .unwrap_or("review");
+    if !matches!(file_mode, "review" | "direct") {
+        return Err(WorkbenchError::invalid(
+            "File changes must use Review copy or Direct edits",
+        ));
+    }
     if !(4_096..=MAX_CONTEXT_BYTES).contains(&budget) {
         return Err(WorkbenchError::invalid(
             "Context budget must be between 4 KiB and 512 KiB",
@@ -328,6 +338,7 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
         workspace_id: snapshot.session.workspace_id,
         preset,
         mode: mode.to_string(),
+        file_mode: file_mode.to_string(),
         web_search: requested_web_search,
         command_network,
         capabilities,
@@ -349,6 +360,7 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
     effective.dynamic_tools.extend(conversation_tools);
     if crate::workbench::api::selected(&snapshot.session.overrides)?.is_some()
         && crate::workbench::shell::available()
+        && (has_workspace || mode == "edit" || !effective.dynamic_tools.is_empty())
     {
         effective
             .dynamic_tools
@@ -369,6 +381,11 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
     // retain the subscription fingerprint format for existing conversations.
     if let Some(provider) = crate::workbench::api::selected(&snapshot.session.overrides)? {
         fingerprint_body.extend_from_slice(provider.runtime().as_bytes());
+    }
+    // A fresh copy must start a successor native thread with transferred history,
+    // even when the file permissions and other instructions have not changed.
+    if let Some(checkpoint) = snapshot.session.overrides["projectCheckpointId"].as_str() {
+        fingerprint_body.extend_from_slice(checkpoint.as_bytes());
     }
     effective.fingerprint = hash_bytes(&fingerprint_body);
     // Derived views are attached only after hashing so that a harness whose

@@ -110,7 +110,6 @@ test("real parser qualification and Dependabot remain manual and infrequent", ()
 
 test("current public version references match the application metadata", () => {
   const { version } = JSON.parse(readText("gui", "package.json"));
-  assert.ok(readText("README.md").startsWith(`# Pipeline ${version}\n`));
   assert.ok(readText("README.md").includes(`version-${version}-blue`));
   assert.ok(readText(".github", "ISSUE_TEMPLATE", "bug_report.yml").includes(`placeholder: "${version}"`));
   assert.ok(readText("CHANGELOG.md").includes(`## ${version} —`));

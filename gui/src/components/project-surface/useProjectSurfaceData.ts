@@ -15,6 +15,8 @@ import {
 import { workspaceClient } from "../../lib/workbench/workspaceClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type { Workspace } from "../../lib/workbenchTypes";
+import { listen } from "@tauri-apps/api/event";
+import { appEvents } from "../../lib/appEvents";
 
 export function useProjectSurfaceData(
   workspaceId: string,
@@ -46,6 +48,38 @@ export function useProjectSurfaceData(
   useEffect(() => {
     void refresh().catch((e) => reportError(workbenchErrorMessage(e)));
   }, [refresh, reportError]);
+  // A chat can create and capture its copy while this surface remains mounted.
+  // Refresh saved review data without rescanning or modifying the project folder.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let live = true;
+    const reload = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!live || busyRef.current || background.current) return;
+        background.current = refresh()
+          .catch((e) => reportError(workbenchErrorMessage(e)))
+          .finally(() => {
+            background.current = null;
+          });
+      }, 100);
+    };
+    const offNavigation = appEvents.on("workspace-destination", (event) => {
+      if (event.workspaceId === workspaceId && event.tab === "edits") reload();
+    });
+    const offTurn = listen<{ kind: string }>(
+      "workbench:event",
+      ({ payload }) => {
+        if (payload.kind === "turnCompleted") reload();
+      },
+    ).catch(() => () => {});
+    return () => {
+      live = false;
+      clearTimeout(timer);
+      offNavigation();
+      void offTurn.then((off) => off()).catch(() => {});
+    };
+  }, [workspaceId, refresh, reportError]);
   const run = useCallback(
     async (operation: () => Promise<unknown>) => {
       if (busyRef.current) return;

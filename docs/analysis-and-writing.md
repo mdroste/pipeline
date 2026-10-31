@@ -141,7 +141,8 @@ on the FRED form and with every FRED dataset:
 5. After a passing test, **Run** works the same way.
 
 Conversations with any provider can use these commands when you enable the
-research execution tools. For general shell commands, see
+research execution tools and choose **File changes → Direct edits** in
+**Assistant settings**. For general shell commands, see
 [Conversation access](connections.md#conversation-access).
 
 | Kind | Runs | Also checks or records |
@@ -309,6 +310,15 @@ context, to a new review. Choose them, then
 
 **Review edits** lets the assistant change files in a separate copy. Your
 folder changes only when you accept.
+
+Edit conversations use **File changes → Review copy** by default. Pipeline
+prepares the copy automatically, keeps the same conversation, and collects
+changes when the assistant finishes or stops. Choose **Review edits** in the
+conversation to inspect, accept, or discard them. **Undo** remains available
+after acceptance. Your next message after accepting or discarding starts a
+fresh copy from the project.
+
+For a smaller selection of files, create a copy yourself:
 
 1. Under **Start an edit**, choose the action item the edit is for and tick
    the files the assistant may change.

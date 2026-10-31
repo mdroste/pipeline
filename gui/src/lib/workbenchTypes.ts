@@ -364,6 +364,7 @@ export interface EffectiveHarness {
   workspaceId: string | null;
   preset: HarnessPreset;
   mode: "inspect" | "edit";
+  fileMode?: "review" | "direct";
   webSearch: boolean;
   commandNetwork: boolean;
   capabilities?: {

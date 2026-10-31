@@ -1,7 +1,7 @@
 # Pipeline
 
 [![CI](https://github.com/mdroste/pipeline/actions/workflows/build.yml/badge.svg)](https://github.com/mdroste/pipeline/actions/workflows/build.yml)
-[![Version 1.2.5](https://img.shields.io/badge/version-1.2.5-blue)](CHANGELOG.md)
+[![Version 1.2.6](https://img.shields.io/badge/version-1.2.6-blue)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/github/license/mdroste/pipeline)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](#install)
 [![Windows](https://img.shields.io/badge/Windows-0078D4)](#install)
@@ -129,12 +129,19 @@ Uninstalling the app leaves your research data in place. See
 - PDF extraction can lose equations, table structure, or reading order. Check
   **Sources** when these matter, or see the
   [extraction options](docs/reviews.md#pdf-extraction).
-- Conversation shell writes need an isolated working copy. Web search,
-  command internet access, and browser interaction have separate settings.
-  Browser interaction needs an optional browser download. API and local
-  commands need **Install command engine** on macOS or Linux; Windows Claude
-  commands need WSL2. See [conversation access](docs/connections.md#conversation-access)
-  for setup and platform limits.
+- In Edit conversations, Pipeline prepares a separate copy of your project.
+  Use **Review edits** to accept or discard changes; accepted changes can be undone.
+  Large projects may need a smaller selection of files or **Direct edits**.
+- Searching the web, giving commands internet access, and letting the assistant
+  operate a browser are separate choices in **Assistant settings**. Pipeline
+  downloads command and browser software when needed. Web search needs no browser.
+- API and local models can run general commands on macOS, or Linux with
+  `bubblewrap` and `socat`. On Windows, these models can run research commands you
+  configure, but cannot run general commands. Claude Code needs Windows
+  Subsystem for Linux (WSL2) to run general commands on Windows.
+
+See [conversation access](docs/connections.md#conversation-access) for setup,
+and [Review edits](docs/analysis-and-writing.md#review-edits) for working with copies.
 
 ## Command line and source builds
 

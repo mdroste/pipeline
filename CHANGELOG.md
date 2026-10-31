@@ -5,6 +5,20 @@ public release was not tracked as a stable release series.
 
 ## Unreleased
 
+## 1.2.6 — 2026-10-30
+
+- Conversation command and browser setup uses a managed runtime, with automatic
+  downloads, progress, cancellation, and retry. A separate Node.js installation
+  is not required.
+- Edit conversations prepare working copies automatically and collect changes
+  for **Review edits**. Accept, discard, conflict checks, and undo remain
+  available. **Direct edits** supports configured research commands and projects
+  that are too large to copy.
+- Keep the README title unversioned while checking the version badge against
+  the application version.
+- Clarify conversation file editing, internet settings, and command setup in
+  the README and connection guide.
+
 ## 1.2.5 — 2026-10-30
 
 - ChatGPT keeps recent conversation history when settings, project moves, or
