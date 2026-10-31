@@ -126,22 +126,15 @@ Uninstalling the app leaves your research data in place. See
 
 ## Current limitations
 
-- Reviews are the most mature part of Pipeline, and macOS is the
-  best-supported platform. See [Support](.github/SUPPORT.md) for Windows and Linux.
 - PDF extraction can lose equations, table structure, or reading order. Check
   **Sources** when these matter, or see the
   [extraction options](docs/reviews.md#pdf-extraction).
-- Each model's input limit caps document length, and your account's limits
-  cap how many calls run at once. Past that cap, more parallel reviewers
-  won't help.
 - Conversation shell writes need an isolated working copy. Web search,
   command internet access, and browser interaction have separate settings.
   Browser interaction needs an optional browser download. API and local
   commands need **Install command engine** on macOS or Linux; Windows Claude
   commands need WSL2. See [conversation access](docs/connections.md#conversation-access)
   for setup and platform limits.
-- Usage displays the latest account report and its time. Claude needs a reply
-  before its first report is available; saved reports carry across app sessions.
 
 ## Command line and source builds
 
