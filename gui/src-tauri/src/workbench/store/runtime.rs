@@ -173,9 +173,9 @@ impl Store {
     pub(crate) fn project_codex_event(
         &self,
         binding_id: &str,
-        event: &crate::workbench::codex::NormalizedEvent,
+        event: &crate::agent_runtime::events::NormalizedEvent,
     ) -> WorkbenchResult<Option<i64>> {
-        use crate::workbench::codex::NormalizedEvent;
+        use crate::agent_runtime::events::NormalizedEvent;
         validate_id("binding id", binding_id)?;
         let (thread_id, operation_id) = match event {
             NormalizedEvent::TurnStarted {

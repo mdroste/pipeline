@@ -37,6 +37,7 @@ pub(super) fn reset_defaults_at(profiles: &Path, id: &str) -> Result<PipelineCon
         PAPER_REVIEW_FAST_ID => quick_auto_review_profile(),
         SLIDE_REVIEW_ID => slide_review_profile(),
         GRANT_REVIEW_ID => grant_review_profile(),
+        DECLAUDE_ID => declaude_profile(),
         _ => {
             // Keep the custom profile's display name, read leniently.
             let name = read_profile_file(&path)

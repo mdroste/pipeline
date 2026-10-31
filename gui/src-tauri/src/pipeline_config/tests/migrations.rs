@@ -144,7 +144,8 @@ fn builtin_catalog_contains_only_current_profiles() {
             "auto-paper-review",
             "auto-paper-review-fast",
             "slide-review",
-            "grant-review"
+            "grant-review",
+            "declaude"
         ]
     );
     // Slide Review is born in the current format; the version-marked

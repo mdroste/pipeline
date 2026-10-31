@@ -240,7 +240,7 @@ function apiRow({ settings }: ConnectionInputs): ConnectionRow {
   const row = {
     id: "api" as const,
     name: "API keys",
-    use: "Reviews only · the provider bills each use",
+    use: "Conversations and reviews · the provider bills each use",
     target: "anthropic-provider",
   };
   if (settings === undefined)
@@ -271,7 +271,7 @@ function localRow({
   const row = {
     id: "local" as const,
     name: "Local model server",
-    use: "Reviews only · a server you run, such as Ollama",
+    use: "Conversations and reviews · a server you run, such as Ollama",
     target: "local-provider",
   };
   const local = dep(dependencies, "Local LLM server");
@@ -298,11 +298,9 @@ export function connectionRows(inputs: ConnectionInputs): ConnectionRow[] {
 export function connectionSummary(rows: ConnectionRow[]) {
   const ready = (id: ConnectionRow["id"]) =>
     rows.some((row) => row.id === id && row.tone === "ok");
-  const conversations = ready("chatgpt") || ready("claude");
-  const reviews = conversations || ready("api") || ready("local");
+  const conversations =
+    ready("chatgpt") || ready("claude") || ready("api") || ready("local");
   if (conversations) return "You can start Conversations and Reviews now.";
-  if (reviews)
-    return "You can run Reviews now. Conversations need ChatGPT or Claude Code.";
   return "Connect at least one provider before your first Review. The example Review needs no connection.";
 }
 

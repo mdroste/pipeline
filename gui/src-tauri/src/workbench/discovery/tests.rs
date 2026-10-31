@@ -3,125 +3,232 @@ use super::*;
 #[cfg(unix)] // Unix tools or journalled project writes
 #[test]
 fn isolated_roles_are_idempotent_private_and_revocable() {
-    let temporary = tempfile::tempdir().unwrap();
-    let store = Store::open_at(&temporary.path().join("store")).unwrap();
-    let session = source(&store, "start-op", "Historical sources", false).unwrap();
-    assert_eq!(
-        source(&store, "start-op", "Historical sources", false).unwrap(),
-        session
-    );
-    let binding = tasks::binding(&store, &session).unwrap();
-    let scope = Scope {
-        session_id: Some(session.clone()),
-        workspace_id: binding.workspace_id.clone(),
-        ..Scope::default()
-    };
-    let deadline = chrono::Utc::now().timestamp() + 3600;
-    let (author, _) = role(&store, &scope, "portfolio", "paper-1", true, deadline).unwrap();
-    let (again, _) = role(&store, &scope, "portfolio", "paper-1", true, deadline).unwrap();
-    assert_eq!(author.session_id, again.session_id);
-    let (referee, _) = role(&store, &scope, "portfolio", "referee-1", false, deadline).unwrap();
-    let (other, _) = role(&store, &scope, "portfolio", "paper-2", true, deadline).unwrap();
-    assert_ne!(author.runtime_root, referee.runtime_root);
-    assert_ne!(author.runtime_root, other.runtime_root);
-    assert_ne!(
-        author.runtime_root.as_deref(),
-        Some(binding.runtime_root.as_str())
-    );
-    let author_id = author.session_id.as_ref().unwrap();
-    let h = research::resolve_harness(&store, author_id).unwrap();
-    assert_eq!(h.permission_profile, "discovery-edit");
-    assert!(!h.command_network);
-    assert_eq!(h.preset.modules, ["paper_tools"]);
-    assert!(h.preset.base_instructions.is_none());
-    assert_eq!(
-        research::resolve_harness(&store, referee.session_id.as_ref().unwrap())
-            .unwrap()
-            .permission_profile,
-        "discovery-inspect"
-    );
-    let root = runtime_root(&store, author_id).unwrap().unwrap();
-    super::super::project::materialize_research_files(
-        &root,
-        vec![("input.txt".into(), b"captured source".to_vec())],
-    )
-    .unwrap();
-    super::super::project::materialize_research_files(
-        &root,
-        vec![("input.txt".into(), b"captured source".to_vec())],
-    )
-    .unwrap();
-    assert!(super::super::project::materialize_research_files(
-        &root,
-        vec![("input.txt".into(), b"changed source".to_vec())]
-    )
-    .is_err());
-    assert_eq!(
+    for runtime in [
+        "codex",
+        "claude",
+        "openai-api",
+        "anthropic-api",
+        "google-api",
+        "local",
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let store = Store::open_at(&temporary.path().join("store")).unwrap();
+        let session = source(&store, "start-op", "Historical sources", false).unwrap();
+        assert_eq!(
+            source(&store, "start-op", "Historical sources", false).unwrap(),
+            session
+        );
+        let current = store.session_snapshot(&session).unwrap().session;
         store
-            .list_sessions(binding.workspace_id.as_deref(), false)
-            .unwrap()
-            .sessions
-            .len(),
-        1
-    );
-    assert_eq!(tasks::session_choices(&store).unwrap().len(), 1);
-    let referee_root = runtime_root(&store, referee.session_id.as_ref().unwrap())
-        .unwrap()
+            .update_session(UpdateSessionRequest {
+                session_id: session.clone(),
+                expected_revision: current.revision,
+                operation_id: "select-provider".into(),
+                title: None,
+                draft: None,
+                overrides: Some(json!({"runtime":runtime})),
+                archived: None,
+                preset_id: None,
+                paper_id: None,
+                clear_paper: None,
+            })
+            .unwrap();
+        let binding = tasks::binding(&store, &session).unwrap();
+        let scope = Scope {
+            session_id: Some(session.clone()),
+            workspace_id: binding.workspace_id.clone(),
+            ..Scope::default()
+        };
+        let deadline = chrono::Utc::now().timestamp() + 3600;
+        let (author, _) = role(&store, &scope, "portfolio", "paper-1", true, deadline).unwrap();
+        let (again, _) = role(&store, &scope, "portfolio", "paper-1", true, deadline).unwrap();
+        assert_eq!(author.session_id, again.session_id);
+        let (referee, _) = role(&store, &scope, "portfolio", "referee-1", false, deadline).unwrap();
+        let (other, _) = role(&store, &scope, "portfolio", "paper-2", true, deadline).unwrap();
+        assert_ne!(author.runtime_root, referee.runtime_root);
+        assert_ne!(author.runtime_root, other.runtime_root);
+        assert_ne!(
+            author.runtime_root.as_deref(),
+            Some(binding.runtime_root.as_str())
+        );
+        let author_id = author.session_id.as_ref().unwrap();
+        let h = research::resolve_harness(&store, author_id).unwrap();
+        assert_eq!(h.permission_profile, "discovery-edit");
+        assert!(!h.command_network);
+        assert_eq!(h.preset.modules, ["paper_tools"]);
+        assert!(h.preset.base_instructions.is_none());
+        assert_eq!(
+            research::resolve_harness(&store, referee.session_id.as_ref().unwrap())
+                .unwrap()
+                .permission_profile,
+            "discovery-inspect"
+        );
+        let root = runtime_root(&store, author_id).unwrap().unwrap();
+        super::super::project::materialize_research_files(
+            &root,
+            vec![("input.txt".into(), b"captured source".to_vec())],
+        )
         .unwrap();
-    super::super::project::materialize_research_files(
-        &referee_root,
-        vec![("input.txt".into(), b"captured source".to_vec())],
-    )
-    .unwrap();
-    revoke(&store, "portfolio").unwrap();
-    // Read-only role copies are reclaimed; the writer's paper root stays.
-    assert!(!referee_root.exists());
-    assert!(root.join("input.txt").is_file());
-    assert!(runtime_root(&store, author_id).is_err());
-    assert!(research::resolve_harness(&store, author_id).is_err());
-    assert!(research::resolve_harness(&store, &session).is_ok());
+        super::super::project::materialize_research_files(
+            &root,
+            vec![("input.txt".into(), b"captured source".to_vec())],
+        )
+        .unwrap();
+        assert!(super::super::project::materialize_research_files(
+            &root,
+            vec![("input.txt".into(), b"changed source".to_vec())]
+        )
+        .is_err());
+        assert_eq!(
+            store
+                .list_sessions(binding.workspace_id.as_deref(), false)
+                .unwrap()
+                .sessions
+                .len(),
+            1
+        );
+        assert_eq!(tasks::session_choices(&store).unwrap().len(), 1);
+        let referee_root = runtime_root(&store, referee.session_id.as_ref().unwrap())
+            .unwrap()
+            .unwrap();
+        super::super::project::materialize_research_files(
+            &referee_root,
+            vec![("input.txt".into(), b"captured source".to_vec())],
+        )
+        .unwrap();
+        let call = |session: &str, tool, args, operation| {
+            super::super::project::assistant_files::call(&store, session, tool, &args, operation)
+        };
+        let created = call(
+            author_id,
+            "project_create",
+            json!({"path":"draft/paper.tex","content":"draft"}),
+            "author-create",
+        )
+        .unwrap();
+        assert_eq!(created["outcome"], "completed");
+        assert_eq!(
+            call(
+                author_id,
+                "project_create",
+                json!({"path":"draft/paper.tex","content":"draft"}),
+                "author-create"
+            )
+            .unwrap(),
+            created
+        );
+        assert!(call(
+            author_id,
+            "project_create",
+            json!({"path":"draft/paper.tex","content":"overwrite"}),
+            "author-overwrite"
+        )
+        .is_err());
+        let read = call(
+            author_id,
+            "project_read",
+            json!({"path":"draft/paper.tex"}),
+            "author-read",
+        )
+        .unwrap();
+        call(
+            author_id,
+            "project_edit",
+            json!({"path":"draft/paper.tex","expectedHash":read["hash"],"content":"revised"}),
+            "author-edit",
+        )
+        .unwrap();
+        assert!(call(
+            author_id,
+            "project_edit",
+            json!({"path":"draft/paper.tex","expectedHash":read["hash"],"content":"stale"}),
+            "author-stale"
+        )
+        .is_err());
+        assert!(!std::path::Path::new(&binding.runtime_root)
+            .join("draft/paper.tex")
+            .exists());
+        assert!(call(
+            referee.session_id.as_ref().unwrap(),
+            "project_create",
+            json!({"path":"draft.tex","content":"forbidden"}),
+            "referee-edit"
+        )
+        .is_err());
+        assert!(call(
+            author_id,
+            "project_create",
+            json!({"path":"../escape","content":"forbidden"}),
+            "author-escape"
+        )
+        .is_err());
+        revoke(&store, "portfolio").unwrap();
+        // Read-only role copies are reclaimed; the writer's paper root stays.
+        assert!(!referee_root.exists());
+        assert!(root.join("input.txt").is_file());
+        assert!(call(
+            author_id,
+            "project_create",
+            json!({"path":"revoked.tex","content":"forbidden"}),
+            "author-revoked"
+        )
+        .is_err());
+        assert!(runtime_root(&store, author_id).is_err());
+        assert!(research::resolve_harness(&store, author_id).is_err());
+        assert!(research::resolve_harness(&store, &session).is_ok());
+    }
 }
 
 #[test]
 fn roles_keep_the_source_conversation_provider() {
-    let temporary = tempfile::tempdir().unwrap();
-    let store = Store::open_at(&temporary.path().join("store")).unwrap();
-    let session = source(&store, "claude-start", "Claude sources", false).unwrap();
-    let current = store.session_snapshot(&session).unwrap().session;
-    store
-        .update_session(UpdateSessionRequest {
-            session_id: session.clone(),
-            expected_revision: current.revision,
-            operation_id: "select-claude".into(),
-            title: None,
-            draft: None,
-            overrides: Some(
-                json!({"runtime":"claude","model":"sonnet","effort":"high","mode":"edit"}),
-            ),
-            archived: None,
-            preset_id: None,
-            paper_id: None,
-            clear_paper: None,
-        })
-        .unwrap();
-    let binding = tasks::binding(&store, &session).unwrap();
-    let scope = Scope {
-        session_id: Some(session),
-        workspace_id: binding.workspace_id,
-        ..Scope::default()
-    };
-    let deadline = chrono::Utc::now().timestamp() + 3600;
-    for (role_key, writer, mode) in [("paper-1", true, "edit"), ("referee-1", false, "inspect")] {
-        let (scope, _) = role(&store, &scope, "portfolio", role_key, writer, deadline).unwrap();
-        let overrides = store
-            .session_snapshot(scope.session_id.as_ref().unwrap())
-            .unwrap()
-            .session
-            .overrides;
-        assert!(super::super::claude::selected(&overrides).unwrap());
-        assert_eq!(overrides["model"], "sonnet");
-        assert_eq!(overrides["effort"], "high");
-        assert_eq!(overrides["mode"], mode);
+    for runtime in [
+        "codex",
+        "claude",
+        "openai-api",
+        "anthropic-api",
+        "google-api",
+        "local",
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let store = Store::open_at(&temporary.path().join("store")).unwrap();
+        let session = source(&store, "claude-start", "Claude sources", false).unwrap();
+        let current = store.session_snapshot(&session).unwrap().session;
+        store
+            .update_session(UpdateSessionRequest {
+                session_id: session.clone(),
+                expected_revision: current.revision,
+                operation_id: "select-claude".into(),
+                title: None,
+                draft: None,
+                overrides: Some(
+                    json!({"runtime":runtime,"model":"chosen-model","effort":"high","mode":"edit"}),
+                ),
+                archived: None,
+                preset_id: None,
+                paper_id: None,
+                clear_paper: None,
+            })
+            .unwrap();
+        let binding = tasks::binding(&store, &session).unwrap();
+        let scope = Scope {
+            session_id: Some(session),
+            workspace_id: binding.workspace_id,
+            ..Scope::default()
+        };
+        let deadline = chrono::Utc::now().timestamp() + 3600;
+        for (role_key, writer, mode) in [("paper-1", true, "edit"), ("referee-1", false, "inspect")]
+        {
+            let (scope, _) = role(&store, &scope, "portfolio", role_key, writer, deadline).unwrap();
+            let overrides = store
+                .session_snapshot(scope.session_id.as_ref().unwrap())
+                .unwrap()
+                .session
+                .overrides;
+            assert_eq!(overrides["runtime"], runtime);
+            assert_eq!(overrides["model"], "chosen-model");
+            assert_eq!(overrides["effort"], "high");
+            assert_eq!(overrides["mode"], mode);
+        }
     }
 }
 

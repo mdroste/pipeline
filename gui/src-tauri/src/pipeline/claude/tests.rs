@@ -115,7 +115,17 @@ fn request_effort_reports_what_each_transport_sends() {
             &settings,
             &overrides
         ),
-        "Not configurable"
+        "Provider default"
+    );
+    assert_eq!(
+        request_effort(
+            "antigravity",
+            "api",
+            "gemini-3.6-flash",
+            &settings,
+            &claude_high
+        ),
+        "high"
     );
 }
 
@@ -123,7 +133,7 @@ fn request_effort_reports_what_each_transport_sends() {
 #[cfg(unix)]
 fn configured_child_owns_a_dedicated_process_group() {
     let mut command = std::process::Command::new("sleep");
-    super::configure_silent_command(&mut command);
+    crate::agent_runtime::process::configure_silent_command(&mut command);
     let mut child = command.arg("5").spawn().unwrap();
     let pid = child.id();
     let process_group = unsafe { libc::getpgid(pid as i32) };

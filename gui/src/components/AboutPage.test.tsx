@@ -150,6 +150,7 @@ describe("AboutPage", () => {
     expect(screen.getByText("Paper Review (Fast)")).toBeInTheDocument();
     expect(screen.getByText("Slide Review")).toBeInTheDocument();
     expect(screen.getByText("Grant Proposal Review")).toBeInTheDocument();
+    expect(screen.getByText("Declaude")).toBeInTheDocument();
     expect(screen.queryByText("Codebase Review")).not.toBeInTheDocument();
     expect(
       screen.queryByText("Replication Package Audit"),

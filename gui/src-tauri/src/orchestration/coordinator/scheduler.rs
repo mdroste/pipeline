@@ -57,6 +57,7 @@ impl Coordinator {
                         run.scope.session_cursor = Some(binding.cursor);
                         run.scope.runtime_root = Some(binding.runtime_root);
                         run.scope.harness_fingerprint = Some(binding.harness_fingerprint);
+                        run.scope.connection_id = binding.connection_id;
                         run.progress
                             .decisions
                             .insert("occurrenceSession".into(), json!(true));

@@ -13,7 +13,7 @@ use super::tools::HostTools;
 use crate::agent_runtime::codex::invocation::{NativeThreadStart, TextTurnStart};
 use crate::agent_runtime::codex::session::{private_write, same_existing_path};
 use crate::agent_runtime::codex::{NormalizedEvent, DEFAULT_REQUEST_TIMEOUT};
-use crate::pipeline::{claude::LlmOverrides, logging};
+use crate::pipeline::{logging, providers::LlmOverrides};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};

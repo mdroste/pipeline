@@ -70,7 +70,7 @@ describe("connection rows", () => {
       ["Local model server", "Running", "ok"],
     ]);
     expect(rows[0].use).toMatch(/Conversations and Reviews/);
-    expect(rows[2].use).toMatch(/Reviews only/);
+    expect(rows[2].use).toMatch(/Conversations and reviews/);
     expect(connectionSummary(rows)).toMatch(/Conversations and Reviews now/);
   });
 
@@ -103,7 +103,9 @@ describe("connection rows", () => {
     });
     expect(apiOnly[0].status).toBe("Checking…");
     expect(apiOnly[1].status).toBe("Checking…");
-    expect(connectionSummary(apiOnly)).toMatch(/run Reviews now/);
+    expect(connectionSummary(apiOnly)).toMatch(
+      /start Conversations and Reviews now/,
+    );
     // A finished request that returned nothing is not shown as loading.
     const unavailable = connectionRows({
       dependencies: null,

@@ -23,22 +23,15 @@ pub(in crate::pipeline::extract) const LLM_CHUNK_MAX_PAGES: usize = 8;
 pub(in crate::pipeline::extract) const LLM_CHUNK_TARGET_BASELINE_CHARS: usize = 50_000;
 pub(in crate::pipeline::extract) const LLM_EXTRACTION_CONCURRENCY: usize = 2;
 
-/// True when call_llm() will take a direct-API path for the preferred
-/// provider — mirrors the dispatch in pipeline::claude::call_llm. Direct
-/// API calls get the PDF attached to the request; CLI calls read it via
-/// the Read tool.
+/// Cloud API connections attach the PDF to the request. Subscription and
+/// local connections read it through the Read tool.
 pub(in crate::pipeline::extract) fn provider_uses_direct_api(
     settings: &crate::settings::Settings,
 ) -> bool {
-    match settings.preferred_provider.as_str() {
-        "claude" | "codex" | "antigravity" => {
-            settings.model_transport(&settings.preferred_provider) == "api"
-        }
-        // Local OpenAI-compatible servers intentionally reject the file-part
-        // attachment used by the verified LLM extraction path.
-        "local" => false,
-        _ => false,
-    }
+    crate::connections::ConnectionId::for_review(&settings.preferred_provider, settings)
+        .ok()
+        .and_then(|connection| connection.api())
+        .is_some_and(|provider| provider != crate::connections::ApiProvider::Local)
 }
 
 /// The shared requirements block for extraction and repair prompts.

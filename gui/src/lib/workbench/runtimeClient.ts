@@ -34,6 +34,11 @@ export const runtimeClient = {
   modelCatalog() {
     return invoke<WorkspaceModelCatalog>("workbench_codex_model_catalog");
   },
+  apiModelCatalog(runtime: string) {
+    return invoke<WorkspaceModelCatalog>("workbench_api_model_catalog", {
+      runtime,
+    });
+  },
   claudeModelCatalog() {
     return invoke<WorkspaceModelCatalog>("workbench_claude_model_catalog");
   },

@@ -29,11 +29,27 @@ deck as PDF and choose **Slide Review**.
 | Paper Review (Fast) | Uses fewer specialists and skips the separate contribution-and-literature assessment |
 | Slide Review | Assesses a deck's argument, figures, readability, and slide order. Comments cite slide numbers |
 | Grant Proposal Review | Assesses aims, feasibility, readability for the panel, and consistency, then combines the comments |
+| Declaude | Finds formulaic prose and suggests replacements suited to the document's subject, audience, and style |
 
 The gallery also has **Revision Response Check**, **Literature Positioning
 Scan**, **Thesis Chapter Review**, **Rubric-Based Review**, **Reference
 Check**, and **Replication Package Readiness**. Each template lists the inputs
 it needs.
+
+### Editing prose with Declaude
+
+Declaude identifies the document type and selects one to three topic reviewers.
+It checks stock phrases, unnecessary contrasts, defensive framing, misplaced
+jargon, repetition, and formulaic paragraphs. A final reviewer checks that
+each replacement preserves the source's claims and qualifications.
+
+The Markdown report lists each original passage, its location, a suggested
+replacement, and the reason for the edit. It identifies incomplete coverage
+and wording that needs your judgment. Declaude assesses writing style; it
+does not determine whether AI wrote the document. Your source stays unchanged.
+
+Use the supported document inputs above. Export slides or website pages to
+PDF; the CLI also accepts text and Markdown snapshots.
 
 ### How Paper Review picks reviewers
 
@@ -121,6 +137,17 @@ each review. Enter 0 for no limit. When a review reaches a limit:
 The cost limit counts API connections at list prices. Subscription calls count
 toward the call and time limits. The preview warns you when the estimate could
 pass a limit.
+
+## Search the web during a review
+
+In the **Review designer**, select a step and turn on **Web search**.
+Search works with every connection. For API and local models, choose a model
+that can use tools. Ask the step to cite the pages it uses.
+
+OpenAI API and local/custom servers use Bing search and public page reads.
+Queries can include terms from your paper, even when the model runs locally.
+See [review search](connections.md#web-search-in-reviews) for model requirements
+and limits.
 
 ## Read and use the results
 

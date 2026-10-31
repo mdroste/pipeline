@@ -125,7 +125,7 @@ pub(super) fn run_bounded_output(
 ) -> Result<BoundedOutput, String> {
     use std::process::Stdio;
 
-    crate::pipeline::claude::configure_silent_command(&mut command);
+    crate::agent_runtime::process::configure_silent_command(&mut command);
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

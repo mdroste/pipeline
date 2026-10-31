@@ -6,7 +6,7 @@ import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 export interface ConversationEntry {
   id: string;
   text: string;
-  role: "You" | "ChatGPT" | "Claude";
+  role: string;
 }
 const PAGE_SIZE = 100;
 

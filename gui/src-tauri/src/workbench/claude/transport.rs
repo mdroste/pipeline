@@ -262,7 +262,7 @@ pub(super) async fn drive(
             .await
             .ok_or(MODEL_TIMEOUT)??;
         let mut bytes = 0usize;
-        let mut messages = 0;
+        let mut answers = super::answers::Answers::default();
         let mut calls = 0;
         let mut activity = super::activity::Activity::default();
         loop {
@@ -272,6 +272,9 @@ pub(super) async fn drive(
                 return Err("Claude turn exceeded its output budget".into());
             }
             activity.observe(&value, turn, app).await?;
+            for event in answers.observe(&value, turn) {
+                turn.emit(app, event).await?;
+            }
             match value["type"].as_str() {
                 Some("control_request") => {
                     calls += 1;
@@ -297,25 +300,14 @@ pub(super) async fn drive(
                                 epoch: turn.epoch,
                                 thread_id: turn.thread.clone(),
                                 turn_id: turn.id.clone(),
-                                item_id: format!("{}-assistant-{messages}", turn.id),
+                                item_id: format!(
+                                    "{}-assistant-{}",
+                                    turn.id,
+                                    answers.stream_index()
+                                ),
                                 delta: delta.into(),
                             },
                         );
-                    }
-                }
-                Some("assistant") if value["parent_tool_use_id"].is_null() => {
-                    let text = value["message"]["content"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .filter(|part| part["type"] == "text")
-                        .filter_map(|part| part["text"].as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if !text.is_empty() {
-                        turn.item(app, &format!("assistant-{messages}"), "agentMessage", &text)
-                            .await?;
-                        messages += 1;
                     }
                 }
                 Some("rate_limit_event") => {
@@ -327,11 +319,8 @@ pub(super) async fn drive(
                             || format!("Claude run failed: {}", value["subtype"]),
                         ));
                     }
-                    if messages == 0 {
-                        let text = value["result"]
-                            .as_str()
-                            .ok_or("Claude returned no assistant response")?;
-                        turn.item(app, "assistant-0", "agentMessage", text).await?;
+                    if !answers.final_received {
+                        return Err("Claude returned no assistant response".into());
                     }
                     return Ok(());
                 }
@@ -346,7 +335,8 @@ pub(super) async fn drive(
 }
 
 #[tauri::command]
-pub async fn workbench_claude_model_catalog() -> Result<super::super::codex::ModelCatalog, String> {
+pub async fn workbench_claude_model_catalog(
+) -> Result<crate::connections::models::ModelCatalog, String> {
     let args = [
         "-p",
         "--input-format",
@@ -374,7 +364,7 @@ pub async fn workbench_claude_model_catalog() -> Result<super::super::codex::Mod
             if name == "default" {
                 return None;
             }
-            Some(super::super::codex::WorkspaceModel {
+            Some(crate::connections::models::WorkspaceModel {
                 id: name.into(),
                 model: name.into(),
                 display_name: item["displayName"].as_str().unwrap_or(name).into(),
@@ -386,7 +376,7 @@ pub async fn workbench_claude_model_catalog() -> Result<super::super::codex::Mod
                     .into_iter()
                     .flatten()
                     .filter_map(Value::as_str)
-                    .map(|v| super::super::codex::ReasoningEffortOption {
+                    .map(|v| crate::connections::models::ReasoningEffortOption {
                         reasoning_effort: v.into(),
                         description: v.into(),
                     })
@@ -394,5 +384,5 @@ pub async fn workbench_claude_model_catalog() -> Result<super::super::codex::Mod
             })
         })
         .collect();
-    Ok(super::super::codex::ModelCatalog { models })
+    Ok(crate::connections::models::ModelCatalog { models })
 }

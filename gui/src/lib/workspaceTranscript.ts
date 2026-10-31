@@ -1,3 +1,4 @@
+import { providerName } from "./workspaceProviders";
 import type { TranscriptItem } from "./workbenchTypes";
 
 export function payloadText(item: TranscriptItem): string {
@@ -31,10 +32,10 @@ export function isMessage(item: TranscriptItem) {
   return item.itemKind.toLowerCase().includes("message");
 }
 
-export function roleFor(item: TranscriptItem): "You" | "Claude" | "ChatGPT" {
+export function roleFor(item: TranscriptItem): string {
   return item.itemKind.toLowerCase().includes("user")
     ? "You"
     : item.payload?.runtime === "claude"
       ? "Claude"
-      : "ChatGPT";
+      : providerName(item.payload?.runtime);
 }

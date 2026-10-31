@@ -8,7 +8,8 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { cliSigningPlan } from "./sign-macos-cli.mjs";
 import { inventoryFiles, verifyInventory } from "./poppler-inventory.mjs";
-import { qualify, requiredPlatforms, requiredScenarios } from "./qualify-release.mjs";
+import { qualify, captureCandidate, requiredPlatforms, requiredScenarios } from "./qualify-release.mjs";
+import { installerNames } from "./draft-release.mjs";
 test("generated package notices link to the bundled Pipeline license", () => {
   const repository = fileURLToPath(new URL("../../", import.meta.url));
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-package-notices-"));
@@ -68,10 +69,31 @@ test("qualification rejects pending, different commits and changed evidence", ()
   try {
     const hash=createHash("sha256").update("fixture").digest("hex"); fs.writeFileSync(path.join(root,"evidence.txt"),"fixture");
     const row={status:"passed",observed:"Synthetic validator fixture",expected:"fixture",environment:"test",versions:"fixture",evidence:[{path:"evidence.txt",sha256:hash}]};
-    const record={schemaVersion:1,version:"0.9.5",commit:"a".repeat(40),scenarios:Object.fromEntries(requiredScenarios.map(s=>[s,{...row}])),platforms:Object.fromEntries(requiredPlatforms.map(p=>[p,{...row,installer:"evidence.txt",installerSha256:hash}]))};
-    assert.equal(qualify(record,record.commit,root),true);
-    assert.throws(()=>qualify(record,"b".repeat(40),root),/exact/);
-    record.scenarios.automations.status="pending"; assert.throws(()=>qualify(record,record.commit,root),/Missing/); record.scenarios.automations.status="passed";
-    fs.writeFileSync(path.join(root,"evidence.txt"),"changed"); assert.throws(()=>qualify(record,record.commit,root),/checksum/);
+    const version = "0.9.5", commit = "a".repeat(40);
+    for (const name of installerNames(version)) {
+      fs.writeFileSync(path.join(root, name), name);
+      fs.writeFileSync(path.join(root, `${name}.sha256`), `${createHash("sha256").update(name).digest("hex")}  ${name}\n`);
+    }
+    const candidate = captureCandidate(commit, version, root);
+    const record={schemaVersion:1,version,commit,scenarios:Object.fromEntries(requiredScenarios.map(s=>[s,{...row}])),platforms:Object.fromEntries(requiredPlatforms.map(p=>[p,{...row,installer:candidate.installers[p].name,installerSha256:candidate.installers[p].sha256}]))};
+    assert.equal(qualify(record,candidate,root),true);
+    assert.throws(()=>qualify(record,{...candidate,commit:"b".repeat(40)},root),/exact/);
+    assert.throws(()=>qualify({...record,version:"0.9.4"},candidate,root),/version/);
+    const wrong = structuredClone(record);
+    wrong.platforms.windows = { ...wrong.platforms.linux };
+    assert.throws(()=>qualify(wrong,candidate,root),/installer differs/);
+    for (const p of requiredPlatforms) wrong.platforms[p] = {...row,installer:"evidence.txt",installerSha256:hash};
+    assert.throws(()=>qualify(wrong,candidate,root),/installer differs/);
+    const renamed = structuredClone(record);
+    renamed.platforms.windows.installerSha256 = hash;
+    fs.writeFileSync(path.join(root, renamed.platforms.windows.installer), "fixture");
+    assert.throws(()=>qualify(renamed,candidate,root),/installer differs/);
+    assert.throws(()=>qualify(record,candidate,root),/checksum/);
+    const win = candidate.installers.windows.name;
+    fs.writeFileSync(path.join(root,win),win);
+    const incomplete = structuredClone(candidate); delete incomplete.installers.linux;
+    assert.throws(()=>qualify(record,incomplete,root),/identity/);
+    record.scenarios.automations.status="pending"; assert.throws(()=>qualify(record,candidate,root),/Missing/); record.scenarios.automations.status="passed";
+    fs.writeFileSync(path.join(root,"evidence.txt"),"changed"); assert.throws(()=>qualify(record,candidate,root),/checksum/);
   } finally {fs.rmSync(root,{recursive:true,force:true});}
 });

@@ -1,6 +1,7 @@
 //! Provider tool loops for direct API providers.
 
 use super::*;
+use crate::{agent_runtime::api::authorize, connections::ApiProvider};
 
 // Every exit (including a later HTTP/tool failure or cancellation) accounts for
 // the responses already received. Successful callers use the returned totals
@@ -58,12 +59,13 @@ pub async fn anthropic_tool_loop(
         let request_timeout = timeout_secs - elapsed;
 
         let pass_key = crate::pipeline::logging::current_pass();
-        let request_builder = client
-            .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
-            .timeout(std::time::Duration::from_secs(request_timeout))
-            .json(&request);
+        let request_builder = authorize(
+            ApiProvider::Anthropic,
+            client.post("https://api.anthropic.com/v1/messages"),
+            api_key,
+        )
+        .timeout(std::time::Duration::from_secs(request_timeout))
+        .json(&request);
         let resp = send_with_status_retry(
             app,
             "Anthropic",
@@ -204,8 +206,8 @@ pub async fn anthropic_tool_loop(
 /// (e.g. "https://api.openai.com/v1", "http://localhost:11434/v1").
 /// `provider` names the endpoint in log/error messages.
 /// When `drop_tools_on_400` is set (local servers), a 400 response to a
-/// request that declared tools retries once without tools — many local
-/// models don't support tool calling, and a hard failure would be opaque.
+/// request that declared tools retries once without tools unless web search
+/// was requested. Search must never be silently disabled by that fallback.
 #[allow(clippy::too_many_arguments)]
 pub async fn openai_tool_loop(
     app: &crate::emit::EventBus,
@@ -224,6 +226,7 @@ pub async fn openai_tool_loop(
         usage: Usage::default(),
     };
     let mut tool_budget = ToolBudget::default();
+    let mut web_budget = web::Budget::default();
     let start = std::time::Instant::now();
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     let mut tools_retry_used = false;
@@ -247,9 +250,7 @@ pub async fn openai_tool_loop(
             .post(&url)
             .timeout(std::time::Duration::from_secs(request_timeout))
             .json(&request);
-        if !api_key.is_empty() {
-            req = req.header("Authorization", format!("Bearer {api_key}"));
-        }
+        req = authorize(ApiProvider::OpenAi, req, api_key);
         let pass_key = crate::pipeline::logging::current_pass();
         let resp = send_with_status_retry(app, provider, label, req, pass_key.as_deref()).await?;
 
@@ -278,6 +279,9 @@ pub async fn openai_tool_loop(
                 && status.as_u16() == 400
                 && !request.tools.is_empty()
             {
+                if web::declared(&request.tools, "WebSearch") {
+                    return Err(format!("{provider} rejected a request with Web search enabled. Choose a tool-capable model or turn off Web search for this step. {}", format_api_error(provider, status.as_u16(), &body)));
+                }
                 log(app, format!(
                     "{label}: {provider} rejected the request with tools declared — retrying without tools. \
                      The model won't be able to read files; consider a tool-capable model."
@@ -339,6 +343,28 @@ pub async fn openai_tool_loop(
                 for tc in tool_calls {
                     let result =
                         match serde_json::from_str::<serde_json::Value>(&tc.function.arguments) {
+                            Ok(_) if !web::declared(&request.tools, &tc.function.name) => {
+                                ToolResult::Error(format!(
+                                    "Tool {} is not enabled for this step",
+                                    tc.function.name
+                                ))
+                            }
+                            Ok(input) if web::is_web(&tc.function.name) => {
+                                let remaining = std::time::Duration::from_secs(timeout_secs)
+                                    .saturating_sub(start.elapsed());
+                                web::within_deadline(
+                                    web::execute(
+                                        app,
+                                        &tc.function.name,
+                                        &input,
+                                        label,
+                                        &mut web_budget,
+                                    ),
+                                    remaining,
+                                    pass_key.as_deref(),
+                                )
+                                .await?
+                            }
                             Ok(input) => {
                                 execute_tool(
                                     app,
@@ -441,9 +467,7 @@ pub async fn google_tool_loop(
         let request_timeout = timeout_secs - elapsed;
 
         let pass_key = crate::pipeline::logging::current_pass();
-        let request_builder = client
-            .post(&url)
-            .header("x-goog-api-key", api_key)
+        let request_builder = authorize(ApiProvider::Google, client.post(&url), api_key)
             .timeout(std::time::Duration::from_secs(request_timeout))
             .json(&request);
         let resp =

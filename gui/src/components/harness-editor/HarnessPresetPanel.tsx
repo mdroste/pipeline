@@ -1,3 +1,7 @@
+import {
+  providerName,
+  type ConversationProvider,
+} from "../../lib/workspaceProviders";
 import { presetDescription } from "./harnessCopy";
 // Detail panel for one harness preset: editable header with a generated
 // summary, ownership badges, use/clone/restore/save actions, and Instructions
@@ -27,7 +31,7 @@ export interface PresetDraft {
 }
 
 interface Props {
-  runtime?: "codex" | "claude";
+  runtime?: ConversationProvider;
   preset: HarnessPreset;
   sourcePreset: HarnessPreset | null;
   catalog: HarnessCatalog;
@@ -119,8 +123,8 @@ function HarnessPresetPanel({
         <div className="flex flex-wrap items-center gap-2">
           {readOnly ? (
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-              {runtime === "claude" && preset.id === "plain"
-                ? "Claude Code default"
+              {runtime !== "codex" && preset.id === "plain"
+                ? `${providerName(runtime)} default`
                 : preset.name}
             </h2>
           ) : (
@@ -170,8 +174,8 @@ function HarnessPresetPanel({
         )}
         {readOnly ? (
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            {runtime === "claude" && preset.id === "plain"
-              ? "Claude Code with Pipeline instructions and scoped project tools."
+            {runtime !== "codex" && preset.id === "plain"
+              ? `${providerName(runtime)} with Pipeline instructions and scoped project tools.`
               : presetDescription(preset)}
           </p>
         ) : (
@@ -301,8 +305,8 @@ function HarnessPresetPanel({
         className="min-h-0 flex-1 overflow-auto p-4"
       >
         <p className="mb-3 rounded border border-gray-200 p-3 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-300">
-          Codex’s native command and file tools follow this conversation’s
-          access settings:{" "}
+          The assistant’s enabled tools follow this conversation’s access
+          settings:{" "}
           {effective.mode === "inspect" ? "read only" : "edits allowed"},
           command network {effective.commandNetwork ? "allowed" : "blocked"}.
           Use Access &amp; inheritance to change those permissions. The choices

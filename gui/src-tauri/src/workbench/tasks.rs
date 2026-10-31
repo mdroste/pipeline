@@ -11,6 +11,8 @@ pub struct TaskBinding {
     pub workspace_id: Option<String>,
     pub cursor: String,
     pub harness_fingerprint: String,
+    #[serde(default)]
+    pub connection_id: Option<crate::connections::ConnectionId>,
     pub runtime_root: String,
     pub root_identity: String,
 }
@@ -62,12 +64,28 @@ pub fn binding(store: &Store, session: &str) -> WorkbenchResult<TaskBinding> {
         workspace_id: snapshot.session.workspace_id,
         cursor: cursor(store, session)?,
         harness_fingerprint: effective.fingerprint,
+        connection_id: Some(
+            crate::connections::ConnectionId::from_runtime(
+                snapshot
+                    .session
+                    .overrides
+                    .get("runtime")
+                    .and_then(Value::as_str)
+                    .unwrap_or("codex"),
+            )
+            .map_err(WorkbenchError::invalid)?,
+        ),
         root_identity: super::store::root_identity(&store.runtime_root(session)?)?,
         runtime_root: store.runtime_root(session)?.to_string_lossy().into_owned(),
     })
 }
 pub fn validate_binding(store: &Store, expected: &TaskBinding) -> WorkbenchResult<()> {
     let actual = binding(store, &expected.session_id)?;
+    if expected.connection_id.is_none() || actual.connection_id != expected.connection_id {
+        return Err(WorkbenchError::conflict(
+            "The task's connection is missing or changed. Refresh task context before continuing.",
+        ));
+    }
     if actual.root_identity != expected.root_identity
         || !compatible_cursor(&expected.cursor, &actual.cursor)
         || actual.workspace_id != expected.workspace_id
@@ -212,6 +230,11 @@ pub fn occurrence_session(
 ) -> WorkbenchResult<TaskBinding> {
     let original = store.session_snapshot(&source.session_id)?;
     let current = binding(store, &source.session_id)?;
+    if source.connection_id.is_none() || current.connection_id != source.connection_id {
+        return Err(WorkbenchError::conflict(
+            "The scheduled task's connection is missing or changed. Prepare a new schedule.",
+        ));
+    }
     if current.root_identity != source.root_identity
         || current.harness_fingerprint != source.harness_fingerprint
         || current.workspace_id != source.workspace_id
@@ -413,6 +436,64 @@ mod tests {
             .record
             .id;
         (temp, store, session)
+    }
+    #[test]
+    fn custom_prompt_cannot_hide_connection_changes_from_tasks_or_schedules() {
+        let (_temp, store, id) = fixture();
+        for runtime in [
+            "codex",
+            "claude",
+            "openai-api",
+            "anthropic-api",
+            "google-api",
+            "local",
+        ] {
+            let session = store.session_snapshot(&id).unwrap().session;
+            store.update_session(serde_json::from_value(json!({"sessionId":id,"expectedRevision":session.revision,"operationId":format!("select-{runtime}"),"presetId":"writing","overrides":{"runtime":runtime}})).unwrap()).unwrap();
+            let saved = binding(&store, &id).unwrap();
+            validate_binding(&store, &saved).unwrap();
+            let mut scope = crate::orchestration::store::Scope {
+                session_id: Some(id.clone()),
+                workspace_id: saved.workspace_id.clone(),
+                session_cursor: Some(saved.cursor.clone()),
+                harness_fingerprint: Some(saved.harness_fingerprint.clone()),
+                connection_id: saved.connection_id,
+                root_identity: Some(saved.root_identity.clone()),
+                runtime_root: Some(saved.runtime_root.clone()),
+                ..Default::default()
+            };
+            let roundtrip: crate::orchestration::store::Scope =
+                serde_json::from_value(serde_json::to_value(&scope).unwrap()).unwrap();
+            assert_eq!(roundtrip.connection_id, saved.connection_id);
+            scope.connection_id = None;
+            let legacy = crate::orchestration::adapters::task_binding(&scope).unwrap();
+            assert!(validate_binding(&store, &legacy)
+                .unwrap_err()
+                .message
+                .contains("connection"));
+            assert!(occurrence_session(&store, &legacy, "legacy", "Legacy").is_err());
+            let next = if runtime == "claude" {
+                "codex"
+            } else {
+                "claude"
+            };
+            let session = store.session_snapshot(&id).unwrap().session;
+            store.update_session(serde_json::from_value(json!({"sessionId":id,"expectedRevision":session.revision,"operationId":format!("switch-{runtime}"),"overrides":{"runtime":next}})).unwrap()).unwrap();
+            if matches!(runtime, "codex" | "claude") {
+                assert_eq!(
+                    binding(&store, &id).unwrap().harness_fingerprint,
+                    saved.harness_fingerprint
+                );
+            }
+            assert!(validate_binding(&store, &saved)
+                .unwrap_err()
+                .message
+                .contains("connection"));
+            assert!(occurrence_session(&store, &saved, "switched", "Switched")
+                .unwrap_err()
+                .message
+                .contains("connection"));
+        }
     }
     #[test]
     fn structured_final_answer_is_separate_from_progress_and_unknown_phases() {

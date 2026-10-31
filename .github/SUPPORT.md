@@ -32,6 +32,8 @@ release gets security and maintenance fixes.
 | A model connection doesn't work | Open **Settings → Connections** and check the account, the provider's command-line tool, or the API key |
 | ChatGPT works in your terminal but not in Pipeline | Sign in inside Pipeline. It uses its own ChatGPT sign-in, separate from the terminal's |
 | Claude subscription access fails | Run `claude auth login` and choose a Claude subscription account. See [Connections](../docs/connections.md) |
+| An API or local conversation cannot use tools or images | Check that the selected model supports function calling and images. See [API conversations](../docs/connections.md#api-conversations) |
+| Commands are unavailable in an API or local conversation | Choose **Install command engine** in **Assistant settings** on macOS or Linux. See [setup requirements](../docs/connections.md#api-conversations) |
 | A PDF review fails during extraction | Read the error and check the parser in **Settings → Reviews**. See [PDF extraction](../docs/reviews.md#pdf-extraction) |
 | A review stops early | See [When a review can't finish](../docs/reviews.md#when-a-review-cant-finish) |
 | Research is missing after changing the data folder | Choose the previous folder and restart. Changing folders doesn't move data |

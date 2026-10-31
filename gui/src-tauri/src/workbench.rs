@@ -4,6 +4,7 @@
 //! run engine. `workbench` remains the internal compatibility namespace. The
 //! service owns its identities, conversations, store, runtime, and cancellation.
 
+pub(crate) mod api;
 pub(crate) mod browser;
 pub(crate) mod capabilities;
 pub(crate) mod claude;
@@ -16,7 +17,10 @@ pub(crate) mod missions;
 pub mod project;
 pub mod release;
 pub mod research;
+pub(crate) mod shell;
+mod shell_policy;
 pub mod store;
+pub(crate) mod submission;
 pub(crate) mod tasks;
 pub mod titles;
 pub(crate) mod web;

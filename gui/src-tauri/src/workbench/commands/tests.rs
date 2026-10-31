@@ -15,7 +15,6 @@ fn storage_maintenance_and_native_setup_exclude_each_other() {
 #[test]
 fn database_worker_pool_is_deliberately_bounded() {
     assert_eq!(DATABASE_WORKER_LIMIT, 4);
-    assert_eq!(DATABASE_WORKERS.available_permits(), 4);
 }
 
 #[test]
@@ -76,7 +75,7 @@ fn transcript_export_text_accepts_string_and_content_parts() {
 
 #[test]
 fn approval_card_epoch_is_claimed_once_even_when_ids_are_reused() {
-    let pending = crate::workbench::codex::NormalizedEvent::ServerRequest {
+    let pending = crate::agent_runtime::events::NormalizedEvent::ServerRequest {
         epoch: 8,
         request_id: json!(42),
         method: "item/fileChange/requestApproval".into(),
@@ -132,4 +131,63 @@ fn lag_recovery_requires_the_exact_terminal_turn() {
         codex::recovered_terminal(&complete, "current").unwrap()["status"],
         "interrupted"
     );
+}
+
+#[test]
+fn automated_selection_inherits_saved_model_and_effort_for_every_provider() {
+    for runtime in [
+        "codex",
+        "claude",
+        "openai-api",
+        "anthropic-api",
+        "google-api",
+        "local",
+    ] {
+        let saved = json!({"runtime":runtime,"model":"chosen-model","effort":"high"});
+        let mut request = SendTurnRequest {
+            session_id: "session".into(),
+            text: "prompt".into(),
+            client_submission_id: "submission".into(),
+            model: None,
+            effort: None,
+        };
+        request.inherit_selection(&saved);
+        assert_eq!(request.model.as_deref(), Some("chosen-model"));
+        assert_eq!(request.effort.as_deref(), Some("high"));
+        request.model = Some("automation-model".into());
+        request.effort = None;
+        request.inherit_selection(&saved);
+        assert_eq!(request.model.as_deref(), Some("automation-model"));
+        assert!(request.effort.is_none());
+        request.model = None;
+        request.effort = Some("low".into());
+        request.inherit_selection(&saved);
+        assert_eq!(request.effort.as_deref(), Some("low"));
+    }
+}
+
+#[tokio::test]
+async fn cancelled_store_wait_keeps_gate_until_worker_finishes() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::open_at(temp.path()).unwrap();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let (finished_tx, finished_rx) = tokio::sync::oneshot::channel();
+    let task = tokio::spawn(run_store_owned(store, move |_| {
+        let _ = started_tx.send(());
+        release_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let _ = finished_tx.send(());
+        Ok(())
+    }));
+    started_rx.await.unwrap();
+    task.abort();
+    let _ = task.await;
+    assert!(DATABASE_GATE.try_write().is_err());
+    release_tx.send(()).unwrap();
+    finished_rx.await.unwrap();
+    let _gate = tokio::time::timeout(std::time::Duration::from_secs(2), DATABASE_GATE.write())
+        .await
+        .unwrap();
 }

@@ -21,7 +21,13 @@ paper, reviewing it, and revising it a set number of times.
 
 The **Active**, **Scheduled**, and **History** tabs list current work,
 schedules, and finished runs. Assistant steps use the conversation's
-provider, tools, and file permissions.
+provider, saved model, thinking level, tools, and file permissions. This
+applies to subscription, API, and local connections. A step can choose another
+model; in that case, set its thinking level for that model.
+
+Changing the conversation's connection requires refreshing the automation's
+context before it continues. Prepare a new schedule if its connection changes.
+Older automations without a saved connection need the same refresh.
 
 ### Review and revise
 
@@ -70,7 +76,8 @@ When an automation waits for input, its question appears on the automation.
 Type your answer and choose **Provide input**. Waiting uses no model calls.
 
 **Pause** lets the current step finish, then holds the next one. **Stop**
-cancels the current work. Saved results stay available.
+cancels the current work, including setup before a message is sent. Saved
+results stay available.
 
 If Pipeline loses track of whether a step finished, for example because the
 app quit, the automation asks for attention:
@@ -145,8 +152,10 @@ Describe your topic under **Research topics and questions**. Under **Project
 context**, choose a project conversation or **Create a project for this
 research**. Then choose **Start research discovery**.
 
-Each chosen proposal gets its own author conversation and folder. Referees
-see the research record and manuscript, not the author's chat.
+Each chosen proposal gets its own author conversation and folder. Authors
+can create and edit drafts there using project file tools with any connection.
+Referees have read-only access to the research record and manuscript, without
+the author’s chat. The original project folder stays separate.
 
 | Setting | Default | Range |
 | --- | --- | --- |

@@ -76,8 +76,8 @@ export function LocalProviderSection({
           </a>{" "}
           installed, run <span className="font-mono">ollama pull llama3.3</span>
           , then select the model below. For LM Studio, llama.cpp, or vLLM,
-          enter that server’s URL. Local models may be less capable than cloud
-          models and may lack file-reading support.
+          enter that server’s URL. Choose a model that can use tools to work
+          with files and search the web.
         </InfoButton>
       </div>
       {externalLinkError && (

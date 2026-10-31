@@ -1,3 +1,8 @@
+import {
+  providerName,
+  isApiProvider,
+  type ConversationProvider,
+} from "../../lib/workspaceProviders";
 // Preset instruction editor: insertable built-in blocks, advisory lint, and a
 // collapsed preview of the assembled developer instructions when the preset
 // is the one in use. Mirrors PromptEditor's chip + lint layout.
@@ -15,7 +20,7 @@ import {
 } from "./harnessHelpers";
 
 interface Props {
-  runtime?: "codex" | "claude";
+  runtime?: ConversationProvider;
   value: string;
   baseInstructions: string | null;
   onBaseChange: (next: string | null) => void;
@@ -42,7 +47,7 @@ function HarnessInstructionsEditor({
   effective,
   inUse,
 }: Props) {
-  const provider = runtime === "claude" ? "Claude Code" : "Codex";
+  const provider = runtime === "codex" ? "Codex" : providerName(runtime);
   const [viewNative, setViewNative] = useState(
     readOnly && baseInstructions === null,
   );
@@ -139,7 +144,12 @@ function HarnessInstructionsEditor({
         </summary>
         {viewNative && (
           <div className="border-t border-gray-200 p-3 dark:border-gray-700">
-            {runtime === "claude" ? (
+            {isApiProvider(runtime) ? (
+              <p>
+                Pipeline supplies the base instructions for this API
+                conversation. Edit the base prompt above to customize them.
+              </p>
+            ) : runtime === "claude" ? (
               <p>
                 Claude Code supplies its own native base prompt. Pipeline does
                 not retrieve or display that prompt. The instructions below are

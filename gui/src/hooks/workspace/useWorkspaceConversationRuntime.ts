@@ -1,4 +1,8 @@
 import {
+  conversationProvider,
+  type ConversationProvider,
+} from "../../lib/workspaceProviders";
+import {
   useCallback,
   useEffect,
   useRef,
@@ -32,7 +36,7 @@ export function useWorkspaceConversationRuntime(
   const [snapshot, setSnapshot] = useState<ConversationSnapshot | null>(null);
   const [models, setModels] = useState<WorkspaceModel[]>([]);
   const [model, setModel] = useState("");
-  const [runtime, setRuntime] = useState<"codex" | "claude">("codex");
+  const [runtime, setRuntime] = useState<ConversationProvider>("codex");
   const [effort, setEffort] = useState("");
   const [draft, setDraft] = useState("");
   const [stream, setStream] = useState("");
@@ -140,7 +144,7 @@ export function useWorkspaceConversationRuntime(
       if (initialize && draftEditRevision.current === editRevision)
         setDraft(pendingHere ? "" : (recoveredDraft ?? next.session.draft));
       const overrides = next.session.overrides;
-      setRuntime(overrides.runtime === "claude" ? "claude" : "codex");
+      setRuntime(conversationProvider(overrides.runtime));
       setModel(typeof overrides.model === "string" ? overrides.model : "");
       setEffort(typeof overrides.effort === "string" ? overrides.effort : "");
       if (pendingHere && owner.threadId && owner.turnId) {
@@ -488,20 +492,28 @@ function useWorkbenchEvents({
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void listen("chatgpt:account-changed", () => {
-      if (snapshotRef.current?.session.overrides.runtime === "claude") return;
+      if (
+        conversationProvider(snapshotRef.current?.session.overrides.runtime) !==
+        "codex"
+      )
+        return;
       void runtimeClient
         .accountState()
         .then(async (account) => {
           if (
             disposed ||
-            snapshotRef.current?.session.overrides.runtime === "claude"
+            conversationProvider(
+              snapshotRef.current?.session.overrides.runtime,
+            ) !== "codex"
           )
             return;
           if (account.status === "chatgpt") {
             const catalog = await runtimeClient.modelCatalog();
             if (
               !disposed &&
-              snapshotRef.current?.session.overrides.runtime !== "claude"
+              conversationProvider(
+                snapshotRef.current?.session.overrides.runtime,
+              ) === "codex"
             ) {
               setModels(catalog.models);
               setError(null);

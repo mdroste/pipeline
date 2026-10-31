@@ -1018,7 +1018,7 @@ fn a_source_conversation_draft_does_not_block_a_discovery_run() {
 
 #[test]
 fn retry_readopts_a_cursor_moved_by_a_steering_message() {
-    use crate::workbench::codex::NormalizedEvent;
+    use crate::agent_runtime::events::NormalizedEvent;
     use crate::workbench::missions::{readopt_scope, refresh_scope, refresh_source_scope};
 
     let fixture = fixture();

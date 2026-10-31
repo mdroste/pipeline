@@ -3,6 +3,11 @@
 // than copying the parent's value.
 
 import { memo, useEffect, useState } from "react";
+import ShellSetup from "./ShellSetup";
+import {
+  conversationProvider,
+  isApiProvider,
+} from "../../lib/workspaceProviders";
 import BrowserSetup from "./BrowserSetup";
 import type { EffectiveHarness } from "../../lib/workbenchTypes";
 import {
@@ -275,6 +280,9 @@ function HarnessAccessTable({
         </table>
       </div>
       {effective.capabilities?.browser && <BrowserSetup disabled={busy} />}
+      {isApiProvider(conversationProvider(conversationOverrides.runtime)) && (
+        <ShellSetup disabled={busy} />
+      )}
       <p className="text-[11px] text-gray-500 dark:text-gray-400">
         Access changes apply to your next message. Current permissions:{" "}
         <span className="font-mono">{effective.permissionProfile}</span>.

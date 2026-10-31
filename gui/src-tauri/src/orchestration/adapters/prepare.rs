@@ -18,6 +18,7 @@ pub async fn prepare(chain: &Chain, session: Option<String>, inputs: &Value) -> 
         scope.workspace_id = binding.workspace_id;
         scope.session_cursor = Some(binding.cursor);
         scope.harness_fingerprint = Some(binding.harness_fingerprint);
+        scope.connection_id = binding.connection_id;
         scope.runtime_root = Some(binding.runtime_root);
     }
     let mut all = Vec::new();
@@ -144,6 +145,7 @@ fn flatten<'a>(steps: &'a [Step], out: &mut Vec<&'a Step>) {
 
 pub fn task_binding(scope: &Scope) -> Result<tasks::TaskBinding> {
     Ok(tasks::TaskBinding {
+        connection_id: scope.connection_id,
         session_id: scope.session_id.clone().ok_or("No conversation selected")?,
         workspace_id: scope.workspace_id.clone(),
         cursor: scope.session_cursor.clone().unwrap_or_default(),

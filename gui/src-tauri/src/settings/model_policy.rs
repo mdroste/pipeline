@@ -40,27 +40,9 @@ impl Settings {
     /// "cli" for subscription-backed command-line providers and "api" for
     /// direct HTTP/local providers.
     pub fn model_transport(&self, provider: &str) -> &'static str {
-        match provider {
-            "local" => "api",
-            "codex" if self.codex_access_mode == "api" => "api",
-            "codex"
-                if self.codex_access_mode.is_empty() && !self.openai_api_key.trim().is_empty() =>
-            {
-                "api"
-            }
-            // Google subscription dispatch (the agy CLI) is disabled: Google's
-            // Antigravity terms do not permit third-party software to use an
-            // Antigravity sign-in, and accounts have been suspended for it.
-            "antigravity" => "api",
-            "claude" | "" if self.claude_access_mode == "api" => "api",
-            "claude" | ""
-                if self.claude_access_mode.is_empty()
-                    && !self.anthropic_api_key.trim().is_empty() =>
-            {
-                "api"
-            }
-            _ => "cli",
-        }
+        crate::connections::ConnectionId::for_review(provider, self)
+            .map(|connection| connection.legacy_transport())
+            .unwrap_or("cli")
     }
 
     pub fn model_context_key(&self, provider: &str) -> String {

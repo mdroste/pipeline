@@ -154,17 +154,22 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
     } else {
         WORKSPACE_PREAMBLE.to_string()
     };
-    if snapshot
+    match snapshot
         .session
         .overrides
         .get("runtime")
         .and_then(Value::as_str)
-        == Some("claude")
     {
-        developer = developer.replace(
-            "Preserve Codex base instructions.",
-            "Preserve Claude Code base instructions.",
-        );
+        Some("claude") => {
+            developer = developer.replace(
+                "Preserve Codex base instructions.",
+                "Preserve Claude Code base instructions.",
+            )
+        }
+        Some("openai-api" | "anthropic-api" | "google-api" | "local") => {
+            developer = developer.replace("Preserve Codex base instructions. ", "")
+        }
+        _ => {}
     }
     let mut sections = vec![InstructionSection {
         id: "preamble".to_string(),
@@ -342,6 +347,13 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
     };
     let conversation_tools = crate::workbench::conversation_tools::catalog(&effective);
     effective.dynamic_tools.extend(conversation_tools);
+    if crate::workbench::api::selected(&snapshot.session.overrides)?.is_some()
+        && crate::workbench::shell::available()
+    {
+        effective
+            .dynamic_tools
+            .push(crate::workbench::shell::catalog());
+    }
     // The renamed default is a display change. Preserve existing native bindings
     // by retaining its legacy display metadata in the fingerprint only.
     let mut fingerprint_view = effective.clone();
@@ -350,9 +362,14 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
         fingerprint_view.preset.description =
             "No research instructions or automatic context.".into();
     }
-    let fingerprint_body = serde_json::to_vec(&fingerprint_view).map_err(|error| {
+    let mut fingerprint_body = serde_json::to_vec(&fingerprint_view).map_err(|error| {
         WorkbenchError::storage("Failed to fingerprint effective harness", error)
     })?;
+    // API provider changes retire their binding and invalidate pinned automations;
+    // retain the subscription fingerprint format for existing conversations.
+    if let Some(provider) = crate::workbench::api::selected(&snapshot.session.overrides)? {
+        fingerprint_body.extend_from_slice(provider.runtime().as_bytes());
+    }
     effective.fingerprint = hash_bytes(&fingerprint_body);
     // Derived views are attached only after hashing so that a harness whose
     // semantic inputs are unchanged keeps the fingerprint recorded on its

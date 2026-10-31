@@ -1,0 +1,16 @@
+{
+  "families": [
+    {"id": "claude", "label": "Claude"},
+    {"id": "codex", "label": "ChatGPT"},
+    {"id": "antigravity", "label": "Gemini"},
+    {"id": "local", "label": "Local"}
+  ],
+  "connections": [
+    {"id": "codex", "label": "ChatGPT", "family": "codex", "access": "subscription"},
+    {"id": "claude", "label": "Claude Code", "family": "claude", "access": "subscription"},
+    {"id": "openai-api", "label": "OpenAI API", "family": "codex", "access": "api"},
+    {"id": "anthropic-api", "label": "Anthropic API", "family": "claude", "access": "api"},
+    {"id": "google-api", "label": "Gemini API", "family": "antigravity", "access": "api"},
+    {"id": "local", "label": "Local / custom", "family": "local", "access": "api"}
+  ]
+}

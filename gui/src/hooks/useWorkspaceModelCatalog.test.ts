@@ -4,6 +4,7 @@ import useWorkspaceModelCatalog from "./useWorkspaceModelCatalog";
 
 const client = vi.hoisted(() => ({
   claudeModelCatalog: vi.fn(),
+  apiModelCatalog: vi.fn(),
   connectCodex: vi.fn(),
   accountState: vi.fn(),
   modelCatalog: vi.fn(),
@@ -63,3 +64,35 @@ it("does not fall back to another provider when Claude authentication fails", as
   expect(client.connectCodex).not.toHaveBeenCalled();
   hook.unmount();
 });
+
+for (const runtime of [
+  "openai-api",
+  "anthropic-api",
+  "google-api",
+  "local",
+] as const) {
+  it(`loads ${runtime} without connecting subscription runtimes`, async () => {
+    vi.clearAllMocks();
+    client.apiModelCatalog.mockResolvedValue({
+      models: [{ model: "api-model" }],
+    });
+    const models = vi.fn();
+    const hook = renderHook(() =>
+      useWorkspaceModelCatalog(
+        "chat",
+        "session",
+        "session",
+        runtime,
+        models,
+        vi.fn(),
+      ),
+    );
+    await waitFor(() =>
+      expect(models).toHaveBeenLastCalledWith([{ model: "api-model" }]),
+    );
+    expect(client.apiModelCatalog).toHaveBeenCalledWith(runtime);
+    expect(client.connectCodex).not.toHaveBeenCalled();
+    expect(client.claudeModelCatalog).not.toHaveBeenCalled();
+    hook.unmount();
+  });
+}

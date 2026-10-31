@@ -189,9 +189,12 @@ fn validate_overrides(overrides: &Value) -> WorkbenchResult<String> {
         ));
     }
     if let Some(runtime) = overrides.get("runtime") {
-        if !matches!(runtime.as_str(), Some("codex" | "claude")) {
+        if !matches!(
+            runtime.as_str(),
+            Some("codex" | "claude" | "openai-api" | "anthropic-api" | "google-api" | "local")
+        ) {
             return Err(WorkbenchError::invalid(
-                "Conversation runtime must be codex or claude",
+                "Choose an available conversation provider",
             ));
         }
     }

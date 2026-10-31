@@ -1,7 +1,7 @@
 //! Direct Google Gemini API client.
 
 use super::api_common::*;
-use super::claude::LlmOverrides;
+use super::providers::LlmOverrides;
 use crate::settings::Settings;
 use std::time::Instant;
 
@@ -19,39 +19,44 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
     let mut declarations = Vec::new();
     if allowed_tools.contains(&"Read") {
         let def = ReadToolDef::default();
-        declarations.push(serde_json::json!({
-            "name": def.name,
-            "description": def.description,
-            "parameters": def.input_schema,
-        }));
+        declarations.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::Google,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
         let def = ReadTextBatchToolDef::default();
-        declarations.push(serde_json::json!({
-            "name": def.name,
-            "description": def.description,
-            "parameters": def.input_schema,
-        }));
+        declarations.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::Google,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
     }
     if allowed_tools.contains(&"ReadDocumentAsset") {
         let def = DocumentAssetToolDef::default();
-        declarations.push(serde_json::json!({
-            "name": def.name,
-            "description": def.description,
-            "parameters": def.input_schema,
-        }));
+        declarations.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::Google,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
         let def = DocumentAssetsBatchToolDef::default();
-        declarations.push(serde_json::json!({
-            "name": def.name,
-            "description": def.description,
-            "parameters": def.input_schema,
-        }));
+        declarations.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::Google,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
     }
     if allowed_tools.contains(&"Write") {
         let def = WriteToolDef::default();
-        declarations.push(serde_json::json!({
-            "name": def.name,
-            "description": def.description,
-            "parameters": def.input_schema,
-        }));
+        declarations.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::Google,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
     }
     let mut tools = Vec::new();
     if !declarations.is_empty() {
@@ -87,10 +92,15 @@ fn remove_hosted_search(request: &mut GoogleRequest) {
 }
 
 fn generation_config(
+    model: &str,
+    effort: &str,
     max_output_tokens: u32,
     schema: Option<&serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
     let mut config = serde_json::json!({"maxOutputTokens": max_output_tokens});
+    if let Some(thinking) = crate::connections::thinking::google_config(model, effort.trim())? {
+        config["thinkingConfig"] = thinking;
+    }
     if let Some(schema) = schema {
         config["responseMimeType"] = serde_json::Value::String("application/json".to_string());
         config["responseJsonSchema"] = crate::pipeline::structured::provider_schema(schema)?;
@@ -168,8 +178,6 @@ pub async fn call_google_api(
     overrides: &LlmOverrides<'_>,
 ) -> Result<String, String> {
     let start = Instant::now();
-    // Google's Gemini API doesn't expose an effort/thinking flag in this client,
-    // so overrides.effort is ignored here.
     let model = resolve_model(overrides.model);
     log(
         app,
@@ -197,6 +205,8 @@ pub async fn call_google_api(
         tools,
         tool_config: None,
         generation_config: Some(generation_config(
+            &model,
+            overrides.effort.unwrap_or(""),
             overrides
                 .max_output_tokens
                 .unwrap_or(DEFAULT_STEP_MAX_OUTPUT_TOKENS),
@@ -218,10 +228,12 @@ pub async fn call_google_api(
             .pdf_attachment
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let generation_key = serde_json::to_string(&request.generation_config).unwrap_or_default();
         let cache_key = context.compatibility_key(
             "google-api",
             [
                 model.as_str(),
+                generation_key.as_str(),
                 system_key.as_str(),
                 tools_key.as_str(),
                 attachment_key.as_str(),
@@ -243,7 +255,7 @@ pub async fn call_google_api(
                 GoogleToolLoopContext {
                     app,
                     client,
-                    api_key: &settings.google_api_key,
+                    api_key: crate::connections::ApiProvider::Google.key(settings)?,
                     model: &model,
                     timeout_secs,
                     label: &warm_label,
@@ -278,7 +290,7 @@ pub async fn call_google_api(
         GoogleToolLoopContext {
             app,
             client,
-            api_key: &settings.google_api_key,
+            api_key: crate::connections::ApiProvider::Google.key(settings)?,
             model: &model,
             timeout_secs,
             label,
@@ -305,7 +317,7 @@ pub async fn call_google_api(
                 GoogleToolLoopContext {
                     app,
                     client,
-                    api_key: &settings.google_api_key,
+                    api_key: crate::connections::ApiProvider::Google.key(settings)?,
                     model: &model,
                     timeout_secs: retry_timeout,
                     label,
@@ -361,15 +373,59 @@ mod tests {
             "required": ["ok"],
             "properties": {"ok": {"type": "boolean"}}
         });
-        let config = generation_config(1234, Some(&schema)).unwrap();
+        let config = generation_config("gemini-3-pro-preview", "", 1234, Some(&schema)).unwrap();
         assert_eq!(config["maxOutputTokens"], 1234);
         assert_eq!(config["responseMimeType"], "application/json");
         assert_eq!(
             config["responseJsonSchema"]["required"],
             serde_json::json!(["ok"])
         );
-        let plain = generation_config(32, None).unwrap();
+        let plain = generation_config("gemini-3-pro-preview", "", 32, None).unwrap();
         assert!(plain.get("responseMimeType").is_none());
+        assert!(plain.get("thinkingConfig").is_none());
+    }
+
+    #[tokio::test]
+    async fn review_and_conversation_encode_the_same_google_thinking() {
+        use crate::connections::{ApiConnection, ApiProvider};
+        let settings = Settings {
+            google_api_key: "fixture-key".into(),
+            ..Default::default()
+        };
+        for (model, effort, expected) in [
+            (
+                "gemini-2.5-flash",
+                "none",
+                serde_json::json!({"thinkingBudget": 0}),
+            ),
+            (
+                "gemini-2.5-pro",
+                "medium",
+                serde_json::json!({"thinkingBudget": 4096}),
+            ),
+            (
+                "gemini-3-pro-preview",
+                "high",
+                serde_json::json!({"thinkingLevel": "high"}),
+            ),
+        ] {
+            let connection = ApiConnection::from_settings(
+                ApiProvider::Google,
+                Some(model),
+                Some(effort),
+                &settings,
+            )
+            .await
+            .unwrap();
+            let conversation = crate::agent_runtime::api::wire::body(&connection, "", &[], &[]);
+            let review = generation_config(model, effort, 16384, None).unwrap();
+            assert_eq!(review["thinkingConfig"], expected);
+            assert_eq!(
+                review["thinkingConfig"],
+                conversation["generationConfig"]["thinkingConfig"]
+            );
+        }
+        assert!(generation_config("gemini-3-pro-preview", "max", 16384, None).is_err());
     }
 
     #[test]

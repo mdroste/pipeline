@@ -263,6 +263,12 @@ function HelpContent({
                     step_count: 4,
                     builtin: true,
                   },
+                  {
+                    id: "declaude",
+                    name: "Declaude",
+                    step_count: 5,
+                    builtin: true,
+                  },
                 ]
             ).map((profile) => (
               <BuiltinRow

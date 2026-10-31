@@ -24,6 +24,7 @@ const ALLOWED_AGENTS: &[&str] = &["claude", "codex", "antigravity", "local"];
 // ── Paths & helpers ─────────────────────────────────────────────────
 
 mod builtins;
+mod declaude;
 mod inputs;
 mod legacy;
 mod migrations;
@@ -77,6 +78,7 @@ use builtins::{
     PAPER_REVIEW_ID, RENAMED_BUILTIN_PROFILES, RETIRED_BUILTIN_PROFILES, SLIDE_REVIEW_ID,
     V15_RETIRED_BUILTIN_PROFILES, V9_RETIRED_BUILTIN_PROFILES,
 };
+use declaude::{declaude_profile, DECLAUDE_ID};
 use legacy::{
     convert_legacy_steps, post_step_to_step, referee_to_step, LegacyPostStepConfig,
     LegacyProfileData, LegacyRefereeConfig,

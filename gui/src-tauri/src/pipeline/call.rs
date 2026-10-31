@@ -6,7 +6,8 @@
 //! deeper Tauri/orchestration stack, while boxed futures keep task-local
 //! logging scopes from embedding (and duplicating) the full dispatcher state.
 
-use super::claude::{call_llm, LlmOverrides};
+use super::providers::call_llm;
+use super::providers::LlmOverrides;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;

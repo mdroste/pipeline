@@ -23,6 +23,11 @@ you change. If you leave a section with unsaved edits, Pipeline asks first.
 Review defaults apply to reviews you start afterward. A saved workflow can
 override them, and a running review keeps the settings it started with.
 
+Choose each conversation’s provider, model, and thinking level in its
+**Model and thinking** picker. Its **Assistant settings** controls tools and
+file access, including optional browser and command-engine setup. See
+[Conversation access](connections.md#conversation-access).
+
 ## Appearance and keyboard
 
 By default, Pipeline follows your system theme, uses 100% text size and
@@ -55,7 +60,8 @@ results, reviews, annotations, saved workflows, automations, and their logs.
 Your manuscripts and datasets stay in your own project folders.
 
 Some files always stay in `~/.pipeline/` on this computer: device settings,
-API keys, provider sign-ins, installed parsers, and caches.
+API keys, provider sign-ins, installed parsers, the conversation browser and
+its sign-ins, the command engine, and caches.
 
 **Choosing a folder doesn't move your existing data.** To get back to earlier
 work, choose the previous folder and restart. To move projects and

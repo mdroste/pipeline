@@ -15,6 +15,8 @@ pub struct AnthropicRequest {
     /// e.g. {"effort": "high"} — omitted entirely when no effort is configured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_config: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,14 +209,14 @@ pub fn anthropic_has_tool_use(blocks: &[serde_json::Value]) -> bool {
         .any(|block| block.get("type").and_then(serde_json::Value::as_str) == Some("tool_use"))
 }
 
-pub(super) fn anthropic_output_incomplete(reason: Option<&str>) -> bool {
+pub(crate) fn anthropic_output_incomplete(reason: Option<&str>) -> bool {
     reason == Some("max_tokens")
 }
 
-pub(super) fn openai_output_incomplete(reason: Option<&str>) -> bool {
+pub(crate) fn openai_output_incomplete(reason: Option<&str>) -> bool {
     matches!(reason, Some("length" | "content_filter"))
 }
 
-pub(super) fn google_output_incomplete(reason: Option<&str>) -> bool {
+pub(crate) fn google_output_incomplete(reason: Option<&str>) -> bool {
     reason.is_some_and(|reason| reason != "STOP")
 }

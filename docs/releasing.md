@@ -120,11 +120,23 @@ Before you publish, test the candidate by hand:
 - On Windows, confirm the installer and installed application show **Michael
   Droste** as the verified publisher. Signing doesn't guarantee that every
   SmartScreen reputation warning disappears immediately.
-- Sign in to each provider and run real conversations and reviews, including
-  tool calls and approvals.
-- For both conversation providers, create and undo files, edit in a working
+- Set up ChatGPT, Claude Code, OpenAI API, Anthropic API, Gemini API, and a
+  local/custom server. Run real conversations and reviews through each,
+  including supported tool calls, image inputs, and approvals. Check model
+  selection, thinking controls, provider switching, and API key errors.
+- Run review steps with **Web search** on OpenAI API and a tool-capable
+  local/custom server. Check search results, page reads, citations, and usage.
+  Turn search off and confirm web calls are denied. Cancel an active search,
+  and check that a server rejecting tools reports an actionable error.
+- For every conversation connection, create and undo files, edit in a working
   copy, interrupt commands, and inspect the captured changes before accepting
-  them. Check that concurrent changes are preserved.
+  them. Check that concurrent changes are preserved. Run an automation with a
+  saved model, and confirm discovery authors can edit their paper folders
+  while referees remain read-only.
+- Install the API command engine on macOS and Linux. Verify read-only and
+  working-copy access, protected-file denial, and child-process cleanup after
+  interruption and normal completion. On Windows, confirm its unavailable
+  state leaves project, research, web, and browser tools usable.
 - Check web search, downloads, and each command internet setting. Verify that
   allowed sites work, denied sites fail, and commands cannot bypass the site
   restriction. Install the optional browser, sign in directly, and confirm
@@ -139,7 +151,8 @@ Before you publish, test the candidate by hand:
   with the same files, model, and effort in each conversation mode. Have a
   researcher score correctness and traceability.
 - Measure startup, first message, streaming, long conversations,
-  cancellation, and idle CPU and memory on each platform.
+  cancellation, and idle CPU and memory on each platform. Include streamed API
+  tool calls and a custom server that returns a complete JSON reply.
 - Stop a running Stata job and confirm its processes are cleaned up.
 - Quit the packaged app at each point in the crash and recovery table in
   [Architecture](architecture.md#crash-and-recovery), and confirm it
@@ -152,14 +165,19 @@ Before you publish, test the candidate by hand:
 Record the results in an evidence file based on
 [`docs/releases/1.1.0-qualification.json`](releases/1.1.0-qualification.json),
 with the final commit, tool and provider versions, platforms, outcomes, and
-the hashes of the evidence and installers. Then run:
+the hashes of the evidence and installers. First capture the candidate identity
+from the complete, verified draft's downloaded installers and checksum files.
+Use the commit and version of its signed tag, and keep this manifest separate
+from the observations:
 
 ```bash
-node scripts/release/qualify-release.mjs /absolute/path/evidence.json <candidate-commit>
+node scripts/release/qualify-release.mjs --candidate <candidate-commit> <candidate-version> /absolute/path/draft-installers > /absolute/path/candidate.json
+node scripts/release/qualify-release.mjs /absolute/path/evidence.json /absolute/path/candidate.json
 ```
 
-It fails if a scenario is missing or pending, the commit differs, or a file
-changed. The evidence must cover all four platforms. Dropping a platform also
+It fails if a scenario is missing or pending, the commit or version differs,
+an installer belongs to another platform, or a file changed. Installer names
+and hashes must match the candidate manifest. The evidence must cover all four platforms. Dropping a platform also
 means updating [Support](../.github/SUPPORT.md) and the release checks.
 
 ## Publish

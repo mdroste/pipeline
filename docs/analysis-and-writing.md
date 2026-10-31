@@ -140,6 +140,10 @@ on the FRED form and with every FRED dataset:
    folder, inputs, and outputs. Choose **Authorize this command and test**.
 5. After a passing test, **Run** works the same way.
 
+Conversations with any provider can use these commands when you enable the
+research execution tools. For general shell commands, see
+[Conversation access](connections.md#conversation-access).
+
 | Kind | Runs | Also checks or records |
 | --- | --- | --- |
 | Stata do-file | Your installed Stata in batch mode: `stata-mp -b do main.do`, or `StataMP-64.exe /e do main.do` on Windows | The log must be an expected output. A log with an error code such as `r(198)` fails. |

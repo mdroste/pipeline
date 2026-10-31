@@ -65,6 +65,7 @@ pub async fn discovery_start(app: tauri::AppHandle, request: Start) -> Result<Va
         workspace_id: Some(ws.clone()),
         session_cursor: Some(binding.cursor),
         harness_fingerprint: Some(binding.harness_fingerprint),
+        connection_id: binding.connection_id,
         root_identity: Some(binding.root_identity),
         runtime_root: Some(binding.runtime_root),
         ..store::Scope::default()

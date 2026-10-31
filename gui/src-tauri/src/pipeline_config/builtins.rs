@@ -177,6 +177,7 @@ pub(super) const BUILTIN_PROFILES: &[&str] = &[
     PAPER_REVIEW_FAST_ID,
     SLIDE_REVIEW_ID,
     GRANT_REVIEW_ID,
+    DECLAUDE_ID,
 ];
 
 /// Built-ins that existed before the version-marked catalog migrations below.
@@ -495,6 +496,7 @@ pub(super) fn create_builtin_profiles() -> Result<(), String> {
         (PAPER_REVIEW_FAST_ID, quick_auto_review_profile()),
         (SLIDE_REVIEW_ID, slide_review_profile()),
         (GRANT_REVIEW_ID, grant_review_profile()),
+        (DECLAUDE_ID, declaude_profile()),
     ] {
         write_builtin_if_missing(&profiles.join(format!("{id}.json")), &profile)?;
     }

@@ -1,6 +1,14 @@
 //! Provider dispatch.
 
-use super::*;
+use artifacts::{event_text_preview, supervise_artifact_writes};
+mod request;
+pub use request::LlmOverrides;
+pub(super) mod artifacts;
+use std::{future::Future, pin::Pin};
+pub(super) type BoxedProviderFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<String, String>> + Send + 'a>>;
+
+use super::claude::call_claude;
 
 /// Dispatch an LLM call to the configured provider (Claude, Codex,
 /// Google, or a local OpenAI-compatible server).
@@ -9,7 +17,7 @@ use super::*;
 /// `cwd`: optional working directory for the subprocess. Pass the paper's source
 /// directory when the LLM needs to read figures or other assets alongside the paper.
 /// When `None`, the subprocess runs in the system temp dir.
-pub(super) fn request_provider_label(provider: &str, transport: &str) -> &'static str {
+pub(crate) fn request_provider_label(provider: &str, transport: &str) -> &'static str {
     match (provider, transport) {
         ("claude", "api") => "Anthropic",
         ("claude", _) => "Claude Code",
@@ -21,7 +29,7 @@ pub(super) fn request_provider_label(provider: &str, transport: &str) -> &'stati
     }
 }
 
-pub(super) fn request_effort(
+pub(crate) fn request_effort(
     provider: &str,
     transport: &str,
     model: &str,
@@ -29,7 +37,7 @@ pub(super) fn request_effort(
     overrides: &LlmOverrides<'_>,
 ) -> String {
     let configured = match provider {
-        "claude" | "codex" => overrides.effort.unwrap_or("").trim(),
+        "claude" | "codex" | "antigravity" | "local" => overrides.effort.unwrap_or("").trim(),
         _ => return "Not configurable".to_string(),
     };
     if configured.is_empty() {
@@ -112,7 +120,8 @@ pub async fn call_llm(
         }
         let overrides = &effective_overrides;
 
-        let transport = settings.model_transport(provider);
+        let connection = crate::connections::ConnectionId::for_review(provider, &settings)?;
+        let transport = connection.legacy_transport();
         let model = overrides
             .model_display
             .filter(|value| !value.trim().is_empty())
@@ -202,11 +211,12 @@ pub async fn call_llm(
         // Direct API path is an explicit credential-mode choice. A saved key
         // may remain available while subscription mode is active, and must
         // not silently change the transport.
-        match provider {
-            "claude" if transport == "api" => {
-                if settings.anthropic_api_key.trim().is_empty() {
-                    return Err("Claude API mode is selected, but no Anthropic API key is configured. Add the key in Settings → Connections or switch Claude to Subscription mode.".to_string());
-                }
+        use crate::connections::ConnectionId;
+        if let Some(api) = connection.api() {
+            api.key(&settings)?;
+        }
+        match connection {
+            ConnectionId::AnthropicApi => {
                 return crate::pipeline::api_anthropic::call_anthropic_api(
                     app,
                     prompt,
@@ -220,10 +230,7 @@ pub async fn call_llm(
                 )
                 .await;
             }
-            "codex" if transport == "api" => {
-                if settings.openai_api_key.trim().is_empty() {
-                    return Err("ChatGPT API mode is selected, but no OpenAI API key is configured. Add the key in Settings → Connections or switch ChatGPT to Subscription mode.".to_string());
-                }
+            ConnectionId::OpenAiApi => {
                 return crate::pipeline::api_openai::call_openai_api(
                     app,
                     prompt,
@@ -237,10 +244,7 @@ pub async fn call_llm(
                 )
                 .await;
             }
-            "antigravity" => {
-                if settings.google_api_key.trim().is_empty() {
-                    return Err("No Google AI API key is configured. Google runs through the Gemini API — add the key in Settings → Connections.".to_string());
-                }
+            ConnectionId::GeminiApi => {
                 return crate::pipeline::api_google::call_google_api(
                     app,
                     prompt,
@@ -256,7 +260,7 @@ pub async fn call_llm(
             }
             // Local OpenAI-compatible server (Ollama, LM Studio, llama.cpp, vLLM).
             // Always direct HTTP — there is no CLI fallback for this provider.
-            "local" => {
+            ConnectionId::Local => {
                 return crate::pipeline::api_openai::call_local_api(
                     app,
                     prompt,
@@ -277,7 +281,9 @@ pub async fn call_llm(
         let cli_call: BoxedProviderFuture<'_> = Box::pin(async {
             match provider {
                 "codex" => {
-                    if settings.codex_backend == "app_server" {
+                    if connection.transport(&settings)
+                        == crate::connections::Transport::CodexAppServer
+                    {
                         return crate::pipeline::codex_server::call_codex(
                             app,
                             prompt,

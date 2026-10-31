@@ -161,7 +161,9 @@ describe("Get started sheet", () => {
     expect(within(list).getAllByText(/Conversations and Reviews/)).toHaveLength(
       2,
     );
-    expect(within(list).getAllByText(/Reviews only/)).toHaveLength(2);
+    expect(within(list).getAllByText(/Conversations and reviews/)).toHaveLength(
+      2,
+    );
     expect(within(dialog).getByRole("status")).toHaveTextContent(
       "You can start Conversations and Reviews now.",
     );

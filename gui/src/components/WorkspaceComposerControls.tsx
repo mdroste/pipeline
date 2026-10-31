@@ -1,3 +1,9 @@
+import {
+  conversationProviders,
+  providerName,
+  isApiProvider,
+  type ConversationProvider,
+} from "../lib/workspaceProviders";
 import { useEffect, useRef, useState } from "react";
 import Popover from "../ui/Popover";
 import SegmentedControl from "../ui/SegmentedControl";
@@ -155,8 +161,8 @@ export default function WorkspaceComposerControls({
   onChange: (model: string, effort: string) => void;
   loadAccount?: () => Promise<AccountSummary>;
   loadClaudeUsage?: () => Promise<ClaudeRateLimit | null>;
-  runtime?: "codex" | "claude";
-  onRuntimeChange?: (runtime: "codex" | "claude") => void;
+  runtime?: ConversationProvider;
+  onRuntimeChange?: (runtime: ConversationProvider) => void;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
@@ -165,7 +171,7 @@ export default function WorkspaceComposerControls({
     "idle",
   );
   useEffect(() => {
-    if (!open || !loadAccount || runtime === "claude") return;
+    if (!open || !loadAccount || runtime !== "codex") return;
     let live = true;
     setSummaryState((state) => (state === "done" ? state : "loading"));
     void loadAccount()
@@ -201,13 +207,13 @@ export default function WorkspaceComposerControls({
   // model from the catalog's isDefault flag when the connection has overrides.
   const selected = models.find((item) => item.model === model);
   const supported = selected?.supportedReasoningEfforts ?? [];
-  const unknownModel = Boolean(model) && !selected;
+  const unknownModel = Boolean(model) && !selected && !isApiProvider(runtime);
   const unknownEffort =
     Boolean(effort) &&
     !supported.some((item) => item.reasoningEffort === effort);
   const shownEffort = effort || selected?.defaultReasoningEffort || "";
   const chip = [
-    runtime === "claude" ? "Claude" : "ChatGPT",
+    providerName(runtime),
     model ? (selected?.displayName ?? model) : "Auto",
     shownEffort ? effortLabel(shownEffort) : null,
   ]
@@ -317,12 +323,18 @@ export default function WorkspaceComposerControls({
               label="Conversation provider"
               value={runtime}
               disabled={disabled}
-              options={[
-                { value: "codex", label: "ChatGPT" },
-                { value: "claude", label: "Claude Code" },
-              ]}
-              onChange={(value) => onRuntimeChange(value as "codex" | "claude")}
+              options={[...conversationProviders]}
+              onChange={(value) =>
+                onRuntimeChange(value as ConversationProvider)
+              }
             />
+            {isApiProvider(runtime) && (
+              <p className="mt-2 text-ui-meta text-ink-muted">
+                Uses the saved connection in Settings → Connections. API
+                providers bill each call. Project tools require a model that
+                supports function calling.
+              </p>
+            )}
             {runtime === "claude" && (
               <p className="mt-2 text-ui-meta text-ink-muted">
                 Uses your Claude Code subscription sign-in. Claude can read
@@ -403,6 +415,19 @@ export default function WorkspaceComposerControls({
             the conversation is idle.
           </p>
         )}
+        {isApiProvider(runtime) && (
+          <label className="block px-3 py-2 text-ui-meta">
+            Model ID
+            <input
+              aria-label="Model ID"
+              className="mt-1 w-full rounded border border-line bg-surface px-2 py-1"
+              value={model}
+              disabled={disabled}
+              placeholder="Automatic"
+              onChange={(event) => onChange(event.target.value, "")}
+            />
+          </label>
+        )}
         <div
           role="listbox"
           aria-label="Model"
@@ -417,7 +442,7 @@ export default function WorkspaceComposerControls({
           {option(
             "",
             "Automatic",
-            `Uses the default model from your ${runtime === "claude" ? "Claude Code" : "ChatGPT"} connection.`,
+            `Uses the default model from your ${providerName(runtime)} connection.`,
           )}
           {unknownModel &&
             option(model, model, "No longer offered. Choose another model.", {

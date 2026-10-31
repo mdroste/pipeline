@@ -23,45 +23,14 @@ pub(super) async fn read_discovery_output<R: AsyncRead + Unpin>(
     Ok((kept, overflowed))
 }
 
-struct DiscoveryProcessGuard {
-    pid: u32,
-    armed: bool,
-}
-
-impl DiscoveryProcessGuard {
-    fn register(pid: u32) -> Self {
-        if pid > 0 {
-            crate::commands::register_child_pid(pid);
-        }
-        Self {
-            pid,
-            armed: pid > 0,
-        }
-    }
-
-    fn unregister(&mut self) {
-        if self.armed {
-            crate::commands::unregister_child_pid(self.pid);
-            self.armed = false;
-        }
-    }
-}
-
-impl Drop for DiscoveryProcessGuard {
-    fn drop(&mut self) {
-        if self.armed {
-            crate::commands::kill_process(self.pid);
-            crate::commands::unregister_child_pid(self.pid);
-        }
-    }
-}
+use crate::agent_runtime::process::DiscoveryProcessGuard;
 
 async fn stop_discovery_child(
     child: &mut tokio::process::Child,
     guard: &mut DiscoveryProcessGuard,
 ) {
     if guard.pid > 0 {
-        crate::commands::kill_process(guard.pid);
+        guard.terminate();
     }
     let _ = child.kill().await;
     let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
@@ -140,7 +109,7 @@ async fn rpc_exchange_impl(
                     .map_err(|e| e.to_string())?;
                 stdin.write_all(b"\n").await.map_err(|e| e.to_string())?;
                 stdin.flush().await.map_err(|e| e.to_string())?;
-                while let Some(record) = crate::pipeline::logging::next_bounded_line(
+                while let Some(record) = crate::agent_runtime::io::next_bounded_line(
                     &mut reader,
                     MAX_DISCOVERY_LINE_BYTES,
                 )
@@ -269,7 +238,7 @@ async fn claude_sdk_initialize() -> Result<serde_json::Value, String> {
         let mut reader = BufReader::new(stdout);
         tokio::time::timeout(Duration::from_secs(20), async {
             while let Some(record) =
-                crate::pipeline::logging::next_bounded_line(&mut reader, MAX_DISCOVERY_LINE_BYTES)
+                crate::agent_runtime::io::next_bounded_line(&mut reader, MAX_DISCOVERY_LINE_BYTES)
                     .await
                     .map_err(|e| e.to_string())?
             {

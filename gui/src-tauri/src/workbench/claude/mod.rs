@@ -9,6 +9,7 @@
 //! stale accepted turn becomes interrupted on restart and is never replayed.
 
 mod activity;
+mod answers;
 mod protocol;
 mod shell;
 #[cfg(test)]
@@ -19,10 +20,10 @@ pub(crate) mod transport;
 pub(crate) mod usage;
 mod wsl;
 
-use super::codex::NormalizedEvent;
 use super::commands::{run_store, RuntimeCommandError, SendTurnRequest, SendTurnResult};
 use super::research::PreparedHarness;
 use super::store::{SessionBinding, Store, WorkbenchError, WorkbenchResult};
+use crate::agent_runtime::events::NormalizedEvent;
 use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
 use tauri::Emitter;
@@ -101,6 +102,7 @@ pub(crate) async fn submit(
     binding: Option<SessionBinding>,
     prepared: PreparedHarness,
     automated: bool,
+    control: super::submission::Control,
 ) -> Result<SendTurnResult, RuntimeCommandError> {
     let session = request.session_id.clone();
     let text = request.text.clone();
@@ -131,10 +133,16 @@ pub(crate) async fn submit(
         )
     });
     // CLI auth, configuration and handshake all finish before sending a prompt.
-    let mut process = transport::Process::start(&args, sandbox.as_ref())
-        .await
-        .map_err(error)?;
-    let initialization = process.initialize(&tool_specs).await.map_err(error)?;
+    let mut process = control
+        .preflight(async {
+            transport::Process::start(&args, sandbox.as_ref())
+                .await
+                .map_err(error)
+        })
+        .await?;
+    let initialization = control
+        .preflight(async { process.initialize(&tool_specs).await.map_err(error) })
+        .await?;
     protocol::validate_model(
         &initialization,
         request.model.as_deref(),
@@ -176,7 +184,7 @@ pub(crate) async fn submit(
         binding: bound.id,
         model: request.model,
     };
-    super::commands::accept_claude_turn(epoch, &thread, &id);
+    super::commands::accept_local_turn(epoch, &thread, &id);
     let (cancel, receiver) = watch::channel(false);
     *running().lock().unwrap_or_else(|e| e.into_inner()) = Some(Running {
         thread: thread.clone(),
@@ -186,16 +194,17 @@ pub(crate) async fn submit(
     let task_turn = turn.clone();
     let original = prompt.user_text.clone();
     tokio::spawn(async move {
-        let result = transport::drive(
-            &mut process,
-            &app,
-            &task_turn,
-            &request.text,
-            &prompt,
-            tool_specs,
-            receiver,
-        )
-        .await;
+        let result = control
+            .run(transport::drive(
+                &mut process,
+                &app,
+                &task_turn,
+                &request.text,
+                &prompt,
+                tool_specs,
+                receiver,
+            ))
+            .await;
         process.stop().await;
         let capture = super::conversation_tools::finish(&task_turn.thread, &task_turn.id).await;
         let result = result.and(capture.map_err(|error| error.message));
@@ -235,7 +244,7 @@ pub(crate) async fn submit(
             let _ = app.emit("workbench:event", event);
         }
         *running().lock().unwrap_or_else(|e| e.into_inner()) = None;
-        super::commands::finish_claude_turn(epoch, &thread, &id);
+        super::commands::finish_local_turn(epoch, &thread, &id);
         if status == "completed" {
             super::commands::spawn_title_generation(
                 app,

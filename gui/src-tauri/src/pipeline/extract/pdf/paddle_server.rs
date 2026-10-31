@@ -111,7 +111,7 @@ pub(in crate::pipeline::extract) async fn start_paddle_server(
         &api_key,
         "--no-ui",
     ]);
-    crate::pipeline::claude::configure_silent_command(&mut command);
+    crate::agent_runtime::process::configure_silent_command(&mut command);
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())

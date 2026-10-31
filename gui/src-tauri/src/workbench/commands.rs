@@ -23,10 +23,12 @@ static DATABASE_GATE: RwLock<()> = RwLock::const_new(());
 static EVENT_BRIDGE_EPOCH: AtomicU64 = AtomicU64::new(0);
 static TURN_QUEUE: OnceLock<Arc<Semaphore>> = OnceLock::new();
 static ACTIVE_TURN_STATE: OnceLock<StdMutex<ActiveTurnState>> = OnceLock::new();
-static PENDING_SERVER_REQUESTS: OnceLock<StdMutex<HashMap<String, super::codex::NormalizedEvent>>> =
-    OnceLock::new();
+static PENDING_SERVER_REQUESTS: OnceLock<
+    StdMutex<HashMap<String, crate::agent_runtime::events::NormalizedEvent>>,
+> = OnceLock::new();
 
-fn pending_server_requests() -> &'static StdMutex<HashMap<String, super::codex::NormalizedEvent>> {
+fn pending_server_requests(
+) -> &'static StdMutex<HashMap<String, crate::agent_runtime::events::NormalizedEvent>> {
     PENDING_SERVER_REQUESTS.get_or_init(|| StdMutex::new(HashMap::new()))
 }
 
@@ -92,7 +94,7 @@ fn complete_active_turn(epoch: u64, thread_id: &str, turn_id: &str) {
     }
 }
 
-pub(crate) fn accept_claude_turn(epoch: u64, thread: &str, turn: &str) {
+pub(crate) fn accept_local_turn(epoch: u64, thread: &str, turn: &str) {
     let mut state = active_turn_state()
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -101,7 +103,7 @@ pub(crate) fn accept_claude_turn(epoch: u64, thread: &str, turn: &str) {
     state.turn_id = Some(turn.into());
 }
 
-pub(crate) fn finish_claude_turn(epoch: u64, thread: &str, turn: &str) {
+pub(crate) fn finish_local_turn(epoch: u64, thread: &str, turn: &str) {
     complete_active_turn(epoch, thread, turn);
 }
 
@@ -179,6 +181,18 @@ pub struct SendTurnRequest {
     pub(crate) effort: Option<String>,
 }
 
+impl SendTurnRequest {
+    // Explicit automation model choices do not inherit another model's effort.
+    fn inherit_selection(&mut self, overrides: &Value) {
+        if self.model.is_none() {
+            self.model = overrides["model"].as_str().map(str::to_owned);
+            if self.effort.is_none() {
+                self.effort = overrides["effort"].as_str().map(str::to_owned);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendTurnResult {
@@ -203,8 +217,12 @@ where
     T: Send + 'static,
     F: FnOnce(Store) -> WorkbenchResult<T> + Send + 'static,
 {
-    let _gate = DATABASE_GATE.read().await;
-    run_store_ungated(operation).await
+    let gate = DATABASE_GATE.read().await;
+    run_store_ungated(move |store| {
+        let _gate = gate;
+        operation(store)
+    })
+    .await
 }
 
 pub(crate) async fn run_store_owned<T, F>(store: Store, operation: F) -> WorkbenchResult<T>
@@ -212,14 +230,17 @@ where
     T: Send + 'static,
     F: FnOnce(Store) -> WorkbenchResult<T> + Send + 'static,
 {
-    let _gate = DATABASE_GATE.read().await;
-    let _permit = DATABASE_WORKERS
+    let gate = DATABASE_GATE.read().await;
+    let permit = DATABASE_WORKERS
         .acquire()
         .await
         .map_err(|_| WorkbenchError::worker("Database workers are unavailable", true))?;
-    tokio::task::spawn_blocking(move || operation(store))
-        .await
-        .map_err(|e| WorkbenchError::worker(format!("Database worker ended: {e}"), true))?
+    tokio::task::spawn_blocking(move || {
+        let (_gate, _permit) = (gate, permit);
+        operation(store)
+    })
+    .await
+    .map_err(|e| WorkbenchError::worker(format!("Database worker ended: {e}"), true))?
 }
 
 async fn run_store_ungated<T, F>(operation: F) -> WorkbenchResult<T>
@@ -227,15 +248,19 @@ where
     T: Send + 'static,
     F: FnOnce(Store) -> WorkbenchResult<T> + Send + 'static,
 {
-    let _permit = DATABASE_WORKERS
+    let permit = DATABASE_WORKERS
         .acquire()
         .await
         .map_err(|_| WorkbenchError::worker("Workbench database workers are unavailable", true))?;
-    tokio::task::spawn_blocking(move || operation(Store::open_default()?))
-        .await
-        .map_err(|error| {
-            WorkbenchError::worker(format!("Workbench database worker stopped: {error}"), true)
-        })?
+    tokio::task::spawn_blocking(move || {
+        // A cancelled await must not release admission while its worker runs.
+        let _permit = permit;
+        operation(Store::open_default()?)
+    })
+    .await
+    .map_err(|error| {
+        WorkbenchError::worker(format!("Workbench database worker stopped: {error}"), true)
+    })?
 }
 
 async fn run_store_exclusive<T, F>(operation: F) -> WorkbenchResult<T>
@@ -243,8 +268,12 @@ where
     T: Send + 'static,
     F: FnOnce(Store) -> WorkbenchResult<T> + Send + 'static,
 {
-    let _gate = DATABASE_GATE.write().await;
-    run_store_ungated(operation).await
+    let gate = DATABASE_GATE.write().await;
+    run_store_ungated(move |store| {
+        let _gate = gate;
+        operation(store)
+    })
+    .await
 }
 
 fn storage_turn_permit(queue: Arc<Semaphore>) -> WorkbenchResult<OwnedSemaphorePermit> {
@@ -384,11 +413,17 @@ pub async fn workbench_generate_session_title(
     session_id: String,
 ) -> Result<String, RuntimeCommandError> {
     let selected_session = session_id.clone();
-    let runtime = if run_store(move |store| {
-        super::claude::selected(&store.session_snapshot(&selected_session)?.session.overrides)
-    })
-    .await?
-    {
+    let overrides =
+        run_store(move |store| Ok(store.session_snapshot(&selected_session)?.session.overrides))
+            .await?;
+    let runtime = if let Some(provider) = super::api::selected(&overrides)? {
+        TitleRuntime::Api {
+            epoch: super::api::next_epoch(),
+            connection: super::api::config::load(provider, overrides["model"].as_str(), None)
+                .await
+                .map_err(super::api::error)?,
+        }
+    } else if super::claude::selected(&overrides)? {
         TitleRuntime::Claude {
             epoch: super::claude::fresh_epoch(),
         }
@@ -414,7 +449,13 @@ const TITLE_PROJECTION_ATTEMPTS: usize = 10;
 /// The provider that writes a conversation's title: the one it talks to.
 pub(crate) enum TitleRuntime {
     Codex(Arc<super::codex::AppServerSupervisor>),
-    Claude { epoch: u64 },
+    Claude {
+        epoch: u64,
+    },
+    Api {
+        epoch: u64,
+        connection: super::api::Connection,
+    },
 }
 
 impl TitleRuntime {
@@ -422,13 +463,14 @@ impl TitleRuntime {
         match self {
             Self::Codex(supervisor) => supervisor.runtime_namespace(),
             Self::Claude { .. } => super::claude::NAMESPACE.to_string(),
+            Self::Api { .. } => super::api::NAMESPACE.to_string(),
         }
     }
 
     fn epoch(&self) -> u64 {
         match self {
             Self::Codex(supervisor) => supervisor.status().epoch,
-            Self::Claude { epoch } => *epoch,
+            Self::Claude { epoch } | Self::Api { epoch, .. } => *epoch,
         }
     }
 }
@@ -467,6 +509,11 @@ async fn generate_session_title(
         return Ok(None);
     };
     let raw = match runtime {
+        TitleRuntime::Api { connection, .. } => {
+            super::api::title(connection, &titles::title_prompt(&user, &assistant))
+                .await
+                .map_err(super::api::error)?
+        }
         TitleRuntime::Codex(supervisor) => {
             codex_title(supervisor, &preferences, &user, &assistant).await?
         }

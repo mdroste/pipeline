@@ -165,14 +165,14 @@ pub(super) async fn run_install_step(
     environment: &[(String, String)],
     label: &str,
 ) -> Result<(), String> {
-    let mut command = crate::pipeline::claude::build_silent_command(
+    let mut command = crate::agent_runtime::process::build_silent_command(
         program
             .to_str()
             .ok_or_else(|| format!("{label} program path is not valid UTF-8"))?,
         None,
     );
     apply_managed_environment(command.as_std_mut(), environment);
-    crate::pipeline::claude::configure_silent_command(command.as_std_mut());
+    crate::agent_runtime::process::configure_silent_command(command.as_std_mut());
     command.args(args);
     command
         .stdin(std::process::Stdio::null())

@@ -1,7 +1,7 @@
 //! Direct OpenAI Chat Completions API client.
 
 use super::api_common::*;
-use super::claude::LlmOverrides;
+use super::providers::LlmOverrides;
 use crate::settings::Settings;
 use std::time::Instant;
 
@@ -22,54 +22,47 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
     let mut tools = Vec::new();
     if allowed_tools.contains(&"Read") {
         let def = ReadToolDef::default();
-        tools.push(serde_json::json!({
-            "type": "function",
-            "function": {
-                "name": def.name,
-                "description": def.description,
-                "parameters": def.input_schema,
-            }
-        }));
+        tools.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::OpenAi,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
         let def = ReadTextBatchToolDef::default();
-        tools.push(serde_json::json!({
-            "type": "function",
-            "function": {
-                "name": def.name,
-                "description": def.description,
-                "parameters": def.input_schema,
-            }
-        }));
+        tools.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::OpenAi,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
     }
     if allowed_tools.contains(&"ReadDocumentAsset") {
         let def = DocumentAssetToolDef::default();
-        tools.push(serde_json::json!({
-            "type": "function",
-            "function": {
-                "name": def.name,
-                "description": def.description,
-                "parameters": def.input_schema,
-            }
-        }));
+        tools.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::OpenAi,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
         let def = DocumentAssetsBatchToolDef::default();
-        tools.push(serde_json::json!({
-            "type": "function",
-            "function": {
-                "name": def.name,
-                "description": def.description,
-                "parameters": def.input_schema,
-            }
-        }));
+        tools.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::OpenAi,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
     }
     if allowed_tools.contains(&"Write") {
         let def = WriteToolDef::default();
-        tools.push(serde_json::json!({
-            "type": "function",
-            "function": {
-                "name": def.name,
-                "description": def.description,
-                "parameters": def.input_schema,
-            }
-        }));
+        tools.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::OpenAi,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
+    }
+    if allowed_tools.contains(&"WebSearch") {
+        tools.extend(super::api_common::web::tools());
     }
     tools
 }
@@ -79,14 +72,7 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
 /// tier; anything else is dropped rather than sent so a CLI-tuned setting
 /// cannot 400 the whole step.
 fn sanitize_reasoning_effort(effort: &str) -> Option<&'static str> {
-    match effort {
-        "minimal" => Some("minimal"),
-        "low" => Some("low"),
-        "medium" => Some("medium"),
-        "high" => Some("high"),
-        "xhigh" => Some("high"),
-        _ => None,
-    }
+    crate::connections::thinking::openai_effort(effort)
 }
 
 fn structured_response_format(
@@ -224,6 +210,8 @@ pub async fn call_openai_api(
 ) -> Result<String, String> {
     let start = Instant::now();
     let model = resolve_model(settings, overrides.model);
+    let endpoint = crate::connections::ApiProvider::OpenAi.endpoint(settings, &model)?;
+    let base_url = endpoint.trim_end_matches("/chat/completions");
     log(
         app,
         format!("{label} started (API: OpenAI, model: {model})"),
@@ -317,8 +305,8 @@ pub async fn call_openai_api(
             match openai_tool_loop(
                 app,
                 client,
-                "https://api.openai.com/v1",
-                &settings.openai_api_key,
+                base_url,
+                crate::connections::ApiProvider::OpenAi.key(settings)?,
                 "OpenAI",
                 warm_request,
                 timeout_secs,
@@ -356,8 +344,8 @@ pub async fn call_openai_api(
     let (text, mut usage) = openai_tool_loop(
         app,
         client,
-        "https://api.openai.com/v1",
-        &settings.openai_api_key,
+        base_url,
+        crate::connections::ApiProvider::OpenAi.key(settings)?,
         "OpenAI",
         request,
         timeout_secs,
@@ -388,10 +376,8 @@ pub async fn call_openai_api(
 /// Call a local OpenAI-compatible server (Ollama, LM Studio, llama.cpp,
 /// vLLM) configured via `settings.local_base_url` / `local_model`.
 ///
-/// Differences from the OpenAI path: no reasoning_effort (most local servers
-/// reject or ignore it), no PDF attachments (no local server supports the
-/// file content part — extraction should use PaddleOCR-VL or pdftotext), and
-/// a retry-without-tools fallback for models without tool-calling support.
+/// Sends the selected thinking level and uses host tools to read documents.
+/// Explicit tool rejection follows the local compatibility policy in the loop.
 #[allow(clippy::too_many_arguments)]
 pub async fn call_local_api(
     app: &crate::emit::EventBus,
@@ -450,7 +436,10 @@ pub async fn call_local_api(
             overrides.shared_context.as_deref(),
         )?,
         tools: build_tools(allowed_tools),
-        reasoning_effort: None,
+        reasoning_effort: overrides
+            .effort
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_owned),
         max_completion_tokens: overrides.max_output_tokens,
         prompt_cache_key: None,
         response_format: structured_response_format(overrides.output_schema)?,
@@ -461,7 +450,7 @@ pub async fn call_local_api(
         app,
         client,
         base_url,
-        &settings.local_api_key,
+        crate::connections::ApiProvider::Local.key(settings)?,
         "Local server",
         request,
         timeout_secs,
@@ -581,8 +570,10 @@ mod tests {
                 "ReadDocumentAssetsBatch"
             ]
         );
-        // Chat Completions/local transports have no safe hosted-search
-        // primitive; WebSearch remains intentionally unavailable here.
-        assert!(build_tools(&["WebSearch"]).is_empty());
+        assert!(build_tools(&[]).is_empty());
+        let web = build_tools(&["WebSearch"]);
+        assert_eq!(web.len(), 2);
+        assert_eq!(web[0]["function"]["name"], "WebSearch");
+        assert_eq!(web[1]["function"]["name"], "WebFetch");
     }
 }

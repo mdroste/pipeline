@@ -5,6 +5,38 @@ public release was not tracked as a stable release series.
 
 ## Unreleased
 
+## 1.2.5 — 2026-10-30
+
+- ChatGPT keeps recent conversation history when settings, project moves, or
+  recovery require a new native thread. Research automations recognize final
+  structured answers from Claude Code and API connections after tool updates.
+- Automations require refreshed context after a connection change and stop
+  before sending a prompt when cancelled during setup.
+- Web page reads preserve paragraphs, lists, and table columns. Release
+  qualification binds evidence to the candidate version and each platform's
+  installer name and checksum.
+
+- Connection names and model information are shared across reviews and
+  conversations. Gemini review steps apply the selected thinking level,
+  and Anthropic review steps use the model's listed thinking options.
+
+- Declaude reviews formulaic prose with one to three topic reviewers and
+  produces a Markdown report with original passages, suggested replacements,
+  and explanations suited to the document's audience and style.
+
+- Reviews support web search and public page reads through OpenAI API and
+  local/custom servers with tool-capable models. Search follows each step's
+  access setting, time limit, and cancellation.
+
+- Conversations support OpenAI, Anthropic, and Gemini API keys, plus local or
+  custom OpenAI-compatible servers. Choose the connection and model in the
+  conversation picker; enabled project and research tools use the same access
+  settings as subscription conversations.
+- API conversations stream replies, offer model-specific thinking controls,
+  and support web search and an optional sandboxed command engine on macOS
+  and Linux. Automations keep saved model choices, and discovery authors can
+  edit their isolated paper folders through project file tools.
+
 ## 1.2.2 — 2026-10-29
 
 - Correct Windows release verification for installation paths with mixed separators.

@@ -1,14 +1,16 @@
 import type { ModelCatalog, ModelSelection, Settings } from "./types";
 
-export const PROVIDERS = ["claude", "codex", "antigravity", "local"] as const;
-export type Provider = (typeof PROVIDERS)[number];
-
-export const PROVIDER_LABELS: Record<Provider, string> = {
-  claude: "Claude",
-  codex: "ChatGPT",
-  antigravity: "Gemini",
-  local: "Local",
-};
+import {
+  providerFamilies,
+  connectionDescription,
+  reviewConnectionId,
+  type ProviderFamily,
+} from "./connections";
+export const PROVIDERS = providerFamilies.map(({ id }) => id);
+export type Provider = ProviderFamily;
+export const PROVIDER_LABELS = Object.fromEntries(
+  providerFamilies.map(({ id, label }) => [id, label]),
+) as Record<Provider, string>;
 
 export function defaultParallelAgents(settings: Settings): string[] {
   return settings.default_parallel_agents?.length
@@ -54,18 +56,10 @@ export function providerTransport(
   settings: Settings,
   provider: string,
 ): "cli" | "api" {
-  if (provider === "local") return "api";
-  if (provider === "codex") {
-    if (settings.codex_access_mode)
-      return settings.codex_access_mode === "api" ? "api" : "cli";
-    return settings.openai_api_key ? "api" : "cli";
-  }
-  // Google subscription dispatch (the agy CLI) is disabled; mirrors
-  // Settings::model_transport in the backend.
-  if (provider === "antigravity") return "api";
-  if (settings.claude_access_mode)
-    return settings.claude_access_mode === "api" ? "api" : "cli";
-  return settings.anthropic_api_key ? "api" : "cli";
+  return connectionDescription(reviewConnectionId(settings, provider))
+    .access === "api"
+    ? "api"
+    : "cli";
 }
 
 export function encodeModelSelection(

@@ -2,7 +2,6 @@
 
 use serde::Serialize;
 use std::future::Future;
-use std::sync::LazyLock;
 
 /// Maximum tool-call round-trips before giving up.
 const MAX_TOOL_ITERATIONS: usize = 15;
@@ -18,36 +17,9 @@ const MAX_TOOL_ARGUMENT_BYTES_TOTAL: usize = 4 * 1024 * 1024;
 const MAX_TOOL_HISTORY_MESSAGES: usize = 128;
 const MAX_TOOL_HISTORY_BYTES: usize = 64 * 1024 * 1024;
 
-/// Shared HTTP client for all direct API calls.
-/// `reqwest::Client` wraps an `Arc` internally, so cloning is cheap.
-/// Reusing a single client enables TCP/TLS connection pooling across
-/// pipeline steps that hit the same API host.
-pub static HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
-/// Custom/local endpoints must never redirect requests carrying prompts or
-/// bearer tokens to a different origin.
-pub static LOCAL_HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .expect("building the loopback-only HTTP client cannot fail")
-});
-/// HTTPS custom endpoints may use an enterprise proxy, but still cannot
-/// redirect a request containing prompts or credentials to another origin.
-pub static CUSTOM_HTTPS_HTTP_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .expect("building the custom HTTPS client cannot fail")
-});
-
-pub fn custom_endpoint_client(base_url: &str) -> &'static reqwest::Client {
-    if base_url.trim_start().starts_with("https://") {
-        &CUSTOM_HTTPS_HTTP_CLIENT
-    } else {
-        &LOCAL_HTTP_CLIENT
-    }
-}
+pub use crate::agent_runtime::api::http::{
+    custom_endpoint_client, CUSTOM_HTTPS_HTTP_CLIENT, HTTP_CLIENT, LOCAL_HTTP_CLIENT,
+};
 
 /// Maximum text file size for Read tool calls (5 MB).
 const MAX_READ_SIZE: usize = 5 * 1024 * 1024;
@@ -245,12 +217,14 @@ mod tool_access;
 mod tool_files;
 mod tool_schema;
 mod usage;
-mod wire;
+pub(super) mod web;
+use crate::agent_runtime::api::records as wire;
 
-use execution::{
+use crate::agent_runtime::api::tool_output::{
     anthropic_tool_result_content, append_openai_image_message, append_openai_tool_result,
-    execute_tool, google_tool_result_parts,
+    google_tool_result_parts,
 };
+use execution::execute_tool;
 use retry::{format_api_error, send_with_status_retry};
 use tool_access::validate_tool_path;
 use tool_files::{
@@ -265,12 +239,13 @@ use execution::{enforce_media_budget, execute_read_assets_batch, execute_read_te
 #[cfg(test)]
 use retry::transient_api_status;
 
+pub use crate::agent_runtime::api::tool_output::{ToolImage, ToolResult};
 pub(crate) use execution::{execute_native_tool, ToolBudget};
 pub use loops::{anthropic_tool_loop, google_tool_loop, openai_tool_loop, GoogleToolLoopContext};
 pub use tool_access::ToolAccess;
 pub use tool_files::{
-    pdf_attachment_base64, reset_write_budget, write_file_for_tool, ToolImage, ToolResult,
-    MAX_ATTACH_PDF, MAX_ATTACH_PDF_GOOGLE,
+    pdf_attachment_base64, reset_write_budget, write_file_for_tool, MAX_ATTACH_PDF,
+    MAX_ATTACH_PDF_GOOGLE,
 };
 pub use tool_schema::{
     DocumentAssetToolDef, DocumentAssetsBatchToolDef, ReadTextBatchToolDef, ReadToolDef,
@@ -287,3 +262,5 @@ pub use wire::{
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod web_tests;

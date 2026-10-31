@@ -1,11 +1,13 @@
 use std::process::Stdio;
 use tokio::io::{AsyncWriteExt, BufReader};
 
-use super::claude::{build_provider_command, normalize_cli_root, LlmOverrides};
+use super::claude::normalize_cli_root;
 use super::cli_process::{
     capture_stderr, emit_stderr_tail, finish_streams, last_stderr_hint, log, track_child_started,
     verbose_log, wait_for_child,
 };
+use crate::agent_runtime::process::build_provider_command;
+use crate::pipeline::providers::LlmOverrides;
 
 fn codex_effective_cwd(
     needs_write: bool,

@@ -649,6 +649,7 @@ fn write_tool_confinement_in_scope() {
 #[test]
 fn provider_request_json_preserves_omissions_casing_and_wire_fields() {
     let anthropic = AnthropicRequest {
+        thinking: None,
         model: "fixture".into(),
         max_tokens: 17,
         system: None,

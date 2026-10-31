@@ -97,7 +97,7 @@ pub async fn workbench_codex_send_turn(
     app: tauri::AppHandle,
     request: SendTurnRequest,
 ) -> Result<SendTurnResult, RuntimeCommandError> {
-    submit_turn(app, request, None).await
+    submit_turn(app, request, None, Default::default()).await
 }
 
 pub(crate) fn task_turn_available() -> bool {
@@ -108,7 +108,10 @@ pub(crate) async fn submit_turn(
     app: tauri::AppHandle,
     request: SendTurnRequest,
     task_binding: Option<crate::workbench::tasks::TaskBinding>,
+    control: crate::workbench::submission::Control,
 ) -> Result<SendTurnResult, RuntimeCommandError> {
+    control.check()?;
+    let mut request = request;
     let automated = task_binding.is_some();
     let permit = if automated {
         turn_queue()
@@ -191,24 +194,31 @@ pub(crate) async fn submit_turn(
         }
 
         let session_id = request.session_id.clone();
-        let (binding, runtime_root, prepared, use_claude) = run_store(move |store| {
+        let (binding, runtime_root, prepared, runtime) = run_store(move |store| {
             if store.session_snapshot(&session_id)?.session.workspace_id.as_deref().is_some_and(crate::workbench::research::jobs::workspace_active) {return Err(WorkbenchError::conflict("This project has a local job holding its write resources. Finish or stop it before starting a research turn."));}
             Ok::<_, WorkbenchError>((
                 store.active_binding(&session_id)?,
                 store.runtime_root(&session_id)?,
                 crate::workbench::research::prepare_turn(&store, &session_id)?,
-                crate::workbench::claude::selected(&store.session_snapshot(&session_id)?.session.overrides)?,
+                store.session_snapshot(&session_id)?.session.overrides,
             ))
         })
         .await?;
-        if use_claude {
-            handed_off = true;
-            return crate::workbench::claude::submit(app, request, binding, prepared, automated).await;
+        control.check()?;
+        if automated {
+            request.inherit_selection(&runtime);
         }
-        let transferred_history = if binding.as_ref().is_some_and(|b| b.runtime_namespace == crate::workbench::claude::NAMESPACE) {
-            let session = request.session_id.clone();
-            run_store(move |store| crate::workbench::history::recent_context(&store, &session)).await?
-        } else { String::new() };
+        if let Some(provider) = crate::workbench::api::selected(&runtime)? {
+            return crate::workbench::api::submit(app, request, binding, prepared, automated, provider, control).await;
+        }
+        if crate::workbench::claude::selected(&runtime)? {
+            handed_off = true;
+            return crate::workbench::claude::submit(app, request, binding, prepared, automated, control).await;
+        }
+        let history_session = request.session_id.clone();
+        let history_binding = binding.clone();
+        let fingerprint = prepared.effective.fingerprint.clone();
+        let transferred_history = run_store(move |store| crate::workbench::history::codex_context(&store, &history_session, history_binding.as_ref(), &fingerprint)).await?;
         let root = runtime_root.to_string_lossy().into_owned();
         let permission_profile = prepared.effective.permission_profile.as_str();
         let supervisor = crate::workbench::codex::supervisor_manager().connect().await?;
@@ -219,10 +229,7 @@ pub(crate) async fn submit_turn(
             .unwrap_or_else(|error| error.into_inner())
             .epoch = Some(supervisor.status().epoch);
         ensure_event_bridge(app, supervisor.clone());
-        let connection = if let Some(binding) = binding.filter(|binding| {
-            binding.runtime_namespace != crate::workbench::claude::NAMESPACE
-                && binding.harness_fingerprint.as_deref() == Some(&prepared.effective.fingerprint)
-        }) {
+        let connection = if let Some(binding) = binding.filter(|_| transferred_history.is_none()) {
             supervisor
                 .resume_thread(
                     &request.session_id,
@@ -240,7 +247,7 @@ pub(crate) async fn submit_turn(
                     cwd: root.clone(),
                     runtime_workspace_roots: vec![root],
                     permissions: permission_profile.to_string(),
-                    developer_instructions: format!("{}\n{}", prepared.effective.developer_instructions, transferred_history),
+                    developer_instructions: format!("{}\n{}", prepared.effective.developer_instructions, transferred_history.unwrap_or_default()),
                     model: request.model.clone(),
                     effort: request.effort.clone(),
                     dynamic_tools: prepared.effective.dynamic_tools.clone(),
@@ -281,7 +288,8 @@ pub(crate) async fn submit_turn(
         // Validation (including the live model catalog check) writes nothing
         // to App Server, so its failures must not be treated as an uncertain
         // dispatch that tears the connection down.
-        supervisor.validate_turn(&turn_request).await?;
+        control.preflight(async { supervisor.validate_turn(&turn_request).await.map_err(Into::into) }).await?;
+        control.check()?;
         handed_off = true;
         dispatched_supervisor = Some(supervisor.clone());
         let turn_id = supervisor
@@ -375,6 +383,9 @@ pub async fn workbench_codex_interrupt_turn(
     thread_id: String,
     turn_id: String,
 ) -> Result<(), crate::workbench::codex::RequestError> {
+    if thread_id.starts_with("api-") {
+        return crate::workbench::api::interrupt(&thread_id, &turn_id);
+    }
     if thread_id.starts_with("claude-") {
         let result = crate::workbench::claude::interrupt(&thread_id, &turn_id);
         let _ = run_store(move |store| {
@@ -408,20 +419,24 @@ pub async fn workbench_codex_reconcile_session(
     app: tauri::AppHandle,
     session_id: String,
 ) -> Result<bool, RuntimeCommandError> {
-    let claude_session = session_id.clone();
-    let use_claude = run_store(move |store| {
-        let snapshot = store.session_snapshot(&claude_session)?;
-        let selected = crate::workbench::claude::selected(&snapshot.session.overrides)?;
-        let was_claude = store
-            .active_binding(&claude_session)?
-            .is_some_and(|b| b.runtime_namespace == crate::workbench::claude::NAMESPACE);
-        if was_claude {
-            crate::workbench::claude::reconcile(store, claude_session)?;
+    let local_session = session_id.clone();
+    if run_store(move |store| {
+        let snapshot = store.session_snapshot(&local_session)?;
+        let api = crate::workbench::api::selected(&snapshot.session.overrides)?.is_some();
+        let claude = !api && crate::workbench::claude::selected(&snapshot.session.overrides)?;
+        let binding = store.active_binding(&local_session)?;
+        match binding.as_ref().map(|b| b.runtime_namespace.as_str()) {
+            Some(crate::workbench::api::NAMESPACE) => {
+                crate::workbench::api::reconcile(store, local_session)
+            }
+            Some(crate::workbench::claude::NAMESPACE) => {
+                crate::workbench::claude::reconcile(store, local_session)
+            }
+            _ => Ok(api || claude),
         }
-        Ok(selected || was_claude)
     })
-    .await?;
-    if use_claude {
+    .await?
+    {
         return Ok(true);
     }
     let lookup_session_id = session_id.clone();
@@ -505,7 +520,7 @@ pub async fn workbench_codex_resolve_server_request(
 }
 
 pub(super) fn claim_pending_request(
-    pending: &mut HashMap<String, crate::workbench::codex::NormalizedEvent>,
+    pending: &mut HashMap<String, crate::agent_runtime::events::NormalizedEvent>,
     request: &ResolveServerRequest,
     epoch: u64,
 ) -> Result<(), crate::workbench::codex::RequestError> {
@@ -525,7 +540,7 @@ pub(super) fn claim_pending_request(
 }
 
 #[tauri::command]
-pub fn workbench_codex_pending_requests() -> Vec<crate::workbench::codex::NormalizedEvent> {
+pub fn workbench_codex_pending_requests() -> Vec<crate::agent_runtime::events::NormalizedEvent> {
     let mut pending = pending_server_requests()
         .lock()
         .unwrap_or_else(|error| error.into_inner())
@@ -533,7 +548,7 @@ pub fn workbench_codex_pending_requests() -> Vec<crate::workbench::codex::Normal
         .cloned()
         .collect::<Vec<_>>();
     pending.sort_by_key(|event| match event {
-        crate::workbench::codex::NormalizedEvent::ServerRequest { request_id, .. } => {
+        crate::agent_runtime::events::NormalizedEvent::ServerRequest { request_id, .. } => {
             request_key(request_id)
         }
         _ => String::new(),
@@ -587,7 +602,7 @@ pub(super) fn ensure_event_bridge(
                     {
                         continue;
                     }
-                    if let crate::workbench::codex::NormalizedEvent::ServerRequest {
+                    if let crate::agent_runtime::events::NormalizedEvent::ServerRequest {
                         request_id,
                         method,
                         params,
@@ -676,7 +691,7 @@ pub(super) fn ensure_event_bridge(
                         continue;
                     }
                     match &event {
-                        crate::workbench::codex::NormalizedEvent::ServerRequest {
+                        crate::agent_runtime::events::NormalizedEvent::ServerRequest {
                             request_id,
                             ..
                         } => {
@@ -685,7 +700,7 @@ pub(super) fn ensure_event_bridge(
                                 .unwrap_or_else(|error| error.into_inner())
                                 .insert(request_key(request_id), event.clone());
                         }
-                        crate::workbench::codex::NormalizedEvent::ServerRequestResolved {
+                        crate::agent_runtime::events::NormalizedEvent::ServerRequestResolved {
                             request_id,
                             ..
                         } => {
@@ -694,7 +709,7 @@ pub(super) fn ensure_event_bridge(
                                 .unwrap_or_else(|error| error.into_inner())
                                 .remove(&request_key(request_id));
                         }
-                        crate::workbench::codex::NormalizedEvent::ConnectionClosed {
+                        crate::agent_runtime::events::NormalizedEvent::ConnectionClosed {
                             epoch,
                             ..
                         } => {
@@ -708,7 +723,7 @@ pub(super) fn ensure_event_bridge(
                             crate::workbench::conversation_tools::stop_all().await;
                             close_active_connection(*epoch);
                         }
-                        crate::workbench::codex::NormalizedEvent::TurnCompleted {
+                        crate::agent_runtime::events::NormalizedEvent::TurnCompleted {
                             epoch,
                             thread_id,
                             turn_id,
@@ -719,7 +734,7 @@ pub(super) fn ensure_event_bridge(
                                 crate::workbench::conversation_tools::finish(thread_id, turn_id)
                                     .await
                             {
-                                let _ = app.emit("workbench:event", crate::workbench::codex::NormalizedEvent::ProtocolWarning {epoch:*epoch,message:format!("The working copy could not be captured: {}. Its files are retained; refresh the working copy before accepting changes.",error.message)});
+                                let _ = app.emit("workbench:event", crate::agent_runtime::events::NormalizedEvent::ProtocolWarning {epoch:*epoch,message:format!("The working copy could not be captured: {}. Its files are retained; refresh the working copy before accepting changes.",error.message)});
                             }
                             complete_active_turn(*epoch, thread_id, turn_id);
                             if status == "completed" {
@@ -776,14 +791,14 @@ async fn reconcile_active_turn(
     if let Ok(recent) = supervisor.recent_turns(&thread).await {
         if let Some(native_turn) = recovered_terminal(&recent, &turn) {
             if let Err(error) = crate::workbench::conversation_tools::finish(&thread, &turn).await {
-                let _ = app.emit("workbench:event", crate::workbench::codex::NormalizedEvent::ProtocolWarning {epoch,message:format!("The working copy could not be captured: {}. Its files are retained; refresh before accepting changes.",error.message)});
+                let _ = app.emit("workbench:event", crate::agent_runtime::events::NormalizedEvent::ProtocolWarning {epoch,message:format!("The working copy could not be captured: {}. Its files are retained; refresh before accepting changes.",error.message)});
             }
             complete_active_turn(epoch, &thread, &turn);
             // The same loss that hid completion from the permit owner can hide
             // it from the renderer. Re-emit the authoritative terminal identity.
             let _ = app.emit(
                 "workbench:event",
-                crate::workbench::codex::NormalizedEvent::TurnCompleted {
+                crate::agent_runtime::events::NormalizedEvent::TurnCompleted {
                     epoch,
                     thread_id: thread,
                     turn_id: turn,
@@ -811,24 +826,24 @@ fn request_key(request_id: &Value) -> String {
 }
 
 pub(super) fn validate_pending_request(
-    event: &crate::workbench::codex::NormalizedEvent,
+    event: &crate::agent_runtime::events::NormalizedEvent,
     active_epoch: u64,
     submitted_method: &str,
 ) -> Result<(), crate::workbench::codex::RequestError> {
     match event {
-        crate::workbench::codex::NormalizedEvent::ServerRequest { epoch, method, .. }
+        crate::agent_runtime::events::NormalizedEvent::ServerRequest { epoch, method, .. }
             if *epoch == active_epoch && method == submitted_method =>
         {
             Ok(())
         }
-        crate::workbench::codex::NormalizedEvent::ServerRequest { epoch, .. }
+        crate::agent_runtime::events::NormalizedEvent::ServerRequest { epoch, .. }
             if *epoch != active_epoch =>
         {
             Err(crate::workbench::codex::RequestError::invalid(
                 "Server request belongs to an expired connection",
             ))
         }
-        crate::workbench::codex::NormalizedEvent::ServerRequest { .. } => Err(
+        crate::agent_runtime::events::NormalizedEvent::ServerRequest { .. } => Err(
             crate::workbench::codex::RequestError::invalid("Server request method did not match"),
         ),
         _ => Err(crate::workbench::codex::RequestError::invalid(

@@ -3,6 +3,7 @@
 pub mod agent_runtime;
 pub mod auto_review;
 pub mod commands;
+pub mod connections;
 pub mod deps;
 pub mod document_bundle;
 pub mod emit;
@@ -20,6 +21,7 @@ pub mod pipeline_config;
 pub mod process;
 pub mod projects;
 pub mod prompts;
+mod public_web;
 pub mod run_scope;
 pub mod runs;
 pub mod safety;
@@ -340,10 +342,13 @@ pub fn run() {
             workbench::commands::workbench_codex_logout,
             workbench::commands::workbench_codex_model_catalog,
             workbench::claude::transport::workbench_claude_model_catalog,
+            workbench::api::config::workbench_api_model_catalog,
             workbench::commands::workbench_codex_validate_model_selection,
             workbench::commands::workbench_codex_rate_limits,
             workbench::claude::usage::workbench_claude_rate_limits,
             workbench::browser::workbench_browser_status,
+            workbench::shell::workbench_shell_status,
+            workbench::shell::workbench_shell_install,
             workbench::browser::workbench_browser_install,
             workbench::commands::workbench_codex_send_turn,
             workbench::commands::workbench_codex_interrupt_turn,
@@ -420,6 +425,7 @@ pub fn run() {
             if matches!(event, tauri::RunEvent::Exit) {
                 tauri::async_runtime::block_on(orchestration::shutdown());
                 tauri::async_runtime::block_on(workbench::claude::shutdown());
+                tauri::async_runtime::block_on(workbench::api::shutdown());
                 tauri::async_runtime::block_on(workbench::research::jobs::shutdown());
                 tauri::async_runtime::block_on(pipeline::codex_server::shutdown());
                 tauri::async_runtime::block_on(agent_runtime::codex::chatgpt::shutdown());

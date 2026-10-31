@@ -15,6 +15,8 @@ pub struct Scope {
     pub workspace_id: Option<String>,
     pub session_cursor: Option<String>,
     pub harness_fingerprint: Option<String>,
+    #[serde(default)]
+    pub connection_id: Option<crate::connections::ConnectionId>,
     pub runtime_root: Option<String>,
     #[serde(default)]
     pub root_identity: Option<String>,

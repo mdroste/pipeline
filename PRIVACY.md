@@ -30,8 +30,9 @@ folder.
 
 ### Conversations
 
-A conversation uses ChatGPT or your Claude subscription. Depending on the task
-and the tools you allow, it can send:
+A conversation uses the connection you choose: ChatGPT, Claude Code, an
+OpenAI, Anthropic, or Gemini API key, or a local/custom model server. Depending
+on the task and the tools you allow, it can send:
 
 - your messages and recent conversation history;
 - assistant instructions and the project notes or evidence you select;
@@ -42,6 +43,9 @@ and the tools you allow, it can send:
 A paper you import into a project goes to a model only when you select it as
 context or an allowed tool reads it. Output from a local command can reach a
 provider later in the same way, even if the command itself ran offline.
+Switching providers sends recent history with your next message to the newly
+selected provider. Automatic API conversation titles use an additional call
+to the same model, with excerpts from the first exchange.
 
 ChatGPT conversations and ChatGPT reviews share one sign-in, stored in
 `~/.pipeline/providers/chatgpt/`. Claude Code keeps its own sign-in. Pipeline
@@ -83,7 +87,13 @@ Pipeline also connects to the internet to:
   in Settings. GitHub receives your network address and app version, and
   nothing about your research;
 - sign in to providers and fetch available models and account limits;
-- run web searches, when the connection supports them and you turn them on;
+- send queries to Bing when **Web search** is enabled in conversations or
+  in review steps using OpenAI API or local/custom servers. Search results
+  and retrieved page text go back to the selected model;
+- run searches enabled on other review connections through the provider's
+  search tools. Subscription conversations may also use native search;
+- read public pages or download files through enabled web tools, and contact
+  sites you open through browser interaction;
 - look up papers on Crossref, when you use literature search or turn on
   lookups in a reference check. Lookups send the reference text as written in
   your bibliography. If you add a Crossref contact email in the **Reading
@@ -91,12 +101,17 @@ Pipeline also connects to the internet to:
 - download data from FRED, DBnomics, or the World Bank when you ask for it;
 - download the optional PDF parser and its model files when you choose
   Install;
+- download Chromium and its browser tools when you choose **Install browser**,
+  or the sandbox package when you choose **Install command engine**;
 - fetch a workflow from a URL you import; and
 - fetch updates for an attached Git repository when you choose **Check
   GitHub**.
 
-Search queries can contain terms from your research. Git checks use your own
-Git credentials and download updates only. Pipeline never commits, merges, or
+Search queries can contain terms from your research, including when the model
+runs locally. Conversation browser profiles retain website sign-ins on this
+computer after the browser closes. Enter passwords directly in that window.
+
+Git checks use your own credentials and download updates only. Pipeline never commits, merges, or
 pushes. Local commands can contact other services if you allow network access
 for them.
 

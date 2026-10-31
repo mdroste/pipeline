@@ -1,3 +1,4 @@
+import { conversationProvider, providerName } from "../lib/workspaceProviders";
 import { presetDescription } from "./harness-editor/harnessCopy";
 import useContainerWidth from "../hooks/useContainerWidth";
 // Lazy two-pane harness editor for one Workspace conversation. The left
@@ -81,11 +82,10 @@ export default function WorkspaceHarnessEditor({
 }) {
   const [root, width] = useContainerWidth<HTMLDivElement>();
   const compact = width !== null && width < 760;
-  const runtime =
-    snapshot.session.overrides.runtime === "claude" ? "claude" : "codex";
+  const runtime = conversationProvider(snapshot.session.overrides.runtime);
   const presetName = (preset: HarnessPreset) =>
-    runtime === "claude" && preset.id === "plain"
-      ? "Claude Code default"
+    runtime !== "codex" && preset.id === "plain"
+      ? `${providerName(runtime)} default`
       : preset.name;
   const sessionId = snapshot.session.id;
   const workspaceId = snapshot.session.workspaceId;

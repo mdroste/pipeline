@@ -1,7 +1,7 @@
-# Pipeline 1.2.2
+# Pipeline 1.2.5
 
 [![CI](https://github.com/mdroste/pipeline/actions/workflows/build.yml/badge.svg)](https://github.com/mdroste/pipeline/actions/workflows/build.yml)
-[![Version 1.2.2](https://img.shields.io/badge/version-1.2.2-blue)](CHANGELOG.md)
+[![Version 1.2.5](https://img.shields.io/badge/version-1.2.5-blue)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/github/license/mdroste/pipeline)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](#install)
 [![Windows](https://img.shields.io/badge/Windows-0078D4)](#install)
@@ -15,7 +15,7 @@ writing and review tasks.
   proposal, then combine and check their comments. You can read each
   reviewer's response and the source material behind the report.
 - **Projects** keep manuscripts, sources, conversations, results, and review
-  comments together. Work with ChatGPT or Claude Code to read, write, and
+  comments together. Work with your connected AI provider to read, write, and
   analyze your material.
 - **Automations** connect these. For example, draft a paper, review it, and
   revise it up to a limit you choose, once or on a schedule.
@@ -50,8 +50,19 @@ Open **Settings → Connections** and set up at least one connection.
 | --- | --- | --- |
 | ChatGPT subscription | Install [Codex](https://github.com/openai/codex), then choose **Sign in to ChatGPT** in Pipeline | Conversations and reviews |
 | Claude subscription | Install [Claude Code](https://code.claude.com/docs/en/setup) and run `claude auth login` with your subscription account | Conversations and reviews |
-| OpenAI, Anthropic, or Google API | An API key | Reviews |
-| Local or custom model server | An OpenAI-compatible server URL and model | Reviews |
+| OpenAI, Anthropic, or Google API | An API key | Conversations and reviews |
+| Local or custom model server | An OpenAI-compatible server URL and model | Conversations and reviews |
+
+Choose the connection in the conversation’s **Model and thinking** picker.
+Reviews and conversations list the thinking levels available for each model.
+API and local connections can use project and research tools, web search,
+and browser interaction. See [conversation setup](docs/connections.md#api-conversations)
+for model requirements and the optional command engine.
+
+Reviews support **Web search** with every connection. Enable it on individual
+steps in the **Review designer**. OpenAI API and local/custom servers use
+Pipeline’s search and page-reading tools with a model that supports tool calls.
+See [review search](docs/connections.md#web-search-in-reviews).
 
 Subscription use counts against your plan. If you're signed out, Pipeline
 asks you to sign in again instead of switching to an API key. See
@@ -114,7 +125,8 @@ background. See [Automations](docs/automations.md).
 ## Data and privacy
 
 Pipeline has no telemetry and needs no Pipeline account. AI providers receive
-the prompts and material for the calls you run.
+the prompts and material for the calls you run. Enabled web tools send queries
+and page requests to search services and websites, including with local models.
 
 Your research is stored in `~/.pipeline/` unless you choose another
 [research data folder](docs/settings.md#research-data-folder). Pipeline
@@ -134,8 +146,10 @@ Uninstalling the app leaves your research data in place. See
   won't help.
 - Conversation shell writes need an isolated working copy. Web search,
   command internet access, and browser interaction have separate settings.
-  Browser interaction needs an optional browser download; Claude shell access
-  on Windows needs WSL2. See [conversation access](docs/connections.md#conversation-access).
+  Browser interaction needs an optional browser download. API and local
+  commands need **Install command engine** on macOS or Linux; Windows Claude
+  commands need WSL2. See [conversation access](docs/connections.md#conversation-access)
+  for setup and platform limits.
 - Usage displays the latest account report and its time. Claude needs a reply
   before its first report is available; saved reports carry across app sessions.
 

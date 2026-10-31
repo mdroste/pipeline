@@ -4,7 +4,7 @@
 //! pricing, and deprecation policy is bundled with the signed application so
 //! mutable remote content cannot change model selection behavior.
 
-use crate::pipeline::claude::build_provider_command;
+use crate::agent_runtime::process::build_provider_command;
 use crate::settings::{ModelSelection, Settings};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -522,11 +522,7 @@ fn is_openai_chat_model(id: &str) -> bool {
 }
 
 async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog, String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| format!("Failed to create model catalog client: {e}"))?;
+    let client = crate::agent_runtime::api::http::client(false, Some(Duration::from_secs(15)))?;
     let mut catalog = base_catalog(provider, "api", "provider_api");
     match provider {
         "claude" => {
@@ -541,8 +537,8 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
                 .map_err(|e| format!("Anthropic model discovery failed: {e}"))?;
             let value = response_json_limited(response, "Anthropic").await?;
             for item in value["data"].as_array().into_iter().flatten() {
-                if let Some(id) = item["id"].as_str() {
-                    catalog.models.push(entry(id));
+                if item["id"].is_string() {
+                    catalog.models.push(effort::anthropic(item));
                 }
             }
         }
@@ -560,7 +556,16 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
             for item in value["data"].as_array().into_iter().flatten() {
                 if let Some(id) = item["id"].as_str() {
                     if is_openai_chat_model(id) {
-                        discovered.push((item["created"].as_u64().unwrap_or(0), entry(id)));
+                        let mut model = entry(id);
+                        if !id.contains("pro")
+                            && (id.starts_with("gpt-5")
+                                || id.starts_with("o3")
+                                || id.starts_with("o4-mini"))
+                        {
+                            model.supported_efforts =
+                                ["low", "medium", "high"].map(str::to_owned).to_vec();
+                        }
+                        discovered.push((item["created"].as_u64().unwrap_or(0), model));
                     }
                 }
             }
@@ -591,6 +596,7 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
                         let mut model = entry(id);
                         model.display_name = item["displayName"].as_str().unwrap_or(id).to_string();
                         model.description = item["description"].as_str().unwrap_or("").to_string();
+                        model.supported_efforts = crate::connections::thinking::google_efforts(id);
                         catalog.models.push(model);
                     }
                 }
@@ -600,7 +606,7 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
             crate::settings::validate_local_base_url(&settings.local_base_url)?;
             let url = format!("{}/models", settings.local_base_url.trim_end_matches('/'));
             let mut request =
-                crate::pipeline::api_common::custom_endpoint_client(&settings.local_base_url)
+                crate::agent_runtime::api::http::custom_endpoint_client(&settings.local_base_url)
                     .get(url)
                     .timeout(Duration::from_secs(15));
             if !settings.local_api_key.trim().is_empty() {
@@ -619,7 +625,14 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
             let value = response_json_limited(response, "Local").await?;
             for item in value["data"].as_array().into_iter().flatten() {
                 if let Some(id) = item["id"].as_str() {
-                    catalog.models.push(entry(id));
+                    let mut model = entry(id);
+                    model.supported_efforts = item["supported_efforts"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|e| e.as_str().map(str::to_owned))
+                        .collect();
+                    catalog.models.push(model);
                 }
             }
             // Ollama's native endpoint is a common fallback.
@@ -637,12 +650,14 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
     Ok(catalog)
 }
 
+mod chatgpt;
 mod discovery;
+pub(crate) mod effort;
 mod resolution;
 
 use discovery::cli_catalog;
 pub(crate) use discovery::rpc_exchange;
-pub use resolution::{discover, price_for_model, resolve};
+pub use resolution::{discover, discover_connection, price_for_model, resolve};
 
 #[cfg(test)]
 use discovery::{populate_claude_models, provider_discovery_error, read_discovery_output};

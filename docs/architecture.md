@@ -32,7 +32,7 @@ commands, stored fields, or tables to match the app.
 | In the app | In the code |
 | --- | --- |
 | Project | A workspace (`Workspace`, `workspace_id`) in the `workbench` store; files and records in `workbench/project/` |
-| Conversation | A session (`sessions` table), whose turns run on a native thread recorded in `session_bindings` |
+| Conversation | A session (`sessions` table), linked to a native or app-owned thread through `session_bindings` |
 | Review | A run of a workflow, also called a profile or pipeline (`pipeline_config/`) |
 | Automation | A task chain (`orchestration/`); a research automation is a mission, and research discovery is self-discovery |
 | Assistant instructions | The harness: presets, modules, and tools resolved for each turn (`presets` table); **Assistant settings** calls a preset an agent profile |
@@ -44,20 +44,21 @@ review subsystem Workflows. Use the app's nouns in UI text and user guides.
 
 Each subsystem owns its store, processes, and cancellation.
 
-- **Conversations** (`workbench/`): persistent ChatGPT or Claude Code
+- **Conversations** (`workbench/`): persistent subscription or API
   conversations with optional research tools.
 - **Reviews** (`pipeline/`, `commands/`, `runs/`, `pipeline_config/`): saved
   dependency graphs of isolated model calls.
 - **Automations** (`orchestration/`): delayed, recurring, or multi-step work
   that calls the other two through adapters and copies their results.
 
-They share the Tauri shell, stateless utilities such as `safety.rs`, the Codex
+They share the Tauri shell, stateless utilities such as `safety.rs` and public HTTP retrieval in `public_web.rs`, the Codex
 protocol code in `agent_runtime/codex/`, and the Claude subscription check in
 `agent_runtime/claude.rs`. One ChatGPT account in
 `agent_runtime/codex/chatgpt/` gives each runtime in-memory authentication.
 
-They never share API keys, stores, run state, process registries,
-cancellation, or writable artifact roots. Results cross between subsystems
+Device connection settings supply independently resolved API credentials to
+each runtime. Conversations never read Review run snapshots. The runtimes never
+share stores, run state, process registries, cancellation, or writable artifact roots. Results cross between subsystems
 only as copies.
 
 - Automations go through the owning adapter: `commands/orchestration.rs` for
@@ -65,6 +66,26 @@ only as copies.
   `workbench/discovery.rs` for conversations.
 - Keep recipes, harness modules, workflows, and task chains separate.
 - Avoid `utils.rs` files, service locators, and shared runners with many flags.
+
+## Connections and provider code
+
+`connections/` translates saved choices into a connection and model. Reviews
+supply the settings captured at run start. Conversations supply current device
+settings at the start of a turn. The shared code does not read run state.
+
+`model_catalog/` discovers models through shared API clients, independent CLI
+probes, or the app's ChatGPT account. Catalogs remain tied to their connection.
+Model information distinguishes supported, unsupported, and unknown options;
+it does not grant access to files or the internet.
+
+`agent_runtime/api/` owns HTTP and provider message formats. Each caller keeps
+its own request limits, tools, retry decisions, logs, and cancellation. Reviews
+continue through `pipeline/call.rs`; Conversations keep their turn journal.
+Automations invoke those same runtime entry points.
+
+`gui/connections.json` supplies connection names and saved IDs to both Rust
+and TypeScript. Existing settings, workflow fields, and IPC names retain their
+meaning.
 
 ## Where code lives
 
@@ -82,7 +103,15 @@ Each module's header comment has the details.
 | `commands/` | Review commands: launch, rerun, queue, export, settings |
 | `pipeline/executor/` | Workflow scheduling, step calls, fan-out, checkpoints |
 | `pipeline/call.rs` | The supervised model-call boundary |
-| `pipeline/api_*.rs`, `pipeline/claude/` | Direct API and CLI provider adapters |
+| `pipeline/providers.rs` | Review provider dispatch |
+| `pipeline/api_*.rs`, `pipeline/api_common/`, `pipeline/claude/` | Review API tools, retries, and CLI integration |
+| `connections/`, `model_catalog/` | Connection identity, model selection, discovery, and thinking options |
+| `agent_runtime/api/` | API request and response formats, streaming, HTTP clients, and tool-result encoding |
+| `agent_runtime/events.rs`, `connections/models.rs` | App event and model records |
+| `agent_runtime/process.rs`, `agent_runtime/io.rs` | Process construction and limited output reads |
+| `gui/connections.json` | Connection names and saved IDs shared by Rust and TypeScript |
+| `pipeline/api_common/web.rs` | Review host search tools, per-call budgets, and web execution deadlines |
+| `public_web.rs`, `public_web/` | Stateless public HTTP retrieval and search parsing shared by both runtimes |
 | `pipeline/codex_server/` | Review connection to the Codex app server |
 | `pipeline/extract/`, `document_bundle.rs` | Extraction and the `DocumentBundle` format |
 | `auto_review/` | Specialist catalog and role selection |
@@ -95,8 +124,10 @@ Each module's header comment has the details.
 | `workbench/commands.rs` | Conversation commands, database gate, turn permit |
 | `workbench/store/`, `workbench/migrations/` | Private SQLite store and migrations |
 | `workbench/codex/` | Conversation app server supervisor and probe |
+| `workbench/api/` | Conversation API turns, tool execution, history, and recovery |
 | `workbench/claude/` | Claude Code conversations, WSL2 transport, and the MCP bridge |
-| `workbench/capabilities.rs`, `conversation_tools.rs`, `web.rs`, `browser/` | Shared conversation access, receipts, public retrieval, and the optional browser |
+| `workbench/capabilities.rs`, `conversation_tools.rs`, `web.rs`, `browser.rs`, `browser/` | Conversation access, receipts, web transport error mapping, and the optional browser |
+| `workbench/shell.rs`, `shell_policy.rs` | Optional API command engine and stateless sandbox policy shared with Claude Code |
 | `workbench/research/` | Harness, sources, notes, evidence, tools, local jobs |
 | `workbench/project/` | Project files, working copies, edit acceptance |
 | `workbench/release/` | Backups, project packages, retention, recipes |
@@ -176,13 +207,36 @@ first-party subscription sign-in. It strips inherited `ANTHROPIC_*` and
 `CLAUDE_*` variables and never falls back to an API key. Pipeline supplies up
 to 128 KiB of recent history from its own transcript store.
 
-**Conversation tools.** Both providers resolve the same file, web, and browser
-capabilities. Ordinary Edit conversations use the project acceptance journal;
-shell writes require a task copy. Codex thread-local configuration travels on
+When ChatGPT needs a new native thread after changed settings, a project move,
+recovery, or a connection switch, it receives the same bounded app-owned
+history. A normal native resume uses the provider's existing history.
+
+**Direct APIs.** `workbench/api/` owns OpenAI, Anthropic, Gemini, and
+OpenAI-compatible conversations. It reads device credentials independently of
+Review access modes and run snapshots. The conversation owns its cancellation,
+turn records, bounded history, and host tools. Requests and responses are
+bounded; SSE text is streamed to the UI while complete native messages retain
+tool arguments and thinking signatures. Only terminal replies enter the tool
+loop. Redirects and automatic retries are disabled. Accepted submissions
+interrupted by a restart are marked interrupted and never resent. API turns
+use the same app-wide permit and store gate as subscription turns.
+
+API replies with tool calls are commentary; a terminal reply without calls is
+the final answer. Claude's successful result completes its last assistant item
+as the final answer. Automations read that answer separately from tool updates.
+
+**Conversation tools.** All providers resolve the same file, web, and browser
+capabilities. Ordinary Edit conversations use the project acceptance journal.
+Shell writes require a task copy. Codex thread-local configuration travels on
 start and resume. Claude receives sandbox settings and an allowlisted native
 tool catalog. Windows Claude uses a separately authenticated WSL2 environment
 when qualified dependencies are present. Workspace owns its browser processes
-and per-conversation profiles independently of Review runtimes.
+and per-conversation profiles independently of Review runtimes. API commands
+use the optional pinned sandbox engine in `workbench/shell.rs`. The stateless
+policy in `workbench/shell_policy.rs` is shared with Claude Code. Public web
+search uses the same bounded retrieval policy as page reads. Discovery writer
+file tools journal changes in their role folder and retain immutable versions.
+They do not redirect writes into the main project.
 
 File and web tools journal admission before acting, compare the captured
 configuration with current access, and never repeat an ambiguous call. Network
@@ -191,7 +245,7 @@ redirect. Browser page requests use the same public-address policy. Account
 services retain identity-scoped quota observations with individual reset times;
 observations are not fresh account balances.
 
-**One active turn.** One turn runs at a time across the app, for either
+**One active turn.** One turn runs at a time across the app, for every
 provider. The permit in `workbench/commands.rs` spans setup, submission, and
 the matching terminal event. Only an event with the same connection epoch,
 thread, and turn releases it. Drafts are saved before sending. Pipeline never
@@ -200,7 +254,8 @@ retries an ambiguous send.
 **Database gate.** Every production store operation goes through the helpers
 in `workbench/commands.rs`. Ordinary work shares a read gate and four blocking
 workers. Whole-store export and restore take the gate exclusively. Process
-waits hold neither a worker nor the gate.
+waits hold neither a worker nor the gate. Blocking workers own their admission
+guards until completion, including after a caller cancels its wait.
 
 **Journal and projection.** Turn and item events are projected into the store
 by `workbench/store/projection.rs`. Each gets a deterministic operation ID in
@@ -258,7 +313,15 @@ append-only events.
 - A task keeps its review pinned until it adopts the result
   (`commands/orchestration/pins.rs`).
 - Before an automated turn, the conversation adapter checks the project,
-  harness, root, and unsent draft. Any change needs attention.
+  connection, harness, root, and unsent draft. Any change needs attention.
+  Older tasks without a saved connection require refreshed context; older
+  schedules require preparation again. The submission
+  boundary inherits the saved model and effort when an automation leaves them
+  unset. An explicit model override uses its own effort or the model default.
+- Task cancellation reaches conversation setup before prompt dispatch. Once a
+  native request is in flight, the adapter retains ownership until it can
+  interrupt the acknowledged turn. API and Claude workers also observe the
+  task's stop signal before sending a prompt.
 
 Research automations (`orchestration/missions/`) add planning and assessment
 on the same coordinator. Their completion is an assessment that never accepts

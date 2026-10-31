@@ -1,6 +1,88 @@
 use super::super::store::{CreateSessionRequest, CreateWorkspaceRequest, UpdateSessionRequest};
 use super::*;
 
+#[test]
+fn success_marks_only_the_last_answer_final_without_duplicate_transcript_items() {
+    for with_assistant in [true, false] {
+        let f = fixture();
+        let bound = f
+            .store
+            .bind_session(&f.session, NAMESPACE, "claude-thread")
+            .unwrap();
+        f.store
+            .record_turn_submission(&bound.id, "submission", "claude-turn")
+            .unwrap();
+        let turn = Turn {
+            epoch: fresh_epoch(),
+            thread: "claude-thread".into(),
+            id: "claude-turn".into(),
+            binding: bound.id.clone(),
+            model: None,
+        };
+        let mut answers = super::answers::Answers::default();
+        let answer = r#"{"summary":"The calibrated result"}"#;
+        let mut frames = Vec::new();
+        if with_assistant {
+            frames.push(json!({"type":"assistant","message":{"content":[{"type":"text","text":"Checking the source"},{"type":"tool_use","name":"project_read"}]}}));
+            frames.push(json!({"type":"assistant","parent_tool_use_id":"child","message":{"content":[{"type":"text","text":"Child output"}]}}));
+            frames.push(
+                json!({"type":"assistant","message":{"content":[{"type":"text","text":answer}]}}),
+            );
+        }
+        frames.push(json!({"type":"result","is_error":false,"subtype":"success","result":answer}));
+        for frame in frames {
+            for event in answers.observe(&frame, &turn) {
+                f.store.project_codex_event(&bound.id, &event).unwrap();
+                f.store.project_codex_event(&bound.id, &event).unwrap();
+            }
+        }
+        assert!(answers.final_received);
+        let outcome = super::super::tasks::outcome(&f.store, &f.session, "submission")
+            .unwrap()
+            .unwrap();
+        assert_eq!(outcome["finalText"], answer);
+        let snapshot = f.store.conversation_snapshot(&f.session).unwrap();
+        assert_eq!(snapshot.items.len(), if with_assistant { 2 } else { 1 });
+        assert!(snapshot.items.iter().all(|item| item.is_final));
+        assert!(!outcome["text"].as_str().unwrap().contains("Child output"));
+    }
+}
+
+#[test]
+fn failed_claude_result_never_promotes_partial_json_to_a_final_answer() {
+    let f = fixture();
+    let bound = f
+        .store
+        .bind_session(&f.session, NAMESPACE, "claude-thread")
+        .unwrap();
+    f.store
+        .record_turn_submission(&bound.id, "submission", "claude-turn")
+        .unwrap();
+    let turn = Turn {
+        epoch: fresh_epoch(),
+        thread: "claude-thread".into(),
+        id: "claude-turn".into(),
+        binding: bound.id.clone(),
+        model: None,
+    };
+    let mut answers = super::answers::Answers::default();
+    assert_eq!(answers.stream_index(), 0);
+    for frame in [
+        json!({"type":"assistant","message":{"content":[{"type":"text","text":"{partial"}]}}),
+        json!({"type":"result","is_error":true,"subtype":"error_max_turns","result":"limit reached"}),
+    ] {
+        for event in answers.observe(&frame, &turn) {
+            f.store.project_codex_event(&bound.id, &event).unwrap();
+        }
+    }
+    let outcome = super::super::tasks::outcome(&f.store, &f.session, "submission")
+        .unwrap()
+        .unwrap();
+    assert!(outcome["finalText"].is_null());
+    assert_eq!(outcome["text"], "{partial");
+    assert!(!answers.final_received);
+}
+
 struct Fixture {
     _temp: tempfile::TempDir,
     store: Store,

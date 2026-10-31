@@ -38,10 +38,15 @@ For a conversation outside any project, choose **Open assistant** on **Home**.
 ### Choose a model
 
 Open the **Model and thinking** chip below the message box. Choose
-**ChatGPT** or **Claude Code**, then a model and a thinking level.
-**Automatic** uses your connection's default model. For ChatGPT, the picker
-also shows the signed-in account and remaining usage. For what Claude
-conversations can do, see [Claude Code](connections.md#connect-claude-code).
+**ChatGPT**, **Claude Code**, **OpenAI API**, **Anthropic API**, **Gemini API**,
+or **Local / custom**, then a model. **Automatic** uses the connection’s
+default. API and local connections also accept a name under **Model ID**.
+**Thinking** shows the levels available for the selected model.
+
+The conversation remembers your choice. Switching providers keeps recent
+history available to the next provider. For ChatGPT, the picker also shows
+the signed-in account and remaining usage. See [Connections](connections.md)
+for sign-in, keys, local servers, and command setup.
 
 ### Add sources
 
@@ -60,7 +65,7 @@ receives, choose **Context** in the conversation menu.
 
 Open **Assistant settings**, the gear below the message. Choose an agent
 profile, which is a saved set of instructions and tools. Set
-**Access mode** to **Read only** or **Allow edits**.
+**Access mode** to **Inspect** or **Edit**.
 
 **Manage agent profiles…** opens the profile editor:
 
@@ -71,7 +76,13 @@ profile, which is a saved set of instructions and tools. Set
 - On **Tools & context**, choose which Pipeline tools the profile can use.
 
 Editing a custom profile changes every conversation that uses it, starting
-with the next message.
+with the next message. These settings apply to every connection.
+[Conversation access](connections.md#conversation-access) explains file access,
+web search, browser interaction, and commands.
+
+Replies stream as the assistant works. Choose **Stop** to interrupt the turn
+and its tools. API billing after an interruption is explained under
+[API conversations](connections.md#api-conversations).
 
 ### Queue your next message
 

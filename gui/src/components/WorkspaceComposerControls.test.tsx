@@ -360,3 +360,35 @@ it("shows each Claude window with its own observation time", async () => {
   expect(screen.getByText("90% of your weekly limit left")).toBeVisible();
   expect(screen.getAllByText(/Reported by Claude Code at/)).toHaveLength(2);
 });
+
+it("offers API and custom connections with an editable model ID", () => {
+  const change = vi.fn();
+  const runtimeChange = vi.fn();
+  render(
+    <WorkspaceComposerControls
+      models={[]}
+      model="custom-model"
+      effort=""
+      disabled={false}
+      runtime="local"
+      onChange={change}
+      onRuntimeChange={runtimeChange}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /Model and thinking/ }));
+  for (const name of [
+    "OpenAI API",
+    "Anthropic API",
+    "Gemini API",
+    "Local / custom",
+  ]) {
+    expect(screen.getByRole("radio", { name })).toBeInTheDocument();
+  }
+  fireEvent.click(screen.getByRole("radio", { name: "OpenAI API" }));
+  expect(runtimeChange).toHaveBeenCalledWith("openai-api");
+  fireEvent.change(screen.getByRole("textbox", { name: "Model ID" }), {
+    target: { value: "another-model" },
+  });
+  expect(change).toHaveBeenCalledWith("another-model", "");
+  expect(screen.queryByText(/No longer offered/)).not.toBeInTheDocument();
+});

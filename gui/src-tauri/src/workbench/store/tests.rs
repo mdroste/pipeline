@@ -525,7 +525,7 @@ fn rust_dto_accepts_the_shared_frontend_fixture() {
 
 #[test]
 fn completed_codex_events_reconcile_into_durable_app_owned_projection() {
-    use crate::workbench::codex::NormalizedEvent;
+    use crate::agent_runtime::events::NormalizedEvent;
 
     let (_temporary, store, workspace_root) = fixture();
     let workspace = store
@@ -802,7 +802,7 @@ fn moving_a_conversation_refiles_it_and_clears_workspace_bound_context() {
 
 #[test]
 fn deleting_a_conversation_removes_its_native_projection_graph() {
-    use crate::workbench::codex::NormalizedEvent;
+    use crate::agent_runtime::events::NormalizedEvent;
     let (_temporary, store, _workspace_root) = fixture();
     let session = store
         .create_session(CreateSessionRequest {
@@ -875,7 +875,7 @@ fn deleting_a_conversation_removes_its_native_projection_graph() {
 
 #[test]
 fn reprojection_under_a_new_incarnation_keeps_transcript_order() {
-    use crate::workbench::codex::NormalizedEvent;
+    use crate::agent_runtime::events::NormalizedEvent;
 
     let (_temporary, store, _workspace_root) = fixture();
     let session = store

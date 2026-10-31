@@ -131,6 +131,7 @@ pub async fn execute(
                         effort: effort.clone(),
                     },
                     Some(binding),
+                    crate::workbench::submission::Control(Some(stop.clone())),
                 )
                 .await
                 .map_err(|e| {

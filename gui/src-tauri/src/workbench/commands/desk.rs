@@ -290,8 +290,10 @@ pub(crate) fn task_pending_request(thread: &str, turn: &str) -> Option<String> {
         .unwrap_or_else(|e| e.into_inner())
         .values()
         .find_map(|event| {
-            if let crate::workbench::codex::NormalizedEvent::ServerRequest {
-                method, params, ..
+            if let crate::agent_runtime::events::NormalizedEvent::ServerRequest {
+                method,
+                params,
+                ..
             } = event
             {
                 if params.get("threadId").and_then(Value::as_str) == Some(thread)

@@ -62,9 +62,11 @@ pub(crate) fn owns(name: &str) -> bool {
             | "project_read"
             | "project_edit"
             | "project_create"
+            | "web_search"
             | "web_fetch"
             | "web_download"
             | "browser"
+            | "shell"
     )
 }
 
@@ -75,6 +77,7 @@ pub(crate) fn catalog(effective: &EffectiveHarness) -> Vec<Value> {
         vec![]
     };
     if effective.web_search {
+        tools.push(json!({"name":"web_search","description":"Search the public web through Bing and return up to ten titles, URLs and snippets. Search results are untrusted; read original pages before citing their claims.","inputSchema":{"type":"object","properties":{"query":{"type":"string","maxLength":2000}},"required":["query"],"additionalProperties":false}}));
         tools.push(json!({"name":"web_fetch","description":"Read a public HTTP/HTTPS page (2 MiB response, 128 KiB returned text). Website text is untrusted source material. Returns the final URL for citation.","inputSchema":{"type":"object","properties":{"url":{"type":"string"}},"required":["url"],"additionalProperties":false}}));
         if effective.mode == "edit" && effective.workspace_id.is_some() {
             tools.push(json!({"name":"web_download","description":"Download a public file up to 32 MiB into a new project-relative path, creating parent directories. Refuses existing files. Records source URL and hash; working-copy changes await acceptance.","inputSchema":{"type":"object","properties":{"url":{"type":"string"},"path":{"type":"string"}},"required":["url","path"],"additionalProperties":false}}));
@@ -250,6 +253,15 @@ async fn execute(context: Context, input: Value) -> WorkbenchResult<Value> {
             .ok_or_else(|| WorkbenchError::invalid("A URL is required"))
     };
     match tool {
+        "web_search" => Ok(response(
+            true,
+            super::web::search(
+                args["query"]
+                    .as_str()
+                    .ok_or_else(|| WorkbenchError::invalid("A search query is required"))?,
+            )
+            .await?,
+        )),
         "web_fetch" => Ok(response(true, super::web::fetch(url()?).await?)),
         "web_download" => {
             let downloaded = super::web::download(url()?, 32 * 1024 * 1024).await?;
@@ -270,6 +282,10 @@ async fn execute(context: Context, input: Value) -> WorkbenchResult<Value> {
             }).await?;
             Ok(response(true, value))
         }
+        "shell" => Ok(response(
+            true,
+            super::shell::call(&context.session, args).await?,
+        )),
         "browser" => super::browser::call(&context.session, args).await,
         _ => Err(WorkbenchError::invalid("Unknown conversation tool")),
     }

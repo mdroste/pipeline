@@ -1,3 +1,7 @@
+import {
+  isApiProvider,
+  type ConversationProvider,
+} from "../lib/workspaceProviders";
 import { useEffect } from "react";
 import { runtimeClient } from "../lib/workbench/runtimeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
@@ -7,7 +11,7 @@ export default function useWorkspaceModelCatalog(
   surface: string,
   sessionId: string | null,
   loadedSessionId: string | undefined,
-  runtime: "codex" | "claude",
+  runtime: ConversationProvider,
   setModels: (models: WorkspaceModel[]) => void,
   setError: (error: string | null) => void,
 ) {
@@ -20,8 +24,9 @@ export default function useWorkspaceModelCatalog(
     ) {
       setModels([]);
       setError(null);
-      const catalog =
-        runtime === "claude"
+      const catalog = isApiProvider(runtime)
+        ? runtimeClient.apiModelCatalog(runtime)
+        : runtime === "claude"
           ? runtimeClient.claudeModelCatalog()
           : runtimeClient
               .connectCodex()

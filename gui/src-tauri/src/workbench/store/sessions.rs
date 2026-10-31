@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn projected_turn_states_follow_the_newest_incarnation_of_the_thread() {
-        use crate::workbench::codex::NormalizedEvent;
+        use crate::agent_runtime::events::NormalizedEvent;
         let temporary = tempfile::tempdir().unwrap();
         let store = Store::open_at(&temporary.path().join("workbench-store")).unwrap();
         let session = store

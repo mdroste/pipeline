@@ -5,7 +5,7 @@ review. The [changelog](../CHANGELOG.md) lists what changed in each version.
 
 | Guide | What it covers |
 | --- | --- |
-| [Connections](connections.md) | ChatGPT, Claude Code, API keys, and local model servers |
+| [Connections](connections.md) | Subscription, API, and local connections; conversation tools and command setup |
 | [Reviews](reviews.md) | Inputs, PDF extraction, results, exports, and custom reviews |
 | [Projects and conversations](projects.md) | Conversations, the Overview, Library, and Activity areas, and backup and sharing |
 | [Analyze and write](analysis-and-writing.md) | Data, local commands, results, the manuscript, and responses to reviewers |

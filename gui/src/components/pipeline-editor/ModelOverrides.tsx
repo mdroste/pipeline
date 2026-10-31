@@ -1,3 +1,4 @@
+import { reviewConnectionLabel } from "../../lib/connections";
 import { memo, useState } from "react";
 import type { ModelCatalog, Settings, StepConfig } from "../../lib/types";
 import {
@@ -86,8 +87,7 @@ function ModelOverrides({
       {open && (
         <div className="mt-2 space-y-2 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
           <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-relaxed">
-            Use the provider’s default model, choose a model role, or select a
-            specific model.
+            Choose Automatic, a model role, or a model by name.
           </p>
           {providers.map((provider) => {
             const key = `${provider}:${transportFor(provider)}`;
@@ -116,7 +116,7 @@ function ModelOverrides({
             return (
               <div key={key} className="space-y-1.5">
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-                  {provider} · {transportFor(provider)}
+                  {reviewConnectionLabel(provider, transportFor(provider))}
                 </div>
                 <select
                   aria-label={`${provider} ${transportFor(provider)} model override`}
@@ -124,7 +124,7 @@ function ModelOverrides({
                   onChange={(event) => updateModel(key, event.target.value)}
                   className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
                 >
-                  <option value="inherit">Provider default (automatic)</option>
+                  <option value="inherit">Automatic</option>
                   {!!catalog?.roles.length && (
                     <optgroup label="Stable roles">
                       {catalog.roles.map((role) => (

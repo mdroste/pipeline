@@ -126,7 +126,7 @@ pub(super) async fn installed_version(
     resolved: &crate::deps::ResolvedCommand,
 ) -> Result<DetectedCodexVersion, String> {
     let mut command = resolved.command(["--version"]);
-    crate::pipeline::claude::configure_silent_command(&mut command);
+    crate::agent_runtime::process::configure_silent_command(&mut command);
     command
         .current_dir(std::env::temp_dir())
         .stdin(Stdio::null())
@@ -664,7 +664,7 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
 
     let args = ["app-server", "--listen", "stdio://", "--strict-config"];
     let mut command = resolved.canonical_command(args)?;
-    crate::pipeline::claude::configure_silent_command(&mut command);
+    crate::agent_runtime::process::configure_silent_command(&mut command);
     command
         .current_dir(&fixture_root)
         .env("CODEX_HOME", &codex_home)

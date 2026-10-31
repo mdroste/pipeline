@@ -172,6 +172,7 @@ pub async fn task_control(
             }
             run.scope.session_cursor = Some(fresh.cursor);
             run.scope.harness_fingerprint = Some(fresh.harness_fingerprint);
+            run.scope.connection_id = fresh.connection_id;
             run.scope.runtime_root = Some(fresh.runtime_root);
             run.scope.root_identity = Some(fresh.root_identity);
             run.reason = Some(

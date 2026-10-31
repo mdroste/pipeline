@@ -1,6 +1,31 @@
 //! Bounded, app-owned history for independent turns and provider switches.
-use super::store::{Store, WorkbenchError, WorkbenchResult};
+use super::store::{SessionBinding, Store, WorkbenchError, WorkbenchResult};
 use serde_json::{json, Value};
+#[cfg(test)]
+mod tests;
+
+/// Only a matching native binding carries its own history. Every successor,
+/// including one after a restore or project move, needs the app's transcript.
+fn resumable_codex(binding: &SessionBinding, fingerprint: &str) -> bool {
+    !matches!(
+        binding.runtime_namespace.as_str(),
+        super::claude::NAMESPACE | super::api::NAMESPACE
+    ) && binding.harness_fingerprint.as_deref() == Some(fingerprint)
+}
+
+/// `None` resumes the provider thread; `Some` seeds a fresh thread.
+pub(crate) fn codex_context(
+    store: &Store,
+    session: &str,
+    binding: Option<&SessionBinding>,
+    fingerprint: &str,
+) -> WorkbenchResult<Option<String>> {
+    if binding.is_some_and(|binding| resumable_codex(binding, fingerprint)) {
+        Ok(None)
+    } else {
+        recent_context(store, session).map(Some)
+    }
+}
 
 pub(crate) fn recent_context(store: &Store, session: &str) -> WorkbenchResult<String> {
     let snapshot = store.conversation_snapshot(session)?;

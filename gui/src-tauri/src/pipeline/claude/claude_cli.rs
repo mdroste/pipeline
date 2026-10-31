@@ -1,6 +1,7 @@
 //! Claude CLI transport.
 
 use super::*;
+use std::future::Future;
 
 /// Call `claude -p` and return the text output.
 /// Streams stderr and stdout back to the frontend as `pipeline:log` events.

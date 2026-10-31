@@ -18,6 +18,7 @@ pub mod merge;
 pub mod orient;
 mod provenance;
 pub(crate) mod provider_error;
+pub mod providers;
 pub mod reconcile;
 pub(crate) mod response_journal;
 pub mod structured;

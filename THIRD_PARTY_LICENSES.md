@@ -59,5 +59,19 @@ Pipeline checks the SHA-256 of every download before using it. The Python
 packages are pinned by URL and hash in a PEP 751 lock file in this
 repository.
 
+## Optional conversation tools
+
+These tools are downloaded separately when you choose **Install browser** or
+**Install command engine** in **Assistant settings**. Their packages and
+license notices stay under `~/.pipeline/native/` on this computer.
+
+| Component | License |
+| --- | --- |
+| Playwright | Apache-2.0 |
+| Chromium and its bundled libraries | BSD-style and other component licenses; see the downloaded distribution’s notices |
+| Anthropic Sandbox Runtime (`@anthropic-ai/sandbox-runtime`) | Apache-2.0 |
+
+The command engine runs locally and requires no Anthropic account.
+
 Operating-system components, such as WebView2, WebKit, and macOS frameworks,
 aren't redistributed with Pipeline.

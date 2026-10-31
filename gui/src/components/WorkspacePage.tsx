@@ -1,3 +1,4 @@
+import { providerName } from "../lib/workspaceProviders";
 import type { AppRoute } from "../lib/router";
 import { useWorkspacePageController } from "../hooks/useWorkspacePageController";
 import WorkspaceMenu from "./WorkspaceMenu";
@@ -636,9 +637,7 @@ export default function WorkspacePage({
                 {snapshot?.session.title ?? DEFAULT_TITLE}
               </h1>
               {(active || submitting) && (
-                <p role="status">
-                  {runtime === "claude" ? "Claude" : "ChatGPT"} is working…
-                </p>
+                <p role="status">{providerName(runtime)} is working…</p>
               )}
               {/* The brief heads the conversation only when the chat stands
                   alone; beside the overview it would repeat what is on screen. */}
@@ -744,7 +743,7 @@ export default function WorkspacePage({
             </WorkspaceMenu>
           </header>
           <WorkspaceConversationView
-            assistantName={runtime === "claude" ? "Claude" : "ChatGPT"}
+            assistantName={providerName(runtime)}
             header={null}
             dropState={dropState}
             inspectorOpen={Boolean(inspector)}
@@ -814,7 +813,7 @@ export default function WorkspacePage({
                     </div>
                     <p role="status">
                       {active || submitting
-                        ? `${runtime === "claude" ? "Claude" : "ChatGPT"} is working…`
+                        ? `${providerName(runtime)} is working…`
                         : "No response running."}
                     </p>
                     {sessionId && (

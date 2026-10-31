@@ -372,26 +372,3 @@ pub fn pdf_attachment_base64(path: &std::path::Path, max_size: usize) -> Result<
 /// inflates by 4/3, so the raw PDF must stay under ~14 MB there.
 pub const MAX_ATTACH_PDF: usize = MAX_PDF_SIZE;
 pub const MAX_ATTACH_PDF_GOOGLE: usize = 14 * 1024 * 1024;
-
-/// Result of executing a tool call.
-pub enum ToolResult {
-    /// Plain text content.
-    Text(String),
-    /// PDF content as base64-encoded bytes.
-    PdfBase64(String),
-    /// Image content with the media type required by multimodal APIs.
-    ImageBase64 { data: String, media_type: String },
-    /// Several images plus compact JSON metadata describing their request
-    /// indices, errors, and duplicate references.
-    ImageBatch {
-        metadata: String,
-        images: Vec<ToolImage>,
-    },
-    /// Error message.
-    Error(String),
-}
-
-pub struct ToolImage {
-    pub data: String,
-    pub media_type: String,
-}

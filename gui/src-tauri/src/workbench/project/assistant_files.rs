@@ -1,4 +1,4 @@
-//! Both conversation providers use the Studio's scoped handles and edit journal.
+//! All conversation providers use the Studio's scoped handles and edit journal.
 use super::*;
 
 pub(crate) fn catalog(edit: bool) -> Vec<Value> {
@@ -66,6 +66,15 @@ pub(crate) fn call(
                 return Err(WorkbenchError::invalid(
                     "File editing requires Edit access in Assistant settings",
                 ));
+            }
+            if super::super::discovery::role_policy(store, session_id)?.is_some() {
+                return super::discovery_files::mutate(
+                    store,
+                    session_id,
+                    tool,
+                    input,
+                    operation_id,
+                );
             }
             let editor_root = match checkpoint {
                 Some(id) => session_task_root(store, ws, id)?,

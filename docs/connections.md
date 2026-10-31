@@ -9,16 +9,42 @@ least one connection under **Settings → Connections**.
 | --- | --- | --- | --- | --- |
 | ChatGPT | A ChatGPT plan and the [Codex](https://github.com/openai/codex) command-line tool | Yes | Yes | Yes |
 | Claude Code | A Claude Pro, Max, Team, or Enterprise plan and [Claude Code](https://code.claude.com/docs/en/setup) | Yes | Yes | Yes |
-| OpenAI API | An OpenAI API key | No | Yes | No |
-| Anthropic API | An Anthropic API key | No | Yes | Yes |
-| Google Gemini API | A Gemini API key | No | Yes | Yes |
-| Local or custom server | The address of an OpenAI-compatible server | No | Yes | No |
+| OpenAI API | An OpenAI API key | Yes | Yes | Yes |
+| Anthropic API | An Anthropic API key | Yes | Yes | Yes |
+| Google Gemini API | A Gemini API key | Yes | Yes | Yes |
+| Local or custom server | The address of an OpenAI-compatible server | Yes | Yes | Yes |
 
-Turn on **Web search** in **Assistant settings** for a conversation, or on
-individual steps in the review designer.
+Every conversation connection can use web search with a model that supports
+tool calls. Turn on **Web search** in **Assistant settings**. The table’s last
+column applies to reviews, where you enable search on individual steps.
+
+Each conversation remembers its provider, and new conversations start on
+ChatGPT. Switching providers gives the next provider recent conversation
+history. Automations use the conversation’s provider and saved model unless
+a step selects another model.
 
 ChatGPT and Claude Code use your subscription. If you're signed out,
 Pipeline asks you to sign in again instead of switching to an API key.
+
+## Web search in reviews
+
+In the **Review designer**, select a step and turn on **Web search**.
+For OpenAI API and local/custom servers, choose a model that can use tools.
+
+For OpenAI API and local/custom servers, Pipeline sends search queries to Bing
+and reads public HTML or text pages. It sends the results, source URLs, and
+page text back to the selected model. No separate search key is needed.
+A local model still needs internet access for these searches.
+
+Each model call can search eight times and read sixteen pages, with
+1 MB of returned web content in total. Search follows the step's time limit
+and stops when you cancel the step or review. Private network pages and
+website sign-ins are unavailable through these review tools.
+
+If a local/custom server rejects a request with search enabled, choose a
+model that supports tool calls or turn off **Web search** for that step.
+The run log shows search errors.
+Check the cited pages before relying on a review's claims.
 
 ## Connect ChatGPT
 
@@ -88,11 +114,6 @@ on in your Claude account.
 
 ### What Claude can do in a conversation
 
-Each conversation remembers its provider, and new conversations start on
-ChatGPT. An automation that uses the conversation uses the same provider. If
-you switch providers partway through, the new one receives the recent
-history.
-
 Claude uses the assistant instructions, selected project context, and research
 tools enabled for the conversation. File, web, and browser access use the same
 settings as ChatGPT; see [Conversation access](#conversation-access).
@@ -121,7 +142,7 @@ interrupted by quitting Pipeline stays in the history and isn't sent again.
 
 ## Conversation access
 
-These settings apply to both ChatGPT and Claude Code. Open **Assistant
+These settings apply to every conversation provider. Open **Assistant
 settings** in the conversation. Project and global settings supply defaults;
 a conversation can override them.
 
@@ -139,6 +160,10 @@ since it was read. New files can include new folders and never replace an
 existing file. Changes in the main project appear in **Review edits** and can
 be undone. Changes in an isolated working copy wait for acceptance, including
 files produced by shell commands.
+
+The shared web search tool sends queries to Bing and returns links and
+snippets. Subscription providers can also use their native search tools. Read
+the original pages before relying on search results.
 
 Web search, command internet access, and browser interaction are independent.
 **Allowed command sites** applies to commands; it does not restrict web search
@@ -190,7 +215,7 @@ checked October 28, 2026.
 
 ## Add an API key
 
-API keys work for reviews only. The provider bills you for each call.
+API keys work for conversations and reviews. The provider bills you for each call.
 
 | Provider | Where | Field |
 | --- | --- | --- |
@@ -200,20 +225,55 @@ API keys work for reviews only. The provider bills you for each call.
 
 Enter the key, then choose its **Save** button, such as **Save Claude API
 Key**. Pipeline stores keys encrypted on this
-computer; see [Privacy](../PRIVACY.md). A saved key stays unused while that
-provider is set to **Subscription**. Gemini always uses an API key.
+computer; see [Privacy](../PRIVACY.md). In a conversation, open the model picker
+and choose **OpenAI API**, **Anthropic API**, or **Gemini API**. Review access
+settings do not change the conversation’s connection. Gemini always uses an API key.
 
 ## Use a local or custom server
 
-Any server that offers an OpenAI-compatible interface works, including
-Ollama, LM Studio, llama.cpp, and vLLM. On the **OpenAI-compatible** card:
+Connect a server that supports OpenAI-compatible chat completions, such as
+Ollama, LM Studio, llama.cpp, or vLLM. On the **OpenAI-compatible** card:
 
 1. Enter the **Server URL**, such as `http://localhost:11434/v1` for Ollama.
 2. Add a key under **Local API Key** if the server needs one.
 3. Choose a **Model** from the list the server reports.
 
+For a conversation, choose **Local / custom** in the model picker. Choose a
+listed model or enter its name under **Model ID**.
+
 Calls go to the address you enter. They stay on your computer only if that
-address is on your computer. Some local models can't read attached files.
+address is on your computer. Use HTTP for a server on this computer and HTTPS
+for a remote server. Model requirements are described below.
+
+## API conversations
+
+API conversations use your assistant instructions and recent history. They can
+use enabled project, research, web search, and browser tools when the model
+supports function calling. Browser screenshots and paper images require a
+model that accepts images. Models without function calling can chat in a
+conversation with no project or enabled tools.
+
+Choose **Install command engine** in **Assistant settings** to enable sandboxed
+commands on macOS, or Linux with `bubblewrap` and `socat`. Setup requires
+Node.js 22.12 or later. Commands follow **Internet access for commands** and
+its allowed sites. Project files are read-only to commands; Edit access lets
+commands write in an isolated working copy. Use the project file tools for
+recoverable changes to the main project. On Windows, use configured research
+commands for local analysis; API conversations have no general shell.
+Project, research, web, and browser tools remain available.
+
+Replies stream as they arrive; a custom server that returns a complete reply
+shows it when the call finishes. Available **Thinking** choices depend on the
+model. **Stop** ends the local wait and cancels running tools; the server may
+still finish and charge for an accepted request. Pipeline does not resend
+interrupted calls automatically.
+
+See [Automations](automations.md) for scheduled turns and research discovery
+using the same connection.
+
+Automatic conversation titles use an extra call to the same API model. Turn
+this off with **Name new conversations automatically** under **Settings →
+Conversations**.
 
 ## Usage and cost
 

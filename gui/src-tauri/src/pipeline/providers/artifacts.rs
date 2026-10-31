@@ -1,17 +1,22 @@
 //! Live artifact-write supervision.
 
-use super::*;
+use super::BoxedProviderFuture;
+use std::time::Duration;
+pub(in crate::pipeline) const MAX_EVENT_TEXT_PREVIEW_BYTES: usize = 16 * 1024;
+pub(in crate::pipeline) const MAX_LIVE_ARTIFACT_FILES: usize = 1_000;
+pub(in crate::pipeline) const MAX_LIVE_ARTIFACT_BYTES: u64 = 300 * 1024 * 1024;
+pub(in crate::pipeline) const MAX_LIVE_ARTIFACT_FILE_BYTES: u64 = 50 * 1024 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) struct EventTextPreview {
-    pub(super) text: String,
-    pub(super) truncated: bool,
+pub(in crate::pipeline) struct EventTextPreview {
+    pub(in crate::pipeline) text: String,
+    pub(in crate::pipeline) truncated: bool,
 }
 
 /// Provider requests can contain entire papers and captured user inputs.
 /// Events cross into the long-lived WebView, so emit only a small UTF-8-safe
 /// diagnostic preview and retain the full character count separately.
-pub(super) fn event_text_preview(value: &str) -> EventTextPreview {
+pub(in crate::pipeline) fn event_text_preview(value: &str) -> EventTextPreview {
     if value.len() <= MAX_EVENT_TEXT_PREVIEW_BYTES {
         return EventTextPreview {
             text: value.to_string(),
@@ -28,7 +33,7 @@ pub(super) fn event_text_preview(value: &str) -> EventTextPreview {
     }
 }
 
-pub(super) fn check_live_artifact_quota(root: &std::path::Path) -> Result<(), String> {
+pub(in crate::pipeline) fn check_live_artifact_quota(root: &std::path::Path) -> Result<(), String> {
     let mut stack = vec![root.to_path_buf()];
     let mut files = 0usize;
     let mut bytes = 0u64;
@@ -81,7 +86,7 @@ pub(super) fn check_live_artifact_quota(root: &std::path::Path) -> Result<(), St
     Ok(())
 }
 
-pub(super) async fn supervise_artifact_writes(
+pub(in crate::pipeline) async fn supervise_artifact_writes(
     future: BoxedProviderFuture<'_>,
     write_dir: &str,
     pass_key: Option<String>,
