@@ -94,17 +94,7 @@ the [review guide](docs/reviews.md).
 ## Work on a project
 
 Create a project from **Projects**. Attach a folder to work with existing
-manuscripts and code, or start without one to collect sources and notes. Each
-project has six areas:
-
-| Area | What you do there |
-| --- | --- |
-| Overview | Resume work, read the research brief, and see next steps |
-| Library | Read documents, files, and papers, and search them |
-| Analyze | Work with data, experiments, theory, and results |
-| Write | Edit the manuscript, handle revisions and reviews, and prepare drafts |
-| Automate | Track action items, recurring checks, and revision work |
-| Activity | Keep notes, decisions, and evidence, and see what a change affects |
+manuscripts and code, or start without one to collect sources and notes.
 
 Conversations use the project material and tools you choose. You can set
 assistant instructions and run your own LaTeX, Stata, R, or Python commands.
