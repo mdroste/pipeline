@@ -46,12 +46,12 @@ Python. You can reopen it from Home.
 
 Open **Settings → Connections** and set up at least one connection.
 
-| Connection | What you need | Works for |
-| --- | --- | --- |
-| ChatGPT subscription | Install [Codex](https://github.com/openai/codex), then choose **Sign in to ChatGPT** in Pipeline | Conversations and reviews |
-| Claude subscription | Install [Claude Code](https://code.claude.com/docs/en/setup) and run `claude auth login` with your subscription account | Conversations and reviews |
-| OpenAI, Anthropic, or Google API | An API key | Conversations and reviews |
-| Local or custom model server | An OpenAI-compatible server URL and model | Conversations and reviews |
+| Connection | What you need |
+| --- | --- |
+| ChatGPT subscription | Install [Codex](https://github.com/openai/codex), then choose **Sign in to ChatGPT** in Pipeline |
+| Claude subscription | Install [Claude Code](https://code.claude.com/docs/en/setup) and run `claude auth login` with your subscription account |
+| OpenAI, Anthropic, or Google API | An API key |
+| Local or custom model server | An OpenAI-compatible server URL and model |
 
 Choose the connection in the conversation’s **Model and thinking** picker.
 Reviews and conversations list the thinking levels available for each model.
