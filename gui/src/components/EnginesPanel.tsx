@@ -2,16 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { confirmDialog } from "./DialogService";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import type { EngineStatus } from "../lib/types";
+import type { EngineDownloadProgress, EngineStatus } from "../lib/types";
+import EngineInstallStatus, { type PhaseStatus } from "./EngineInstallStatus";
 import InfoButton from "./InfoButton";
-
-type PhaseStatus = "running" | "done" | "failed";
-
-const PHASES: { id: string; label: string }[] = [
-  { id: "runtime", label: "Runtime" },
-  { id: "packages", label: "Packages" },
-  { id: "models", label: "Models" },
-];
 
 /** Cap the streamed install log kept in memory. */
 const MAX_LOG_LINES = 200;
@@ -33,7 +26,9 @@ export default function EnginesPanel({
   const [engines, setEngines] = useState<EngineStatus[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [phases, setPhases] = useState<Record<string, PhaseStatus>>({});
+  const [download, setDownload] = useState<EngineDownloadProgress | null>(null);
   const [logLines, setLogLines] = useState<string[]>([]);
+  const [uninstalling, setUninstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [listenersReady, setListenersReady] = useState(false);
   const [listenerError, setListenerError] = useState<string | null>(null);
@@ -44,7 +39,6 @@ export default function EnginesPanel({
   const [refreshingStatus, setRefreshingStatus] = useState(true);
   const [openDirError, setOpenDirError] = useState<string | null>(null);
   const [openingPipelineDir, setOpeningPipelineDir] = useState(false);
-  const logRef = useRef<HTMLPreElement>(null);
   const refreshGeneration = useRef(0);
   const backgroundInstalls = useRef(new Set<string>());
   const cancelRequested = useRef(false);
@@ -66,6 +60,7 @@ export default function EnginesPanel({
         )?.install_progress;
         if (activeProgress) {
           setPhases(activeProgress.phases as Record<string, PhaseStatus>);
+          setDownload(activeProgress.download ?? null);
           setLogLines(activeProgress.log_lines.slice(-MAX_LOG_LINES));
         }
         setEngineStatusError(null);
@@ -121,6 +116,10 @@ export default function EnginesPanel({
           }));
         },
       ),
+      listen<{ download: EngineDownloadProgress | null }>(
+        "engines:download",
+        (e) => setDownload(e.payload.download),
+      ),
       listen<{ line: string }>("engines:log", (e) => {
         setLogLines((l) => [...l.slice(-(MAX_LOG_LINES - 1)), e.payload.line]);
       }),
@@ -154,17 +153,12 @@ export default function EnginesPanel({
     };
   }, [listenerAttempt]);
 
-  useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
-    }
-  }, [logLines]);
-
   const install = async (id: string) => {
     cancelRequested.current = false;
     setBusy(id);
     setError(null);
     setPhases({});
+    setDownload(null);
     setLogLines([]);
     try {
       await invoke("install_engine", { engineId: id });
@@ -173,6 +167,7 @@ export default function EnginesPanel({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
+      setDownload(null);
       refresh();
     }
   };
@@ -191,8 +186,10 @@ export default function EnginesPanel({
       return;
     }
     setBusy(id);
+    setUninstalling(true);
     setError(null);
     setPhases({});
+    setDownload(null);
     setLogLines([]);
     try {
       await invoke("uninstall_engine", { engineId: id });
@@ -201,6 +198,7 @@ export default function EnginesPanel({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
+      setUninstalling(false);
       refresh();
     }
   };
@@ -380,46 +378,33 @@ export default function EnginesPanel({
                 </p>
               )}
 
-              {isBusy && (
-                <div className="space-y-2">
-                  <p
-                    className="text-xs text-blue-700 dark:text-blue-300"
-                    role="status"
-                  >
-                    Installation continues in the background if you leave
-                    Settings.
-                  </p>
-                  <div className="flex items-center gap-2">
-                    {PHASES.map((phase) => {
-                      const status = phases[phase.id];
-                      const chip =
-                        status === "done"
-                          ? "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300"
-                          : status === "running"
-                            ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300 animate-pulse"
-                            : status === "failed"
-                              ? "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300"
-                              : "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500";
-                      return (
-                        <span
-                          key={phase.id}
-                          className={`text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded ${chip}`}
-                        >
-                          {phase.label}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {(isBusy || error) && logLines.length > 0 && (
-                <pre
-                  ref={logRef}
-                  className="text-[11px] leading-relaxed font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 max-h-40 overflow-y-auto whitespace-pre-wrap"
+              {uninstalling && isBusy ? (
+                <p
+                  className="text-xs text-gray-500 dark:text-gray-400"
+                  role="status"
                 >
-                  {logLines.join("\n")}
-                </pre>
+                  Removing {engine.label}…
+                </p>
+              ) : (
+                <>
+                  {isBusy && (
+                    <p
+                      className="text-xs text-blue-700 dark:text-blue-300"
+                      role="status"
+                    >
+                      Installation continues in the background if you leave
+                      Settings.
+                    </p>
+                  )}
+                  {(isBusy || (error && logLines.length > 0)) && (
+                    <EngineInstallStatus
+                      active={isBusy}
+                      phases={phases}
+                      download={download}
+                      logLines={logLines}
+                    />
+                  )}
+                </>
               )}
             </div>
           );

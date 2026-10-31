@@ -155,10 +155,11 @@ fn write_quality(body: &mut Body, export: &ReportExport) {
         body.text(
             None,
             &format!(
-                "Evidence: {} verified, {} partially verified, {} unverified; {} item(s) for manual review.",
+                "Evidence: {} verified, {} partially verified, {} unverified, {} not checkable; {} item(s) for manual review.",
                 quality.verified_evidence,
                 quality.partially_verified_evidence,
                 quality.unverified_evidence,
+                quality.not_checkable_evidence,
                 quality.manual_review_items
             ),
         );

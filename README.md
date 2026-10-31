@@ -78,8 +78,8 @@ asks you to sign in again instead of switching to an API key. See
    choose **Grant Proposal Review**.
 4. Check the provider, model, and PDF extraction settings, then choose
    **Start review** to see the plan.
-5. Check the planned steps, then choose **Generate report**, or **Add to
-   queue** if other reviews are running.
+5. Check the plan, then choose **Generate report**, or **Add to queue** if
+   other reviews are running.
 
 When the review finishes, read the report and open **Sources** to see the
 document and the evidence behind each comment. Paper Review picks subject and

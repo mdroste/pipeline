@@ -21,7 +21,7 @@ pub(super) async fn install_paddle_engine(
     });
     if let Err(error) = download_verified(
         app,
-        &llama_download_url(artifact),
+        &[llama_download_url(artifact)],
         &runtime_archive,
         artifact.sha256,
         MAX_LLAMA_ARCHIVE_BYTES,
@@ -82,7 +82,7 @@ pub(super) async fn install_paddle_engine(
     ] {
         if let Err(error) = download_verified(
             app,
-            &paddle_model_url(filename),
+            &[paddle_model_url(filename)],
             &model_dir.join(filename),
             sha256,
             MAX_PADDLE_MODEL_BYTES,
@@ -169,8 +169,13 @@ pub(super) async fn install_paddle_full_parser(
             app,
             "Installing the managed PaddleOCR-VL model and llama.cpp dependency first",
         );
-        install_paddle_engine(app, base).await?;
+        emit_phase(app, spec.id, "recognition", "running");
+        if let Err(error) = install_paddle_engine(app, base).await {
+            emit_phase(app, spec.id, "recognition", "failed");
+            return Err(error);
+        }
     }
+    emit_phase(app, spec.id, "recognition", "done");
 
     let parser_root = paddle_parser_root()?;
     match refresh_paddle_parser_sidecar_locked(&parser_root) {
@@ -246,7 +251,7 @@ pub(super) async fn install_paddle_full_parser(
         let python_archive = target.join("python.tar.gz");
         download_verified(
             app,
-            &python_download_url(python_artifact),
+            &python_download_urls(python_artifact),
             &python_archive,
             python_artifact.sha256,
             MAX_PYTHON_ARCHIVE_BYTES,
@@ -357,7 +362,7 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
         let model_archive = target.join("PP-DocLayoutV3_infer.tar");
         download_verified(
             app,
-            PADDLE_LAYOUT_MODEL_URL,
+            &[PADDLE_LAYOUT_MODEL_URL.to_string()],
             &model_archive,
             PADDLE_LAYOUT_MODEL_SHA256,
             MAX_LAYOUT_MODEL_ARCHIVE_BYTES,
@@ -444,7 +449,7 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
         if backup.exists() {
             let _ = std::fs::rename(&backup, &target);
         }
-        emit_phase(app, spec.id, "packages", "failed");
+        fail_running_phases(app, spec.id);
         return Err(error);
     }
     if backup.exists() {

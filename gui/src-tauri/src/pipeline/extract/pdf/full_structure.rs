@@ -10,6 +10,92 @@ use super::page_quality::{
 use crate::models::ExtractionResult;
 use std::path::Path;
 
+/// Mirrors `FIGURE_ONLY_MIN_PAGE_SHARE` in the parser sidecar, which applies
+/// the same rule before deciding whether to replace a page's layout result.
+const FIGURE_ONLY_MIN_PAGE_SHARE: f64 = 0.25;
+
+/// A page without figures below this share of its text layer gets a quality
+/// note. Plot labels make the comparison meaningless on figure pages, and
+/// recognized math markup only raises the count, so ordinary pages sit well
+/// above it unless text was really lost.
+const PARTIAL_PAGE_MIN_COVERAGE_PERCENT: usize = 80;
+
+/// Mirrors `UNVERIFIED_IMAGE_TEXT_KEY` in the parser sidecar, which moves image
+/// recognition that looks made up out of its block's text and into this key of
+/// the block's raw record.
+const UNVERIFIED_IMAGE_TEXT_KEY: &str = "unverified_image_text";
+const WITHHELD_IMAGE_TEXT_NOTE: &str = "Image text withheld as unverified";
+
+/// Withheld image text leaves a figure as complete as any `chart` region, which
+/// is never recognized, so this note is reported without degrading the run.
+pub(crate) fn is_withheld_image_text_note(note: &str) -> bool {
+    note.starts_with(WITHHELD_IMAGE_TEXT_NOTE)
+}
+
+fn withheld_image_text_note(structure: &PaddleStructure) -> Option<String> {
+    let pages = structure
+        .pages
+        .iter()
+        .filter_map(|page| {
+            let regions = page
+                .blocks
+                .iter()
+                .filter(|block| block.raw.get(UNVERIFIED_IMAGE_TEXT_KEY).is_some())
+                .count();
+            (regions > 0).then_some((page.number, regions))
+        })
+        .collect::<Vec<_>>();
+    if pages.is_empty() {
+        return None;
+    }
+    let regions = pages.iter().map(|(_, regions)| regions).sum::<usize>();
+    let pages = pages
+        .iter()
+        .map(|(page, _)| page.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "{WITHHELD_IMAGE_TEXT_NOTE}: {regions} image region(s) on page(s) {pages} returned the kind of data the recognizer makes up for plots. Read those figures from their images."
+    ))
+}
+
+fn is_figure_region(role: &str) -> bool {
+    matches!(
+        role,
+        "chart" | "image" | "figure" | "chart_body" | "image_body" | "picture"
+    )
+}
+
+/// Figures are the only content the layout model found on the page, so its
+/// text layer holds plot labels that remain visible in the page image.
+fn paddle_page_is_figure_only(page: &PaddleStructuredPage) -> bool {
+    let (Some(width), Some(height)) = (page.width, page.height) else {
+        return false;
+    };
+    let mut figure_area = 0.0;
+    for block in &page.blocks {
+        let role = block.role.to_ascii_lowercase();
+        if is_figure_region(&role) {
+            if let [left, top, right, bottom] = block.bbox[..] {
+                figure_area += (right - left).max(0.0) * (bottom - top).max(0.0);
+            }
+        } else if !matches!(
+            role.as_str(),
+            "figure_title"
+                | "number"
+                | "header"
+                | "header_image"
+                | "footer"
+                | "footer_image"
+                | "paragraph_title"
+                | "vision_footnote"
+        ) {
+            return false;
+        }
+    }
+    figure_area >= FIGURE_ONLY_MIN_PAGE_SHARE * f64::from(width) * f64::from(height)
+}
+
 fn paddle_page_is_figure_related(page: &PaddleStructuredPage) -> bool {
     let mut has_figure_region = false;
     for block in &page.blocks {
@@ -27,6 +113,9 @@ fn paddle_effective_baseline(
     page: &PaddleStructuredPage,
     baseline: PdfPageTextBaseline,
 ) -> (usize, bool) {
+    if paddle_page_is_figure_only(page) {
+        return (0, false);
+    }
     let fragmented_visual_page = baseline.total_chars >= SUSPECT_BASELINE_MIN_CHARS
         && baseline.prose_chars < baseline.total_chars / 2
         && paddle_page_is_figure_related(page);
@@ -42,6 +131,20 @@ fn fragmented_visual_baseline_note(page: u32, baseline: PdfPageTextBaseline) -> 
         "Page {page}: the PDF text layer is dominated by isolated figure labels; completeness was checked against {} prose-like characters rather than {} total characters.",
         baseline.prose_chars, baseline.total_chars
     )
+}
+
+fn page_lost_text(
+    page: &PaddleStructuredPage,
+    recognized_chars: usize,
+    total_chars: usize,
+) -> bool {
+    total_chars >= SUSPECT_BASELINE_MIN_CHARS
+        && recognized_chars.saturating_mul(100)
+            < total_chars.saturating_mul(PARTIAL_PAGE_MIN_COVERAGE_PERCENT)
+        && !page
+            .blocks
+            .iter()
+            .any(|block| is_figure_region(&block.role.to_ascii_lowercase()))
 }
 
 pub(in crate::pipeline::extract) fn paddle_full_block_markdown(
@@ -131,7 +234,7 @@ pub(in crate::pipeline::extract) fn full_parser_extraction_from_structure(
         }
     }
     let mut restructured_empty_pages = Vec::new();
-    let mut fragmented_visual_notes = Vec::new();
+    let mut coverage_notes = Vec::new();
     for (index, page) in structure.pages.iter().enumerate() {
         let expected = index as u32 + 1;
         if page.number != expected {
@@ -173,9 +276,17 @@ pub(in crate::pipeline::extract) fn full_parser_extraction_from_structure(
                 page_baseline.map(|value| value.total_chars),
             )
         {
-            fragmented_visual_notes.push(fragmented_visual_baseline_note(
+            coverage_notes.push(fragmented_visual_baseline_note(
                 expected,
                 page_baseline.unwrap_or_default(),
+            ));
+        }
+        if let Some(total_chars) = page_baseline
+            .map(|value| value.total_chars)
+            .filter(|total_chars| page_lost_text(page, recognized_chars, *total_chars))
+        {
+            coverage_notes.push(format!(
+                "Page {expected}: recognized {recognized_chars} of {total_chars} characters in the PDF text layer; some text may be missing, so consult the rendered page."
             ));
         }
     }
@@ -191,7 +302,7 @@ pub(in crate::pipeline::extract) fn full_parser_extraction_from_structure(
         );
     }
     let mut quality_notes = structure.quality_notes.clone();
-    for note in fragmented_visual_notes {
+    for note in coverage_notes {
         if !quality_notes.contains(&note) {
             quality_notes.push(note);
         }
@@ -206,6 +317,7 @@ pub(in crate::pipeline::extract) fn full_parser_extraction_from_structure(
                 .join(", ")
         ));
     }
+    quality_notes.extend(withheld_image_text_note(structure));
     quality_notes.extend(scan_math_quality(&text));
     Ok(ExtractionResult {
         text,

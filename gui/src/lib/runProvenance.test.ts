@@ -4,6 +4,7 @@ import {
   aggregateProviderModelUsage,
   aggregateStepModelUsage,
   buildRunProvenance,
+  namedModelSummary,
   provenanceMarkdown,
 } from "./runProvenance";
 
@@ -67,7 +68,7 @@ describe("run provenance", () => {
   it("uses per-call records to split multi-provider and multi-model usage", () => {
     expect(aggregateProviderModelUsage(report())).toEqual([
       expect.objectContaining({
-        provider: "Codex",
+        provider: "ChatGPT",
         model: "gpt-5.6-sol",
         transports: ["CLI"],
         efforts: ["high"],
@@ -94,7 +95,7 @@ describe("run provenance", () => {
       expect.objectContaining({
         step_id: "technical",
         step_label: "Technical",
-        provider: "Codex",
+        provider: "ChatGPT",
         model: "gpt-5.6-sol",
         input_tokens: 1_000,
         output_tokens: 100,
@@ -108,6 +109,28 @@ describe("run provenance", () => {
         output_tokens: 200,
       }),
     ]);
+  });
+
+  it("separates the provider default placeholder from named models", () => {
+    const withDefault = report();
+    withDefault.step_outputs[0].calls![1].model = "Provider default";
+    expect(
+      namedModelSummary(buildRunProvenance({ report: withDefault })),
+    ).toEqual({ models: "gpt-5.6-sol", usesProviderDefault: true });
+
+    const allDefault = report();
+    allDefault.step_outputs[0].calls![0].model = "Provider default";
+    allDefault.step_outputs[0].calls![1].model = "Provider default";
+    expect(
+      namedModelSummary(buildRunProvenance({ report: allDefault })),
+    ).toEqual({ models: "Provider default", usesProviderDefault: false });
+
+    expect(namedModelSummary(buildRunProvenance({ report: report() }))).toEqual(
+      {
+        models: "gpt-5.6-sol, claude-opus-4-8",
+        usesProviderDefault: false,
+      },
+    );
   });
 
   it("keeps every provider and model visible and uses run-wide totals", () => {
@@ -126,7 +149,7 @@ describe("run provenance", () => {
       },
     });
 
-    expect(provenance.provider_summary).toBe("Codex, Claude");
+    expect(provenance.provider_summary).toBe("ChatGPT, Claude");
     expect(provenance.model_summary).toBe("gpt-5.6-sol, claude-opus-4-8");
     expect(provenance.totals.input_tokens).toBe(3_500);
     expect(provenance.usage_matches_total).toBe(false);
@@ -139,7 +162,7 @@ describe("run provenance", () => {
       "**Token usage:** 3,500 input · 350 output · 2,300 cached",
     );
     expect(markdown).toContain(
-      "**Models / providers:** Codex (CLI) / gpt-5.6-sol / effort high; Claude (API) / claude-opus-4-8 / effort max",
+      "**Models / providers:** ChatGPT (CLI) / gpt-5.6-sol / effort high; Claude (API) / claude-opus-4-8 / effort max",
     );
     expect(markdown).not.toContain("## Run provenance");
     expect(markdown).not.toContain("**Run total**");

@@ -15,6 +15,7 @@ mod full;
 pub(super) use cache::{activate_paddle_full_cache, full_parser_cache_fingerprint};
 pub(super) use full::extract_paddle_full;
 pub(super) use full_structure::full_parser_extraction_from_structure;
+pub(crate) use full_structure::is_withheld_image_text_note;
 pub(super) use llm::extract_llm;
 pub(crate) use native::extract_pdftotext;
 pub(super) use native::{find_command, pdftotext_page_metrics};

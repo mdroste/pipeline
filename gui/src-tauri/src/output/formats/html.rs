@@ -334,10 +334,11 @@ fn quality(export: &ReportExport) -> String {
     }
     if quality.schema_version > 0 {
         html.push_str(&format!(
-            "<p>Evidence: {} verified, {} partially verified, {} unverified; {} item(s) for manual review.</p>",
+            "<p>Evidence: {} verified, {} partially verified, {} unverified, {} not checkable; {} item(s) for manual review.</p>",
             quality.verified_evidence,
             quality.partially_verified_evidence,
             quality.unverified_evidence,
+            quality.not_checkable_evidence,
             quality.manual_review_items
         ));
     }

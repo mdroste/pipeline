@@ -5,6 +5,37 @@ public release was not tracked as a stable release series.
 
 ## Unreleased
 
+- Installing the PaddleOCR-VL Full Parser works again. In 1.2.5 and 1.2.6 the
+  install stopped with `HTTP 302 Found`.
+- Engine installs show each step, a progress bar, the download size, speed, and
+  time left. The installer log moved behind **Show details**.
+- Engine downloads survive dropped connections: they reconnect and continue from
+  the last byte received. If one source for Python tools fails, they use the
+  other.
+- PDF Reviews keep reference lists as structured entries. The PaddleOCR-VL Full
+  Parser previously lost them during layout analysis, so reference pages fell
+  back to plain page text, and entries on the page where the list began could
+  be dropped without warning. Reviews extract these PDFs again automatically.
+- PDF Reviews no longer read made-up numbers from plots. When the PaddleOCR-VL
+  Full Parser mistook a plot for a picture, it could write out a table of values
+  the plot does not print, and Reviews treated that table as text from the paper.
+  That output now stays out of the document, and quotes from it no longer verify.
+  The figure keeps its image, with a note to read it from there. Text in real
+  pictures, such as a scanned press release, is unchanged, though a picture of a
+  real table is occasionally treated the same way. Reviews extract these PDFs
+  again automatically.
+- Pages that hold only figures keep their chart images instead of being replaced
+  with rearranged label text.
+- Text between math inequalities such as `ρ < 0` and `ρ > 0` is no longer removed
+  from extracted blocks.
+- Reviews now warn when a page without figures recognizes less than 80 percent of
+  the text in the PDF.
+- **Quality and limitations** lists each extraction note once.
+- Evidence marked **Not checkable** no longer makes a Review Degraded, and
+  **Quality and limitations** counts it separately.
+- A quote from an outside source is marked **Not checkable** instead of **Quote
+  not found** when its evidence names a URL or DOI.
+
 ## 1.2.6 — 2026-10-30
 
 - Conversation command and browser setup uses a managed runtime, with automatic

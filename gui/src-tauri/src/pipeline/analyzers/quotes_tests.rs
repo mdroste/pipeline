@@ -209,6 +209,38 @@ fn fabricated_quotes_are_never_promoted() {
 }
 
 #[test]
+fn quotes_from_named_outside_sources_are_not_checkable() {
+    let paper = paper();
+    let outside = |description: &str| {
+        let mut item = evidence("An increase in debt level leads to lower output.");
+        item.page = Some(1);
+        item.description = description.into();
+        item
+    };
+    for description in [
+        "Mustafi, abstract: https://example.org/mustafi-jmp.pdf",
+        "Mustafi, stable DOI: https://doi.org/10.2139/ssrn.4794463",
+        "Mustafi (2024), DOI:10.2139/ssrn.4794463",
+    ] {
+        let outcome = check(&paper, &outside(description));
+        assert_eq!(outcome.status, NOT_CHECKABLE, "{description}");
+        assert_eq!(outcome.reason, "external_locator");
+    }
+    let mut linked = outside("Mustafi abstract");
+    linked.url = "https://example.org/mustafi-jmp.pdf".into();
+    assert_eq!(check(&paper, &linked).status, NOT_CHECKABLE);
+
+    // Without a named source, a missing quote is still reported as missing.
+    assert_eq!(check(&paper, &outside("Section 2")).status, NOT_FOUND);
+
+    // A link does not excuse a quote that the document can confirm.
+    let mut real = evidence("We conclude that the policy had small effects.");
+    real.page = Some(3);
+    real.description = "Conclusion, compare https://example.org".into();
+    assert_eq!(check(&paper, &real).status, VERIFIED);
+}
+
+#[test]
 fn quotes_without_document_locators_are_not_checkable() {
     let paper = paper();
     assert_eq!(check(&paper, &evidence("  ")).reason, "no_quote");

@@ -408,6 +408,7 @@ export interface ReportQuality {
   verified_evidence: number;
   partially_verified_evidence: number;
   unverified_evidence: number;
+  not_checkable_evidence?: number;
   manual_review_items: number;
   limitations?: string[];
   reproducibility_hash: string;
@@ -927,10 +928,19 @@ export type ExportEnvelope =
     };
 
 /** Mirrors engines::EngineStatus. */
+export interface EngineDownloadProgress {
+  label: string;
+  received_bytes: number;
+  total_bytes: number | null;
+  bytes_per_second: number;
+  retrying: boolean;
+}
+
 export interface EngineInstallProgress {
   engine_id: string;
   phases: Record<string, string>;
   log_lines: string[];
+  download?: EngineDownloadProgress | null;
 }
 
 export interface EngineStatus {

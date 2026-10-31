@@ -318,7 +318,7 @@ describe("App launch", () => {
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
     await user.click(screen.getByRole("button", { name: "Start review" }));
     expect(
-      await screen.findByRole("dialog", { name: "Review the plan" }),
+      await screen.findByRole("dialog", { name: "Ready to start" }),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Generate report" }));
 

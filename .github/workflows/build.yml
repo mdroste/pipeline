@@ -109,6 +109,10 @@ jobs:
         working-directory: gui/src-tauri
         run: cargo test --locked --all-targets
 
+      - name: Pinned engine downloads
+        working-directory: gui/src-tauri
+        run: cargo test --locked --lib engines::download -- --ignored
+
   platform-tests:
     name: Native tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

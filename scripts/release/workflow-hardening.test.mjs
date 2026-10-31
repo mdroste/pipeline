@@ -42,7 +42,8 @@ test("CI and release use the repository's exact toolchains", () => {
 test("automatic CI gates production builds and all native targets", () => {
   const contents = readText(".github", "workflows", "build.yml");
   for (const required of ["push:", "pull_request:", "workflow_call:", "npm run build", "npm run test:release",
-    "cargo clippy --locked --all-targets --all-features -- -D warnings", "cargo test --locked --all-targets", "macos-15", "windows-2022"])
+    "cargo clippy --locked --all-targets --all-features -- -D warnings", "cargo test --locked --all-targets",
+    "cargo test --locked --lib engines::download -- --ignored", "macos-15", "windows-2022"])
     assert.ok(contents.includes(required), required);
 });
 

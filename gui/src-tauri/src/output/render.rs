@@ -179,10 +179,11 @@ fn render_quality_section(md: &mut String, report: &PipelineReport, quality_stat
         quality.skipped_steps.len()
     ));
     md.push_str(&format!(
-        "**Evidence:** {} verified, {} partially verified, {} unverified; {} manual-review item(s).  \n",
+        "**Evidence:** {} verified, {} partially verified, {} unverified, {} not checkable; {} manual-review item(s).  \n",
         quality.verified_evidence,
         quality.partially_verified_evidence,
         quality.unverified_evidence,
+        quality.not_checkable_evidence,
         quality.manual_review_items
     ));
     md.push_str(&format!(

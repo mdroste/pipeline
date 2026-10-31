@@ -8,8 +8,8 @@
 //! └── native/    native runtimes + GGUF models
 //! ```
 //!
-//! Installs stream progress to the frontend via `engines:phase` /
-//! `engines:log` events.
+//! Installs stream progress to the frontend via `engines:phase`,
+//! `engines:download`, and `engines:log` events.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -243,11 +243,16 @@ fn uv_artifact_name(artifact: &UvArtifact) -> String {
     }
 }
 
-fn uv_download_url(artifact: &UvArtifact) -> String {
-    format!(
-        "https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/{}",
+/// GitHub first, then Astral's mirror of the same release assets.
+fn uv_download_urls(artifact: &UvArtifact) -> Vec<String> {
+    let path = format!(
+        "uv/releases/download/{UV_VERSION}/{}",
         uv_artifact_name(artifact)
-    )
+    );
+    vec![
+        format!("https://github.com/astral-sh/{path}"),
+        format!("https://releases.astral.sh/github/{path}"),
+    ]
 }
 
 fn python_artifact_for(os: &str, arch: &str) -> Option<&'static PythonArtifact> {
@@ -266,11 +271,16 @@ fn python_artifact() -> Result<&'static PythonArtifact, String> {
     })
 }
 
-fn python_download_url(artifact: &PythonArtifact) -> String {
-    format!(
-        "https://releases.astral.sh/github/python-build-standalone/releases/download/{PYTHON_BUILD_RELEASE}/cpython-{PYTHON_VERSION}%2B{PYTHON_BUILD_RELEASE}-{}-install_only_stripped.tar.gz",
+/// Astral's mirror first, then the same release assets on GitHub.
+fn python_download_urls(artifact: &PythonArtifact) -> Vec<String> {
+    let path = format!(
+        "python-build-standalone/releases/download/{PYTHON_BUILD_RELEASE}/cpython-{PYTHON_VERSION}%2B{PYTHON_BUILD_RELEASE}-{}-install_only_stripped.tar.gz",
         artifact.target
-    )
+    );
+    vec![
+        format!("https://releases.astral.sh/github/{path}"),
+        format!("https://github.com/astral-sh/{path}"),
+    ]
 }
 
 fn standalone_python(root: &Path) -> PathBuf {
@@ -509,6 +519,7 @@ fn find_file_named(root: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
+mod download;
 mod installer_io;
 mod integrity;
 mod operations;
@@ -522,6 +533,7 @@ pub use operations::*;
 pub use runtime::*;
 pub use storage::*;
 
+use download::*;
 use integrity::*;
 use paddle_install::*;
 use process::*;

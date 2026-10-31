@@ -170,7 +170,8 @@ pub(crate) async fn run(command: Command, label: &str) -> Result<Vec<u8>, String
 async fn download(artifact: &Artifact, path: &Path) -> Result<(), String> {
     let client = reqwest::Client::builder()
         .https_only(true)
-        .redirect(reqwest::redirect::Policy::none())
+        // The pinned checksum below authenticates the archive, not the host.
+        .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .map_err(|e| e.to_string())?;
     let url = format!(

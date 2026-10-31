@@ -23,13 +23,15 @@ const base: UsageEstimate = {
 };
 
 describe("RunUsageEstimate", () => {
-  it("shows ranges, list price, and where to set limits", () => {
+  it("shows ranges and list price, and omits limits that are not set", () => {
     render(<RunUsageEstimate estimate={base} />);
-    expect(screen.getByText("8–12")).toBeInTheDocument();
-    expect(screen.getByText("180k–400k · 30k–110k")).toBeInTheDocument();
-    expect(screen.getByText("$0.850–$2.40")).toBeInTheDocument();
-    expect(screen.getByText("None set")).toBeInTheDocument();
-    expect(screen.getByText(/Settings → Reviews/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/8–12 model calls · \$0\.850–\$2\.40 at API list price/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/180k–400k tokens in · 30k–110k out/),
+    ).toBeVisible();
+    expect(screen.queryByText("Limits")).not.toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
@@ -48,8 +50,10 @@ describe("RunUsageEstimate", () => {
         batchCount={3}
       />,
     );
-    expect(screen.getByText("Estimated use per document")).toBeInTheDocument();
-    expect(screen.queryByText("API list price")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/8–12 model calls per document/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/API list price/)).not.toBeInTheDocument();
     expect(screen.getByText("10 model calls · 30 minutes")).toBeInTheDocument();
     expect(screen.getByText(/not billed per token/)).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent(

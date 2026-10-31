@@ -45,7 +45,8 @@ const config: PipelineConfig = {
 };
 
 describe("RunPreview", () => {
-  it("shows execution, provider, workload, and artifact-access details", () => {
+  it("summarizes the run and keeps per-step access in a disclosure", async () => {
+    const user = userEvent.setup();
     render(
       <RunPreview
         config={config}
@@ -78,16 +79,23 @@ describe("RunPreview", () => {
     );
 
     expect(
-      screen.getByRole("dialog", { name: "Review the plan" }),
+      screen.getByRole("dialog", { name: "Ready to start" }),
     ).toBeVisible();
     expect(screen.getByText(/2 documents · document/)).toBeVisible();
-    expect(screen.getByTitle("4–16")).toBeVisible();
+    expect(screen.getByText("4–16 model calls")).toBeVisible();
     expect(
-      screen.getByTitle("claude, antigravity, local, default provider"),
+      screen.getByText(/^Claude, Gemini, Local, default provider/),
     ).toBeVisible();
-    expect(screen.getByText("Primary text, visuals")).toBeVisible();
-    expect(screen.getByText("Output: analysis")).toBeVisible();
-    expect(screen.getAllByText("WebSearch").length).toBeGreaterThan(0);
+
+    const details = screen.getByText("Reads: Analysis results");
+    expect(details).not.toBeVisible();
+    await user.click(screen.getByText("Steps and what each can read"));
+    expect(details).toBeVisible();
+    expect(
+      screen.getByText("Reads: Document text, visuals · Orientation map"),
+    ).toBeVisible();
+    expect(screen.getByText("Tools: WebSearch")).toBeVisible();
+    expect(screen.getByText("Orientation")).toBeVisible();
   });
 
   it("requires an explicit confirmation", async () => {
@@ -144,8 +152,8 @@ describe("RunPreview", () => {
       />,
     );
     // The required orientation call contributes the fixed unit.
-    expect(screen.getByTitle("1–2")).toBeVisible();
-    expect(screen.getByTitle("0 fixed + 1 conditional")).toBeVisible();
+    expect(screen.getByText("1–2 model calls")).toBeVisible();
+    expect(screen.getByText("0 steps + 1 conditional")).toBeVisible();
   });
 
   it("shows bounded runtime-assembled specialists for Auto Review", () => {
@@ -238,23 +246,15 @@ describe("RunPreview", () => {
         onRun={() => {}}
       />,
     );
-    expect(screen.getByText("4 fixed")).toBeVisible();
-    expect(screen.getByText("+ 2–6 adaptive agents per report")).toBeVisible();
-    expect(screen.getByTitle("7–11")).toBeVisible();
     expect(
-      screen.getByText(/assembles 2–6 subject and method specialists/),
+      screen.getByText("4 steps + 2–6 specialists chosen for each document"),
     ).toBeVisible();
+    expect(screen.getByText("7–11 model calls")).toBeVisible();
+    expect(screen.getByText("Specialists")).toBeInTheDocument();
+    expect(screen.getByText(/Specialist results \(2–6\)/)).toBeInTheDocument();
     expect(
-      screen.getByText("Adaptive agents (2–6, auto-selected)"),
-    ).toBeVisible();
-    expect(screen.getByText("Adaptive agents")).toBeVisible();
-    expect(
-      screen.getByText("Reports: selected adaptive agents (2–6)"),
-    ).toBeVisible();
-    expect(screen.getAllByText("Exposition & Architecture")[0]).not.toHaveClass(
-      "truncate",
-    );
-    expect(screen.getByText("4 fixed")).not.toHaveClass("truncate");
+      screen.getByText(/Exposition & Architecture results/),
+    ).toBeInTheDocument();
   });
 
   it("uses the Quick schema range in work estimates and routing details", () => {
@@ -314,13 +314,10 @@ describe("RunPreview", () => {
       />,
     );
 
-    expect(screen.getByText("+ 2–4 adaptive agents per report")).toBeVisible();
-    expect(screen.getByTitle("6–8")).toBeVisible();
     expect(
-      screen.getByText(/assembles 2–4 subject and method specialists/),
+      screen.getByText("3 steps + 2–4 specialists chosen for each document"),
     ).toBeVisible();
-    expect(
-      screen.getByText("Adaptive agents (2–4, auto-selected)"),
-    ).toBeVisible();
+    expect(screen.getByText("6–8 model calls")).toBeVisible();
+    expect(screen.getByText(/2–4 calls/)).toBeInTheDocument();
   });
 });

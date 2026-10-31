@@ -14,7 +14,10 @@
 //!   (`locator_mismatch`), its cited node does not exist (`locator_unknown`),
 //!   or only a close paraphrase was found (`paraphrase_suspected`).
 //! - `not_found`; `not_checkable` when there is no quote, the locator is
-//!   external, or the cited file was not captured.
+//!   external, or the cited file was not captured. A quote missing from the
+//!   document is external when its evidence also names a URL or DOI, because
+//!   `findings-v1` has no URL field and its evidence can only say so in the
+//!   description.
 
 use super::fold::{fold, tokens, Fold};
 use crate::document_bundle::DocumentBundle;
@@ -561,7 +564,18 @@ pub fn verify_evidence(
     if matches!(kind, "external" | "call") || (external && !located) {
         return Outcome::plain(NOT_CHECKABLE, "external_locator");
     }
-    mark_elided(verify_document(index, evidence, quote), elided)
+    let outcome = mark_elided(verify_document(index, evidence, quote), elided);
+    if outcome.status == NOT_FOUND && (external || names_outside_source(&evidence.description)) {
+        return Outcome::plain(NOT_CHECKABLE, "external_locator");
+    }
+    outcome
+}
+
+fn names_outside_source(description: &str) -> bool {
+    let description = description.to_ascii_lowercase();
+    ["http://", "https://", "doi.org/", "doi:"]
+        .iter()
+        .any(|marker| description.contains(marker))
 }
 
 #[derive(Serialize)]

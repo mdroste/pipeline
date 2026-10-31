@@ -632,6 +632,10 @@ pub struct ReportQuality {
     pub partially_verified_evidence: u32,
     #[serde(default)]
     pub unverified_evidence: u32,
+    /// Evidence the verifier cannot test, such as an outside source or a
+    /// citation without a quote. It is reported but does not degrade a run.
+    #[serde(default)]
+    pub not_checkable_evidence: u32,
     #[serde(default)]
     pub manual_review_items: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

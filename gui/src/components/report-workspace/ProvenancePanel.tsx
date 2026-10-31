@@ -2,9 +2,15 @@ import {
   formatRunDate,
   formatRunDuration,
   formatTokens,
+  namedModelSummary,
   type RunProvenance,
 } from "../../lib/runProvenance";
 import type { ReportQuality } from "../../lib/types";
+
+const METADATA_LABEL =
+  "text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400";
+const METADATA_VALUE =
+  "mt-1 break-words text-sm text-gray-800 dark:text-gray-200";
 
 export default function ProvenancePanel({
   provenance,
@@ -13,15 +19,12 @@ export default function ProvenancePanel({
   provenance: RunProvenance;
   quality?: ReportQuality;
 }) {
+  const { models, usesProviderDefault } = namedModelSummary(provenance);
   const fields = [
-    ["Review subject", provenance.subject],
-    ["Authors", provenance.authors.join(", ") || "—"],
     ["Workflow", provenance.workflow],
     ["Completed", formatRunDate(provenance.completed)],
     ["Duration", formatRunDuration(provenance.duration_secs)],
-    ["Report", provenance.run_id || "Unsaved"],
     ["Provider", provenance.provider_summary],
-    ["Model", provenance.model_summary],
   ];
   const showCacheWrite = provenance.totals.cache_write_input_tokens > 0;
   const status = quality?.status || provenance.status;
@@ -56,24 +59,38 @@ export default function ProvenancePanel({
           </span>
         </div>
 
-        <dl className="mt-8 grid gap-px overflow-hidden rounded-xl border border-gray-200 bg-gray-200 sm:grid-cols-2 lg:grid-cols-4 dark:border-gray-800 dark:bg-gray-800">
-          {fields.map(([label, value]) => (
-            <div
-              key={label}
-              className="min-w-0 bg-white px-4 py-3.5 dark:bg-gray-950"
-            >
-              <dt className="text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                {label}
-              </dt>
-              <dd
-                className="mt-1 break-words text-sm font-medium text-gray-800 dark:text-gray-200"
-                title={value}
-              >
-                {value}
-              </dd>
+        <div className="mt-8 rounded-xl border border-gray-200 dark:border-gray-800">
+          <div className="border-b border-gray-200 px-5 py-4 dark:border-gray-800">
+            <p className="break-words text-base font-semibold text-gray-950 dark:text-gray-50">
+              {provenance.subject}
+            </p>
+            {provenance.authors.length > 0 && (
+              <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                {provenance.authors.join(", ")}
+              </p>
+            )}
+          </div>
+          <dl className="grid gap-x-8 gap-y-4 px-5 py-4 sm:grid-cols-3">
+            {fields.map(([label, value]) => (
+              <div key={label} className="min-w-0">
+                <dt className={METADATA_LABEL}>{label}</dt>
+                <dd className={METADATA_VALUE}>{value}</dd>
+              </div>
+            ))}
+            <div className="min-w-0 sm:col-span-2">
+              <dt className={METADATA_LABEL}>Model</dt>
+              <dd className={METADATA_VALUE}>{models}</dd>
+              {usesProviderDefault && (
+                <dd className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  Some steps used the provider's default model.
+                </dd>
+              )}
             </div>
-          ))}
-        </dl>
+          </dl>
+          <p className="break-all border-t border-gray-200 px-5 py-2.5 font-mono text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400">
+            Report ID: {provenance.run_id || "Unsaved"}
+          </p>
+        </div>
 
         {quality && quality.schema_version > 0 && (
           <section aria-labelledby="quality-ledger-heading" className="mt-10">
@@ -103,7 +120,7 @@ export default function ProvenancePanel({
                 ],
                 [
                   "Evidence",
-                  `${quality.verified_evidence} verified · ${quality.partially_verified_evidence} partial · ${quality.unverified_evidence} unverified`,
+                  `${quality.verified_evidence} verified · ${quality.partially_verified_evidence} partial · ${quality.unverified_evidence} unverified · ${quality.not_checkable_evidence ?? 0} not checkable`,
                 ],
               ].map(([label, value]) => (
                 <div

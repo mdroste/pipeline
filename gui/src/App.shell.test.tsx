@@ -185,7 +185,7 @@ describe("App shell", () => {
     await user.click(screen.getByRole("button", { name: "Choose test paper" }));
     await user.click(screen.getByRole("button", { name: "Start review" }));
     expect(
-      await screen.findByRole("dialog", { name: "Review the plan" }),
+      await screen.findByRole("dialog", { name: "Ready to start" }),
     ).toBeVisible();
     expect(enqueue).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Generate report" }));

@@ -13,6 +13,7 @@ pub(super) struct InstallProgressState {
     engine_id: String,
     phases: BTreeMap<String, String>,
     log_lines: VecDeque<String>,
+    download: Option<EngineDownloadProgress>,
 }
 
 pub(super) fn install_progress_state() -> &'static Mutex<InstallProgressState> {
@@ -46,6 +47,7 @@ pub(super) fn current_install_progress() -> Option<EngineInstallProgress> {
         engine_id: progress.engine_id.clone(),
         phases: progress.phases.clone(),
         log_lines: progress.log_lines.iter().cloned().collect(),
+        download: progress.download.clone(),
     })
 }
 
@@ -62,16 +64,39 @@ pub(super) fn record_install_log(line: &str) {
     progress.log_lines.push_back(line.to_string());
 }
 
-pub(super) fn record_install_phase(engine_id: &str, phase: &str, status: &str) {
+/// Returns false for a component nested inside the active install, whose work
+/// is reported as a single phase of that install.
+pub(super) fn record_install_phase(engine_id: &str, phase: &str, status: &str) -> bool {
     let mut progress = install_progress_state()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     if progress.engine_id != engine_id {
-        return;
+        return false;
     }
     progress
         .phases
         .insert(phase.to_string(), status.to_string());
+    true
+}
+
+/// Replaces the current transfer; `None` means no transfer is running.
+pub(super) fn report_download(
+    app: &crate::emit::EventBus,
+    download: Option<EngineDownloadProgress>,
+) {
+    {
+        let mut progress = install_progress_state()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if !progress.engine_id.is_empty() {
+            progress.download = download.clone();
+        }
+    }
+    app.emit_event(
+        "engines:download",
+        serde_json::json!({ "download": download }),
+    )
+    .ok();
 }
 
 /// Hard ceiling on a managed-engine download.
@@ -170,12 +195,29 @@ pub(super) fn log(app: &crate::emit::EventBus, line: impl Into<String>) {
 }
 
 pub(super) fn emit_phase(app: &crate::emit::EventBus, engine_id: &str, phase: &str, status: &str) {
-    record_install_phase(engine_id, phase, status);
+    if !record_install_phase(engine_id, phase, status) {
+        return;
+    }
     app.emit_event(
         "engines:phase",
         serde_json::json!({ "engine": engine_id, "phase": phase, "status": status }),
     )
     .ok();
+}
+
+/// Mark whichever phase was running when the install stopped.
+pub(super) fn fail_running_phases(app: &crate::emit::EventBus, engine_id: &str) {
+    let running: Vec<String> = install_progress_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .phases
+        .iter()
+        .filter(|(_, status)| *status == "running")
+        .map(|(phase, _)| phase.clone())
+        .collect();
+    for phase in running {
+        emit_phase(app, engine_id, &phase, "failed");
+    }
 }
 
 pub(super) async fn await_install_operation<F, T>(future: F) -> Result<T, String>
@@ -193,81 +235,6 @@ where
             return Ok(value);
         }
     }
-}
-
-pub(super) async fn download_verified(
-    app: &crate::emit::EventBus,
-    url: &str,
-    destination: &Path,
-    expected_sha256: &str,
-    max_bytes: u64,
-    label: &str,
-) -> Result<u64, String> {
-    log(app, format!("Downloading {label} ({url})"));
-    let client = &*crate::pipeline::api_common::HTTP_CLIENT;
-    let mut response = await_install_operation(
-        client
-            .get(url)
-            .timeout(std::time::Duration::from_secs(INSTALL_STEP_TIMEOUT_SECS))
-            .send(),
-    )
-    .await?
-    .map_err(|error| format!("Failed to download {label}: {error}"))?;
-    if !response.status().is_success() {
-        return Err(format!(
-            "{label} download failed: HTTP {}",
-            response.status()
-        ));
-    }
-    if response
-        .content_length()
-        .is_some_and(|length| length > max_bytes)
-    {
-        return Err(format!("{label} exceeds its download safety limit"));
-    }
-
-    let mut output = std::fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(destination)
-        .map_err(|error| format!("Failed to stage {label}: {error}"))?;
-    let mut hasher = Sha256::new();
-    let mut downloaded = 0u64;
-    let mut next_progress = 100_000_000u64;
-    while let Some(chunk) = await_install_operation(response.chunk())
-        .await?
-        .map_err(|error| format!("Failed while downloading {label}: {error}"))?
-    {
-        downloaded = downloaded
-            .checked_add(chunk.len() as u64)
-            .ok_or_else(|| format!("{label} size overflow"))?;
-        if downloaded > max_bytes {
-            return Err(format!("{label} exceeds its download safety limit"));
-        }
-        hasher.update(&chunk);
-        output
-            .write_all(&chunk)
-            .map_err(|error| format!("Failed to store {label}: {error}"))?;
-        if downloaded >= next_progress {
-            log(app, format!("{label}: {} MB", downloaded / 1_000_000));
-            next_progress = next_progress.saturating_add(100_000_000);
-        }
-    }
-    output
-        .sync_all()
-        .map_err(|error| format!("Failed to sync {label}: {error}"))?;
-    let actual = format!("{:x}", hasher.finalize());
-    if actual != expected_sha256 {
-        return Err(format!(
-            "{label} checksum mismatch (expected {expected_sha256}, got {actual}). \
-             Refusing to install."
-        ));
-    }
-    log(
-        app,
-        format!("Verified {label} ({} MB)", downloaded / 1_000_000),
-    );
-    Ok(downloaded)
 }
 
 pub(super) fn safe_archive_path(path: &Path) -> bool {
@@ -907,11 +874,11 @@ pub(super) async fn ensure_uv(app: &crate::emit::EventBus) -> Result<PathBuf, St
         .join(if zip_archive { "uv.zip" } else { "uv.tar.gz" });
     download_verified(
         app,
-        &uv_download_url(artifact),
+        &uv_download_urls(artifact),
         &archive,
         artifact.sha256,
         MAX_UV_ARCHIVE_BYTES,
-        "managed Python bootstrap",
+        "Python installer",
     )
     .await?;
     let staged_uv = staging.path().join(exe("uv"));

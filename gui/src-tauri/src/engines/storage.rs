@@ -5,6 +5,19 @@ pub struct EngineInstallProgress {
     pub engine_id: String,
     pub phases: BTreeMap<String, String>,
     pub log_lines: Vec<String>,
+    pub download: Option<EngineDownloadProgress>,
+}
+
+/// The artifact being transferred right now.
+#[derive(Debug, Clone, Serialize)]
+pub struct EngineDownloadProgress {
+    pub label: String,
+    pub received_bytes: u64,
+    /// Absent until the host reports a size, and when it never does.
+    pub total_bytes: Option<u64>,
+    pub bytes_per_second: u64,
+    /// The connection failed and the download is waiting to reconnect.
+    pub retrying: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

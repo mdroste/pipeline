@@ -113,8 +113,9 @@ Choose a provider and model in Settings or in the review designer. Different
 steps can use different providers. See [Connections](connections.md) for the
 options.
 
-Steps that don't depend on each other run at the same time. The run preview
-shows each step's inputs before anything starts.
+Steps that don't depend on each other run at the same time. To see each
+step's inputs before anything starts, open **Steps and what each can read** in
+the run preview.
 
 You can queue reviews. **Settings → Reviews → Simultaneous Reviews** sets how
 many run at once: two by default, four at most. The sidebar lists running and
