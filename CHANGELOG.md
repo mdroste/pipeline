@@ -28,6 +28,10 @@ public release was not tracked as a stable release series.
   with rearranged label text.
 - Text between math inequalities such as `ρ < 0` and `ρ > 0` is no longer removed
   from extracted blocks.
+- The PaddleOCR-VL full parser keeps more captions, table notes, and equation
+  labels. Its layout confidence threshold now defaults to 0.30, and a saved
+  0.50 moves to 0.30 once. Other saved values stay as they are, and you can
+  choose 0.50 again in Settings. Each paper is parsed again on its next run.
 - Reviews now warn when a page without figures recognizes less than 80 percent of
   the text in the PDF.
 - **Quality and limitations** lists each extraction note once.

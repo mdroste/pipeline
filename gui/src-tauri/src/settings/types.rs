@@ -175,6 +175,10 @@ pub struct Settings {
 
     #[serde(default = "default_paddle_full_layout_threshold")]
     pub paddle_full_layout_threshold: f32,
+    /// Version 1 retires the former 0.5 default once, while preserving a
+    /// threshold chosen after that migration.
+    #[serde(default)]
+    pub paddle_full_layout_threshold_version: u32,
 
     #[serde(default = "default_true")]
     pub paddle_full_layout_nms: bool,
@@ -352,8 +356,8 @@ fn default_true() -> bool {
     true
 }
 
-fn default_paddle_full_layout_threshold() -> f32 {
-    0.5
+pub(super) fn default_paddle_full_layout_threshold() -> f32 {
+    0.3
 }
 
 fn default_paddle_full_layout_merge_bboxes_mode() -> String {
@@ -436,6 +440,7 @@ impl Default for Settings {
             paddle_page_retries: default_paddle_page_retries(),
             paddle_full_layout_detection: true,
             paddle_full_layout_threshold: default_paddle_full_layout_threshold(),
+            paddle_full_layout_threshold_version: 1,
             paddle_full_layout_nms: true,
             paddle_full_layout_merge_bboxes_mode: default_paddle_full_layout_merge_bboxes_mode(),
             paddle_full_merge_layout_blocks: true,

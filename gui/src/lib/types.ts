@@ -784,6 +784,8 @@ export interface Settings {
   /** Official full-parser layout and document-restructuring controls. */
   paddle_full_layout_detection: boolean;
   paddle_full_layout_threshold: number;
+  /** Persisted one-time migration from the former 0.5 default. */
+  paddle_full_layout_threshold_version?: number;
   paddle_full_layout_nms: boolean;
   /** "large" | "small" | "union". */
   paddle_full_layout_merge_bboxes_mode: string;

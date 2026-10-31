@@ -333,12 +333,13 @@ export function ExtractionSection({
                         paddle_full_layout_threshold: parseFloat(
                           e.target.value,
                         ),
+                        paddle_full_layout_threshold_version: 1,
                       })
                     }
                     className={selectClass}
                   >
-                    <option value={0.3}>0.30 — retain more regions</option>
-                    <option value={0.5}>0.50 — recommended</option>
+                    <option value={0.3}>0.30 — recommended</option>
+                    <option value={0.5}>0.50 — fewer regions</option>
                     <option value={0.7}>0.70 — higher precision</option>
                   </select>
                 </Field>

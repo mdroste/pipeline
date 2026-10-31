@@ -198,7 +198,8 @@ fn paddle_tuning_defaults_are_automatic_and_bounded() {
     assert_eq!(defaults.paddle_max_output_tokens, 4096);
     assert_eq!(defaults.paddle_page_retries, 1);
     assert!(defaults.paddle_full_layout_detection);
-    assert_eq!(defaults.paddle_full_layout_threshold, 0.5);
+    assert_eq!(defaults.paddle_full_layout_threshold, 0.3);
+    assert_eq!(defaults.paddle_full_layout_threshold_version, 1);
     assert!(defaults.paddle_full_layout_nms);
     assert_eq!(defaults.paddle_full_layout_merge_bboxes_mode, "large");
     assert!(defaults.paddle_full_merge_layout_blocks);
@@ -219,7 +220,7 @@ fn paddle_tuning_defaults_are_automatic_and_bounded() {
     assert_eq!(legacy.paddle_max_output_tokens, 4096);
     assert_eq!(legacy.paddle_page_retries, 1);
     assert!(legacy.paddle_full_layout_detection);
-    assert_eq!(legacy.paddle_full_layout_threshold, 0.5);
+    assert_eq!(legacy.paddle_full_layout_threshold, 0.3);
     assert!(legacy.paddle_full_layout_nms);
     assert_eq!(legacy.paddle_full_layout_merge_bboxes_mode, "large");
     assert!(legacy.paddle_full_merge_layout_blocks);
@@ -768,6 +769,34 @@ fn old_codex_defaults_migrate_once_and_advanced_legacy_choice_survives_reload() 
 }
 
 #[test]
+fn the_former_paddle_layout_threshold_default_moves_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let temp = directory.path().join("settings.json");
+    for (saved, expected) in [
+        (Some(0.5), 0.3),
+        (Some(0.3), 0.3),
+        (Some(0.7), 0.7),
+        (None, 0.3),
+    ] {
+        let mut raw = serde_json::json!({});
+        if let Some(saved) = saved {
+            raw["paddle_full_layout_threshold"] = serde_json::json!(saved);
+        }
+        std::fs::write(&temp, serde_json::to_vec(&raw).unwrap()).unwrap();
+        let mut settings = load_raw_settings_required(&temp).unwrap();
+        assert_eq!(settings.paddle_full_layout_threshold, expected as f32);
+        assert_eq!(settings.paddle_full_layout_threshold_version, 1);
+
+        // A choice made after the move stays, even at the former default.
+        settings.paddle_full_layout_threshold = 0.5;
+        save_raw_unlocked(&temp, &settings).unwrap();
+        let reloaded = load_raw_settings_required(&temp).unwrap().normalized();
+        assert_eq!(reloaded.paddle_full_layout_threshold, 0.5);
+        assert_eq!(reloaded.paddle_full_layout_threshold_version, 1);
+    }
+}
+
+#[test]
 fn quarantine_never_overwrites_a_backup_or_a_concurrent_repair() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.json");
@@ -795,6 +824,30 @@ fn imported_bundle_settings_are_normalized_before_validation() {
     assert_eq!(normalized.validate(), Ok(()));
     assert_eq!(normalized.antigravity_access_mode, "api");
     assert_ne!(normalized.preferred_provider, "gemini");
+}
+
+#[test]
+fn imported_settings_move_the_former_paddle_layout_threshold_default_once() {
+    let earlier_build = Settings {
+        paddle_full_layout_threshold: 0.5,
+        paddle_full_layout_threshold_version: 0,
+        ..Default::default()
+    };
+    assert_eq!(
+        earlier_build
+            .normalized_for_import()
+            .paddle_full_layout_threshold,
+        0.3
+    );
+
+    let chosen = Settings {
+        paddle_full_layout_threshold: 0.5,
+        ..Default::default()
+    };
+    assert_eq!(
+        chosen.normalized_for_import().paddle_full_layout_threshold,
+        0.5
+    );
 }
 
 #[test]

@@ -1,6 +1,11 @@
 //! Provider transport, inherited role policies, and compatibility normalization.
 
-use super::types::{default_codex_backend, default_provider, ModelSelection, Settings};
+use super::types::{
+    default_codex_backend, default_paddle_full_layout_threshold, default_provider, ModelSelection,
+    Settings,
+};
+
+const FORMER_PADDLE_FULL_LAYOUT_THRESHOLD: f32 = 0.5;
 
 impl ModelSelection {
     pub fn from_legacy(value: &str) -> Self {
@@ -235,13 +240,20 @@ impl Settings {
     /// is never changed merely because a credential is entered or cleared.
     /// Antigravity is the exception: subscription mode is disabled, so any
     /// stored value is coerced to "api" and older settings files keep loading.
-    /// Codex's native backend migrates independently of subscription/API mode.
+    /// Codex's native backend migrates independently of subscription/API mode,
+    /// and so does the former PaddleOCR-VL layout threshold default.
     pub(super) fn normalize_access_modes(&mut self) {
         if self.codex_backend_preference_version == 0 {
             if self.codex_backend == "legacy_cli" {
                 self.codex_backend = default_codex_backend();
             }
             self.codex_backend_preference_version = 1;
+        }
+        if self.paddle_full_layout_threshold_version == 0 {
+            if self.paddle_full_layout_threshold == FORMER_PADDLE_FULL_LAYOUT_THRESHOLD {
+                self.paddle_full_layout_threshold = default_paddle_full_layout_threshold();
+            }
+            self.paddle_full_layout_threshold_version = 1;
         }
         if self.claude_access_mode.trim().is_empty() {
             self.claude_access_mode = if self.anthropic_api_key.trim().is_empty() {

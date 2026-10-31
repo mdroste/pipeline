@@ -862,7 +862,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline-chars", default="[]")
     parser.add_argument("--baseline-prose-chars", default="[]")
     parser.add_argument("--layout-detection", type=_bool, default=True)
-    parser.add_argument("--layout-threshold", type=float, default=0.5)
+    parser.add_argument("--layout-threshold", type=float, default=0.3)
     parser.add_argument("--layout-nms", type=_bool, default=True)
     parser.add_argument("--layout-merge-bboxes-mode", choices=("large", "small", "union"), default="large")
     parser.add_argument("--merge-layout-blocks", type=_bool, default=True)

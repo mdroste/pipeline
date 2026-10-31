@@ -16,7 +16,7 @@ export function makeSettings(): Settings {
     paddle_max_output_tokens: 4096,
     paddle_page_retries: 1,
     paddle_full_layout_detection: true,
-    paddle_full_layout_threshold: 0.5,
+    paddle_full_layout_threshold: 0.3,
     paddle_full_layout_nms: true,
     paddle_full_layout_merge_bboxes_mode: "large",
     paddle_full_merge_layout_blocks: true,

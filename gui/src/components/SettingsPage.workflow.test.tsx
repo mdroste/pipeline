@@ -302,10 +302,11 @@ describe("SettingsPage workflow", () => {
         name: /Local engine: PaddleOCR-VL 1\.6 Full Parser/,
       }),
     );
-    await user.selectOptions(
-      screen.getByLabelText("PaddleOCR-VL layout confidence threshold"),
-      "0.7",
+    const layoutThreshold = screen.getByLabelText(
+      "PaddleOCR-VL layout confidence threshold",
     );
+    expect(layoutThreshold).toHaveDisplayValue("0.30 — recommended");
+    await user.selectOptions(layoutThreshold, "0.7");
     await user.selectOptions(
       screen.getByLabelText("PaddleOCR-VL overlapping layout boxes"),
       "union",
@@ -323,6 +324,7 @@ describe("SettingsPage workflow", () => {
           ...makeSettings(),
           pdf_extractor: "paddleocr-vl-full",
           paddle_full_layout_threshold: 0.7,
+          paddle_full_layout_threshold_version: 1,
           paddle_full_layout_merge_bboxes_mode: "union",
           paddle_full_merge_tables: false,
           paddle_full_show_formula_numbers: false,
