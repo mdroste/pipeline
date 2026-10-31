@@ -1,0 +1,370 @@
+/* The primary sidebar. These rules also style the project navigation that the
+   Workspace page portals into it, and the icon rail's flyouts. */
+:root {
+  --nav-active: rgb(52 78 65 / 0.11);
+  --nav-hover: rgb(39 43 38 / 0.06);
+  --nav-text: var(--ui-page-muted);
+  --nav-strong: var(--ui-page-text);
+  --nav-line: rgb(39 43 38 / 0.1);
+}
+.dark {
+  --nav-active: rgb(170 202 173 / 0.14);
+  --nav-hover: rgb(255 255 255 / 0.06);
+  --nav-line: rgb(255 255 255 / 0.09);
+}
+.nav-row,
+.nav-child {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  color: var(--nav-text);
+  text-align: left;
+  transition:
+    background-color 0.12s,
+    color 0.12s;
+}
+.nav-row {
+  gap: 9px;
+  height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: var(--ui-text-label);
+  font-weight: 500;
+}
+.nav-child {
+  gap: 7px;
+  min-height: 29px;
+  padding: 4px 8px;
+  border-radius: 7px;
+  font-size: var(--ui-text-label);
+}
+.nav-row:hover:not(:disabled),
+.nav-child:hover:not(:disabled) {
+  background: var(--nav-hover);
+  color: var(--nav-strong);
+}
+.nav-row:disabled,
+.nav-child:disabled {
+  opacity: 0.45;
+}
+.nav-row[data-active],
+.nav-row[aria-current="page"] {
+  color: var(--nav-strong);
+}
+.nav-row[data-active] > svg:first-child,
+.nav-row[aria-current="page"] > svg:first-child {
+  color: var(--ui-page-accent);
+}
+.nav-row[aria-current="page"],
+.nav-child[aria-current="page"] {
+  background: var(--nav-active);
+}
+.nav-child[aria-current="page"] {
+  color: var(--nav-strong);
+  font-weight: 500;
+}
+.nav-child[data-strong] {
+  color: var(--nav-strong);
+  font-weight: 600;
+}
+.nav-child[data-quiet] {
+  font-size: var(--ui-text-meta);
+}
+.nav-row:focus-visible,
+.nav-child:focus-visible,
+.nav-chevron:focus-visible,
+.nav-primary:focus-visible,
+.nav-status:focus-visible {
+  outline: 2px solid var(--ui-page-accent);
+  outline-offset: -1px;
+}
+.nav-row-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-group {
+  position: relative;
+}
+.nav-group > .nav-row {
+  padding-right: 32px;
+}
+.nav-chevron {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--nav-text);
+  opacity: 0.7;
+  transform: rotate(-90deg);
+  transition: transform 0.14s;
+}
+.nav-chevron[data-open] {
+  transform: none;
+}
+.nav-chevron:hover {
+  background: var(--nav-hover);
+  color: var(--nav-strong);
+  opacity: 1;
+}
+.nav-children {
+  display: grid;
+  gap: 1px;
+  margin: 2px 0 6px 16px;
+  padding-left: 9px;
+  border-left: 1px solid var(--nav-line);
+  animation: nav-reveal 0.16s ease-out;
+}
+@keyframes nav-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.nav-slot {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.nav-label {
+  display: flex;
+  min-height: 26px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 2px 0 8px;
+  color: var(--nav-text);
+  font-size: var(--ui-text-meta);
+  font-weight: 500;
+}
+.nav-empty {
+  margin: 0;
+  padding: 3px 8px 5px;
+  color: var(--nav-text);
+  font-size: var(--ui-text-meta);
+}
+.nav-session {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  border-radius: 7px;
+}
+.nav-session > .nav-child {
+  flex: 1;
+  min-width: 0;
+}
+.nav-session-menu {
+  position: absolute;
+  right: 1px;
+  opacity: 0;
+}
+.nav-session:hover > .nav-child,
+.nav-session:focus-within > .nav-child,
+.nav-session:has([aria-expanded="true"]) > .nav-child {
+  padding-right: 30px;
+}
+.nav-session:hover > .nav-session-menu,
+.nav-session:focus-within > .nav-session-menu,
+.nav-session:has([aria-expanded="true"]) > .nav-session-menu {
+  opacity: 1;
+}
+.nav-session-status {
+  display: block;
+  overflow: hidden;
+  color: var(--ui-warning);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-primary {
+  display: flex;
+  height: 34px;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border-radius: 9px;
+  background: var(--ui-page-accent);
+  color: var(--ui-page-on-accent);
+  font-size: var(--ui-text-label);
+  font-weight: 550;
+}
+.nav-primary:hover {
+  filter: brightness(1.12);
+}
+.nav-primary svg:last-child {
+  margin-left: auto;
+  opacity: 0.7;
+}
+.nav-count {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  color: var(--nav-text);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.nav-spinner {
+  display: block;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  animation: nav-spin 1s linear infinite;
+  border: 2px solid rgb(var(--color-accent-500) / 0.25);
+  border-top-color: rgb(var(--color-accent-500));
+  border-radius: 50%;
+}
+@keyframes nav-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.nav-activity[data-live] {
+  background: var(--nav-active);
+  color: var(--nav-strong);
+}
+.nav-activity .nav-row-label {
+  flex: none;
+}
+.nav-activity-summary {
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+  color: var(--nav-text);
+  font-size: 11.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nav-setup {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid rgb(217 119 6 / 0.35);
+  border-radius: 9px;
+  background: var(--ui-warning-soft);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+}
+.nav-setup small {
+  display: block;
+  color: var(--ui-page-muted);
+  font-size: 11.5px;
+  font-weight: 400;
+}
+.nav-status {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  place-items: center;
+  border-radius: 8px;
+}
+.nav-status:hover {
+  background: var(--nav-hover);
+}
+.nav-icon {
+  width: 38px !important;
+  height: 36px !important;
+  border-radius: 9px !important;
+  color: var(--nav-text);
+}
+.nav-icon:hover {
+  background: var(--nav-hover) !important;
+  color: var(--nav-strong);
+}
+.nav-icon[aria-current="page"],
+.nav-icon[data-active] {
+  background: var(--nav-active);
+  color: var(--ui-page-accent);
+}
+.nav-icon[data-primary] {
+  margin-bottom: 2px;
+  background: var(--ui-page-accent) !important;
+  color: var(--ui-page-on-accent);
+}
+.nav-icon-mark {
+  position: absolute;
+  top: 6px;
+  right: 7px;
+  display: flex;
+}
+.nav-flyout-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 8px 6px;
+  font-size: var(--ui-text-label);
+  font-weight: 600;
+}
+.nav-flyout-heading button {
+  color: var(--ui-page-accent);
+  font-size: var(--ui-text-meta);
+  font-weight: 500;
+}
+.nav-flyout-body {
+  display: grid;
+  gap: 1px;
+}
+.nav-activity-panel {
+  display: grid;
+  gap: 2px;
+}
+.nav-activity-label {
+  padding: 8px 8px 2px;
+  color: var(--ui-page-muted);
+  font-size: var(--ui-text-meta);
+  font-weight: 500;
+}
+.nav-activity-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: var(--ui-text-label);
+  text-align: left;
+}
+.nav-activity-item:hover {
+  background: var(--nav-hover);
+}
+.nav-activity-empty {
+  margin: 0;
+  padding: 4px 8px 8px;
+  color: var(--ui-page-muted);
+}
+.nav-activity-all {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+  padding: 8px 8px 4px;
+  border-top: 1px solid var(--ui-border);
+  color: var(--ui-page-accent);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+@media (prefers-reduced-motion: reduce) {
+  .nav-children {
+    animation: none;
+  }
+  .nav-chevron,
+  .nav-row,
+  .nav-child {
+    transition: none;
+  }
+}

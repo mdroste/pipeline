@@ -46,7 +46,7 @@ describe("SettingsPage navigation", () => {
         onThemeChange={() => {}}
       />,
     );
-    expect(await screen.findByText("Preferred Provider")).toBeInTheDocument();
+    expect(await screen.findByText("Model defaults")).toBeInTheDocument();
     for (const label of [
       "Input assessment",
       "Parallel review",
@@ -55,44 +55,39 @@ describe("SettingsPage navigation", () => {
     ])
       await userEvent.click(screen.getAllByText(label)[0]);
     expect(
-      screen.getByRole("option", { name: "Claude (Anthropic)" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("option", { name: "ChatGPT (OpenAI)" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("combobox", { name: "Preferred Provider" }),
+      screen.getByRole("button", { name: "Change default model" }),
     ).toBeVisible();
+    expect(
+      screen.queryByRole("combobox", { name: "Default provider" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText("Provider configuration"),
     ).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Claude API Key")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Maximum Concurrent Agents")).toBeVisible();
-    expect(
-      screen.getByText("or more", { selector: "strong" }).closest("p"),
-    ).toHaveTextContent(
-      "Select one or more default model to use for parallel workflow steps.",
-    );
-    expect(
-      screen.getByText("one", { selector: "strong" }).closest("p"),
-    ).toHaveTextContent(
-      "Select one default model to use for sequential workflow steps.",
-    );
+    expect(screen.getByLabelText("Model calls at once")).toBeVisible();
     expect(
       screen.getByText(
-        "Select one default model to combine outputs when a Parallel step runs with multiple providers.",
+        "Choose one or more models for steps that run at the same time.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Choose one model for steps that run one at a time."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Choose one model to combine results when a parallel step uses more than one provider.",
       ),
     ).toBeVisible();
     expect(
       screen.getByText(
-        "Choose the default model for reading inputs and selecting specialist reviewers.",
+        "Reads the inputs and selects the specialist reviewers.",
       ),
     ).toBeVisible();
     const orientationDefaults = screen.getByRole("group", {
-      name: "Orientation map providers",
+      name: "Input assessment providers",
     });
     const parallelDefaults = screen.getByRole("group", {
-      name: "Parallel steps providers",
+      name: "Parallel review providers",
     });
     expect(
       orientationDefaults.compareDocumentPosition(parallelDefaults) &
@@ -111,7 +106,9 @@ describe("SettingsPage navigation", () => {
     expect(
       screen.queryByLabelText("Maximum saved reports"),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /^LLM/ })).toBeVisible();
+    expect(
+      screen.getByRole("radio", { name: /^Selected model/ }),
+    ).toBeVisible();
     expect(invoke).toHaveBeenCalledWith("get_settings");
   });
 
@@ -126,8 +123,8 @@ describe("SettingsPage navigation", () => {
       />,
     );
     await user.selectOptions(
-      await screen.findByLabelText("Preferred Provider"),
-      "codex",
+      await screen.findByLabelText("Step time limit"),
+      "1800",
     );
     await user.click(screen.getByRole("button", { name: "Connections" }));
     await user.type(screen.getByLabelText("Local API Key"), "test-token");
@@ -135,12 +132,12 @@ describe("SettingsPage navigation", () => {
       screen.getByRole("button", { name: "Save Local API Key" }),
     );
     await user.click(screen.getByRole("button", { name: "Reviews" }));
-    expect(screen.getByLabelText("Preferred Provider")).toHaveValue("codex");
+    expect(screen.getByLabelText("Step time limit")).toHaveValue("1800");
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("save_settings", {
         settings: {
           ...makeSettings(),
-          preferred_provider: "codex",
+          step_timeout_secs: 1800,
           local_api_key: "test-token",
         },
       }),
@@ -157,7 +154,7 @@ describe("SettingsPage navigation", () => {
         initialSection="llm"
       />,
     );
-    expect(await screen.findByText("Preferred Provider")).toBeVisible();
+    expect(await screen.findByText("Model defaults")).toBeVisible();
 
     view.rerender(
       <SettingsPage
@@ -169,9 +166,11 @@ describe("SettingsPage navigation", () => {
     );
 
     expect(
-      await screen.findByRole("heading", { name: "PDF Extraction" }),
+      await screen.findByRole("heading", { name: "PDF extraction" }),
     ).toBeVisible();
-    expect(screen.getByRole("radio", { name: /^LLM\b/ })).toBeVisible();
+    expect(
+      screen.getByRole("radio", { name: /^Selected model\b/ }),
+    ).toBeVisible();
   });
 
   it("focuses and scrolls to a requested settings target", async () => {
@@ -229,11 +228,11 @@ describe("SettingsPage navigation", () => {
       />,
     );
     expect(
-      await screen.findByText(/Used when a workflow has no assigned provider/),
+      await screen.findByText(/How many model calls a review can run/),
     ).toBeVisible();
     expect(
       screen.queryByRole("button", {
-        name: "More information about Preferred Provider",
+        name: "More information about Model calls at once",
       }),
     ).not.toBeInTheDocument();
   });

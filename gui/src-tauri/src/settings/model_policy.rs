@@ -73,18 +73,27 @@ impl Settings {
                     }
                 }
             }
-            // Provider-level model boxes were retired. A missing role or
-            // workflow override now delegates directly to the active
-            // provider/transport instead of inheriting an invisible setting.
+            // The shared default fills in for a missing role or workflow
+            // override on its own provider. Other providers delegate to the
+            // active provider/transport.
+            _ if provider == self.preferred_provider && !self.default_model.is_empty() => {
+                ModelSelection::Pinned {
+                    model: self.default_model.clone(),
+                }
+            }
             _ => ModelSelection::Automatic,
         }
     }
 
-    pub fn model_effort(&self, _provider: &str) -> &str {
-        // As with model selection, absent role/workflow effort now means the
-        // provider's own default. The legacy provider effort fields remain in
-        // the wire format only so older settings and bundles still deserialize.
-        ""
+    pub fn model_effort(&self, provider: &str) -> &str {
+        // As with model selection, the shared default applies to its own
+        // provider. The legacy provider effort fields remain in the wire
+        // format only so older settings and bundles still deserialize.
+        if provider == self.preferred_provider {
+            &self.default_effort
+        } else {
+            ""
+        }
     }
 
     pub fn parallel_agents(&self) -> Vec<String> {
@@ -130,7 +139,8 @@ impl Settings {
             .cloned()
     }
 
-    fn role_effort(
+    /// The stage's own thinking level, without the shared default.
+    fn stage_effort(
         &self,
         overrides: &std::collections::HashMap<String, String>,
         provider: &str,
@@ -141,6 +151,19 @@ impl Settings {
             .filter(|effort| !effort.trim().is_empty())
             .cloned()
             .unwrap_or_default()
+    }
+
+    fn role_effort(
+        &self,
+        overrides: &std::collections::HashMap<String, String>,
+        provider: &str,
+    ) -> String {
+        let effort = self.stage_effort(overrides, provider);
+        if effort.is_empty() {
+            self.model_effort(provider).to_string()
+        } else {
+            effort
+        }
     }
 
     pub fn parallel_model_selection(&self, provider: &str) -> Option<ModelSelection> {
@@ -167,11 +190,13 @@ impl Settings {
     }
 
     pub fn merge_effort(&self, provider: &str) -> String {
-        let configured = self.role_effort(&self.default_merge_effort_overrides, provider);
-        if configured.is_empty() && self.default_merge_agent.trim().is_empty() {
+        let configured = self.stage_effort(&self.default_merge_effort_overrides, provider);
+        if !configured.is_empty() {
+            configured
+        } else if self.default_merge_agent.trim().is_empty() {
             self.sequential_effort(provider)
         } else {
-            configured
+            self.model_effort(provider).to_string()
         }
     }
 
@@ -224,8 +249,8 @@ impl Settings {
     /// Keep old Pipeline builds and exported settings usable while clearing the
     /// retired provider-level default from newly saved settings.
     pub(super) fn sync_legacy_model_fields(&mut self) {
-        self.claude_model = self.model_selection("claude").legacy_value();
-        self.codex_model = self.model_selection("codex").legacy_value();
+        self.claude_model = ModelSelection::Automatic.legacy_value();
+        self.codex_model = ModelSelection::Automatic.legacy_value();
     }
 
     pub fn normalized(mut self) -> Self {
@@ -255,6 +280,10 @@ impl Settings {
             }
             self.paddle_full_layout_threshold_version = 1;
         }
+        if self.model_defaults_version == 0 {
+            self.release_stage_defaults();
+            self.model_defaults_version = 1;
+        }
         if self.claude_access_mode.trim().is_empty() {
             self.claude_access_mode = if self.anthropic_api_key.trim().is_empty() {
                 "subscription"
@@ -272,6 +301,34 @@ impl Settings {
             .to_string();
         }
         self.antigravity_access_mode = "api".to_string();
+    }
+
+    /// Stages used to be saved with a copy of the preferred provider, which
+    /// left them behind whenever it changed. Empty now means "follow the
+    /// default", so clear the copies that resolve to the same thing. A stage
+    /// with its own model or thinking is a deliberate choice and stays.
+    fn release_stage_defaults(&mut self) {
+        let parallel_plain = self.default_parallel_model_overrides.is_empty()
+            && self.default_parallel_effort_overrides.is_empty();
+        let sequential_plain = self.default_sequential_model_overrides.is_empty()
+            && self.default_sequential_effort_overrides.is_empty();
+        let merge_plain = self.default_merge_model_overrides.is_empty()
+            && self.default_merge_effort_overrides.is_empty();
+        let orientation_plain = self.default_orientation_model_overrides.is_empty()
+            && self.default_orientation_effort_overrides.is_empty();
+        // Merge inherits from Sequential, including its model and thinking.
+        if merge_plain && sequential_plain && self.default_merge_agent == self.sequential_agent() {
+            self.default_merge_agent.clear();
+        }
+        if sequential_plain && self.default_sequential_agent == self.preferred_provider {
+            self.default_sequential_agent.clear();
+        }
+        if orientation_plain && self.default_orientation_agent == self.preferred_provider {
+            self.default_orientation_agent.clear();
+        }
+        if parallel_plain && self.default_parallel_agents == [self.preferred_provider.clone()] {
+            self.default_parallel_agents.clear();
+        }
     }
 
     /// Drop provider ids this build does not support from the surviving

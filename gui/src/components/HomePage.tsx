@@ -46,7 +46,7 @@ export default function HomePage({
 }) {
   const actions = [
     {
-      title: "Start a conversation",
+      title: "Chat",
       description:
         "Ask questions or get help with a draft, without setting up a project.",
       label: "New chat",
@@ -56,7 +56,7 @@ export default function HomePage({
       onClick: onAssistant,
     },
     {
-      title: "Review a paper",
+      title: "Review",
       description:
         "Review a paper and save the findings, supporting evidence, and report.",
       // Reviews run side by side, so this always sets up a new one; the
@@ -68,9 +68,8 @@ export default function HomePage({
       onClick: onNewReview,
     },
     {
-      title: "Set up an automation",
-      description:
-        "Run conversations and reviews in sequence or on a schedule, such as draft, review, revise.",
+      title: "Automate",
+      description: "Chain tasks together in sequence or on a schedule.",
       label: "Open automations",
       icon: "tasks" as const,
       accent:
@@ -101,7 +100,7 @@ export default function HomePage({
               </span>
               <span className="mt-0.5 block text-xs text-gray-500 dark:text-neutral-400">
                 {runningReviews > 1
-                  ? "Open the earliest; the sidebar lists the rest"
+                  ? "Open the earliest; Activity lists the rest"
                   : "Open review"}
               </span>
             </span>

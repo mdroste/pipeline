@@ -68,8 +68,9 @@ export default function WorkflowCodexConnection({
       {!!status?.unresolvedAttempts?.length && (
         <div className="space-y-2 text-xs">
           <p>
-            An earlier attempt has no confirmed result. Check its saved result
-            before allowing a new run. Previous usage still counts.
+            A review call stopped before Pipeline could confirm its result.
+            Check the saved result before new review calls can run. Usage from
+            that call still counts.
           </p>
           {status.unresolvedAttempts.map((attempt) => (
             <div key={attempt.id} className="space-y-1">
@@ -112,7 +113,7 @@ export default function WorkflowCodexConnection({
                     })
                   }
                 >
-                  Acknowledge and allow a new run
+                  Continue without it
                 </button>
               </div>
             </div>

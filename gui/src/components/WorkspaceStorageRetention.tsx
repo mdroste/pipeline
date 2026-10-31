@@ -4,8 +4,10 @@ import { confirmDialog } from "./DialogService";
 import type { StorageReport, PrunePlan } from "../lib/workbenchTypes";
 const button =
   "rounded border px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800";
-const mib = (bytes: number) =>
-  `${(bytes / 1048576).toFixed(bytes < 1048576 ? 2 : 1)} MiB`;
+const mb = (bytes: number) =>
+  `${(bytes / 1_000_000).toFixed(bytes < 1_000_000 ? 2 : 1)} MB`;
+const plural = (count: number, noun: string) =>
+  `${count} ${noun}${count === 1 ? "" : "s"}`;
 export default function WorkspaceStorageRetention({
   busy,
   onAction,
@@ -33,7 +35,7 @@ export default function WorkspaceStorageRetention({
       )}
       <section>
         <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-          Storage and retention
+          Disk use
         </h3>
         <button
           type="button"
@@ -47,7 +49,7 @@ export default function WorkspaceStorageRetention({
             })
           }
         >
-          Inspect disk use
+          Show disk use
         </button>
         {storage && (
           <div className="mt-2 space-y-2 text-xs">
@@ -57,8 +59,8 @@ export default function WorkspaceStorageRetention({
                 <tr>
                   <th>Category</th>
                   <th>Size</th>
-                  <th>Entries</th>
-                  <th>Prune</th>
+                  <th>Items</th>
+                  <th>Remove</th>
                 </tr>
               </thead>
               <tbody>
@@ -71,13 +73,13 @@ export default function WorkspaceStorageRetention({
                       {c.label}
                       <p className="text-gray-500">{c.note}</p>
                     </td>
-                    <td className="py-1 pr-2">{mib(c.bytes)}</td>
+                    <td className="py-1 pr-2">{mb(c.bytes)}</td>
                     <td className="py-1 pr-2">{c.entries}</td>
                     <td className="py-1">
                       {c.disposable ? (
                         <input
                           type="checkbox"
-                          aria-label={`Prune ${c.label}`}
+                          aria-label={`Remove ${c.label}`}
                           checked={pruneKeys.includes(c.key)}
                           onChange={(e) => {
                             pruneGeneration.current += 1;
@@ -91,7 +93,7 @@ export default function WorkspaceStorageRetention({
                           }}
                         />
                       ) : (
-                        <span className="text-gray-500">retained</span>
+                        <span className="text-gray-500">Kept</span>
                       )}
                     </td>
                   </tr>
@@ -132,12 +134,12 @@ export default function WorkspaceStorageRetention({
                     setPrunePlan(plan);
                     setStorage(await releaseClient.storageReport());
                     setNotice(
-                      `Moved ${plan.entries.length} item(s), ${mib(plan.bytes)}, to trash. Restore or empty trash below.`,
+                      `Moved ${plural(plan.entries.length, "item")} (${mb(plan.bytes)}) to Trash. Restore or empty Trash below.`,
                     );
                   })
                 }
               >
-                Move to trash
+                Move to Trash
               </button>
               <button
                 type="button"
@@ -147,9 +149,9 @@ export default function WorkspaceStorageRetention({
                   onAction(async () => {
                     if (
                       !(await confirmDialog(
-                        `Permanently delete ${storage.trash.length} trashed item(s)? This cannot be undone.`,
+                        `Permanently delete ${plural(storage.trash.length, "item")} in Trash? This cannot be undone.`,
                         {
-                          title: "Empty trash",
+                          title: "Empty Trash",
                           confirmLabel: "Delete permanently",
                           destructive: true,
                         },
@@ -161,13 +163,14 @@ export default function WorkspaceStorageRetention({
                   })
                 }
               >
-                Empty trash
+                Empty Trash
               </button>
             </div>
             {prunePlan && !prunePlan.applied && (
               <p>
-                {prunePlan.entries.length} item(s), {mib(prunePlan.bytes)},
-                would move to trash. Nothing has been moved yet.
+                Choose Move to Trash to move{" "}
+                {plural(prunePlan.entries.length, "item")} (
+                {mb(prunePlan.bytes)}).
               </p>
             )}
             {storage.trash.map((t) => (
@@ -176,7 +179,9 @@ export default function WorkspaceStorageRetention({
                 className="flex items-center gap-2 border-t pt-1 dark:border-neutral-800"
               >
                 <span className="min-w-0 flex-1 truncate">
-                  {t.category} · {mib(t.sizeBytes)} · {t.originalPath}
+                  {storage.categories.find((c) => c.key === t.category)
+                    ?.label ?? t.category}{" "}
+                  · {mb(t.sizeBytes)} · {t.originalPath}
                 </span>
                 <button
                   type="button"

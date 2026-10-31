@@ -69,7 +69,7 @@ describe("SettingsPage history", () => {
       await screen.findByRole("button", { name: "Data & Storage" }),
     );
     await screen.findByText("8 reports · 7.0 GB");
-    await user.click(screen.getByRole("button", { name: "Review cleanup…" }));
+    await user.click(screen.getByRole("button", { name: "Preview cleanup…" }));
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("preview_purge_runs", {
@@ -122,10 +122,10 @@ describe("SettingsPage history", () => {
     await user.click(
       await screen.findByRole("button", { name: "Data & Storage" }),
     );
-    await user.click(screen.getByRole("button", { name: "Review cleanup…" }));
+    await user.click(screen.getByRole("button", { name: "Preview cleanup…" }));
 
     expect(await screen.findByRole("status")).toHaveTextContent(
-      "Your completed reports are within the storage limits.",
+      "No reports are over these limits.",
     );
     expect(confirmDialog).not.toHaveBeenCalled();
     expect(
@@ -166,7 +166,7 @@ describe("SettingsPage history", () => {
     await user.click(
       await screen.findByRole("button", { name: "Data & Storage" }),
     );
-    await user.click(screen.getByRole("button", { name: "Review cleanup…" }));
+    await user.click(screen.getByRole("button", { name: "Preview cleanup…" }));
     await waitFor(() => expect(confirmDialog).toHaveBeenCalledTimes(1));
     expect(
       invoke.mock.calls.some(([command]) => command === "purge_runs"),
@@ -199,11 +199,11 @@ describe("SettingsPage history", () => {
     await user.click(
       await screen.findByRole("button", { name: "Data & Storage" }),
     );
-    await user.click(screen.getByRole("button", { name: "Review cleanup…" }));
+    await user.click(screen.getByRole("button", { name: "Preview cleanup…" }));
 
     expect(
       await screen.findByText(
-        "The retention preview could not be loaded; no reports were moved: history index unavailable",
+        "Could not preview cleanup. No reports were moved. history index unavailable",
       ),
     ).toBeVisible();
     expect(

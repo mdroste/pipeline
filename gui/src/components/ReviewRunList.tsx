@@ -167,68 +167,6 @@ function RunRow({
   );
 }
 
-/** A one-line summary pinned to the rail footer while the run list is
- *  scrolled out of view; activating it brings the list back. */
-export function ReviewRunBeacon({
-  runs,
-  unseen,
-  onReveal,
-}: {
-  runs: QueuedRun[];
-  unseen: ReadonlySet<string>;
-  onReveal: () => void;
-}) {
-  const running = runs.filter((run) => run.status === "running").length;
-  const queued = runs.filter((run) => run.status === "queued").length;
-  const ready = runs.filter((run) => unseen.has(run.key)).length;
-  if (running + queued + ready === 0) return null;
-  const reviews = (count: number) => `${count} review${count === 1 ? "" : "s"}`;
-  // Short enough for the narrowest rail; the accessible name says it fully.
-  const summary =
-    running > 0 && queued > 0
-      ? `${running} running · ${queued} queued`
-      : running > 0
-        ? `${reviews(running)} running`
-        : queued > 0
-          ? `${reviews(queued)} queued`
-          : `${reviews(ready)} finished`;
-  const description =
-    running + queued > 0
-      ? `${reviews(running)} running, ${queued} queued`
-      : `${reviews(ready)} finished and not opened yet`;
-  return (
-    <button
-      type="button"
-      onClick={onReveal}
-      aria-label={`${description}. Show them in the sidebar.`}
-      title={`${description}. Show them in the sidebar.`}
-      className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs font-medium ring-1 transition-colors
-                  focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 ${
-                    running + queued > 0
-                      ? "bg-blue-50 text-blue-800 ring-blue-200/80 hover:bg-blue-100 dark:bg-blue-950/40 dark:text-blue-200 dark:ring-blue-900/70 dark:hover:bg-blue-950/70"
-                      : "bg-emerald-50 text-emerald-800 ring-emerald-200/80 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-900/70 dark:hover:bg-emerald-950/70"
-                  }`}
-    >
-      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-        {running + queued > 0 ? (
-          <span
-            aria-hidden="true"
-            className={`block h-3.5 w-3.5 rounded-full border-2 border-blue-500/25 border-t-blue-500 dark:border-blue-400/25 dark:border-t-blue-400 ${
-              running > 0 ? "animate-spin" : ""
-            }`}
-          />
-        ) : (
-          <span
-            aria-hidden="true"
-            className="block h-2.5 w-2.5 rounded-full bg-emerald-500"
-          />
-        )}
-      </span>
-      <span className="min-w-0 flex-1 truncate">{summary}</span>
-    </button>
-  );
-}
-
 /** Reviews in the queue: what is running, what waits, and what just
  *  finished. Each row returns to that review. */
 export default function ReviewRunList({

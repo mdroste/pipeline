@@ -152,9 +152,8 @@ export default function ProjectSettings({
               </select>
             </label>
             <p className={muted}>
-              Notes, action items, and comparisons refer to this version.
-              Importing a newer file does not change the choice until you make
-              it here.
+              Notes, action items, and comparisons use this version. Importing a
+              newer file doesn’t change it.
             </p>
             <label className="block text-xs">
               Reference results
@@ -187,8 +186,8 @@ export default function ProjectSettings({
             {data.ledger.staleClaims.length > 0 && (
               <p className="text-xs text-amber-700 dark:text-amber-300">
                 {data.ledger.staleClaims.length === 1
-                  ? "One claim rests on evidence that is out of date."
-                  : `${data.ledger.staleClaims.length} claims rest on evidence that is out of date.`}
+                  ? "One claim uses out-of-date evidence."
+                  : `${data.ledger.staleClaims.length} claims use out-of-date evidence.`}
               </p>
             )}
           </Card>
@@ -218,25 +217,25 @@ export default function ProjectSettings({
               </p>
               <p className={muted}>
                 {repository.upstream
-                  ? `${repository.ahead} to push, ${repository.behind} to pull, as of ${repository.fetchedAt ? formatDate(repository.fetchedAt) : "a check that has not happened yet"}.`
+                  ? repository.fetchedAt
+                    ? `${repository.ahead} to push, ${repository.behind} to pull, as of ${formatDate(repository.fetchedAt)}.`
+                    : `${repository.ahead} to push and ${repository.behind} to pull. Not checked against the remote yet.`
                   : "This branch does not track a remote branch."}{" "}
                 {repository.changed + repository.untracked > 0 &&
                   `${repository.changed} uncommitted and ${repository.untracked} untracked files.`}
               </p>
               <p className={muted}>
-                The overview reads this from the folder&rsquo;s own Git data.
-                Checking the remote runs <code>git fetch</code> with your Git
-                credentials and happens only when you ask; nothing is committed,
-                pushed, or merged.
+                This comes from the folder&rsquo;s Git data. The Check button
+                runs <code>git fetch</code> with your Git credentials. It
+                doesn&rsquo;t commit, push, or merge.
               </p>
             </Card>
           )}
 
           <Card title="Target date">
             <p className={muted}>
-              One optional date to keep in view, such as a submission or
-              resubmission deadline. It appears at the top of the project
-              overview.
+              Shows at the top of the project overview. Use it for a deadline,
+              such as a submission or resubmission.
             </p>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-xs">
@@ -283,9 +282,9 @@ export default function ProjectSettings({
               <p className="break-all font-mono text-xs">{workspace.root}</p>
             ) : (
               <p className={muted}>
-                No folder attached. Attach the folder that holds the paper and
-                its code to list its files and let the assistant propose edits
-                in a separate working copy.
+                No folder attached. Attach the folder with your paper and code
+                so the assistant can see the files and suggest edits in a
+                separate copy.
               </p>
             )}
             {workspace?.missingRootAt && (

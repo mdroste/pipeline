@@ -83,7 +83,7 @@ export function createAppTestFixture(
     appearance.systemThemeListener = undefined;
     localStorage.clear();
     localStorage.setItem("pipeline.ui.page", "main");
-    document.documentElement.classList.remove("dark", "theme-transitioning");
+    document.documentElement.classList.remove("dark", "theme-switching");
     document.documentElement.style.colorScheme = "";
     Object.defineProperty(window, "matchMedia", {
       configurable: true,

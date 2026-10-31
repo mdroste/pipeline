@@ -275,8 +275,15 @@ pub struct ExecutionPlanResponse {
     pub input_slots: Vec<crate::pipeline_config::InputSlot>,
     pub readiness: crate::deps::DepsReport,
     pub stages: Vec<executor::ExecutionPlanStage>,
+    /// Every provider this run may call, including PDF extraction, comparison
+    /// with the previous report, and the usage-limit backup.
+    pub providers: Vec<String>,
+    pub orientation_agent: String,
     pub parallel_agents: Vec<String>,
+    pub sequential_agent: String,
     pub merge_agent: Option<String>,
+    /// The usage-limit backup, when it couldn't run right now.
+    pub backup_unavailable: Option<String>,
     /// Rough preflight range of calls, tokens, and API list-price cost, with
     /// the Review limits that will apply.
     pub usage_estimate: executor::budget::UsageEstimate,
@@ -324,6 +331,7 @@ pub async fn get_execution_plan(
     let diff = diff.unwrap_or(false);
     let readiness =
         check_snapshot_dependencies(&snapshot, diff, paper_path.as_deref(), &extra_inputs).await?;
+    let backup_unavailable = crate::deps::unavailable_backup(&snapshot.settings, &readiness);
     let profile_config_snapshot_id = snapshot.config_fingerprint.clone();
     let resolved_interpretation = paper_path
         .as_deref()
@@ -397,8 +405,18 @@ pub async fn get_execution_plan(
         input_slots,
         readiness,
         stages,
+        providers: crate::deps::run_providers(
+            &snapshot.settings,
+            &planning_config,
+            diff,
+            paper_path.as_deref(),
+            Some(&extra_inputs),
+        ),
+        orientation_agent: snapshot.settings.orientation_agent().to_string(),
         parallel_agents: snapshot.settings.parallel_agents(),
+        sequential_agent: snapshot.settings.sequential_agent().to_string(),
         merge_agent,
+        backup_unavailable,
         usage_estimate,
         host_checks: crate::pipeline::analyzers::registry::host_checks(&planning_config),
     })

@@ -110,10 +110,10 @@ it("finds synonyms, shows current values, and opens an advanced parser control",
   const search = await screen.findByRole("searchbox");
   await user.type(search, "OCR formula");
   await user.click(
-    screen.getByRole("button", { name: /Retain formula numbers/ }),
+    screen.getByRole("button", { name: /Keep equation numbers/ }),
   );
   const toggle = await screen.findByRole("switch", {
-    name: "Retain formula numbers",
+    name: "Keep equation numbers",
   });
   await waitFor(() => expect(toggle).toHaveFocus());
   expect(toggle.closest("details")).toHaveAttribute("open");
@@ -198,9 +198,7 @@ it("discards an old sign-in check when the connection changes", async () => {
     }),
   );
   expect(screen.getByText("API key required")).toBeVisible();
-  expect(
-    screen.queryByText("Subscription sign-in verified."),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByText("Signed in")).not.toBeInTheDocument();
   expect(onCheck).not.toHaveBeenCalled();
   expect(
     screen.getByRole("button", { name: "Check connection" }),

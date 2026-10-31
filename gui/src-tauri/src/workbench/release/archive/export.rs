@@ -190,7 +190,7 @@ pub fn export_archive(
         })?;
     let portable_snapshot_path = temporary.path().join("portable-research.sqlite3");
     snapshot_database(&snapshot, &portable_snapshot_path)?;
-    let note="Readable transcripts and portable research records do not guarantee that native Codex threads can resume on another machine or account. When a binding is unavailable, start a new session from reviewed notes and selected evidence.".to_string();
+    let note="Conversations from this backup may not continue on another computer or account. If one can't, start a new conversation from your notes and evidence.".to_string();
     let conversation_files = conversation_files::stage(store, &snapshot, temporary.path())?;
     if 2 + session_count * 2 + blobs.len() + conversation_files.len() > MAX_ARCHIVE_ENTRIES {
         return Err(WorkbenchError::invalid(

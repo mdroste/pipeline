@@ -90,7 +90,7 @@ it("edits automatic title preferences and saves each change", async () => {
     }),
   );
   expect(screen.queryByRole("option", { name: "low" })).not.toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Title reasoning effort"), {
+  fireEvent.change(screen.getByLabelText("Title thinking level"), {
     target: { value: "high" },
   });
   await waitFor(() =>
@@ -121,10 +121,10 @@ it("keeps title settings editable while signed out", async () => {
   render(<WorkspaceConnectionSettings embedded />);
   expect(await screen.findByLabelText("Title model")).toHaveValue("gpt-mini");
   expect(
-    screen.getByRole("option", { name: "gpt-mini (not currently available)" }),
+    screen.getByRole("option", { name: "gpt-mini (saved, not available)" }),
   ).toBeInTheDocument();
-  expect(screen.getByLabelText("Title reasoning effort")).toHaveValue("low");
+  expect(screen.getByLabelText("Title thinking level")).toHaveValue("low");
   expect(
-    screen.getByText("Model choices appear after signing in."),
+    screen.getByText("Sign in to ChatGPT to choose a model."),
   ).toBeInTheDocument();
 });

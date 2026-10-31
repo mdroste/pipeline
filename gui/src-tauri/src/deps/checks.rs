@@ -304,9 +304,6 @@ pub(super) fn required_providers(
 ) -> std::collections::HashSet<String> {
     let mut required = std::collections::HashSet::new();
     let preferred = settings.preferred_provider.clone();
-    if let Some(fallback) = settings.usage_limit_fallback_agent() {
-        required.insert(fallback.to_string());
-    }
     let Some(config) = config else {
         required.insert(preferred);
         return required;
@@ -344,6 +341,32 @@ pub(super) fn required_providers(
         );
     }
     required
+}
+
+/// Providers a run may call, in display order. This is the set readiness
+/// requires plus the usage-limit backup, which isn't needed to start but can
+/// still receive material, so a run preview can't name fewer providers than the
+/// run can reach.
+pub fn run_providers(
+    settings: &crate::settings::Settings,
+    config: &crate::pipeline_config::PipelineConfig,
+    diff: bool,
+    input_path: Option<&str>,
+    extra_inputs: Option<&std::collections::HashMap<String, String>>,
+) -> Vec<String> {
+    const DISPLAY_ORDER: [&str; 4] = ["claude", "codex", "antigravity", "local"];
+    let mut required = required_providers(settings, Some(config), diff, input_path, extra_inputs);
+    if let Some(fallback) = settings.usage_limit_fallback_agent() {
+        required.insert(fallback.to_string());
+    }
+    let mut providers = required.into_iter().collect::<Vec<_>>();
+    providers.sort_by_key(|provider| {
+        DISPLAY_ORDER
+            .iter()
+            .position(|known| known == provider)
+            .unwrap_or(DISPLAY_ORDER.len())
+    });
+    providers
 }
 
 /// Run all dependency checks against one already-loaded settings/profile
@@ -615,7 +638,7 @@ fn check_all_for(
                 "Managed PaddleOCR layout client, recognition runtime, and models are installed."
                     .into()
             } else if pdf_requirements.paddle_full {
-                "Install from Settings → PDF Extraction, or run `pipeline-cli engines install paddle` from a source build."
+                "Install from Settings → PDF extraction, or run `pipeline-cli engines install paddle` from a source build."
                     .into()
             } else {
                 "Install PaddleOCR-VL Full Parser from Settings, or run `pipeline-cli engines install paddle` from a source build."

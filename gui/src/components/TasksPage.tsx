@@ -20,6 +20,7 @@ import Builder from "./tasks/Builder";
 import Detail from "./tasks/Detail";
 import ScheduleCard from "./tasks/ScheduleCard";
 import { Status } from "./tasks/shared";
+import PageHeader from "../ui/PageHeader";
 import "./TasksPage.css";
 const ResearchMissions = lazy(() => import("./ResearchMissions"));
 
@@ -184,31 +185,31 @@ export default function TasksPage({
     pane?.firstElementChild?.scrollIntoView?.({ block: "nearest" });
   }, [paneKey]);
   return (
-    <main className="tasks-page">
-      <header className="tasks-header">
-        <div>
-          <p className="task-eyebrow">PIPELINE</p>
-          <h1>Automations</h1>
-          <p className="task-muted">
-            Run project work and reviews now or on a schedule, with pauses for
-            your input.
-          </p>
-        </div>
-        {view !== "missions" && (
-          <button
-            className="task-primary"
-            onClick={() => {
-              setCreating(true);
-              selectedRef.current = null;
-              setSelected(null);
-            }}
-          >
-            + New automation
-          </button>
-        )}
-      </header>
-      <div className="tasks-toolbar">
-        <div className="task-tabs" role="tablist" aria-label="Automations view">
+    <main className="ui-page tasks-page">
+      <PageHeader
+        title="Automations"
+        description="Run project work and reviews now or on a schedule, with pauses for your input."
+        action={
+          view !== "missions" && (
+            <button
+              className="task-primary"
+              onClick={() => {
+                setCreating(true);
+                selectedRef.current = null;
+                setSelected(null);
+              }}
+            >
+              + New automation
+            </button>
+          )
+        }
+      />
+      <div className="ui-page-toolbar">
+        <div
+          className="ui-page-tabs"
+          role="tablist"
+          aria-label="Automations view"
+        >
           {views.map((v) => (
             <button {...tabList.tabProps(v)} key={v}>
               {v === "missions"

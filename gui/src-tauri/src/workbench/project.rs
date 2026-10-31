@@ -137,7 +137,7 @@ fn lock(store: &Store, workspace_id: &str) -> WorkbenchResult<fs::File> {
 pub fn capabilities() -> Value {
     let tool =
         |name: &str| crate::deps::find_on_path(name).map(|p| p.to_string_lossy().into_owned());
-    json!({"platform":std::env::consts::OS,"fileAcceptance":files::REPLACEMENT,"git":tool("git"),"latex":tool("pdflatex").or_else(||tool("latexmk")),"pdfPages":tool("pdftoppm"),"stataPolicy":"Use an installed Stata in batch mode, or a custom launcher for a shell alias. Test the command profile to confirm it works; finding Stata isn't enough. Stata on Windows and Linux has had less testing than on macOS.","qualification":"Reading project files works without a model. Conversations need a ChatGPT or Claude sign-in. Commands run only after you approve them.","record":"https://github.com/mdroste/pipeline/blob/main/.github/SUPPORT.md"})
+    json!({"platform":std::env::consts::OS,"fileAcceptance":files::REPLACEMENT,"git":tool("git"),"latex":tool("pdflatex").or_else(||tool("latexmk")),"pdfPages":tool("pdftoppm"),"stataPolicy":"Pipeline runs Stata in batch mode. If you start Stata with a shell alias, use a custom launcher. Test your command profile to confirm it works. Stata has had less testing on Windows and Linux than on macOS.","qualification":"Reading project files works without a model. Conversations need a ChatGPT or Claude sign-in. Commands run only after you approve them.","record":"https://github.com/mdroste/pipeline/blob/main/.github/SUPPORT.md"})
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

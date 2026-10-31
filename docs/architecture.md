@@ -138,6 +138,7 @@ Each module's header comment has the details.
 | `engines/`, `deps/` | Managed local engines and dependency checks |
 | `gui/src/lib/` | Typed IPC clients and pure helpers |
 | `gui/src/hooks/workspace/` | Conversation runtime in the UI |
+| `gui/src/components/NavRail.tsx`, `nav-rail/` | Primary sidebar. The open Workspace page portals its project navigation into a slot here, so that page keeps its own gates |
 | `gui/src/components/pipeline-editor/` | **Review designer** |
 | `gui/src/ui/` | Shared controls; design tokens are in `App.css` |
 

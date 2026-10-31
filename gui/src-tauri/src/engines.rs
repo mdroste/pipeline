@@ -293,19 +293,14 @@ fn standalone_python(root: &Path) -> PathBuf {
 
 fn full_parser_support_for(os: &str, arch: &str) -> Result<(), String> {
     if os == "macos" && arch == "x86_64" {
-        return Err(
-            "The official PaddlePaddle 3.2.1 runtime has no Intel macOS wheel, so PaddleOCR-VL Full Parser is unavailable on this Mac."
-                .to_string(),
-        );
+        return Err("PaddleOCR-VL Full Parser doesn't run on Intel Macs.".to_string());
     }
     match (os, arch) {
         ("macos", "aarch64")
         | ("windows", "x86_64")
         | ("linux", "x86_64")
         | ("linux", "aarch64") => Ok(()),
-        _ => Err(format!(
-            "The full PaddleOCR-VL parser is not packaged for {os}/{arch}"
-        )),
+        _ => Err("PaddleOCR-VL Full Parser isn't available for this computer.".to_string()),
     }
 }
 
@@ -335,10 +330,7 @@ const PADDLE_RECOGNITION_COMPONENT: EngineSpec = EngineSpec {
 pub const ENGINES: &[EngineSpec] = &[EngineSpec {
     id: "paddleocr-vl-parser",
     label: "PaddleOCR-VL 1.6 Full Parser",
-    description: "Includes the official PaddleOCR layout client, PP-DocLayoutV3, structured \
-                      reading order, title hierarchy, formula metadata, and cross-page table \
-                      reconstruction, plus a managed recognition model; no system Python, \
-                      pip, Conda, or Docker is required.",
+    description: "Reads PDFs on this computer. Pipeline installs everything it needs.",
     est_download_mb: 2900,
     est_disk_mb: 3800,
 }];
@@ -530,6 +522,7 @@ fn find_file_named(root: &Path, name: &str) -> Option<PathBuf> {
 mod download;
 mod installer_io;
 mod integrity;
+mod layout_model;
 mod native_recognition;
 mod operations;
 mod paddle_install;
@@ -544,6 +537,7 @@ pub use storage::*;
 
 use download::*;
 use integrity::*;
+use layout_model::*;
 use native_recognition::*;
 use paddle_install::*;
 use process::*;

@@ -48,10 +48,10 @@ describe("SettingsPage workflow", () => {
       />,
     );
 
-    await screen.findByText("Preferred Provider");
-    await user.click(screen.getByText("Combine results"));
+    await screen.findByText("Model defaults");
+    await user.click(screen.getAllByText("Combine results")[0]);
     const mergeProviders = screen.getByRole("group", {
-      name: "Merge providers",
+      name: "Combine results providers",
     });
     await user.click(
       within(mergeProviders).getByRole("button", { name: "ChatGPT" }),
@@ -69,6 +69,123 @@ describe("SettingsPage workflow", () => {
     );
   });
 
+  it("lets a stage go back to following the default", async () => {
+    const user = userEvent.setup();
+    const settings = {
+      ...makeSettings(),
+      default_sequential_agent: "codex",
+      default_sequential_model_overrides: {
+        "codex:cli": { mode: "pinned" as const, model: "sol" },
+      },
+    };
+    mockLoad(settings);
+    render(
+      <SettingsPage
+        onClose={() => {}}
+        theme="light"
+        onThemeChange={() => {}}
+      />,
+    );
+
+    await screen.findByText("Model defaults");
+    await user.click(screen.getAllByText("Sequential steps")[0]);
+    await user.click(
+      within(
+        screen.getByRole("group", { name: "Sequential steps providers" }),
+      ).getByRole("button", { name: "Default model" }),
+    );
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("save_settings", {
+        settings: {
+          ...settings,
+          default_sequential_agent: "",
+          default_sequential_model_overrides: {},
+          default_sequential_effort_overrides: {},
+        },
+      }),
+    );
+  });
+
+  it("offers a connected provider as the usage-limit backup", async () => {
+    const user = userEvent.setup();
+    mockLoad({ ...makeSettings(), openai_api_key: "", google_api_key: "key" });
+    render(
+      <SettingsPage
+        onClose={() => {}}
+        theme="light"
+        onThemeChange={() => {}}
+        dependencies={{
+          ready: true,
+          deps: [
+            {
+              name: "ChatGPT (reviews)",
+              found: true,
+              version: "",
+              path: "",
+              required: false,
+              hint: "",
+              authenticated: false,
+            },
+          ],
+        }}
+      />,
+    );
+
+    await user.click(
+      await screen.findByLabelText("Enable usage-limit fallback"),
+    );
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        "save_settings",
+        expect.objectContaining({
+          settings: expect.objectContaining({
+            usage_limit_fallback_agent: "antigravity",
+          }),
+        }),
+      ),
+    );
+  });
+
+  it("explains that a backup needs a second connected provider", async () => {
+    mockLoad(makeSettings());
+    render(
+      <SettingsPage
+        onClose={() => {}}
+        theme="light"
+        onThemeChange={() => {}}
+        dependencies={{
+          ready: true,
+          deps: [
+            {
+              name: "ChatGPT (reviews)",
+              found: true,
+              version: "",
+              path: "",
+              required: false,
+              hint: "",
+              authenticated: false,
+            },
+            {
+              name: "Local LLM server",
+              found: false,
+              version: "",
+              path: "",
+              required: false,
+              hint: "",
+            },
+          ],
+        }}
+      />,
+    );
+    expect(
+      await screen.findByLabelText("Enable usage-limit fallback"),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/Connect a second provider to use a backup/),
+    ).toBeVisible();
+  });
+
   it("keeps execution controls alongside model defaults", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings());
@@ -80,17 +197,15 @@ describe("SettingsPage workflow", () => {
       />,
     );
 
-    await screen.findByText("Preferred Provider");
-    expect(screen.getByLabelText("Maximum Concurrent Agents")).toBeVisible();
+    await screen.findByText("Model defaults");
+    expect(screen.getByLabelText("Model calls at once")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Reviews" }));
 
-    const maxConcurrentAgents = screen.getByLabelText(
-      "Maximum Concurrent Agents",
-    );
+    const maxConcurrentAgents = screen.getByLabelText("Model calls at once");
     expect(maxConcurrentAgents).toHaveValue("16");
     expect(maxConcurrentAgents).toHaveAttribute("max", "20");
-    expect(screen.getByLabelText("Step Timeout")).toHaveValue("1200");
-    expect(screen.getByLabelText("Step Retries")).toHaveValue("1");
+    expect(screen.getByLabelText("Step time limit")).toHaveValue("1200");
+    expect(screen.getByLabelText("Step retries")).toHaveValue("1");
   });
 
   it("offers only the PaddleOCR-VL Full Parser as a local PDF extractor", async () => {
@@ -103,25 +218,23 @@ describe("SettingsPage workflow", () => {
       />,
     );
     await userEvent.click(
-      await screen.findByRole("button", { name: "PDF Extraction" }),
+      await screen.findByRole("button", { name: "PDF extraction" }),
     );
     expect(
       screen.getByRole("radio", {
-        name: /Local engine: PaddleOCR-VL 1\.6 Full Parser/,
+        name: /Local parser: PaddleOCR-VL 1\.6 Full Parser/,
       }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("radio", { name: /PaddleOCR-VL 1\.6 Q8/ }),
     ).not.toBeInTheDocument();
     const engineHeading = screen.getByRole("heading", {
-      name: "Local Engines",
+      name: "Local parser",
     });
     expect(engineHeading).toBeVisible();
     expect(screen.getByText("not installed")).toBeVisible();
-    expect(
-      screen.queryByText("PaddleOCR-VL recognition server"),
-    ).not.toBeVisible();
-    expect(screen.queryByText("Full parser structure")).not.toBeVisible();
+    expect(screen.queryByText("Speed and memory")).not.toBeVisible();
+    expect(screen.queryByText("Document structure")).not.toBeVisible();
     expect(
       screen.queryByLabelText("PaddleOCR-VL concurrent pages"),
     ).not.toBeVisible();
@@ -142,13 +255,13 @@ describe("SettingsPage workflow", () => {
       />,
     );
     await userEvent.click(
-      await screen.findByRole("button", { name: "PDF Extraction" }),
+      await screen.findByRole("button", { name: "PDF extraction" }),
     );
 
     const paddle = screen.getByRole("radio", {
-      name: /Local engine: PaddleOCR-VL 1\.6 Full Parser/,
+      name: /Local parser: PaddleOCR-VL 1\.6 Full Parser/,
     });
-    const llm = screen.getByRole("radio", { name: /^LLM\b/ });
+    const llm = screen.getByRole("radio", { name: /^Selected model\b/ });
     const pdftotext = screen.getByRole("radio", { name: /^pdftotext\b/ });
 
     expect(screen.getByText("Best to basic ↓")).toBeVisible();
@@ -156,7 +269,7 @@ describe("SettingsPage workflow", () => {
     expect(screen.getByText("High quality")).toBeVisible();
     expect(screen.getByText("Basic quality")).toBeVisible();
     expect(
-      screen.getByText(/This may lose more detail than PaddleOCR-VL/),
+      screen.getByText(/It can lose more detail than PaddleOCR-VL/),
     ).toBeVisible();
     expect(
       paddle.compareDocumentPosition(llm) & Node.DOCUMENT_POSITION_FOLLOWING,
@@ -176,22 +289,20 @@ describe("SettingsPage workflow", () => {
       />,
     );
     await userEvent.click(
-      await screen.findByRole("button", { name: "PDF Extraction" }),
+      await screen.findByRole("button", { name: "PDF extraction" }),
     );
-    expect(await screen.findByText("Full parser structure")).not.toBeVisible();
+    expect(await screen.findByText("Document structure")).not.toBeVisible();
     await userEvent.click(await screen.findByText("Advanced parser settings"));
 
     const engineHeading = screen.getByRole("heading", {
-      name: "Local Engines",
+      name: "Local parser",
     });
-    const recognitionSettings = await screen.findByText(
-      "PaddleOCR-VL recognition server",
-    );
+    const recognitionSettings = await screen.findByText("Speed and memory");
     expect(
       engineHeading.compareDocumentPosition(recognitionSettings) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(screen.getByText("Full parser structure")).toBeVisible();
+    expect(screen.getByText("Document structure")).toBeVisible();
   });
 
   it("shows the automatic default using an installed Full Parser", async () => {
@@ -209,17 +320,17 @@ describe("SettingsPage workflow", () => {
       />,
     );
     await user.click(
-      await screen.findByRole("button", { name: "PDF Extraction" }),
+      await screen.findByRole("button", { name: "PDF extraction" }),
     );
 
     expect(screen.getByRole("radio", { name: /^Automatic/ })).toBeChecked();
     expect(
       await screen.findByText(
-        /Full Parser is installed, so Pipeline will use it/,
+        /Uses PaddleOCR-VL Full Parser if it’s installed/,
       ),
     ).toBeVisible();
 
-    await user.click(screen.getByRole("radio", { name: /^LLM/ }));
+    await user.click(screen.getByRole("radio", { name: /^Selected model/ }));
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("save_settings", {
         settings: { ...makeSettings(), pdf_extractor: "llm" },
@@ -238,12 +349,12 @@ describe("SettingsPage workflow", () => {
       />,
     );
     await user.click(
-      await screen.findByRole("button", { name: "PDF Extraction" }),
+      await screen.findByRole("button", { name: "PDF extraction" }),
     );
     await userEvent.click(await screen.findByText("Advanced parser settings"));
     await user.click(
       screen.getByRole("radio", {
-        name: /Local engine: PaddleOCR-VL 1\.6 Full Parser/,
+        name: /Local parser: PaddleOCR-VL 1\.6 Full Parser/,
       }),
     );
 
@@ -252,7 +363,7 @@ describe("SettingsPage workflow", () => {
       "2",
     );
     await user.selectOptions(
-      screen.getByLabelText("PaddleOCR-VL vision encoder batch"),
+      screen.getByLabelText("PaddleOCR-VL image batch size"),
       "2048",
     );
     await user.selectOptions(
@@ -294,18 +405,18 @@ describe("SettingsPage workflow", () => {
       />,
     );
     await user.click(
-      await screen.findByRole("button", { name: "PDF Extraction" }),
+      await screen.findByRole("button", { name: "PDF extraction" }),
     );
     await userEvent.click(await screen.findByText("Advanced parser settings"));
     await user.click(
       screen.getByRole("radio", {
-        name: /Local engine: PaddleOCR-VL 1\.6 Full Parser/,
+        name: /Local parser: PaddleOCR-VL 1\.6 Full Parser/,
       }),
     );
     const layoutThreshold = screen.getByLabelText(
       "PaddleOCR-VL layout confidence threshold",
     );
-    expect(layoutThreshold).toHaveDisplayValue("0.30 — recommended");
+    expect(layoutThreshold).toHaveDisplayValue("0.30 (recommended)");
     await user.selectOptions(layoutThreshold, "0.7");
     await user.selectOptions(
       screen.getByLabelText("PaddleOCR-VL overlapping layout boxes"),
@@ -315,7 +426,7 @@ describe("SettingsPage workflow", () => {
       screen.getByRole("switch", { name: "Merge tables across pages" }),
     );
     await user.click(
-      screen.getByRole("switch", { name: "Retain formula numbers" }),
+      screen.getByRole("switch", { name: "Keep equation numbers" }),
     );
 
     await waitFor(() =>
@@ -333,7 +444,7 @@ describe("SettingsPage workflow", () => {
     );
   });
 
-  it("keeps automatic revision reconciliation off by default and persists opt-in", async () => {
+  it("keeps the previous-report comparison off by default and persists opt-in", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings());
     render(
@@ -346,7 +457,7 @@ describe("SettingsPage workflow", () => {
 
     await user.click(await screen.findByRole("button", { name: "Reviews" }));
     const reconciliation = screen.getByRole("switch", {
-      name: /automatic revision reconciliation/i,
+      name: /compare with the previous report/i,
     });
     expect(reconciliation).toHaveAttribute("aria-checked", "false");
 

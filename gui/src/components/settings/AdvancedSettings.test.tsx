@@ -113,7 +113,7 @@ describe("AdvancedSettings updates", () => {
     });
     renderSettings();
     expect(
-      await screen.findByText(/update setting could not be read/),
+      await screen.findByText(/Could not read your update setting/),
     ).toBeInTheDocument();
   });
 
@@ -174,7 +174,7 @@ describe("AdvancedSettings updates", () => {
     respond({ update_status: () => status() });
     renderSettings();
     expect(
-      await screen.findByText(/Each time it starts, and once a day/),
+      await screen.findByText(/when it starts and once a day/),
     ).toBeInTheDocument();
   });
 

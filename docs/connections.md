@@ -18,9 +18,9 @@ Every conversation connection can use web search with a model that supports
 tool calls. Turn on **Web search** in **Assistant settings**. The table’s last
 column applies to reviews, where you enable search on individual steps.
 
-Each conversation remembers its provider, and new conversations start on
-ChatGPT. Switching providers gives the next provider recent conversation
-history. Automations use the conversation’s provider and saved model unless
+Each conversation remembers its provider. New conversations start on your
+[default model](settings.md#default-model), or on ChatGPT until you choose one.
+Switching providers gives the next provider recent conversation history. Automations use the conversation’s provider and saved model unless
 a step selects another model.
 
 ChatGPT and Claude Code use your subscription. If you're signed out,
@@ -85,8 +85,7 @@ Connections → OpenAI → Reviews**:
 
 - **Check saved result** looks up what ChatGPT recorded for that call, shows
   it, and saves a copy. The text isn't added to the interrupted review.
-- **Acknowledge and allow a new run** closes the record so you can run
-  reviews again.
+- **Continue without it** closes the record so you can run reviews again.
 
 The interrupted call still counts against your plan.
 
@@ -243,11 +242,11 @@ API keys work for conversations and reviews. The provider bills you for each cal
 | Anthropic | **Anthropic** card, choose **API** | **Claude API Key** |
 | Google | **Google** card | **Gemini API Key** |
 
-Enter the key, then choose its **Save** button, such as **Save Claude API
-Key**. Pipeline stores keys encrypted on this
+Enter the key, then choose **Save**. Pipeline stores keys encrypted on this
 computer; see [Privacy](../PRIVACY.md). In a conversation, open the model picker
 and choose **OpenAI API**, **Anthropic API**, or **Gemini API**. Review access
-settings do not change the conversation’s connection. Gemini always uses an API key.
+settings do not change an existing conversation’s connection. Gemini always uses
+an API key.
 
 ## Use a local or custom server
 

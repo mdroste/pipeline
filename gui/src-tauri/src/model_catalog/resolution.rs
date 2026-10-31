@@ -224,7 +224,7 @@ async fn discover_uncached(
                 if let Some(mut cache) = read_cache(provider, transport, settings) {
                     cache.catalog.stale = true;
                     cache.catalog.warning = Some(format!(
-                        "Live discovery failed; using the last known catalog. {error}"
+                        "Could not refresh the model list, so Pipeline is using the last saved one. {error}"
                     ));
                     return Ok(cache.catalog);
                 }
@@ -232,7 +232,7 @@ async fn discover_uncached(
             let mut catalog = base_catalog(provider, transport, "bundled_policy");
             catalog.stale = true;
             catalog.warning = Some(format!(
-                "Live discovery failed. Automatic still uses the provider default. {error}"
+                "Could not load the model list. Provider default still works. {error}"
             ));
             if let Some(transport_policy) = policy_for(&policy, provider, transport) {
                 catalog.models = transport_policy

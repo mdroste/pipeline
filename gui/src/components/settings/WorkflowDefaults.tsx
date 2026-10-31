@@ -1,8 +1,10 @@
-import type { ModelCatalog, Settings } from "../../lib/types";
+import { providerAvailability } from "../../lib/connections";
+import type { DepsReport, ModelCatalog, Settings } from "../../lib/types";
 import {
   defaultMergeAgent,
   defaultMergeEffortOverrides,
   defaultMergeModelOverrides,
+  defaultModelSummary,
   defaultOrientationAgent,
   defaultParallelAgents,
   defaultSequentialAgent,
@@ -13,27 +15,56 @@ import ModelStage from "./ModelStage";
 import AgentDefaultsControl from "../AgentDefaultsControl";
 
 import { selectClass, inputClass, SectionHeader, Field } from "./controls";
+import { SettingRow } from "./SaveState";
 export function ModelDefaultsSection({
   settings,
   setSettings,
   catalogs,
+  onChangeDefault,
+  dependencies,
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
   catalogs: Record<string, ModelCatalog>;
+  onChangeDefault: () => void;
+  dependencies?: DepsReport | null;
 }) {
   const parallelAgents = defaultParallelAgents(settings);
   const mergeAgent = defaultMergeAgent(settings);
   const sequentialAgent = defaultSequentialAgent(settings);
   const orientationAgent = defaultOrientationAgent(settings);
   const usageLimitFallbackAgent = settings.usage_limit_fallback_agent || "";
+  // A backup that isn't connected couldn't help, so offer a connected one first.
+  const backupOptions = PROVIDERS.filter(
+    (provider) => provider !== (settings.preferred_provider || "claude"),
+  );
+  const backupStatus = (status: "ready" | "unknown") =>
+    backupOptions.find(
+      (provider) =>
+        providerAvailability(provider, settings, dependencies) === status,
+    );
+  const backupChoice = backupStatus("ready") ?? backupStatus("unknown");
+  const defaultLabel = "Default model";
 
   return (
     <>
       <SectionHeader
         title="Model defaults"
-        description="Choose who handles each stage. Steps set to Default use these providers, models, and thinking levels."
+        description="Review stages use your default model. Choose another for a stage here, or for a step in the review designer."
       />
+      <SettingRow
+        label={defaultLabel}
+        description={defaultModelSummary(settings, catalogs)}
+      >
+        <button
+          type="button"
+          className="settings-button"
+          aria-label="Change default model"
+          onClick={onChangeDefault}
+        >
+          Change
+        </button>
+      </SettingRow>
 
       <div className="space-y-0">
         <section className="space-y-5">
@@ -41,6 +72,9 @@ export function ModelDefaultsSection({
             <div>
               <ModelStage
                 title="Input assessment"
+                inherited={
+                  !settings.default_orientation_agent ? defaultLabel : undefined
+                }
                 agents={[orientationAgent]}
                 models={settings.default_orientation_model_overrides}
                 efforts={settings.default_orientation_effort_overrides}
@@ -56,8 +90,20 @@ export function ModelDefaultsSection({
                   settings={settings}
                   catalogs={catalogs}
                   providers={PROVIDERS}
-                  label="Orientation map"
-                  help="Choose the default model for reading inputs and selecting specialist reviewers."
+                  dependencies={dependencies}
+                  inherit={{
+                    active: !settings.default_orientation_agent,
+                    label: defaultLabel,
+                    onSelect: () =>
+                      setSettings({
+                        ...settings,
+                        default_orientation_agent: "",
+                        default_orientation_model_overrides: {},
+                        default_orientation_effort_overrides: {},
+                      }),
+                  }}
+                  label="Input assessment"
+                  help="Reads the inputs and selects the specialist reviewers."
                   onChange={(next) =>
                     setSettings({
                       ...settings,
@@ -73,6 +119,11 @@ export function ModelDefaultsSection({
             <div>
               <ModelStage
                 title="Parallel review"
+                inherited={
+                  !settings.default_parallel_agents?.length
+                    ? defaultLabel
+                    : undefined
+                }
                 agents={parallelAgents}
                 models={settings.default_parallel_model_overrides}
                 efforts={settings.default_parallel_effort_overrides}
@@ -86,15 +137,21 @@ export function ModelDefaultsSection({
                   settings={settings}
                   catalogs={catalogs}
                   providers={PROVIDERS}
+                  dependencies={dependencies}
                   multi
-                  label="Parallel steps"
-                  help={
-                    <>
-                      Select one{" "}
-                      <strong className="font-semibold">or more</strong> default
-                      model to use for parallel workflow steps.
-                    </>
-                  }
+                  inherit={{
+                    active: !settings.default_parallel_agents?.length,
+                    label: defaultLabel,
+                    onSelect: () =>
+                      setSettings({
+                        ...settings,
+                        default_parallel_agents: [],
+                        default_parallel_model_overrides: {},
+                        default_parallel_effort_overrides: {},
+                      }),
+                  }}
+                  label="Parallel review"
+                  help="Choose one or more models for steps that run at the same time."
                   onChange={(next) =>
                     setSettings({
                       ...settings,
@@ -109,6 +166,11 @@ export function ModelDefaultsSection({
             <div>
               <ModelStage
                 title="Combine results"
+                inherited={
+                  !settings.default_merge_agent
+                    ? "Same as sequential steps"
+                    : undefined
+                }
                 agents={[mergeAgent]}
                 models={defaultMergeModelOverrides(settings)}
                 efforts={defaultMergeEffortOverrides(settings)}
@@ -122,8 +184,20 @@ export function ModelDefaultsSection({
                   settings={settings}
                   catalogs={catalogs}
                   providers={PROVIDERS}
-                  label="Merge"
-                  help="Select one default model to combine outputs when a Parallel step runs with multiple providers."
+                  dependencies={dependencies}
+                  inherit={{
+                    active: !settings.default_merge_agent,
+                    label: "Same as sequential steps",
+                    onSelect: () =>
+                      setSettings({
+                        ...settings,
+                        default_merge_agent: "",
+                        default_merge_model_overrides: {},
+                        default_merge_effort_overrides: {},
+                      }),
+                  }}
+                  label="Combine results"
+                  help="Choose one model to combine results when a parallel step uses more than one provider."
                   onChange={(next) =>
                     setSettings({
                       ...settings,
@@ -138,6 +212,9 @@ export function ModelDefaultsSection({
             <div>
               <ModelStage
                 title="Sequential steps"
+                inherited={
+                  !settings.default_sequential_agent ? defaultLabel : undefined
+                }
                 agents={[sequentialAgent]}
                 models={settings.default_sequential_model_overrides}
                 efforts={settings.default_sequential_effort_overrides}
@@ -151,13 +228,20 @@ export function ModelDefaultsSection({
                   settings={settings}
                   catalogs={catalogs}
                   providers={PROVIDERS}
+                  dependencies={dependencies}
+                  inherit={{
+                    active: !settings.default_sequential_agent,
+                    label: defaultLabel,
+                    onSelect: () =>
+                      setSettings({
+                        ...settings,
+                        default_sequential_agent: "",
+                        default_sequential_model_overrides: {},
+                        default_sequential_effort_overrides: {},
+                      }),
+                  }}
                   label="Sequential steps"
-                  help={
-                    <>
-                      Select <strong className="font-semibold">one</strong>{" "}
-                      default model to use for sequential workflow steps.
-                    </>
-                  }
+                  help="Choose one model for steps that run one at a time."
                   onChange={(next) =>
                     setSettings({
                       ...settings,
@@ -172,27 +256,22 @@ export function ModelDefaultsSection({
             <div
               id="usage-limit-fallback"
               tabIndex={-1}
-              className="settings-anchor py-5"
+              className="settings-anchor py-3"
             >
               <label className="flex items-start gap-2.5 text-sm text-gray-800 dark:text-neutral-200">
                 <input
                   aria-label="Enable usage-limit fallback"
                   type="checkbox"
                   checked={Boolean(usageLimitFallbackAgent)}
-                  onChange={(event) => {
-                    const fallback =
-                      PROVIDERS.find(
-                        (provider) =>
-                          provider !==
-                          (settings.preferred_provider || "claude"),
-                      ) || "codex";
+                  disabled={!usageLimitFallbackAgent && !backupChoice}
+                  onChange={(event) =>
                     setSettings({
                       ...settings,
                       usage_limit_fallback_agent: event.target.checked
-                        ? fallback
+                        ? (backupChoice ?? "")
                         : "",
-                    });
-                  }}
+                    })
+                  }
                   className="mt-0.5 rounded border-gray-300 accent-gray-900 dark:border-neutral-700 dark:accent-neutral-200"
                 />
                 <span>
@@ -200,9 +279,12 @@ export function ModelDefaultsSection({
                     Continue after an account usage limit
                   </span>
                   <span className="mt-0.5 block text-xs leading-5 text-gray-500 dark:text-neutral-400">
-                    If your provider reaches a usage or credit limit, retry the
-                    call with the backup provider you choose. Temporary rate
-                    limits still use the normal retry settings.
+                    If you reach a usage or credit limit, Pipeline retries the
+                    call with your backup provider. Temporary rate limits use
+                    Step retries instead.
+                    {!usageLimitFallbackAgent &&
+                      !backupChoice &&
+                      " Connect a second provider to use a backup."}
                   </span>
                 </span>
               </label>
@@ -219,8 +301,9 @@ export function ModelDefaultsSection({
                     settings={settings}
                     catalogs={catalogs}
                     providers={PROVIDERS}
-                    label="Fallback agent"
-                    help="Try the backup provider once for the affected call, including input assessment, review steps, and combining results."
+                    dependencies={dependencies}
+                    label="Backup provider"
+                    help="Pipeline tries this provider once for the call that reached the limit."
                     onChange={(next) =>
                       setSettings({
                         ...settings,
@@ -234,31 +317,6 @@ export function ModelDefaultsSection({
                   />
                 </div>
               )}
-            </div>
-            <div className="pt-5">
-              <Field
-                label="Preferred Provider"
-                help="Used when a workflow has no assigned provider, and as the fallback for PDF extraction and revision comparison."
-              >
-                <select
-                  aria-label="Preferred Provider"
-                  value={settings.preferred_provider}
-                  onChange={(event) =>
-                    setSettings({
-                      ...settings,
-                      preferred_provider: event.target.value,
-                    })
-                  }
-                  className={selectClass}
-                >
-                  <option value="claude">Claude (Anthropic)</option>
-                  <option value="codex">ChatGPT (OpenAI)</option>
-                  <option value="antigravity">Gemini (Google)</option>
-                  <option value="local">
-                    Local (Ollama / OpenAI-compatible)
-                  </option>
-                </select>
-              </Field>
             </div>
           </div>
         </section>
@@ -310,11 +368,14 @@ export function WorkflowSection({
         title="Execution"
         description="Set how many model calls can run at once, how long they can take, and how often to retry."
       />
-      <div className="space-y-5">
-        <Field label="Maximum Concurrent Agents">
+      <div>
+        <SettingRow
+          label="Model calls at once"
+          description="How many model calls a review can run at the same time."
+        >
           <div className="flex items-center gap-3">
             <input
-              aria-label="Maximum Concurrent Agents"
+              aria-label="Model calls at once"
               type="range"
               min={1}
               max={20}
@@ -331,14 +392,14 @@ export function WorkflowSection({
               {settings.max_workers}
             </span>
           </div>
-        </Field>
+        </SettingRow>
 
-        <Field
-          label="Step Timeout"
-          help="Maximum time for each LLM call. Orientation and extraction calls use half this value."
+        <SettingRow
+          label="Step time limit"
+          description="Maximum time for each model call. Input assessment and PDF extraction calls get half this time."
         >
           <select
-            aria-label="Step Timeout"
+            aria-label="Step time limit"
             value={settings.step_timeout_secs}
             onChange={(e) =>
               setSettings({
@@ -354,15 +415,15 @@ export function WorkflowSection({
             <option value={2700}>45 minutes</option>
             <option value={3600}>60 minutes</option>
           </select>
-        </Field>
+        </SettingRow>
 
-        <Field
-          label="Step Retries"
-          help="Number of times to retry a failed step before giving up. Set to 0 for no retries."
+        <SettingRow
+          label="Step retries"
+          description="How many times to retry a failed step. Enter 0 for no retries."
         >
           <div className="flex items-center gap-3">
             <input
-              aria-label="Step Retries"
+              aria-label="Step retries"
               type="range"
               min={0}
               max={5}
@@ -379,15 +440,15 @@ export function WorkflowSection({
               {settings.max_retries}
             </span>
           </div>
-        </Field>
+        </SettingRow>
 
-        <Field
-          label="Simultaneous Reviews"
-          help="How many queued reviews run at the same time. Each review makes its own provider calls, so a higher limit clears the queue sooner but uses provider capacity faster."
+        <SettingRow
+          label="Reviews at once"
+          description="How many reviews run at the same time. A higher number finishes the queue sooner but reaches provider limits faster."
         >
           <select
             id="max-concurrent-reviews"
-            aria-label="Simultaneous Reviews"
+            aria-label="Reviews at once"
             value={settings.max_concurrent_reviews ?? 2}
             onChange={(e) =>
               setSettings({
@@ -402,45 +463,47 @@ export function WorkflowSection({
             <option value={3}>3</option>
             <option value={4}>4</option>
           </select>
-        </Field>
+        </SettingRow>
 
-        <Field
-          label="Review limits"
-          help="Stop a Review before it starts new steps once it reaches a limit. Steps already running finish, and completed results are saved as a partial report. Cost counts direct API connections at list prices; subscriptions are limited by calls and time. Leave a field at 0 for no limit."
-        >
-          <div id="review-limits" className="grid gap-2 sm:grid-cols-3">
-            <LimitInput
-              label="Cost (USD)"
-              step="0.5"
-              value={settings.review_max_cost_usd ?? 0}
-              onChange={(value) =>
-                setSettings({ ...settings, review_max_cost_usd: value })
-              }
-            />
-            <LimitInput
-              label="Model calls"
-              step="1"
-              value={settings.review_max_calls ?? 0}
-              onChange={(value) =>
-                setSettings({
-                  ...settings,
-                  review_max_calls: Math.round(value),
-                })
-              }
-            />
-            <LimitInput
-              label="Minutes"
-              step="5"
-              value={settings.review_max_minutes ?? 0}
-              onChange={(value) =>
-                setSettings({
-                  ...settings,
-                  review_max_minutes: Math.round(value),
-                })
-              }
-            />
-          </div>
-        </Field>
+        <div className="pt-3">
+          <Field
+            label="Review limits"
+            help="When a review reaches a limit, Pipeline starts no new steps. Running steps finish, and the results so far are saved as a partial report. Cost counts API use at list prices. Subscriptions use only the model call and time limits. Enter 0 for no limit."
+          >
+            <div id="review-limits" className="grid gap-2 sm:grid-cols-3">
+              <LimitInput
+                label="Cost (USD)"
+                step="0.5"
+                value={settings.review_max_cost_usd ?? 0}
+                onChange={(value) =>
+                  setSettings({ ...settings, review_max_cost_usd: value })
+                }
+              />
+              <LimitInput
+                label="Model calls"
+                step="1"
+                value={settings.review_max_calls ?? 0}
+                onChange={(value) =>
+                  setSettings({
+                    ...settings,
+                    review_max_calls: Math.round(value),
+                  })
+                }
+              />
+              <LimitInput
+                label="Minutes"
+                step="5"
+                value={settings.review_max_minutes ?? 0}
+                onChange={(value) =>
+                  setSettings({
+                    ...settings,
+                    review_max_minutes: Math.round(value),
+                  })
+                }
+              />
+            </div>
+          </Field>
+        </div>
       </div>
     </>
   );

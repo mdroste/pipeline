@@ -70,11 +70,10 @@ export default function ConversationTitleSettings() {
       <section className="space-y-3 text-sm">
         <h2 className="font-semibold">Conversation titles</h2>
         <p className="text-gray-500 dark:text-neutral-400">
-          Generate a short title after the first reply. This uses an additional
-          model call, with the cheapest available model by default. The model
-          choice below applies to ChatGPT conversations; Claude Code
-          conversations use the cheapest Claude model offered. Rename or
-          regenerate titles from the conversation list.
+          Pipeline titles each conversation after the first reply. This uses one
+          extra model call. The settings below apply to ChatGPT conversations.
+          Claude Code conversations use the cheapest Claude model. To rename or
+          regenerate a title, use the conversation list.
         </p>
         {titles ? (
           <>
@@ -115,15 +114,15 @@ export default function ConversationTitleSettings() {
                       (model) => model.model === titles.model,
                     ) && (
                       <option value={titles.model}>
-                        {titles.model} (not currently available)
+                        {titles.model} (saved, not available)
                       </option>
                     )}
                 </select>
               </label>
               <label className="block text-xs font-medium">
-                Reasoning effort
+                Thinking level
                 <select
-                  aria-label="Title reasoning effort"
+                  aria-label="Title thinking level"
                   value={titles.effort ?? ""}
                   disabled={!titles.enabled}
                   onChange={(event) =>
@@ -145,7 +144,7 @@ export default function ConversationTitleSettings() {
             </div>
             {(!catalog || catalog.models.length === 0) && (
               <p className="text-xs text-gray-500">
-                Model choices appear after signing in.
+                Sign in to ChatGPT to choose a model.
               </p>
             )}
           </>

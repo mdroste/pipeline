@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ComponentProps } from "react";
+import { useLayoutEffect, type ComponentProps } from "react";
+import { createPortal } from "react-dom";
 import NavRail, { CollapsedNavBar, NAV_RAIL_WIDTH } from "./NavRail";
-import { ReviewRunBeacon } from "./ReviewRunList";
+import { NavRailSlotProvider, useNavRailSlot } from "./nav-rail/navRailSlot";
 import { queuedRun } from "../test/queuedRunFixture";
 import type { QueuedRun } from "../lib/types";
 
@@ -23,8 +24,10 @@ function run(
   });
 }
 
-function renderRail(overrides: Partial<ComponentProps<typeof NavRail>> = {}) {
-  const props: ComponentProps<typeof NavRail> = {
+function railProps(
+  overrides: Partial<ComponentProps<typeof NavRail>> = {},
+): ComponentProps<typeof NavRail> {
+  return {
     activePage: "home",
     hasCurrentRun: false,
     isMac: false,
@@ -37,39 +40,96 @@ function renderRail(overrides: Partial<ComponentProps<typeof NavRail>> = {}) {
     onDependencies: vi.fn(),
     ...overrides,
   };
+}
+
+function renderRail(overrides: Partial<ComponentProps<typeof NavRail>> = {}) {
+  const props = railProps(overrides);
   render(<NavRail {...props} />);
   return props;
 }
 
+const expand = (user: ReturnType<typeof userEvent.setup>, section: string) =>
+  user.click(screen.getByRole("button", { name: `Expand ${section}` }));
+
 describe("NavRail", () => {
-  it("keeps every destination visible in one flat rail", async () => {
+  beforeEach(() => localStorage.clear());
+
+  it("starts with the destinations and opens what each one holds", async () => {
     const user = userEvent.setup();
     const props = renderRail();
-    const reviews = within(screen.getByRole("region", { name: "Reviews" }));
 
     expect(screen.getByRole("button", { name: "Home" })).toHaveAttribute(
       "aria-current",
       "page",
     );
+    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
     expect(screen.getByRole("button", { name: "System ready" })).toBeVisible();
-    expect(
-      screen.queryByRole("button", { name: /Tools/ }),
-    ).not.toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: "Conversations" }));
+    expect(props.onNavigate).toHaveBeenCalledWith("conversations");
     await user.click(screen.getByRole("button", { name: "Projects" }));
     expect(props.onNavigate).toHaveBeenCalledWith("project-index");
     await user.click(screen.getByRole("button", { name: "Automations" }));
     expect(props.onNavigate).toHaveBeenCalledWith("tasks");
-    await user.click(reviews.getByRole("button", { name: "Review history" }));
+    await user.click(screen.getByRole("button", { name: "Reviews" }));
     expect(props.onNavigate).toHaveBeenCalledWith("history");
+
+    await expand(user, "Reviews");
+    const reviews = within(screen.getByRole("group", { name: "Reviews" }));
+    await user.click(reviews.getByRole("button", { name: "Designer" }));
+    expect(props.onNavigate).toHaveBeenCalledWith("pipeline");
+    await user.click(reviews.getByRole("button", { name: "New review" }));
+    expect(props.onNewRun).toHaveBeenCalledOnce();
     // Collections live inside history and project Reviews, not the rail.
     expect(
       reviews.queryByRole("button", { name: "Review collections" }),
     ).not.toBeInTheDocument();
-    await user.click(reviews.getByRole("button", { name: "Review designer" }));
-    expect(props.onNavigate).toHaveBeenCalledWith("pipeline");
-    await user.click(reviews.getByRole("button", { name: "New review" }));
+  });
+
+  it("starts each kind of work from one menu", async () => {
+    const user = userEvent.setup();
+    const onNewConversation = vi.fn();
+    const onNewProject = vi.fn();
+    const props = renderRail({ onNewConversation, onNewProject });
+
+    const choose = async (name: RegExp) => {
+      await user.click(screen.getByRole("button", { name: "New" }));
+      await user.click(screen.getByRole("menuitem", { name }));
+    };
+    await choose(/^New conversation/);
+    expect(onNewConversation).toHaveBeenCalledOnce();
+    await choose(/^New review/);
     expect(props.onNewRun).toHaveBeenCalledOnce();
+    await choose(/^New project/);
+    expect(onNewProject).toHaveBeenCalledOnce();
+    await choose(/^New automation/);
+    expect(props.onNavigate).toHaveBeenCalledWith("tasks");
+  });
+
+  it("opens the section holding the page and remembers a section left open", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <NavRail {...railProps({ activePage: "pipeline" })} />,
+    );
+    expect(screen.getByRole("button", { name: "Designer" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+
+    rerender(<NavRail {...railProps({ activePage: "home" })} />);
+    expect(screen.queryByRole("button", { name: "Designer" })).toBeNull();
+
+    await expand(user, "Reviews");
+    rerender(<NavRail {...railProps({ activePage: "tasks" })} />);
+    expect(screen.getByRole("button", { name: "Designer" })).toBeVisible();
+
+    // Closing a section by hand does not stop a later visit from opening it.
+    await user.click(screen.getByRole("button", { name: "Collapse Reviews" }));
+    expect(screen.queryByRole("button", { name: "Designer" })).toBeNull();
+    rerender(<NavRail {...railProps({ activePage: "history" })} />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "History" })).toBeVisible(),
+    );
   });
 
   it("opens recent projects directly and identifies unavailable folders", async () => {
@@ -95,6 +155,7 @@ describe("NavRail", () => {
       ],
     });
 
+    await expand(user, "Projects");
     await user.click(screen.getByRole("button", { name: "Monetary policy" }));
     expect(onOpenProject).toHaveBeenCalledWith("monetary");
     expect(screen.getByRole("button", { name: /Trade paper/ })).toHaveAttribute(
@@ -104,8 +165,8 @@ describe("NavRail", () => {
     expect(screen.getByLabelText("Folder unavailable")).toBeVisible();
   });
 
-  it("shows project activity and attention without changing project navigation", () => {
-    renderRail({ activePage: "workspace", workspaceActive: true });
+  it("shows project activity and attention on the Projects row", () => {
+    renderRail({ activePage: "project-index", workspaceActive: true });
     expect(screen.getByRole("button", { name: /^Projects/ })).toHaveAttribute(
       "aria-current",
       "page",
@@ -116,15 +177,27 @@ describe("NavRail", () => {
     expect(screen.getByLabelText("needs attention")).toBeVisible();
   });
 
-  it("marks the gallery as part of the designer destination", () => {
-    renderRail({ activePage: "gallery" });
+  it("marks gallery and batch as parts of their review destinations", () => {
+    const { unmount } = render(
+      <NavRail {...railProps({ activePage: "gallery" })} />,
+    );
+    expect(screen.getByRole("button", { name: "Designer" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    unmount();
 
+    render(<NavRail {...railProps({ activePage: "batch" })} />);
+    expect(screen.getByRole("button", { name: "History" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
     expect(
-      screen.getByRole("button", { name: "Review designer" }),
-    ).toHaveAttribute("aria-current", "page");
+      screen.queryByRole("button", { name: /Current batch/ }),
+    ).not.toBeInTheDocument();
   });
 
-  it("keeps New review available and lists every queued, running, and finished review", async () => {
+  it("lists every queued, running, and finished review in Activity", async () => {
     const user = userEvent.setup();
     const onOpenRun = vi.fn();
     const onCancelRun = vi.fn();
@@ -148,7 +221,9 @@ describe("NavRail", () => {
       onDismissRuns,
     });
 
-    expect(screen.getByRole("button", { name: "New review" })).toBeEnabled();
+    const activity = screen.getByRole("button", { name: /^Activity/ });
+    expect(activity).toHaveTextContent("1 running · 1 for you");
+    await user.click(activity);
     expect(screen.getByRole("status")).toHaveTextContent(
       "1 of 1 running · 1 queued",
     );
@@ -167,14 +242,11 @@ describe("NavRail", () => {
       ),
       "broken.pdfFailed",
     ]);
-    const activeRow = list.getByRole("button", { name: /^active\.pdf/ });
-    expect(activeRow).toHaveAttribute("aria-current", "page");
-    expect(
-      screen.getByRole("button", { name: "Review history" }),
-    ).not.toHaveAttribute("aria-current");
+    expect(list.getByRole("button", { name: /^active\.pdf/ })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
 
-    await user.click(list.getByRole("button", { name: /^finished\.pdf/ }));
-    expect(onOpenRun).toHaveBeenCalledWith("finished");
     await user.click(
       list.getByRole("button", { name: "Cancel review of active.pdf" }),
     );
@@ -189,34 +261,59 @@ describe("NavRail", () => {
       screen.getByRole("button", { name: "Clear finished (2)" }),
     );
     expect(onDismissRuns).toHaveBeenLastCalledWith(undefined);
+
+    await user.click(list.getByRole("button", { name: /^finished\.pdf/ }));
+    expect(onOpenRun).toHaveBeenCalledWith("finished");
+    expect(screen.queryByRole("dialog", { name: "Activity" })).toBeNull();
   });
 
-  it("shows no run list until a review is queued", () => {
+  it("collects conversation and automation attention in Activity", async () => {
+    const user = userEvent.setup();
+    const onOpenConversations = vi.fn();
+    const onOpenAutomations = vi.fn();
+    const onActivity = vi.fn();
+    renderRail({
+      workspaceAttention: true,
+      tasksAttention: true,
+      onOpenConversations,
+      onOpenAutomations,
+      onActivity,
+    });
+    const open = () =>
+      user.click(screen.getByRole("button", { name: /^Activity/ }));
+
+    await open();
+    await user.click(
+      screen.getByRole("button", { name: /conversation needs your approval/ }),
+    );
+    expect(onOpenConversations).toHaveBeenCalledOnce();
+    await open();
+    await user.click(
+      screen.getByRole("button", { name: /automation has an update/ }),
+    );
+    expect(onOpenAutomations).toHaveBeenCalledOnce();
+    await open();
+    await user.click(screen.getByRole("button", { name: "See all activity" }));
+    expect(onActivity).toHaveBeenCalledOnce();
+  });
+
+  it("says so when nothing is running", async () => {
+    const user = userEvent.setup();
     renderRail({ onOpenRun: vi.fn() });
+    await user.click(screen.getByRole("button", { name: "Activity" }));
+    expect(screen.getByText("Nothing is running.")).toBeVisible();
     expect(
       screen.queryByRole("list", { name: /Reviews in progress/ }),
     ).toBeNull();
   });
 
-  it("marks history active for a batch without adding a batch destination", () => {
-    renderRail({ activePage: "batch" });
-
-    expect(
-      screen.getByRole("button", { name: "Review history" }),
-    ).toHaveAttribute("aria-current", "page");
-    expect(
-      screen.queryByRole("button", { name: /Current batch/ }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("opens dependency details from the system status", async () => {
+  it("shows a setup row only when the system needs something", async () => {
     const user = userEvent.setup();
-    const props = renderRail({
-      dependenciesReady: false,
-    });
+    const props = renderRail({ dependenciesReady: false });
 
     await user.click(screen.getByRole("button", { name: "Setup needed" }));
     expect(props.onDependencies).toHaveBeenCalledOnce();
+    expect(screen.getByText("See what is missing")).toBeVisible();
   });
 
   it("exposes an adjustable primary-navigation divider", async () => {
@@ -226,28 +323,99 @@ describe("NavRail", () => {
       name: "Resize primary navigation",
     });
 
-    expect(divider).toHaveAttribute("aria-valuenow", "216");
+    expect(divider).toHaveAttribute("aria-valuenow", "240");
     await user.click(divider);
     await user.keyboard("{ArrowRight}");
-    expect(props.onResize).toHaveBeenCalledWith(224);
+    expect(props.onResize).toHaveBeenCalledWith(248);
   });
 
-  it("offers to hide itself from a button at the top", async () => {
+  it("offers to fold itself from a button at the top", async () => {
     const user = userEvent.setup();
     const onToggleCollapsed = vi.fn();
     renderRail({ onToggleCollapsed });
 
-    await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
+    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
     expect(onToggleCollapsed).toHaveBeenCalledOnce();
   });
 
-  it("removes the hidden rail from view and from keyboard order", () => {
-    renderRail({ collapsed: true, onToggleCollapsed: vi.fn() });
+  it("keeps every destination as an icon, with sections in a flyout", async () => {
+    const user = userEvent.setup();
+    const props = renderRail({ collapsed: true, tasksAttention: true });
 
-    expect(document.querySelector("aside")).toHaveClass("hidden");
+    await user.click(screen.getByRole("button", { name: "Home" }));
+    expect(props.onNavigate).toHaveBeenCalledWith("home");
+    expect(screen.getByLabelText("Automation update")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Reviews" }));
+    const flyout = within(screen.getByRole("dialog", { name: "Reviews" }));
+    await user.click(flyout.getByRole("button", { name: "History" }));
+    expect(props.onNavigate).toHaveBeenCalledWith("history");
+    expect(screen.queryByRole("dialog", { name: "Reviews" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Reviews" }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Reviews" })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Reviews" }));
+    await user.click(document.body);
+    expect(screen.queryByRole("dialog", { name: "Reviews" })).toBeNull();
+
     expect(
-      screen.queryByRole("button", { name: "Hide sidebar" }),
-    ).not.toBeInTheDocument();
+      screen.queryByRole("separator", { name: "Resize primary navigation" }),
+    ).toBeNull();
+  });
+});
+
+describe("Workspace navigation in the sidebar", () => {
+  function Reporter({ projectId }: { projectId: string | null }) {
+    const rail = useNavRailSlot();
+    const setWorkspace = rail?.setWorkspace;
+    useLayoutEffect(() => {
+      setWorkspace?.({
+        projectId,
+        projectName: projectId ? "Monetary policy" : null,
+        newConversation,
+        openView: vi.fn(),
+      });
+      return () => setWorkspace?.(null);
+    }, [setWorkspace]);
+    return rail?.slot
+      ? createPortal(<button type="button">Project tree</button>, rail.slot)
+      : null;
+  }
+  const newConversation = vi.fn();
+  const renderWorkspace = (projectId: string | null) =>
+    render(
+      <NavRailSlotProvider>
+        <NavRail {...railProps({ activePage: "workspace" })} />
+        <Reporter projectId={projectId} />
+      </NavRailSlotProvider>,
+    );
+
+  it("places an open project under Projects and starts conversations there", async () => {
+    const user = userEvent.setup();
+    renderWorkspace("monetary");
+
+    const projects = within(screen.getByRole("group", { name: "Projects" }));
+    expect(
+      await projects.findByRole("button", { name: "Project tree" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "New" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /In Monetary policy/ }),
+    );
+    expect(newConversation).toHaveBeenCalledOnce();
+  });
+
+  it("places an unfiled conversation under Conversations", async () => {
+    renderWorkspace(null);
+    const conversations = within(
+      screen.getByRole("group", { name: "Conversations" }),
+    );
+    expect(
+      await conversations.findByRole("button", { name: "Project tree" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("group", { name: "Projects" })).toBeNull();
   });
 });
 
@@ -258,14 +426,7 @@ describe("CollapsedNavBar", () => {
       document.querySelector("aside > [data-tauri-drag-region]"),
     ).toBeInTheDocument();
 
-    render(
-      <CollapsedNavBar
-        isMac={false}
-        isWindows
-        status={null}
-        onExpand={vi.fn()}
-      />,
-    );
+    render(<CollapsedNavBar isMac={false} isWindows onExpand={vi.fn()} />);
     expect(screen.getByTestId("collapsed-nav-bar")).toHaveAttribute(
       "data-tauri-drag-region",
       "deep",
@@ -279,66 +440,12 @@ describe("CollapsedNavBar", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("brings the rail back and reports what the rail would have shown", async () => {
+  it("brings the full sidebar back", async () => {
     const user = userEvent.setup();
     const onExpand = vi.fn();
-    const { rerender } = render(
-      <CollapsedNavBar isMac={false} status={null} onExpand={onExpand} />,
-    );
+    render(<CollapsedNavBar isMac={false} onExpand={onExpand} />);
 
-    await user.click(screen.getByRole("button", { name: "Show sidebar" }));
+    await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
     expect(onExpand).toHaveBeenCalledOnce();
-
-    rerender(
-      <CollapsedNavBar isMac={false} status="running" onExpand={onExpand} />,
-    );
-    expect(
-      screen.getByRole("button", { name: "Show sidebar (running)" }),
-    ).toBeVisible();
-
-    rerender(
-      <CollapsedNavBar isMac={false} status="attention" onExpand={onExpand} />,
-    );
-    expect(
-      screen.getByRole("button", { name: "Show sidebar (needs attention)" }),
-    ).toBeVisible();
-  });
-});
-
-describe("ReviewRunBeacon", () => {
-  it("summarizes active and finished reviews and reveals the list", async () => {
-    const user = userEvent.setup();
-    const onReveal = vi.fn();
-    const { rerender } = render(
-      <ReviewRunBeacon
-        runs={[run("a", "running"), run("b", "running"), run("c", "queued")]}
-        unseen={new Set()}
-        onReveal={onReveal}
-      />,
-    );
-    await user.click(
-      screen.getByRole("button", { name: /^2 reviews running, 1 queued/ }),
-    );
-    expect(onReveal).toHaveBeenCalledOnce();
-
-    rerender(
-      <ReviewRunBeacon
-        runs={[run("d", "done")]}
-        unseen={new Set(["d"])}
-        onReveal={onReveal}
-      />,
-    );
-    expect(
-      screen.getByRole("button", { name: /^1 review finished/ }),
-    ).toBeVisible();
-
-    rerender(
-      <ReviewRunBeacon
-        runs={[run("d", "done")]}
-        unseen={new Set()}
-        onReveal={onReveal}
-      />,
-    );
-    expect(screen.queryByRole("button")).toBeNull();
   });
 });

@@ -191,3 +191,42 @@ async fn cancelled_store_wait_keeps_gate_until_worker_finishes() {
         .await
         .unwrap();
 }
+
+#[test]
+fn new_conversations_copy_a_chosen_default_only() {
+    let settings = crate::settings::Settings {
+        preferred_provider: "claude".into(),
+        default_model: "opus".into(),
+        default_effort: "high".into(),
+        ..Default::default()
+    };
+    assert_eq!(default_session_overrides(&settings).unwrap(), None);
+
+    let chosen = crate::settings::Settings {
+        default_model_chosen: true,
+        ..settings
+    };
+    assert_eq!(
+        default_session_overrides(&chosen).unwrap(),
+        Some(json!({"runtime":"claude","model":"opus","effort":"high"}))
+    );
+
+    let api = crate::settings::Settings {
+        claude_access_mode: "api".into(),
+        ..chosen.clone()
+    };
+    assert_eq!(
+        default_session_overrides(&api).unwrap().unwrap()["runtime"],
+        "anthropic-api"
+    );
+
+    // The conversation picker sets a thinking level only for a chosen model.
+    let automatic = crate::settings::Settings {
+        default_model: String::new(),
+        ..chosen
+    };
+    assert_eq!(
+        default_session_overrides(&automatic).unwrap(),
+        Some(json!({"runtime":"claude"}))
+    );
+}

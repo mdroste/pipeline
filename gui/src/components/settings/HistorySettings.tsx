@@ -4,7 +4,6 @@ import { confirmDialog } from "../DialogService";
 
 import type { Settings } from "../../lib/types";
 
-import InfoButton from "../InfoButton";
 import ValidatedNumber from "./ValidatedNumber";
 
 export function RunRetention({
@@ -50,7 +49,7 @@ export function RunRetention({
         maxBytes: settings.max_saved_run_bytes,
       });
       if (preview.delete_count === 0) {
-        setPurgeResult("Your completed reports are within the storage limits.");
+        setPurgeResult("No reports are over these limits.");
         await loadUsage();
         return;
       }
@@ -63,7 +62,7 @@ export function RunRetention({
           `(${fmtBytes(preview.remaining_bytes)}) will remain.\n\n` +
           "You can restore reports from Trash until you delete them permanently.",
         {
-          title: "Apply retention policy",
+          title: "Move old reports to Trash",
           confirmLabel: "Move to Trash",
           destructive: true,
         },
@@ -78,17 +77,16 @@ export function RunRetention({
       });
       setPurgeResult(
         removed === 0
-          ? "Your completed reports are within the storage limits."
+          ? "No reports are over these limits."
           : `Moved ${removed} completed report${removed === 1 ? "" : "s"} to Trash.`,
       );
       await loadUsage();
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
       setPurgeError(
-        `${
-          purgeStarted
-            ? "Review history could not be moved to Trash"
-            : "The retention preview could not be loaded; no reports were moved"
-        }: ${error instanceof Error ? error.message : String(error)}`,
+        purgeStarted
+          ? `Could not move reports to Trash: ${detail}`
+          : `Could not preview cleanup. No reports were moved. ${detail}`,
       );
     } finally {
       setPurging(false);
@@ -99,13 +97,8 @@ export function RunRetention({
     <div>
       <div className="mb-1.5 flex items-center gap-1.5">
         <span className="text-sm font-medium text-gray-700 dark:text-neutral-300">
-          Review history retention
+          Saved report limits
         </span>
-        <InfoButton label="Review history retention">
-          Reports and supporting files are saved in your research data folder.
-          After each review, Pipeline moves the oldest completed reports to
-          Trash to stay within both limits. Set either limit to 0 for no limit.
-        </InfoButton>
         {usage && (
           <span className="ml-auto text-xs font-normal text-gray-500 dark:text-neutral-400">
             {usage.count} report{usage.count === 1 ? "" : "s"} ·{" "}
@@ -148,17 +141,16 @@ export function RunRetention({
           className="px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-neutral-600 text-gray-700 dark:text-neutral-300 hover:bg-gray-50 dark:hover:bg-neutral-800 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           title={
             settings.max_saved_runs === 0 && settings.max_saved_run_bytes === 0
-              ? "Set a limit above 0 to review cleanup"
+              ? "Set a limit above 0 to preview cleanup"
               : "Preview reports beyond these limits"
           }
         >
-          {purging ? "Preparing cleanup…" : "Review cleanup…"}
+          {purging ? "Preparing cleanup…" : "Preview cleanup…"}
         </button>
       </div>
       <p className="settings-row-description mt-3">
-        Set either limit to 0 for unlimited. Reports beyond these limits move to
-        Trash after a review finishes. Review cleanup previews the exact reports
-        before making changes.
+        After each review, Pipeline moves the oldest reports to Trash to stay
+        within these limits. Enter 0 for no limit.
       </p>
       {purgeError && (
         <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">

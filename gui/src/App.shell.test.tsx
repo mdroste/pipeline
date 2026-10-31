@@ -27,11 +27,14 @@ const appearance: AppTestAppearance = {
   systemThemeListener: undefined,
 };
 const { reset } = createAppTestFixture(mocks, appearance);
-// The rail is flat: every destination is always visible, so "opening tools"
-// is a no-op kept only so navigation call sites read as user journeys.
-async function openTools(_user: {
+// History and Designer sit inside Reviews, which stays closed until it is
+// needed or the current page belongs to it.
+async function openTools(user: {
   click: (element: Element) => Promise<unknown>;
-}) {}
+}) {
+  const expand = screen.queryByRole("button", { name: "Expand Reviews" });
+  if (expand) await user.click(expand);
+}
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
@@ -140,7 +143,7 @@ describe("App shell", () => {
 
     await waitFor(() => {
       expect(document.documentElement).toHaveClass("dark");
-      expect(document.documentElement).not.toHaveClass("theme-transitioning");
+      expect(document.documentElement).not.toHaveClass("theme-switching");
       expect(setWindowTheme).toHaveBeenCalledWith(null);
     });
 
@@ -212,9 +215,11 @@ describe("App shell", () => {
       await screen.findByRole("heading", { name: "test-paper.pdf is queued" }),
     ).toBeVisible();
     expect(router.route).toEqual({ page: "main", runKey: "test-paper" });
+    await user.click(screen.getByRole("button", { name: /^Activity/ }));
     expect(
       screen.getByRole("button", { name: /^test-paper\.pdf/ }),
     ).toHaveAttribute("aria-current", "page");
+    await user.keyboard("{Escape}");
     expect(screen.getByRole("button", { name: "New review" })).toBeEnabled();
   });
 
@@ -237,13 +242,14 @@ describe("App shell", () => {
     ).not.toBeInTheDocument();
 
     await openTools(user);
-    await user.click(screen.getByRole("button", { name: "Review designer" }));
+    await user.click(screen.getByRole("button", { name: "Designer" }));
     await user.click(await screen.findByRole("button", { name: "Gallery" }));
 
     expect(await screen.findByText("Gallery workspace")).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Review designer" }),
-    ).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Designer" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
   });
 
   it("shows run setup only in the new-review workspace", async () => {
@@ -257,35 +263,40 @@ describe("App shell", () => {
       "page",
     );
 
-    await user.click(screen.getByRole("button", { name: "Review history" }));
+    await openTools(user);
+    await user.click(screen.getByRole("button", { name: "History" }));
     expect(await screen.findByText("History workspace")).toBeVisible();
     expect(screen.queryByTestId("run-setup-panel")).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Review history" }),
-    ).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "History" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
 
     await user.click(screen.getByRole("button", { name: "New review" }));
     expect(screen.getByTestId("run-setup-panel")).toBeVisible();
   });
 
-  it("collapses the sidebar, keeps focus on the toggle, and remembers the choice", async () => {
+  it("folds the sidebar to icons, keeps focus on the toggle, and remembers the choice", async () => {
     const user = userEvent.setup();
     const { unmount } = render(<App />);
 
     expect(screen.queryByTestId("collapsed-nav-bar")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
-    expect(screen.getByRole("button", { name: "Show sidebar" })).toHaveFocus();
-    expect(document.querySelector("aside")).toHaveClass("hidden");
+    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(
+      screen.getByRole("button", { name: "Expand sidebar" }),
+    ).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Home" })).toBeVisible();
     expect(screen.getByTestId("run-setup-panel")).toBeVisible();
 
     unmount();
     render(<App />);
-    const show = screen.getByRole("button", { name: "Show sidebar" });
-    expect(show).not.toHaveFocus();
+    const expand = screen.getByRole("button", { name: "Expand sidebar" });
+    expect(expand).not.toHaveFocus();
 
-    await user.click(show);
-    expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveFocus();
+    await user.click(expand);
+    expect(
+      screen.getByRole("button", { name: "Collapse sidebar" }),
+    ).toHaveFocus();
     expect(screen.queryByTestId("collapsed-nav-bar")).not.toBeInTheDocument();
-    expect(document.querySelector("aside")).not.toHaveClass("hidden");
   });
 });

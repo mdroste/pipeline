@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { PROVIDER_LABELS, type Provider } from "../../lib/providers";
 import type { StepConfig } from "../../lib/types";
 
 function StepRow({
@@ -27,9 +28,7 @@ function StepRow({
   const badges: string[] = [];
   if (step.tools?.includes("WebSearch")) badges.push("web search");
   if (step.agents?.length) {
-    badges.push(
-      ...step.agents.map((a) => a.charAt(0).toUpperCase() + a.slice(1)),
-    );
+    badges.push(...step.agents.map((a) => PROVIDER_LABELS[a as Provider] ?? a));
   }
   if (step.model) badges.push(`model: ${step.model}`);
   if (step.effort) badges.push(`effort: ${step.effort}`);

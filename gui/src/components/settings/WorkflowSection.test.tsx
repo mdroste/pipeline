@@ -14,7 +14,7 @@ describe("WorkflowSection", () => {
       <WorkflowSection settings={makeSettings()} setSettings={setSettings} />,
     );
 
-    const control = screen.getByLabelText("Simultaneous Reviews");
+    const control = screen.getByLabelText("Reviews at once");
     expect(control).toHaveValue("2");
     expect(control).toHaveAttribute("id", "max-concurrent-reviews");
     await user.selectOptions(control, "4");
@@ -28,7 +28,7 @@ describe("WorkflowSection", () => {
       makeSettings(),
       DEFAULT_PREFERENCES,
       "system",
-    ).find((candidate) => candidate.label === "Simultaneous Reviews");
+    ).find((candidate) => candidate.label === "Reviews at once");
     expect(entry).toMatchObject({
       section: "workflow",
       target: "max-concurrent-reviews",

@@ -126,6 +126,16 @@ vi.mock(
 describe("App content scroller", () => {
   beforeEach(reset);
 
+  it("contains the shell so the window itself cannot scroll", async () => {
+    localStorage.setItem("pipeline.ui.page", "home");
+    render(<App />);
+    await screen.findByRole("heading", { name: "What would you like to do?" });
+    expect(screen.getByTestId("app-shell")).toHaveClass(
+      "relative",
+      "overflow-clip",
+    );
+  });
+
   it("opens each destination at the top of the shared content scroller", async () => {
     const user = userEvent.setup();
     localStorage.setItem("pipeline.ui.page", "home");
@@ -134,7 +144,7 @@ describe("App content scroller", () => {
     const content = screen.getByTestId("app-content");
     content.scrollTop = 400;
 
-    await user.click(screen.getByRole("button", { name: "Review history" }));
+    await user.click(screen.getByRole("button", { name: "Reviews" }));
     expect(await screen.findByText("History workspace")).toBeVisible();
     expect(content.scrollTop).toBe(0);
 

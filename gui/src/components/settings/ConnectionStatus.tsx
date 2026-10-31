@@ -23,7 +23,7 @@ export default function ConnectionStatus({
   const [checking, setChecking] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [error, setError] = useState("");
-  const [checked, setChecked] = useState<string | null>(null);
+  const [checked, setChecked] = useState(false);
   const checkGeneration = useRef(0);
   const saved = useContext(ReviewSaveState);
   const subscription =
@@ -44,7 +44,7 @@ export default function ConnectionStatus({
   useEffect(() => {
     checkGeneration.current += 1;
     setChecking(false);
-    setChecked(null);
+    setChecked(false);
     setError("");
     setAttempted(false);
     return () => {
@@ -52,7 +52,7 @@ export default function ConnectionStatus({
     };
   }, [key, subscription, settings.local_base_url]);
   const status = error
-    ? "Connection needs attention"
+    ? "Connection problem"
     : checked
       ? "Signed in"
       : subscription
@@ -60,41 +60,34 @@ export default function ConnectionStatus({
           ? "Signed in"
           : dependency?.cli_auth_status === "signed_out"
             ? "Sign-in required"
-            : "Subscription · check sign-in"
+            : "Sign-in not checked"
         : provider !== "local" && !key
           ? "API key required"
           : loading
-            ? "Checking model access…"
+            ? "Checking…"
             : blocked
-              ? "Waiting for saved connection"
+              ? "Saving…"
               : catalog?.warning || catalog?.stale
-                ? "Connection needs attention"
+                ? "Connection problem"
                 : catalog?.models.length
-                  ? "Model access available"
-                  : "Not yet verified";
+                  ? "Connected"
+                  : "Not checked";
   return (
     <div className="settings-connection-status">
-      <div>
-        <span className="settings-status-badge">{status}</span>
-        <span className="settings-row-description block">
-          {subscription
-            ? "Subscription"
-            : provider === "local"
-              ? "Compatible server"
-              : "API · metered usage"}{" "}
-          · Reviews
-        </span>
-      </div>
+      <span role="status" className="settings-status-badge">
+        {status}
+      </span>
       <button
         type="button"
         className="settings-button"
+        title={subscription ? undefined : "This check is free."}
         disabled={checking || loading || saved.pending || Boolean(saved.error)}
         onClick={async () => {
           const generation = ++checkGeneration.current;
           setChecking(true);
           setAttempted(true);
           setError("");
-          setChecked(null);
+          setChecked(false);
           try {
             if (subscription) {
               const { readiness: report } = await appClient.executionPlan({
@@ -118,9 +111,9 @@ export default function ConnectionStatus({
               if (dep.cli_auth_status !== "signed_in")
                 throw new Error(
                   dep.hint ||
-                    "Sign-in could not be verified. Sign in using the provider’s command-line tool.",
+                    "Could not confirm sign-in. Sign in with the provider’s command-line tool.",
                 );
-              setChecked("Subscription sign-in verified.");
+              setChecked(true);
             }
             await onCheck();
           } catch (cause) {
@@ -143,20 +136,6 @@ export default function ConnectionStatus({
           {error || catalog?.warning}
         </p>
       )}
-      {checked && (
-        <p role="status" className="settings-inline-status">
-          {checked}
-        </p>
-      )}
-      {!subscription &&
-      catalog?.models.length &&
-      !catalog.warning &&
-      !catalog.stale &&
-      !blocked ? (
-        <p className="settings-row-description">
-          Connection verified without making a model call.
-        </p>
-      ) : null}
     </div>
   );
 }

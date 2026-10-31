@@ -87,6 +87,14 @@ beforeEach(() => {
     },
   );
 });
+it("titles the page without repeating the product name", async () => {
+  render(<TasksPage />);
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Automations" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("PIPELINE")).not.toBeInTheDocument();
+});
+
 it("prepares a concrete scope before starting work", async () => {
   render(<TasksPage initialSessionId="session" />);
   await screen.findByRole("option", { name: "Research idea" });

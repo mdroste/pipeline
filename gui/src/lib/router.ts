@@ -9,6 +9,7 @@ export type AppPage =
   | "main"
   | "workspace"
   | "project-index"
+  | "conversations"
   | "tasks"
   | "pipeline"
   | "settings"
@@ -29,6 +30,7 @@ export type AppRoute =
       runKey?: string;
     }
   | { page: "project-index" }
+  | { page: "conversations" }
   | {
       page: "workspace";
       /** Switch to this project on entry; omitted = last-used project. */
@@ -61,6 +63,7 @@ const PAGES: readonly AppPage[] = [
   "main",
   "workspace",
   "project-index",
+  "conversations",
   "tasks",
   "pipeline",
   "settings",
@@ -84,6 +87,7 @@ const PAGE_TO_PATH: Record<AppPage, string> = {
   home: "/home",
   main: "/reviews/new",
   "project-index": "/projects",
+  conversations: "/conversations",
   workspace: "/project",
   tasks: "/automations",
   pipeline: "/reviews/designer",

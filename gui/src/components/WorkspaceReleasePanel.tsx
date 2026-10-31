@@ -15,6 +15,9 @@ import type {
 
 const ExchangePanel = lazy(() => import("./WorkspaceExchangePanel"));
 
+const plural = (count: number, noun: string) =>
+  `${count} ${noun}${count === 1 ? "" : "s"}`;
+
 function operation(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
@@ -73,12 +76,12 @@ export default function WorkspaceReleasePanel({
   const exportArchive = async () => {
     const path = await save({
       defaultPath: "workspace-research.pwrx",
-      filters: [{ name: "Workspace research archive", extensions: ["pwrx"] }],
+      filters: [{ name: "Research backup", extensions: ["pwrx"] }],
     });
     if (!path) return;
     const report = await releaseClient.exportResearchArchive(path);
     notify(
-      `Exported ${report.workspaceCount} workspace(s), ${report.sessionCount} conversation(s), and ${report.blobCount} file(s).\n\n${report.portabilityNote}`,
+      `Exported ${plural(report.workspaceCount, "project")}, ${plural(report.sessionCount, "conversation")}, and ${plural(report.blobCount, "file")}.\n\n${report.portabilityNote}`,
       "success",
     );
   };
@@ -86,16 +89,16 @@ export default function WorkspaceReleasePanel({
   const restoreArchive = async () => {
     const path = await open({
       multiple: false,
-      filters: [{ name: "Workspace research archive", extensions: ["pwrx"] }],
+      filters: [{ name: "Research backup", extensions: ["pwrx"] }],
     });
     if (typeof path !== "string") return;
     const inspection = await releaseClient.inspectResearchArchive(path);
     const roots = inspection.workspaceRoots.length
       ? inspection.workspaceRoots.map((root) => `• ${root}`).join("\n")
-      : "• No registered Workspace roots";
+      : "• None";
     if (
       !(await confirmDialog(
-        `You can restore only when Workspace has no saved research data. Restoring does not run any tools. Conversations restart from saved context, and command profiles must be tested again.\n\nProject folders in this backup:\n${roots}\n\n${inspection.portabilityNote}`,
+        `You can restore only if Pipeline has no saved projects or conversations. Conversations restart from saved context. Test your command profiles again after restoring.\n\nProject folders in this backup:\n${roots}\n\n${inspection.portabilityNote}`,
         { title: "Restore research backup", confirmLabel: "Continue" },
       ))
     )
@@ -106,7 +109,7 @@ export default function WorkspaceReleasePanel({
     if (!mappings) return;
     const report = await releaseClient.importResearchArchive(path, mappings);
     window.alert(
-      `Restored ${report.workspaceCount} workspace(s) and ${report.sessionCount} conversation(s).\n\n${report.portabilityNote}`,
+      `Restored ${plural(report.workspaceCount, "project")} and ${plural(report.sessionCount, "conversation")}.\n\n${report.portabilityNote}`,
     );
     window.location.reload();
   };
@@ -137,10 +140,9 @@ export default function WorkspaceReleasePanel({
             Research backup
           </h3>
           <p className="mt-1 text-xs text-gray-500">
-            Back up projects, saved research files, conversation working files,
-            and transcripts. This backup excludes external project folders,
-            reviews, automations, Trash, and sign-ins. Back up external folders
-            separately.
+            Saves your projects, research files, and conversations to one file.
+            It leaves out attached project folders, reviews, automations, Trash,
+            and sign-ins. Back up attached folders separately.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <button
@@ -157,7 +159,7 @@ export default function WorkspaceReleasePanel({
               onClick={() => onAction(restoreArchive)}
               className="rounded border px-3 py-2 text-xs"
             >
-              Restore archive
+              Restore research backup
             </button>
           </div>
         </section>
@@ -233,9 +235,8 @@ export default function WorkspaceReleasePanel({
 
       {(view === "all" || view === "backup") && (
         <p className="rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
-          After restoring, sign in to ChatGPT. The assistant starts a new
-          session using your reviewed notes and selected evidence. Earlier
-          messages remain available to read.
+          After restoring, sign in to ChatGPT. Conversations restart from your
+          notes and evidence. You can still read earlier messages.
         </p>
       )}
     </div>

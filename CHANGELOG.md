@@ -3,7 +3,62 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
-## Unreleased
+## 1.3.2 — 2026-10-31
+
+- The sidebar is simpler. **Home**, **Conversations**, **Projects**, **Reviews**,
+  and **Automations** now sit in one list, and each opens what it holds when you
+  need it. **History** and **Designer** moved inside **Reviews**. One **New**
+  button starts a conversation, review, project, or automation.
+- A project's areas and conversations now appear in the sidebar when you open
+  it. They replace the panel behind the project name. **Switch project** moves
+  to another project.
+- **Activity** at the bottom of the sidebar collects running and queued reviews,
+  conversations waiting for approval, and automation updates.
+- **Conversations** is a new page that lists every conversation, with or without
+  a project.
+- Command/Ctrl+K and **Search** now find projects, conversations, reviews,
+  automations, and project views from anywhere in the app.
+- The sidebar folds to icons instead of hiding, and does so by itself in
+  narrower windows.
+- **Settings → Connections** now has one **Default model**: a provider, model,
+  and thinking level for reviews and new conversations. It replaces **Preferred
+  provider**. Each review stage follows it, and a stage you changed can go back
+  to it. A new conversation copies it when it starts, so existing conversations
+  keep their provider. Until you choose a default, new conversations start on
+  ChatGPT as before.
+- A usage-limit backup that isn't connected no longer stops reviews from
+  starting. The run preview warns you instead, and Pipeline now suggests a
+  connected provider when you turn the backup on.
+- Provider menus and buttons show which connections aren't ready, so you can see
+  the problem before a review won't start.
+- **New review** now shows the providers a workflow will really use, including
+  when it sets its own or its steps differ, and it hides **Parallel agents** for
+  workflows with no parallel steps. Model menus there stay readable instead of
+  shrinking to "Prov". The run preview names each provider instead of saying
+  "default provider".
+- The review designer shows ChatGPT and Gemini by name, and Review settings show
+  a saved model role by its real name.
+- Settings is tighter and quieter. Rows take less height, **Connections** shows
+  each provider's status beside its name, and API keys save from one line.
+  **Reviews** execution settings now use the same rows as the rest of Settings.
+- The layout model for the PaddleOCR-VL Full Parser now downloads from Hugging
+  Face, which fixes installs that crawled at a few dozen KB/s. If Hugging Face
+  can't supply it, Pipeline uses the same model from PaddlePaddle's own server.
+- **Projects**, **Activity**, and the workflow gallery now look like
+  **Automations**, with the same heading, toolbar, and rows. Automations no
+  longer shows "PIPELINE" above its title, because the sidebar already shows the
+  name.
+- Switching between light and dark now fades the whole window at once. Text used
+  to change at different speeds and could flicker.
+- Settings now uses plainer wording throughout, and storage categories have
+  names you can read. Several controls were renamed: **Simultaneous Reviews** is
+  now **Reviews at once**, **Review cleanup…** is **Preview cleanup…**,
+  **Automatic revision reconciliation** is **Compare with the previous report**,
+  and **Restore archive** is **Restore research backup**. Settings search still
+  finds the old names.
+- On Windows, choosing **Subscription** or **API** under **Connection mode** in
+  Settings no longer pushes the window contents up and leaves an empty space
+  below them.
 
 ## 1.3.1 — 2026-10-31
 

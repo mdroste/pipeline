@@ -160,7 +160,7 @@ function ModelOverrides({
                     onChange={(event) => updateEffort(key, event.target.value)}
                     className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
                   >
-                    <option value="">Provider default thinking</option>
+                    <option value="">Default thinking</option>
                     {efforts.map((effort) => (
                       <option key={effort} value={effort}>
                         {effort.charAt(0).toUpperCase() + effort.slice(1)}

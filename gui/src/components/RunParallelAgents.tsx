@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  DepsReport,
   ModelCatalog,
   PipelineConfig,
   RunParallelOverrides,
   Settings,
 } from "../lib/types";
+import { workflowParallelAgents } from "../lib/parallelAgents";
 import {
   defaultMergeAgent,
   defaultMergeEffortOverrides,
   defaultMergeModelOverrides,
-  defaultParallelAgents,
   PROVIDER_LABELS,
   PROVIDERS,
   type Provider,
@@ -20,6 +21,8 @@ import AgentDefaultsControl from "./AgentDefaultsControl";
 interface Props {
   value: RunParallelOverrides | null;
   disabled?: boolean;
+  /** What readiness last saw; undefined leaves providers unlabeled. */
+  dependencies?: DepsReport | null;
   localLlmActive?: boolean;
   refreshKey?: number;
   onChange: (value: RunParallelOverrides | null) => void;
@@ -28,28 +31,27 @@ interface Props {
 export default function RunParallelAgents({
   value,
   disabled = false,
+  dependencies,
   localLlmActive = false,
   refreshKey = 0,
   onChange,
 }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [workflowMerge, setWorkflowMerge] = useState<
-    PipelineConfig["merge"] | null
-  >(null);
+  const [config, setConfig] = useState<PipelineConfig | null>(null);
   const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
     let live = true;
-    setWorkflowMerge(null);
+    setConfig(null);
     Promise.all([
       invoke<{ settings: Settings }>("get_settings"),
       invoke<PipelineConfig>("get_pipeline_config"),
     ])
-      .then(([response, config]) => {
+      .then(([response, workflow]) => {
         if (!live) return;
         setSettings(response.settings);
-        setWorkflowMerge(config.merge);
+        setConfig(workflow);
       })
       .catch(() => {
         // The run readiness error remains authoritative. Keep this optional
@@ -93,15 +95,15 @@ export default function RunParallelAgents({
     };
   }, [open, providers, settings]);
 
-  if (!settings) return null;
+  if (!settings || !config) return null;
 
-  const inheritedAgents = defaultParallelAgents(settings);
-  const agents = value?.agents ?? inheritedAgents;
-  const modelOverrides =
-    value?.model_overrides ?? settings.default_parallel_model_overrides ?? {};
-  const effortOverrides =
-    value?.effort_overrides ?? settings.default_parallel_effort_overrides ?? {};
-  const workflowMergeAgent = workflowMerge?.agents?.[0];
+  const inherited = workflowParallelAgents(config, settings);
+  // Nothing fans out, so a choice here would have no effect on the run.
+  if (!inherited.applies) return null;
+  const agents = value?.agents ?? inherited.agents;
+  const modelOverrides = value?.model_overrides ?? inherited.modelOverrides;
+  const effortOverrides = value?.effort_overrides ?? inherited.effortOverrides;
+  const workflowMergeAgent = config.merge.agents?.[0];
   const inheritedMergeAgent = workflowMergeAgent || defaultMergeAgent(settings);
   const mergeAgent = value?.merge_agent || inheritedMergeAgent;
   const inheritedMergeModelOverrides = workflowMergeAgent
@@ -116,8 +118,8 @@ export default function RunParallelAgents({
   const mergeEffortOverrides = value?.merge_agent
     ? (value.merge_effort_overrides ?? {})
     : inheritedMergeEffortOverrides;
-  const multipleAgents = agents.length > 1;
-  const mergeEnabled = workflowMerge?.enabled ?? true;
+  const multipleAgents = value ? agents.length > 1 : inherited.multiple;
+  const mergeEnabled = config.merge.enabled;
   const mergeSource = value?.merge_agent
     ? "This report"
     : workflowMergeAgent
@@ -132,10 +134,13 @@ export default function RunParallelAgents({
             Parallel agents
           </p>
           <p className="mt-0.5 truncate text-[11px] text-gray-500 dark:text-gray-500">
-            {agents
-              .map((agent) => PROVIDER_LABELS[agent as Provider])
-              .join(" + ")}
-            {!value && " · Settings default"}
+            {!value && inherited.source === "mixed"
+              ? "Varies by step"
+              : agents
+                  .map((agent) => PROVIDER_LABELS[agent as Provider])
+                  .join(" + ")}
+            {!value && inherited.source === "settings" && " · Settings default"}
+            {!value && inherited.source === "workflow" && " · Workflow"}
           </p>
           {multipleAgents && (
             <p className="mt-0.5 truncate text-[11px] text-gray-500 dark:text-gray-500">
@@ -175,8 +180,14 @@ export default function RunParallelAgents({
             catalogs={catalogs}
             providers={providers}
             multi
+            stacked
+            dependencies={dependencies}
             label="Agents for this report"
-            help="Each selected provider runs its own version of every parallel review step."
+            help={
+              inherited.source === "settings"
+                ? "Each selected provider runs its own version of every parallel review step."
+                : "Each selected provider runs its own version of every parallel review step, replacing this workflow’s choices for this report."
+            }
             disabled={disabled}
             onChange={(next) =>
               onChange({
@@ -196,6 +207,8 @@ export default function RunParallelAgents({
                 settings={settings}
                 catalogs={catalogs}
                 providers={providers}
+                stacked
+                dependencies={dependencies}
                 label="Merge for this report"
                 help="One provider combines these reviews before the next steps begin."
                 disabled={disabled}

@@ -28,7 +28,8 @@ export type IconName =
   | "stop"
   | "arrow-up"
   | "warning"
-  | "sidebar";
+  | "sidebar"
+  | "search";
 
 export function Icon({
   name,
@@ -97,11 +98,10 @@ export function Icon({
     case "tasks":
       return (
         <svg {...common}>
-          <rect x="4" y="4" width="16" height="16" rx="3" />
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
-            d="m8 12 2.5 2.5L16 9"
+            d="M16.5 3 20 6.5 16.5 10M4 11.5v-2a3 3 0 0 1 3-3h13M7.5 21 4 17.5 7.5 14M20 12.5v2a3 3 0 0 1-3 3H4"
           />
         </svg>
       );
@@ -172,6 +172,17 @@ export function Icon({
             strokeLinecap="round"
             strokeLinejoin="round"
             d="M19 13.25v-2.5l-2.05-.52a5.7 5.7 0 0 0-.55-1.32l1.08-1.82-1.77-1.77-1.82 1.08a5.7 5.7 0 0 0-1.32-.55L12.05 3h-2.5l-.52 2.05a5.7 5.7 0 0 0-1.32.55L5.9 4.52 4.12 6.29 5.2 8.11a5.7 5.7 0 0 0-.55 1.32L2.6 9.95v2.5l2.05.52c.13.46.31.9.55 1.32l-1.08 1.82 1.77 1.77 1.82-1.08c.42.24.86.42 1.32.55l.52 2.05h2.5l.52-2.05c.46-.13.9-.31 1.32-.55l1.82 1.08 1.77-1.77-1.08-1.82c.24-.42.42-.86.55-1.32L19 13.25Z"
+          />
+        </svg>
+      );
+    case "search":
+      return (
+        <svg {...common}>
+          <circle cx="11" cy="11" r="6.5" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="m20 20-4.3-4.3"
           />
         </svg>
       );

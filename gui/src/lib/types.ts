@@ -733,7 +733,13 @@ export interface PipelineResult {
 }
 
 export interface Settings {
+  /** With its access mode, this names the connection of the shared default. */
   preferred_provider: string;
+  /** Empty means Automatic. A local server uses `local_model` instead. */
+  default_model?: string;
+  default_effort?: string;
+  /** New conversations follow the default only once one has been chosen. */
+  default_model_chosen?: boolean;
   /** Providers inherited by Parallel steps whose workflow agent list is empty. */
   default_parallel_agents?: string[];
   default_parallel_model_overrides?: Record<string, ModelSelection>;

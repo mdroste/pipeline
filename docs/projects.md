@@ -8,7 +8,7 @@ covers **Analyze** and **Write**, and [Automations](automations.md) covers
 
 ## Create a project
 
-Open **Projects** and choose **New project**. Enter a name, and optionally
+Open **Projects** and choose **+ New project**. Enter a name, and optionally
 choose the folder that holds the paper and its code, and the paper itself.
 Then choose **Create project**.
 
@@ -24,16 +24,19 @@ what needs you, such as an interrupted edit or suggested notes. Choose the
 name to open the Overview, or **Resume conversation** to go back to the last
 conversation. **Pin project** keeps a project at the top on this computer.
 
-Inside a project, choose the project name in the top bar to open navigation.
-Press Command/Ctrl+K to go to any view by name. The layout menu switches
-between **Project only**, **Chat only**, and **Project + chat**. Project areas
+Inside a project, the sidebar lists its six areas and its conversations.
+**Switch project** moves to another project. Press Command/Ctrl+K, or choose
+**Search** in the sidebar, to find any project, conversation, review,
+automation, or view by name. The layout menu switches between **Project only**, **Chat only**, and **Project + chat**. Project areas
 work without a model connection. Conversations and reviews need one. See
 [Connections](connections.md).
 
 ## Work in a conversation
 
-Start a conversation from the Overview, or with **New chat** above the chat.
-For a conversation outside any project, choose **New chat** on **Home**.
+Start a conversation from the Overview, with **New chat** above the chat, or
+from **New → New conversation** in the sidebar. Outside a project, **New →
+New conversation** starts one with no project. **Conversations** in the sidebar
+lists every conversation, and filters to **Unfiled** and **Archived**.
 
 ### Choose a model
 
@@ -304,7 +307,7 @@ A backup restores only into an empty research data folder:
 
 1. Choose an empty folder under
    [Research data folder](settings.md#research-data-folder) and restart.
-2. Open **Manage research data** and choose **Restore archive**.
+2. Open **Manage research data** and choose **Restore research backup**.
 3. Under **Choose project folders**, point each project to its folder.
 4. Sign in again, approve and test your commands, and turn scheduled checks
    back on.
@@ -351,8 +354,8 @@ compares the numbers. A value matches when
 ### Trash
 
 To free space, open **Settings → Data & Storage**, then
-**Storage and retention**, and choose **Inspect disk use**. Select categories,
-choose **Preview deletion**, then **Move to trash**. Reviews have their own
+**Disk use**, and choose **Show disk use**. Select categories, choose
+**Preview deletion**, then **Move to Trash**. Reviews have their own
 cleanup, described in [Settings](settings.md#storage-and-cleanup). Cleanup offers only files
 nothing refers to, such as finished run files. **Restore** brings items back
-until you choose **Empty trash**, which deletes them permanently.
+until you choose **Empty Trash**, which deletes them permanently.

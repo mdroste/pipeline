@@ -243,6 +243,14 @@ impl Settings {
         if !self.local_model.is_empty() && sanitize_cli_arg(&self.local_model) != self.local_model {
             return Err("Invalid local model name".to_string());
         }
+        if self.default_model.trim() != self.default_model
+            || sanitize_cli_arg(&self.default_model) != self.default_model
+        {
+            return Err("Invalid default model".to_string());
+        }
+        if sanitize_cli_arg(&self.default_effort) != self.default_effort {
+            return Err("Invalid default thinking level".to_string());
+        }
         validate_local_base_url(&self.local_base_url)?;
         Ok(())
     }

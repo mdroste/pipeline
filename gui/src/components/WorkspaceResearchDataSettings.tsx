@@ -42,8 +42,7 @@ export default function WorkspaceResearchDataSettings({
           : "Research diagnostics"}
       </h2>
       <p className="mt-2 text-sm text-gray-500">
-        Backups and retention apply to all projects and conversations on this
-        device.
+        Applies to all projects and conversations on this computer.
       </p>
       {!expanded && (
         <button

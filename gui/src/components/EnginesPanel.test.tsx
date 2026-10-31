@@ -100,7 +100,7 @@ describe("EnginesPanel", () => {
     render(<EnginesPanel />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Local engine status could not be loaded: engine catalog unavailable",
+      "Could not check the local parser: engine catalog unavailable",
     );
     await user.click(screen.getByRole("button", { name: "Retry status" }));
 
@@ -128,7 +128,7 @@ describe("EnginesPanel", () => {
     await screen.findByText("PaddleOCR-VL 1.6 Full Parser");
     await user.click(
       screen.getByRole("button", {
-        name: "More information about Local Engines",
+        name: "More information about Local parser",
       }),
     );
     await user.click(screen.getByRole("button", { name: "~/.pipeline/" }));
@@ -389,7 +389,7 @@ describe("EnginesPanel", () => {
       status = engine();
       await act(() => vi.advanceTimersByTimeAsync(2500));
       expect(await screen.findByRole("alert")).toHaveTextContent(
-        "PaddleOCR-VL 1.6 Full Parser was not installed.",
+        "PaddleOCR-VL 1.6 Full Parser didn’t finish installing.",
       );
       expect(
         screen.getByRole("button", { name: /Install \(~2\.9 GB\)/ }),
@@ -428,7 +428,7 @@ describe("EnginesPanel", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Engine cancellation failed: cancellation channel unavailable",
+      "Could not cancel the install: cancellation channel unavailable",
     );
   });
 

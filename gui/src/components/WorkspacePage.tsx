@@ -8,13 +8,25 @@ import WorkspaceComposerControls, {
   loadClaudeUsage,
 } from "./WorkspaceComposerControls";
 import RetainedWorkspaceView from "./RetainedWorkspaceView";
-import WorkspaceProjectNavigation from "./WorkspaceProjectNavigation";
-import { workspaceDestinations } from "../lib/workspaceNavigation";
+import WorkspaceRailNavigation from "./WorkspaceRailNavigation";
+import { useNavRailSlot } from "./nav-rail/navRailSlot";
+import {
+  workspaceDestinations,
+  type WorkspaceDestination,
+} from "../lib/workspaceNavigation";
 import WorkspaceDesk from "./WorkspaceDesk";
 import WorkspaceConversationView from "./WorkspaceConversationView";
 import WorkspaceContextInspector from "./WorkspaceContextInspector";
 import WorkspaceContextTray from "./WorkspaceContextTray";
-import { lazy, Suspense, useEffect, useId, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import "./WorkspaceNavigation.css";
 import "./WorkspaceInspector.css";
@@ -22,17 +34,12 @@ import RequestCard from "./WorkspaceRequestCard";
 import WorkspaceBackgroundTurnNotice from "./WorkspaceBackgroundTurnNotice";
 import useComposerFileDrop from "../hooks/useComposerFileDrop";
 import IconButton from "../ui/IconButton";
-import Select from "../ui/Select";
 import { MenuItem, MenuLabel, MenuSeparator } from "../ui/Menu";
 import { Icon } from "../ui/icons";
 import WorkspaceIcon from "./WorkspaceIcon";
-import SidebarPanel, { SidebarHeader } from "./SidebarPanel";
 import WorkspaceComposerMenu from "./WorkspaceComposerMenu";
 import WorkspaceConversationOutline from "./WorkspaceConversationOutline";
-import {
-  ConversationMenu,
-  MoveConversationDialog,
-} from "./WorkspaceConversationActions";
+import { MoveConversationDialog } from "./WorkspaceConversationActions";
 import type { ReviewHandoff } from "../lib/workbenchTypes";
 
 const WorkspaceProjectSurface = lazy(() => import("./WorkspaceProjectSurface"));
@@ -52,7 +59,6 @@ export default function WorkspacePage({
   entrySurface,
   newProjectRequest = 0,
   onNewProjectRequestHandled,
-  onOpenSettings,
   onReviewHandoff,
   onTasks,
 }: {
@@ -64,26 +70,10 @@ export default function WorkspacePage({
   newProjectRequest?: number;
   onNewProjectRequestHandled?: () => void;
   onTasks?: (sessionId: string, taskId?: string) => void;
-  onOpenSettings: () => void;
   onReviewHandoff?: (handoff: ReviewHandoff) => void;
 }) {
   const {
-    layout: {
-      sidebarWidth,
-      setSidebarWidth,
-      shellRef,
-      shellWidth,
-      navigationOpen,
-      setNavigationOpen,
-      navigationButtonRef,
-      toolPickerOpen,
-      setToolPickerOpen,
-      conversationMenuRef,
-      navigationFits,
-      navigationCollapsed,
-      pinNavigation,
-      navigationDialog,
-    },
+    layout: { toolPickerOpen, setToolPickerOpen, conversationMenuRef },
     inspector: {
       inspector,
       harnessEditor,
@@ -97,8 +87,6 @@ export default function WorkspacePage({
       workspaceId,
       sessions,
       sessionId,
-      showArchived,
-      setShowArchived,
       tasksEnabled,
       projectRequest,
       resetRequest,
@@ -117,7 +105,6 @@ export default function WorkspacePage({
       recordDestination,
       navigateProject,
       currentWorkspace,
-      projectFolder,
       setProjectRequest,
     },
     conversation: {
@@ -191,7 +178,6 @@ export default function WorkspacePage({
     onNewProjectRequestHandled,
   });
   const [conversationFirst, setConversationFirst] = useState(0);
-  const projectLabel = useId();
   const assistantPane = useRef<HTMLElement>(null);
   const setComposerBusy = (value: boolean) => {
     contextBusyRef.current = value;
@@ -232,256 +218,89 @@ export default function WorkspacePage({
     setError,
   ]);
 
-  const navigation = (
-    <SidebarPanel
-      fill={navigationCollapsed}
-      aria-label="Project navigation"
-      className={navigationCollapsed ? "workspace-navigation-drawer" : ""}
-      width={navigationCollapsed ? (shellWidth ?? sidebarWidth) : sidebarWidth}
-      defaultWidth={224}
-      min={200}
-      max={440}
-      onResize={setSidebarWidth}
-      resizeLabel="Resize project sidebar"
-    >
-      <SidebarHeader
-        title="Projects"
-        actions={
-          <>
-            <button
-              type="button"
-              title="Connection settings"
-              aria-label="Assistant connection settings"
-              onClick={onOpenSettings}
-              className="workspace-sidebar-icon-button"
-            >
-              <WorkspaceIcon name="settings" size={18} />
-            </button>
-            <button
-              type="button"
-              className="workspace-sidebar-icon-button"
-              aria-label="Close navigation"
-              title="Close navigation"
-              onClick={() => {
-                if (navigationCollapsed) setNavigationOpen(false);
-                else pinNavigation(false);
-              }}
-            >
-              <WorkspaceIcon name="close" />
-            </button>
-          </>
-        }
-      />
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="space-y-5 px-5 pb-5 pt-1">
-          <div>
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <span
-                id={projectLabel}
-                className="text-ui-meta font-medium text-ink-muted"
-              >
-                Project
-              </span>
-              <button
-                type="button"
-                title="New project"
-                aria-label="New project"
-                disabled={contextBusy || harnessEditor}
-                onClick={() => {
-                  setNavigationOpen(false);
-                  setProjectDialog(true);
-                }}
-                className="workspace-sidebar-text-button"
-              >
-                <WorkspaceIcon name="plus" size={14} />
-                New project
-              </button>
-            </div>
-            <Select
-              className="w-full"
-              labelledBy={projectLabel}
-              disabled={contextBusy || harnessEditor}
-              value={workspaceId ?? ""}
-              onChange={(value) => {
-                void selectProject(value || null).catch((cause) =>
-                  setError(workbenchErrorMessage(cause)),
-                );
-              }}
-              options={[
-                { value: "", label: "Unfiled conversations" },
-                ...workspaces
-                  .filter((item) => !item.archivedAt)
-                  .map((item) => ({ value: item.id, label: item.name })),
-              ]}
-            />
-            {currentWorkspace && (
-              <p
-                className="mt-2 truncate text-xs text-gray-500"
-                title={currentWorkspace.root ?? undefined}
-              >
-                {currentWorkspace.missingRootAt
-                  ? "Folder not found"
-                  : (projectFolder ?? "No folder attached")}
-              </p>
-            )}
-          </div>
-        </div>
-        {workspaceId && (
-          <WorkspaceProjectNavigation
-            key={workspaceId}
-            destination={destination}
-            disabled={contextBusy || harnessEditor}
-            onNavigate={navigateProject}
-          />
-        )}
-        <details
-          className="workspace-conversations"
-          open={!workspaceId || undefined}
-        >
-          <summary>Conversations · {sessions.length}</summary>
-          <div className="px-3 py-2">
-            <button
-              type="button"
-              disabled={contextBusy || harnessEditor}
-              onClick={() =>
-                void createSession().catch((cause) =>
-                  setError(workbenchErrorMessage(cause)),
-                )
-              }
-              className="workspace-sidebar-primary"
-            >
-              <WorkspaceIcon name="plus" />
-              New conversation
-            </button>
-          </div>
-
-          <nav aria-label="Conversations" className="px-3 pb-4">
-            {!sessions.length && (
-              <p className="px-2 py-3 text-xs text-gray-500 dark:text-gray-400">
-                No conversations yet.
-              </p>
-            )}
-            {sessions.map((session) => (
-              <div
-                key={session.id}
-                className={`mb-1 flex items-center rounded-lg pr-1 transition-colors ${session.id === sessionId && surface === "chat" ? "bg-gray-100 text-gray-950 dark:bg-gray-800 dark:text-gray-50" : "text-gray-600 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/60"}`}
-              >
-                <button
-                  type="button"
-                  disabled={contextBusy || harnessEditor}
-                  aria-current={
-                    session.id === sessionId && surface === "chat"
-                      ? "page"
-                      : undefined
-                  }
-                  title={session.title}
-                  onClick={() => {
-                    void selectSession(session.id).catch((cause) =>
-                      setError(workbenchErrorMessage(cause)),
-                    );
-                  }}
-                  className="min-w-0 flex-1 rounded-lg px-2 py-2.5 text-left text-sm disabled:opacity-40"
-                >
-                  <span className="block truncate">{session.title}</span>
-                  {backgroundTurn?.sessionId === session.id && (
-                    <span className="block text-xs text-amber-700 dark:text-amber-300">
-                      {backgroundTurn.waiting
-                        ? "Needs your approval"
-                        : "Responding…"}
-                    </span>
-                  )}
-                  {session.archivedAt && (
-                    <span className="text-xs text-gray-500 dark:text-gray-400">
-                      Archived
-                    </span>
-                  )}
-                </button>
-                <ConversationMenu
-                  session={session}
-                  disabled={contextBusy || harnessEditor}
-                  onRename={() =>
-                    void renameSession(session).catch((cause) =>
-                      setError(workbenchErrorMessage(cause)),
-                    )
-                  }
-                  onGenerateTitle={() =>
-                    void generateTitle(session).catch((cause) =>
-                      setError(
-                        `Title could not be generated: ${workbenchErrorMessage(cause)}`,
-                      ),
-                    )
-                  }
-                  onMove={() => {
-                    setNavigationOpen(false);
-                    setMoveError(null);
-                    setMoveTarget(session);
-                  }}
-                  onArchive={() =>
-                    void archiveSession(session).catch((cause) =>
-                      setError(workbenchErrorMessage(cause)),
-                    )
-                  }
-                  onDelete={() =>
-                    void deleteSession(session).catch((cause) =>
-                      setError(workbenchErrorMessage(cause)),
-                    )
-                  }
-                />
-              </div>
-            ))}
-          </nav>
-          <label className="flex shrink-0 cursor-pointer items-center gap-2 border-t border-gray-200/80 px-5 py-4 text-xs text-gray-500 dark:border-gray-800 dark:text-gray-400">
-            <input
-              type="checkbox"
-              disabled={contextBusy || harnessEditor}
-              checked={showArchived}
-              onChange={(event) => {
-                setShowArchived(event.target.checked);
-                void loadSessions(workspaceId, event.target.checked);
-              }}
-              className="rounded border-gray-300"
-            />
-            Show archived
-          </label>
-        </details>
-      </div>
-
-      {navigationCollapsed && (
-        <button
-          type="button"
-          className="workspace-pin-navigation"
-          disabled={!navigationFits}
-          onClick={() => pinNavigation(true)}
-        >
-          Keep navigation open
-        </button>
-      )}
-    </SidebarPanel>
-  );
-
+  // The sidebar's actions run the latest closures without re-reporting.
+  const railActions = useRef({
+    newConversation: () => undefined as void,
+    openView: (_destination: WorkspaceDestination) => undefined as void,
+  });
+  railActions.current = {
+    newConversation: () =>
+      void createSession().catch((cause) =>
+        setError(workbenchErrorMessage(cause)),
+      ),
+    openView: navigateProject,
+  };
+  const rail = useNavRailSlot();
+  const setRailWorkspace = rail?.setWorkspace;
+  const projectName = currentWorkspace?.name ?? null;
+  useLayoutEffect(() => {
+    setRailWorkspace?.({
+      projectId: workspaceId,
+      projectName,
+      newConversation: () => railActions.current.newConversation(),
+      openView: (view) => railActions.current.openView(view),
+    });
+    return () => setRailWorkspace?.(null);
+  }, [setRailWorkspace, workspaceId, projectName]);
+  const dismissRail = () => rail?.dismissRef.current?.();
+  const reportError = (cause: unknown) =>
+    setError(workbenchErrorMessage(cause));
   return (
-    <div
-      ref={shellRef}
-      className="workspace-chat-shell flex h-full min-h-0 min-w-0 bg-white dark:bg-neutral-950"
-    >
-      {navigationCollapsed ? (
-        <div
-          ref={navigationDialog}
-          hidden={!navigationOpen}
-          role="dialog"
-          aria-modal={navigationOpen ? true : undefined}
-          aria-label="Browse projects"
-          className="workspace-navigation-overlay"
-        >
-          <div
-            className="workspace-navigation-backdrop"
-            onPointerDown={() => setNavigationOpen(false)}
-          />
-          {navigation}
-        </div>
-      ) : (
-        navigation
-      )}
+    <div className="workspace-chat-shell flex h-full min-h-0 min-w-0 bg-white dark:bg-neutral-950">
+      {rail?.slot &&
+        createPortal(
+          <WorkspaceRailNavigation
+            key={workspaceId ?? "unfiled"}
+            project={currentWorkspace}
+            projects={workspaces}
+            destination={destination}
+            sessions={sessions}
+            sessionId={sessionId}
+            chatOpen={surface === "chat"}
+            background={backgroundTurn}
+            disabled={contextBusy || harnessEditor}
+            onNavigate={(view) => {
+              dismissRail();
+              navigateProject(view);
+            }}
+            onSelectSession={(id) => {
+              dismissRail();
+              void selectSession(id).catch(reportError);
+            }}
+            onCreateSession={() => {
+              dismissRail();
+              void createSession().catch(reportError);
+            }}
+            onSelectProject={(id) => {
+              dismissRail();
+              void selectProject(id).catch(reportError);
+            }}
+            onNewProject={() => {
+              dismissRail();
+              setProjectDialog(true);
+            }}
+            onAllProjects={() => {
+              dismissRail();
+              onAllProjects?.();
+            }}
+            conversationActions={(session) => ({
+              onRename: () => void renameSession(session).catch(reportError),
+              onGenerateTitle: () =>
+                void generateTitle(session).catch((cause) =>
+                  setError(
+                    `Title could not be generated: ${workbenchErrorMessage(cause)}`,
+                  ),
+                ),
+              onMove: () => {
+                setMoveError(null);
+                setMoveTarget(session);
+              },
+              onArchive: () => void archiveSession(session).catch(reportError),
+              onDelete: () => void deleteSession(session).catch(reportError),
+            })}
+          />,
+          rail.slot,
+        )}
       {toolPickerOpen && workspaceId && (
         <WorkspaceToolPicker
           workspaceId={workspaceId}
@@ -515,13 +334,6 @@ export default function WorkspacePage({
       <WorkspaceDesk
         key={workspaceId ?? "unfiled"}
         workspaceId={workspaceId}
-        navigationHidden={navigationCollapsed}
-        navigationButtonRef={navigationButtonRef}
-        onNavigation={() => {
-          if (!navigationCollapsed) pinNavigation(false);
-          else setNavigationOpen((value) => !value);
-        }}
-        navigationOpen={navigationOpen}
         projectName={currentWorkspace?.name}
         toolLabel={workspaceDestinations[destination].label}
         onTools={workspaceId ? () => setToolPickerOpen(true) : undefined}
@@ -1011,9 +823,7 @@ export default function WorkspacePage({
                   if (sessionRef.current === next.session.id) setSnapshot(next);
                 }}
                 onBusy={setComposerBusy}
-                onBrowseProjects={() => {
-                  if (navigationCollapsed) setNavigationOpen(true);
-                }}
+                onBrowseProjects={() => onAllProjects?.()}
                 onTasks={
                   sessionId && onTasks ? () => onTasks(sessionId) : undefined
                 }

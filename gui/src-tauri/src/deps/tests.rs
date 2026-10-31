@@ -3,7 +3,8 @@ use super::{check_claude_auth, probe_resolved};
 use super::{
     cli_auth_status, cli_setup_recommendation, dependency_ready, google_dependency,
     parse_host_port, pdf_dependency_requirements, pdf_extraction_may_run, required_providers,
-    resolve_command_in, windows_pathexts, CliAuthStatus, DepStatus,
+    resolve_command_in, run_providers, unavailable_backup, windows_pathexts, CliAuthStatus,
+    DepStatus,
 };
 use std::ffi::{OsStr, OsString};
 use std::path::Path;
@@ -168,7 +169,7 @@ fn active_profile_explicit_agents_are_required() {
 }
 
 #[test]
-fn configured_usage_limit_fallback_is_required_at_preflight() {
+fn usage_limit_backup_is_not_needed_to_start_a_run() {
     let settings = crate::settings::Settings {
         preferred_provider: "claude".to_string(),
         usage_limit_fallback_agent: "codex".to_string(),
@@ -176,7 +177,81 @@ fn configured_usage_limit_fallback_is_required_at_preflight() {
     };
     let required = required_providers(&settings, None, false, None, None);
     assert!(required.contains("claude"));
-    assert!(required.contains("codex"));
+    assert!(!required.contains("codex"));
+}
+
+#[test]
+fn a_backup_is_flagged_only_when_it_could_not_run() {
+    let dependency = |name: &str, found: bool, authenticated: Option<bool>| DepStatus {
+        name: name.into(),
+        found,
+        version: String::new(),
+        path: String::new(),
+        required: false,
+        hint: String::new(),
+        help_url: None,
+        authenticated,
+        cli_auth_status: None,
+    };
+    let settings = |backup: &str| crate::settings::Settings {
+        usage_limit_fallback_agent: backup.into(),
+        ..Default::default()
+    };
+    let report = crate::deps::DepsReport {
+        deps: vec![
+            dependency("ChatGPT (reviews)", true, Some(false)),
+            dependency("Google API", true, Some(true)),
+            dependency("Local LLM server", false, None),
+        ],
+        ready: true,
+    };
+
+    assert_eq!(
+        unavailable_backup(&settings("codex"), &report).as_deref(),
+        Some("codex")
+    );
+    assert_eq!(
+        unavailable_backup(&settings("local"), &report).as_deref(),
+        Some("local")
+    );
+    assert_eq!(unavailable_backup(&settings("antigravity"), &report), None);
+    assert_eq!(unavailable_backup(&settings(""), &report), None);
+}
+
+#[test]
+fn run_providers_list_every_required_provider_in_display_order() {
+    let settings = crate::settings::Settings {
+        preferred_provider: "local".to_string(),
+        default_orientation_agent: "codex".to_string(),
+        default_merge_agent: "codex".to_string(),
+        usage_limit_fallback_agent: "antigravity".to_string(),
+        auto_revision_reconciliation: true,
+        ..Default::default()
+    };
+    let config = crate::pipeline_config::PipelineConfig {
+        steps: vec![crate::pipeline_config::StepConfig {
+            id: "review".to_string(),
+            agents: vec!["claude".to_string()],
+            ..Default::default()
+        }],
+        merge: Default::default(),
+        outputs: Default::default(),
+        context_cache: Default::default(),
+        use_orientation: true,
+        orientation_prompt: String::new(),
+        orientation_schema: None,
+        extraction: crate::pipeline_config::ExtractionConfig {
+            method: "pdftotext".to_string(),
+            ..Default::default()
+        },
+        parallel_context_template: String::new(),
+        variables: Vec::new(),
+    };
+
+    assert_eq!(
+        run_providers(&settings, &config, false, None, None),
+        ["claude", "codex", "antigravity", "local"]
+    );
 }
 
 #[test]

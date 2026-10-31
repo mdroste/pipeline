@@ -207,7 +207,7 @@ describe("DepsCheck", () => {
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
-  it("links a missing required PaddleOCR-VL extractor to PDF Extraction settings", async () => {
+  it("links a missing required PaddleOCR-VL extractor to PDF extraction settings", async () => {
     const onOpenPdfSettings = vi.fn();
     const report: DepsReport = {
       ready: false,
@@ -236,7 +236,7 @@ describe("DepsCheck", () => {
       screen.getByText(/Required PDF parsing tools are missing\./),
     ).toBeInTheDocument();
     const settingsLink = screen.getByRole("link", {
-      name: "Settings → Reviews → PDF Extraction",
+      name: "Settings → Reviews → PDF extraction",
     });
     expect(settingsLink).toHaveAttribute("href", "#paddleocr-local-engine");
     await userEvent.setup().click(settingsLink);

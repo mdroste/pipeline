@@ -6,10 +6,12 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { listen } from "@tauri-apps/api/event";
 import { appEvents } from "../lib/appEvents";
 import WorkspacePage from "./WorkspacePage";
+import { NavRailSlotProvider, useNavRailSlot } from "./nav-rail/navRailSlot";
 import type {
   ConversationSnapshot,
   WorkbenchSession,
@@ -161,8 +163,20 @@ beforeEach(() => {
     value: scrollIntoView,
   });
 });
+/** The app shell's sidebar slot, so the page's navigation has somewhere to go. */
+function RailSlot() {
+  return <div ref={useNavRailSlot()?.setSlot} aria-label="Sidebar" />;
+}
+function RailHost({ children }: { children: ReactNode }) {
+  return (
+    <NavRailSlotProvider>
+      <RailSlot />
+      {children}
+    </NavRailSlotProvider>
+  );
+}
 const mount = async () => {
-  const view = render(<WorkspacePage onOpenSettings={vi.fn()} />);
+  const view = render(<WorkspacePage />, { wrapper: RailHost });
   await screen.findByRole("heading", { name: "Policy discussion" });
   return view;
 };
@@ -215,7 +229,7 @@ it.each(["chat", "project"])(
           finish = resolve;
         }),
     );
-    render(<WorkspacePage onOpenSettings={vi.fn()} />);
+    render(<WorkspacePage />);
     fireEvent.click(
       await screen.findByRole("button", { name: "Stop response" }),
     );
@@ -276,39 +290,28 @@ it("handles export cancellation, dialog/write failure and a successful retry vis
   expect(screen.queryByRole("alert")).toBeNull();
 });
 
-it("starts with navigation closed and preserves the draft while opening, pinning and closing it", async () => {
+it("places conversations in the sidebar and keeps the draft while switching", async () => {
   await mount();
   const draft = screen.getByLabelText("Message");
   fireEvent.change(draft, { target: { value: "Keep my working question" } });
   expect(
-    screen.queryByRole("complementary", { name: "Project navigation" }),
+    within(screen.getByRole("navigation", { name: "Conversations" })).getByRole(
+      "button",
+      { name: "Policy discussion" },
+    ),
+  ).toBeVisible();
+  // No project is open, so its sections and switcher stay out of the way.
+  expect(
+    screen.queryByRole("navigation", { name: "Project sections" }),
   ).not.toBeInTheDocument();
-  const browse = screen.getByRole("button", { name: "Browse projects" });
-  browse.focus();
-  fireEvent.click(browse);
   expect(
-    screen.getByRole("dialog", { name: "Browse projects" }),
-  ).toBeInTheDocument();
-  expect(draft.closest("[inert]")).not.toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Keep navigation open" }));
-  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(
-    screen.getByRole("complementary", { name: "Project navigation" }),
-  ).toBeInTheDocument();
-  expect(localStorage.getItem("pipeline.workspace.navigationPinned")).toBe(
-    "true",
-  );
-  expect(draft.closest("[inert]")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Close navigation" }));
-  expect(localStorage.getItem("pipeline.workspace.navigationPinned")).toBe(
-    "false",
-  );
-  expect(browse).toHaveFocus();
+    screen.queryByRole("button", { name: "Switch project" }),
+  ).not.toBeInTheDocument();
   expect(draft).toHaveValue("Keep my working question");
   expect(mocks.sendTurn).not.toHaveBeenCalled();
 });
 
-it("opens project tools with the keyboard while leaving a message draft untouched", async () => {
+it("opens the project view picker while leaving a message draft untouched", async () => {
   localStorage.setItem("pipeline.workspace.workspaceId", workspace.id);
   localStorage.setItem("pipeline.workspace.sessionId", "conversation");
   localStorage.setItem(`pipeline.workspace.view.${workspace.id}`, "assistant");
@@ -320,8 +323,7 @@ it("opens project tools with the keyboard while leaving a message draft untouche
   await mount();
   const draft = screen.getByLabelText("Message");
   fireEvent.change(draft, { target: { value: "Keep my assumptions" } });
-  draft.focus();
-  fireEvent.keyDown(draft, { key: "k", metaKey: true });
+  fireEvent.click(screen.getByRole("button", { name: "Find a project view" }));
   const search = await screen.findByRole("combobox", {
     name: "Find a project view",
   });
@@ -344,13 +346,7 @@ it("explicit project entry reveals the project even when the saved view is conve
     workspace,
     session: { ...snapshot.session, workspaceId: workspace.id },
   };
-  render(
-    <WorkspacePage
-      entrySurface="project"
-      entryRequest={1}
-      onOpenSettings={vi.fn()}
-    />,
-  );
+  render(<WorkspacePage entrySurface="project" entryRequest={1} />);
   await waitFor(() =>
     expect(
       screen.getByRole("region", { name: "Project working area" }),
@@ -367,7 +363,6 @@ it("saves the exact composer draft before allowing navigation back to the index"
       onSaveHandlerChange={(handler) => {
         save = handler;
       }}
-      onOpenSettings={vi.fn()}
     />,
   );
   const message = await screen.findByLabelText("Message");
@@ -465,7 +460,6 @@ it("flushes and clears the old conversation when a sidebar entry switches projec
 
   view.rerender(
     <WorkspacePage
-      onOpenSettings={vi.fn()}
       entryRequest={1}
       entryTarget={{
         page: "workspace",
@@ -529,27 +523,6 @@ it("opens generated PDF and source links from an unfiled conversation", async ()
   );
 });
 
-it("restores the sidebar width, persists resizing, and resets without loading research tools", async () => {
-  localStorage.setItem("pipeline.workspace.navigationPinned", "true");
-  localStorage.setItem("pipeline.workspace.sidebarWidth", "336");
-  await mount();
-  const sidebar = screen.getByRole("complementary", {
-    name: "Project navigation",
-  });
-  const divider = within(sidebar).getByRole("separator", {
-    name: "Resize project sidebar",
-  });
-  expect(sidebar).toHaveStyle({ width: "336px" });
-  fireEvent.keyDown(divider, { key: "ArrowRight" });
-  expect(sidebar).toHaveStyle({ width: "344px" });
-  expect(localStorage.getItem("pipeline.workspace.sidebarWidth")).toBe("344");
-  fireEvent.doubleClick(divider);
-  expect(sidebar).toHaveStyle({ width: "224px" });
-  expect(localStorage.getItem("pipeline.workspace.sidebarWidth")).toBe("224");
-  expect(mocks.listPapers).not.toHaveBeenCalled();
-  expect(mocks.effectiveHarness).not.toHaveBeenCalled();
-});
-
 it("opens the attach menu lazily and offers only things added to a message", async () => {
   await mount();
   expect(mocks.listPapers).not.toHaveBeenCalled();
@@ -570,29 +543,16 @@ it("opens the attach menu lazily and offers only things added to a message", asy
   expect(mocks.sendTurn).not.toHaveBeenCalled();
 });
 
-it("requires a project before importing and preserves a draft when switching", async () => {
-  await mount();
-  fireEvent.change(screen.getByLabelText("Message"), {
-    target: { value: "Keep this unsent question" },
+it("sends the researcher to their projects before importing", async () => {
+  const onAllProjects = vi.fn();
+  render(<WorkspacePage onAllProjects={onAllProjects} />, {
+    wrapper: RailHost,
   });
+  await screen.findByRole("heading", { name: "Policy discussion" });
   fireEvent.click(screen.getByRole("button", { name: "Add to message" }));
   fireEvent.click(screen.getByRole("menuitem", { name: /^Add files/ }));
   fireEvent.click(screen.getByRole("button", { name: "Choose a project" }));
-  // Choosing a project happens in project navigation, which opens for it.
-  expect(screen.getByRole("dialog", { name: "Browse projects" })).toBeVisible();
-  fireEvent.click(screen.getByRole("combobox", { name: "Project" }));
-  fireEvent.click(screen.getByRole("option", { name: "Monetary policy" }));
-  await waitFor(() =>
-    expect(mocks.updateSession).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: "conversation",
-        draft: "Keep this unsent question",
-      }),
-    ),
-  );
-  await waitFor(() =>
-    expect(mocks.listSessions).toHaveBeenCalledWith("project", false),
-  );
+  expect(onAllProjects).toHaveBeenCalledOnce();
   expect(mocks.importPaper).not.toHaveBeenCalled();
   expect(mocks.sendTurn).not.toHaveBeenCalled();
 });
@@ -725,14 +685,14 @@ it("blocks sending while files are being imported", async () => {
   fireEvent.click(screen.getByRole("menuitem", { name: /^Add files/ }));
   fireEvent.click(await screen.findByRole("button", { name: "Choose files…" }));
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-  expect(screen.getByLabelText("Project")).toBeDisabled();
+  expect(
+    screen.getByRole("button", { name: "New conversation" }),
+  ).toBeDisabled();
   await act(async () => release(null));
   expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
 });
 
 const openMenu = () => {
-  if (!screen.queryByRole("complementary", { name: "Project navigation" }))
-    fireEvent.click(screen.getByRole("button", { name: "Browse projects" }));
   fireEvent.click(
     screen.getByRole("button", {
       name: "Conversation actions for Policy discussion",
@@ -821,7 +781,9 @@ it("moves an unfiled conversation into a project and follows it there", async ()
   await waitFor(() =>
     expect(mocks.listSessions).toHaveBeenCalledWith("project", false),
   );
-  expect(screen.getByLabelText("Project")).toHaveTextContent("Monetary policy");
+  expect(
+    await screen.findByRole("button", { name: "Monetary policy" }),
+  ).toBeVisible();
   expect(localStorage.getItem("pipeline.workspace.workspaceId")).toBe(
     "project",
   );
@@ -886,7 +848,7 @@ it("regenerates a title on request and refreshes it from a background title even
 });
 
 it("recovers an immediate mode-exit draft even if its database save fails", async () => {
-  const view = render(<WorkspacePage onOpenSettings={vi.fn()} />);
+  const view = render(<WorkspacePage />);
   await screen.findByRole("heading", { name: "Policy discussion" });
   mocks.updateSession.mockRejectedValue({ message: "Temporary store failure" });
   fireEvent.change(screen.getByLabelText("Message"), {
@@ -901,7 +863,7 @@ it("recovers an immediate mode-exit draft even if its database save fails", asyn
   expect(localStorage.getItem("pipeline.pendingDraft.conversation")).toBe(
     "Exact unsent question αβ",
   );
-  render(<WorkspacePage onOpenSettings={vi.fn()} />);
+  render(<WorkspacePage />);
   await screen.findByRole("heading", { name: "Policy discussion" });
   expect(screen.getByLabelText("Message")).toHaveValue(
     "Exact unsent question αβ",
@@ -1034,7 +996,6 @@ it("loads an initial conversation deep link without blanking its saved draft", a
         sessionId: "conversation",
         surface: "chat",
       }}
-      onOpenSettings={vi.fn()}
     />,
   );
   await waitFor(() =>

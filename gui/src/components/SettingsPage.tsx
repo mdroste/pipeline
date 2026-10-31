@@ -37,6 +37,7 @@ import ConversationTitleSettings from "./settings/ConversationTitleSettings";
 import NotificationSettings from "./settings/NotificationSettings";
 import AdvancedSettings from "./settings/AdvancedSettings";
 import ConnectionStatus from "./settings/ConnectionStatus";
+import DefaultModelSettings from "./settings/DefaultModelSettings";
 import {
   SettingsOperations,
   ReviewSaveState,
@@ -73,7 +74,7 @@ const STORED_KEY_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
   google: "Google",
-  local: "local-server",
+  local: "local server",
 };
 
 export default function SettingsPage({
@@ -237,7 +238,7 @@ export default function SettingsPage({
                   <button onClick={retrySave}>Retry</button>
                 </span>
               ) : savePending ? (
-                "Changes pending…"
+                "Saving…"
               ) : (
                 "Preferences save automatically."
               )
@@ -265,7 +266,6 @@ export default function SettingsPage({
                   if (e.key === "Escape") setQuery("");
                 }}
               />
-              <span className="settings-search-hint">Find a preference</span>
             </div>
             {query.trim() ? (
               <div className="settings-page-body settings-search-results">
@@ -341,8 +341,8 @@ export default function SettingsPage({
                     <p key={i}>{warning}</p>
                   ))}
                   <p>
-                    Changing a setting will overwrite the current file with
-                    these values.
+                    If you change a setting, these values replace your settings
+                    file.
                   </p>
                   {undecryptableKeys.map((provider) => (
                     <button
@@ -386,6 +386,16 @@ export default function SettingsPage({
                 )}
                 {section === "providers" && (
                   <>
+                    <SettingsCard id="default-model">
+                      <DefaultModelSettings
+                        settings={settings}
+                        setSettings={setSettings}
+                        catalogs={catalogs}
+                        catalogBlocked={catalogBlocked}
+                        dependencies={dependencies}
+                      />
+                      <ReviewSaveFeedback />
+                    </SettingsCard>
                     <ProvidersSection
                       settings={settings}
                       setSettings={setSettings}
@@ -401,17 +411,18 @@ export default function SettingsPage({
                     />
                     <SettingsCard id="local-provider">
                       <ProviderHeader
-                        name="OpenAI-compatible"
-                        description="Ollama, LM Studio, llama.cpp, or another compatible server."
-                      />
-                      <ConnectionStatus
-                        provider="local"
-                        settings={settings}
-                        catalog={catalogs.local}
-                        loading={catalogLoading.local}
-                        blocked={catalogBlocked.local}
-                        onCheck={() => loadCatalog("local", settings, true)}
-                      />
+                        name="Local server"
+                        description="Ollama, LM Studio, llama.cpp, or another OpenAI-compatible server."
+                      >
+                        <ConnectionStatus
+                          provider="local"
+                          settings={settings}
+                          catalog={catalogs.local}
+                          loading={catalogLoading.local}
+                          blocked={catalogBlocked.local}
+                          onCheck={() => loadCatalog("local", settings, true)}
+                        />
+                      </ProviderHeader>
                       <LocalProviderSection
                         settings={settings}
                         setSettings={setSettings}
@@ -432,14 +443,9 @@ export default function SettingsPage({
                         settings={settings}
                         setSettings={setSettings}
                         catalogs={catalogs}
+                        onChangeDefault={() => void selectSection("providers")}
+                        dependencies={dependencies}
                       />
-                      <button
-                        type="button"
-                        className="settings-text-link"
-                        onClick={() => void selectSection("providers")}
-                      >
-                        Manage provider connections →
-                      </button>
                       <ReviewSaveFeedback />
                     </SettingsCard>
                     <SettingsCard id="workflow-execution">
@@ -460,8 +466,8 @@ export default function SettingsPage({
                     <SettingsCard id="review-comparison">
                       <SectionHeader title="Revision comparison" />
                       <Toggle
-                        label="Automatic revision reconciliation"
-                        description="Add an AI comparison of addressed, remaining, and new concerns when a previous report exists. This adds a model call."
+                        label="Compare with the previous report"
+                        description="When a previous report exists, list the concerns that were addressed, remain, or are new. This uses one extra model call."
                         checked={settings.auto_revision_reconciliation}
                         onChange={(value) =>
                           setSettings({
@@ -480,7 +486,7 @@ export default function SettingsPage({
                     <SettingsCard id="workflow-history">
                       <SectionHeader
                         title="Review history"
-                        description="Retention applies to completed Reviews and their artifacts."
+                        description="Limits for completed reviews and their files."
                       />
                       <RunRetention
                         settings={settings}
@@ -491,8 +497,8 @@ export default function SettingsPage({
                     <SettingsCard id="storage-cache">
                       <SectionHeader title="Extraction cache" />
                       <Toggle
-                        label="Reuse verified extraction cache"
-                        description="Reuse exact source-and-settings matches to avoid repeating PDF extraction. Existing research records and reports are unaffected."
+                        label="Reuse earlier PDF extractions"
+                        description="Skip extraction when the same PDF was already read with the same settings."
                         checked={settings.reuse_pdf_extraction_cache}
                         onChange={(value) =>
                           setSettings({

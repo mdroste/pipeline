@@ -348,7 +348,7 @@ export function pdfRows(report: DepsReport | null): PdfRow[] {
             status: "Not installed",
             tone: full.required ? "attention" : "idle",
             detail:
-              "Optional. Reads formulas, tables, and figures on this computer; needs several gigabytes. Install it from Settings → Reviews → PDF Extraction.",
+              "Optional. Reads formulas, tables, and figures on this computer; needs several gigabytes. Install it from Settings → Reviews → PDF extraction.",
           },
     );
   return rows;

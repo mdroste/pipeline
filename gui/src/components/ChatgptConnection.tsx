@@ -7,6 +7,14 @@ import type {
   WorkspaceRateLimits,
 } from "../lib/workbenchTypes";
 
+/** Names a rate-limit window by its length, such as "7-day limit". */
+function windowLimitLabel(minutes: number | null) {
+  if (!minutes) return "Second limit";
+  if (minutes % 1440 === 0) return `${minutes / 1440}-day limit`;
+  if (minutes % 60 === 0) return `${minutes / 60}-hour limit`;
+  return `${minutes}-minute limit`;
+}
+
 export default function ChatgptConnection({
   onAccountChange,
   onStatusChange,
@@ -82,18 +90,72 @@ export default function ChatgptConnection({
   const signedIn = status?.account.status === "chatgpt";
   const disabled = busy || !status || status.loginInProgress;
   return (
-    <div
-      role="group"
-      aria-label="ChatGPT account"
-      className="space-y-3 rounded border border-gray-200 p-4 dark:border-neutral-700"
-    >
-      <p className="text-sm">
-        {signedIn
-          ? `Signed in${status.account.email ? ` as ${status.account.email}` : ""}${status.account.planType ? ` (${status.account.planType})` : ""}`
-          : status
-            ? "Not signed in to ChatGPT."
-            : "Checking ChatGPT account…"}
-      </p>
+    <div role="group" aria-label="ChatGPT account" className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+        <p className="text-sm">
+          {signedIn
+            ? `Signed in${status.account.email ? ` as ${status.account.email}` : ""}${status.account.planType ? ` (${status.account.planType})` : ""}`
+            : status
+              ? "Not signed in to ChatGPT."
+              : "Checking ChatGPT account…"}
+        </p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            className="settings-button"
+            disabled={disabled}
+            onClick={() => void act(() => chatgptAccountClient.loginStart())}
+          >
+            {signedIn ? "Change account" : "Sign in to ChatGPT"}
+          </button>
+          {status?.pendingLogin && (
+            <button
+              className="settings-button"
+              disabled={busy}
+              onClick={() =>
+                void act(() =>
+                  chatgptAccountClient.loginCancel({ ...status.pendingLogin }),
+                )
+              }
+            >
+              Cancel sign-in
+            </button>
+          )}
+          {signedIn && (
+            <button
+              className="settings-button"
+              disabled={disabled}
+              onClick={() => void act(() => chatgptAccountClient.logout())}
+            >
+              Sign out
+            </button>
+          )}
+          <button
+            className="settings-button-quiet"
+            disabled={busy}
+            onClick={() => void act(async () => {})}
+          >
+            Refresh
+          </button>
+          {signedIn && (
+            <button
+              className="settings-button-quiet"
+              disabled={disabled}
+              onClick={() =>
+                void act(async () => {
+                  const [models, usage] = await Promise.all([
+                    chatgptAccountClient.models(),
+                    chatgptAccountClient.limits(),
+                  ]);
+                  setCatalog(models);
+                  setLimits(usage);
+                })
+              }
+            >
+              Models & usage
+            </button>
+          )}
+        </div>
+      </div>
       {!!status?.existingAccounts?.length && (
         <div className="space-y-2 text-sm">
           <p>
@@ -121,67 +183,8 @@ export default function ChatgptConnection({
         </div>
       )}
       {status?.loginInProgress && (
-        <p className="text-sm">
-          Complete ChatGPT sign-in in your browser. Conversations and Reviews
-          can start when sign-in finishes.
-        </p>
+        <p className="text-sm">Finish signing in to ChatGPT in your browser.</p>
       )}
-      <div className="flex flex-wrap gap-2">
-        <button
-          className="settings-button"
-          disabled={disabled}
-          onClick={() => void act(() => chatgptAccountClient.loginStart())}
-        >
-          {signedIn ? "Change account" : "Sign in to ChatGPT"}
-        </button>
-        {status?.pendingLogin && (
-          <button
-            className="settings-button"
-            disabled={busy}
-            onClick={() =>
-              void act(() =>
-                chatgptAccountClient.loginCancel({ ...status.pendingLogin }),
-              )
-            }
-          >
-            Cancel sign-in
-          </button>
-        )}
-        {signedIn && (
-          <button
-            className="settings-button"
-            disabled={disabled}
-            onClick={() => void act(() => chatgptAccountClient.logout())}
-          >
-            Sign out
-          </button>
-        )}
-        <button
-          className="settings-button"
-          disabled={busy}
-          onClick={() => void act(async () => {})}
-        >
-          Refresh
-        </button>
-        {signedIn && (
-          <button
-            className="settings-button"
-            disabled={disabled}
-            onClick={() =>
-              void act(async () => {
-                const [models, usage] = await Promise.all([
-                  chatgptAccountClient.models(),
-                  chatgptAccountClient.limits(),
-                ]);
-                setCatalog(models);
-                setLimits(usage);
-              })
-            }
-          >
-            Models & usage
-          </button>
-        )}
-      </div>
       {catalog && (
         <details className="settings-disclosure">
           <summary>
@@ -209,7 +212,7 @@ export default function ChatgptConnection({
             ? `${bucket.primary.remainingPercent}% remaining`
             : "Current usage unavailable"}
           {bucket.secondary
-            ? `; second window ${bucket.secondary.remainingPercent}% remaining`
+            ? `; ${windowLimitLabel(bucket.secondary.windowDurationMins)}: ${bucket.secondary.remainingPercent}% remaining`
             : ""}
         </p>
       ))}

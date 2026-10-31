@@ -27,11 +27,14 @@ const appearance: AppTestAppearance = {
   systemThemeListener: undefined,
 };
 const { reset } = createAppTestFixture(mocks, appearance);
-// The rail is flat: every destination is always visible, so "opening tools"
-// is a no-op kept only so navigation call sites read as user journeys.
-async function openTools(_user: {
+// History and Designer sit inside Reviews, which stays closed until it is
+// needed or the current page belongs to it.
+async function openTools(user: {
   click: (element: Element) => Promise<unknown>;
-}) {}
+}) {
+  const expand = screen.queryByRole("button", { name: "Expand Reviews" });
+  if (expand) await user.click(expand);
+}
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
@@ -147,9 +150,7 @@ describe("App navigation", () => {
       "aria-current",
       "page",
     );
-    expect(
-      screen.getByRole("button", { name: "Review designer" }),
-    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Reviews" })).toBeVisible();
     // A first launch (no earlier interface state) also offers guided setup.
     await screen.findByRole("dialog", { name: "Get started with Pipeline" });
     await user.click(screen.getByRole("button", { name: "Skip for now" }));
@@ -264,7 +265,7 @@ describe("App navigation", () => {
       await screen.findByRole("button", { name: "Make settings dirty" }),
     );
     await openTools(user);
-    await user.click(screen.getByRole("button", { name: "Review history" }));
+    await user.click(screen.getByRole("button", { name: "History" }));
 
     expect(confirmDialog).toHaveBeenCalledWith(
       "You have unsaved settings changes. Leave and discard them?",
@@ -285,6 +286,7 @@ describe("App navigation", () => {
     );
     // Activity is a destination now; the leave guard runs before it opens.
     await user.click(screen.getByRole("button", { name: "Activity" }));
+    await user.click(screen.getByRole("button", { name: "See all activity" }));
 
     expect(confirmDialog).toHaveBeenCalledWith(
       "You have unsaved settings changes. Leave and discard them?",
@@ -301,7 +303,7 @@ describe("App navigation", () => {
 
     await waitFor(() => expect(onCloseRequested).toHaveBeenCalledTimes(1));
     await openTools(user);
-    await user.click(screen.getByRole("button", { name: "Review designer" }));
+    await user.click(screen.getByRole("button", { name: "Designer" }));
     await user.click(
       await screen.findByRole("button", { name: "Make workflow dirty" }),
     );
@@ -340,7 +342,8 @@ describe("App navigation", () => {
       await screen.findByRole("button", { name: "Edit collection" }),
     );
     saveCollection.mockResolvedValue(false);
-    await user.click(screen.getByRole("button", { name: "Review history" }));
+    await openTools(user);
+    await user.click(screen.getByRole("button", { name: "History" }));
     expect(
       screen.getByRole("button", { name: "Edit collection" }),
     ).toBeInTheDocument();
@@ -349,7 +352,8 @@ describe("App navigation", () => {
     await act(async () => onCloseRequested.mock.calls[0][0](event));
     expect(event.preventDefault).toHaveBeenCalled();
     saveCollection.mockResolvedValue(true);
-    await user.click(screen.getByRole("button", { name: "Review history" }));
+    await openTools(user);
+    await user.click(screen.getByRole("button", { name: "History" }));
     expect(await screen.findByText("History workspace")).toBeInTheDocument();
   });
 
@@ -367,7 +371,8 @@ describe("App navigation", () => {
           resolve = done;
         }),
     );
-    await user.click(screen.getByRole("button", { name: "Review history" }));
+    await openTools(user);
+    await user.click(screen.getByRole("button", { name: "History" }));
     const returning = router.navigate({ page: "projects" });
     await act(async () => resolve(true));
     await act(async () => {

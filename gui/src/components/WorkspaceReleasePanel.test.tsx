@@ -69,7 +69,9 @@ it("maps archived project folders in a form instead of a native prompt", async (
     new Error("stop before reload"),
   );
   render(panel());
-  fireEvent.click(screen.getByRole("button", { name: "Restore archive" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Restore research backup" }),
+  );
   await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalled());
   expect(mocks.confirmDialog.mock.calls[0][0]).toContain("/old/paper-a");
 
@@ -104,7 +106,9 @@ it("maps archived project folders in a form instead of a native prompt", async (
 it("rejects a relative folder path and lets the user cancel the restore", async () => {
   mocks.confirmDialog.mockResolvedValue(true);
   render(panel());
-  fireEvent.click(screen.getByRole("button", { name: "Restore archive" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Restore research backup" }),
+  );
   const first = await screen.findByRole("textbox", {
     name: "Folder on this computer for /old/paper-a",
   });
@@ -123,7 +127,9 @@ it("rejects a relative folder path and lets the user cancel the restore", async 
 it("stops before choosing folders when the restore warning is declined", async () => {
   mocks.confirmDialog.mockResolvedValue(false);
   render(panel());
-  fireEvent.click(screen.getByRole("button", { name: "Restore archive" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Restore research backup" }),
+  );
   await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalled());
   expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
   expect(mocks.importResearchArchive).not.toHaveBeenCalled();
@@ -143,7 +149,7 @@ it("reports a finished export without a native alert", async () => {
   );
   await waitFor(() =>
     expect(mocks.notify).toHaveBeenCalledWith(
-      expect.stringContaining("Exported 2 workspace(s)"),
+      expect.stringContaining("Exported 2 projects"),
       "success",
     ),
   );

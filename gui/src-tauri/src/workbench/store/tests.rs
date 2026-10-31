@@ -951,3 +951,26 @@ fn reprojection_under_a_new_incarnation_keeps_transcript_order() {
         .collect();
     assert_eq!(ordered, ["item-user", "item-agent", "item-new"]);
 }
+
+#[test]
+fn a_session_can_start_with_its_settings() {
+    let (_temp, store, _root) = fixture();
+    let request = |operation_id: &str| CreateSessionRequest {
+        workspace_id: None,
+        title: "New conversation".into(),
+        operation_id: operation_id.into(),
+    };
+    let overrides = json!({"runtime":"claude","model":"opus"});
+    let session = store
+        .create_session_with_overrides(request("first"), Some(&overrides))
+        .unwrap()
+        .record;
+    assert_eq!(session.overrides, overrides);
+    assert_eq!(session.revision, 1);
+
+    let plain = store.create_session(request("second")).unwrap().record;
+    assert_eq!(plain.overrides, json!({}));
+    assert!(store
+        .create_session_with_overrides(request("third"), Some(&json!({"runtime":"other"})))
+        .is_err());
+}

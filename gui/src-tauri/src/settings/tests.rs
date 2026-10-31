@@ -878,3 +878,120 @@ fn an_undecryptable_stored_key_can_be_discarded_but_a_readable_one_cannot() {
     let untouched: Settings = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(untouched.google_api_key, stored.google_api_key);
 }
+
+#[test]
+fn fresh_stages_follow_the_preferred_provider() {
+    let settings = Settings {
+        preferred_provider: "codex".into(),
+        ..Default::default()
+    };
+    assert_eq!(settings.parallel_agents(), ["codex"]);
+    assert_eq!(settings.sequential_agent(), "codex");
+    assert_eq!(settings.merge_agent(), "codex");
+    assert_eq!(settings.orientation_agent(), "codex");
+}
+
+#[test]
+fn saved_copies_of_the_preferred_provider_are_released_once() {
+    let mut settings: Settings = serde_json::from_value(serde_json::json!({
+        "preferred_provider": "claude",
+        "default_parallel_agents": ["claude"],
+        "default_merge_agent": "claude",
+        "default_sequential_agent": "claude",
+        "default_orientation_agent": "claude",
+    }))
+    .unwrap();
+    settings.normalize_access_modes();
+    assert_eq!(settings.model_defaults_version, 1);
+    assert!(settings.default_parallel_agents.is_empty());
+    assert!(settings.default_merge_agent.is_empty());
+    assert!(settings.default_sequential_agent.is_empty());
+    assert!(settings.default_orientation_agent.is_empty());
+
+    // A later choice that happens to match stays a choice.
+    settings.default_sequential_agent = "claude".into();
+    settings.normalize_access_modes();
+    assert_eq!(settings.default_sequential_agent, "claude");
+}
+
+#[test]
+fn releasing_stages_never_changes_what_they_resolve_to() {
+    let pinned = |model: &str| ModelSelection::Pinned {
+        model: model.into(),
+    };
+    let mut settings = Settings {
+        model_defaults_version: 0,
+        preferred_provider: "claude".into(),
+        default_parallel_agents: vec!["claude".into(), "codex".into()],
+        default_merge_agent: "claude".into(),
+        default_sequential_agent: "claude".into(),
+        default_sequential_model_overrides: [("claude:cli".to_string(), pinned("opus"))].into(),
+        default_orientation_agent: "codex".into(),
+        ..Default::default()
+    };
+    let merge_model = settings.merge_model_selection("claude");
+    settings.normalize_access_modes();
+
+    // Two reviewers, a different provider, and a stage's own model all stay.
+    assert_eq!(settings.parallel_agents(), ["claude", "codex"]);
+    assert_eq!(settings.orientation_agent(), "codex");
+    assert_eq!(settings.default_sequential_agent, "claude");
+    // Clearing Merge here would hand it Sequential's pinned model.
+    assert_eq!(settings.default_merge_agent, "claude");
+    assert_eq!(settings.merge_model_selection("claude"), merge_model);
+}
+
+#[test]
+fn the_default_model_applies_only_to_its_own_provider() {
+    let settings = Settings {
+        preferred_provider: "claude".into(),
+        default_model: "opus".into(),
+        default_effort: "high".into(),
+        default_merge_agent: "claude".into(),
+        default_orientation_effort_overrides: [("claude:cli".to_string(), "low".to_string())]
+            .into(),
+        ..Default::default()
+    };
+    assert_eq!(settings.model_selection("claude").label(), "opus");
+    assert_eq!(settings.model_selection("codex").label(), "Automatic");
+    assert_eq!(settings.model_effort("claude"), "high");
+    assert_eq!(settings.model_effort("codex"), "");
+    assert_eq!(settings.sequential_effort("claude"), "high");
+    assert_eq!(settings.merge_effort("claude"), "high");
+    assert_eq!(settings.merge_effort("codex"), "");
+    // A stage's own thinking level still wins.
+    assert_eq!(settings.orientation_effort("claude"), "low");
+}
+
+#[test]
+fn inherited_merge_prefers_sequential_thinking_over_the_default() {
+    let settings = Settings {
+        preferred_provider: "claude".into(),
+        default_effort: "high".into(),
+        default_sequential_effort_overrides: [("claude:cli".to_string(), "low".to_string())].into(),
+        ..Default::default()
+    };
+    assert_eq!(settings.merge_effort("claude"), "low");
+}
+
+#[test]
+fn the_default_model_stays_out_of_legacy_provider_fields() {
+    let mut settings = Settings {
+        preferred_provider: "claude".into(),
+        default_model: "opus".into(),
+        ..Default::default()
+    };
+    settings.sync_legacy_model_fields();
+    assert_eq!(settings.claude_model, "");
+}
+
+#[test]
+fn unsafe_default_models_are_rejected() {
+    for default_model in [" opus", "opus\n--flag"] {
+        let settings = Settings {
+            default_model: default_model.into(),
+            ..Default::default()
+        };
+        assert!(settings.validate().is_err(), "{default_model:?}");
+    }
+}

@@ -71,9 +71,7 @@ export default function EnginesPanel({
         onEngineStatusChange?.([]);
         const detail =
           reason instanceof Error ? reason.message : String(reason);
-        setEngineStatusError(
-          `Local engine status could not be loaded: ${detail}`,
-        );
+        setEngineStatusError(`Could not check the local parser: ${detail}`);
       },
     );
     void Promise.allSettled([engineRequest]).then(() => {
@@ -135,11 +133,11 @@ export default function EnginesPanel({
         registered.forEach((unlisten) => unlisten());
         if (live && failed) {
           setListenerError(
-            `Engine progress connection failed: ${
+            `Could not track install progress: ${
               failed.reason instanceof Error
                 ? failed.reason.message
                 : String(failed.reason)
-            }. Retry before installing or removing an engine.`,
+            }. Retry before you install or uninstall the parser.`,
           );
         }
         return;
@@ -177,7 +175,7 @@ export default function EnginesPanel({
       !(await confirmDialog(
         "Uninstall this parser and remove its installed software and model files?",
         {
-          title: "Uninstall engine",
+          title: "Uninstall parser",
           confirmLabel: "Uninstall",
           destructive: true,
         },
@@ -210,7 +208,7 @@ export default function EnginesPanel({
       await invoke("cancel_engine_install");
     } catch (caught) {
       const detail = caught instanceof Error ? caught.message : String(caught);
-      setError(`Engine cancellation failed: ${detail}`);
+      setError(`Could not cancel the install: ${detail}`);
     }
   };
 
@@ -239,7 +237,7 @@ export default function EnginesPanel({
     const failed = finished.find((engine) => !engine.installed);
     if (failed && !cancelRequested.current)
       setError(
-        `${failed.label} was not installed. The installation stopped before it finished; install again to retry.`,
+        `${failed.label} didn’t finish installing. Choose Install to try again.`,
       );
     cancelRequested.current = false;
   }, [busy, engines, onSystemChange]);
@@ -248,10 +246,10 @@ export default function EnginesPanel({
     <div>
       <div className="mb-3 flex items-center gap-1.5">
         <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-          Local Engines
+          Local parser
         </h4>
-        <InfoButton label="Local Engines">
-          Managed engines are installed under{" "}
+        <InfoButton label="Local parser">
+          The parser is installed in{" "}
           <button
             type="button"
             onClick={openPipelineDir}
@@ -413,7 +411,7 @@ export default function EnginesPanel({
 
       {refreshingStatus && engines.length === 0 && !engineStatusError && (
         <p role="status" className="text-xs text-gray-500 dark:text-gray-400">
-          Loading local engine status…
+          Loading local parser status…
         </p>
       )}
       {!refreshingStatus && !engineStatusError && engines.length === 0 && (

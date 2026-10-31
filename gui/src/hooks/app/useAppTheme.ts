@@ -13,6 +13,22 @@ import {
   type ThemePreference,
 } from "../../lib/theme";
 
+function canCrossfadeTheme() {
+  return (
+    typeof document.startViewTransition === "function" &&
+    !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+function applyTheme(root: HTMLElement, dark: boolean) {
+  root.classList.add("theme-switching");
+  root.classList.toggle("dark", dark);
+  root.style.colorScheme = dark ? "dark" : "light";
+  // Commit the new colors while transitions are off so that none of them start.
+  void getComputedStyle(root).color;
+  root.classList.remove("theme-switching");
+}
+
 // Desktop theme ownership is separate from useAppAppearance's scale and density.
 export function useAppTheme() {
   const [theme, setTheme] = useState<ThemePreference>(() =>
@@ -22,7 +38,7 @@ export function useAppTheme() {
     () => window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
   const dark = resolveDarkTheme(theme, systemIsDark);
-  const themeApplied = useRef(false);
+  const latestDark = useRef(dark);
 
   const handleThemeChange = useCallback((preference: ThemePreference) => {
     localStorage.setItem(THEME_STORAGE_KEY, preference);
@@ -31,21 +47,17 @@ export function useAppTheme() {
 
   useLayoutEffect(() => {
     const root = document.documentElement;
-    const animate =
-      themeApplied.current && root.classList.contains("dark") !== dark;
-    themeApplied.current = true;
-    root.classList.toggle("theme-transitioning", animate);
-    root.classList.toggle("dark", dark);
-    root.style.colorScheme = dark ? "dark" : "light";
-    if (!animate) return;
-
-    const timer = setTimeout(() => {
-      root.classList.remove("theme-transitioning");
-    }, 350);
-    return () => {
-      clearTimeout(timer);
-      root.classList.remove("theme-transitioning");
-    };
+    const changed = latestDark.current !== dark;
+    latestDark.current = dark;
+    // A crossfade applies its change a frame later, so it reads the latest
+    // value: a newer change can skip it, but the older callback still runs.
+    const apply = () => applyTheme(root, latestDark.current);
+    if (changed && canCrossfadeTheme()) {
+      // Ready rejects when the crossfade is skipped, as in a hidden window.
+      document.startViewTransition(apply).ready.catch(() => {});
+    } else {
+      apply();
+    }
   }, [dark]);
 
   // matchMedia is provided by WebKit/WebView2/WebKitGTK, so system appearance

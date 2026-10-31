@@ -198,6 +198,20 @@ export function useAppNavigation() {
     });
   };
 
+  /** A new conversation outside any project. */
+  const startConversation = async () => {
+    const [{ conversationClient }, { newOperation }] = await Promise.all([
+      import("../../lib/workbench/conversationClient"),
+      import("../../lib/workspaceSessionState"),
+    ]);
+    const created = await conversationClient.createSession({
+      workspaceId: null,
+      title: "New conversation",
+      operationId: newOperation("create-session"),
+    });
+    return openWorkspaceSession(created.record.id);
+  };
+
   const createWorkspaceProject = async () => {
     if (!(await router.navigate({ page: "workspace", surface: "project" })))
       return;
@@ -234,10 +248,6 @@ export function useAppNavigation() {
       taskSessionId: sessionId ?? undefined,
       taskId: id,
     });
-  };
-
-  const openWorkspaceSettings = async () => {
-    await router.navigate({ page: "settings", section: "workspace" });
   };
 
   // The source is set before the route commits, so the report opens on it in
@@ -305,8 +315,8 @@ export function useAppNavigation() {
     createWorkspaceProject,
     openPaddleInstallSettings,
     openWorkspaceSession,
+    startConversation,
     openTask,
-    openWorkspaceSettings,
     openHistoryRun,
     openActivityProject,
     openActivityTask,

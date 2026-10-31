@@ -6,9 +6,6 @@ import {
   useState,
   type RefObject,
 } from "react";
-import useContainerWidth from "../useContainerWidth";
-import usePersistentPanelWidth from "../usePersistentPanelWidth";
-import useModalDialog from "../useModalDialog";
 import { loadDeskLayout } from "../../lib/deskLayout";
 import { appEvents } from "../../lib/appEvents";
 import {
@@ -21,12 +18,6 @@ export function useWorkspaceChrome(
   entrySurface: "chat" | "project" | undefined,
   contextBusyRef: RefObject<boolean>,
 ) {
-  const [sidebarWidth, setSidebarWidth] = usePersistentPanelWidth(
-    "pipeline.workspace.sidebarWidth",
-    224,
-    200,
-    440,
-  );
   const [inspector, setInspector] = useState<
     "settings" | "outline" | "context" | "activity" | null
   >(null);
@@ -46,18 +37,6 @@ export function useWorkspaceChrome(
       : isWorkspaceDestination(savedDestination)
         ? savedDestination
         : "overview";
-  const [shellRef, shellWidth] = useContainerWidth<HTMLDivElement>();
-  const [navigationOpen, setNavigationOpen] = useState(false);
-  const navigationButtonRef = useRef<HTMLButtonElement>(null);
-  const [navigationPinned, setNavigationPinned] = useState(() => {
-    try {
-      return (
-        localStorage.getItem("pipeline.workspace.navigationPinned") === "true"
-      );
-    } catch {
-      return false;
-    }
-  });
   const [toolPickerOpen, setToolPickerOpen] = useState(false);
   const conversationMenuRef = useRef<HTMLButtonElement>(null);
   const [assistantRequest, setAssistantRequest] = useState(0);
@@ -81,7 +60,6 @@ export function useWorkspaceChrome(
   const navigateProject = (tab: WorkspaceDestination) => {
     recordDestination(tab);
     setSurface("project");
-    setNavigationOpen(false);
     // Re-selecting the current destination also leaves an opened object view.
     if (workspaceId)
       appEvents.emit("workspace-destination", { workspaceId, tab });
@@ -95,7 +73,6 @@ export function useWorkspaceChrome(
     if (trigger) inspectorTriggerRef.current = trigger;
     setInspector((value) => (value === next ? null : next));
     setAssistantRequest((value) => value + 1);
-    setNavigationOpen(false);
   };
   const closeInspector = (restoreFocus = true) => {
     if (contextBusyRef.current) return;
@@ -103,26 +80,7 @@ export function useWorkspaceChrome(
     if (restoreFocus)
       requestAnimationFrame(() => inspectorTriggerRef.current?.focus());
   };
-  const navigationFits =
-    shellWidth === null ||
-    shellWidth - sidebarWidth >= (workspaceId ? 848 : 480);
-  const navigationCollapsed = !navigationPinned || !navigationFits;
-  const pinNavigation = (value: boolean) => {
-    setNavigationPinned(value);
-    setNavigationOpen(false);
-    try {
-      localStorage.setItem(
-        "pipeline.workspace.navigationPinned",
-        String(value),
-      );
-    } catch {
-      /* Optional view preference. */
-    }
-    navigationButtonRef.current?.focus();
-  };
   return {
-    sidebarWidth,
-    setSidebarWidth,
     inspector,
     setInspector,
     projectRequest,
@@ -130,12 +88,6 @@ export function useWorkspaceChrome(
     resetRequest,
     destination,
     setDestinationState,
-    shellRef,
-    shellWidth,
-    navigationOpen,
-    setNavigationOpen,
-    navigationButtonRef,
-    navigationPinned,
     toolPickerOpen,
     setToolPickerOpen,
     conversationMenuRef,
@@ -152,9 +104,6 @@ export function useWorkspaceChrome(
     navigateProject,
     openInspector,
     closeInspector,
-    navigationFits,
-    navigationCollapsed,
-    pinNavigation,
   };
 }
 export type WorkspaceChrome = ReturnType<typeof useWorkspaceChrome>;
@@ -181,47 +130,9 @@ export function useWorkspaceChromeEffects(
   chrome: WorkspaceChrome,
   workspaceId: string | null,
   sessionId: string | null,
-  contextBusy: boolean,
 ) {
-  const {
-    navigationCollapsed,
-    navigationOpen,
-    setNavigationOpen,
-    setToolPickerOpen,
-    surface,
-    harnessEditor,
-    toolPickerOpen,
-  } = chrome;
-  const navigationDialog = useModalDialog<HTMLDivElement>(
-    () => setNavigationOpen(false),
-    navigationCollapsed && navigationOpen,
-    true,
-  );
+  const { setToolPickerOpen, surface } = chrome;
   useEffect(() => {
-    setNavigationOpen(false);
     setToolPickerOpen(false);
   }, [sessionId, workspaceId, surface]);
-  useEffect(() => {
-    const shortcut = (event: KeyboardEvent) => {
-      if (
-        (event.metaKey || event.ctrlKey) &&
-        event.key.toLowerCase() === "k" &&
-        !event.altKey &&
-        workspaceId &&
-        !harnessEditor &&
-        !contextBusy
-      ) {
-        // Keep shortcuts local to the project; another modal owns its keyboard.
-        if (document.querySelector('[aria-modal="true"]') && !toolPickerOpen)
-          return;
-        event.preventDefault();
-        setToolPickerOpen((value) => !value);
-        setNavigationOpen(false);
-      }
-    };
-    window.addEventListener("keydown", shortcut);
-    return () => window.removeEventListener("keydown", shortcut);
-  }, [workspaceId, harnessEditor, contextBusy, toolPickerOpen]);
-
-  return navigationDialog;
 }

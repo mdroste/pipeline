@@ -18,6 +18,11 @@ export interface RunPreviewPlan {
   inputMode: string;
   inputInterpretation: string;
   stages: ExecutionPlanStage[];
+  /** Every provider the run may call, as the readiness check counts them. */
+  providers?: string[];
+  orientationAgent?: string;
+  /** The usage-limit backup, when it couldn't run right now. */
+  backupUnavailable?: string | null;
   usageEstimate?: UsageEstimate;
   hostChecks?: HostCheck[];
 }
@@ -36,10 +41,6 @@ interface Props {
 function basename(path: string): string {
   const parts = path.replaceAll("\\", "/").split("/").filter(Boolean);
   return parts[parts.length - 1] || "No input";
-}
-
-function stepProviders(step: StepConfig): string[] {
-  return step.agents.length > 0 ? step.agents : ["default provider"];
 }
 
 function providerList(providers: string[]): string {
@@ -106,7 +107,7 @@ function fixedAccessRow(
   return {
     id: step.id,
     label: step.label,
-    providers: stepProviders(step),
+    providers: step.agents,
     unitLabel:
       units.maximum > units.minimum
         ? `up to ${units.maximum} calls`
@@ -145,14 +146,16 @@ export default function RunPreview({
       rows.push({
         id: "orientation",
         label: "Orientation",
-        providers: ["default provider"],
+        providers: plan.orientationAgent ? [plan.orientationAgent] : [],
         unitLabel: "1 call",
         reads: ["The document"],
         tools: [],
       });
     }
-    const specialistContext =
-      steps.find((step) => step.phase === "parallel")?.context.include ?? [];
+    // Specialists copy the first review step's providers and access.
+    const specialistDonor = steps.find(
+      (step) => step.phase === "parallel" && step.kind !== "analyzer",
+    );
     let inserted = false;
     const insertAdaptiveRows = () => {
       if (!autoAssembled || inserted) return;
@@ -160,9 +163,9 @@ export default function RunPreview({
       rows.push({
         id: "auto_adaptive_agents",
         label: "Specialists",
-        providers: ["default provider"],
+        providers: specialistDonor?.agents ?? [],
         unitLabel: `${adaptiveCountLabel} calls`,
-        reads: specialistContext.map((selector) =>
+        reads: (specialistDonor?.context.include ?? []).map((selector) =>
           selectorLabel(selector, stepLabels),
         ),
         tools: [],
@@ -184,31 +187,27 @@ export default function RunPreview({
     autoAssembled,
     config.steps,
     config.use_orientation,
+    plan.orientationAgent,
     steps,
   ]);
   const summary = useMemo(() => {
-    const providers = new Set<string>();
     let minimumUnits = 0;
     let maximumUnits = 0;
     for (const step of steps) {
       // Pipeline checks run on this computer and make no provider call.
       if (step.kind === "analyzer") continue;
-      stepProviders(step).forEach((provider) => providers.add(provider));
       const units = declaredUnits(step);
       minimumUnits += units.minimum;
       maximumUnits += units.maximum;
     }
     if (autoAssembled) {
-      providers.add("default provider");
       minimumUnits += adaptiveCount ?? adaptiveRange.totalMin;
       maximumUnits += adaptiveCount ?? adaptiveRange.totalMax;
     }
-    providers.add("default provider");
     if (config.merge.enabled) {
       for (const step of steps.filter(
         (candidate) => candidate.agents.length > 1,
       )) {
-        providers.add(config.merge.agents[0] || "default provider");
         minimumUnits += step.for_each ? 0 : 1;
         maximumUnits += step.for_each ? Math.max(step.for_each.max, 1) : 1;
       }
@@ -216,7 +215,6 @@ export default function RunPreview({
     const perDocumentMinimum = minimumUnits + 1;
     const perDocumentMaximum = maximumUnits + 1;
     return {
-      providers: [...providers],
       minimumUnits: perDocumentMinimum * batchCount,
       maximumUnits: perDocumentMaximum * batchCount,
     };
@@ -226,7 +224,6 @@ export default function RunPreview({
     adaptiveRange.totalMin,
     autoAssembled,
     batchCount,
-    config.merge.agents,
     config.merge.enabled,
     steps,
   ]);
@@ -276,10 +273,16 @@ export default function RunPreview({
                   : stepsLabel(steps.length)}
             </SummaryRow>
             <SummaryRow label="Providers">
-              {providerList(summary.providers)}
+              {providerList(plan.providers ?? [])}
               <p className={SUMMARY_NOTE}>
                 See below for what each step can send.
               </p>
+              {plan.backupUnavailable && (
+                <p className="mt-1 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                  Your backup, {providerList([plan.backupUnavailable])}, isn’t
+                  connected. If you reach a usage limit, this review stops.
+                </p>
+              )}
             </SummaryRow>
             {plan.usageEstimate ? (
               <RunUsageEstimate

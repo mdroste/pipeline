@@ -146,7 +146,7 @@ Before you publish, test the candidate by hand:
 - On Windows, confirm the installer and installed application show **Michael
   Droste** as the verified publisher. Signing doesn't guarantee that every
   SmartScreen reputation warning disappears immediately.
-- On Windows, check the window with and without the sidebar: drag it from the
+- On Windows, check the window with the sidebar full and folded to icons: drag it from the
   top of the window, double-click there to maximize, snap it to a screen edge,
   resize it from every edge, and use the minimize, maximize, and close buttons.
 - Set up ChatGPT, Claude Code, OpenAI API, Anthropic API, Gemini API, and a

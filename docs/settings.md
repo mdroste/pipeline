@@ -7,9 +7,9 @@ purpose.
 | Section | What you can change |
 | --- | --- |
 | General | Theme, text size, spacing, editor font and wrapping, startup page, and guided setup |
-| Connections | ChatGPT sign-in, Claude, API keys, and local model servers. See [Connections](connections.md) |
+| Connections | Your default model, ChatGPT sign-in, Claude, API keys, and local model servers. See [Connections](connections.md) |
 | Conversations | Send shortcut and automatic conversation titles |
-| Reviews | Default models and reasoning, parallel calls, simultaneous reviews, review limits, timeouts, retries, and PDF extraction |
+| Reviews | Models for each review stage, parallel calls, simultaneous reviews, review limits, timeouts, retries, and PDF extraction |
 | Data & Storage | Research data folder, disk use, retention, cleanup, backups, and Trash |
 | Notifications | Completion, failure, and attention notices, desktop notifications, and sound |
 | Advanced & About | Logging, research tools, diagnostics, app version, and updates |
@@ -27,6 +27,22 @@ Choose each conversation’s provider, model, and thinking level in its
 **Model and thinking** picker. Its **Assistant settings** controls tools and
 file access, including optional browser and command-engine setup. See
 [Conversation access](connections.md#conversation-access).
+
+## Default model
+
+**Settings → Connections → Default model** sets one provider, model, and
+thinking level for reviews and new conversations.
+
+- Reviews use it unless a stage in **Settings → Reviews** or a saved workflow
+  chooses another model. It also reads PDFs when you use model extraction.
+- A new conversation copies it when it starts. Changing the default leaves
+  existing conversations as they are, and you can change any conversation in
+  its **Model and thinking** picker.
+- Automations keep the provider and model of the conversation they came from.
+
+Until you choose a default, reviews use Claude and new conversations start on
+ChatGPT. To set a thinking level, choose a model first. The provider list marks
+any connection that isn't ready as **(not connected)**.
 
 ## Appearance and keyboard
 
@@ -82,7 +98,7 @@ it before you change retention or clean up.
 Retention limits save when you press Enter or leave the field. Enter `0` for
 no limit. Press Escape to restore the saved value.
 
-**Review cleanup…** shows which reports will move to Trash. Confirm to apply
+**Preview cleanup…** shows which reports will move to Trash. Confirm to apply
 it. You can restore items from Trash, or delete them permanently once you no
 longer need them.
 
@@ -126,6 +142,6 @@ browser.
 
 To stop the checks, turn off **Check automatically** in the banner, or
 **Check for updates automatically** under **Advanced & About**. **Check for
-updates** checks right away. Each check sends GitHub your network address and app
+updates** checks right away. Each check sends GitHub your IP address and app
 version, and nothing about your research. Copies built from source check only
 when you ask, and you update them by downloading the installer.

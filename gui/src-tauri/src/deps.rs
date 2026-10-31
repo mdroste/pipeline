@@ -94,10 +94,33 @@ pub fn dependency_ready(dependency: &DepStatus) -> bool {
     !dependency.required || dependency_available(dependency)
 }
 
+/// The configured usage-limit backup when it couldn't run right now. A backup
+/// is only needed after a limit, so this warns instead of blocking the run; if
+/// the limit does arrive, the call fails with both errors.
+pub fn unavailable_backup(
+    settings: &crate::settings::Settings,
+    report: &DepsReport,
+) -> Option<String> {
+    let backup = settings.usage_limit_fallback_agent()?;
+    let names: &[&str] = match backup {
+        "claude" => &["Claude CLI"],
+        "codex" => &["Codex CLI", "ChatGPT (reviews)"],
+        "antigravity" => &["Google API"],
+        "local" => &["Local LLM server"],
+        _ => return None,
+    };
+    report
+        .deps
+        .iter()
+        .find(|dependency| names.contains(&dependency.name.as_str()))
+        .filter(|dependency| !dependency_available(dependency))
+        .map(|_| backup.to_string())
+}
+
 mod checks;
 mod command;
 
-pub use checks::check_snapshot;
+pub use checks::{check_snapshot, run_providers};
 use command::{configure_probe_command, probe_resolved};
 pub(crate) use command::{find_on_path, resolve_command, resolve_command_at, ResolvedCommand};
 

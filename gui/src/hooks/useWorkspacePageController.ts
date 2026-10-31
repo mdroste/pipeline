@@ -72,8 +72,6 @@ export function useWorkspacePageController({
   const contextBusyRef = useRef(false);
   const chrome = useWorkspaceChrome(workspaceId, entrySurface, contextBusyRef);
   const {
-    sidebarWidth,
-    setSidebarWidth,
     inspector,
     setInspector,
     projectRequest,
@@ -81,12 +79,6 @@ export function useWorkspacePageController({
     resetRequest,
     destination,
     setDestinationState,
-    shellRef,
-    shellWidth,
-    navigationOpen,
-    setNavigationOpen,
-    navigationButtonRef,
-    navigationPinned,
     toolPickerOpen,
     setToolPickerOpen,
     conversationMenuRef,
@@ -103,9 +95,6 @@ export function useWorkspacePageController({
     navigateProject,
     openInspector,
     closeInspector,
-    navigationFits,
-    navigationCollapsed,
-    pinNavigation,
   } = chrome;
   const conversation = useWorkspaceConversationRuntime(sessionId, setSessions);
   const {
@@ -143,7 +132,6 @@ export function useWorkspacePageController({
     refreshSessionRecord,
     acceptSnapshot,
   } = conversation;
-  const [showArchived, setShowArchived] = useState(false);
   // Automations are a first-class capability; no discovery gate hides them.
   const tasksEnabled = true;
   const [selectedMessage, setSelectedMessage] = useState<string | null>(null);
@@ -174,7 +162,7 @@ export function useWorkspacePageController({
     sessionListSequence,
     setSessions,
     setSessionId,
-    showArchived,
+    false,
     setError,
   );
 
@@ -298,7 +286,6 @@ export function useWorkspacePageController({
         setWorkspaceId(id);
       }
       setSurface(id ? "project" : "chat");
-      setNavigationOpen(false);
       setInspector(null);
     },
     [harnessEditor, saveCurrentDraft, workspaceId],
@@ -455,7 +442,7 @@ export function useWorkspacePageController({
 
   const sessionMutations = useWorkspaceSessionMutations({
     workspaceId,
-    showArchived,
+    showArchived: false,
     sessionRef,
     saveCurrentDraft,
     loadSessions,
@@ -616,44 +603,20 @@ export function useWorkspacePageController({
           tab: target.destination,
         });
       setSurface(target.surface ?? (target.sessionId ? "chat" : "project"));
-      setNavigationOpen(false);
       setInspector(null);
     },
     (cause) => setError(workbenchErrorMessage(cause)),
   );
-  const navigationDialog = useWorkspaceChromeEffects(
-    chrome,
-    workspaceId,
-    sessionId,
-    contextBusy,
-  );
+  useWorkspaceChromeEffects(chrome, workspaceId, sessionId);
 
   const currentWorkspace =
     workspaces.find((item) => item.id === workspaceId) ?? null;
-  const projectFolder = currentWorkspace?.root
-    ? currentWorkspace.root
-        .replace(/[\\/]+$/, "")
-        .split(/[\\/]/)
-        .pop() || currentWorkspace.root
-    : null;
 
   return {
     layout: {
-      sidebarWidth,
-      setSidebarWidth,
-      shellRef,
-      shellWidth,
-      navigationOpen,
-      setNavigationOpen,
-      navigationButtonRef,
-      navigationPinned,
       toolPickerOpen,
       setToolPickerOpen,
       conversationMenuRef,
-      navigationFits,
-      navigationCollapsed,
-      pinNavigation,
-      navigationDialog,
     },
     inspector: {
       inspector,
@@ -669,8 +632,6 @@ export function useWorkspacePageController({
       workspaceId,
       sessions,
       sessionId,
-      showArchived,
-      setShowArchived,
       tasksEnabled,
       projectRequest,
       resetRequest,
@@ -690,7 +651,6 @@ export function useWorkspacePageController({
       recordDestination,
       navigateProject,
       currentWorkspace,
-      projectFolder,
       setProjectRequest,
     },
     conversation: {

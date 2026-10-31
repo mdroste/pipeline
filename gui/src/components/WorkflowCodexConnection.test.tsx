@@ -44,7 +44,7 @@ describe("Workflow Codex connection", () => {
     ];
     render(<WorkflowCodexConnection />);
     const acknowledge = await screen.findByRole("button", {
-      name: "Acknowledge and allow a new run",
+      name: "Continue without it",
     });
     expect(mocked).not.toHaveBeenCalledWith(
       "workflow_codex_acknowledge_attempt",

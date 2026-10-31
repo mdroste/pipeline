@@ -8,6 +8,7 @@ import { listedRunStatus } from "../lib/reportPresentation";
 import type { RunSummary } from "../lib/types";
 import type { WorkbenchEvent } from "../lib/workbenchTypes";
 import { button, muted, Inspect } from "./research-programs/shared";
+import PageHeader from "../ui/PageHeader";
 interface Activity {
   turns: {
     sessionId: string;
@@ -89,52 +90,46 @@ export default function ResearchActivity({
     reviews.filter((r) =>
       ["running", "paused", "interrupted"].includes(r.status),
     ).length;
+  const action = asPage ? "ui-page-button mr-2" : button;
+  const row = asPage ? "ui-page-row space-y-2" : "space-y-2 border-t py-3";
   return (
     <aside
       role={asPage ? undefined : "dialog"}
       aria-label={asPage ? "Activity" : "Suite activity"}
       className={
         asPage
-          ? "mx-auto flex w-full max-w-3xl flex-col px-6 py-8"
+          ? "ui-page"
           : "absolute right-0 top-0 z-50 flex h-full w-[min(32rem,95vw)] flex-col overflow-auto border-l bg-white p-5 shadow-xl dark:bg-neutral-950"
       }
     >
-      <div className="flex justify-between">
-        {asPage ? (
-          <div>
-            <h1 className="text-xl font-semibold">Activity</h1>
-            <p className={`${muted} mt-1`}>
-              See work in progress, completed work, and items that need your
-              attention.
-            </p>
-          </div>
-        ) : (
-          <>
-            <h2 className="font-semibold">Suite activity</h2>
-            <button autoFocus className={button} onClick={onClose}>
-              Close
-            </button>
-          </>
-        )}
-      </div>
+      {asPage ? (
+        <PageHeader
+          title="Activity"
+          description="See work in progress, completed work, and items that need your attention."
+        />
+      ) : (
+        <div className="flex justify-between">
+          <h2 className="font-semibold">Suite activity</h2>
+          <button autoFocus className={button} onClick={onClose}>
+            Close
+          </button>
+        </div>
+      )}
       {error && <p role="alert">{error}</p>}
-      <p className={`${muted} my-3`}>
+      <p className={`${muted} ${asPage ? "ui-page-toolbar" : "my-3"}`}>
         {activity?.pendingRequests.length ?? 0} unresolved conversation requests
         · {activity?.researchAttention ?? 0} research attention items
       </p>
       {activity?.turns.map((t) => (
-        <section
-          className="space-y-2 border-t py-3"
-          key={`${t.sessionId}:${t.turnId}`}
-        >
+        <section className={row} key={`${t.sessionId}:${t.turnId}`}>
           <h3>{t.title}</h3>
           <p className={muted}>Conversation · {t.state}</p>
-          <button className={button} onClick={() => onSession(t.sessionId)}>
+          <button className={action} onClick={() => onSession(t.sessionId)}>
             Open conversation and requests
           </button>
           {t.turnId && (
             <button
-              className={button}
+              className={action}
               onClick={() =>
                 void runtimeClient
                   .interruptTurn(t.threadId, t.turnId!)
@@ -154,14 +149,14 @@ export default function ResearchActivity({
         </section>
       ))}
       {activity?.jobs.map((j) => (
-        <section className="space-y-2 border-t py-3" key={j.id}>
+        <section className={row} key={j.id}>
           <h3>
             {j.title} · {j.adapter}
           </h3>
           <p className={muted}>
             Local job · {j.state} · owner: {j.owner ?? "unestablished"}
           </p>
-          <button className={button} onClick={() => onProject(j.workspaceId)}>
+          <button className={action} onClick={() => onProject(j.workspaceId)}>
             Open job logs and recovery
           </button>
         </section>
@@ -169,12 +164,12 @@ export default function ResearchActivity({
       {tasks
         .filter((t) => !["finished", "cancelled"].includes(t.state))
         .map((t) => (
-          <section className="space-y-2 border-t py-3" key={t.id}>
+          <section className={row} key={t.id}>
             <h3>{t.name}</h3>
             <p className={muted}>
               Automation · {t.state} · {t.reason}
             </p>
-            <button className={button} onClick={() => onTasks(t.id)}>
+            <button className={action} onClick={() => onTasks(t.id)}>
               Open task controls
             </button>
           </section>
@@ -182,22 +177,20 @@ export default function ResearchActivity({
       {reviews
         .filter((r) => ["running", "paused", "interrupted"].includes(r.status))
         .map((r) => (
-          <section className="space-y-2 border-t py-3" key={r.run_id}>
+          <section className={row} key={r.run_id}>
             <h3>{r.title || r.input_name}</h3>
             <p className={muted}>Review · {r.status}</p>
-            <button className={button} onClick={() => onReview(r.run_id)}>
+            <button className={action} onClick={() => onReview(r.run_id)}>
               Open Review controls
             </button>
           </section>
         ))}
       {asPage && running === 0 && (
-        <p className={`${muted} border-t py-4`}>
-          Nothing is running right now.
-        </p>
+        <p className={`${muted} ui-page-row`}>Nothing is running right now.</p>
       )}
       {asPage && (
-        <section aria-label="Recently finished reviews" className="mt-6">
-          <h2 className="text-sm font-semibold">Recently finished reviews</h2>
+        <section aria-label="Recently finished reviews" className="mt-7">
+          <h2 className="ui-page-label">Recently finished reviews</h2>
           {reviews
             .filter(
               (r) => !["running", "paused", "interrupted"].includes(r.status),
@@ -206,23 +199,26 @@ export default function ResearchActivity({
             .map((r) => (
               <div
                 key={r.run_id}
-                className="flex items-center gap-3 border-t py-2.5 first:border-t-0"
+                className="ui-page-row flex items-center gap-3"
               >
                 <span className="min-w-0 flex-1 truncate text-sm">
                   {r.title || r.input_name}
                 </span>
                 <span className={muted}>{listedRunStatus(r.status)}</span>
-                <button className={button} onClick={() => onReview(r.run_id)}>
+                <button
+                  className="ui-page-button"
+                  onClick={() => onReview(r.run_id)}
+                >
                   Open
                 </button>
               </div>
             ))}
           {reviews.length === 0 && (
-            <p className={`${muted} mt-2`}>No reviews yet.</p>
+            <p className={`${muted} px-3 pt-2`}>No reviews yet.</p>
           )}
         </section>
       )}
-      <p className={`${muted} mt-4`}>
+      <p className={`${muted} ${asPage ? "mt-6 px-3" : "mt-4"}`}>
         Stop or resume work from its own page. Stopping a review leaves project
         jobs running.
       </p>

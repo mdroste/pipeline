@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { inputClass } from "./controls";
-import { useSettingsOperation, ReviewSaveFeedback } from "./SaveState";
+import { useSettingsOperation } from "./SaveState";
 
 export default function CredentialField({
   label,
@@ -15,7 +15,6 @@ export default function CredentialField({
 }) {
   const [editing, setEditing] = useState(!value);
   const [draft, setDraft] = useState(value);
-  const [submitted, setSubmitted] = useState(false);
   useEffect(() => {
     setDraft(value);
   }, [value]);
@@ -30,65 +29,67 @@ export default function CredentialField({
           >
             {label}
           </label>
-          <input
-            id={`credential-${label.replaceAll(" ", "-")}`}
-            aria-label={label}
-            type="password"
-            className={inputClass}
-            value={draft}
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(event) => setDraft(event.target.value)}
-          />
-          <p className="settings-row-description">
-            {optional ? "Optional bearer token. " : ""}Stored encrypted. Changes
-            are sent only after you save.
-          </p>
-          <div className="settings-actions">
+          <div className="settings-credential-entry">
+            <input
+              id={`credential-${label.replaceAll(" ", "-")}`}
+              aria-label={label}
+              type="password"
+              className={inputClass}
+              value={draft}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => setDraft(event.target.value)}
+            />
             <button
               type="button"
               className="settings-button-primary"
+              aria-label={`Save ${label}`}
               disabled={draft === value}
               onClick={() => {
                 onSave(draft.trim());
                 setDraft(draft.trim());
-                setSubmitted(true);
                 setEditing(false);
               }}
             >
-              Save {label}
+              Save
             </button>
-            <button
-              type="button"
-              className="settings-button"
-              onClick={() => {
-                setDraft(value);
-                setEditing(false);
-              }}
-            >
-              Cancel
-            </button>
+            {(value || draft) && (
+              <button
+                type="button"
+                className="settings-button"
+                onClick={() => {
+                  setDraft(value);
+                  setEditing(false);
+                }}
+              >
+                Cancel
+              </button>
+            )}
           </div>
+          <p className="settings-row-description">
+            {optional ? "Only needed if your server requires a key. " : ""}
+            Stored encrypted.
+          </p>
         </>
       ) : (
         <div className="settings-credential-summary">
           <span>
             {value
-              ? "API key configured · encrypted"
+              ? "API key saved · encrypted"
               : optional
                 ? "No API key · optional"
-                : "API key not configured"}
+                : "No API key saved"}
           </span>
           <button
             type="button"
             className="settings-button"
+            aria-label={`${value ? "Edit" : "Add"} ${label}`}
             onClick={() => setEditing(true)}
           >
-            {value ? "Edit" : "Add"} {label}
+            {value ? "Edit" : "Add"}
           </button>
         </div>
       )}
-      {submitted && <ReviewSaveFeedback />}
     </div>
   );
 }

@@ -22,14 +22,33 @@ pub enum ModelSelection {
 /// Persisted user settings at ~/.pipeline/settings.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
-    /// Preferred LLM provider: "claude", "codex", or "antigravity".
-    /// Used for steps that don't specify an explicit agent. Default = "claude".
+    /// Provider of the shared default model: "claude", "codex", "antigravity",
+    /// or "local". With that family's access mode it names one connection.
+    /// Used by every Review stage that names no provider of its own.
     #[serde(default = "default_provider", alias = "llm_provider")]
     pub preferred_provider: String,
 
+    /// Model of the shared default, empty for Automatic. It applies only to
+    /// `preferred_provider`; a local server uses `local_model` instead.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub default_model: String,
+
+    /// Thinking level of the shared default, empty for the model's own.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub default_effort: String,
+
+    /// Set once a researcher picks a default. `preferred_provider` always has
+    /// a value, so without this a never-chosen Claude would move new
+    /// conversations off ChatGPT.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub default_model_chosen: bool,
+
+    /// One-time release of stages that stored a copy of `preferred_provider`.
+    #[serde(default)]
+    pub model_defaults_version: u32,
+
     /// Providers used when a Parallel workflow step leaves `agents` empty.
-    /// An empty list is retained as a legacy representation and resolves to
-    /// `preferred_provider`; the current Settings UI always saves at least one.
+    /// Empty follows `preferred_provider`.
     #[serde(default)]
     pub default_parallel_agents: Vec<String>,
 
@@ -404,16 +423,20 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             preferred_provider: "claude".to_string(),
-            default_parallel_agents: vec!["claude".to_string()],
+            default_model: String::new(),
+            default_effort: String::new(),
+            default_model_chosen: false,
+            model_defaults_version: 1,
+            default_parallel_agents: Vec::new(),
             default_parallel_model_overrides: std::collections::HashMap::new(),
             default_parallel_effort_overrides: std::collections::HashMap::new(),
-            default_merge_agent: "claude".to_string(),
+            default_merge_agent: String::new(),
             default_merge_model_overrides: std::collections::HashMap::new(),
             default_merge_effort_overrides: std::collections::HashMap::new(),
-            default_sequential_agent: "claude".to_string(),
+            default_sequential_agent: String::new(),
             default_sequential_model_overrides: std::collections::HashMap::new(),
             default_sequential_effort_overrides: std::collections::HashMap::new(),
-            default_orientation_agent: "claude".to_string(),
+            default_orientation_agent: String::new(),
             default_orientation_model_overrides: std::collections::HashMap::new(),
             default_orientation_effort_overrides: std::collections::HashMap::new(),
             usage_limit_fallback_agent: String::new(),

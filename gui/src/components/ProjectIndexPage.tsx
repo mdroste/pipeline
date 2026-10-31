@@ -9,6 +9,7 @@ import {
 } from "../lib/projectIndex";
 import type { WorkspaceDestination } from "../lib/workspaceNavigation";
 import { workbenchErrorMessage } from "../lib/workbenchError";
+import PageHeader from "../ui/PageHeader";
 import "./project-surface/ProjectHome.css";
 
 const ProjectDialog = lazy(() => import("./WorkspaceProjectDialog"));
@@ -63,21 +64,21 @@ export default function ProjectIndexPage({
   ];
   return (
     <div className="project-home project-index-page">
-      <div className="project-home-content">
-        <header className="project-home-heading">
-          <div>
-            <h1>Projects</h1>
-            <p>Pick up your research where you left it.</p>
-          </div>
-          <button
-            type="button"
-            className="project-home-button primary"
-            onClick={() => setCreating(true)}
-          >
-            New project
-          </button>
-        </header>
-        <div className="project-index-search">
+      <div className="ui-page">
+        <PageHeader
+          title="Projects"
+          description="Pick up your research where you left it."
+          action={
+            <button
+              type="button"
+              className="ui-page-button primary"
+              onClick={() => setCreating(true)}
+            >
+              + New project
+            </button>
+          }
+        />
+        <div className="ui-page-toolbar project-index-search">
           <label className="sr-only" htmlFor="project-index-search">
             Search projects
           </label>
@@ -90,7 +91,7 @@ export default function ProjectIndexPage({
           />
           <button
             type="button"
-            className="project-home-button"
+            className="ui-page-button"
             disabled={loading}
             onClick={() => void refresh()}
           >
@@ -116,7 +117,7 @@ export default function ProjectIndexPage({
             </p>
             <button
               type="button"
-              className="project-home-button primary"
+              className="ui-page-button primary"
               onClick={() => setCreating(true)}
             >
               Create your first project
@@ -136,9 +137,12 @@ export default function ProjectIndexPage({
                 key={label}
                 aria-label={label}
               >
-                <h2>{label}</h2>
+                <h2 className="ui-page-label">{label}</h2>
                 {items.map((project) => (
-                  <article className="project-index-row" key={project.id}>
+                  <article
+                    className="ui-page-row project-index-row"
+                    key={project.id}
+                  >
                     <div className="project-index-info">
                       <button
                         type="button"
@@ -218,7 +222,7 @@ export default function ProjectIndexPage({
                     <div className="project-index-actions">
                       <button
                         type="button"
-                        className="project-home-button"
+                        className="ui-page-button"
                         disabled={pending}
                         onClick={() =>
                           void run(() =>

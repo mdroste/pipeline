@@ -128,21 +128,24 @@ describe("AboutPage", () => {
     expect(readFlappyHighScore()).toBe(7);
   });
 
-  it("explains both orchestration modes, scoped access, and provider data sharing", () => {
+  it("explains the product areas, built-in reviews, and provider data sharing", () => {
     render(<AboutPage onClose={() => undefined} />);
 
     expect(
-      screen.getByText(
-        /develop research, work with AI assistants, and review papers/i,
-      ),
+      screen.getByText(/Chat with an AI\s+assistant, keep each paper/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Chat with the assistant in an unfiled conversation/i),
+      screen.getByText(/A conversation is a chat with the AI assistant/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Automations" }),
     ).toBeInTheDocument();
     expect(screen.getByText("~/.pipeline/workbench/")).toBeInTheDocument();
-    expect(screen.getByText(/prerequisites finish/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/reads only the material its workflow allows/i),
+      screen.getByText(/don't depend on each other run at the same time/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/sends its prompt and the material it can read/i),
     ).toBeInTheDocument();
     expect(screen.getByText(/plan and data-use terms/i)).toBeInTheDocument();
     expect(screen.getByText("Reviews")).toBeInTheDocument();
@@ -155,12 +158,43 @@ describe("AboutPage", () => {
     expect(
       screen.queryByText("Replication Package Audit"),
     ).not.toBeInTheDocument();
-    // Once in setup (highly recommended) and once under PDF & document handling.
+    // Once in setup (highly recommended) and once under How Pipeline reads documents.
     expect(screen.getAllByText("PaddleOCR-VL Full Parser")).toHaveLength(2);
     expect(screen.getByText("Highly recommended")).toBeInTheDocument();
     expect(screen.queryByText("PaddleOCR-VL Fast")).not.toBeInTheDocument();
-    // The app calls saved workflows "workflows" everywhere now.
+    // Researchers see "review design"; workflow and profile are internal names.
+    expect(screen.queryByText(/workflow/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/profile/i)).not.toBeInTheDocument();
+  });
+
+  it("describes each built-in review by what it does", () => {
+    render(<AboutPage onClose={() => undefined} />);
+
+    expect(
+      screen.getByText(/checks them against the paper/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Finds formulaic prose/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/configured review step/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says conversations use the chosen provider", () => {
+    render(<AboutPage onClose={() => undefined} initialSection="privacy" />);
+
+    expect(
+      screen.getByText(/to the provider you\s+chose/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/managed ChatGPT/i)).not.toBeInTheDocument();
+  });
+
+  it("lists each report tab with a plain description", () => {
+    render(<AboutPage onClose={() => undefined} />);
+
+    expect(screen.getByText("Report details")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Findings you can accept, reject, or annotate/i),
+    ).toBeInTheDocument();
   });
 
   it("keeps reference sections collapsed by default and opens privacy on request", () => {
@@ -187,15 +221,21 @@ describe("AboutPage", () => {
     render(<AboutPage onClose={() => undefined} onNavigate={onNavigate} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Open Settings" }));
-    fireEvent.click(screen.getByRole("button", { name: "Open Designer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Automations" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open Review designer" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Open Gallery" }));
-    fireEvent.click(screen.getByRole("button", { name: "Open History" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open Review history" }),
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Open review collections" }),
     );
 
     expect(onNavigate.mock.calls.map((call) => call[0])).toEqual([
       "settings",
+      "tasks",
       "pipeline",
       "gallery",
       "history",
@@ -206,7 +246,7 @@ describe("AboutPage", () => {
   it("hides navigation links when no navigator is provided", () => {
     render(<AboutPage onClose={() => undefined} />);
     expect(
-      screen.queryByRole("button", { name: "Open Designer" }),
+      screen.queryByRole("button", { name: "Open Review designer" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Open Settings" }),

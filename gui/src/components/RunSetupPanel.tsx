@@ -5,6 +5,7 @@ import WorkflowPanel from "./WorkflowPanel";
 import RunParallelAgents from "./RunParallelAgents";
 import { isWindows } from "../lib/platform";
 import type {
+  DepsReport,
   PipelineConfig,
   PrimaryInputSelection,
   RunParallelOverrides,
@@ -17,6 +18,8 @@ interface Props {
   configError: string | null;
   configLoading: boolean;
   dependenciesError: string | null;
+  /** What readiness last saw, for labeling providers. */
+  dependencies?: DepsReport | null;
   inputMode: string;
   /** The primary input App holds; the selector shows it across remounts. */
   inputSelection: PrimaryInputSelection | null;
@@ -48,6 +51,7 @@ export default function RunSetupPanel({
   configError,
   configLoading,
   dependenciesError,
+  dependencies,
   inputMode,
   inputSelection,
   launchError = null,
@@ -126,6 +130,7 @@ export default function RunSetupPanel({
           <RunParallelAgents
             value={parallelOverrides}
             disabled={configLoading || preparingRun}
+            dependencies={dependencies}
             localLlmActive={localLlmActive}
             refreshKey={configVersion}
             onChange={onParallelOverridesChange}

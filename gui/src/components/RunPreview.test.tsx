@@ -55,6 +55,8 @@ describe("RunPreview", () => {
           profileId: "review",
           inputMode: "document",
           inputInterpretation: "document",
+          providers: ["claude", "antigravity", "local"],
+          orientationAgent: "claude",
           stages: [
             {
               id: "extract",
@@ -83,9 +85,8 @@ describe("RunPreview", () => {
     ).toBeVisible();
     expect(screen.getByText(/2 documents · document/)).toBeVisible();
     expect(screen.getByText("4–16 model calls")).toBeVisible();
-    expect(
-      screen.getByText(/^Claude, Gemini, Local, default provider/),
-    ).toBeVisible();
+    expect(screen.getByText(/^Claude, Gemini, Local/)).toBeVisible();
+    expect(screen.queryByText(/default provider/i)).not.toBeInTheDocument();
 
     const details = screen.getByText("Reads: Analysis results");
     expect(details).not.toBeVisible();
@@ -96,6 +97,65 @@ describe("RunPreview", () => {
     ).toBeVisible();
     expect(screen.getByText("Tools: WebSearch")).toBeVisible();
     expect(screen.getByText("Orientation")).toBeVisible();
+  });
+
+  it("names the providers that handle orientation and specialists", () => {
+    render(
+      <RunPreview
+        config={{
+          ...config,
+          orientation_schema: { "x-pipeline-contract": "auto-review-v2" },
+        }}
+        inputPath="/papers/draft.pdf"
+        plan={{
+          profileId: "review",
+          inputMode: "document",
+          inputInterpretation: "document",
+          providers: ["codex"],
+          orientationAgent: "codex",
+          stages: [],
+        }}
+        onCancel={() => {}}
+        onRun={() => {}}
+      />,
+    );
+
+    const row = (label: string) =>
+      screen.getByText(label).parentElement as HTMLElement;
+    expect(row("Orientation")).toHaveTextContent("ChatGPT · 1 call");
+    expect(row("Specialists")).toHaveTextContent("Claude, Gemini");
+    expect(screen.queryByText(/default provider/i)).not.toBeInTheDocument();
+  });
+
+  it("warns when the usage-limit backup couldn't run", () => {
+    const plan = {
+      profileId: "review",
+      inputMode: "document",
+      inputInterpretation: "document",
+      providers: ["claude", "codex"],
+      orientationAgent: "claude",
+      stages: [],
+    };
+    const props = {
+      config,
+      inputPath: "/papers/draft.pdf",
+      onCancel: () => {},
+      onRun: () => {},
+    };
+    const { rerender } = render(<RunPreview {...props} plan={plan} />);
+    expect(screen.queryByText(/isn’t connected/)).not.toBeInTheDocument();
+
+    rerender(
+      <RunPreview {...props} plan={{ ...plan, backupUnavailable: "codex" }} />,
+    );
+    expect(
+      screen.getByText(
+        "Your backup, ChatGPT, isn’t connected. If you reach a usage limit, this review stops.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Generate report" }),
+    ).toBeEnabled();
   });
 
   it("requires an explicit confirmation", async () => {

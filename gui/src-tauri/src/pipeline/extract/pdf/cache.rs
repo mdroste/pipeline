@@ -21,7 +21,10 @@ pub(in crate::pipeline::extract) fn llm_extraction_cache_path(
         "engine": "llm-pdf-bounded-v2",
         "provider": settings.preferred_provider,
         "transport": if provider_uses_direct_api(settings) { "api" } else { "cli" },
-        "model_policy": "automatic",
+        "model_policy": match settings.default_model.as_str() {
+            "" => "automatic",
+            model => model,
+        },
         "effort_policy": "provider_default",
         "chunk_pages": LLM_CHUNK_MAX_PAGES,
         "chunk_chars": LLM_CHUNK_TARGET_BASELINE_CHARS,

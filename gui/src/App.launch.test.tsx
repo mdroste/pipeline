@@ -30,11 +30,14 @@ const { previewConfig, runSetup, reset } = createAppTestFixture(
   mocks,
   appearance,
 );
-// The rail is flat: every destination is always visible, so "opening tools"
-// is a no-op kept only so navigation call sites read as user journeys.
-async function openTools(_user: {
+// History and Designer sit inside Reviews, which stays closed until it is
+// needed or the current page belongs to it.
+async function openTools(user: {
   click: (element: Element) => Promise<unknown>;
-}) {}
+}) {
+  const expand = screen.queryByRole("button", { name: "Expand Reviews" });
+  if (expand) await user.click(expand);
+}
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: mocks.listen }));
@@ -240,15 +243,18 @@ describe("App launch", () => {
         expectedProfileConfigSnapshotId: "config-test",
       }),
     );
-    // Each document is its own queued review in the rail; the first opens.
+    // Each document is its own queued review in Activity; the first opens.
     expect(
       await screen.findByRole("heading", { name: "a.pdf is queued" }),
     ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /^Activity/ }));
     expect(screen.getByRole("button", { name: /^b\.pdf/ })).toBeVisible();
+    await user.keyboard("{Escape}");
     expect(screen.getByRole("button", { name: "New review" })).toBeEnabled();
     expect(invoke).not.toHaveBeenCalledWith("start_batch", expect.anything());
 
-    await user.click(screen.getByRole("button", { name: "Review history" }));
+    await openTools(user);
+    await user.click(screen.getByRole("button", { name: "History" }));
     expect(await screen.findByText("History workspace")).toBeVisible();
     expect(enqueue).not.toHaveBeenCalled();
   });
@@ -349,7 +355,7 @@ describe("App launch", () => {
       await screen.findByRole("button", { name: "Choose DOCX" }),
     );
     await openTools(user);
-    await user.click(screen.getByRole("button", { name: "Review designer" }));
+    await user.click(screen.getByRole("button", { name: "Designer" }));
     await user.click(
       await screen.findByRole("button", {
         name: "Save document workflow",
@@ -384,7 +390,7 @@ describe("App launch", () => {
       await screen.findByRole("button", { name: "Choose test paper" }),
     );
     await openTools(user);
-    await user.click(screen.getByRole("button", { name: "Review designer" }));
+    await user.click(screen.getByRole("button", { name: "Designer" }));
     await user.click(
       await screen.findByRole("button", {
         name: "Switch to folder workflow",
@@ -503,7 +509,7 @@ describe("App launch", () => {
     expect(screen.getByRole("button", { name: "Setup needed" })).toBeVisible();
   });
 
-  it("opens PDF Extraction settings from a missing PaddleOCR dependency", async () => {
+  it("opens PDF extraction settings from a missing PaddleOCR dependency", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
       if (command === "get_run_setup") {
@@ -540,7 +546,7 @@ describe("App launch", () => {
 
     await user.click(
       await screen.findByRole("link", {
-        name: "Settings → Reviews → PDF Extraction",
+        name: "Settings → Reviews → PDF extraction",
       }),
     );
 
@@ -673,7 +679,8 @@ describe("App launch", () => {
       await screen.findByRole("button", { name: "Generate report" }),
     );
     await waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1));
-    await user.click(screen.getByRole("button", { name: "Review history" }));
+    await openTools(user);
+    await user.click(screen.getByRole("button", { name: "History" }));
     expect(await screen.findByText("History workspace")).toBeVisible();
     await act(async () => finish(queuedRun("late")));
     expect(screen.getByText("History workspace")).toBeVisible();
@@ -688,7 +695,8 @@ describe("App launch", () => {
     );
     expect(screen.getByText("Shown input: /tmp/test-paper.pdf")).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "Review designer" }));
+    await openTools(user);
+    await user.click(screen.getByRole("button", { name: "Designer" }));
     await user.click(
       await screen.findByRole("button", { name: "Close workflow editor" }),
     );

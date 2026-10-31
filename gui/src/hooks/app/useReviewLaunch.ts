@@ -184,6 +184,7 @@ export function useReviewLaunch(
             plan.parallelAgents ?? [],
             parallelOverrides,
             plan.mergeAgent,
+            plan.sequentialAgent,
           ),
           parallelOverrides,
           batchPaths: paths,
@@ -216,6 +217,7 @@ export function useReviewLaunch(
           plan.parallelAgents ?? [],
           parallelOverrides,
           plan.mergeAgent,
+          plan.sequentialAgent,
         ),
         parallelOverrides,
       });

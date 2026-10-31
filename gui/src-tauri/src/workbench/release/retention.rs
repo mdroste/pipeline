@@ -247,15 +247,39 @@ pub fn storage_report(store: &Store) -> WorkbenchResult<StorageReport> {
     let active = active_jobs(store)?;
     fn describe(key: &str) -> (&'static str, bool, &'static str) {
         match key {
-            "blobs_referenced" => ("Immutable evidence blobs (referenced)", false, "Referenced by artifacts, paper or source text, evidence, exchange imports or context snapshots; never pruned."),
-            "blobs_unreferenced" => ("Immutable blobs without a current reference", true, "No record references these files; they can be moved to trash and restored until trash is emptied."),
-            "blobs_staging" => ("Blob staging in progress", false, "Partial captures; left alone."),
-            "job_scratch" => ("Execution scratch", true, "Finished job material. Retained receipts and adopted outputs live in blobs, not here."),
-            "conversation_files" => ("Conversation working files", false, "Working files for conversations without a registered folder; retained with the conversation."),
-            "context_referenced" => ("Turn context snapshots (referenced)", false, "Referenced by recorded turns."),
-            "context_unreferenced" => ("Turn context files without a recorded turn", true, "Not referenced by any context snapshot."),
-            "migration_backups" => ("Pre-migration database backups", true, "Safety copies made before schema migrations; restorable from trash until emptied."),
-            "trash" => ("Trash", false, "Pruned material awaiting restore or explicit deletion."),
+            "blobs_referenced" => (
+                "Research files in use",
+                false,
+                "Used by your papers, sources, evidence, or conversations. Always kept.",
+            ),
+            "blobs_unreferenced" => ("Unused research files", true, "Nothing uses these files."),
+            "blobs_staging" => ("Files being saved", false, "Incomplete saves. Always kept."),
+            "job_scratch" => (
+                "Temporary command files",
+                true,
+                "Left over from finished commands. Results you kept are stored separately.",
+            ),
+            "conversation_files" => (
+                "Conversation working files",
+                false,
+                "Files for conversations with no project folder. Kept with the conversation.",
+            ),
+            "context_referenced" => (
+                "Conversation context",
+                false,
+                "Used by saved conversations.",
+            ),
+            "context_unreferenced" => (
+                "Unused conversation context",
+                true,
+                "Nothing uses these files.",
+            ),
+            "migration_backups" => (
+                "Database backups from updates",
+                true,
+                "Copies saved before an update changed the database.",
+            ),
+            "trash" => ("Trash", false, "Items you can restore or delete."),
             _ => ("Other", false, ""),
         }
     }
@@ -282,7 +306,7 @@ pub fn storage_report(store: &Store) -> WorkbenchResult<StorageReport> {
             disposable,
             note: if key == "job_scratch" && active > 0 {
                 format!(
-                    "{note} Pruning is unavailable while {active} job(s) or conversation turn(s) are active."
+                    "{note} You can't remove these while commands or conversations are running."
                 )
             } else {
                 note.into()
@@ -294,7 +318,7 @@ pub fn storage_report(store: &Store) -> WorkbenchResult<StorageReport> {
         categories,
         trash: list_trash(store)?,
         active_jobs: active,
-        note: "Pruning never touches referenced evidence, credentials, the database or Workflow runs. Pruned files go to a private trash journal and can be restored until trash is emptied.".into(),
+        note: "Cleanup removes only files nothing is using. Removed files go to Trash, where you can restore them until you empty it.".into(),
     })
 }
 

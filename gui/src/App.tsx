@@ -2,7 +2,15 @@ import { useAppAppearance } from "./hooks/useAppAppearance";
 import { useAppNotifications } from "./hooks/useAppNotifications";
 import { useAppController } from "./hooks/useAppController";
 import ProviderLimitBanner from "./components/ProviderLimitBanner";
-import { lazy, Suspense, useLayoutEffect, useMemo, useRef } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import ReviewRunView from "./components/ReviewRunView";
 import DepsCheck from "./components/DepsCheck";
 import Console from "./components/Console";
@@ -10,6 +18,7 @@ import VariablePrompt from "./components/VariablePrompt";
 import RunPreview from "./components/RunPreview";
 import UpdateBanner from "./components/UpdateBanner";
 import NavRail, { CollapsedNavBar } from "./components/NavRail";
+import { NavRailSlotProvider } from "./components/nav-rail/navRailSlot";
 import RunSetupPanel from "./components/RunSetupPanel";
 import RunPlanPreview from "./components/RunPlanPreview";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -27,6 +36,8 @@ const SettingsPage = lazy(() => import("./components/SettingsPage"));
 const HomePage = lazy(() => import("./components/HomePage"));
 const TasksPage = lazy(() => import("./components/TasksPage"));
 const ProjectIndexPage = lazy(() => import("./components/ProjectIndexPage"));
+const ConversationsPage = lazy(() => import("./components/ConversationsPage"));
+const AppSearch = lazy(() => import("./components/AppSearch"));
 const WorkspacePage = lazy(() => import("./components/WorkspacePage"));
 const PipelinePage = lazy(() => import("./components/PipelinePage"));
 const ResearchActivity = lazy(() => import("./components/ResearchActivity"));
@@ -40,10 +51,8 @@ const WorkflowGalleryPage = lazy(
 // Windows title strip takes the same color so it reads as part of the page.
 const SURFACE_TOP_PAGES: ReadonlySet<AppPage> = new Set([
   "batch",
-  "gallery",
   "history",
   "home",
-  "project-index",
   "projects",
   "workspace",
 ]);
@@ -52,7 +61,7 @@ const loadBatchPanel = () => import("./components/BatchPanel");
 const BatchPanel = lazy(loadBatchPanel);
 const ReportWorkspace = lazy(() => import("./components/ReportWorkspace"));
 
-function App() {
+function AppShell() {
   useAppAppearance();
   const {
     navigation,
@@ -67,6 +76,7 @@ function App() {
   } = useAppController();
   const {
     openWorkspaceSession,
+    startConversation,
     openActivityProject,
     openActivityTask,
     page,
@@ -80,7 +90,6 @@ function App() {
     newProjectRequest,
     setNewProjectRequest,
     openTask,
-    openWorkspaceSettings,
     taskSessionId,
     taskId,
     discoveryId,
@@ -188,6 +197,23 @@ function App() {
     usage,
   } = reviewView;
   useAppNotifications(runQueue.runs);
+  const [searchOpen, setSearchOpen] = useState(false);
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if (
+        !(event.metaKey || event.ctrlKey) ||
+        event.altKey ||
+        event.key.toLowerCase() !== "k"
+      )
+        return;
+      // Another modal owns its keyboard.
+      if (!searchOpen && document.querySelector('[aria-modal="true"]')) return;
+      event.preventDefault();
+      setSearchOpen((open) => !open);
+    };
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, [searchOpen]);
   // Every destination shares the content scroller below, so open each new
   // page, review, or saved run at the top. A layout effect runs before pages'
   // passive effects, so a page that restores its own offset still wins.
@@ -245,11 +271,23 @@ function App() {
     );
   };
 
+  // The window itself never scrolls. Relative and clip contain visually hidden
+  // elements that sit outside a page's scroller, so neither focus nor the
+  // scroll wheel can move the shell and leave blank space below it.
   return (
     <div
       data-testid="app-shell"
-      className="flex h-screen flex-col overflow-hidden bg-gray-50 dark:bg-[#101010]"
+      className="relative flex h-screen flex-col overflow-clip bg-gray-50 dark:bg-[#101010]"
     >
+      {searchOpen && (
+        <Suspense fallback={null}>
+          <AppSearch
+            onClose={() => setSearchOpen(false)}
+            onOpenConversation={(id) => void openWorkspaceSession(id)}
+            onOpenRun={(id) => void openHistoryRun(id, null)}
+          />
+        </Suspense>
+      )}
       {showDeps && depsReport && (
         <DepsCheck
           report={depsReport}
@@ -363,13 +401,6 @@ function App() {
         <CollapsedNavBar
           isMac={isMac}
           isWindows={isWindows}
-          status={
-            workspaceAttention || tasksAttention || unseenRuns.size > 0
-              ? "attention"
-              : workspaceActive || isRunning
-                ? "running"
-                : null
-          }
           onExpand={toggleNavRail}
           toggleRef={navRailToggleRef}
         />
@@ -390,6 +421,17 @@ function App() {
           onOpenRun={(key) => void openRun(key)}
           onCancelRun={(run) => void cancelReview(run)}
           onDismissRuns={dismissReviews}
+          onSearch={() => setSearchOpen(true)}
+          onNewConversation={() =>
+            void startConversation().catch((error: unknown) =>
+              notify(
+                `The conversation could not be started: ${error instanceof Error ? error.message : String(error)}`,
+              ),
+            )
+          }
+          onNewProject={() => void createWorkspaceProject()}
+          onOpenConversation={(id) => void openWorkspaceSession(id)}
+          onOpenConversations={() => void openWorkspace("chat")}
           onConfigureRuns={() =>
             void router.navigate({
               page: "settings",
@@ -427,6 +469,7 @@ function App() {
             configError={runConfigError}
             configLoading={runConfigLoading}
             dependenciesError={depsError}
+            dependencies={depsReport}
             inputMode={inputMode}
             inputSelection={inputSelection}
             launchError={launchError}
@@ -544,6 +587,17 @@ function App() {
                   onOpenProject={openWorkspaceProject}
                   onResumeConversation={openWorkspaceSession}
                 />
+              ) : page === "conversations" ? (
+                <ConversationsPage
+                  onOpen={openWorkspaceSession}
+                  onNew={() =>
+                    void startConversation().catch((error: unknown) =>
+                      notify(
+                        `The conversation could not be started: ${error instanceof Error ? error.message : String(error)}`,
+                      ),
+                    )
+                  }
+                />
               ) : page === "workspace" ? (
                 // A project's Reviews open saved runs (and cited sources)
                 // through the shell, like the other review entry points.
@@ -557,7 +611,6 @@ function App() {
                     newProjectRequest={newProjectRequest}
                     onNewProjectRequestHandled={() => setNewProjectRequest(0)}
                     onTasks={(session, id) => void openTask(session, id)}
-                    onOpenSettings={() => void openWorkspaceSettings()}
                     onReviewHandoff={(handoff) =>
                       void handleWorkspaceReviewHandoff(handoff)
                     }
@@ -701,6 +754,15 @@ function App() {
         </main>
       </div>
     </div>
+  );
+}
+
+/** The sidebar and the Workspace page are siblings joined by this slot. */
+function App() {
+  return (
+    <NavRailSlotProvider>
+      <AppShell />
+    </NavRailSlotProvider>
   );
 }
 

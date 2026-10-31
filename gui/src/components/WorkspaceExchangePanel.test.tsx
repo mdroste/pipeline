@@ -218,11 +218,11 @@ it("previews a prune before moving anything and only offers disposable categorie
     trashIds: [],
   });
   render(<WorkspaceExchangePanel {...props()} />);
-  fireEvent.click(await screen.findByText("Inspect disk use"));
+  fireEvent.click(await screen.findByText("Show disk use"));
   await screen.findByText("Orphan blobs");
-  expect(screen.queryByLabelText("Prune Referenced blobs")).toBeNull();
-  expect(screen.getByText("Move to trash")).toBeDisabled();
-  fireEvent.click(screen.getByLabelText("Prune Orphan blobs"));
+  expect(screen.queryByLabelText("Remove Referenced blobs")).toBeNull();
+  expect(screen.getByText("Move to Trash")).toBeDisabled();
+  fireEvent.click(screen.getByLabelText("Remove Orphan blobs"));
   fireEvent.click(screen.getByText("Preview deletion"));
   await waitFor(() =>
     expect(mocks.pruneStorage).toHaveBeenCalledWith(
@@ -230,7 +230,7 @@ it("previews a prune before moving anything and only offers disposable categorie
       false,
     ),
   );
-  await screen.findByText(/would move to trash. Nothing has been moved yet/);
+  await screen.findByText(/Choose Move to Trash to move/);
 });
 
 it("drafts a workflow only from completed steps and saves it as a file", async () => {
@@ -302,15 +302,15 @@ it("invalidates changed prune categories and sends the reviewed token on apply",
     previewToken: "reviewed",
   });
   render(<WorkspaceExchangePanel {...props()} />);
-  fireEvent.click(await screen.findByText("Inspect disk use"));
-  fireEvent.click(await screen.findByLabelText("Prune Orphan blobs"));
+  fireEvent.click(await screen.findByText("Show disk use"));
+  fireEvent.click(await screen.findByLabelText("Remove Orphan blobs"));
   fireEvent.click(screen.getByText("Preview deletion"));
-  await waitFor(() => expect(screen.getByText("Move to trash")).toBeEnabled());
-  fireEvent.click(screen.getByLabelText("Prune Job scratch"));
-  expect(screen.getByText("Move to trash")).toBeDisabled();
+  await waitFor(() => expect(screen.getByText("Move to Trash")).toBeEnabled());
+  fireEvent.click(screen.getByLabelText("Remove Job scratch"));
+  expect(screen.getByText("Move to Trash")).toBeDisabled();
   fireEvent.click(screen.getByText("Preview deletion"));
-  await waitFor(() => expect(screen.getByText("Move to trash")).toBeEnabled());
-  fireEvent.click(screen.getByText("Move to trash"));
+  await waitFor(() => expect(screen.getByText("Move to Trash")).toBeEnabled());
+  fireEvent.click(screen.getByText("Move to Trash"));
   await waitFor(() =>
     expect(mocks.pruneStorage).toHaveBeenCalledWith(
       ["blobs_unreferenced", "job_scratch"],
@@ -345,11 +345,11 @@ it("ignores a pending prune preview after its category selection changes", async
       }),
   );
   render(<WorkspaceExchangePanel {...props()} />);
-  fireEvent.click(await screen.findByText("Inspect disk use"));
-  fireEvent.click(await screen.findByLabelText("Prune Orphan blobs"));
+  fireEvent.click(await screen.findByText("Show disk use"));
+  fireEvent.click(await screen.findByLabelText("Remove Orphan blobs"));
   fireEvent.click(screen.getByText("Preview deletion"));
   await waitFor(() => expect(finish).toBeDefined());
-  fireEvent.click(screen.getByLabelText("Prune Orphan blobs"));
+  fireEvent.click(screen.getByLabelText("Remove Orphan blobs"));
   await act(async () =>
     finish({
       entries: [],
@@ -359,7 +359,7 @@ it("ignores a pending prune preview after its category selection changes", async
       previewToken: "stale",
     }),
   );
-  expect(screen.getByText("Move to trash")).toBeDisabled();
+  expect(screen.getByText("Move to Trash")).toBeDisabled();
 });
 
 it("imports only into the target that was previewed", async () => {
@@ -417,11 +417,11 @@ it("empties trash only after an explicit in-app confirmation", async () => {
   mocks.emptyTrash.mockResolvedValue(undefined);
   mocks.confirmDialog.mockResolvedValueOnce(false);
   render(<WorkspaceExchangePanel {...props()} />);
-  fireEvent.click(await screen.findByText("Inspect disk use"));
-  fireEvent.click(await screen.findByText("Empty trash"));
+  fireEvent.click(await screen.findByText("Show disk use"));
+  fireEvent.click(await screen.findByText("Empty Trash"));
   await waitFor(() =>
     expect(mocks.confirmDialog).toHaveBeenCalledWith(
-      "Permanently delete 1 trashed item(s)? This cannot be undone.",
+      "Permanently delete 1 item in Trash? This cannot be undone.",
       expect.objectContaining({
         confirmLabel: "Delete permanently",
         destructive: true,
@@ -431,6 +431,6 @@ it("empties trash only after an explicit in-app confirmation", async () => {
   expect(mocks.emptyTrash).not.toHaveBeenCalled();
 
   mocks.confirmDialog.mockResolvedValueOnce(true);
-  fireEvent.click(screen.getByText("Empty trash"));
+  fireEvent.click(screen.getByText("Empty Trash"));
   await waitFor(() => expect(mocks.emptyTrash).toHaveBeenCalledTimes(1));
 });

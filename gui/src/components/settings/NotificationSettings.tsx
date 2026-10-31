@@ -16,7 +16,7 @@ export default function NotificationSettings() {
     <>
       <SectionHeader
         title="Notify me about"
-        description="Applies to conversations, reviews, and automations while Pipeline is running. Results and requests remain available in their original views."
+        description="Applies to conversations, reviews, and automations while Pipeline is running."
       />
       {(
         [
@@ -33,12 +33,12 @@ export default function NotificationSettings() {
           [
             "notifyAttention",
             "Attention required",
-            "An approval, input, or research check needs your attention.",
+            "An approval, your input, or a research check is waiting for you.",
           ],
           [
             "suppressFocused",
             "Quiet while I’m using Pipeline",
-            "Mute these notifications and sounds while you’re using Pipeline.",
+            "No notifications or sounds while Pipeline is the active window.",
           ],
         ] as const
       ).map(([key, label, description]) => (
@@ -55,7 +55,7 @@ export default function NotificationSettings() {
       <div id="notification-sound" className="settings-anchor">
         <Toggle
           label="Play a sound"
-          description="Play a short tone with enabled notifications."
+          description="Play a short sound with each notification."
           checked={p.notificationSound}
           onChange={(value) => {
             update("notificationSound", value);
@@ -67,7 +67,7 @@ export default function NotificationSettings() {
       <div id="desktop-notifications" className="settings-anchor">
         <Toggle
           label="Desktop notifications"
-          description="Also show notifications through your operating system. Enabling this may ask for notification permission."
+          description="Also show notifications outside Pipeline. Your system may ask for permission first."
           checked={p.desktopNotifications}
           onChange={async (value) => {
             if (busy) return;
@@ -85,9 +85,7 @@ export default function NotificationSettings() {
                   "Notifications are blocked by your system. Allow Pipeline notifications in system settings, then try again.",
                 );
             } catch {
-              setPermissionError(
-                "Desktop notifications are unavailable. You can still use in-app notifications.",
-              );
+              setPermissionError("Could not turn on desktop notifications.");
             } finally {
               setBusy(false);
             }
@@ -111,17 +109,16 @@ export default function NotificationSettings() {
           void deliverNotice({
             id: "preview",
             kind: "completion",
-            title: "Notification preview",
-            body: "Your notification preferences are working.",
+            title: "Test notification",
+            body: "Notifications are working.",
           })
         }
       >
         Test completion notification
       </button>
       <p className="settings-row-description mt-2">
-        The test uses your current notification and sound settings, including
-        muting while Pipeline is in focus. Pipeline must be open, and system
-        settings may block desktop notifications.
+        The test follows the settings above. If Quiet while I’m using Pipeline
+        is on, nothing appears.
       </p>
     </>
   );

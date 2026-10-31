@@ -10,7 +10,6 @@ import {
   useRef,
   useState,
   type ReactNode,
-  type RefObject,
 } from "react";
 import useContainerWidth from "../hooks/useContainerWidth";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
@@ -37,8 +36,6 @@ function loadView(key: string): DeskView | null {
 export default function WorkspaceDesk({
   project,
   children,
-  navigationHidden,
-  onNavigation,
   hidden,
   assistantOnly,
   assistantRequest = 0,
@@ -50,18 +47,14 @@ export default function WorkspaceDesk({
   onStop,
   stopping = false,
   feedback,
-  navigationButtonRef,
   workspaceId,
   projectName,
   toolLabel,
   onTools,
   toolsDisabled = false,
-  navigationOpen = false,
 }: {
   project: ReactNode;
   children: ReactNode;
-  navigationHidden: boolean;
-  onNavigation: () => void;
   hidden?: boolean;
   assistantOnly?: boolean;
   assistantRequest?: number;
@@ -76,12 +69,10 @@ export default function WorkspaceDesk({
   stopping?: boolean;
   feedback?: ReactNode;
   workspaceId?: string | null;
-  navigationButtonRef?: RefObject<HTMLButtonElement | null>;
   projectName?: string;
   toolLabel?: string;
   onTools?: () => void;
   toolsDisabled?: boolean;
-  navigationOpen?: boolean;
 }) {
   const [root, width] = useContainerWidth<HTMLDivElement>();
   const preferenceKey = `pipeline.workspace.view.${workspaceId ?? "unfiled"}`;
@@ -210,24 +201,16 @@ export default function WorkspaceDesk({
         aria-label="Desk views"
         data-tauri-drag-region={isMac ? "deep" : undefined}
       >
-        <button
-          ref={navigationButtonRef}
-          type="button"
-          onClick={onNavigation}
-          aria-label="Browse projects"
-          aria-expanded={navigationOpen || !navigationHidden}
-          className="workspace-desk-button workspace-browse-button"
-        >
-          <WorkspaceIcon name="outline" />
-          <span>{projectName ?? "Unfiled conversations"}</span>
-        </button>
+        <span className="workspace-desk-title">
+          {projectName ?? "Unfiled conversations"}
+        </span>
         {project && onTools && (
           <button
             type="button"
             disabled={toolsDisabled}
             onClick={onTools}
             aria-label="Find a project view"
-            title="Go to a project view (⌘/Ctrl K)"
+            title="Go to a project view"
             className="workspace-desk-button workspace-tool-trigger"
           >
             <span>{toolLabel ?? "Project views"}</span>

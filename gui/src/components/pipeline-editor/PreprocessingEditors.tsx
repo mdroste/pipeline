@@ -124,7 +124,7 @@ function ExtractionEditor({
         <div className="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
           Pipeline uses the PDF method you choose and stops if it cannot read
           the document completely. Adjust speed, memory, OCR, and image options
-          in Settings → Reviews → PDF Extraction. LaTeX files are read directly.
+          in Settings → Reviews → PDF extraction. LaTeX files are read directly.
         </div>
       </div>
     </div>

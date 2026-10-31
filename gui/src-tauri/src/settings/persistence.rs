@@ -62,11 +62,11 @@ pub(super) fn load_with_warnings_inner() -> (Settings, Vec<String>, Vec<String>)
             // (including encrypted API keys) with defaults.
             match quarantine_corrupt_file(&path, &content) {
                 Some(backup) => warnings.push(format!(
-                    "Settings file has invalid JSON: {e}. It was moved to {} — fix and rename it back, or re-enter your settings.",
+                    "Could not read your settings file: {e}. Pipeline moved it to {}. Fix it and rename it back, or enter your settings again.",
                     backup.display()
                 )),
                 None => warnings.push(format!(
-                    "Settings file has invalid JSON: {e}. Your saved settings were not loaded."
+                    "Could not read your settings file: {e}. Your saved settings were not loaded."
                 )),
             }
             Settings::default()
@@ -83,7 +83,7 @@ pub(super) fn load_with_warnings_inner() -> (Settings, Vec<String>, Vec<String>)
             settings.anthropic_api_key = decrypt_string(&settings.anthropic_api_key, &key)
                 .unwrap_or_else(|e| {
                     warnings.push(format!(
-                        "Could not decrypt Anthropic API key: {e}. The key may need to be re-entered."
+                        "Could not decrypt your Anthropic API key: {e}. Enter it again."
                     ));
                     undecryptable.push("anthropic".to_string());
                     String::new()
@@ -91,7 +91,7 @@ pub(super) fn load_with_warnings_inner() -> (Settings, Vec<String>, Vec<String>)
             settings.openai_api_key = decrypt_string(&settings.openai_api_key, &key)
                 .unwrap_or_else(|e| {
                     warnings.push(format!(
-                        "Could not decrypt OpenAI API key: {e}. The key may need to be re-entered."
+                        "Could not decrypt your OpenAI API key: {e}. Enter it again."
                     ));
                     undecryptable.push("openai".to_string());
                     String::new()
@@ -99,15 +99,15 @@ pub(super) fn load_with_warnings_inner() -> (Settings, Vec<String>, Vec<String>)
             settings.google_api_key = decrypt_string(&settings.google_api_key, &key)
                 .unwrap_or_else(|e| {
                     warnings.push(format!(
-                        "Could not decrypt Google API key: {e}. The key may need to be re-entered."
+                        "Could not decrypt your Google API key: {e}. Enter it again."
                     ));
                     undecryptable.push("google".to_string());
                     String::new()
                 });
-            settings.local_api_key = decrypt_string(&settings.local_api_key, &key)
-                .unwrap_or_else(|e| {
+            settings.local_api_key =
+                decrypt_string(&settings.local_api_key, &key).unwrap_or_else(|e| {
                     warnings.push(format!(
-                        "Could not decrypt local-server API key: {e}. The key may need to be re-entered."
+                        "Could not decrypt your local server API key: {e}. Enter it again."
                     ));
                     undecryptable.push("local".to_string());
                     String::new()
@@ -115,7 +115,7 @@ pub(super) fn load_with_warnings_inner() -> (Settings, Vec<String>, Vec<String>)
         }
         Err(e) => {
             warnings.push(format!(
-                "Could not load encryption key: {e}. API keys have been cleared — please re-enter them in Settings."
+                "Could not load the encryption key: {e}. Enter your API keys again."
             ));
             settings.anthropic_api_key = String::new();
             settings.openai_api_key = String::new();

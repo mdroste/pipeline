@@ -355,6 +355,11 @@ fn every_pinned_source() -> Vec<String> {
         paddle_model_url(PADDLE_MODEL_FILE),
         paddle_model_url(PADDLE_MMPROJ_FILE),
     ];
+    sources.extend(
+        LAYOUT_MODEL_FILES
+            .iter()
+            .map(|file| layout_model_url(file.name)),
+    );
     sources.extend(LLAMA_ARTIFACTS.iter().map(llama_download_url));
     sources.extend(UV_ARTIFACTS.iter().flat_map(uv_download_urls));
     sources.extend(PYTHON_ARTIFACTS.iter().flat_map(python_download_urls));

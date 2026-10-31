@@ -2,7 +2,9 @@ import type { Settings } from "../../lib/types";
 import type { AppPreferences } from "../../lib/appPreferences";
 import type { ThemePreference } from "../../lib/theme";
 import type { Section } from "./navigation";
+import { connectionDescription } from "../../lib/connections";
 import {
+  defaultConnectionId,
   defaultOrientationAgent,
   defaultParallelAgents,
   defaultMergeAgent,
@@ -111,49 +113,49 @@ export function settingsSearchEntries(
     "conversations",
     "conversation-titles",
     "Conversation titles",
-    "Automatically name conversations; title model and reasoning effort",
-    "Open to view",
+    "Automatically name conversations; title model and thinking level",
+    "",
   );
   add(
     "providers",
     "anthropic-provider",
     "Anthropic connection",
     "Claude account, subscription, API key",
-    `${s.claude_access_mode} · ${s.anthropic_api_key ? "Key configured" : "No API key"}`,
+    `${s.claude_access_mode} · ${s.anthropic_api_key ? "Key saved" : "No API key"}`,
   );
   add(
     "providers",
     "openai-provider",
-    "OpenAI Review connection",
+    "OpenAI for reviews",
     "ChatGPT account, subscription, API key",
-    `${s.codex_access_mode} · ${s.openai_api_key ? "Key configured" : "No API key"}`,
+    `${s.codex_access_mode} · ${s.openai_api_key ? "Key saved" : "No API key"}`,
   );
   add(
     "providers",
     "workspace-provider",
-    "Conversation connection",
+    "ChatGPT account",
     "ChatGPT sign-in, account, models, usage limits",
-    "Separate sign-in",
+    "",
   );
   add(
     "providers",
     "google-provider",
     "Google connection",
     "Gemini API key",
-    s.google_api_key ? "API key configured" : "API key required",
+    s.google_api_key ? "API key saved" : "API key required",
   );
   add(
     "providers",
     "local-provider",
-    "Compatible server",
-    "Ollama, LM Studio, llama.cpp, local model, endpoint, API key",
+    "Local server",
+    "Ollama, LM Studio, llama.cpp, OpenAI-compatible server, local model, endpoint, API key",
     s.local_model || "No model selected",
   );
   add(
     "providers",
     "Reviews Codex backend",
-    "Reviews connection compatibility",
-    "Advanced legacy CLI backend",
+    "Reviews connection",
+    "Codex App Server or legacy Codex CLI, compatibility",
     s.codex_backend || "app_server",
   );
   add(
@@ -161,26 +163,26 @@ export function settingsSearchEntries(
     "workflow-models",
     "Model defaults",
     "Input assessment orientation, parallel review, combine merge results, sequential steps, provider, thinking, reasoning",
-    "Expand a stage to view",
+    "",
   );
   for (const [label, target, agents, models, efforts] of [
     [
       "Input assessment",
-      "Orientation map providers",
+      "Input assessment providers",
       [defaultOrientationAgent(s)],
       s.default_orientation_model_overrides,
       s.default_orientation_effort_overrides,
     ],
     [
       "Parallel review",
-      "Parallel steps providers",
+      "Parallel review providers",
       defaultParallelAgents(s),
       s.default_parallel_model_overrides,
       s.default_parallel_effort_overrides,
     ],
     [
       "Combine results",
-      "Merge providers",
+      "Combine results providers",
       [defaultMergeAgent(s)],
       s.default_merge_model_overrides,
       s.default_merge_effort_overrides,
@@ -197,14 +199,14 @@ export function settingsSearchEntries(
       .map((agent) => {
         const key = `${agent}:${providerTransport(s, agent)}`;
         const model = models?.[key] ?? models?.[agent];
-        return `${PROVIDER_LABELS[agent as Provider]} · ${model?.mode === "pinned" ? model.model : model?.mode === "role" ? model.role : "Provider default"} · ${efforts?.[key] || efforts?.[agent] || "Default reasoning"}`;
+        return `${PROVIDER_LABELS[agent as Provider]} · ${model?.mode === "pinned" ? model.model : model?.mode === "role" ? model.role : "Provider default"} · ${efforts?.[key] || efforts?.[agent] || "Default thinking"}`;
       })
       .join("; ");
     add(
       "workflow",
       target,
       label,
-      "Review stage provider, model, thinking and reasoning effort",
+      "Review stage provider, model, and thinking level",
       value,
     );
   }
@@ -212,42 +214,42 @@ export function settingsSearchEntries(
     "workflow",
     "usage-limit-fallback",
     "Continue after an account usage limit",
-    "Fallback agent, subscription window, API quota, credits",
+    "Backup provider, fallback, subscription window, API quota, credits",
     s.usage_limit_fallback_agent || "Off",
   );
   add(
-    "workflow",
-    "Preferred Provider",
-    "Preferred Provider",
-    "Fallback for unassigned providers, extraction and revision comparison",
-    s.preferred_provider,
+    "providers",
+    "default-model",
+    "Default model",
+    "Preferred provider, model, thinking, effort, reviews and new conversations",
+    connectionDescription(defaultConnectionId(s)).label,
   );
   add(
     "workflow",
-    "Maximum Concurrent Agents",
-    "Maximum Concurrent Agents",
-    "Execution concurrency, parallel workers",
+    "Model calls at once",
+    "Model calls at once",
+    "Concurrent agents, execution concurrency, parallel workers",
     s.max_workers,
   );
   add(
     "workflow",
-    "Step Timeout",
-    "Step Timeout",
-    "Maximum time for a model call",
+    "Step time limit",
+    "Step time limit",
+    "Timeout, maximum time for a model call",
     `${s.step_timeout_secs / 60} minutes`,
   );
   add(
     "workflow",
-    "Step Retries",
-    "Step Retries",
+    "Step retries",
+    "Step retries",
     "Retry failed calls",
     s.max_retries,
   );
   add(
     "workflow",
     "max-concurrent-reviews",
-    "Simultaneous Reviews",
-    "Reviews that run at once, queue, concurrency, parallel reviews",
+    "Reviews at once",
+    "Simultaneous reviews, queue, concurrency, parallel reviews",
     s.max_concurrent_reviews ?? 2,
   );
   add(
@@ -266,22 +268,22 @@ export function settingsSearchEntries(
   add(
     "workflow",
     "workflow-extraction",
-    "PDF Extraction",
+    "PDF extraction",
     "OCR, document reading, extraction method, PaddleOCR, pdftotext",
     s.pdf_extractor,
   );
   add(
     "workflow",
-    "PDF extraction time budget",
-    "Extraction time budget",
-    "Timeout for reading a complete PDF",
+    "PDF extraction time limit",
+    "Extraction time limit",
+    "Time budget, timeout for reading a complete PDF",
     `${s.pdf_extraction_timeout_secs / 60} minutes`,
   );
   add(
     "workflow",
-    "Automatic revision reconciliation",
-    "Automatic revision reconciliation",
-    "Compare addressed, remaining and new concerns between revisions",
+    "Compare with the previous report",
+    "Compare with the previous report",
+    "Revision reconciliation, addressed, remaining and new concerns between revisions",
     s.auto_revision_reconciliation,
   );
   add(
@@ -289,14 +291,14 @@ export function settingsSearchEntries(
     "general-storage",
     "Research data folder",
     "Storage directory, Dropbox, restart, active and pending folder",
-    "Open to view location",
+    "",
   );
   add(
     "storage",
     "workspace-research-data",
     "Research backups & cleanup",
     "Backup, restore archive, conversations, retention, disk usage, Trash",
-    "Inspect research data",
+    "",
   );
   add(
     "storage",
@@ -307,7 +309,7 @@ export function settingsSearchEntries(
   );
   add(
     "storage",
-    "Report history size limit in GB",
+    "Review history size limit in GB",
     "Report history size limit",
     "Retention, disk usage, cleanup",
     s.max_saved_run_bytes ? `${s.max_saved_run_bytes / 1e9} GB` : "Unlimited",
@@ -315,8 +317,8 @@ export function settingsSearchEntries(
   add(
     "storage",
     "storage-cache",
-    "Reuse verified extraction cache",
-    "Temporary PDF data, avoid repeating extraction",
+    "Reuse earlier PDF extractions",
+    "Extraction cache, temporary PDF data, avoid repeating extraction",
     s.reuse_pdf_extraction_cache,
   );
   for (const [key, label, description] of [
@@ -366,14 +368,14 @@ export function settingsSearchEntries(
     "app-version",
     "Version & updates",
     "About Pipeline, check for update, automatic updates, download, release notes",
-    "Check installed version",
+    "",
   );
   add(
     "advanced",
     "workspace-diagnostics",
-    "Research diagnostics",
-    "Capabilities, evaluation, performance, Git, LaTeX, PDF tools",
-    "Inspect diagnostics",
+    "Installed tools",
+    "Diagnostics, capabilities, Git, LaTeX, PDF tools, Stata",
+    "",
   );
   const parser = [
     [
@@ -382,8 +384,8 @@ export function settingsSearchEntries(
       "paddle_page_concurrency",
     ],
     [
-      "PaddleOCR-VL vision encoder batch",
-      "Vision encoder batch",
+      "PaddleOCR-VL image batch size",
+      "Image batch size",
       "paddle_mtmd_batch_tokens",
     ],
     [
@@ -408,8 +410,8 @@ export function settingsSearchEntries(
       "paddle_full_layout_threshold",
     ],
     [
-      "Layout NMS",
-      "Suppress overlapping layout detections",
+      "Remove overlapping regions",
+      "Remove overlapping regions",
       "paddle_full_layout_nms",
     ],
     [
@@ -418,18 +420,18 @@ export function settingsSearchEntries(
       "paddle_full_layout_merge_bboxes_mode",
     ],
     [
-      "Merge layout blocks",
-      "Merge layout blocks",
+      "Merge split regions",
+      "Merge split regions",
       "paddle_full_merge_layout_blocks",
     ],
     [
-      "OCR text inside images",
-      "OCR text inside images",
+      "Read text inside images",
+      "Read text inside images",
       "paddle_full_ocr_image_blocks",
     ],
     [
-      "Format block content",
-      "Format block content",
+      "Save regions as Markdown",
+      "Save regions as Markdown",
       "paddle_full_format_block_content",
     ],
     [
@@ -437,19 +439,28 @@ export function settingsSearchEntries(
       "Merge tables across pages",
       "paddle_full_merge_tables",
     ],
-    ["Relevel titles", "Relevel titles", "paddle_full_relevel_titles"],
+    ["Fix heading levels", "Fix heading levels", "paddle_full_relevel_titles"],
     [
-      "Retain formula numbers",
-      "Retain formula numbers",
+      "Keep equation numbers",
+      "Keep equation numbers",
       "paddle_full_show_formula_numbers",
     ],
   ] as const;
+  // Technical names stay searchable behind the plain labels.
+  const parserTerms: Partial<Record<(typeof parser)[number][2], string>> = {
+    paddle_mtmd_batch_tokens: ", vision encoder",
+    paddle_full_layout_nms: ", NMS, suppress layout detections",
+    paddle_full_merge_layout_blocks: ", layout blocks",
+    paddle_full_format_block_content: ", format block content",
+    paddle_full_relevel_titles: ", relevel titles",
+    paddle_full_show_formula_numbers: ", formula numbers",
+  };
   for (const [target, label, key] of parser)
     add(
       "workflow",
       target,
       label,
-      "Advanced PDF extraction, PaddleOCR parser",
+      `Advanced PDF extraction, PaddleOCR parser${parserTerms[key] ?? ""}`,
       s[key],
     );
   return entries;

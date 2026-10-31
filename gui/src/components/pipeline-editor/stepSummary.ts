@@ -1,3 +1,4 @@
+import { PROVIDER_LABELS, type Provider } from "../../lib/providers";
 import type {
   PipelineConfig,
   PrimaryArtifactPart,
@@ -12,7 +13,7 @@ function naturalList(items: string[]): string {
 }
 
 function providerLabel(provider: string): string {
-  return provider.charAt(0).toUpperCase() + provider.slice(1);
+  return PROVIDER_LABELS[provider as Provider] ?? provider;
 }
 
 function isIssuesSchema(

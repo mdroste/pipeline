@@ -305,7 +305,7 @@ const depsReport = {
     { name: "pdftoppm", found: true, version: "bundled", path: "/Applications/Pipeline.app/Contents/Resources/poppler/pdftoppm", required: true, hint: "" },
     { name: "pdftotext", found: true, version: "bundled", path: "/Applications/Pipeline.app/Contents/Resources/poppler/pdftotext", required: true, hint: "" },
     depsAttention
-      ? { name: "PaddleOCR-VL Full Parser", found: false, version: "", path: "", required: true, hint: "Install from Settings → PDF Extraction, or run `pipeline-cli engines install paddle` from a source build." }
+      ? { name: "PaddleOCR-VL Full Parser", found: false, version: "", path: "", required: true, hint: "Install from Settings → PDF extraction, or run `pipeline-cli engines install paddle` from a source build." }
       : { name: "PaddleOCR-VL Full Parser", found: true, version: "managed 2026.09.2", path: "/Users/mike/Library/Application Support/com.pipeline.app/engines/paddle/run.py", required: true, hint: "Managed PaddleOCR layout client, recognition runtime, and models are installed." },
     { name: "PDF extractor configuration", found: true, version: "paddleocr-vl-full", path: "", required: true, hint: "The selected PDF extraction method is supported." },
     { name: "Local LLM server", found: false, version: "", path: "", required: false, hint: "" },
@@ -330,7 +330,10 @@ const executionPlan = {
     { id: "wave-3", kind: "sequential", label: "Referee report", stepIds: ["referee_report"], stepLabels: ["Referee report"] },
     { id: "wave-4", kind: "sequential", label: "Escalation pass", stepIds: ["second_round"], stepLabels: ["Escalation pass"] },
   ],
+  providers: ["claude", "codex"],
+  orientationAgent: "claude",
   parallelAgents: ["claude", "codex"],
+  sequentialAgent: "claude",
   mergeAgent: "claude",
   usageEstimate: { documentTokens: 21000, callsLow: 8, callsHigh: 12, inputTokensLow: 190000, inputTokensHigh: 420000, outputTokensLow: 32000, outputTokensHigh: 110000, apiCostLow: 0.86, apiCostHigh: 2.4, unpricedCalls: 0, subscriptionCallsHigh: 6, maxCostUsd: params.get("limits") === "1" ? 2 : null, maxCalls: null, maxMinutes: params.get("limits") === "1" ? 30 : null, exceedsCostLimit: params.get("limits") === "1", exceedsCallLimit: false },
   hostChecks: params.get("checks") === "1" ? [{ stepId: "reference_check", stepLabel: "Check References", analyzer: "Reference check", reads: ["Extracted document"], networkServices: ["Crossref"], networkPayload: "Each reference's text as written in the bibliography (titles, authors, years, venues, DOIs). No other manuscript text." }] : [],
@@ -350,7 +353,7 @@ const commandData: Record<string, unknown> = {
   mark_smoke_ready: true,
   get_execution_plan: executionPlan,
   list_analyzers: analyzers,
-  get_settings: settings,
+  get_settings: { settings, warnings: [] },
   save_settings: true,
   check_for_update: { current: appVersion, latest: appVersion, update_available: false, release_url: "", release_name: "", published_at: null, download_url: null, can_install: false, checked_at: null },
   list_run_queue: { limit: 2, runs: [] },
@@ -383,6 +386,7 @@ const commandData: Record<string, unknown> = {
   workbench_session_snapshot: snapshot,
   workbench_harness_catalog: harnessCatalog,
   workbench_effective_harness: effectiveHarness,
+  chatgpt_account_status: { account: { status: "chatgpt", email: "mike@example.edu", planType: "plus" }, epoch: 1, version: "0.153.4", loginInProgress: false },
   workbench_codex_account_state: { status: "chatgpt", email: "mike@example.edu", planType: "plus", unsupportedAccountType: null, requiresOpenaiAuth: false },
   workbench_claude_rate_limits: { status: "allowed", resetsAt: Math.floor(Date.now() / 1000) + 3 * 3600, rateLimitType: "five_hour", usedPercent: 41, isUsingOverage: false, observedAt: Date.now() },
   workbench_codex_rate_limits: { source: "perBucket", buckets: [{ limitId: "codex", limitName: null, planType: "plus", primary: { usedPercent: 38, remainingPercent: 62, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 2 * 3600 }, secondary: null }] },

@@ -1,7 +1,7 @@
 // The one positioning routine for floating layers (popovers, menus, list
 // boxes, tooltips). Pure so it can be tested without layout.
 
-export type Side = "top" | "bottom";
+export type Side = "top" | "bottom" | "right";
 export type Align = "start" | "center" | "end";
 
 export interface AnchoredPosition {
@@ -33,6 +33,26 @@ export function computeAnchoredPosition(
   align: Align = "start",
   offset = 8,
 ): AnchoredPosition {
+  if (side === "right") {
+    const maxHeight = Math.max(
+      MINIMUM_HEIGHT,
+      viewport.height - VIEWPORT_MARGIN * 2,
+    );
+    const height = Math.min(layer.height, maxHeight);
+    const desired = align === "end" ? anchor.bottom - height : anchor.top;
+    return {
+      left: Math.min(
+        anchor.right + offset,
+        viewport.width - layer.width - VIEWPORT_MARGIN,
+      ),
+      top: Math.max(
+        VIEWPORT_MARGIN,
+        Math.min(desired, viewport.height - height - VIEWPORT_MARGIN),
+      ),
+      maxHeight,
+      side,
+    };
+  }
   const above = anchor.top - offset - VIEWPORT_MARGIN;
   const below = viewport.height - anchor.bottom - offset - VIEWPORT_MARGIN;
   const preferred = side === "top" ? above : below;

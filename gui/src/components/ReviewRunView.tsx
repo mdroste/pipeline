@@ -85,7 +85,7 @@ export default function ReviewRunView({
           </h2>
           <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-neutral-400">
             {queuedExplanation(run, runs, limit)} You can keep working or set up
-            another review; this one appears in the sidebar until it finishes.
+            another review; this one stays in Activity until it finishes.
           </p>
           <p className="mt-1 text-xs text-gray-400 dark:text-neutral-500">
             Workflow: {run.profileName || "Active workflow"}

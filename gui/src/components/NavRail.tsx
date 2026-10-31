@@ -1,13 +1,19 @@
-import { type ReactNode, type Ref, useEffect, useRef, useState } from "react";
-import ResizeHandle from "./ResizeHandle";
-import ReviewRunList, { ReviewRunBeacon } from "./ReviewRunList";
-import type { QueuedRun } from "../lib/types";
-import { Icon, type IconName } from "../ui/icons";
+import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import useConversationIndex from "../hooks/useConversationIndex";
+import type { AppPage } from "../lib/router";
 import Badge from "../ui/Badge";
 import IconButton from "../ui/IconButton";
-import type { AppPage } from "../lib/router";
+import { Icon } from "../ui/icons";
+import ActivityTray, { type ActivityTrayProps } from "./nav-rail/ActivityTray";
+import NavFlyout from "./nav-rail/NavFlyout";
+import { NavChild, NavGroup, NavIcon, NavRow } from "./nav-rail/NavRows";
+import NewMenu from "./nav-rail/NewMenu";
+import { useNavRailSlot } from "./nav-rail/navRailSlot";
+import useNavSections, { type NavSection } from "./nav-rail/useNavSections";
+import "./nav-rail/NavRail.css";
+import ResizeHandle from "./ResizeHandle";
 
-export const NAV_RAIL_WIDTH = { default: 216, min: 208, max: 320 };
+export const NAV_RAIL_WIDTH = { default: 240, min: 208, max: 320 };
 
 export type { AppPage };
 
@@ -19,21 +25,13 @@ export interface RecentProject {
   updatedAt: string;
 }
 
-interface Props {
+interface Props extends Partial<
+  Omit<ActivityTrayProps, "current" | "activeRunKey">
+> {
   activePage: AppPage;
   hasCurrentRun: boolean;
-  /** Reviews in the run queue, the concurrency limit, and the one on screen. */
-  runs?: QueuedRun[];
-  runLimit?: number;
+  /** The review on screen. */
   activeRunKey?: string | null;
-  unseenRuns?: ReadonlySet<string>;
-  onOpenRun?: (key: string) => void;
-  onCancelRun?: (run: QueuedRun) => void;
-  onDismissRuns?: (key?: string) => void;
-  onConfigureRuns?: () => void;
-  workspaceActive?: boolean;
-  workspaceAttention?: boolean;
-  tasksAttention?: boolean;
   isMac: boolean;
   isWindows?: boolean;
   dependenciesReady: boolean | null;
@@ -41,84 +39,26 @@ interface Props {
   dependenciesError?: string | null;
   width: number;
   onResize: (width: number) => void;
+  /** Folded to icons. */
   collapsed?: boolean;
   onToggleCollapsed?: () => void;
   toggleRef?: Ref<HTMLButtonElement>;
   onNewRun: () => void;
+  onNewConversation?: () => void;
+  onNewProject?: () => void;
+  onSearch?: () => void;
   onNavigate: (page: AppPage) => void;
   recentProjects?: RecentProject[];
   recentProjectsLoading?: boolean;
   onOpenProject?: (projectId: string) => void;
+  onOpenConversation?: (sessionId: string) => void;
   onDependencies: () => void;
-  onActivity?: () => void;
 }
 
-function RailButton({
-  active,
-  disabled,
-  icon,
-  label,
-  onClick,
-  suffix,
-  title,
-  nested = false,
-  action = false,
-  current = active,
-}: {
-  active: boolean;
-  disabled?: boolean;
-  icon: IconName;
-  label: string;
-  onClick: () => void;
-  suffix?: ReactNode;
-  title?: string;
-  nested?: boolean;
-  action?: boolean;
-  current?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      aria-current={current ? "page" : undefined}
-      disabled={disabled}
-      onClick={onClick}
-      title={title ?? label}
-      className={`group flex w-full items-center gap-2 rounded-lg py-2 text-left text-[13px] font-medium
-                  transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400
-                  disabled:cursor-not-allowed disabled:opacity-40 ${nested ? "px-2" : "px-3"} ${
-                    action
-                      ? "bg-gray-900 text-white shadow-sm hover:bg-gray-800 dark:bg-neutral-200 dark:text-neutral-950 dark:hover:bg-neutral-100"
-                      : active
-                        ? "bg-white text-gray-950 shadow-sm ring-1 ring-gray-200/80 dark:bg-neutral-800 dark:text-neutral-50 dark:ring-neutral-700"
-                        : "text-gray-600 hover:bg-white/70 hover:text-gray-950 dark:text-neutral-400 dark:hover:bg-neutral-800/70 dark:hover:text-neutral-100"
-                  }`}
-    >
-      <span
-        className={`shrink-0 ${action ? "text-current" : active ? "text-gray-900 dark:text-neutral-100" : "text-gray-500 group-hover:text-gray-700 dark:text-neutral-400 dark:group-hover:text-neutral-200"}`}
-      >
-        <Icon name={icon} />
-      </span>
-      <span className="min-w-0 flex-1 truncate">{label}</span>
-      {suffix}
-    </button>
-  );
-}
-
-function SectionHeading({ id, children }: { id: string; children: ReactNode }) {
-  return (
-    <h2
-      id={id}
-      className="px-3 pb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-400 dark:text-neutral-500"
-    >
-      {children}
-    </h2>
-  );
-}
-
-// The button keeps one window position in the rail and in the collapsed bar,
-// so a second click undoes the first. On macOS it sits in line with the traffic
-// lights, above the window-wide drag strip. On Windows it sits in the row of the
-// window controls.
+// The button keeps one window position in the rail and in the bar above the
+// icons, so a second click undoes the first. On macOS it sits in line with the
+// traffic lights, above the window-wide drag strip. On Windows it sits in the
+// row of the window controls.
 const railToggleClass = (isMac: boolean, isWindows: boolean) =>
   `absolute ${
     isMac
@@ -128,22 +68,18 @@ const railToggleClass = (isMac: boolean, isWindows: boolean) =>
         : "left-3 top-2 z-10"
   }`;
 
-/** Replaces the hidden rail, so the window controls stay clear of the page. */
+/** Sits above the icon rail, so the window controls stay clear of the page. */
 export function CollapsedNavBar({
   isMac,
   isWindows = false,
-  status,
   onExpand,
   toggleRef,
 }: {
   isMac: boolean;
   isWindows?: boolean;
-  /** What the hidden rail would otherwise show. */
-  status: "attention" | "running" | null;
   onExpand: () => void;
   toggleRef?: Ref<HTMLButtonElement>;
 }) {
-  const statusLabel = status === "attention" ? "needs attention" : "running";
   return (
     <div
       data-testid="collapsed-nav-bar"
@@ -154,25 +90,58 @@ export function CollapsedNavBar({
     >
       <IconButton
         ref={toggleRef}
-        label={status ? `Show sidebar (${statusLabel})` : "Show sidebar"}
+        label="Expand sidebar"
         tooltipSide="bottom"
         size="sm"
         className={railToggleClass(isMac, isWindows)}
         onClick={onExpand}
       >
         <Icon name="sidebar" />
-        {status && (
-          <span className="absolute right-0.5 top-0.5 flex">
-            <Badge kind={status} label={statusLabel} />
-          </span>
-        )}
       </IconButton>
     </div>
   );
 }
 
-const NO_RUNS: QueuedRun[] = [];
+/** The newest conversations, read only while their section is open. */
+function RecentConversations({
+  onOpen,
+}: {
+  onOpen?: (sessionId: string) => void;
+}) {
+  const { conversations, loading } = useConversationIndex();
+  if (!conversations.length)
+    return (
+      <p className="nav-empty">
+        {loading ? "Loading conversations…" : "No conversations yet."}
+      </p>
+    );
+  return (
+    <>
+      {conversations.slice(0, 3).map(({ session, projectName }) => (
+        <NavChild
+          key={session.id}
+          label={session.title}
+          title={
+            projectName ? `${session.title} · ${projectName}` : session.title
+          }
+          onClick={() => onOpen?.(session.id)}
+        />
+      ))}
+    </>
+  );
+}
+
+const NO_RUNS: NonNullable<Props["runs"]> = [];
 const NONE_UNSEEN: ReadonlySet<string> = new Set();
+
+const pageSection = (page: AppPage, unfiled: boolean): NavSection | null => {
+  if (page === "conversations") return "conversations";
+  if (page === "workspace") return unfiled ? "conversations" : "projects";
+  if (page === "project-index") return "projects";
+  if (["main", "history", "batch", "pipeline", "gallery"].includes(page))
+    return "reviews";
+  return null;
+};
 
 export default function NavRail({
   activePage,
@@ -199,48 +168,361 @@ export default function NavRail({
   onToggleCollapsed,
   toggleRef,
   onNewRun,
+  onNewConversation,
+  onNewProject,
+  onSearch,
   onNavigate,
   recentProjects = [],
   recentProjectsLoading = false,
   onOpenProject,
+  onOpenConversation,
   onDependencies,
+  onOpenConversations,
+  onOpenAutomations,
   onActivity,
 }: Props) {
-  // The run list sits low in a scrolling rail; while it is out of view a
-  // pinned beacon keeps active reviews visible and scrolls back to them.
-  const navRef = useRef<HTMLElement>(null);
-  const runListRef = useRef<HTMLDivElement>(null);
-  const [runListVisible, setRunListVisible] = useState(true);
-  const hasRunList = Boolean(onOpenRun);
+  const rail = useNavRailSlot();
+  const workspace = activePage === "workspace" ? rail?.workspace : null;
+  const unfiled = workspace?.projectId === null;
+  const section = pageSection(activePage, unfiled);
+  const { isOpen, toggle } = useNavSections(section);
+  const [flyout, setFlyout] = useState<NavSection | null>(null);
+  const flyoutAnchors = {
+    conversations: useRef<HTMLButtonElement>(null),
+    projects: useRef<HTMLButtonElement>(null),
+    reviews: useRef<HTMLButtonElement>(null),
+  };
+  const dismissRef = rail?.dismissRef;
   useEffect(() => {
-    const target = runListRef.current;
-    if (!target || typeof IntersectionObserver === "undefined") return;
-    const observer = new IntersectionObserver(
-      ([entry]) =>
-        setRunListVisible(
-          entry.isIntersecting && entry.intersectionRatio > 0.2,
-        ),
-      { root: navRef.current, threshold: [0, 0.2, 0.5, 1] },
+    if (!dismissRef) return;
+    dismissRef.current = () => setFlyout(null);
+    return () => {
+      dismissRef.current = null;
+    };
+  }, [dismissRef]);
+  useEffect(() => {
+    if (!collapsed) setFlyout(null);
+  }, [collapsed]);
+
+  const reviewsRunning = runs.filter((run) => run.status === "running").length;
+  const projectStatus =
+    workspaceAttention || workspaceActive ? (
+      <Badge
+        kind={workspaceAttention ? "attention" : "running"}
+        label={workspaceAttention ? "needs attention" : "running"}
+      />
+    ) : undefined;
+  const reviewStatus = reviewsRunning > 0 && (
+    <span className="nav-count" aria-label={`${reviewsRunning} running`}>
+      <span aria-hidden="true" className="nav-spinner" />
+      {reviewsRunning}
+    </span>
+  );
+  const automationStatus = tasksAttention ? (
+    <Badge kind="attention" label="Automation update" />
+  ) : undefined;
+  const slot = <div ref={rail?.setSlot} className="nav-slot" />;
+
+  /** Every choice in a section leaves the icon rail's flyout. */
+  const pick = (action?: () => void) => () => {
+    setFlyout(null);
+    action?.();
+  };
+  const conversationChildren =
+    workspace && unfiled ? (
+      slot
+    ) : (
+      <RecentConversations
+        onOpen={(id) => {
+          setFlyout(null);
+          onOpenConversation?.(id);
+        }}
+      />
     );
-    observer.observe(target);
-    return () => observer.disconnect();
-  }, [hasRunList]);
+  const projectChildren =
+    workspace && !unfiled ? (
+      slot
+    ) : recentProjectsLoading && !recentProjects.length ? (
+      <div
+        role="status"
+        aria-label="Loading recent projects"
+        className="space-y-1 px-2 py-1"
+      >
+        {[0, 1].map((item) => (
+          <span
+            key={item}
+            className="block h-6 animate-pulse rounded-md bg-gray-200/70 dark:bg-neutral-800"
+          />
+        ))}
+      </div>
+    ) : recentProjects.length ? (
+      recentProjects
+        .slice(0, 3)
+        .map((project) => (
+          <NavChild
+            key={project.id}
+            label={project.name}
+            onClick={pick(() => onOpenProject?.(project.id))}
+            title={
+              project.missingRootAt
+                ? `${project.name} · Folder unavailable`
+                : project.name
+            }
+            suffix={
+              project.missingRootAt ? (
+                <Badge kind="attention" label="Folder unavailable" />
+              ) : undefined
+            }
+          />
+        ))
+    ) : (
+      <p className="nav-empty">Your projects will appear here.</p>
+    );
+  const reviewChildren = (
+    <>
+      <NavChild
+        label="New review"
+        current={activePage === "main" && !hasCurrentRun}
+        onClick={pick(onNewRun)}
+        title={
+          runs.some((run) => run.status === "running")
+            ? "Set up another review; it runs alongside or after the current ones"
+            : "Start a new review"
+        }
+      />
+      <NavChild
+        label="History"
+        current={activePage === "history" || activePage === "batch"}
+        onClick={pick(() => onNavigate("history"))}
+        title="Review history"
+      />
+      <NavChild
+        label="Designer"
+        current={activePage === "pipeline" || activePage === "gallery"}
+        onClick={pick(() => onNavigate("pipeline"))}
+        title="Design review steps, prompts, and templates"
+      />
+    </>
+  );
+  const sections: Record<
+    NavSection,
+    {
+      label: string;
+      icon: "assistant" | "project" | "review";
+      page: AppPage;
+      current: boolean;
+      suffix?: ReactNode;
+      children: ReactNode;
+    }
+  > = {
+    conversations: {
+      label: "Conversations",
+      icon: "assistant",
+      page: "conversations",
+      current: activePage === "conversations",
+      children: conversationChildren,
+    },
+    projects: {
+      label: "Projects",
+      icon: "project",
+      page: "project-index",
+      current: activePage === "project-index",
+      suffix: projectStatus,
+      children: projectChildren,
+    },
+    reviews: {
+      label: "Reviews",
+      icon: "review",
+      page: "history",
+      current: false,
+      suffix: reviewStatus,
+      children: reviewChildren,
+    },
+  };
+  const group = (id: NavSection) => {
+    const entry = sections[id];
+    return (
+      <NavGroup
+        icon={entry.icon}
+        label={entry.label}
+        current={entry.current}
+        active={section === id}
+        open={isOpen(id)}
+        onToggle={() => toggle(id)}
+        onClick={() => onNavigate(entry.page)}
+        suffix={entry.suffix}
+      >
+        {entry.children}
+      </NavGroup>
+    );
+  };
+  const groupIcon = (id: NavSection) => {
+    const entry = sections[id];
+    return (
+      <NavIcon
+        ref={flyoutAnchors[id]}
+        icon={entry.icon}
+        label={entry.label}
+        active={section === id}
+        aria-expanded={flyout === id}
+        onClick={() => setFlyout((open) => (open === id ? null : id))}
+      >
+        {entry.suffix && (
+          <span className="nav-icon-mark">
+            {id === "reviews" ? (
+              <Badge kind="running" label={`${reviewsRunning} running`} />
+            ) : (
+              entry.suffix
+            )}
+          </span>
+        )}
+      </NavIcon>
+    );
+  };
+  const newMenu = (
+    <NewMenu
+      compact={collapsed}
+      projectName={workspace?.projectName}
+      onNewConversation={
+        workspace?.newConversation ?? (() => onNewConversation?.())
+      }
+      onNewReview={onNewRun}
+      onNewProject={() => onNewProject?.()}
+      onNewAutomation={() => onNavigate("tasks")}
+    />
+  );
+  const activity = (
+    <ActivityTray
+      compact={collapsed}
+      current={activePage === "activity"}
+      runs={runs}
+      runLimit={runLimit}
+      activeRunKey={activePage === "main" ? activeRunKey : null}
+      unseenRuns={unseenRuns}
+      workspaceActive={workspaceActive}
+      workspaceAttention={workspaceAttention}
+      tasksAttention={tasksAttention}
+      onOpenRun={onOpenRun}
+      onCancelRun={onCancelRun}
+      onDismissRuns={onDismissRuns}
+      onConfigureRuns={onConfigureRuns}
+      onOpenConversations={onOpenConversations}
+      onOpenAutomations={onOpenAutomations ?? (() => onNavigate("tasks"))}
+      onActivity={onActivity}
+    />
+  );
+  const needsSetup =
+    !dependenciesLoading && (Boolean(dependenciesError) || !dependenciesReady);
+  const systemLabel = dependenciesLoading
+    ? "Checking system"
+    : dependenciesError
+      ? "Check failed"
+      : dependenciesReady
+        ? "System ready"
+        : "Setup needed";
+  const systemDot = (
+    <button
+      type="button"
+      className="nav-status"
+      aria-label={systemLabel}
+      title={systemLabel}
+      onClick={onDependencies}
+    >
+      <Badge
+        kind={
+          dependenciesLoading
+            ? "idle"
+            : dependenciesError
+              ? "error"
+              : dependenciesReady
+                ? "ok"
+                : "attention"
+        }
+        label=""
+      />
+    </button>
+  );
+
+  if (collapsed)
+    return (
+      <aside className="relative flex w-14 shrink-0 flex-col items-center border-r border-gray-200/80 bg-gray-100/90 px-2 pb-2.5 pt-2 [color-scheme:light] dark:border-neutral-800 dark:bg-[#101010] dark:[color-scheme:dark]">
+        <nav
+          aria-label="Primary"
+          className="flex min-h-0 flex-1 flex-col items-center gap-0.5"
+        >
+          {newMenu}
+          {onSearch && (
+            <NavIcon
+              icon="search"
+              label="Search"
+              tooltip="Search (⌘/Ctrl K)"
+              onClick={onSearch}
+            />
+          )}
+          <span className="h-1.5" />
+          <NavIcon
+            icon="home"
+            label="Home"
+            current={activePage === "home"}
+            onClick={() => onNavigate("home")}
+          />
+          {groupIcon("conversations")}
+          {groupIcon("projects")}
+          {groupIcon("reviews")}
+          <NavIcon
+            icon="tasks"
+            label="Automations"
+            tooltip="Schedule and run research automations"
+            current={activePage === "tasks"}
+            onClick={() => onNavigate("tasks")}
+          >
+            {automationStatus && (
+              <span className="nav-icon-mark">{automationStatus}</span>
+            )}
+          </NavIcon>
+        </nav>
+        <div className="flex shrink-0 flex-col items-center gap-0.5 border-t border-gray-200/80 pt-2 dark:border-neutral-800">
+          {activity}
+          <NavIcon
+            icon="settings"
+            label="Settings"
+            current={activePage === "settings"}
+            onClick={() => onNavigate("settings")}
+          />
+          <NavIcon
+            icon="help"
+            label="Help"
+            current={activePage === "help"}
+            onClick={() => onNavigate("help")}
+          />
+          {systemDot}
+        </div>
+        {flyout && (
+          <NavFlyout
+            label={sections[flyout].label}
+            anchorRef={flyoutAnchors[flyout]}
+            onClose={() => setFlyout(null)}
+            onOpenPage={pick(() => onNavigate(sections[flyout].page))}
+          >
+            {sections[flyout].children}
+          </NavFlyout>
+        )}
+      </aside>
+    );
+
   return (
     <aside
       style={{ width }}
-      className={`relative shrink-0 flex-col border-r border-gray-200/80 bg-gray-100/90 px-3 pb-3 [color-scheme:light]
-                  dark:border-neutral-800 dark:bg-[#101010] dark:[color-scheme:dark] ${isMac ? "pt-12" : isWindows ? "pt-1" : "pt-2.5"} ${
-                    collapsed ? "hidden" : "flex"
-                  }`}
+      className="relative flex shrink-0 flex-col border-r border-gray-200/80 bg-gray-100/90 px-2.5 pb-2.5 [color-scheme:light] dark:border-neutral-800 dark:bg-[#101010] dark:[color-scheme:dark]"
     >
       {(isMac || isWindows) && (
-        <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-12" />
+        <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-7" />
       )}
 
-      {onToggleCollapsed && !collapsed && (
+      {onToggleCollapsed && (
         <IconButton
           ref={toggleRef}
-          label="Hide sidebar"
+          label="Collapse sidebar"
           tooltipSide="bottom"
           size="sm"
           className={railToggleClass(isMac, isWindows)}
@@ -250,218 +532,86 @@ export default function NavRail({
         </IconButton>
       )}
 
-      <div className={`mb-5 pr-2 ${isMac ? "pl-2" : "pl-8"}`}>
-        <span className="text-base font-semibold tracking-[-0.01em] text-gray-900 dark:text-neutral-100">
-          Pipeline
-        </span>
+      <div
+        className={`flex shrink-0 items-center text-sm font-semibold tracking-[-0.01em] text-gray-900 dark:text-neutral-100 ${
+          isMac ? "h-7 pl-[96px]" : isWindows ? "h-8 pl-8" : "h-11 pl-8"
+        }`}
+      >
+        Pipeline
+      </div>
+
+      <div className="mb-3 mt-1.5 flex shrink-0 gap-1.5">
+        {newMenu}
+        {onSearch && (
+          <IconButton
+            label="Search"
+            tooltip="Search (⌘/Ctrl K)"
+            tooltipSide="bottom"
+            className="!h-[34px] !w-[34px] border border-gray-200/80 dark:border-neutral-800"
+            onClick={onSearch}
+          >
+            <Icon name="search" className="h-[17px] w-[17px]" />
+          </IconButton>
+        )}
       </div>
 
       <nav
-        ref={navRef}
         aria-label="Primary"
-        className="min-h-0 overflow-y-auto pb-4 space-y-1 [scrollbar-width:thin]"
+        className="-mx-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1 [scrollbar-width:thin]"
       >
-        <RailButton
-          active={activePage === "home"}
+        <NavRow
           icon="home"
           label="Home"
+          current={activePage === "home"}
           onClick={() => onNavigate("home")}
         />
-        <RailButton
-          active={activePage === "workspace" || activePage === "project-index"}
-          icon="project"
-          label="Projects"
-          onClick={() => onNavigate("project-index")}
-          suffix={
-            workspaceActive || workspaceAttention ? (
-              <Badge
-                kind={workspaceAttention ? "attention" : "running"}
-                label={workspaceAttention ? "needs attention" : "running"}
-              />
-            ) : undefined
-          }
-        />
-        <RailButton
-          active={activePage === "tasks"}
+        {group("conversations")}
+        {group("projects")}
+        {group("reviews")}
+        <NavRow
           icon="tasks"
           label="Automations"
+          current={activePage === "tasks"}
           onClick={() => onNavigate("tasks")}
-          suffix={
-            tasksAttention ? (
-              <Badge kind="attention" label="Automation update" />
-            ) : undefined
-          }
+          suffix={automationStatus}
           title="Schedule and run research automations"
         />
-
-        <section aria-labelledby="recent-projects-heading" className="!mt-5">
-          <SectionHeading id="recent-projects-heading">
-            Recent projects
-          </SectionHeading>
-          <div className="space-y-1">
-            {recentProjects.slice(0, 4).map((project) => (
-              <RailButton
-                key={project.id}
-                nested
-                active={false}
-                current={false}
-                icon="project"
-                label={project.name}
-                onClick={() => onOpenProject?.(project.id)}
-                title={
-                  project.missingRootAt
-                    ? `${project.name} · Folder unavailable`
-                    : project.name
-                }
-                suffix={
-                  project.missingRootAt ? (
-                    <Badge kind="attention" label="Folder unavailable" />
-                  ) : undefined
-                }
-              />
-            ))}
-            {recentProjectsLoading && !recentProjects.length ? (
-              <div
-                role="status"
-                aria-label="Loading recent projects"
-                className="space-y-2 px-2 py-1"
-              >
-                {[0, 1, 2].map((item) => (
-                  <span
-                    key={item}
-                    className="block h-8 animate-pulse rounded-lg bg-gray-200/70 dark:bg-neutral-800"
-                  />
-                ))}
-              </div>
-            ) : (
-              !recentProjects.length && (
-                <p className="px-3 py-1 text-xs leading-5 text-gray-400 dark:text-neutral-500">
-                  Your recent work will appear here.
-                </p>
-              )
-            )}
-          </div>
-        </section>
-
-        <section
-          aria-labelledby="reviews-heading"
-          className="!mt-5 border-t border-gray-200/80 pt-4 dark:border-neutral-800"
-        >
-          <SectionHeading id="reviews-heading">Reviews</SectionHeading>
-          <div className="space-y-1">
-            <RailButton
-              action
-              active={activePage === "main" && !hasCurrentRun}
-              icon="new"
-              label="New review"
-              onClick={onNewRun}
-              title={
-                runs.some((run) => run.status === "running")
-                  ? "Set up another review; it runs alongside or after the current ones"
-                  : "Start a new review"
-              }
-            />
-            <RailButton
-              active={activePage === "history" || activePage === "batch"}
-              icon="history"
-              label="Review history"
-              onClick={() => onNavigate("history")}
-            />
-            <RailButton
-              active={activePage === "pipeline" || activePage === "gallery"}
-              icon="designer"
-              label="Review designer"
-              onClick={() => onNavigate("pipeline")}
-              title="Design review steps, prompts, and templates"
-            />
-            {/* After the fixed destinations, so a long queue never moves them. */}
-            {onOpenRun && (
-              <div ref={runListRef} className="scroll-mb-4">
-                <ReviewRunList
-                  runs={runs}
-                  limit={runLimit}
-                  activeRunKey={activePage === "main" ? activeRunKey : null}
-                  unseen={unseenRuns}
-                  onOpen={onOpenRun}
-                  onCancel={(run) => onCancelRun?.(run)}
-                  onDismiss={(key) => onDismissRuns?.(key)}
-                  onConfigure={onConfigureRuns}
-                />
-              </div>
-            )}
-          </div>
-        </section>
       </nav>
 
-      <div className="mt-auto shrink-0 space-y-1 border-t border-gray-200/80 pt-3 dark:border-neutral-800">
-        {onOpenRun && !runListVisible && (
-          <ReviewRunBeacon
-            runs={runs}
-            unseen={unseenRuns}
-            onReveal={() => {
-              const list = runListRef.current;
-              list?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-              list
-                ?.querySelector<HTMLButtonElement>("li button")
-                ?.focus({ preventScroll: true });
-            }}
-          />
+      <div className="mt-2 shrink-0 space-y-1 border-t border-gray-200/80 pt-2 dark:border-neutral-800">
+        {needsSetup && (
+          <button
+            type="button"
+            className="nav-setup"
+            aria-label={systemLabel}
+            onClick={onDependencies}
+          >
+            <Badge kind={dependenciesError ? "error" : "attention"} label="" />
+            <span className="min-w-0">
+              {systemLabel}
+              <small>See what is missing</small>
+            </span>
+          </button>
         )}
-        {onActivity && (
-          <RailButton
-            active={activePage === "activity"}
-            icon="activity"
-            label="Activity"
-            onClick={onActivity}
-            suffix={
-              tasksAttention ? (
-                <Badge kind="attention" label="Automation update" />
-              ) : undefined
-            }
-          />
-        )}
-        <RailButton
-          active={activePage === "help"}
-          icon="help"
-          label="Help"
-          onClick={() => onNavigate("help")}
-        />
-        <RailButton
-          active={activePage === "settings"}
-          icon="settings"
-          label="Settings"
-          onClick={() => onNavigate("settings")}
-        />
-        <button
-          type="button"
-          onClick={onDependencies}
-          className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs text-gray-500
-                     transition-colors hover:bg-white/70 hover:text-gray-800 focus-visible:outline-none
-                     focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-neutral-400 dark:hover:bg-neutral-800/70
-                     dark:hover:text-neutral-200"
-        >
-          <span
-            aria-hidden="true"
-            className={`h-1.5 w-1.5 rounded-full ${
-              dependenciesLoading
-                ? "bg-gray-400"
-                : dependenciesError
-                  ? "bg-red-500"
-                  : dependenciesReady
-                    ? "bg-emerald-500"
-                    : "bg-amber-500"
-            }`}
-          />
-          <span className="truncate">
-            {dependenciesLoading
-              ? "Checking system"
-              : dependenciesError
-                ? "Check failed"
-                : dependenciesReady
-                  ? "System ready"
-                  : "Setup needed"}
+        {activity}
+        <div className="flex items-center gap-0.5">
+          <span className="min-w-0 flex-1">
+            <NavRow
+              icon="settings"
+              label="Settings"
+              current={activePage === "settings"}
+              onClick={() => onNavigate("settings")}
+            />
           </span>
-        </button>
+          <IconButton
+            label="Help"
+            aria-current={activePage === "help" ? "page" : undefined}
+            onClick={() => onNavigate("help")}
+          >
+            <Icon name="help" />
+          </IconButton>
+          {!needsSetup && systemDot}
+        </div>
       </div>
       <ResizeHandle
         currentWidth={width}

@@ -4,25 +4,23 @@ export const REPORT_WORKSPACE_TABS = [
   {
     id: "report",
     label: "Report",
-    description: "the consolidated write-up",
-    availability: "always",
+    description: "The combined write-up from all the reviewers.",
   },
   {
     id: "provenance",
     label: "Report details",
-    description: "run, model, usage, and quality details",
-    availability: "when report metadata is available",
+    description: "The models, usage, and quality checks for this review.",
   },
   {
     id: "issues",
     label: "Issues",
-    description: "structured findings and human decisions",
-    availability: "when the workflow publishes findings",
+    description:
+      "Findings you can accept, reject, or annotate. Appears when the review produces findings.",
   },
   {
     id: "sources",
     label: "Sources",
-    description: "saved source and run artifacts",
-    availability: "always",
+    description:
+      "The extracted text, page images, and each reviewer's full response.",
   },
 ] as const;

@@ -381,26 +381,7 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
         emit_phase(app, spec.id, "packages", "done");
 
         emit_phase(app, spec.id, "models", "running");
-        let model_archive = target.join("PP-DocLayoutV3_infer.tar");
-        download_verified(
-            app,
-            &[PADDLE_LAYOUT_MODEL_URL.to_string()],
-            &model_archive,
-            PADDLE_LAYOUT_MODEL_SHA256,
-            MAX_LAYOUT_MODEL_ARCHIVE_BYTES,
-            "PP-DocLayoutV3 model",
-        )
-        .await?;
-        let models = target.join("models");
-        let archive_for_task = model_archive.clone();
-        let models_for_task = models.clone();
-        let layout_model = tokio::task::spawn_blocking(move || {
-            unpack_layout_model_archive(&archive_for_task, &models_for_task)
-        })
-        .await
-        .map_err(|error| format!("Layout-model extraction task failed: {error}"))??;
-        std::fs::remove_file(&model_archive)
-            .map_err(|error| format!("Failed to remove staged model archive: {error}"))?;
+        let layout_model = install_layout_model(app, &target).await?;
         let native_model = match backend {
             RecognitionBackend::BuiltIn => {
                 Some(install_native_recognition_model(app, &target).await?)

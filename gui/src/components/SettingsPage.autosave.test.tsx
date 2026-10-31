@@ -63,20 +63,17 @@ describe("SettingsPage autosave", () => {
         onThemeChange={() => {}}
       />,
     );
-    await screen.findByText("Preferred Provider");
+    await screen.findByLabelText("Step time limit");
 
     expect(
       screen.queryByRole("button", { name: "Save" }),
     ).not.toBeInTheDocument();
     expect(screen.getByText("Preferences save automatically.")).toBeVisible();
-    await user.selectOptions(
-      screen.getByLabelText("Preferred Provider"),
-      "codex",
-    );
+    await user.selectOptions(screen.getByLabelText("Step time limit"), "1800");
 
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("save_settings", {
-        settings: { ...makeSettings(), preferred_provider: "codex" },
+        settings: { ...makeSettings(), step_timeout_secs: 1800 },
       }),
     );
     expect(await screen.findByText("Saved")).toBeInTheDocument();
@@ -115,8 +112,8 @@ describe("SettingsPage autosave", () => {
       />,
     );
     await user.selectOptions(
-      await screen.findByLabelText("Preferred Provider"),
-      "codex",
+      await screen.findByLabelText("Step time limit"),
+      "1800",
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -158,7 +155,7 @@ describe("SettingsPage autosave", () => {
 
     await user.click(await screen.findByRole("button", { name: "Reviews" }));
     const reconciliation = screen.getByRole("switch", {
-      name: /automatic revision reconciliation/i,
+      name: /compare with the previous report/i,
     });
     await user.click(reconciliation);
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));

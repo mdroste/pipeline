@@ -52,6 +52,15 @@
   --ui-warning-soft: #fffbeb;
   --ui-scrim: rgb(0 0 0 / 0.16);
 
+  /* The page palette: the quieter text, hairlines, and green accent of the
+     standard app page (ui/page.css). */
+  --ui-page-text: #272b26;
+  --ui-page-line: #e7e5e0;
+  --ui-page-muted: #73766f;
+  --ui-page-soft: #f7f8f4;
+  --ui-page-accent: #344e41;
+  --ui-page-on-accent: #ffffff;
+
   /* Three radii: controls, floating containers, large containers. */
   --ui-radius-sm: 6px;
   --ui-radius-md: 10px;
@@ -85,22 +94,32 @@
   --ui-warning: #fcd34d;
   --ui-warning-soft: rgb(120 53 15 / 0.25);
   --ui-scrim: rgb(0 0 0 / 0.5);
+  --ui-page-text: #e7ece2;
+  --ui-page-line: #363a34;
+  --ui-page-muted: #a1a89b;
+  --ui-page-soft: #20251f;
+  --ui-page-accent: #aacaad;
+  --ui-page-on-accent: #1c2b20;
   --ui-shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
   --ui-shadow-2: 0 4px 24px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.3);
   --ui-shadow-3: 0 12px 40px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
 }
 
-/* Smooth dark/light mode transition — applied temporarily during toggle */
-html.theme-transitioning,
-html.theme-transitioning *,
-html.theme-transitioning *::before,
-html.theme-transitioning *::after {
-  transition:
-    color 0.3s ease,
-    background-color 0.3s ease,
-    border-color 0.3s ease,
-    fill 0.3s ease,
-    stroke 0.3s ease !important;
+/* A theme change crossfades the whole window as one picture (useAppTheme), so
+   all text and surfaces arrive together. Element transitions stay off while the
+   theme class flips: inherited colors would otherwise lag by nesting depth, and
+   transition-colors elements would run at their own pace inside the crossfade. */
+html.theme-switching,
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: none !important;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.28s;
+  animation-timing-function: ease-in-out;
 }
 
 /* Respect platform accessibility preferences across both authored CSS and

@@ -15,6 +15,30 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
+it("titles the Activity destination with the standard page header", async () => {
+  mocks.list.mockResolvedValue([]);
+  mocks.invoke.mockImplementation(async (command) =>
+    command === "list_runs"
+      ? []
+      : { turns: [], jobs: [], pendingRequests: [], researchAttention: 0 },
+  );
+  render(
+    <ResearchActivity
+      asPage
+      onClose={vi.fn()}
+      onSession={vi.fn()}
+      onProject={vi.fn()}
+      onTasks={vi.fn()}
+      onReview={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("heading", { level: 1, name: "Activity" }),
+  ).toBeInTheDocument();
+  expect(
+    await screen.findByText("Nothing is running right now."),
+  ).toBeInTheDocument();
+});
 it("keeps other runtime owners visible when one adapter fails and targets exact owners", async () => {
   mocks.list.mockRejectedValue(new Error("Task adapter unavailable"));
   mocks.invoke.mockImplementation(async (command) =>

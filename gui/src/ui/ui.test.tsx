@@ -10,6 +10,7 @@ import Tooltip from "./Tooltip";
 import IconButton from "./IconButton";
 import Sheet from "./Sheet";
 import Skeleton from "./Skeleton";
+import PageHeader from "./PageHeader";
 
 const viewport = { width: 1000, height: 800 };
 const anchor = (left: number, top: number, width = 100, height = 30) => ({
@@ -21,6 +22,28 @@ const anchor = (left: number, top: number, width = 100, height = 30) => ({
 });
 
 describe("computeAnchoredPosition", () => {
+  it("opens to the right of a rail control and stays inside the window", () => {
+    const anchor = { left: 8, right: 46, top: 700, bottom: 736, width: 38 };
+    const viewport = { width: 1200, height: 760 };
+    expect(
+      computeAnchoredPosition(
+        anchor,
+        { width: 264, height: 300 },
+        viewport,
+        "right",
+      ),
+    ).toEqual({ left: 54, top: 448, maxHeight: 736, side: "right" });
+    expect(
+      computeAnchoredPosition(
+        anchor,
+        { width: 264, height: 100 },
+        viewport,
+        "right",
+        "end",
+      ).top,
+    ).toBe(636);
+  });
+
   it("places below and start-aligned when there is room", () => {
     expect(
       computeAnchoredPosition(
@@ -334,6 +357,25 @@ describe("Tooltip and IconButton", () => {
     fireEvent.mouseEnter(screen.getByRole("button", { name: "Child" }));
     expect(enter).toHaveBeenCalledOnce();
     expect(ref.current).toBe(screen.getByRole("button", { name: "Child" }));
+  });
+});
+
+describe("PageHeader", () => {
+  it("shows the page's name, purpose, and main action", () => {
+    render(
+      <PageHeader
+        title="Projects"
+        description="Pick up your research."
+        action={<button>+ New project</button>}
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Projects" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Pick up your research.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "+ New project" }),
+    ).toBeInTheDocument();
   });
 });
 

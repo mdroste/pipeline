@@ -345,7 +345,34 @@ pub async fn workbench_update_workspace(
 pub async fn workbench_create_session(
     request: CreateSessionRequest,
 ) -> WorkbenchResult<Mutation<WorkbenchSession>> {
-    run_store(move |store| store.create_session(request)).await
+    run_store(move |store| {
+        let overrides = default_session_overrides(&crate::settings::load())?;
+        store.create_session_with_overrides(request, overrides.as_ref())
+    })
+    .await
+}
+
+/// New conversations copy the chosen default, so changing it later never moves
+/// a conversation that has already started. With no choice made they keep the
+/// ChatGPT fallback that conversations without a saved runtime use.
+fn default_session_overrides(
+    settings: &crate::settings::Settings,
+) -> WorkbenchResult<Option<Value>> {
+    if !settings.default_model_chosen {
+        return Ok(None);
+    }
+    let connection =
+        crate::connections::ConnectionId::for_review(&settings.preferred_provider, settings)
+            .map_err(WorkbenchError::invalid)?;
+    let mut overrides = json!({ "runtime": connection });
+    // The conversation picker offers thinking levels only for a chosen model.
+    if !settings.default_model.is_empty() {
+        overrides["model"] = settings.default_model.as_str().into();
+        if !settings.default_effort.is_empty() {
+            overrides["effort"] = settings.default_effort.as_str().into();
+        }
+    }
+    Ok(Some(overrides))
 }
 
 #[tauri::command]

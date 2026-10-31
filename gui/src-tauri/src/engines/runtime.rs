@@ -79,7 +79,7 @@ pub(super) fn paddle_paths_at(root: &Path) -> Option<PaddleEnginePaths> {
 pub fn paddle_engine_paths() -> Result<PaddleEnginePaths, String> {
     let root = paddle_root()?;
     paddle_paths_at(&root).ok_or_else(|| {
-        "The PaddleOCR-VL Full Parser recognition component is missing. Install or repair the Full Parser from Settings → PDF Extraction."
+        "The PaddleOCR-VL Full Parser recognition component is missing. Install or repair the Full Parser from Settings → PDF extraction."
             .to_string()
     })
 }
@@ -191,7 +191,7 @@ pub fn paddle_full_parser_status() -> Result<PaddleFullParserStatus, String> {
     full_parser_support()?;
     let native_root = pipeline_home()?.join("native");
     paddle_full_parser_status_at(&native_root).ok_or_else(|| {
-        "The managed PaddleOCR-VL Full Parser is incomplete. Install or repair it from Settings → PDF Extraction."
+        "The managed PaddleOCR-VL Full Parser is incomplete. Install or repair it from Settings → PDF extraction."
             .to_string()
     })
 }
@@ -486,7 +486,7 @@ pub(crate) fn paddle_full_parser_lease() -> Result<
         .map(|paths| (paths, lease))
         .ok_or_else(|| {
             "PaddleOCR-VL Full Parser is not installed or failed verification. \
-         Install or repair it from Settings → PDF Extraction."
+         Install or repair it from Settings → PDF extraction."
                 .to_string()
         })
 }

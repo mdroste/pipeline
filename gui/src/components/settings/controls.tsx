@@ -23,23 +23,23 @@ export function SettingsCard({
 export function ProviderHeader({
   name,
   description,
+  children,
 }: {
   name: string;
   description?: string;
+  children?: React.ReactNode;
 }) {
   return (
     <header className="settings-provider-header">
-      <div className="settings-provider-mark" aria-hidden="true">
-        {name === "OpenAI-compatible" ? "<>" : name.slice(0, 1)}
-      </div>
       <div className="min-w-0 flex-1">
         <h2 className="text-base font-semibold">{name}</h2>
         {description && (
-          <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">
+          <p className="text-xs leading-5 text-gray-500 dark:text-neutral-400">
             {description}
           </p>
         )}
       </div>
+      {children}
     </header>
   );
 }
@@ -59,12 +59,12 @@ export function CatalogStatus({
     <div className="mt-1.5 flex items-start justify-between gap-3 text-[11px] text-gray-500 dark:text-neutral-400">
       <span>
         {loading
-          ? "Discovering models…"
+          ? "Loading models…"
           : blocked
-            ? "Waiting to save. Choose Refresh to load the available options now."
+            ? "Waiting to save. Choose Refresh to load models now."
             : catalog
-              ? `${catalog.transport.toUpperCase()} · ${catalog.source_version || catalog.source}${catalog.stale ? " · stale" : ""}`
-              : "Catalog not loaded"}
+              ? `${catalog.models.length} ${catalog.models.length === 1 ? "model" : "models"}${catalog.stale ? " · list may be out of date" : ""}`
+              : "Models not loaded"}
         {catalog?.warning && (
           <span className="block text-amber-700 dark:text-amber-300">
             {catalog.warning}
@@ -84,10 +84,10 @@ export function CatalogStatus({
 }
 
 export const selectClass =
-  "w-full py-2 px-3 border border-gray-300 dark:border-neutral-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20 dark:focus:ring-neutral-100/20 transition-[box-shadow,color,background-color,border-color]";
+  "w-full py-1.5 px-3 border border-gray-300 dark:border-neutral-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20 dark:focus:ring-neutral-100/20 transition-[box-shadow,color,background-color,border-color]";
 
 export const inputClass =
-  "w-full py-2 px-3 border border-gray-300 dark:border-neutral-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20 dark:focus:ring-neutral-100/20 transition-[box-shadow,color,background-color,border-color]";
+  "w-full py-1.5 px-3 border border-gray-300 dark:border-neutral-600 rounded-lg text-sm text-gray-900 bg-white dark:bg-neutral-800 dark:text-neutral-200 focus:outline-none focus:ring-2 focus:ring-gray-900/20 dark:focus:ring-neutral-100/20 transition-[box-shadow,color,background-color,border-color]";
 
 export function SectionHeader({
   title,
@@ -99,7 +99,7 @@ export function SectionHeader({
   help?: React.ReactNode;
 }) {
   return (
-    <div className="mb-6">
+    <div className="mb-3">
       <div className="flex items-center gap-1.5">
         <h2 className="text-base font-semibold text-gray-900 dark:text-neutral-100">
           {title}

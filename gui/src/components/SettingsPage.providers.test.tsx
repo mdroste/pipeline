@@ -103,7 +103,7 @@ describe("SettingsPage providers", () => {
       />,
     );
     expect(
-      (await screen.findAllByText("Subscription · check sign-in"))[0],
+      (await screen.findAllByText("Sign-in not checked"))[0],
     ).toBeVisible();
     expect(screen.getByLabelText("Reviews Codex backend")).toHaveValue(
       "legacy_cli",
@@ -245,6 +245,9 @@ describe("SettingsPage providers", () => {
     const api =
       claudeModes.querySelector<HTMLInputElement>('input[value="api"]');
     expect(api).not.toBeNull();
+    // A hidden radio placed outside the settings pane scrolls the whole window
+    // when it takes focus.
+    expect(api!.closest("label")).toHaveClass("relative");
     await user.click(api!);
     expect(api).toBeChecked();
     expect(screen.getByLabelText("Claude API Key")).toBeVisible();
@@ -275,16 +278,23 @@ describe("SettingsPage providers", () => {
     expect(subscription).toBeDisabled();
     expect(subscription).not.toBeChecked();
     expect(api).toBeChecked();
-    expect(
-      screen.getByText(/Gemini connects through the Google API/),
-    ).toBeVisible();
+    expect(screen.getByText(/Gemini needs a Google API key/)).toBeVisible();
   });
 
   it("lists discovered models without stable role options", async () => {
     invoke.mockImplementation((cmd: string, args?: { provider?: string }) => {
       if (cmd === "list_engines") return Promise.resolve([]);
       if (cmd === "get_settings") {
-        return Promise.resolve({ settings: makeSettings(), warnings: [] });
+        return Promise.resolve({
+          settings: {
+            ...makeSettings(),
+            default_orientation_agent: "claude",
+            default_parallel_agents: ["claude"],
+            default_merge_agent: "claude",
+            default_sequential_agent: "claude",
+          },
+          warnings: [],
+        });
       }
       if (cmd === "get_model_catalog") {
         const result = catalog(args?.provider ?? "local", "cli", "live");
@@ -322,7 +332,7 @@ describe("SettingsPage providers", () => {
       />,
     );
 
-    await screen.findByText("Preferred Provider");
+    await screen.findByText("Model defaults");
     for (const label of [
       "Input assessment",
       "Parallel review",
@@ -331,10 +341,8 @@ describe("SettingsPage providers", () => {
     ])
       await userEvent.click(screen.getAllByText(label)[0]);
     expect(
-      await screen.findByRole("option", {
-        name: "Claude Live · Parallel steps",
-      }),
-    ).toBeInTheDocument();
+      await screen.findAllByRole("option", { name: "Claude Live" }),
+    ).toHaveLength(4);
     expect(screen.getAllByRole("group", { name: "Exact model" })).toHaveLength(
       4,
     );
@@ -363,10 +371,10 @@ describe("SettingsPage providers", () => {
     );
     await user.click(
       await screen.findByRole("button", {
-        name: "More information about Local server",
+        name: "More information about Server setup",
       }),
     );
-    await user.click(screen.getByRole("link", { name: "ollama.com" }));
+    await user.click(screen.getByRole("link", { name: "Ollama" }));
 
     expect(
       await screen.findByText("Could not open ollama.com: no browser"),

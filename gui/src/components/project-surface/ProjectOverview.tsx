@@ -36,6 +36,7 @@ import useProjectSignals from "../../hooks/useProjectSignals";
 import { payloadText } from "../../lib/workspaceTranscript";
 import { isOpenTask, noteKindLabel, op, type SurfaceApi } from "./shared";
 import ProjectNotes from "./ProjectNotes";
+import "../../ui/page.css";
 import "./ProjectHome.css";
 
 interface Props extends SurfaceApi {
@@ -330,14 +331,14 @@ export default function ProjectOverview(props: Props) {
               </label>
               <div className="flex gap-3">
                 <button
-                  className="project-home-button primary"
+                  className="ui-page-button primary"
                   disabled={saving || !question.trim()}
                 >
                   {saving ? "Saving…" : "Save question"}
                 </button>
                 <button
                   type="button"
-                  className="project-home-button"
+                  className="ui-page-button"
                   disabled={saving}
                   onClick={() => setEditingQuestion(false)}
                 >
@@ -399,7 +400,7 @@ export default function ProjectOverview(props: Props) {
           </div>
           <button
             type="button"
-            className="project-home-button primary"
+            className="ui-page-button primary"
             onClick={() =>
               resume ? onResume(resume.session.id) : onStartConversation()
             }

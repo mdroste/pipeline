@@ -110,17 +110,19 @@ source or another extraction method and run the review again.
 
 ## Run several reviews
 
-Choose a provider and model in Settings or in the review designer. Different
-steps can use different providers. See [Connections](connections.md) for the
-options.
+Reviews use your [default model](settings.md#default-model). To use another,
+choose one for a stage under **Settings → Reviews**, or for a step in the
+review designer. Different steps can use different providers. See
+[Connections](connections.md) for the options.
 
 Steps that don't depend on each other run at the same time. To see each
 step's inputs before anything starts, open **Steps and what each can read** in
 the run preview.
 
-You can queue reviews. **Settings → Reviews → Simultaneous Reviews** sets how
-many run at once: two by default, four at most. The sidebar lists running and
-queued reviews. Stopping one review leaves the others running.
+You can queue reviews. **Settings → Reviews → Reviews at once** sets how many
+run at once: two by default, four at most. **Activity** at the bottom of the
+sidebar lists running and queued reviews. Stopping one review leaves the others
+running.
 
 ## Estimated use and limits
 
@@ -139,6 +141,11 @@ each review. Enter 0 for no limit. When a review reaches a limit:
 The cost limit counts API connections at list prices. Subscription calls count
 toward the call and time limits. The preview warns you when the estimate could
 pass a limit.
+
+If you reach your account's usage or credit limit,
+**Settings → Reviews → Continue after an account usage limit** retries the call
+with a backup provider. A review doesn't need the backup to start. If the backup
+isn't connected, the run preview says so, and reaching a limit stops the review.
 
 ## Search the web during a review
 

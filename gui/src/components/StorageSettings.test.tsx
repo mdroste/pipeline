@@ -60,7 +60,7 @@ describe("StorageSettings", () => {
       initial.activeDirectory,
     );
     expect(
-      screen.getByText(/Existing data stays in its original folder/),
+      screen.getByText(/doesn’t move your data when you change folders/),
     ).toBeVisible();
     expect(onSavingChange.mock.calls).toEqual([[true], [false]]);
   });

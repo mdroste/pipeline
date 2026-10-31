@@ -7,11 +7,24 @@ impl Store {
         &self,
         request: CreateSessionRequest,
     ) -> WorkbenchResult<Mutation<WorkbenchSession>> {
+        self.create_session_with_overrides(request, None)
+    }
+
+    /// Create a session whose settings are in place from its first revision.
+    pub fn create_session_with_overrides(
+        &self,
+        request: CreateSessionRequest,
+        overrides: Option<&Value>,
+    ) -> WorkbenchResult<Mutation<WorkbenchSession>> {
         if let Some(workspace_id) = &request.workspace_id {
             validate_id("workspace id", workspace_id)?;
         }
         validate_id("operation id", &request.operation_id)?;
         let title = validate_title(&request.title)?;
+        let overrides = overrides
+            .map(validate_overrides)
+            .transpose()?
+            .unwrap_or_else(|| "{}".to_string());
         let id = new_id("session")?;
         let timestamp = now();
         let mut connection = self.connection()?;
@@ -29,8 +42,8 @@ impl Store {
         }
         transaction
             .execute(
-                "INSERT INTO sessions (id, workspace_id, title, overrides_json, draft, revision, created_at, updated_at) VALUES (?1, ?2, ?3, '{}', '', 1, ?4, ?4)",
-                params![id, request.workspace_id, title, timestamp],
+                "INSERT INTO sessions (id, workspace_id, title, overrides_json, draft, revision, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, '', 1, ?5, ?5)",
+                params![id, request.workspace_id, title, overrides, timestamp],
             )
             .map_err(|error| WorkbenchError::storage("Failed to create session", error))?;
         let session = load_session(&transaction, &id)?;

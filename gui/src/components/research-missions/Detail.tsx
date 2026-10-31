@@ -341,7 +341,7 @@ export default function MissionDetail({
         </p>
       )}
       <div
-        className="task-tabs mission-tabs"
+        className="ui-page-tabs mission-tabs"
         role="tablist"
         aria-label="Research automation detail view"
       >

@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { open as openUrl } from "@tauri-apps/plugin-shell";
+import { withAccessMode } from "../../lib/providers";
 import type { DepsReport, ModelCatalog, Settings } from "../../lib/types";
 
 import InfoButton from "../InfoButton";
@@ -57,12 +58,12 @@ export function LocalProviderSection({
   };
 
   return (
-    <section className="space-y-5">
+    <section className="mt-3 space-y-3">
       <div className="flex items-center gap-1.5">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-neutral-100">
-          Local server
+          Server setup
         </h3>
-        <InfoButton label="Local server">
+        <InfoButton label="Server setup">
           Connect to an OpenAI-compatible server. With{" "}
           <a
             href="https://ollama.com"
@@ -72,7 +73,7 @@ export function LocalProviderSection({
             }}
             className="underline cursor-pointer hover:text-gray-700 dark:hover:text-neutral-300"
           >
-            ollama.com
+            Ollama
           </a>{" "}
           installed, run <span className="font-mono">ollama pull llama3.3</span>
           , then select the model below. For LM Studio, llama.cpp, or vLLM,
@@ -127,7 +128,7 @@ export function LocalProviderSection({
               (model) => model.id === settings.local_model,
             ) && (
               <option value={settings.local_model}>
-                {settings.local_model} (saved; not currently listed)
+                {settings.local_model} (saved, not available)
               </option>
             )}
         </select>
@@ -159,14 +160,21 @@ export function AccessModeSelector({
 }) {
   const effectiveValue = subscriptionDisabledNote ? "api" : value;
   return (
-    <div>
-      <div className="mb-1.5 text-sm font-medium text-gray-700 dark:text-neutral-300">
-        Connection mode
+    <div className="settings-row settings-row-plain">
+      <div className="settings-row-copy">
+        <div className="settings-row-label">Connection mode</div>
+        <p className="settings-row-description">
+          {subscriptionDisabledNote
+            ? subscriptionDisabledNote
+            : effectiveValue === "subscription"
+              ? `Reviews use your ${provider} subscription.`
+              : "Reviews use the API key below. Your provider bills you for what you use."}
+        </p>
       </div>
       <div
         role="radiogroup"
         aria-label={`${provider} connection mode`}
-        className="inline-flex rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-neutral-600 dark:bg-neutral-900"
+        className="inline-flex shrink-0 rounded-lg border border-gray-300 bg-gray-50 p-0.5 dark:border-neutral-600 dark:bg-neutral-900"
       >
         {(["subscription", "api"] as const).map((mode) => {
           const disabled =
@@ -174,7 +182,9 @@ export function AccessModeSelector({
           return (
             <label
               key={mode}
-              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-within:ring-2 focus-within:ring-blue-500 ${
+              // Relative keeps the hidden radio inside the scrolling settings
+              // pane. Otherwise focusing it scrolls the whole window on Windows.
+              className={`relative rounded-md px-3 py-1.5 text-xs font-medium transition-colors focus-within:ring-2 focus-within:ring-blue-500 ${
                 disabled
                   ? "cursor-not-allowed text-gray-300 dark:text-neutral-600"
                   : effectiveValue === mode
@@ -196,13 +206,6 @@ export function AccessModeSelector({
           );
         })}
       </div>
-      <p className="mt-1.5 text-[11px] leading-4 text-gray-500 dark:text-neutral-400">
-        {subscriptionDisabledNote
-          ? subscriptionDisabledNote
-          : effectiveValue === "subscription"
-            ? "Use your signed-in subscription account. The saved API key stays inactive."
-            : "Use the API key below. The provider charges for token usage; no command-line tool is needed."}
-      </p>
     </div>
   );
 }
@@ -246,13 +249,12 @@ export function ProvidersSection({
   return (
     <>
       <SettingsCard id="anthropic-provider">
-        <ProviderHeader name="Anthropic" />
-        {check("claude")}
+        <ProviderHeader name="Anthropic">{check("claude")}</ProviderHeader>
         <AccessModeSelector
           provider="Claude"
           value={settings.claude_access_mode}
           onChange={(mode) =>
-            setSettings({ ...settings, claude_access_mode: mode })
+            setSettings(withAccessMode(settings, "claude", mode))
           }
         />
         {settings.claude_access_mode === "api" ? (
@@ -266,7 +268,7 @@ export function ProvidersSection({
         ) : (
           settings.anthropic_api_key && (
             <p className="settings-row-description mt-3">
-              A saved API key is inactive in subscription mode.
+              Your saved API key isn’t used in subscription mode.
             </p>
           )
         )}
@@ -286,29 +288,32 @@ export function ProvidersSection({
           />
         </section>
         <section className="settings-provider-scope">
-          <h3>Reviews</h3>
+          <div className="settings-provider-header">
+            <h3>Reviews</h3>
+            {(settings.codex_access_mode === "api" ||
+              settings.codex_backend === "legacy_cli") &&
+              check("codex")}
+          </div>
           <AccessModeSelector
             provider="ChatGPT"
             value={settings.codex_access_mode}
             onChange={(mode) =>
-              setSettings({ ...settings, codex_access_mode: mode })
+              setSettings(withAccessMode(settings, "codex", mode))
             }
           />
           {settings.codex_access_mode !== "api" ? (
             <>
-              {settings.codex_backend === "legacy_cli" ? (
-                check("codex")
-              ) : (
+              {settings.codex_backend !== "legacy_cli" && (
                 <WorkflowCodexConnection onStatusChange={onCodexStatusChange} />
               )}
-              <details className="settings-disclosure mt-4">
+              <details className="settings-disclosure">
                 <summary>
                   Advanced connection settings <span>Compatibility</span>
                 </summary>
                 <div className="pt-4">
                   <Field
                     label="Reviews connection"
-                    help="Use the legacy CLI only for compatibility troubleshooting. Pipeline never switches to it automatically."
+                    help="Use the legacy CLI only if Codex App Server doesn’t work."
                   >
                     <select
                       aria-label="Reviews Codex backend"
@@ -339,35 +344,31 @@ export function ProvidersSection({
               </details>
               {settings.openai_api_key && (
                 <p className="settings-row-description mt-3">
-                  A saved API key is inactive in subscription mode.
+                  Your saved API key isn’t used in subscription mode.
                 </p>
               )}
             </>
           ) : (
-            <>
-              {check("codex")}
-              <CredentialField
-                label="OpenAI API Key"
-                value={settings.openai_api_key}
-                onSave={(value) =>
-                  setSettings({ ...settings, openai_api_key: value })
-                }
-              />
-            </>
+            <CredentialField
+              label="OpenAI API Key"
+              value={settings.openai_api_key}
+              onSave={(value) =>
+                setSettings({ ...settings, openai_api_key: value })
+              }
+            />
           )}
           <ReviewSaveFeedback />
         </section>
       </SettingsCard>
       <SettingsCard id="google-provider">
-        <ProviderHeader name="Google" />
-        {check("antigravity")}
+        <ProviderHeader name="Google">{check("antigravity")}</ProviderHeader>
         <AccessModeSelector
           provider="Gemini"
           value={settings.antigravity_access_mode}
           onChange={(mode) =>
             setSettings({ ...settings, antigravity_access_mode: mode })
           }
-          subscriptionDisabledNote="Gemini connects through the Google API. A Google API key is required; subscription sign-in is unavailable."
+          subscriptionDisabledNote="Gemini needs a Google API key. Subscription sign-in isn’t available."
         />
         <CredentialField
           label="Gemini API Key"

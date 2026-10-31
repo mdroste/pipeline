@@ -426,7 +426,7 @@ fn full_parser_support_is_explicit_for_release_platforms() {
     assert!(full_parser_support_for("linux", "x86_64").is_ok());
     assert!(full_parser_support_for("macos", "x86_64")
         .unwrap_err()
-        .contains("Intel macOS"));
+        .contains("Intel Macs"));
     assert!(full_parser_support_for("windows", "aarch64").is_err());
 }
 

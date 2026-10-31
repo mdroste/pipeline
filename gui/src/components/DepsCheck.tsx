@@ -193,10 +193,10 @@ function DependencyHint({
   dep: Dependency;
   onOpenPdfSettings?: () => void;
 }) {
-  const pdfSettingsLabel = "Settings → Reviews → PDF Extraction";
+  const pdfSettingsLabel = "Settings → Reviews → PDF extraction";
   // Older dependency reports use the previous Settings navigation labels.
   const hint = dep.hint.replace(
-    /Settings → (?:Workflows → )?PDF Extraction/g,
+    /Settings → (?:(?:Reviews|Workflows) → )?PDF extraction/gi,
     pdfSettingsLabel,
   );
   const pdfSettingsIndex = hint.indexOf(pdfSettingsLabel);

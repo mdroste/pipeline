@@ -96,33 +96,28 @@ export default function AdvancedSettings({
         <ReviewSaveFeedback />
       </SettingsCard>
       <SettingsCard id="workspace-diagnostics">
-        <SectionHeader title="Research capabilities" />
+        <SectionHeader title="Installed tools" />
         {capabilities ? (
-          <>
-            <p className="settings-row-description">
-              {capabilities.qualification}
-            </p>
-            <dl className="settings-capabilities">
-              {[
-                ["Platform", capabilities.platform],
-                ["Git", capabilities.git ?? "Not found"],
-                ["LaTeX", capabilities.latex ?? "Not found"],
-                [
-                  "PDF tools",
-                  capabilities.pdfPages ?? "No system PDF renderer found",
-                ],
-                ["Stata", capabilities.stataPolicy],
-              ].map(([key, value]) => (
-                <div key={key}>
-                  <dt>{key}</dt>
-                  <dd>{value}</dd>
-                </div>
-              ))}
-            </dl>
-          </>
+          <dl className="settings-capabilities">
+            {[
+              ["Platform", capabilities.platform],
+              ["Git", capabilities.git ?? "Not found"],
+              ["LaTeX", capabilities.latex ?? "Not found"],
+              [
+                "PDF tools",
+                capabilities.pdfPages ?? "No system PDF renderer found",
+              ],
+              ["Stata", capabilities.stataPolicy],
+            ].map(([key, value]) => (
+              <div key={key}>
+                <dt>{key}</dt>
+                <dd>{value}</dd>
+              </div>
+            ))}
+          </dl>
         ) : (
           <p className="settings-row-description">
-            Capability information is unavailable.
+            Could not check installed tools.
           </p>
         )}
       </SettingsCard>
@@ -131,15 +126,12 @@ export default function AdvancedSettings({
           title="Pipeline"
           description={version ? `Version ${version}` : "Version unavailable"}
         />
-        <p className="settings-row-description">
-          A research workspace for conversations, reviews, and automations.
-        </p>
         {updateStatus && (
           <Toggle
             label="Check for updates automatically"
             description={
               updateStatus.automatic_available
-                ? "Each time it starts, and once a day while it stays open, Pipeline asks GitHub whether a newer version is available. GitHub receives your network address and app version, nothing about your research."
+                ? "Pipeline checks GitHub for a new version when it starts and once a day while it’s open. GitHub sees your IP address and app version, but nothing about your research."
                 : "This copy of Pipeline was not installed from an official release, so it checks for updates only when you ask."
             }
             checked={updateStatus.automatic}
@@ -148,8 +140,8 @@ export default function AdvancedSettings({
         )}
         {updateStatus?.error && (
           <p role="alert" className="settings-error">
-            Your update setting could not be read, so automatic checks are off.
-            Choose a setting to replace it.
+            Could not read your update setting, so automatic checks are off. Use
+            the switch above to set it again.
           </p>
         )}
         <div className="settings-actions mt-4">
