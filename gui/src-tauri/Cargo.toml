@@ -1,6 +1,6 @@
 [package]
 name = "pipeline-gui"
-version = "1.2.6"
+version = "1.3.0"
 description = "Desktop agent orchestration suite for academic research and review"
 homepage = "https://github.com/mdroste/pipeline"
 repository = "https://github.com/mdroste/pipeline"

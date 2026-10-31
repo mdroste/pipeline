@@ -5,6 +5,8 @@ public release was not tracked as a stable release series.
 
 ## Unreleased
 
+## 1.3.0 — 2026-10-30
+
 - Installing the PaddleOCR-VL Full Parser works again. In 1.2.5 and 1.2.6 the
   install stopped with `HTTP 302 Found`.
 - Engine installs show each step, a progress bar, the download size, speed, and
