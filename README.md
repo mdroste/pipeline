@@ -1,4 +1,4 @@
-# Pipeline 1.2.5
+# Pipeline
 
 [![CI](https://github.com/mdroste/pipeline/actions/workflows/build.yml/badge.svg)](https://github.com/mdroste/pipeline/actions/workflows/build.yml)
 [![Version 1.2.5](https://img.shields.io/badge/version-1.2.5-blue)](CHANGELOG.md)
