@@ -85,7 +85,7 @@ export const PERSONAS: Record<GetStartedPersona, PersonaGuide> = {
       "Choose a PDF, Word file, .tex file, or folder. LaTeX source keeps equations and structure.",
     templates: ["reference-check", "replication-package-readiness"],
     tips: [
-      "Open the example Review first to see what a finished Review contains.",
+      "Open the example review first to see what a finished Review contains.",
       "Projects keep conversations, files, notes, and local checks together.",
     ],
   },
@@ -301,7 +301,7 @@ export function connectionSummary(rows: ConnectionRow[]) {
   const conversations =
     ready("chatgpt") || ready("claude") || ready("api") || ready("local");
   if (conversations) return "You can start Conversations and Reviews now.";
-  return "Connect at least one provider before your first Review. The example Review needs no connection.";
+  return "Connect at least one provider before your first Review. The example review needs no connection.";
 }
 
 export interface PdfRow {

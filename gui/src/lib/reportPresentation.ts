@@ -1,6 +1,7 @@
 import {
   isPaperOrientation,
   type PipelineReport,
+  type ReportQuality,
   type RunSummary,
 } from "./types";
 
@@ -164,6 +165,89 @@ export function canonicalProblemMessage(
     case "missing-content":
       return "The report is empty or unavailable. Check the saved outputs for details.";
   }
+}
+
+const WITHHELD_IMAGE_TEXT_NOTE = "Image text withheld as unverified";
+
+const counted = (count: number, one: string, many: string) =>
+  count === 1 ? `1 ${one}` : `${count} ${many}`;
+
+/**
+ * How a report's stored status reads to a researcher. `degraded` stays the
+ * stored value, but it also covers a single misquotation or a retry that
+ * succeeded, so only a problem with the reading of the document is announced
+ * as a limitation. status_label in output/quality.rs must agree.
+ */
+export function reportStatusDisplay(
+  status: string,
+  quality?: ReportQuality | null,
+): {
+  label: string;
+  heading: string;
+  tone: "good" | "caution" | "stopped" | "bad";
+  notes: string[];
+} {
+  if (status === "done")
+    return {
+      label: "Completed",
+      heading: "Completed report",
+      tone: "good",
+      notes: [],
+    };
+  if (status !== "degraded")
+    return {
+      label: status,
+      heading: `${status} report`,
+      tone:
+        status === "partial"
+          ? "caution"
+          : status === "cancelled"
+            ? "stopped"
+            : "bad",
+      notes: [],
+    };
+
+  // Without the quality record there is no way to rule out a coverage problem.
+  const limited =
+    !quality ||
+    (quality.extraction_notes ?? []).some(
+      (note) => !note.startsWith(WITHHELD_IMAGE_TEXT_NOTE),
+    );
+  const quotes =
+    (quality?.partially_verified_evidence ?? 0) +
+    (quality?.unverified_evidence ?? 0);
+  const manual = quality?.manual_review_items ?? 0;
+  const notes = [
+    ...(quality && limited ? ["Part of the document may be incomplete"] : []),
+    ...(quotes > 0
+      ? [`${counted(quotes, "quote needs", "quotes need")} checking`]
+      : []),
+    ...(manual > 0
+      ? [`${counted(manual, "comment needs", "comments need")} manual review`]
+      : []),
+  ];
+  return limited
+    ? {
+        label: "Completed with limitations",
+        heading: "Completed with limitations",
+        tone: "caution",
+        notes,
+      }
+    : {
+        label: "Completed",
+        heading: "Completed report",
+        tone: "good",
+        notes,
+      };
+}
+
+/**
+ * Lists have only the stored status, which cannot tell a misquotation from a
+ * reading problem, so a `degraded` run is listed as done and its report says
+ * what to check.
+ */
+export function listedRunStatus(status: string): string {
+  return status === "degraded" ? "done" : status;
 }
 
 /** Remove Pipeline's private markdown boundary tokens before presentation. */

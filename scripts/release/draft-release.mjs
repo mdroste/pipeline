@@ -5,6 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { packageUrl, updateManifest, updatePackages, updaterPublicKey, verifyUpdateSignature } from "./update-manifest.mjs";
 
 export function verifyTag(ref, annotated, expectedCommit) {
   if (ref.object?.type !== "tag" || annotated.sha !== ref.object.sha)
@@ -22,11 +23,26 @@ export const installerNames = version => [
   `Pipeline-${version}-Windows.exe`, `Pipeline-${version}-Linux.AppImage`,
 ];
 const digest = file => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+const MANIFEST = "latest.json";
+const uploadable = version => new Set([...installerNames(version),
+  ...updatePackages(version).flatMap(({ name }) => [name, `${name}.sig`])]);
 
-export function manageDraft(mode, tag, file, gh = args => execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })) {
+export function manageDraft(mode, tag, file, gh = args => execFileSync("gh", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }), updaterKey = updaterPublicKey()) {
   if (!/^v\d+\.\d+\.\d+$/.test(tag)) throw new Error("A stable version tag is required");
   const repo = process.env.GITHUB_REPOSITORY;
+  const version = tag.slice(1);
   const view = () => JSON.parse(gh(["release", "view", tag, "--json", "isDraft,assets"]));
+  // Assets are immutable: a retry may repeat an upload only with identical bytes.
+  const publish = (candidate, temp) => {
+    const release = view(); requireDraft(release);
+    const assetName = path.basename(candidate);
+    if (release.assets.some(a => a.name === assetName)) {
+      const previous = path.join(temp, "previous"); fs.mkdirSync(previous, { recursive: true });
+      gh(["release", "download", tag, "--pattern", assetName, "--dir", previous]);
+      if (digest(path.join(previous, assetName)) !== digest(candidate))
+        throw new Error(`Existing asset differs: ${assetName}. Use a new version; assets are never overwritten.`);
+    } else gh(["release", "upload", tag, candidate]);
+  };
   if (mode === "prepare") {
     const ref = JSON.parse(gh(["api", `repos/${repo}/git/ref/tags/${tag}`]));
     if (ref.object?.type !== "tag") throw new Error("Release requires a signed annotated tag");
@@ -46,30 +62,46 @@ export function manageDraft(mode, tag, file, gh = args => execFileSync("gh", arg
   requireDraft(view());
   if (mode === "upload") {
     const name = path.basename(file);
-    if (!installerNames(tag.slice(1)).includes(name)) throw new Error("Unexpected installer name");
+    if (!uploadable(version).has(name)) throw new Error("Unexpected release asset name");
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-release-"));
     try {
-      fs.writeFileSync(path.join(temp, `${name}.sha256`), `${digest(file)}  ${name}\n`);
-      for (const candidate of [file, path.join(temp, `${name}.sha256`)]) {
-        const release = view(); requireDraft(release);
-        const assetName = path.basename(candidate);
-        if (release.assets.some(a => a.name === assetName)) {
-          const previous = path.join(temp, "previous"); fs.mkdirSync(previous, { recursive: true });
-          gh(["release", "download", tag, "--pattern", assetName, "--dir", previous]);
-          if (digest(path.join(previous, assetName)) !== digest(candidate))
-            throw new Error(`Existing asset differs: ${assetName}. Use a new version; assets are never overwritten.`);
-        } else gh(["release", "upload", tag, candidate]);
+      publish(file, temp);
+      if (!name.endsWith(".sig")) {
+        fs.writeFileSync(path.join(temp, `${name}.sha256`), `${digest(file)}  ${name}\n`);
+        publish(path.join(temp, `${name}.sha256`), temp);
       }
+    } finally { fs.rmSync(temp, { recursive: true, force: true }); }
+  } else if (mode === "manifest") {
+    const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-manifest-"));
+    try {
+      const signatures = {};
+      for (const { name } of updatePackages(version)) {
+        gh(["release", "download", tag, "--pattern", `${name}.sig`, "--dir", temp]);
+        signatures[name] = fs.readFileSync(path.join(temp, `${name}.sig`), "utf8");
+      }
+      const manifest = path.join(temp, MANIFEST);
+      fs.writeFileSync(manifest, `${JSON.stringify(updateManifest(version, signatures), null, 2)}\n`);
+      publish(manifest, temp);
     } finally { fs.rmSync(temp, { recursive: true, force: true }); }
   } else if (mode === "verify") {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pipeline-draft-"));
     try {
-      for (const name of installerNames(tag.slice(1))) {
+      for (const name of installerNames(version)) {
         for (const asset of [name, `${name}.sha256`])
           gh(["release", "download", tag, "--pattern", asset, "--dir", temp]);
         const expected = `${digest(path.join(temp, name))}  ${name}\n`;
         if (fs.readFileSync(path.join(temp, `${name}.sha256`), "utf8") !== expected)
           throw new Error(`Checksum mismatch: ${name}`);
+      }
+      gh(["release", "download", tag, "--pattern", MANIFEST, "--dir", temp]);
+      const manifest = JSON.parse(fs.readFileSync(path.join(temp, MANIFEST), "utf8"));
+      if (manifest.version !== version) throw new Error(`Manifest is for version ${manifest.version}`);
+      for (const { platform, name } of updatePackages(version)) {
+        if (!fs.existsSync(path.join(temp, name)))
+          gh(["release", "download", tag, "--pattern", name, "--dir", temp]);
+        const entry = manifest.platforms?.[platform];
+        if (entry?.url !== packageUrl(version, name)) throw new Error(`Manifest has the wrong package for ${platform}`);
+        verifyUpdateSignature(fs.readFileSync(path.join(temp, name)), entry.signature, updaterKey, version);
       }
       requireDraft(view());
     } finally { fs.rmSync(temp, { recursive: true, force: true }); }

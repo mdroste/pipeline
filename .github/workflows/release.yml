@@ -34,7 +34,6 @@ jobs:
 
   prepare:
     if: github.ref_type == 'tag'
-    needs: quality
     runs-on: ubuntu-22.04
     environment:
       name: release
@@ -71,11 +70,11 @@ jobs:
         include: >-
           ${{ fromJSON(
           inputs.platform == 'all'
-          && '[{"id":"macos-arm64","name":"macOS ARM","runner":"macos-15","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin","bundle":"dmg"},{"id":"macos-x64","name":"macOS Intel","runner":"macos-15-intel","rust_target":"x86_64-apple-darwin","tauri_args":"--target x86_64-apple-darwin","bundle":"dmg"},{"id":"windows","name":"Windows","runner":"windows-2022","rust_target":"","tauri_args":"","bundle":"nsis"},{"id":"linux","name":"Linux","runner":"ubuntu-22.04","rust_target":"","tauri_args":"","bundle":"appimage"}]'
+          && '[{"id":"macos-arm64","name":"macOS ARM","runner":"macos-15","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin","bundle":"app,dmg"},{"id":"macos-x64","name":"macOS Intel","runner":"macos-15-intel","rust_target":"x86_64-apple-darwin","tauri_args":"--target x86_64-apple-darwin","bundle":"app,dmg"},{"id":"windows","name":"Windows","runner":"windows-2022","rust_target":"","tauri_args":"","bundle":"nsis"},{"id":"linux","name":"Linux","runner":"ubuntu-22.04","rust_target":"","tauri_args":"","bundle":"appimage"}]'
           || inputs.platform == 'macos-arm64'
-          && '[{"id":"macos-arm64","name":"macOS ARM","runner":"macos-15","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin","bundle":"dmg"}]'
+          && '[{"id":"macos-arm64","name":"macOS ARM","runner":"macos-15","rust_target":"aarch64-apple-darwin","tauri_args":"--target aarch64-apple-darwin","bundle":"app,dmg"}]'
           || inputs.platform == 'macos-x64'
-          && '[{"id":"macos-x64","name":"macOS Intel","runner":"macos-15-intel","rust_target":"x86_64-apple-darwin","tauri_args":"--target x86_64-apple-darwin","bundle":"dmg"}]'
+          && '[{"id":"macos-x64","name":"macOS Intel","runner":"macos-15-intel","rust_target":"x86_64-apple-darwin","tauri_args":"--target x86_64-apple-darwin","bundle":"app,dmg"}]'
           || inputs.platform == 'windows'
           && '[{"id":"windows","name":"Windows","runner":"windows-2022","rust_target":"","tauri_args":"","bundle":"nsis"}]'
           || '[{"id":"linux","name":"Linux","runner":"ubuntu-22.04","rust_target":"","tauri_args":"","bundle":"appimage"}]') }}
@@ -89,13 +88,13 @@ jobs:
           toolchain: ${{ env.RUST_VERSION }}
           targets: ${{ matrix.rust_target }}
 
+      # release-cache.yml saves this on main, the only cache a new tag can read.
       - name: Restore Rust build cache
         uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: gui/src-tauri -> target
           shared-key: release-${{ matrix.id }}
-          cache-workspace-crates: true
-          cache-on-failure: true
+          save-if: false
 
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -165,7 +164,19 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run tauri -- build ${{ matrix.tauri_args }} --bundles ${{ matrix.bundle }} -- --locked
+          # Without this, Tauri skips the Finder step that arranges the window.
+          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri -- build ${{ matrix.tauri_args }} --bundles ${{ matrix.bundle }} --config '{"bundle":{"createUpdaterArtifacts":true}}' -- --locked
+
+      - name: Verify the disk image layout
+        if: startsWith(matrix.id, 'macos-')
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg_path="$(find "gui/src-tauri/target/${{ matrix.rust_target }}/release/bundle/dmg" -type f -name '*.dmg' -print -quit)"
+          bash scripts/release/verify-macos-dmg.sh "$dmg_path"
 
       - name: Build unsigned package
         if: matrix.id == 'linux'
@@ -174,7 +185,9 @@ jobs:
           PIPELINE_OFFICIAL_RELEASE: "1"
           PIPELINE_BUNDLE_PLATFORM: ${{ matrix.id }}
           NO_STRIP: ${{ matrix.id == 'linux' && '1' || '' }}
-        run: npm run tauri -- build ${{ matrix.tauri_args }} --bundles ${{ matrix.bundle }} -- --locked
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri -- build ${{ matrix.tauri_args }} --bundles ${{ matrix.bundle }} --config '{"bundle":{"createUpdaterArtifacts":true}}' -- --locked
 
       - name: Compile Windows application before signing login
         if: matrix.id == 'windows'
@@ -223,6 +236,8 @@ jobs:
           AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
           AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
           AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npm run tauri -- bundle --config "$env:RUNNER_TEMP/windows-signing.json" --bundles nsis
 
       - name: Verify Windows installer and installed signatures
@@ -242,29 +257,46 @@ jobs:
             macos-arm64)
               source_path="$(find gui/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -type f -name '*.dmg' -print -quit)"
               asset_name="Pipeline-${version}-macOS-AppleSilicon.dmg"
+              update_path="$(find gui/src-tauri/target/aarch64-apple-darwin/release/bundle/macos -type f -name '*.app.tar.gz' -print -quit)"
+              update_name="Pipeline-${version}-macOS-AppleSilicon.app.tar.gz"
               ;;
             macos-x64)
               source_path="$(find gui/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg -type f -name '*.dmg' -print -quit)"
               asset_name="Pipeline-${version}-macOS-Intel.dmg"
+              update_path="$(find gui/src-tauri/target/x86_64-apple-darwin/release/bundle/macos -type f -name '*.app.tar.gz' -print -quit)"
+              update_name="Pipeline-${version}-macOS-Intel.app.tar.gz"
               ;;
             windows)
               source_path="$(find gui/src-tauri/target/release/bundle/nsis -type f -name '*setup.exe' -print -quit)"
               asset_name="Pipeline-${version}-Windows.exe"
+              update_path="$source_path"
+              update_name="$asset_name"
               ;;
             linux)
               source_path="$(find gui/src-tauri/target/release/bundle/appimage -type f -name '*.AppImage' -print -quit)"
               asset_name="Pipeline-${version}-Linux.AppImage"
+              update_path="$source_path"
+              update_name="$asset_name"
               ;;
           esac
           test -n "$source_path"
           test -s "$source_path"
+          test -s "$update_path.sig"
           cp "$source_path" "$RUNNER_TEMP/$asset_name"
 
           node scripts/release/draft-release.mjs upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/$asset_name"
 
+          # The in-app updater's package; Windows and Linux use the installer.
+          if [ "$update_name" != "$asset_name" ]; then
+            cp "$update_path" "$RUNNER_TEMP/$update_name"
+            node scripts/release/draft-release.mjs upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/$update_name"
+          fi
+          cp "$update_path.sig" "$RUNNER_TEMP/$update_name.sig"
+          node scripts/release/draft-release.mjs upload "$GITHUB_REF_NAME" "$RUNNER_TEMP/$update_name.sig"
+
   verify-draft:
     name: Verify complete draft release
-    needs: package
+    needs: [quality, package]
     runs-on: ubuntu-22.04
     environment:
       name: release
@@ -274,7 +306,11 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
-      - name: Verify all four installers and checksums
+      - name: Publish the update manifest to the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release/draft-release.mjs manifest "$GITHUB_REF_NAME"
+      - name: Verify all four installers, checksums, and update signatures
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release/draft-release.mjs verify "$GITHUB_REF_NAME"

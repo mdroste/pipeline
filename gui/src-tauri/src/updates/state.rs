@@ -23,7 +23,8 @@ static LOCK: Mutex<()> = Mutex::new(());
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub(super) struct State {
-    /// Daily checks in official builds. Manual checks work regardless.
+    /// Checks at launch and once a day in official builds. Manual checks work
+    /// regardless.
     pub automatic: bool,
     pub last_checked_at: Option<DateTime<Utc>>,
     /// Latest stable release reported by the last successful check.
@@ -134,6 +135,7 @@ mod tests {
                 name: "Pipeline v1.2.0".into(),
                 release_url: "https://github.com/mdroste/pipeline/releases/tag/v1.2.0".into(),
                 download_url: None,
+                manifest_url: None,
                 published_at: Some("2026-10-27T18:00:00Z".into()),
             }),
             failures: 2,

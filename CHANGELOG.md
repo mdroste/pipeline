@@ -5,6 +5,47 @@ public release was not tracked as a stable release series.
 
 ## Unreleased
 
+## 1.3.1 — 2026-10-31
+
+- The PaddleOCR-VL Full Parser installs on Windows with Smart App Control on, as
+  long as Windows allows its Python tools. New Windows installs read pages with
+  PaddlePaddle directly and no longer download `llama.cpp`. This runs on the
+  processor, so it's slower and needs about 6 GB of free memory, or about 10 GB
+  for a few seconds as it starts. Long papers get more time to finish, and
+  existing Windows installs keep working as they are.
+- On Windows, the separate title bar is gone. The sidebar reaches the top of the
+  window, and the minimize, maximize, and close buttons sit in the top-right
+  corner. Drag the top of the window to move it.
+- A button at the top of the sidebar hides it, so a page can use the full width
+  of the window. A dot on the button shows when something is running or needs
+  your attention. Pipeline remembers your choice.
+- **See an example review** now opens the real report screen on a finished
+  review of an invented paper, with the report, report details, issues, and each
+  reviewer's output. Its paper and comments are rewritten, and page links in its
+  evidence open the cited page.
+- The text of each issue is easier to read. It was shown in pale gray.
+- Issues name their reviewers in plain words and have **Accept**, **Reject**,
+  and **Done** buttons in place of symbols.
+- A report is no longer called "degraded" because of a misquotation or a retry
+  that succeeded. It shows as **Completed report**, with a note such as "2 quotes
+  need checking". **Completed with limitations** now means that part of the
+  document may be incomplete. Review history and exports use the same wording,
+  and saved reports keep the text they were written with.
+- Automations no longer run extra reviews or revisions because of a misquotation
+  or a retry that succeeded. A review still counts as incomplete if part of the
+  document may be missing or a comment needs manual review.
+- The macOS and Windows installers have a new look. On macOS, the disk image
+  opens straight to a window showing where to drag Pipeline, with no license
+  agreement first. On Windows, the installer uses the system font, shows the
+  Pipeline logo, and has fewer steps.
+- Pipeline checks for updates every time it starts, rather than once a day. To
+  turn this off, clear **Check automatically** in the update banner or use the
+  setting under **Advanced & About**.
+- **Install update** now installs a new version from inside Pipeline. It
+  downloads while you keep working, waits for you to choose **Restart now**, and
+  warns you first if restarting would stop running work. Versions before 1.3.1
+  need to download the installer one last time.
+
 ## 1.3.0 — 2026-10-30
 
 - Installing the PaddleOCR-VL Full Parser works again. In 1.2.5 and 1.2.6 the

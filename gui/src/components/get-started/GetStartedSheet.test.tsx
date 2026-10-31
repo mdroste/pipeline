@@ -306,7 +306,7 @@ describe("Get started sheet", () => {
     navigate.mockRestore();
   });
 
-  it("opens the example Review and returns to the same step", async () => {
+  it("opens the example review and returns to the same step", async () => {
     const user = userEvent.setup();
     renderHost();
     const dialog = await sheet();
@@ -317,7 +317,7 @@ describe("Get started sheet", () => {
       within(dialog).getByRole("button", { name: "Open the example" }),
     );
     const example = await screen.findByRole("dialog", {
-      name: "Example Review — sample data, no model was called",
+      name: "Example review",
     });
     expect(
       screen.queryByRole("dialog", { name: "Get started with Pipeline" }),

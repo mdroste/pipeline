@@ -118,6 +118,7 @@ Each module's header comment has the details.
 | `pipeline_config/` | Built-in workflows, validation, migrations |
 | `runs/`, `output/` | Review run store, recovery, retention, report formats |
 | `settings/`, `storage.rs` | Device settings and research folder choice |
+| `updates.rs`, `updates/` | Update checks, their preference, and in-app install |
 | `agent_runtime/codex/` | Shared Codex transport, launch, and version checks |
 | `agent_runtime/codex/chatgpt/` | The shared ChatGPT account |
 | `agent_runtime/claude.rs` | Claude subscription check |

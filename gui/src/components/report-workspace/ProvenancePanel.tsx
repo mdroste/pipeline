@@ -5,6 +5,7 @@ import {
   namedModelSummary,
   type RunProvenance,
 } from "../../lib/runProvenance";
+import { reportStatusDisplay } from "../../lib/reportPresentation";
 import type { ReportQuality } from "../../lib/types";
 
 const METADATA_LABEL =
@@ -27,7 +28,10 @@ export default function ProvenancePanel({
     ["Provider", provenance.provider_summary],
   ];
   const showCacheWrite = provenance.totals.cache_write_input_tokens > 0;
-  const status = quality?.status || provenance.status;
+  const display = reportStatusDisplay(
+    quality?.status || provenance.status,
+    quality,
+  );
 
   return (
     <div className="h-full overflow-y-auto">
@@ -38,7 +42,7 @@ export default function ProvenancePanel({
         <div className="flex items-start justify-between gap-6">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">
-              Completed report
+              {display.heading}
             </p>
             <h2 className="mt-1 text-2xl font-semibold tracking-[-0.025em] text-gray-950 dark:text-gray-50">
               Report details
@@ -50,12 +54,12 @@ export default function ProvenancePanel({
           </div>
           <span
             className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-              status === "done"
+              display.tone === "good"
                 ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300"
                 : "bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
             }`}
           >
-            {status === "done" ? "Completed" : status}
+            {display.label}
           </span>
         </div>
 

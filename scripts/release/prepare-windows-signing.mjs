@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 export function windowsSigningConfig(root) {
   return {
     bundle: {
+      createUpdaterArtifacts: true,
       windows: {
         signCommand: {
           cmd: "pwsh",

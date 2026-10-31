@@ -12,6 +12,7 @@ test("all third-party GitHub Actions are pinned to immutable commit SHAs", () =>
   for (const workflow of [
     "build.yml",
     "release.yml",
+    "release-cache.yml",
     "paddle-parser-qualification.yml",
   ]) {
     const contents = readText(".github", "workflows", workflow);
@@ -31,7 +32,7 @@ test("CI and release use the repository's exact toolchains", () => {
   const nodeVersion = readText("gui", ".nvmrc").trim();
   const rustVersion = readText("rust-toolchain.toml")
     .match(/^channel\s*=\s*"([^"]+)"$/m)?.[1];
-  for (const workflow of ["build.yml", "release.yml"]) {
+  for (const workflow of ["build.yml", "release.yml", "release-cache.yml"]) {
     const contents = readText(".github", "workflows", workflow);
     assert.ok(contents.includes(`NODE_VERSION: ${nodeVersion}`));
     assert.ok(contents.includes(`RUST_VERSION: ${rustVersion}`));
@@ -67,11 +68,75 @@ test("Windows PDF tests use the pinned Poppler tools before system executables",
 
 test("release has one draft coordinator behind quality gates and no publication or overwrite", () => {
   const contents = readText(".github", "workflows", "release.yml");
-  for (const required of ["workflow_dispatch:", "needs: quality", "needs: prepare", "needs: package", "fetch-depth: 0",
+  for (const required of ["workflow_dispatch:", "needs: prepare", "needs: [quality, package]", "fetch-depth: 0",
     "draft-release.mjs prepare", "draft-release.mjs upload", "draft-release.mjs verify", "bundle-poppler.sh",
     "Build unsigned package", "Import Apple signing certificate"])
     assert.ok(contents.includes(required), required);
   assert.doesNotMatch(contents, /--clobber|--draft=false|gh release edit/);
+});
+
+test("new release tags reuse dependencies compiled on main under the same cache key", () => {
+  const release = readText(".github", "workflows", "release.yml");
+  const warm = readText(".github", "workflows", "release-cache.yml");
+  const cacheStep = (contents) => contents.split("name: Restore Rust build cache")[1]?.split("- name:")[0] ?? "";
+
+  assert.match(cacheStep(release), /save-if: false/);
+  assert.doesNotMatch(cacheStep(warm), /save-if/);
+  for (const contents of [release, warm]) {
+    for (const shared of ["CARGO_INCREMENTAL: 1", "workspaces: gui/src-tauri -> target",
+      "shared-key: release-${{ matrix.id }}"])
+      assert.ok(contents.includes(shared), shared);
+    for (const runner of ["macos-15", "macos-15-intel", "windows-2022", "ubuntu-22.04"])
+      assert.ok(contents.includes(runner), runner);
+    for (const target of ["aarch64-apple-darwin", "x86_64-apple-darwin"])
+      assert.ok(contents.includes(`--target ${target}`), target);
+  }
+  assert.ok(release.includes('MACOSX_DEPLOYMENT_TARGET: "15.0"'));
+  assert.ok(warm.includes("&& '15.0' ||"), "dependencies must target the release's macOS version");
+  assert.ok(warm.includes("npm run tauri -- build ${{ matrix.tauri_args }} --no-bundle -- --locked"));
+  assert.ok(warm.includes("if: github.ref == 'refs/heads/main'"));
+  assert.ok(warm.includes("contents: read"));
+  assert.doesNotMatch(warm, /secrets\.|^\s*environment:|contents: write|id-token|actions\/cache@|bundle-poppler|pull_request/m);
+});
+
+test("every release build signs the in-app update package", () => {
+  const release = readText(".github", "workflows", "release.yml");
+  const matrix = [...release.matchAll(/"id":"(macos-[a-z0-9]+)"[^}]*"bundle":"([^"]+)"/g)];
+  assert.ok(matrix.length >= 2);
+  // Without the app target, Tauri builds no macOS update archive.
+  for (const [, , bundle] of matrix) assert.equal(bundle, "app,dmg");
+  for (const step of ["Build signed and notarized macOS package", "Build unsigned package", "Build signed Windows package"]) {
+    const build = release.split(`name: ${step}`)[1]?.split("- name:")[0] ?? "";
+    assert.ok(build.includes("TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}"), step);
+    assert.ok(build.includes("TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}"), step);
+  }
+  for (const step of ["Build signed and notarized macOS package", "Build unsigned package"]) {
+    const build = release.split(`name: ${step}`)[1]?.split("- name:")[0] ?? "";
+    assert.ok(build.includes(`--config '{"bundle":{"createUpdaterArtifacts":true}}'`), step);
+  }
+  assert.ok(release.indexOf("draft-release.mjs manifest") < release.indexOf('draft-release.mjs verify'));
+});
+
+test("the Windows window differs from the others only by its native title bar", () => {
+  const config = JSON.parse(readText("gui", "src-tauri", "tauri.conf.json"));
+  const windows = JSON.parse(
+    readText("gui", "src-tauri", "tauri.windows.conf.json"),
+  );
+  // Tauri replaces arrays when it merges platform config, so these can drift.
+  assert.deepEqual(windows.app.windows, [
+    { ...config.app.windows[0], decorations: false },
+  ]);
+  assert.deepEqual(Object.keys(windows), ["app"]);
+  assert.deepEqual(Object.keys(windows.app), ["windows"]);
+});
+
+test("the window controls drawn by the app are allowed to act", () => {
+  const capability = JSON.parse(
+    readText("gui", "src-tauri", "capabilities", "default.json"),
+  );
+  for (const permission of ["close", "minimize", "toggle-maximize"]) {
+    assert.ok(capability.permissions.includes(`core:window:allow-${permission}`));
+  }
 });
 
 test("Tauri packages only the GUI and avoids persistent incremental caches", () => {

@@ -60,17 +60,25 @@ class StubResult(dict):
 
 class StubPaddleOCRVL:
     merge_mode: object = None
+    native = False
 
     def __init__(self, **kwargs: object) -> None:
         model_dir = Path(str(kwargs["layout_detection_model_dir"]))
         assert model_dir.name == "PP-DocLayoutV3_infer"
-        assert kwargs["vl_rec_backend"] == "llama-cpp-server"
-        assert kwargs["vl_rec_server_url"].startswith("http://127.0.0.1:")
-        assert kwargs["vl_rec_api_key"] == "contract-secret"
+        StubPaddleOCRVL.native = "vl_rec_model_dir" in kwargs
+        if StubPaddleOCRVL.native:
+            assert Path(str(kwargs["vl_rec_model_dir"])).is_dir()
+            assert "vl_rec_backend" not in kwargs
+            assert "vl_rec_server_url" not in kwargs
+        else:
+            assert kwargs["vl_rec_backend"] == "llama-cpp-server"
+            assert kwargs["vl_rec_server_url"].startswith("http://127.0.0.1:")
+            assert kwargs["vl_rec_api_key"] == "contract-secret"
         assert kwargs["device"] == "cpu"
         StubPaddleOCRVL.merge_mode = kwargs["layout_merge_bboxes_mode"]
 
-    def predict(self, **_: object):
+    def predict(self, **kwargs: object):
+        assert kwargs["temperature"] == (None if StubPaddleOCRVL.native else 0.0)
         yield StubResult()
 
     def restructure_pages(self, pages, **_: object):
@@ -120,6 +128,7 @@ def title_retry(sidecar, page, candidate, layout_threshold: float = 0.5):
     pipeline = TitleRetryPipeline(candidate)
     page.get = lambda key: {"input_img": "page image"} if key == "layout_det_res" else None
     arguments = types.SimpleNamespace(
+        native_model_dir="",
         layout_threshold=layout_threshold,
         layout_nms=True,
         resolved_layout_merge_mode="large",
@@ -395,6 +404,38 @@ def main() -> int:
         assert document["parser"] == "paddleocr-vl-full"
         assert StubPaddleOCRVL.merge_mode == {0: "large", 1: "union", 2: "union"}
         assert document["settings"]["layout_merge_bboxes_mode"] == "large"
+
+        native_model = root / "native-model"
+        native_model.mkdir()
+        native_arguments = [
+            "--layout-model-dir",
+            str(model),
+            "--native-model-dir",
+            str(native_model),
+        ]
+        code, stdout, stderr = invoke(sidecar, ["--warm-layout", *native_arguments])
+        assert code == 0 and not stderr, stderr
+        assert StubPaddleOCRVL.native
+        code, stdout, stderr = invoke(
+            sidecar,
+            [
+                "--input",
+                str(input_path),
+                "--output",
+                str(root / "native.json"),
+                "--assets-dir",
+                str(root / "native-assets"),
+                "--baseline-chars",
+                "[0]",
+                *native_arguments,
+            ],
+        )
+        assert code == 0 and not stderr, stderr
+        code, stdout, stderr = invoke(
+            sidecar,
+            ["--warm-layout", "--layout-model-dir", str(model), "--native-model-dir", str(root / "missing")],
+        )
+        assert code == 2 and "recognition model" in stderr
         assert len(document["pages"]) == 1
         assert document["pages"][0]["number"] == 1
         assert document["pages"][0]["blocks"][0]["role"] == "text"

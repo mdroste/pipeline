@@ -1,5 +1,6 @@
 import { reviewHistoryClient } from "../lib/reviewHistoryClient";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { listedRunStatus } from "../lib/reportPresentation";
 import { router } from "../lib/router";
 import { confirmDialog, notify } from "./DialogService";
 import ComparePage from "./ComparePage";
@@ -95,8 +96,6 @@ function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     running: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
     done: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
-    degraded:
-      "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
     partial:
       "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
     failed: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
@@ -279,7 +278,11 @@ export default function HistoryPage({
   );
   const visible = useMemo(() => {
     const matching = runs.filter((run) => {
-      if (statusFilter !== "all" && run.status !== statusFilter) return false;
+      if (
+        statusFilter !== "all" &&
+        listedRunStatus(run.status) !== statusFilter
+      )
+        return false;
       if (providerFilter !== "all" && run.provider !== providerFilter)
         return false;
       if (
@@ -539,7 +542,6 @@ export default function HistoryPage({
             {[
               "running",
               "done",
-              "degraded",
               "partial",
               "failed",
               "interrupted",
@@ -785,7 +787,7 @@ export default function HistoryPage({
                             {r.title || r.input_name}
                           </button>
                         )}
-                        <StatusBadge status={r.status} />
+                        <StatusBadge status={listedRunStatus(r.status)} />
                         {r.tags.map((t) => (
                           <span
                             key={t}

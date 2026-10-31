@@ -12,7 +12,14 @@ import { MAX_RENDER_CHARS } from "./report-viewer/limits";
 import ReportContents from "./report-viewer/ReportContents";
 import { useAppPreferences } from "../lib/appPreferences";
 import useContainerWidth from "../hooks/useContainerWidth";
-import React, { memo, useId, useMemo, useRef, useState } from "react";
+import React, {
+  memo,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { reportAnchorPlugin } from "../lib/reportAnchors";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -38,6 +45,8 @@ import SafeMarkdownLink from "./SafeMarkdownLink";
 interface Props {
   markdown: string;
   initialContentsOpen?: boolean;
+  /** Scrolls to the heading with this text; a new key repeats the request. */
+  scrollRequest?: { key: number; heading: string } | null;
 }
 
 /**
@@ -141,7 +150,11 @@ const ReportMarkdown = memo(function ReportMarkdown({
   );
 });
 
-function ReportViewerContent({ markdown, initialContentsOpen = true }: Props) {
+function ReportViewerContent({
+  markdown,
+  initialContentsOpen = true,
+  scrollRequest = null,
+}: Props) {
   const contentRef = useRef<HTMLDivElement>(null);
   const instanceId = useId();
   const anchorPrefix = `report-${instanceId.replace(/[^a-zA-Z0-9_-]/g, "")}-`;
@@ -186,6 +199,18 @@ function ReportViewerContent({ markdown, initialContentsOpen = true }: Props) {
     [boundedMarkdown],
   );
   const find = useFindBar(contentRef, normalizedMarkdown);
+
+  const requestedHeading = scrollRequest?.heading;
+  const requestKey = scrollRequest?.key;
+  useEffect(() => {
+    if (!requestedHeading) return;
+    const target = Array.from(
+      contentRef.current?.querySelectorAll<HTMLElement>("h1, h2, h3") ?? [],
+    ).find((heading) => heading.textContent?.trim() === requestedHeading);
+    if (!target) return;
+    setActiveAnchor(target.id || null);
+    target.scrollIntoView({ block: "start" });
+  }, [requestKey, requestedHeading]);
 
   const navigationIndex = useMemo(
     () => buildNavigationIndex(normalizedMarkdown),

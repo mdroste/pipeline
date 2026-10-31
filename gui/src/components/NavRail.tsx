@@ -1,9 +1,10 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, type Ref, useEffect, useRef, useState } from "react";
 import ResizeHandle from "./ResizeHandle";
 import ReviewRunList, { ReviewRunBeacon } from "./ReviewRunList";
 import type { QueuedRun } from "../lib/types";
 import { Icon, type IconName } from "../ui/icons";
 import Badge from "../ui/Badge";
+import IconButton from "../ui/IconButton";
 import type { AppPage } from "../lib/router";
 
 export const NAV_RAIL_WIDTH = { default: 216, min: 208, max: 320 };
@@ -34,11 +35,15 @@ interface Props {
   workspaceAttention?: boolean;
   tasksAttention?: boolean;
   isMac: boolean;
+  isWindows?: boolean;
   dependenciesReady: boolean | null;
   dependenciesLoading: boolean;
   dependenciesError?: string | null;
   width: number;
   onResize: (width: number) => void;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
+  toggleRef?: Ref<HTMLButtonElement>;
   onNewRun: () => void;
   onNavigate: (page: AppPage) => void;
   recentProjects?: RecentProject[];
@@ -110,6 +115,62 @@ function SectionHeading({ id, children }: { id: string; children: ReactNode }) {
   );
 }
 
+// The button keeps one window position in the rail and in the collapsed bar,
+// so a second click undoes the first. On macOS it sits in line with the traffic
+// lights, above the window-wide drag strip. On Windows it sits in the row of the
+// window controls.
+const railToggleClass = (isMac: boolean, isWindows: boolean) =>
+  `absolute ${
+    isMac
+      ? "left-[76px] top-0.5 z-40 !h-6 !w-6"
+      : isWindows
+        ? "left-3 top-0.5 z-10"
+        : "left-3 top-2 z-10"
+  }`;
+
+/** Replaces the hidden rail, so the window controls stay clear of the page. */
+export function CollapsedNavBar({
+  isMac,
+  isWindows = false,
+  status,
+  onExpand,
+  toggleRef,
+}: {
+  isMac: boolean;
+  isWindows?: boolean;
+  /** What the hidden rail would otherwise show. */
+  status: "attention" | "running" | null;
+  onExpand: () => void;
+  toggleRef?: Ref<HTMLButtonElement>;
+}) {
+  const statusLabel = status === "attention" ? "needs attention" : "running";
+  return (
+    <div
+      data-testid="collapsed-nav-bar"
+      data-tauri-drag-region={isMac || isWindows ? "deep" : undefined}
+      className={`relative shrink-0 border-b border-gray-200/80 bg-gray-100/90 dark:border-neutral-800 dark:bg-[#101010] ${
+        isMac ? "h-7" : isWindows ? "h-8" : "h-11"
+      }`}
+    >
+      <IconButton
+        ref={toggleRef}
+        label={status ? `Show sidebar (${statusLabel})` : "Show sidebar"}
+        tooltipSide="bottom"
+        size="sm"
+        className={railToggleClass(isMac, isWindows)}
+        onClick={onExpand}
+      >
+        <Icon name="sidebar" />
+        {status && (
+          <span className="absolute right-0.5 top-0.5 flex">
+            <Badge kind={status} label={statusLabel} />
+          </span>
+        )}
+      </IconButton>
+    </div>
+  );
+}
+
 const NO_RUNS: QueuedRun[] = [];
 const NONE_UNSEEN: ReadonlySet<string> = new Set();
 
@@ -128,11 +189,15 @@ export default function NavRail({
   workspaceAttention = false,
   tasksAttention = false,
   isMac,
+  isWindows = false,
   dependenciesReady,
   dependenciesLoading,
   dependenciesError,
   width,
   onResize,
+  collapsed = false,
+  onToggleCollapsed,
+  toggleRef,
   onNewRun,
   onNavigate,
   recentProjects = [],
@@ -163,14 +228,29 @@ export default function NavRail({
   return (
     <aside
       style={{ width }}
-      className={`relative flex shrink-0 flex-col border-r border-gray-200/80 bg-gray-100/90 px-3 pb-3 [color-scheme:light]
-                  dark:border-neutral-800 dark:bg-[#101010] dark:[color-scheme:dark] ${isMac ? "pt-12" : "pt-4"}`}
+      className={`relative shrink-0 flex-col border-r border-gray-200/80 bg-gray-100/90 px-3 pb-3 [color-scheme:light]
+                  dark:border-neutral-800 dark:bg-[#101010] dark:[color-scheme:dark] ${isMac ? "pt-12" : isWindows ? "pt-1" : "pt-2.5"} ${
+                    collapsed ? "hidden" : "flex"
+                  }`}
     >
-      {isMac && (
+      {(isMac || isWindows) && (
         <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-12" />
       )}
 
-      <div className="mb-5 px-2">
+      {onToggleCollapsed && !collapsed && (
+        <IconButton
+          ref={toggleRef}
+          label="Hide sidebar"
+          tooltipSide="bottom"
+          size="sm"
+          className={railToggleClass(isMac, isWindows)}
+          onClick={onToggleCollapsed}
+        >
+          <Icon name="sidebar" />
+        </IconButton>
+      )}
+
+      <div className={`mb-5 pr-2 ${isMac ? "pl-2" : "pl-8"}`}>
         <span className="text-base font-semibold tracking-[-0.01em] text-gray-900 dark:text-neutral-100">
           Pipeline
         </span>

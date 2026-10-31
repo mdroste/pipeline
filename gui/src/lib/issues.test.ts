@@ -271,6 +271,42 @@ describe("issues parsing", () => {
     ]);
   });
 
+  it("names reviewers by their step labels", () => {
+    const report = {
+      products: {
+        schema_version: 1,
+        primary_step_id: "validate",
+        findings: {
+          schema_version: 1,
+          source_step_id: "validate",
+          source_step_label: "Validate",
+          findings: [
+            {
+              id: "one",
+              title: "One",
+              body: "Body",
+              sources: ["causal_identification", "retired_step"],
+            },
+          ],
+        },
+      },
+      step_outputs: [
+        {
+          step_id: "causal_identification",
+          step_label: "Method — Causal Identification",
+          phase: "parallel",
+          agent: "",
+          raw_text: "",
+        },
+      ],
+    } as unknown as PipelineReport;
+
+    expect(detectReportIssues(report)?.[0].sources).toEqual([
+      "Method — Causal Identification",
+      "retired_step",
+    ]);
+  });
+
   it("does not infer a different product when a current report publishes no findings", () => {
     const report = {
       products: {

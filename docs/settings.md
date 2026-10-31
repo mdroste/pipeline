@@ -103,16 +103,29 @@ the **Automations** page. Pipeline won't wake a sleeping computer.
 
 ## Updates
 
-An installed release checks GitHub for a newer version about a minute after it
-starts, then about once a day. When one is available, a banner offers:
+An installed release checks GitHub for a newer version each time it starts, and
+about once a day while it stays open. When one is available, a banner offers:
 
-- **Download**, which opens the installer for your computer in your browser;
-- **What’s new**, which opens the release notes; and
+- **Install update**, which downloads the update while you keep working;
+- **What’s new**, which opens the release notes;
+- **Check automatically**, which turns these checks on or off; and
 - **Dismiss**, which hides the banner until the next version.
 
-Run the downloaded installer to upgrade.
+When the download finishes, choose **Restart now** to install the update. Pipeline
+warns you first if restarting would discard unsaved changes or stop a running
+review, conversation, or automation. Choose **Later** to keep working, and
+Pipeline offers the update again the next time it starts.
 
-To stop the checks, turn off **Check for updates automatically** under
-**Advanced & About**. **Check for updates** checks right away. Each check sends
-GitHub your network address and app version, and nothing about your research.
-Copies built from source check only when you ask.
+On macOS, your computer may ask for an administrator password if your account
+can't change the Applications folder. On Windows, a small installer window shows
+its progress, and then Pipeline reopens.
+
+If Pipeline can't install an update, the banner says why and offers **Try again**
+and **Download instead**, which opens the installer for your computer in your
+browser.
+
+To stop the checks, turn off **Check automatically** in the banner, or
+**Check for updates automatically** under **Advanced & About**. **Check for
+updates** checks right away. Each check sends GitHub your network address and app
+version, and nothing about your research. Copies built from source check only
+when you ask, and you update them by downloading the installer.

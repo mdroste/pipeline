@@ -558,6 +558,12 @@ mark.search-hit.current {
   color: theme("colors.gray.500");
 }
 
+/* A finding's body uses report typography but has no footer. */
+.report-content.issue-body > :last-child {
+  color: inherit;
+  font-size: inherit;
+}
+
 /* ── Print styles ───────────────────────────────────────────────── */
 
 @media print {

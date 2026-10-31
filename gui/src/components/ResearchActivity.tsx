@@ -4,6 +4,7 @@ import { taskClient } from "../lib/taskClient";
 import { type TaskSummary } from "../lib/taskTypes";
 import { runtimeClient } from "../lib/workbench/runtimeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
+import { listedRunStatus } from "../lib/reportPresentation";
 import type { RunSummary } from "../lib/types";
 import type { WorkbenchEvent } from "../lib/workbenchTypes";
 import { button, muted, Inspect } from "./research-programs/shared";
@@ -210,7 +211,7 @@ export default function ResearchActivity({
                 <span className="min-w-0 flex-1 truncate text-sm">
                   {r.title || r.input_name}
                 </span>
-                <span className={muted}>{r.status}</span>
+                <span className={muted}>{listedRunStatus(r.status)}</span>
                 <button className={button} onClick={() => onReview(r.run_id)}>
                   Open
                 </button>

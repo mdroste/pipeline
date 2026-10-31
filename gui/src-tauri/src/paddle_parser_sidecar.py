@@ -1,9 +1,10 @@
 """Narrow managed sidecar for Pipeline's full PaddleOCR-VL parser.
 
-The Rust host owns the llama.cpp service and passes an authenticated loopback
-URL to this process.  This script owns only PaddleOCR's client-side layout,
-recognition orchestration, page restructuring, and normalization into a small
-versioned JSON contract.  It intentionally has no package-management logic.
+The Rust host either owns a llama.cpp service and passes an authenticated
+loopback URL, or passes a verified model directory for PaddlePaddle to recognize
+with directly.  This script owns only PaddleOCR's layout, recognition
+orchestration, page restructuring, and normalization into a small versioned JSON
+contract.  It intentionally has no package-management logic.
 """
 
 from __future__ import annotations
@@ -403,7 +404,7 @@ def _retry_page(
             use_ocr_for_image_block=args.ocr_image_blocks,
             format_block_content=args.format_block_content,
             max_new_tokens=args.max_new_tokens,
-            temperature=0.0,
+            temperature=_recognition_temperature(args),
             use_queues=False,
         )
     )
@@ -845,6 +846,23 @@ def _layout_merge_mode(mode: str, labels: list[str]) -> str | dict[int, str]:
     }
 
 
+def _recognition_temperature(args: argparse.Namespace) -> float | None:
+    # Built-in recognition is deterministic and warns on every call if given one.
+    return None if args.native_model_dir else 0.0
+
+
+def _recognition_options(args: argparse.Namespace) -> dict[str, Any]:
+    if args.native_model_dir:
+        return {"vl_rec_model_dir": args.native_model_dir}
+    return {
+        "vl_rec_backend": "llama-cpp-server",
+        "vl_rec_server_url": args.server_url,
+        "vl_rec_max_concurrency": args.concurrency,
+        "vl_rec_api_model_name": args.server_model,
+        "vl_rec_api_key": args.api_key or None,
+    }
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--probe", action="store_true")
@@ -853,6 +871,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output")
     parser.add_argument("--assets-dir")
     parser.add_argument("--layout-model-dir")
+    parser.add_argument("--native-model-dir", default="")
     parser.add_argument("--server-url", default="http://127.0.0.1:9/v1")
     parser.add_argument("--server-model", default="paddleocr-vl-1.6")
     parser.add_argument("--api-key", default=os.environ.get("PIPELINE_PADDLE_API_KEY", ""))
@@ -897,6 +916,9 @@ def main() -> int:
     ):
         print("The managed PP-DocLayoutV3 model is incomplete", file=sys.stderr)
         return 2
+    if args.native_model_dir and not Path(args.native_model_dir).is_dir():
+        print("The managed recognition model is incomplete", file=sys.stderr)
+        return 2
 
     args.resolved_layout_merge_mode = _layout_merge_mode(
         args.layout_merge_bboxes_mode, _layout_labels(layout_model_dir)
@@ -904,11 +926,7 @@ def main() -> int:
     pipeline = PaddleOCRVL(
         pipeline_version="v1.6",
         device="cpu",
-        vl_rec_backend="llama-cpp-server",
-        vl_rec_server_url=args.server_url,
-        vl_rec_max_concurrency=args.concurrency,
-        vl_rec_api_model_name=args.server_model,
-        vl_rec_api_key=args.api_key or None,
+        **_recognition_options(args),
         layout_detection_model_dir=str(layout_model_dir),
         use_layout_detection=args.layout_detection,
         layout_threshold=args.layout_threshold,
@@ -935,7 +953,7 @@ def main() -> int:
         pipeline.predict(
             input=args.input,
             max_new_tokens=args.max_new_tokens,
-            temperature=0.0,
+            temperature=_recognition_temperature(args),
         )
     )
     try:

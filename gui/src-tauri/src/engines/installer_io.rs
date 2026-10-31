@@ -895,9 +895,12 @@ pub(super) async fn ensure_uv(app: &crate::emit::EventBus) -> Result<PathBuf, St
     apply_managed_environment(&mut probe, &[]);
     let output =
         crate::process::run_bounded(&mut probe, std::time::Duration::from_secs(15), 256 * 1024)
-            .map_err(|error| format!("Managed uv validation failed: {error}"))?;
+            .map_err(|error| probe_start_error("managed uv", &error))?;
     if !output.status.success() || !String::from_utf8_lossy(&output.stdout).contains(UV_VERSION) {
-        return Err("The downloaded uv binary failed its version check".to_string());
+        return Err(probe_exit_error(
+            "The downloaded uv binary",
+            output.status.code(),
+        ));
     }
     let backup = runtime_dir.join(format!(".{}-backup", exe("uv")));
     if backup.exists() {

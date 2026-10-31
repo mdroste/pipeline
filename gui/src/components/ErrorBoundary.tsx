@@ -1,4 +1,6 @@
 import { Component, Fragment, ReactNode } from "react";
+import WindowControls from "./WindowControls";
+import { isWindows } from "../lib/platform";
 
 interface Props {
   children: ReactNode;
@@ -34,6 +36,17 @@ export default class ErrorBoundary extends Component<Props, State> {
         <div
           className={`${this.props.nested ? "h-full min-h-0 overflow-auto" : "h-screen"} flex bg-gray-50 dark:bg-gray-950 p-8`}
         >
+          {/* This screen replaces the app, and Windows has no native title bar
+              to fall back on: keep the window movable and closable. */}
+          {isWindows && !this.props.nested && (
+            <>
+              <div
+                data-tauri-drag-region
+                className="fixed inset-x-0 top-0 h-8"
+              />
+              <WindowControls />
+            </>
+          )}
           {/* Auto margins center the message without clipping a tall one. */}
           <div role="alert" className="m-auto max-w-md text-center">
             <h1 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-2">

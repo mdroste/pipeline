@@ -48,7 +48,11 @@ pub(in crate::pipeline::extract) fn full_parser_cache_fingerprint(
         "parser_release": paths.release,
         "parser_integrity": paths.integrity_sha256,
         "sidecar_sha256": paths.sidecar_sha256,
-        "recognition_integrity": paths.paddle.integrity_sha256,
+        "recognition_integrity": match &paths.recognition {
+            crate::engines::PaddleRecognition::Llama(engine) => engine.integrity_sha256.as_str(),
+            // The parser's own integrity digest binds built-in weights.
+            crate::engines::PaddleRecognition::BuiltIn { .. } => "built-in",
+        },
         "concurrency": crate::settings::resolved_paddle_page_concurrency(settings),
         "vision_batch": crate::settings::resolved_paddle_mtmd_batch_tokens(settings),
         "flash_attention": settings.paddle_flash_attention,

@@ -6,6 +6,68 @@ use crate::pipeline_config::PipelineConfig;
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
 
+/// The researcher-facing name of a stored run status. `degraded` stays the
+/// stored value, but it also covers a single misquotation or a retry that
+/// succeeded, so only a problem with the reading of the document is announced
+/// as a limitation. reportStatusDisplay in reportPresentation.ts must agree.
+pub fn status_label(quality: &ReportQuality, status: &str) -> String {
+    match status {
+        "done" => "Completed".to_string(),
+        "degraded" if coverage_limited(quality) => "Completed with limitations".to_string(),
+        "degraded" => "Completed".to_string(),
+        other => crate::output::capitalize(other),
+    }
+}
+
+/// What a reader should check in a report with a `degraded` status, if anything.
+pub fn status_notes(quality: &ReportQuality, status: &str) -> Vec<String> {
+    if status != "degraded" {
+        return Vec::new();
+    }
+    let mut notes = Vec::new();
+    if coverage_limited(quality) {
+        notes.push("Part of the document may be incomplete.".to_string());
+    }
+    let quotes = quality.partially_verified_evidence + quality.unverified_evidence;
+    if quotes > 0 {
+        notes.push(if quotes == 1 {
+            "1 quote needs checking.".to_string()
+        } else {
+            format!("{quotes} quotes need checking.")
+        });
+    }
+    if quality.manual_review_items > 0 {
+        notes.push(if quality.manual_review_items == 1 {
+            "1 comment needs manual review.".to_string()
+        } else {
+            format!(
+                "{} comments need manual review.",
+                quality.manual_review_items
+            )
+        });
+    }
+    notes
+}
+
+/// Whether automations may rely on this review. A misquotation is flagged on its
+/// own comment and a retry that succeeded changes nothing, so neither sends an
+/// automation back for another paid pass. A reading problem, or a comment left
+/// for a person, still does.
+pub fn review_is_complete(quality: &ReportQuality) -> bool {
+    match quality.status.as_str() {
+        "done" => true,
+        "degraded" => !coverage_limited(quality) && quality.manual_review_items == 0,
+        _ => false,
+    }
+}
+
+fn coverage_limited(quality: &ReportQuality) -> bool {
+    quality
+        .extraction_notes
+        .iter()
+        .any(|note| !is_withheld_image_text_note(note))
+}
+
 /// Build the provider-independent report quality ledger from durable inputs.
 pub fn build_report_quality(
     extraction: &ExtractionResult,
@@ -472,5 +534,92 @@ mod tests {
         // Any other extraction note still marks the run.
         let recovered = "Page 45: recovered incomplete layout recognition.";
         assert_eq!(quality(&[note, recovered]).status, "degraded");
+    }
+
+    #[test]
+    fn automations_rely_on_a_review_despite_a_misquotation_or_a_retry() {
+        let degraded = |overrides: ReportQuality| ReportQuality {
+            status: "degraded".into(),
+            ..overrides
+        };
+
+        assert!(review_is_complete(&ReportQuality {
+            status: "done".into(),
+            ..Default::default()
+        }));
+        assert!(review_is_complete(&degraded(ReportQuality {
+            partially_verified_evidence: 1,
+            unverified_evidence: 2,
+            schema_retry_events: 1,
+            extraction_notes: vec!["Image text withheld as unverified: 1 region.".into()],
+            ..Default::default()
+        })));
+
+        assert!(!review_is_complete(&degraded(ReportQuality {
+            extraction_notes: vec!["Page 45: recovered incomplete layout.".into()],
+            ..Default::default()
+        })));
+        assert!(!review_is_complete(&degraded(ReportQuality {
+            manual_review_items: 1,
+            ..Default::default()
+        })));
+        for status in ["partial", "failed", "cancelled", ""] {
+            assert!(!review_is_complete(&ReportQuality {
+                status: status.into(),
+                ..Default::default()
+            }));
+        }
+    }
+
+    #[test]
+    fn status_wording_separates_reading_problems_from_single_comments() {
+        let quality = |notes: &[&str], partial, unverified, manual| ReportQuality {
+            extraction_notes: notes.iter().map(|note| note.to_string()).collect(),
+            partially_verified_evidence: partial,
+            unverified_evidence: unverified,
+            manual_review_items: manual,
+            ..Default::default()
+        };
+
+        let misquote = quality(&[], 1, 1, 0);
+        assert_eq!(status_label(&misquote, "degraded"), "Completed");
+        assert_eq!(
+            status_notes(&misquote, "degraded"),
+            ["2 quotes need checking."]
+        );
+
+        // A retry that succeeded leaves nothing for the reader to check.
+        let retried = quality(&[], 0, 0, 0);
+        assert_eq!(status_label(&retried, "degraded"), "Completed");
+        assert!(status_notes(&retried, "degraded").is_empty());
+
+        let withheld = quality(
+            &["Image text withheld as unverified: 1 image region(s)."],
+            0,
+            1,
+            1,
+        );
+        assert_eq!(status_label(&withheld, "degraded"), "Completed");
+        assert_eq!(
+            status_notes(&withheld, "degraded"),
+            ["1 quote needs checking.", "1 comment needs manual review."]
+        );
+
+        let unreadable = quality(&["Page 45: recovered incomplete layout."], 0, 1, 0);
+        assert_eq!(
+            status_label(&unreadable, "degraded"),
+            "Completed with limitations"
+        );
+        assert_eq!(
+            status_notes(&unreadable, "degraded"),
+            [
+                "Part of the document may be incomplete.",
+                "1 quote needs checking."
+            ]
+        );
+
+        assert_eq!(status_label(&retried, "done"), "Completed");
+        assert_eq!(status_label(&retried, "partial"), "Partial");
+        assert!(status_notes(&unreadable, "partial").is_empty());
     }
 }

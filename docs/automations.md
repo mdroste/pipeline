@@ -38,8 +38,10 @@ paper**.
 Pipeline reviews the paper with the **Review workflow** you choose, asks the
 assistant to revise it, and reviews it again. It stops when a complete review
 has no high-priority or unclassified findings, or after **Maximum reviews**.
-The final paper is always the last version reviewed. **Save paper…** saves
-it.
+A review is complete when every step finished, the whole document was read, and
+no comment was left for you to review by hand. A quote that needs checking
+doesn't count against it, so check any flagged quotes in the final report. The
+final paper is always the last version reviewed. **Save paper…** saves it.
 
 If a revision leaves the paper unchanged, the automation asks for your
 attention. The revision step can include the manuscript text only up to

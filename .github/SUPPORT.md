@@ -15,15 +15,18 @@ There's no Windows on ARM build. Other Linux distributions may run the
 AppImage, but only those in the table are supported.
 
 On Windows, the installer downloads WebView2 if it's missing, so it needs an
-internet connection. The Windows installer isn't signed, so SmartScreen may
-warn you before it runs. On Windows, working copies and accepting edits in
+internet connection. SmartScreen may warn you about a new release even though
+it's signed. If Smart App Control or a device policy blocks a tool the
+PaddleOCR-VL Full Parser needs, Pipeline tells you and the other extraction
+methods still work. On Windows, working copies and accepting edits in
 **Review edits** are newer and less mature than on macOS.
 
 ## Updates
 
-Pipeline checks GitHub for new stable releases and shows a banner when one is
-available. Download and run the installer to update. Only the latest stable
-release gets security and maintenance fixes.
+Pipeline checks GitHub for new stable releases when it starts, and shows a banner
+when one is available. Choose **Install update**, then **Restart now**. Version
+1.3.0 and earlier can't update themselves, so download and run the installer once.
+Only the latest stable release gets security and maintenance fixes.
 
 ## Common problems
 

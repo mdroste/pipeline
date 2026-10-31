@@ -7,7 +7,7 @@ use super::github::{CheckError, Release};
 use super::state::State;
 
 /// Lets store recovery and startup I/O finish before the first request.
-const STARTUP_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
+const STARTUP_DELAY: std::time::Duration = std::time::Duration::from_secs(10);
 /// Wall-clock comparisons on each tick keep the schedule correct across sleep.
 const TICK: std::time::Duration = std::time::Duration::from_secs(60 * 60);
 const CHECK_INTERVAL_HOURS: i64 = 24;
@@ -28,17 +28,26 @@ pub fn start(app: tauri::AppHandle) {
     let bus = crate::emit::from_app(app);
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(STARTUP_DELAY).await;
+        // A launch that cannot reach GitHub checks again on the next tick.
+        let mut startup_check_owed = true;
         loop {
-            super::run_automatic(&bus).await;
+            startup_check_owed = super::run_automatic(&bus, startup_check_owed).await;
             tokio::time::sleep(TICK).await;
         }
     });
 }
 
-pub(super) fn automatic_due(state: &State, now: DateTime<Utc>) -> bool {
+/// Each launch checks unless the researcher turned checks off or GitHub asked
+/// Pipeline to wait.
+pub(super) fn automatic_allowed(state: &State, now: DateTime<Utc>) -> bool {
     state.automatic
         && state.rate_limited_until.is_none_or(|until| now >= until)
         && state.retry_after.is_none_or(|until| now >= until)
+}
+
+/// A long-running app also checks once a day.
+pub(super) fn automatic_due(state: &State, now: DateTime<Utc>) -> bool {
+    automatic_allowed(state, now)
         // A last check in the future means the clock moved back; check again.
         && state.last_checked_at.is_none_or(|at| {
             at > now || now >= at + Duration::hours(CHECK_INTERVAL_HOURS)
@@ -106,23 +115,33 @@ mod tests {
     }
 
     #[test]
+    fn every_launch_checks_even_after_a_recent_check() {
+        assert!(automatic_allowed(&State::default(), now()));
+        assert!(automatic_allowed(&checked(1), now()));
+        assert!(!automatic_due(&checked(1), now()));
+    }
+
+    #[test]
     fn preference_and_waits_block_automatic_checks() {
         let off = State {
             automatic: false,
             ..State::default()
         };
         assert!(!automatic_due(&off, now()));
+        assert!(!automatic_allowed(&off, now()));
         let limited = State {
             rate_limited_until: Some(now() + Duration::minutes(5)),
             ..State::default()
         };
         assert!(!automatic_due(&limited, now()));
+        assert!(!automatic_allowed(&limited, now()));
         assert!(automatic_due(&limited, now() + Duration::minutes(5)));
         let retrying = State {
             retry_after: Some(now() + Duration::hours(2)),
             ..State::default()
         };
         assert!(!automatic_due(&retrying, now()));
+        assert!(!automatic_allowed(&retrying, now()));
     }
 
     #[test]

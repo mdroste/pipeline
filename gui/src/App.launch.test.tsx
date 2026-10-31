@@ -65,7 +65,7 @@ vi.mock("./hooks/usePipeline", () => ({
     dismiss: vi.fn(),
   }),
 }));
-vi.mock("./lib/platform", () => ({ isMac: false }));
+vi.mock("./lib/platform", () => ({ isMac: false, isWindows: false }));
 vi.mock("./components/PaperSelector", async () => {
   const { default: Fixture } = (
     await import("./test/appShellFixtures")

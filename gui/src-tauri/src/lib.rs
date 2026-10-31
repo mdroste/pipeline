@@ -49,6 +49,7 @@ fn write_smoke_ready(path: Option<std::ffi::OsString>) -> Result<bool, String> {
 }
 
 pub fn run() {
+    process::suppress_windows_error_dialogs();
     let builder = tauri::Builder::default();
     #[cfg(feature = "e2e")]
     let builder = builder
@@ -59,6 +60,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             // Pin storage before any recovery or background work opens a store.
             // Settings remains accessible if a configured drive is unavailable.
@@ -396,6 +398,11 @@ pub fn run() {
             commands::config::check_for_update,
             commands::config::update_status,
             commands::config::update_set_automatic,
+            commands::config::update_install_state,
+            commands::config::update_install_start,
+            commands::config::update_install_cancel,
+            commands::config::update_install_restart,
+            commands::config::update_running_automations,
             commands::config::open_pipeline_dir,
             commands::config::get_storage_settings,
             commands::config::set_storage_directory,
@@ -424,15 +431,21 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|_, event| {
             if matches!(event, tauri::RunEvent::Exit) {
-                tauri::async_runtime::block_on(orchestration::shutdown());
-                tauri::async_runtime::block_on(workbench::claude::shutdown());
-                tauri::async_runtime::block_on(workbench::api::shutdown());
-                tauri::async_runtime::block_on(workbench::research::jobs::shutdown());
-                tauri::async_runtime::block_on(pipeline::codex_server::shutdown());
-                tauri::async_runtime::block_on(agent_runtime::codex::chatgpt::shutdown());
+                stop_runtimes();
             }
         });
     commands::cleanup_print_export();
+}
+
+/// Stop every runtime that owns child processes. Runs on normal exit and
+/// before the Windows updater ends the process, which skips the exit event.
+fn stop_runtimes() {
+    tauri::async_runtime::block_on(orchestration::shutdown());
+    tauri::async_runtime::block_on(workbench::claude::shutdown());
+    tauri::async_runtime::block_on(workbench::api::shutdown());
+    tauri::async_runtime::block_on(workbench::research::jobs::shutdown());
+    tauri::async_runtime::block_on(pipeline::codex_server::shutdown());
+    tauri::async_runtime::block_on(agent_runtime::codex::chatgpt::shutdown());
 }
 
 #[cfg(test)]

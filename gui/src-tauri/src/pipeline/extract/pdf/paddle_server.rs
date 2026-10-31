@@ -2,7 +2,7 @@
 
 use super::super::core::{run_bounded_output, BoundedOutput};
 use super::page_quality::PdfPageTextBaseline;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 
 pub(in crate::pipeline::extract) const PADDLE_MODEL_ALIAS: &str = "paddleocr-vl-1.6";
@@ -31,6 +31,12 @@ pub(in crate::pipeline::extract) fn paddle_model_list_has_alias(value: &serde_js
                 model.get("id").and_then(serde_json::Value::as_str) == Some(PADDLE_MODEL_ALIAS)
             })
         })
+}
+
+/// Where the sidecar sends page regions for recognition.
+pub(in crate::pipeline::extract) enum SidecarRecognition {
+    Server { base_url: String, api_key: String },
+    BuiltIn { model_dir: PathBuf },
 }
 
 pub(in crate::pipeline::extract) struct PaddleServer {
@@ -211,8 +217,7 @@ pub(in crate::pipeline::extract) fn run_paddle_full_sidecar(
     input: &Path,
     output: &Path,
     assets: &Path,
-    base_url: &str,
-    api_key: &str,
+    recognition: &SidecarRecognition,
     baselines: &[PdfPageTextBaseline],
     timeout: std::time::Duration,
 ) -> Result<BoundedOutput, String> {
@@ -230,7 +235,7 @@ pub(in crate::pipeline::extract) fn run_paddle_full_sidecar(
     let baseline_prose_chars = serde_json::to_string(&baseline_prose_chars)
         .map_err(|error| format!("Failed to serialize PDF prose-line baseline: {error}"))?;
     let mut command = StdCommand::new(&paths.python);
-    let arguments: Vec<std::ffi::OsString> = vec![
+    let mut arguments: Vec<std::ffi::OsString> = vec![
         "-I".into(),
         "-B".into(),
         paths.script.as_os_str().to_owned(),
@@ -242,10 +247,6 @@ pub(in crate::pipeline::extract) fn run_paddle_full_sidecar(
         assets.as_os_str().to_owned(),
         "--layout-model-dir".into(),
         paths.layout_model.as_os_str().to_owned(),
-        "--server-url".into(),
-        base_url.into(),
-        "--server-model".into(),
-        PADDLE_MODEL_ALIAS.into(),
         "--concurrency".into(),
         crate::settings::resolved_paddle_page_concurrency(settings)
             .to_string()
@@ -279,9 +280,26 @@ pub(in crate::pipeline::extract) fn run_paddle_full_sidecar(
         "--show-formula-numbers".into(),
         boolean(settings.paddle_full_show_formula_numbers).into(),
     ];
-    command.args(arguments);
     let mut environment = crate::engines::paddle_full_parser_env(paths);
-    environment.push(("PIPELINE_PADDLE_API_KEY".to_string(), api_key.to_string()));
+    match recognition {
+        SidecarRecognition::Server { base_url, api_key } => {
+            arguments.extend([
+                "--server-url".into(),
+                base_url.into(),
+                "--server-model".into(),
+                PADDLE_MODEL_ALIAS.into(),
+            ]);
+            environment.push(("PIPELINE_PADDLE_API_KEY".to_string(), api_key.clone()));
+        }
+        SidecarRecognition::BuiltIn { model_dir } => {
+            arguments.push("--native-model-dir".into());
+            arguments.push(model_dir.as_os_str().to_owned());
+            // Paddle's pool otherwise keeps what loading the weights freed,
+            // nearly doubling the memory held for the whole run.
+            environment.push(("FLAGS_use_system_allocator".to_string(), "1".to_string()));
+        }
+    }
+    command.args(arguments);
     crate::engines::apply_managed_environment(&mut command, &environment);
     if let Some(parent) = output.parent() {
         command.current_dir(parent);

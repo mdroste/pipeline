@@ -204,7 +204,7 @@ export function StartupSettings() {
       <SettingRow
         id="guided-setup"
         label="Guided setup"
-        description="Check connections and tools on this computer, and open an example Review. Nothing in the guide changes your settings."
+        description="Check connections and tools on this computer, and open an example review. Nothing in the guide changes your settings."
       >
         <button
           type="button"

@@ -29,10 +29,12 @@ it("offers outcome-first entry points without exposing runtime terminology", asy
     screen.getByRole("heading", { name: "What would you like to do?" }),
   ).toBeVisible();
   await user.click(
-    screen.getByRole("button", { name: /Work with the assistant/ }),
+    screen.getByRole("button", { name: /Start a conversation/ }),
   );
   await user.click(screen.getByRole("button", { name: /Review a paper/ }));
-  await user.click(screen.getByRole("button", { name: /Automate research/ }));
+  await user.click(
+    screen.getByRole("button", { name: /Set up an automation/ }),
+  );
 
   expect(props.onAssistant).toHaveBeenCalledOnce();
   expect(props.onNewReview).toHaveBeenCalledOnce();

@@ -7,6 +7,47 @@ pub(super) struct InstallDrainStats {
 
 use super::*;
 
+const WINDOWS_APP_CONTROL_BLOCK: &str = "Windows blocked a tool the Full Parser needs because \
+    it isn't signed. Smart App Control or a device policy usually causes this, and Pipeline \
+    can't make an exception. To use the Full Parser on this computer, turn off Smart App \
+    Control in Windows Security under App & browser control, or ask your IT administrator. \
+    Windows may not let you turn it back on. Poppler and model extraction still work.";
+
+// NTSTATUS facility shared by the App Control policy and reputation failures,
+// including STATUS_SYSTEM_INTEGRITY_POLICY_VIOLATION (0xC0E90002).
+const CODE_INTEGRITY_FACILITY: u32 = 0xC0E9;
+const STATUS_INVALID_IMAGE_HASH: u32 = 0xC000_0428;
+
+fn is_code_integrity_exit(code: i32) -> bool {
+    let status = code as u32;
+    status >> 16 == CODE_INTEGRITY_FACILITY || status == STATUS_INVALID_IMAGE_HASH
+}
+
+// CreateProcess reports the same blocks as Win32 errors when the executable
+// itself is refused: ERROR_INVALID_IMAGE_HASH and the
+// ERROR_SYSTEM_INTEGRITY_* range.
+fn is_code_integrity_start_failure(error: &str) -> bool {
+    [577, 4551, 4556, 4557, 4558, 4559, 4580, 4581]
+        .iter()
+        .any(|code| error.contains(&format!("(os error {code})")))
+}
+
+pub(super) fn probe_start_error(tool: &str, error: &str) -> String {
+    if is_code_integrity_start_failure(error) {
+        WINDOWS_APP_CONTROL_BLOCK.to_string()
+    } else {
+        format!("{tool} validation failed: {error}")
+    }
+}
+
+pub(super) fn probe_exit_error(tool: &str, code: Option<i32>) -> String {
+    match code {
+        Some(code) if is_code_integrity_exit(code) => WINDOWS_APP_CONTROL_BLOCK.to_string(),
+        Some(code) => format!("{tool} failed its validation check (exit code {code:#X})"),
+        None => format!("{tool} failed its validation check"),
+    }
+}
+
 pub(super) async fn drain_install_output<R, F>(
     mut reader: R,
     mut emit: F,

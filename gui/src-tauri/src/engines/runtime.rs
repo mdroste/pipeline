@@ -154,7 +154,11 @@ pub(super) fn paddle_full_parser_status_at(native_root: &Path) -> Option<PaddleF
     let version_root = parser_root.join("versions").join(PADDLE_PARSER_RELEASE);
     let layout_model = version_root.join("models").join("PP-DocLayoutV3_infer");
     let script = version_root.join("paddle_parser_sidecar.py");
-    if !paddle_install_committed(&native_root.join("paddleocr-vl"))
+    let recognition_committed = match installed_recognition_backend(&version_root) {
+        Some(RecognitionBackend::BuiltIn) => native_model_committed(&version_root),
+        _ => paddle_install_committed(&native_root.join("paddleocr-vl")),
+    };
+    if !recognition_committed
         || !parser_install_committed(&parser_root)
         || !venv_python(&version_root.join("venv")).is_file()
         || !bounded_regular_file(&script, 2 * 1024 * 1024)
@@ -190,6 +194,17 @@ pub fn paddle_full_parser_status() -> Result<PaddleFullParserStatus, String> {
         "The managed PaddleOCR-VL Full Parser is incomplete. Install or repair it from Settings → PDF Extraction."
             .to_string()
     })
+}
+
+/// Read which backend an install recorded, for the fast commit-marker checks.
+/// Full verification reads the same value from its authenticated manifest.
+pub(super) fn installed_recognition_backend(version_root: &Path) -> Option<RecognitionBackend> {
+    let manifest = version_root.join("install.json");
+    if !bounded_regular_file(&manifest, 2 * 1024 * 1024) {
+        return None;
+    }
+    let manifest = serde_json::from_slice(&std::fs::read(manifest).ok()?).ok()?;
+    RecognitionBackend::from_manifest(&manifest)
 }
 
 pub(super) struct VerifiedParserRuntime {
@@ -258,10 +273,7 @@ pub(super) fn verified_parser_runtime_at(root: &Path) -> Option<VerifiedParserRu
             .get("offline_model_runtime")
             .and_then(serde_json::Value::as_bool)
             != Some(true)
-        || manifest
-            .get("recognition_backend")
-            .and_then(serde_json::Value::as_str)
-            != Some("managed llama.cpp")
+        || RecognitionBackend::from_manifest(&manifest).is_none()
         || manifest
             .get("integrity_schema")
             .and_then(serde_json::Value::as_u64)
@@ -343,12 +355,18 @@ pub(super) fn verified_parser_sidecar_at(
 pub(super) fn paddle_full_parser_paths_at(root: &Path) -> Option<PaddleFullParserPaths> {
     let (verified, script, script_digest) = verified_parser_sidecar_at(root)?;
     let version_root = verified.version_root;
+    let recognition = match RecognitionBackend::from_manifest(&verified.manifest)? {
+        RecognitionBackend::ManagedLlama => PaddleRecognition::Llama(paddle_engine_paths().ok()?),
+        RecognitionBackend::BuiltIn => PaddleRecognition::BuiltIn {
+            model_dir: native_model_dir(&version_root),
+        },
+    };
     Some(PaddleFullParserPaths {
         python: venv_python(&version_root.join("venv")),
         script,
         model_cache: version_root.join("cache"),
         layout_model: version_root.join("models").join("PP-DocLayoutV3_infer"),
-        paddle: paddle_engine_paths().ok()?,
+        recognition,
         release: PADDLE_PARSER_RELEASE.to_string(),
         integrity_sha256: verified.integrity_sha256,
         sidecar_sha256: script_digest,

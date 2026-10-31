@@ -1,4 +1,5 @@
-import { useState, type ComponentType } from "react";
+import { useEffect, useState, type ComponentType } from "react";
+import type { ArtifactSelectionRequest } from "../../lib/artifactTypes";
 import {
   renderSpecialistMarkdown,
   renderStructuredMarkdown,
@@ -6,14 +7,26 @@ import {
 import { renderSurvey } from "../../lib/surveyMarkdown";
 import type { PipelineReport } from "../../lib/types";
 
+const pageHeading = (page: number) => `Page ${page}`;
+
+/** Whether extracted text has the page headings an evidence link can jump to. */
+export function hasPageHeadings(extractedText?: string): boolean {
+  return /^#{1,6} Page \d+\s*$/m.test(extractedText ?? "");
+}
+
 export default function LocalSources({
   ReportViewer,
   extractedText,
   report,
+  selectionRequest = null,
 }: {
-  ReportViewer: ComponentType<{ markdown: string }>;
+  ReportViewer: ComponentType<{
+    markdown: string;
+    scrollRequest?: { key: number; heading: string } | null;
+  }>;
   extractedText: string;
   report: PipelineReport;
+  selectionRequest?: ArtifactSelectionRequest | null;
 }) {
   const options = [
     { id: "extracted", label: "Extracted text", markdown: extractedText },
@@ -39,6 +52,11 @@ export default function LocalSources({
   ];
   const [selected, setSelected] = useState(options[0]?.id ?? "");
   const active = options.find((option) => option.id === selected) ?? options[0];
+  const requestedPage = selectionRequest?.page;
+
+  useEffect(() => {
+    if (requestedPage) setSelected("extracted");
+  }, [requestedPage, selectionRequest?.key]);
 
   return (
     <div className="flex h-full min-h-0">
@@ -62,7 +80,19 @@ export default function LocalSources({
         ))}
       </nav>
       <div className="min-w-0 flex-1">
-        {active && <ReportViewer markdown={active.markdown} />}
+        {active && (
+          <ReportViewer
+            markdown={active.markdown}
+            scrollRequest={
+              requestedPage && selectionRequest && active.id === "extracted"
+                ? {
+                    key: selectionRequest.key,
+                    heading: pageHeading(requestedPage),
+                  }
+                : null
+            }
+          />
+        )}
       </div>
     </div>
   );

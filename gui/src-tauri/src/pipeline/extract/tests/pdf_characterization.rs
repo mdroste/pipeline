@@ -258,6 +258,50 @@ async fn managed_paddle_server_exit_preserves_error_and_forgets_child() {
 
 #[cfg(unix)]
 #[test]
+fn built_in_recognition_runs_the_sidecar_without_a_server() {
+    let directory = tempfile::tempdir().unwrap();
+    let python = directory.path().join("fake-python");
+    write_fake_executable(
+        &python,
+        "#!/bin/sh\nprintf 'arg=%s\\n' \"$@\"\nprintf 'allocator=%s key=%s\\n' \"$FLAGS_use_system_allocator\" \"$PIPELINE_PADDLE_API_KEY\" >&2\nexit 23\n",
+    );
+    let model_dir = directory.path().join("recognition-model");
+    let paths = crate::engines::PaddleFullParserPaths {
+        python,
+        script: directory.path().join("sidecar.py"),
+        model_cache: directory.path().join("cache"),
+        layout_model: directory.path().join("layout"),
+        recognition: crate::engines::PaddleRecognition::BuiltIn {
+            model_dir: model_dir.clone(),
+        },
+        release: "fixture".into(),
+        integrity_sha256: "fixture".into(),
+        sidecar_sha256: "fixture".into(),
+    };
+    let active = crate::run_scope::ActiveScope::begin("pdf-sidecar-built-in-characterization");
+    let output = crate::run_scope::enter_blocking(active.scope().clone(), || {
+        run_paddle_full_sidecar(
+            &paths,
+            &crate::settings::Settings::default(),
+            &directory.path().join("input.pdf"),
+            &directory.path().join("output.json"),
+            &directory.path().join("assets"),
+            &SidecarRecognition::BuiltIn { model_dir },
+            &[],
+            std::time::Duration::from_secs(2),
+        )
+    })
+    .unwrap();
+    assert_eq!(output.status.code(), Some(23));
+    assert_eq!(output.stderr, b"allocator=1 key=\n");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("arg=--native-model-dir"));
+    assert!(stdout.contains("recognition-model"));
+    assert!(!stdout.contains("arg=--server-url"));
+}
+
+#[cfg(unix)]
+#[test]
 fn managed_paddle_sidecar_preserves_failure_capture_and_private_key_environment() {
     let directory = tempfile::tempdir().unwrap();
     let python = directory.path().join("fake-python");
@@ -270,12 +314,12 @@ fn managed_paddle_sidecar_preserves_failure_capture_and_private_key_environment(
         script: directory.path().join("sidecar.py"),
         model_cache: directory.path().join("cache"),
         layout_model: directory.path().join("layout"),
-        paddle: crate::engines::PaddleEnginePaths {
+        recognition: crate::engines::PaddleRecognition::Llama(crate::engines::PaddleEnginePaths {
             server: directory.path().join("unused-server"),
             model: directory.path().join("unused-model"),
             mmproj: directory.path().join("unused-projector"),
             integrity_sha256: "fixture".into(),
-        },
+        }),
         release: "fixture".into(),
         integrity_sha256: "fixture".into(),
         sidecar_sha256: "fixture".into(),
@@ -288,8 +332,10 @@ fn managed_paddle_sidecar_preserves_failure_capture_and_private_key_environment(
             &directory.path().join("input.pdf"),
             &directory.path().join("output.json"),
             &directory.path().join("assets"),
-            "http://127.0.0.1:1/v1",
-            "sidecar-fixture-key",
+            &SidecarRecognition::Server {
+                base_url: "http://127.0.0.1:1/v1".into(),
+                api_key: "sidecar-fixture-key".into(),
+            },
             &[PdfPageTextBaseline {
                 total_chars: 200,
                 prose_chars: 120,

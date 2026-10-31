@@ -1,7 +1,7 @@
 # Pipeline
 
 [![CI](https://github.com/mdroste/pipeline/actions/workflows/build.yml/badge.svg)](https://github.com/mdroste/pipeline/actions/workflows/build.yml)
-[![Version 1.3.0](https://img.shields.io/badge/version-1.3.0-blue)](CHANGELOG.md)
+[![Version 1.3.1](https://img.shields.io/badge/version-1.3.1-blue)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/github/license/mdroste/pipeline)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](#install)
 [![Windows](https://img.shields.io/badge/Windows-0078D4)](#install)
@@ -30,9 +30,10 @@ Download the installer for your computer from
 [Releases](https://github.com/mdroste/pipeline/releases/latest). Each
 installer comes with a SHA-256 checksum.
 
-macOS releases are signed and notarized. The Windows installer isn't signed,
-so SmartScreen may warn you. If you downloaded it from this repository's
-release page, choose **More info → Run anyway**.
+macOS releases are signed and notarized. Windows releases are signed by
+**Michael Droste**. SmartScreen may still warn you about a new release. If you
+downloaded it from this repository's release page, choose **More info → Run
+anyway**.
 
 The app includes the Poppler PDF tools, and you don't need Python. Pipeline
 checks for new releases and lets you decide when to install them. See

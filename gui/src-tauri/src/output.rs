@@ -420,7 +420,7 @@ mod quality;
 mod render;
 mod summary;
 
-pub use quality::build_report_quality;
+pub use quality::{build_report_quality, review_is_complete, status_label, status_notes};
 pub(crate) use render::capitalize;
 pub use render::render_markdown;
 pub use summary::{api_cost_of, model_price};

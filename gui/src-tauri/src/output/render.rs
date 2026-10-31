@@ -57,9 +57,13 @@ pub fn render_markdown(
     } else {
         report.quality.status.as_str()
     };
+    let status_label = status_label(&report.quality, quality_status);
+    let status_note = status_notes(&report.quality, quality_status)
+        .iter()
+        .map(|note| format!(" {note}"))
+        .collect::<String>();
     md.push_str(&format!(
-        "> **Quality status:** {}. Coverage and limitations are reported below.\n\n",
-        capitalize(quality_status)
+        "> **Status:** {status_label}.{status_note} Coverage and limitations are reported below.\n\n",
     ));
 
     // Warning for failed steps
@@ -130,7 +134,7 @@ pub fn render_markdown(
         md.push_str("\n\n");
     }
 
-    render_quality_section(&mut md, report, quality_status);
+    render_quality_section(&mut md, report, &status_label);
 
     // Per-step timing / tokens / cost, when the run recorded any.
     if let Some(summary) = render_run_summary(report, settings) {
@@ -146,13 +150,10 @@ pub fn render_markdown(
     md
 }
 
-fn render_quality_section(md: &mut String, report: &PipelineReport, quality_status: &str) {
+fn render_quality_section(md: &mut String, report: &PipelineReport, status_label: &str) {
     let quality = &report.quality;
     md.push_str("---\n\n## Quality and limitations\n\n");
-    md.push_str(&format!(
-        "**Final status:** {}  \n",
-        capitalize(quality_status)
-    ));
+    md.push_str(&format!("**Final status:** {status_label}  \n"));
     if quality.schema_version == 0 {
         md.push_str(
             "This report predates the deterministic quality ledger; only preserved failure metadata is available.\n\n",

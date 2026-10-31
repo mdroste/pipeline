@@ -13,7 +13,7 @@ fn full_parser_cache_identity_uses_verified_content_digests() {
         script: PathBuf::from("/managed/parser/sidecar.py"),
         model_cache: PathBuf::from("/managed/parser/cache"),
         layout_model: PathBuf::from("/managed/parser/layout"),
-        paddle,
+        recognition: crate::engines::PaddleRecognition::Llama(paddle),
         release: "parser-release".to_string(),
         integrity_sha256: "parser-integrity-a".to_string(),
         sidecar_sha256: "sidecar-a".to_string(),
@@ -29,8 +29,19 @@ fn full_parser_cache_identity_uses_verified_content_digests() {
     paths.integrity_sha256 = "parser-integrity-b".to_string();
     assert_ne!(full_parser_cache_fingerprint(&paths, &settings), original);
     paths.integrity_sha256 = "parser-integrity-a".to_string();
-    paths.paddle.integrity_sha256 = "recognition-integrity-b".to_string();
-    assert_ne!(full_parser_cache_fingerprint(&paths, &settings), original);
+    let crate::engines::PaddleRecognition::Llama(engine) = &mut paths.recognition else {
+        unreachable!("the fixture uses managed llama.cpp");
+    };
+    engine.integrity_sha256 = "recognition-integrity-b".to_string();
+    let second_engine = full_parser_cache_fingerprint(&paths, &settings);
+    assert_ne!(second_engine, original);
+
+    paths.recognition = crate::engines::PaddleRecognition::BuiltIn {
+        model_dir: PathBuf::from("/managed/parser/models/recognition"),
+    };
+    let built_in = full_parser_cache_fingerprint(&paths, &settings);
+    assert_ne!(built_in, original);
+    assert_ne!(built_in, second_engine);
 }
 
 #[test]

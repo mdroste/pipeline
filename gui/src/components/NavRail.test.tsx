@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
-import NavRail, { NAV_RAIL_WIDTH } from "./NavRail";
+import NavRail, { CollapsedNavBar, NAV_RAIL_WIDTH } from "./NavRail";
 import { ReviewRunBeacon } from "./ReviewRunList";
 import { queuedRun } from "../test/queuedRunFixture";
 import type { QueuedRun } from "../lib/types";
@@ -230,6 +230,78 @@ describe("NavRail", () => {
     await user.click(divider);
     await user.keyboard("{ArrowRight}");
     expect(props.onResize).toHaveBeenCalledWith(224);
+  });
+
+  it("offers to hide itself from a button at the top", async () => {
+    const user = userEvent.setup();
+    const onToggleCollapsed = vi.fn();
+    renderRail({ onToggleCollapsed });
+
+    await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
+    expect(onToggleCollapsed).toHaveBeenCalledOnce();
+  });
+
+  it("removes the hidden rail from view and from keyboard order", () => {
+    renderRail({ collapsed: true, onToggleCollapsed: vi.fn() });
+
+    expect(document.querySelector("aside")).toHaveClass("hidden");
+    expect(
+      screen.queryByRole("button", { name: "Hide sidebar" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("CollapsedNavBar", () => {
+  it("drags the window from the top of the rail and collapsed bar on Windows", () => {
+    renderRail({ isWindows: true });
+    expect(
+      document.querySelector("aside > [data-tauri-drag-region]"),
+    ).toBeInTheDocument();
+
+    render(
+      <CollapsedNavBar
+        isMac={false}
+        isWindows
+        status={null}
+        onExpand={vi.fn()}
+      />,
+    );
+    expect(screen.getByTestId("collapsed-nav-bar")).toHaveAttribute(
+      "data-tauri-drag-region",
+      "deep",
+    );
+  });
+
+  it("leaves dragging to the native title bar on other platforms", () => {
+    renderRail();
+    expect(
+      document.querySelector("[data-tauri-drag-region]"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("brings the rail back and reports what the rail would have shown", async () => {
+    const user = userEvent.setup();
+    const onExpand = vi.fn();
+    const { rerender } = render(
+      <CollapsedNavBar isMac={false} status={null} onExpand={onExpand} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Show sidebar" }));
+    expect(onExpand).toHaveBeenCalledOnce();
+
+    rerender(
+      <CollapsedNavBar isMac={false} status="running" onExpand={onExpand} />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Show sidebar (running)" }),
+    ).toBeVisible();
+
+    rerender(
+      <CollapsedNavBar isMac={false} status="attention" onExpand={onExpand} />,
+    );
+    expect(
+      screen.getByRole("button", { name: "Show sidebar (needs attention)" }),
+    ).toBeVisible();
   });
 });
 

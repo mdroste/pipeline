@@ -19,8 +19,9 @@ pub(crate) fn normalize_review(value: Value, artifact: Value) -> Result<Value> {
                 .count()
         })
         .unwrap_or(1);
-    let complete =
-        report.quality.status == "done" && report.failed_steps.is_empty() && findings.is_some();
+    let complete = crate::output::review_is_complete(&report.quality)
+        && report.failed_steps.is_empty()
+        && findings.is_some();
     let mut markdown = value["markdown"].as_str().unwrap_or_default().to_string();
     if markdown.len() > 128 * 1024 {
         let mut n = 128 * 1024;
@@ -117,5 +118,42 @@ pub fn recover_review(store: &Store, operation: &str) -> Result<Option<Value>> {
         Ok(Some(result))
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{FindingSet, ReportQuality, RunProducts};
+
+    fn complete(quality: ReportQuality, failed_steps: Value, findings: bool) -> bool {
+        let products = RunProducts {
+            findings: findings.then(FindingSet::default),
+            ..Default::default()
+        };
+        let report = json!({
+            "quality": quality,
+            "products": products,
+            "failed_steps": failed_steps,
+            "report_date": "2026-11-01",
+            "paper_hash": "abc",
+        });
+        normalize_review(json!({"report": report}), json!({})).unwrap()["complete"] == true
+    }
+
+    #[test]
+    fn a_misquotation_does_not_mark_a_review_incomplete() {
+        let misquoted = || ReportQuality {
+            status: "degraded".into(),
+            unverified_evidence: 1,
+            ..Default::default()
+        };
+        assert!(complete(misquoted(), json!([]), true));
+        assert!(!complete(misquoted(), json!([]), false));
+        assert!(!complete(
+            misquoted(),
+            json!([{"step_id": "a", "step_label": "A", "error": "stopped"}]),
+            true
+        ));
     }
 }

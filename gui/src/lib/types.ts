@@ -870,7 +870,18 @@ export interface UpdateInfo {
   published_at: string | null;
   /** This platform's installer, when the release includes one. */
   download_url: string | null;
+  /** Whether this copy can install the release itself. */
+  can_install: boolean;
   checked_at: string | null;
+}
+
+/** Progress of an in-app update (`update_install_state`, `update-install`). */
+export interface UpdateInstallState {
+  phase: "idle" | "downloading" | "ready" | "installing" | "failed";
+  version: string | null;
+  downloaded: number;
+  total: number | null;
+  error: string | null;
 }
 
 /** Saved update preference and last result (`update_status`). */

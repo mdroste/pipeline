@@ -3,6 +3,7 @@ import PaperSelector from "./PaperSelector";
 import SidebarPanel, { SidebarHeader } from "./SidebarPanel";
 import WorkflowPanel from "./WorkflowPanel";
 import RunParallelAgents from "./RunParallelAgents";
+import { isWindows } from "../lib/platform";
 import type {
   PipelineConfig,
   PrimaryInputSelection,
@@ -93,6 +94,10 @@ export default function RunSetupPanel({
       onResize={onResize}
       resizeLabel="Resize report setup"
     >
+      {/* This panel reaches the window top, beside the main content's strip. */}
+      {isWindows && (
+        <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-6" />
+      )}
       <SidebarHeader title="New review" heading="h1" />
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-6 pt-1">
         <div className="space-y-5">

@@ -146,7 +146,7 @@ fn load_run(dir: &Path, manifest: RunManifest) -> Result<LoadedRun, String> {
         input_name,
         workflow: manifest.profile_name.clone(),
         date: report.report_date.to_string(),
-        status: crate::output::capitalize(&status),
+        status: crate::output::status_label(&report.quality, &status),
     };
     let export = ReportExport::from_report(&report, &markdown, meta);
     Ok(LoadedRun {

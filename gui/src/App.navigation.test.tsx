@@ -62,7 +62,7 @@ vi.mock("./hooks/usePipeline", () => ({
     dismiss: vi.fn(),
   }),
 }));
-vi.mock("./lib/platform", () => ({ isMac: false }));
+vi.mock("./lib/platform", () => ({ isMac: false, isWindows: false }));
 vi.mock(
   "./components/PaperSelector",
   async () =>
@@ -170,11 +170,11 @@ describe("App navigation", () => {
     await screen.findByRole("dialog", { name: "Get started with Pipeline" });
     await user.keyboard("{Escape}");
     await user.click(
-      screen.getByRole("button", { name: "See an example Review" }),
+      screen.getByRole("button", { name: "See an example review" }),
     );
     expect(
       await screen.findByRole("dialog", {
-        name: "Example Review — sample data, no model was called",
+        name: "Example review",
       }),
     ).toBeVisible();
     expect(invoke).not.toHaveBeenCalledWith(

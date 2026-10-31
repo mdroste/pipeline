@@ -46,10 +46,10 @@ export default function HomePage({
 }) {
   const actions = [
     {
-      title: "Work with the assistant",
+      title: "Start a conversation",
       description:
-        "Develop an argument, revise prose, or investigate results in a project.",
-      label: "Open assistant",
+        "Ask questions or get help with a draft, without setting up a project.",
+      label: "New chat",
       icon: "assistant" as const,
       accent:
         "from-blue-500/15 via-blue-500/5 to-transparent text-blue-700 dark:text-blue-300",
@@ -68,9 +68,9 @@ export default function HomePage({
       onClick: onNewReview,
     },
     {
-      title: "Automate research",
+      title: "Set up an automation",
       description:
-        "Schedule research and reviews, repeat them as needed, and pause for your input.",
+        "Run conversations and reviews in sequence or on a schedule, such as draft, review, revise.",
       label: "Open automations",
       icon: "tasks" as const,
       accent:
@@ -102,7 +102,7 @@ export default function HomePage({
               <span className="mt-0.5 block text-xs text-gray-500 dark:text-neutral-400">
                 {runningReviews > 1
                   ? "Open the earliest; the sidebar lists the rest"
-                  : "Open the current review"}
+                  : "Open review"}
               </span>
             </span>
             <Icon
@@ -170,7 +170,7 @@ export default function HomePage({
                   onClick={onExampleReview}
                   className="font-semibold text-gray-700 underline decoration-gray-300 underline-offset-2 hover:text-gray-950 hover:decoration-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-neutral-200 dark:decoration-neutral-600 dark:hover:text-neutral-50"
                 >
-                  See an example Review
+                  See an example review
                 </button>
               )}
             </p>
@@ -180,14 +180,9 @@ export default function HomePage({
         <div className="mt-12 max-w-3xl">
           <section aria-labelledby="projects-heading">
             <div className="flex items-center justify-between gap-4">
-              <div>
-                <h2 id="projects-heading" className="text-base font-semibold">
-                  Continue working
-                </h2>
-                <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">
-                  Your recently updated research projects.
-                </p>
-              </div>
+              <h2 id="projects-heading" className="text-base font-semibold">
+                Recent projects
+              </h2>
               <button
                 type="button"
                 onClick={() => onNavigate("project-index")}

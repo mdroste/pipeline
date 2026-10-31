@@ -18,6 +18,10 @@ other release jobs use `release`. Build jobs don't create deployment records.
   `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, and
   `APPLE_TEAM_ID`.
 - Register your tag signing key with GitHub.
+- Add repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Every platform build signs its update
+  package with them, so they can't be limited to one environment. See
+  [In-app updates](#in-app-updates).
 - Create a `windows-signing` environment limited to `v*` tags. Add environment
   secrets `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, and `AZURE_SUBSCRIPTION_ID`,
   and variables `AZURE_SIGNING_ACCOUNT`, `AZURE_SIGNING_PROFILE`, and
@@ -61,23 +65,35 @@ produce an AppImage.
    platform to rebuild a missing installer. The default is macOS on Apple
    Silicon.
 
-The workflow first runs the same quality checks as every pull request:
-frontend tests, formatting, size and link checks, a production build,
-release tests, Clippy, and native tests on Linux, macOS, and Windows.
-
-It then checks that the version matches, that GitHub verifies the tag
-signature, and that the tag points at the workflow's commit. It creates a
+The workflow first checks that the version matches, that GitHub verifies the
+tag signature, and that the tag points at the workflow's commit. It creates a
 draft, or reuses one, and stops if that release is already published.
 
+The same quality checks as every pull request run alongside the platform jobs:
+frontend tests, formatting, size and link checks, a production build,
+release tests, Clippy, and native tests on Linux, macOS, and Windows. A failed
+check doesn't stop the platform jobs, but the final job won't run. Leave that
+draft unpublished.
+
 Each platform job bundles Poppler and builds the installer. macOS builds are
-signed and notarized. Windows builds sign the bundled tools, application,
+signed and notarized. Finder arranges the disk image window during the macOS
+build, and the job fails if the layout wasn't saved. If Finder times out, run
+the job again. Windows builds sign the bundled tools, application,
 CLI, uninstaller, and installer. Before upload, the Windows job installs the
 package and verifies its signatures, timestamps, publisher, and Poppler
 inventory. Each installer is uploaded with a SHA-256 checksum file. An asset that's
 already uploaded is never replaced. A retry with identical bytes passes, and
-different bytes need a new version. A final job downloads all four
-installers and checks their checksums, so a single-platform run fails this
-step until every platform is built.
+different bytes need a new version. Once the quality checks and platform jobs
+pass, a final job downloads all four installers and checks their checksums and
+[update signatures](#in-app-updates), so a single-platform run fails this step
+until every platform is built.
+
+Platform jobs reuse Rust dependencies compiled by
+[release-cache.yml](../.github/workflows/release-cache.yml), because a new tag
+can't read another tag's cache. **Release cache** runs when `main` changes Rust
+dependencies or the toolchain, and twice a week. If a release changes either,
+wait for it to finish on `main` before you start **Release**. Otherwise, the
+release still works but compiles every dependency.
 
 ## Packaged resources
 
@@ -117,9 +133,22 @@ Before you publish, test the candidate by hand:
   previous release with existing data, WebView2 setup on Windows, the
   AppImage on a Linux machine with FUSE 2, and that macOS accepts the
   signature and notarization.
+- Update from the previous release on each platform. Choose **Install update**,
+  then **Restart now**, and check that the new version opens with its data. On
+  macOS, repeat this from an account that isn't an administrator. On Windows,
+  check that the installer shows only its progress and reopens Pipeline.
+- On macOS, open the disk image in light and dark mode. It should open without
+  a license prompt and show Pipeline, an arrow, and Applications, with both
+  labels easy to read.
+- On Windows, go through the installer at 100% and 150% display scale. The logo
+  should look sharp, no text should be cut off, and the installer should move
+  from the progress bar to the finish page without a click.
 - On Windows, confirm the installer and installed application show **Michael
   Droste** as the verified publisher. Signing doesn't guarantee that every
   SmartScreen reputation warning disappears immediately.
+- On Windows, check the window with and without the sidebar: drag it from the
+  top of the window, double-click there to maximize, snap it to a screen edge,
+  resize it from every edge, and use the minimize, maximize, and close buttons.
 - Set up ChatGPT, Claude Code, OpenAI API, Anthropic API, Gemini API, and a
   local/custom server. Run real conversations and reviews through each,
   including supported tool calls, image inputs, and approvals. Check model
@@ -181,6 +210,22 @@ an installer belongs to another platform, or a file changed. Installer names
 and hashes must match the candidate manifest. The evidence must cover all four platforms. Dropping a platform also
 means updating [Support](../.github/SUPPORT.md) and the release checks.
 
+## In-app updates
+
+Each build signs a package for Pipeline's updater: an app archive on macOS, and
+the installer itself on Windows and Linux. The final job adds a `latest.json` file
+that lists them, and checks every signature against the public key in
+`gui/src-tauri/tauri.conf.json`. A release without those files still shows
+researchers the update, with **Download** in place of **Install update**.
+
+Copies of Pipeline trust only that public key, and they can't update themselves
+past a change to it. Keep the private key and its password in a password manager.
+If either is lost or exposed, generate a new pair with `npm run tauri signer
+generate`, put the new public key in `tauri.conf.json`, and update both secrets.
+Researchers on earlier versions then have to download that release once by hand.
+
+Local builds don't create these packages, so they need no key.
+
 ## Publish
 
 Before you publish the draft, confirm its tag and commit, the quality and
@@ -190,8 +235,9 @@ Published tags and assets never change.
 
 ## Updating tools
 
-Keep `gui/.nvmrc`, `rust-toolchain.toml`, and the toolchain versions in both
-workflows in step. Third-party Actions are pinned to commit SHAs. Update a pin
+Keep `gui/.nvmrc`, `rust-toolchain.toml`, and the toolchain versions in the
+Tests, Release, and Release cache workflows in step. Third-party Actions are
+pinned to commit SHAs. Update a pin
 only after reviewing the upstream change, then rerun the release tests.
 Changes to Poppler packaging need a careful review of the bundling script and
 its pinned inputs.

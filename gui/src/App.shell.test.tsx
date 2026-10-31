@@ -62,7 +62,7 @@ vi.mock("./hooks/usePipeline", () => ({
     dismiss: vi.fn(),
   }),
 }));
-vi.mock("./lib/platform", () => ({ isMac: false }));
+vi.mock("./lib/platform", () => ({ isMac: false, isWindows: false }));
 vi.mock(
   "./components/PaperSelector",
   async () =>
@@ -266,5 +266,26 @@ describe("App shell", () => {
 
     await user.click(screen.getByRole("button", { name: "New review" }));
     expect(screen.getByTestId("run-setup-panel")).toBeVisible();
+  });
+
+  it("collapses the sidebar, keeps focus on the toggle, and remembers the choice", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<App />);
+
+    expect(screen.queryByTestId("collapsed-nav-bar")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
+    expect(screen.getByRole("button", { name: "Show sidebar" })).toHaveFocus();
+    expect(document.querySelector("aside")).toHaveClass("hidden");
+    expect(screen.getByTestId("run-setup-panel")).toBeVisible();
+
+    unmount();
+    render(<App />);
+    const show = screen.getByRole("button", { name: "Show sidebar" });
+    expect(show).not.toHaveFocus();
+
+    await user.click(show);
+    expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveFocus();
+    expect(screen.queryByTestId("collapsed-nav-bar")).not.toBeInTheDocument();
+    expect(document.querySelector("aside")).not.toHaveClass("hidden");
   });
 });

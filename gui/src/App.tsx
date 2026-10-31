@@ -9,15 +9,17 @@ import Console from "./components/Console";
 import VariablePrompt from "./components/VariablePrompt";
 import RunPreview from "./components/RunPreview";
 import UpdateBanner from "./components/UpdateBanner";
-import NavRail from "./components/NavRail";
+import NavRail, { CollapsedNavBar } from "./components/NavRail";
 import RunSetupPanel from "./components/RunSetupPanel";
 import RunPlanPreview from "./components/RunPlanPreview";
 import ErrorBoundary from "./components/ErrorBoundary";
 import GetStartedHost from "./components/get-started/GetStartedHost";
 import { openGetStarted } from "./lib/getStarted";
 import { HistoryRunOpener } from "./hooks/app/historyRunOpener";
-import { isMac } from "./lib/platform";
-import { router } from "./lib/router";
+import WindowControls from "./components/WindowControls";
+import { isMac, isWindows } from "./lib/platform";
+import { router, type AppPage } from "./lib/router";
+import { confirmUpdateRestart } from "./lib/updateRestart";
 import { confirmDialog, notify } from "./components/DialogService";
 import type { QueuedRun } from "./lib/types";
 
@@ -34,6 +36,18 @@ const ProjectsPage = lazy(() => import("./components/ProjectsPage"));
 const WorkflowGalleryPage = lazy(
   () => import("./components/WorkflowGalleryPage"),
 );
+// Pages that start on the plain surface rather than the shell behind it. The
+// Windows title strip takes the same color so it reads as part of the page.
+const SURFACE_TOP_PAGES: ReadonlySet<AppPage> = new Set([
+  "batch",
+  "gallery",
+  "history",
+  "home",
+  "project-index",
+  "projects",
+  "workspace",
+]);
+
 const loadBatchPanel = () => import("./components/BatchPanel");
 const BatchPanel = lazy(loadBatchPanel);
 const ReportWorkspace = lazy(() => import("./components/ReportWorkspace"));
@@ -141,6 +155,9 @@ function App() {
     setCloseProtectionUnavailable,
     navRailWidth,
     setNavRailWidth,
+    navRailCollapsed,
+    toggleNavRail,
+    navRailToggleRef,
     runSetupWidth,
     setRunSetupWidth,
     theme,
@@ -297,13 +314,14 @@ function App() {
           className="fixed inset-x-0 top-0 z-30 h-1.5"
         />
       )}
+      {isWindows && <WindowControls />}
 
       {closeProtectionUnavailable && (
         <div
           role="alert"
-          data-tauri-drag-region={isMac ? "deep" : undefined}
-          className="flex shrink-0 items-center gap-3 border-b border-amber-300 bg-amber-50 px-5 py-2 text-xs text-amber-900
-                     dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-200"
+          data-tauri-drag-region={isMac || isWindows ? "deep" : undefined}
+          className={`flex shrink-0 items-center gap-3 border-b border-amber-300 bg-amber-50 py-2 pl-5 text-xs text-amber-900
+                     dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-200 ${isWindows ? "pr-[150px]" : "pr-5"}`}
         >
           <span className="flex-1">
             Pipeline cannot warn you about unsaved changes when you quit. Save
@@ -341,8 +359,26 @@ function App() {
           </button>
         </div>
       )}
+      {navRailCollapsed && (
+        <CollapsedNavBar
+          isMac={isMac}
+          isWindows={isWindows}
+          status={
+            workspaceAttention || tasksAttention || unseenRuns.size > 0
+              ? "attention"
+              : workspaceActive || isRunning
+                ? "running"
+                : null
+          }
+          onExpand={toggleNavRail}
+          toggleRef={navRailToggleRef}
+        />
+      )}
       <div className="flex min-h-0 flex-1">
         <NavRail
+          collapsed={navRailCollapsed}
+          onToggleCollapsed={toggleNavRail}
+          toggleRef={navRailToggleRef}
           onActivity={() => void handleNavigate("activity")}
           tasksAttention={tasksAttention}
           activePage={page}
@@ -364,6 +400,7 @@ function App() {
           workspaceActive={workspaceActive}
           workspaceAttention={workspaceAttention}
           isMac={isMac}
+          isWindows={isWindows}
           dependenciesReady={depsReport?.ready ?? null}
           dependenciesLoading={depsLoading}
           dependenciesError={depsError}
@@ -430,7 +467,34 @@ function App() {
         )}
 
         <main className="flex min-w-0 flex-1 flex-col">
-          <UpdateBanner />
+          {/* The Windows title bar: the window controls float over its right
+              end. The collapsed sidebar's bar does this job when it is shown. */}
+          {isWindows && !navRailCollapsed && (
+            <div
+              data-testid="window-drag-strip"
+              data-tauri-drag-region
+              className={`h-8 shrink-0 ${
+                SURFACE_TOP_PAGES.has(page) ||
+                (page === "main" && state.kind === "done")
+                  ? "bg-surface"
+                  : ""
+              }`}
+            />
+          )}
+          <UpdateBanner
+            confirmRestart={() => {
+              const unsaved = navigation.unsavedRef.current;
+              return confirmUpdateRestart({
+                unsavedChanges:
+                  unsaved.workflowDirty ||
+                  unsaved.settingsDirty ||
+                  unsaved.projectsDirty ||
+                  unsaved.tasksDirty,
+                reviews: isRunning,
+                conversations: workspaceActive,
+              });
+            }}
+          />
           {page === "main" && providerLimitNotices.length > 0 && (
             <ProviderLimitBanner
               notices={providerLimitNotices}

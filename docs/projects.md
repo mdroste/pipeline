@@ -33,7 +33,7 @@ work without a model connection. Conversations and reviews need one. See
 ## Work in a conversation
 
 Start a conversation from the Overview, or with **New chat** above the chat.
-For a conversation outside any project, choose **Open assistant** on **Home**.
+For a conversation outside any project, choose **New chat** on **Home**.
 
 ### Choose a model
 

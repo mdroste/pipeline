@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import AdvancedSettings from "./AdvancedSettings";
 import { version as appVersion } from "../../../package.json";
@@ -8,7 +8,9 @@ import type { UpdateInfo, UpdateStatus } from "../../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
 const openUrl = vi.hoisted(() => vi.fn());
+const listen = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen }));
 vi.mock("@tauri-apps/api/app", () => ({
   getVersion: () => Promise.resolve(appVersion),
 }));
@@ -19,13 +21,14 @@ vi.mock("../../lib/projectClient", () => ({
 
 const available: UpdateInfo = {
   current: appVersion,
-  latest: "1.3.0",
+  latest: "9.0.0",
   update_available: true,
-  release_url: "https://github.com/mdroste/pipeline/releases/tag/v1.3.0",
-  release_name: "Pipeline v1.3.0",
+  can_install: false,
+  release_url: "https://github.com/mdroste/pipeline/releases/tag/v9.0.0",
+  release_name: "Pipeline v9.0.0",
   published_at: null,
   download_url:
-    "https://github.com/mdroste/pipeline/releases/download/v1.3.0/Pipeline-1.3.0-Windows.exe",
+    "https://github.com/mdroste/pipeline/releases/download/v9.0.0/Pipeline-9.0.0-Windows.exe",
   checked_at: "2026-10-28T12:00:00Z",
 };
 
@@ -51,6 +54,8 @@ function respond(
   );
 }
 
+let emitStatus: (payload: UpdateStatus) => void = () => {};
+
 function renderSettings() {
   return render(
     <AdvancedSettings settings={makeSettings()} setSettings={vi.fn()} />,
@@ -62,6 +67,13 @@ describe("AdvancedSettings updates", () => {
     invoke.mockReset();
     openUrl.mockReset();
     openUrl.mockResolvedValue(undefined);
+    listen.mockReset();
+    listen.mockImplementation(
+      (_event: string, handler: (event: { payload: UpdateStatus }) => void) => {
+        emitStatus = (payload) => handler({ payload });
+        return Promise.resolve(vi.fn());
+      },
+    );
   });
 
   it("saves the automatic-check preference", async () => {
@@ -114,11 +126,11 @@ describe("AdvancedSettings updates", () => {
     renderSettings();
 
     expect(
-      await screen.findByText("Version 1.3.0 is available."),
+      await screen.findByText("Version 9.0.0 is available."),
     ).toBeInTheDocument();
     expect(screen.getByText(/Last checked/)).toBeInTheDocument();
     await user.click(
-      screen.getByRole("button", { name: "Download version 1.3.0" }),
+      screen.getByRole("button", { name: "Download version 9.0.0" }),
     );
     expect(openUrl).toHaveBeenCalledWith(available.download_url);
     await user.click(
@@ -126,6 +138,44 @@ describe("AdvancedSettings updates", () => {
     );
     expect(openUrl).toHaveBeenCalledWith(available.release_url);
     expect(invoke).not.toHaveBeenCalledWith("check_for_update");
+  });
+
+  it("installs in the app when this copy can", async () => {
+    const user = userEvent.setup();
+    respond({
+      update_status: () =>
+        status({
+          info: { ...available, can_install: true },
+          last_checked_at: available.checked_at,
+        }),
+      update_install_start: () => null,
+    });
+    renderSettings();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Install version 9.0.0" }),
+    );
+    expect(invoke).toHaveBeenCalledWith("update_install_start");
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it("follows a change made in the update banner", async () => {
+    respond({ update_status: () => status() });
+    renderSettings();
+    const toggle = await screen.findByRole("switch", {
+      name: "Check for updates automatically",
+    });
+    expect(toggle).toBeChecked();
+    act(() => emitStatus(status({ automatic: false })));
+    expect(toggle).not.toBeChecked();
+  });
+
+  it("describes checks at startup", async () => {
+    respond({ update_status: () => status() });
+    renderSettings();
+    expect(
+      await screen.findByText(/Each time it starts, and once a day/),
+    ).toBeInTheDocument();
   });
 
   it("reports an up-to-date manual check", async () => {

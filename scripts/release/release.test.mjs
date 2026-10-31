@@ -16,3 +16,4 @@ import "./update-check-assets.test.mjs";
 
 import "./release-fixes.test.mjs";
 import "./windows-signing.test.mjs";
+import "./installer-presentation.test.mjs";

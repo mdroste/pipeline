@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import HistoryPage from "./HistoryPage";
 import type { RunSummary } from "../lib/types";
@@ -40,6 +40,34 @@ describe("HistoryPage", () => {
     invoke.mockReset();
     listen.mockReset();
     listen.mockResolvedValue(() => {});
+  });
+
+  it("lists a run with a misquotation as done, not degraded", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "list_runs")
+        return Promise.resolve([
+          run({ run_id: "one", input_name: "one.pdf", status: "degraded" }),
+          run({ run_id: "two", input_name: "two.pdf", status: "done" }),
+          run({ run_id: "three", input_name: "three.pdf", status: "partial" }),
+        ]);
+      if (command === "runs_disk_usage")
+        return Promise.resolve({ count: 3, bytes: 300 });
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const user = userEvent.setup();
+    render(<HistoryPage onClose={vi.fn()} />);
+
+    await screen.findByText("one.pdf");
+    expect(screen.queryByText("degraded")).not.toBeInTheDocument();
+    const filter = screen.getByRole("combobox", { name: "Filter by status" });
+    expect(
+      within(filter).queryByRole("option", { name: "degraded" }),
+    ).not.toBeInTheDocument();
+
+    await user.selectOptions(filter, "done");
+    expect(screen.getByText("one.pdf")).toBeVisible();
+    expect(screen.getByText("two.pdf")).toBeVisible();
+    expect(screen.queryByText("three.pdf")).not.toBeInTheDocument();
   });
 
   it("decomposes tokens without showing detailed model activity in the run list", async () => {

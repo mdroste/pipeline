@@ -31,6 +31,7 @@ use run::{cmd_batch, cmd_check, cmd_run};
 use workflow::cmd_workflow;
 
 fn main() {
+    pipeline_gui_lib::process::suppress_windows_error_dialogs();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let action = match parse_cli(&args) {
         Ok(action) => action,

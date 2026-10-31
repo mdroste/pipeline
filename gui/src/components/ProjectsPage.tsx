@@ -6,6 +6,7 @@ import type {
   RunSummary,
   TrashedProject,
 } from "../lib/types";
+import { listedRunStatus } from "../lib/reportPresentation";
 import ProjectIssueLedgerPanel from "./ProjectIssueLedgerPanel";
 import { confirmDialog, notify } from "./DialogService";
 import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
@@ -735,7 +736,7 @@ export default function ProjectsPage({
                       </p>
                       <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
                         {run
-                          ? `${run.profile_name} · ${formatDate(run.created)} · ${run.status}`
+                          ? `${run.profile_name} · ${formatDate(run.created)} · ${listedRunStatus(run.status)}`
                           : "Report no longer exists"}
                       </p>
                     </div>

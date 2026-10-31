@@ -150,7 +150,7 @@ function NextStepsStep({
       </h3>
       <ul aria-label="Suggested next steps" className="space-y-2">
         <Action
-          title="See an example Review"
+          title="See an example review"
           detail="A sample Review of a fictional paper. No connection or model call is needed."
         >
           <Button variant="primary" onClick={onOpenExample}>

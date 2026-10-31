@@ -97,7 +97,7 @@ export function settingsSearchEntries(
     "general",
     "guided-setup",
     "Guided setup",
-    "Get started, set up Pipeline, check connections and installed tools, example Review",
+    "Get started, set up Pipeline, check connections and installed tools, example review",
     "Set up Pipeline",
   );
   add(

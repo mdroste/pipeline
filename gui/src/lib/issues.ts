@@ -366,13 +366,21 @@ export function detectReportIssues(report: PipelineReport): Issue[] | null {
   if ((report.products?.schema_version ?? 0) > 0) {
     const published = report.products?.findings?.findings;
     if (!published) return null;
+    const stepLabels = new Map(
+      (report.step_outputs ?? []).map((step) => [
+        step.step_id,
+        step.step_label,
+      ]),
+    );
     return published.map((finding, index) => ({
       id: finding.id || String(index + 1),
       title: finding.title || `Issue ${index + 1}`,
       severity: normalizeSeverity(finding.priority),
       section: finding.category ?? "",
       body: finding.body ?? "",
-      sources: parseSources(finding.sources),
+      sources: parseSources(finding.sources)?.map(
+        (source) => stepLabels.get(source) || source,
+      ),
       evidence: parseEvidence(finding.evidence ?? []),
     }));
   }

@@ -5,6 +5,7 @@ import { EMPTY_USAGE } from "../lib/runViews";
 import { router } from "../lib/router";
 import type { PipelineState } from "../lib/reviewRuntimeTypes";
 import { usePipeline } from "./usePipeline";
+import useNavRailCollapse from "./useNavRailCollapse";
 import usePersistentPanelWidth from "./usePersistentPanelWidth";
 import useRecentProjects from "./useRecentProjects";
 import { useAppAttention } from "./app/useAppAttention";
@@ -63,6 +64,7 @@ export function useAppController() {
     NAV_RAIL_WIDTH.min,
     NAV_RAIL_WIDTH.max,
   );
+  const navRail = useNavRailCollapse();
   const [runSetupWidth, setRunSetupWidth] = usePersistentPanelWidth(
     "pipeline.ui.runSetupWidth",
     288,
@@ -146,6 +148,9 @@ export function useAppController() {
       ...closeProtection,
       navRailWidth,
       setNavRailWidth,
+      navRailCollapsed: navRail.collapsed,
+      toggleNavRail: navRail.toggle,
+      navRailToggleRef: navRail.toggleRef,
       runSetupWidth,
       setRunSetupWidth,
     },

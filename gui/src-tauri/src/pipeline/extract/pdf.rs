@@ -19,7 +19,7 @@ pub(crate) use full_structure::is_withheld_image_text_note;
 pub(super) use llm::extract_llm;
 pub(crate) use native::extract_pdftotext;
 pub(super) use native::{find_command, pdftotext_page_metrics};
-pub(super) use paddle_server::{run_paddle_full_sidecar, start_paddle_server};
+pub(super) use paddle_server::{run_paddle_full_sidecar, start_paddle_server, SidecarRecognition};
 
 #[cfg(test)]
 pub(super) use full_structure::render_paddle_full_page;

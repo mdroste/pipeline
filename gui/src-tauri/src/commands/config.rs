@@ -662,10 +662,41 @@ pub async fn update_status() -> Result<crate::updates::UpdateStatus, String> {
 }
 
 #[tauri::command]
-pub async fn update_set_automatic(enabled: bool) -> Result<crate::updates::UpdateStatus, String> {
-    tokio::task::spawn_blocking(move || crate::updates::set_automatic(enabled))
+pub async fn update_set_automatic(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<crate::updates::UpdateStatus, String> {
+    let bus = crate::emit::from_app(app);
+    tokio::task::spawn_blocking(move || crate::updates::set_automatic(&bus, enabled))
         .await
         .map_err(|e| format!("Update preference task failed: {e}"))?
+}
+
+#[tauri::command]
+pub fn update_install_state() -> crate::updates::InstallState {
+    crate::updates::install_state()
+}
+
+/// Start downloading the newest release; `update-install` events report progress.
+#[tauri::command]
+pub async fn update_install_start(app: AppHandle) -> Result<crate::updates::InstallState, String> {
+    crate::updates::install_start(&app)
+}
+
+#[tauri::command]
+pub fn update_install_cancel(app: AppHandle) -> crate::updates::InstallState {
+    crate::updates::install_cancel(&app)
+}
+
+/// Install the downloaded update and restart. On Windows this ends the process.
+#[tauri::command]
+pub async fn update_install_restart(app: AppHandle) -> Result<(), String> {
+    crate::updates::install_restart(app).await
+}
+
+#[tauri::command]
+pub fn update_running_automations() -> usize {
+    crate::orchestration::running_count()
 }
 
 // --- Managed local engines ---

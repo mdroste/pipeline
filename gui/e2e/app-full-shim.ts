@@ -340,8 +340,10 @@ const analyzers = [
   { id: "replication_static", version: 1, label: "Replication package check", description: "Checks a replication package folder against common data-editor requirements.", reads: ["Source folder"], networkServices: [], networkPayload: "" },
 ];
 
-// `?update=available` shows the update banner and Settings offer.
-const updateInfo = params.get("update") === "available" ? { current: appVersion, latest: "1.3.0", update_available: true, release_url: "https://github.com/mdroste/pipeline/releases/tag/v1.3.0", release_name: "Pipeline v1.3.0", published_at: now, download_url: "https://github.com/mdroste/pipeline/releases/download/v1.3.0/Pipeline-1.3.0-macOS-AppleSilicon.dmg", checked_at: now } : null;
+// `?update=available` shows the update banner and Settings offer; `&install=ready`
+// (or downloading, installing, failed) starts it at that step of an in-app update.
+const updateInfo = params.get("update") === "available" ? { current: appVersion, latest: "9.0.0", update_available: true, release_url: "https://github.com/mdroste/pipeline/releases/tag/v9.0.0", release_name: "Pipeline v9.0.0", published_at: now, download_url: "https://github.com/mdroste/pipeline/releases/download/v9.0.0/Pipeline-9.0.0-macOS-AppleSilicon.dmg", can_install: true, checked_at: now } : null;
+const installPhase = params.get("install") ?? "idle";
 const updateStatus = (automatic = true) => ({ automatic, automatic_available: true, last_checked_at: updateInfo?.checked_at ?? null, info: updateInfo, error: null });
 
 const commandData: Record<string, unknown> = {
@@ -350,10 +352,15 @@ const commandData: Record<string, unknown> = {
   list_analyzers: analyzers,
   get_settings: settings,
   save_settings: true,
-  check_for_update: { current: appVersion, latest: appVersion, update_available: false, release_url: "", release_name: "", published_at: null, download_url: null, checked_at: null },
+  check_for_update: { current: appVersion, latest: appVersion, update_available: false, release_url: "", release_name: "", published_at: null, download_url: null, can_install: false, checked_at: null },
   list_run_queue: { limit: 2, runs: [] },
   update_status: () => updateStatus(),
   update_set_automatic: (args: { enabled: boolean }) => updateStatus(args.enabled),
+  update_install_state: { phase: installPhase, version: updateInfo?.latest ?? null, downloaded: 21_000_000, total: 42_000_000, error: installPhase === "failed" ? "Could not download the update. Check your connection and try again." : null },
+  update_install_start: { phase: "downloading", version: updateInfo?.latest ?? null, downloaded: 0, total: null, error: null },
+  update_install_cancel: { phase: "idle", version: null, downloaded: 0, total: null, error: null },
+  update_install_restart: null,
+  update_running_automations: 0,
   get_batch_status: [],
   get_run_setup: { profileId: "auto_paper_review", profileConfigSnapshotId: "snap-1", inputMode: "document", variables: pipelineConfig.variables, inputSlots: [] },
   get_pipeline_config: pipelineConfig,

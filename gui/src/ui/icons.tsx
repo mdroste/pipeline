@@ -27,7 +27,8 @@ export type IconName =
   | "import"
   | "stop"
   | "arrow-up"
-  | "warning";
+  | "warning"
+  | "sidebar";
 
 export function Icon({
   name,
@@ -302,6 +303,13 @@ export function Icon({
             strokeLinejoin="round"
             d="M12 4.5 3.5 19h17L12 4.5ZM12 10v4.5M12 17h.01"
           />
+        </svg>
+      );
+    case "sidebar":
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
+          <path strokeLinecap="round" d="M9.5 5v14" />
         </svg>
       );
     case "arrow":

@@ -337,8 +337,8 @@ pub const ENGINES: &[EngineSpec] = &[EngineSpec {
     label: "PaddleOCR-VL 1.6 Full Parser",
     description: "Includes the official PaddleOCR layout client, PP-DocLayoutV3, structured \
                       reading order, title hierarchy, formula metadata, and cross-page table \
-                      reconstruction, plus the managed Q8 model and llama.cpp server; no \
-                      system Python, pip, Conda, or Docker is required.",
+                      reconstruction, plus a managed recognition model; no system Python, \
+                      pip, Conda, or Docker is required.",
     est_download_mb: 2900,
     est_disk_mb: 3800,
 }];
@@ -456,13 +456,21 @@ pub struct PaddleEnginePaths {
     pub integrity_sha256: String,
 }
 
+/// How an installed parser reads page regions. Fixed when the runtime is
+/// installed and recorded in its manifest.
+#[derive(Debug, Clone)]
+pub enum PaddleRecognition {
+    Llama(PaddleEnginePaths),
+    BuiltIn { model_dir: PathBuf },
+}
+
 #[derive(Debug, Clone)]
 pub struct PaddleFullParserPaths {
     pub python: PathBuf,
     pub script: PathBuf,
     pub model_cache: PathBuf,
     pub layout_model: PathBuf,
-    pub paddle: PaddleEnginePaths,
+    pub recognition: PaddleRecognition,
     pub release: String,
     pub integrity_sha256: String,
     pub sidecar_sha256: String,
@@ -522,6 +530,7 @@ fn find_file_named(root: &Path, name: &str) -> Option<PathBuf> {
 mod download;
 mod installer_io;
 mod integrity;
+mod native_recognition;
 mod operations;
 mod paddle_install;
 mod process;
@@ -535,6 +544,7 @@ pub use storage::*;
 
 use download::*;
 use integrity::*;
+use native_recognition::*;
 use paddle_install::*;
 use process::*;
 

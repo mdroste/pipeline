@@ -123,6 +123,12 @@ pub fn background_enabled() -> bool {
         .get()
         .is_some_and(|s| s.background.load(Ordering::Acquire))
 }
+/// Task runs in progress, for warning before a restart.
+pub fn running_count() -> usize {
+    INSTANCE.get().map_or(0, |m| {
+        m.active.lock().unwrap_or_else(|e| e.into_inner()).len()
+    })
+}
 pub async fn shutdown() {
     if let Some(m) = INSTANCE.get() {
         m.stopping.store(true, Ordering::Release);

@@ -27,6 +27,18 @@ const INSTALLER_SUFFIX: Option<&str> = if cfg!(all(target_os = "macos", target_a
     None
 };
 
+/// Signed package the in-app updater installs on this platform. Windows and
+/// Linux install the installer itself; the names must match `updatePackages()`
+/// in `scripts/release/update-manifest.mjs`, and a release test compares them.
+const PACKAGE_SUFFIX: Option<&str> = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    Some("-macOS-AppleSilicon.app.tar.gz")
+} else if cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+    Some("-macOS-Intel.app.tar.gz")
+} else {
+    INSTALLER_SUFFIX
+};
+const MANIFEST_NAME: &str = "latest.json";
+
 /// The latest stable release as last seen by a successful check. It is also
 /// the cached form saved in `updates.json`, so its URLs are revalidated when
 /// read back.
@@ -37,6 +49,9 @@ pub(super) struct Release {
     pub release_url: String,
     #[serde(default)]
     pub download_url: Option<String>,
+    /// Update manifest for in-app install. Releases before it have none.
+    #[serde(default)]
+    pub manifest_url: Option<String>,
     #[serde(default)]
     pub published_at: Option<String>,
 }
@@ -177,18 +192,22 @@ fn release_from(release: GithubRelease) -> Option<Release> {
         return None;
     }
     let version = bounded(strip_v(&release.tag_name).to_string());
-    let download_url = expected_installer(&version).and_then(|expected| {
+    let asset_url = |name: &str| {
         release
             .assets
             .iter()
-            .find(|asset| asset.name == expected)
+            .find(|asset| asset.name == name)
             .map(|asset| asset.browser_download_url.clone())
-            .filter(|url| is_download_url(url, &version))
-    });
+    };
+    let download_url = expected_installer(&version)
+        .and_then(|expected| asset_url(&expected))
+        .filter(|url| is_download_url(url, &version));
+    let manifest_url = asset_url(MANIFEST_NAME).filter(|url| is_manifest_url(url, &version));
     Some(Release {
         name: bounded(release.name.unwrap_or_else(|| release.tag_name.clone())),
         release_url: release_page_or_default(&release.html_url),
         download_url,
+        manifest_url,
         published_at: release.published_at.map(bounded),
         version,
     })
@@ -247,9 +266,25 @@ pub(super) fn is_download_url(url: &str, version: &str) -> bool {
     let Some(installer) = expected_installer(version) else {
         return false;
     };
-    github_path(url).is_some_and(|path| {
-        path == format!("/{OWNER}/{REPO}/releases/download/v{version}/{installer}")
+    is_release_asset(url, version, &installer)
+}
+
+/// Accept only the manifest attached to the `v<version>` tag of this repository.
+pub(super) fn is_manifest_url(url: &str, version: &str) -> bool {
+    is_release_asset(url, version, MANIFEST_NAME)
+}
+
+/// Accept only this platform's update package, attached to the `v<version>`
+/// tag of this repository.
+pub(super) fn is_package_url(url: &str, version: &str) -> bool {
+    PACKAGE_SUFFIX.is_some_and(|suffix| {
+        is_release_asset(url, version, &format!("Pipeline-{version}{suffix}"))
     })
+}
+
+fn is_release_asset(url: &str, version: &str, name: &str) -> bool {
+    github_path(url)
+        .is_some_and(|path| path == format!("/{OWNER}/{REPO}/releases/download/v{version}/{name}"))
 }
 
 fn github_path(url: &str) -> Option<String> {
@@ -310,6 +345,45 @@ mod tests {
             release.published_at.as_deref(),
             Some("2026-10-27T18:00:00Z")
         );
+    }
+
+    #[test]
+    fn manifest_is_read_from_the_release_assets() {
+        let url = "https://github.com/mdroste/pipeline/releases/download/v1.2.0/latest.json";
+        let manifest = |url: &str| {
+            release_from(github_release(serde_json::json!({
+                "tag_name": "v1.2.0",
+                "html_url": "https://github.com/mdroste/pipeline/releases/tag/v1.2.0",
+                "published_at": null,
+                "assets": [{ "name": "latest.json", "browser_download_url": url }],
+            })))
+            .unwrap()
+            .manifest_url
+        };
+        assert_eq!(manifest(url).as_deref(), Some(url));
+        assert_eq!(manifest(&url.replace("v1.2.0", "v1.1.0")), None);
+        assert_eq!(manifest(&url.replace("mdroste", "other")), None);
+        assert!(!is_manifest_url(&format!("{url}?x=1"), "1.2.0"));
+    }
+
+    #[test]
+    fn update_packages_must_belong_to_the_announced_version() {
+        let Some(suffix) = PACKAGE_SUFFIX else {
+            return;
+        };
+        let url = format!(
+            "https://github.com/mdroste/pipeline/releases/download/v1.2.0/Pipeline-1.2.0{suffix}"
+        );
+        assert!(is_package_url(&url, "1.2.0"));
+        assert!(!is_package_url(&url, "1.2.1"));
+        assert!(!is_package_url(
+            &url.replace("github.com", "github.com.example.net"),
+            "1.2.0"
+        ));
+        assert!(!is_package_url(
+            &url.replace("Pipeline-", "Other-"),
+            "1.2.0"
+        ));
     }
 
     #[test]

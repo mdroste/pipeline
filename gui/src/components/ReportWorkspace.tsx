@@ -6,14 +6,14 @@ import {
   canonicalProblemMessage,
 } from "../lib/reportPresentation";
 import ProvenancePanel from "./report-workspace/ProvenancePanel";
-import LocalSources from "./report-workspace/LocalSources";
+import LocalSources, { hasPageHeadings } from "./report-workspace/LocalSources";
 import ReportHeader from "./report-workspace/ReportHeader";
 import KeptTabPanel from "./report-workspace/KeptTabPanel";
 import useReportResources from "./report-workspace/useReportResources";
 import type { WorkspaceTab, OutputView } from "./report-workspace/types";
 import useTabList from "../hooks/useTabList";
 import RunMarkdown from "./file-workspace/RunMarkdown";
-import { Fragment, lazy, useMemo, useState } from "react";
+import { Fragment, lazy, useMemo, useState, type ReactNode } from "react";
 import { detectReportIssues, type IssueEvidence } from "../lib/issues";
 import { buildRunProvenance } from "../lib/runProvenance";
 import {
@@ -42,6 +42,8 @@ interface Props {
   onBack?: () => void;
   /** Open a cited page or artifact when navigating here from a project ledger. */
   initialSourceSelection?: ArtifactSelectionTarget | null;
+  /** Shown above the report header; receives the open tab. */
+  notice?: (tab: WorkspaceTab) => ReactNode;
 }
 
 const TAB_LABELS = Object.fromEntries(
@@ -91,6 +93,7 @@ export default function ReportWorkspace({
   durationSecs,
   onBack,
   initialSourceSelection = null,
+  notice,
 }: Props) {
   const [tab, setTab] = useState<WorkspaceTab>(
     initialSourceSelection ? "sources" : "report",
@@ -118,8 +121,9 @@ export default function ReportWorkspace({
     () => (report ? detectReportIssues(report) : null),
     [report],
   );
+  const canOpenEvidence = !!runId || hasPageHeadings(extractedText);
   const openEvidence = (evidence: IssueEvidence) => {
-    if (!runId || (!evidence.page && !evidence.artifactPath)) return;
+    if (!evidence.page && !evidence.artifactPath) return;
     setSourceRequest({
       key: Date.now(),
       page: evidence.page,
@@ -211,7 +215,7 @@ export default function ReportWorkspace({
             <IssuesTable
               issues={issues}
               runId={runId ?? null}
-              onOpenEvidence={runId ? openEvidence : undefined}
+              onOpenEvidence={canOpenEvidence ? openEvidence : undefined}
             />
           </div>
         )
@@ -242,6 +246,7 @@ export default function ReportWorkspace({
               ReportViewer={ReportViewer}
               extractedText={extractedText ?? ""}
               report={report}
+              selectionRequest={sourceRequest}
             />
           ) : (
             <div className="flex h-full items-center justify-center p-8 text-sm text-gray-500 dark:text-gray-400">
@@ -395,6 +400,7 @@ export default function ReportWorkspace({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-white dark:bg-gray-950">
+      {notice?.(activeTab)}
       <ReportHeader
         onBack={onBack}
         status={status}

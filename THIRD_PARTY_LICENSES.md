@@ -49,7 +49,8 @@ them when you uninstall the parser.
 | Component | Version | License |
 | --- | --- | --- |
 | PaddleOCR-VL 1.6 GGUF model and vision projector | Model revision `511b09642bb324401f15f97cc23bc67e8f0a291d` | Apache-2.0 |
-| `llama.cpp` runtime, from the project's GitHub releases | b9637 | MIT |
+| PaddleOCR-VL 1.6 model, on Windows | Model revision `c5630abae1d940eafe0697512a0325494b02ab42` | Apache-2.0 |
+| `llama.cpp` runtime, from the project's GitHub releases, except on new Windows installs | b9637 | MIT |
 | uv | 0.11.26 | MIT or Apache-2.0 |
 | CPython | 3.12.13 | Python Software Foundation License |
 | `paddleocr` and `paddlepaddle`, with their locked dependencies | 3.7.0 and 3.2.1 | Apache-2.0 |

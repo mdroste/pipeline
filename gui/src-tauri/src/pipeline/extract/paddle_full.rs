@@ -1,6 +1,23 @@
 //! Managed full-parser invocation and lifetime.
 use super::*;
 
+/// Built-in recognition runs on the processor, so the time budget has to grow
+/// with the document. A page took about a minute on a fast laptop.
+const BUILT_IN_RECOGNITION_SECS_PER_PAGE: u64 = 180;
+
+fn extraction_budget_secs(
+    recognition: &crate::engines::PaddleRecognition,
+    pages: usize,
+    configured_secs: u64,
+) -> u64 {
+    match recognition {
+        crate::engines::PaddleRecognition::Llama(_) => configured_secs,
+        crate::engines::PaddleRecognition::BuiltIn { .. } => {
+            configured_secs.max(pages as u64 * BUILT_IN_RECOGNITION_SECS_PER_PAGE)
+        }
+    }
+}
+
 pub(crate) async fn extract_paddle_full(
     app: &crate::emit::EventBus,
     path: &Path,
@@ -8,7 +25,6 @@ pub(crate) async fn extract_paddle_full(
     settings: &crate::settings::Settings,
 ) -> Result<ExtractionResult, String> {
     let started = std::time::Instant::now();
-    let total_timeout = std::time::Duration::from_secs(settings.pdf_extraction_timeout_secs);
     // The first resolution each session content-hashes the multi-gigabyte
     // managed runtime: announce it, keep it off the async workers, and let
     // cancellation return immediately (the detached hash finishes in the
@@ -58,6 +74,12 @@ pub(crate) async fn extract_paddle_full(
             "PaddleOCR-VL Full Parser is limited to {MAX_RENDERED_PDF_PAGES} pages per PDF"
         ));
     }
+    let budget_secs = extraction_budget_secs(
+        &paths.recognition,
+        baseline.len(),
+        settings.pdf_extraction_timeout_secs,
+    );
+    let total_timeout = std::time::Duration::from_secs(budget_secs);
     let baseline = Some(baseline);
     let root = paddle_full_cache_root(hash)
         .ok_or_else(|| "Could not create PaddleOCR-VL full-parser cache path".to_string())?;
@@ -100,11 +122,33 @@ pub(crate) async fn extract_paddle_full(
             settings.paddle_full_relevel_titles,
         ),
     );
-    extraction_log(
-        app,
-        "PaddleOCR-VL Full Parser: loading the managed Q8 recognition server",
-    );
-    let server = start_paddle_server(&paths.paddle, settings).await?;
+    // The server, when there is one, stays up until extraction returns.
+    let (_server, recognition) = match &paths.recognition {
+        crate::engines::PaddleRecognition::Llama(engine) => {
+            extraction_log(
+                app,
+                "PaddleOCR-VL Full Parser: loading the managed Q8 recognition server",
+            );
+            let server = start_paddle_server(engine, settings).await?;
+            let recognition = SidecarRecognition::Server {
+                base_url: format!("{}/v1", server.base_url),
+                api_key: server.api_key.clone(),
+            };
+            (Some(server), recognition)
+        }
+        crate::engines::PaddleRecognition::BuiltIn { model_dir } => {
+            extraction_log(
+                app,
+                "PaddleOCR-VL Full Parser: reading pages on the processor, which can take a minute or more per page",
+            );
+            (
+                None,
+                SidecarRecognition::BuiltIn {
+                    model_dir: model_dir.clone(),
+                },
+            )
+        }
+    };
     let staging = tempfile::Builder::new()
         .prefix(".full-parser-staging-")
         .tempdir_in(&root)
@@ -116,16 +160,13 @@ pub(crate) async fn extract_paddle_full(
     let input = staged_pdf.clone();
     let output = staged_structure.clone();
     let assets = staged_assets.clone();
-    let base_url = format!("{}/v1", server.base_url);
-    let api_key = server.api_key.clone();
     let baselines = baseline.clone().unwrap_or_default();
     let timeout = total_timeout
         .checked_sub(started.elapsed())
         .filter(|remaining| !remaining.is_zero())
         .ok_or_else(|| {
             format!(
-                "PaddleOCR-VL Full Parser exceeded the {}s extraction budget while loading",
-                settings.pdf_extraction_timeout_secs
+                "PaddleOCR-VL Full Parser exceeded the {budget_secs}s extraction budget while loading"
             )
         })?;
     let sidecar_lease = engine_lease.clone();
@@ -137,8 +178,7 @@ pub(crate) async fn extract_paddle_full(
             &input,
             &output,
             &assets,
-            &base_url,
-            &api_key,
+            &recognition,
             &baselines,
             timeout,
         )
@@ -217,4 +257,26 @@ pub(crate) async fn extract_paddle_full(
         ),
     );
     Ok(extraction)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engines::PaddleRecognition;
+
+    #[test]
+    fn built_in_recognition_scales_the_budget_with_the_document() {
+        let built_in = PaddleRecognition::BuiltIn {
+            model_dir: "model".into(),
+        };
+        assert_eq!(extraction_budget_secs(&built_in, 5, 1800), 1800);
+        assert_eq!(extraction_budget_secs(&built_in, 100, 1800), 18_000);
+        let llama = PaddleRecognition::Llama(crate::engines::PaddleEnginePaths {
+            server: "server".into(),
+            model: "model".into(),
+            mmproj: "projector".into(),
+            integrity_sha256: "fixture".into(),
+        });
+        assert_eq!(extraction_budget_secs(&llama, 100, 1800), 1800);
+    }
 }

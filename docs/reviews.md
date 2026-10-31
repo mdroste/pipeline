@@ -80,9 +80,10 @@ for your document appear as separate steps when the run starts.
 
 ### Try the example review
 
-**See an example Review** on Home shows sample findings on a fictional paper
-excerpt, with severity, categories, cited evidence, and quote checks. It
-doesn't call a model, and it isn't saved to your review history.
+**See an example review** on Home opens a finished review of an invented paper
+on the same screen as a real report. You can read the report, check the evidence
+for each comment, try accepting and rejecting comments, and see what each
+reviewer wrote. It doesn't call a model, and nothing is saved.
 
 ## PDF extraction
 
@@ -93,7 +94,7 @@ single review.
 | --- | --- | --- |
 | Poppler (`pdftotext`) | Extracts text on your computer with the bundled PDF tools | Nothing to install. Equations, tables, and reading order may be incomplete |
 | Model extraction | Sends the document to the model connection you selected | Needs a working connection. The document leaves your computer |
-| PaddleOCR-VL Full Parser | Extracts text, layout, formulas, tables, and figures on your computer | Install it from Settings. It needs about 4 GB of disk space |
+| PaddleOCR-VL Full Parser | Extracts text, layout, formulas, tables, and figures on your computer | Install it from Settings. It needs about 4 GB of disk space. On Windows it runs on the processor, so it's slower and needs about 6 GB of free memory, or about 10 GB for a few seconds as it starts |
 
 **By default, Pipeline uses the Full Parser if it's installed, and otherwise
 sends the PDF to your model connection.** If extraction fails, the review

@@ -133,7 +133,7 @@ fn every_format_reads_the_run_without_modifying_it_or_the_manuscript() {
     let run = load_run(&fixture.run_dir, fixture.manifest.clone()).unwrap();
     assert_eq!(run.export.meta.title, "draft.docx");
     assert_eq!(run.export.meta.workflow, "Paper Review");
-    assert_eq!(run.export.meta.status, "Done");
+    assert_eq!(run.export.meta.status, "Completed");
 
     let html = generate(&run, ReportFormat::Html).unwrap();
     assert_eq!(html.suggested_name, "draft review.html");

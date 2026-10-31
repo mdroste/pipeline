@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-shell";
 import type { Settings, UpdateInfo, UpdateStatus } from "../../lib/types";
 import {
@@ -43,8 +44,13 @@ export default function AdvancedSettings({
         if (live) setUpdateStatus(v ?? null);
       })
       .catch(() => {});
+    // The update banner can change this preference too.
+    const stopListening = listen<UpdateStatus>("update-status", (event) => {
+      if (live) setUpdateStatus(event.payload);
+    }).catch(() => null);
     return () => {
       live = false;
+      void stopListening.then((stop) => stop?.());
     };
   }, []);
   // A fresh manual result takes precedence over the saved one.
@@ -52,6 +58,19 @@ export default function AdvancedSettings({
   const checkedAt = known?.checked_at ?? updateStatus?.last_checked_at ?? null;
   const openPage = (url: string) =>
     void open(url).catch(() => setError("Could not open the release page."));
+  // The banner at the top of the window shows progress and the restart.
+  const installUpdate = async () => {
+    setError("");
+    try {
+      await invoke("update_install_start");
+    } catch (failure) {
+      setError(
+        typeof failure === "string" && failure
+          ? failure
+          : "Could not start the update. Try again.",
+      );
+    }
+  };
   const saveAutomatic = async (enabled: boolean) => {
     setError("");
     try {
@@ -120,7 +139,7 @@ export default function AdvancedSettings({
             label="Check for updates automatically"
             description={
               updateStatus.automatic_available
-                ? "Once a day, Pipeline asks GitHub whether a newer version is available. GitHub receives your network address and app version, nothing about your research."
+                ? "Each time it starts, and once a day while it stays open, Pipeline asks GitHub whether a newer version is available. GitHub receives your network address and app version, nothing about your research."
                 : "This copy of Pipeline was not installed from an official release, so it checks for updates only when you ask."
             }
             checked={updateStatus.automatic}
@@ -157,14 +176,23 @@ export default function AdvancedSettings({
           </button>
           {known?.update_available && (
             <>
-              <button
-                className="settings-button"
-                onClick={() =>
-                  openPage(known.download_url ?? known.release_url)
-                }
-              >
-                Download version {known.latest}
-              </button>
+              {known.can_install ? (
+                <button
+                  className="settings-button"
+                  onClick={() => void installUpdate()}
+                >
+                  Install version {known.latest}
+                </button>
+              ) : (
+                <button
+                  className="settings-button"
+                  onClick={() =>
+                    openPage(known.download_url ?? known.release_url)
+                  }
+                >
+                  Download version {known.latest}
+                </button>
+              )}
               <button
                 className="settings-button"
                 onClick={() => openPage(known.release_url)}

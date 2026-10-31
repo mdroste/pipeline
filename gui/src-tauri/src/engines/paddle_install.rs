@@ -50,12 +50,23 @@ pub(super) async fn install_paddle_engine(
         .ok_or("llama-server disappeared after extraction")?;
     let mut probe = std::process::Command::new(&staged_server);
     probe.arg("--version");
-    let output =
-        crate::process::run_bounded(&mut probe, std::time::Duration::from_secs(15), 256 * 1024)
-            .map_err(|error| format!("llama-server validation failed: {error}"))?;
+    let output = match crate::process::run_bounded(
+        &mut probe,
+        std::time::Duration::from_secs(15),
+        256 * 1024,
+    ) {
+        Ok(output) => output,
+        Err(error) => {
+            emit_phase(app, spec.id, "runtime", "failed");
+            return Err(probe_start_error("llama-server", &error));
+        }
+    };
     if !output.status.success() || output.stdout_truncated || output.stderr_truncated {
         emit_phase(app, spec.id, "runtime", "failed");
-        return Err("The downloaded llama-server failed its validation check".to_string());
+        return Err(probe_exit_error(
+            "The downloaded llama-server",
+            output.status.code(),
+        ));
     }
     emit_phase(app, spec.id, "runtime", "done");
 
@@ -160,10 +171,11 @@ pub(super) async fn install_paddle_full_parser(
 ) -> Result<(), String> {
     full_parser_support()?;
     let python_artifact = python_artifact()?;
+    let backend = new_install_recognition_backend();
 
-    // The parser is an add-on to the native Q8 stack. Installing it is one
-    // user action even on a fresh machine.
-    if paddle_engine_paths().is_err() {
+    // With managed llama.cpp the parser is an add-on to the native Q8 stack.
+    // Installing it is one user action even on a fresh machine.
+    if backend == RecognitionBackend::ManagedLlama && paddle_engine_paths().is_err() {
         let base = engine("paddleocr-vl")?;
         log(
             app,
@@ -180,20 +192,30 @@ pub(super) async fn install_paddle_full_parser(
     let parser_root = paddle_parser_root()?;
     match refresh_paddle_parser_sidecar_locked(&parser_root) {
         Ok(SidecarRefresh::Refreshed | SidecarRefresh::AlreadyCurrent) => {
-            for phase in ["runtime", "packages", "models"] {
-                emit_phase(app, spec.id, phase, "done");
+            match paddle_full_parser_paths_at(&parser_root) {
+                Some(installed) => {
+                    for phase in ["runtime", "packages", "models"] {
+                        emit_phase(app, spec.id, phase, "done");
+                    }
+                    log(
+                        app,
+                        format!(
+                            "{} sidecar updated without reinstalling its managed runtime ({})",
+                            spec.label,
+                            installed.script.display()
+                        ),
+                    );
+                    return Ok(());
+                }
+                // An older Windows runtime whose llama.cpp component is gone
+                // is rebuilt with built-in recognition.
+                None if backend == RecognitionBackend::BuiltIn => {}
+                None => {
+                    return Err(
+                        "The refreshed parser sidecar failed its integrity check".to_string()
+                    )
+                }
             }
-            let installed = paddle_full_parser_paths_at(&parser_root)
-                .ok_or("The refreshed parser sidecar failed its integrity check")?;
-            log(
-                app,
-                format!(
-                    "{} sidecar updated without reinstalling its managed runtime ({})",
-                    spec.label,
-                    installed.script.display()
-                ),
-            );
-            return Ok(());
         }
         Ok(SidecarRefresh::NotReusable) => {}
         Err(error) => log(
@@ -379,10 +401,16 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
         .map_err(|error| format!("Layout-model extraction task failed: {error}"))??;
         std::fs::remove_file(&model_archive)
             .map_err(|error| format!("Failed to remove staged model archive: {error}"))?;
+        let native_model = match backend {
+            RecognitionBackend::BuiltIn => {
+                Some(install_native_recognition_model(app, &target).await?)
+            }
+            RecognitionBackend::ManagedLlama => None,
+        };
 
         // A successful construction proves that the exact local weights can
         // initialize without a first-use download or recognition request.
-        let warm_args = vec![
+        let mut warm_args = vec![
             "-I".to_string(),
             "-B".to_string(),
             script.to_string_lossy().to_string(),
@@ -392,6 +420,10 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
             "--server-url".to_string(),
             "http://127.0.0.1:9/v1".to_string(),
         ];
+        if let Some(model) = &native_model {
+            warm_args.push("--native-model-dir".to_string());
+            warm_args.push(model.to_string_lossy().to_string());
+        }
         run_install_step(app, &python, &warm_args, &environment, "layout model validation")
             .await?;
         emit_phase(app, spec.id, "models", "done");
@@ -428,7 +460,8 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
             "layout_model_artifact_sha256": PADDLE_LAYOUT_MODEL_SHA256,
             "layout_ready": true,
             "offline_model_runtime": true,
-            "recognition_backend": "managed llama.cpp",
+            "recognition_backend": backend.manifest_value(),
+            "recognition_model_revision": native_model.is_some().then_some(NATIVE_MODEL_REVISION),
             "integrity_schema": INSTALL_INTEGRITY_SCHEMA,
             "integrity_sha256": integrity_sha256,
         });

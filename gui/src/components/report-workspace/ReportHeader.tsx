@@ -7,6 +7,7 @@ import {
 } from "../../lib/runProvenance";
 import type { PipelineReport } from "../../lib/types";
 import type { RunManifest } from "../../lib/artifactTypes";
+import { reportStatusDisplay } from "../../lib/reportPresentation";
 
 interface Props {
   onBack?: () => void;
@@ -32,6 +33,7 @@ export default function ReportHeader({
   pdfMarkdown,
   extractedText,
 }: Props) {
+  const display = reportStatusDisplay(status, report?.quality);
   return (
     <header className="shrink-0 border-b border-gray-200/80 bg-white px-6 pb-4 pt-5 dark:border-gray-800 dark:bg-gray-950">
       <div className="flex min-w-0 items-start gap-4">
@@ -63,18 +65,23 @@ export default function ReportHeader({
           <div className="flex items-center gap-2">
             <span
               className={`h-1.5 w-1.5 rounded-full ${
-                status === "done"
+                display.tone === "good"
                   ? "bg-emerald-500"
-                  : status === "partial" || status === "degraded"
+                  : display.tone === "caution"
                     ? "bg-amber-500"
-                    : status === "cancelled"
+                    : display.tone === "stopped"
                       ? "bg-gray-400"
                       : "bg-red-500"
               }`}
             />
             <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
-              {status === "done" ? "Completed report" : `${status} report`}
+              {display.heading}
             </span>
+            {display.notes.length > 0 && (
+              <span className="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">
+                {display.notes.join(" · ")}
+              </span>
+            )}
           </div>
           <h1
             className="mt-1 truncate text-xl font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-50"

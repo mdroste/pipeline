@@ -29,6 +29,21 @@ pub(crate) fn configure_isolation(command: &mut Command) {
     }
 }
 
+/// Make a child that Windows refuses to load exit with its status instead of
+/// waiting behind a system dialog. Children inherit this process error mode.
+pub fn suppress_windows_error_dialogs() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Diagnostics::Debug::{
+            SetErrorMode, SEM_FAILCRITICALERRORS,
+        };
+        // SAFETY: SetErrorMode takes a plain flag value and has no preconditions.
+        unsafe {
+            SetErrorMode(SEM_FAILCRITICALERRORS);
+        }
+    }
+}
+
 fn drain_capped<R: std::io::Read>(mut reader: R, limit: usize) -> (Vec<u8>, bool) {
     let mut kept = Vec::with_capacity(limit.min(16 * 1024));
     let mut truncated = false;

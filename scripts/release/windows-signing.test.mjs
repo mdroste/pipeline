@@ -17,6 +17,7 @@ test("Windows signing preserves checkout paths with spaces as single arguments",
   assert.equal(args[2], path.join(os.tmpdir(), "a checkout with spaces/scripts/release/windows-sign.ps1"));
   assert.deepEqual(args.slice(3), ["-FilePath", "%1"]);
   assert.deepEqual(Object.keys(config), ["bundle"]);
+  assert.equal(config.bundle.createUpdaterArtifacts, true);
 });
 
 test("release verifies installed Windows signatures before upload and cannot use unsigned fallback", () => {

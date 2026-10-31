@@ -92,7 +92,7 @@ describe("connection rows", () => {
       "Not running",
     ]);
     expect(connectionSummary(rows)).toMatch(
-      /example Review needs no connection/,
+      /example review needs no connection/,
     );
     const apiOnly = connectionRows({
       dependencies: null,

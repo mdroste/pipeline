@@ -30,9 +30,14 @@ pub async fn install_engine(app: &crate::emit::EventBus, engine_id: &str) -> Res
     // plus bounded archive/cache headroom, not the whole shared stack again.
     let home = pipeline_home()?;
     std::fs::create_dir_all(&home).map_err(|e| format!("Failed to create ~/.pipeline: {e}"))?;
-    let base_installed = paddle_root()
-        .ok()
-        .is_some_and(|root| paddle_paths_at(&root).is_some());
+    let base_installed = match new_install_recognition_backend() {
+        RecognitionBackend::ManagedLlama => paddle_root()
+            .ok()
+            .is_some_and(|root| paddle_paths_at(&root).is_some()),
+        // Built-in weights live in the parser install, so anything beyond a
+        // sidecar refresh needs room for them.
+        RecognitionBackend::BuiltIn => lightweight_parser_refresh,
+    };
     let parser_target_present = paddle_parser_version_root()
         .ok()
         .is_some_and(|target| target.exists());

@@ -4,6 +4,13 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ErrorBoundary from "./ErrorBoundary";
 
+const platform = vi.hoisted(() => ({ isMac: false, isWindows: false }));
+
+vi.mock("../lib/platform", () => platform);
+vi.mock("./WindowControls", () => ({
+  default: () => <div data-testid="window-controls" />,
+}));
+
 function Boom({ fail }: { fail: boolean }) {
   if (fail) {
     const error = new Error("kaboom\n/private/project/secret.ts");
@@ -31,6 +38,37 @@ describe("ErrorBoundary", () => {
   });
   afterEach(() => {
     errSpy.mockRestore();
+  });
+
+  it("keeps the window controls on the app-wide screen on Windows", () => {
+    platform.isWindows = true;
+    try {
+      const { container } = render(
+        <ErrorBoundary>
+          <Boom fail={true} />
+        </ErrorBoundary>,
+      );
+      expect(screen.getByTestId("window-controls")).toBeInTheDocument();
+      expect(
+        container.querySelector("[data-tauri-drag-region]"),
+      ).toBeInTheDocument();
+    } finally {
+      platform.isWindows = false;
+    }
+  });
+
+  it("leaves the window controls to the shell inside a pane", () => {
+    platform.isWindows = true;
+    try {
+      render(
+        <ErrorBoundary nested>
+          <Boom fail={true} />
+        </ErrorBoundary>,
+      );
+      expect(screen.queryByTestId("window-controls")).not.toBeInTheDocument();
+    } finally {
+      platform.isWindows = false;
+    }
   });
 
   it("renders children when no error", () => {

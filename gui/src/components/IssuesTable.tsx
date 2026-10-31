@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Issue, IssueEvidence } from "../lib/issues";
 import { severityRank } from "../lib/issues";
+import { Icon } from "../ui/icons";
 import SafeMarkdownLink from "./SafeMarkdownLink";
 import { EvidenceVerificationBadge } from "./report-workspace/EvidenceVerificationBadge";
 
@@ -34,11 +35,13 @@ function sevStyle(sev: string): string {
 }
 
 const VERDICT_STYLES: Record<Verdict, string> = {
-  accept: "bg-green-700 text-white",
-  reject: "bg-red-600 text-white",
-  done: "bg-gray-500 text-white",
+  accept: "border-transparent bg-green-700 text-white",
+  reject: "border-transparent bg-red-600 text-white",
+  done: "border-transparent bg-gray-500 text-white",
   "": "",
 };
+
+const VERDICT_LABELS = { accept: "Accept", reject: "Reject", done: "Done" };
 
 function evidenceCitation(item: IssueEvidence): string {
   const references = [
@@ -449,9 +452,10 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                     : "border-gray-200 dark:border-gray-800"
               }`}
             >
-              <div className="flex items-center gap-3 px-3 py-2">
+              <div className="flex items-start gap-3 px-3 py-2.5">
                 <input
                   type="checkbox"
+                  className="mt-1 shrink-0"
                   aria-label={`Select issue: ${issue.title}`}
                   checked={selected.has(issue.id)}
                   disabled={!annotationsLoaded}
@@ -466,31 +470,30 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                   }
                 />
                 <span
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase shrink-0 ${sevStyle(issue.severity)}`}
+                  className={`mt-0.5 w-14 px-1.5 py-0.5 rounded text-center text-[10px] font-medium uppercase shrink-0 ${sevStyle(issue.severity)}`}
                 >
                   {issue.severity || "—"}
                 </span>
                 <button
                   onClick={() => toggleExpand(issue.id)}
                   aria-expanded={isOpen}
-                  className="flex-1 text-left min-w-0"
+                  className="group flex min-w-0 flex-1 items-start gap-1.5 text-left"
                 >
-                  <span className="text-sm text-gray-900 dark:text-gray-100">
-                    {issue.title}
-                  </span>
-                  {issue.section && (
-                    <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">
-                      §{issue.section}
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-gray-900 group-hover:text-gray-950 dark:text-gray-100 dark:group-hover:text-white">
+                      {issue.title}
                     </span>
-                  )}
-                </button>
-                {ann?.status && (
-                  <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${VERDICT_STYLES[ann.status]}`}
-                  >
-                    {ann.status}
+                    {issue.section && (
+                      <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
+                        {issue.section}
+                      </span>
+                    )}
                   </span>
-                )}
+                  <Icon
+                    name="chevron-down"
+                    className={`mt-1 h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
                 <div className="flex items-center gap-1 shrink-0">
                   {(["accept", "reject", "done"] as Verdict[]).map((v) => (
                     <button
@@ -499,21 +502,21 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                       disabled={!annotationsLoaded}
                       aria-label={`${v} issue: ${issue.title}`}
                       aria-pressed={ann?.status === v}
-                      className={`px-1.5 py-0.5 rounded text-[10px] border transition-colors ${
+                      className={`px-2 py-1 rounded text-[11px] border transition-colors ${
                         ann?.status === v
                           ? VERDICT_STYLES[v]
-                          : "border-gray-300 dark:border-gray-600 text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 disabled:cursor-wait disabled:opacity-40"
+                          : "border-gray-300 dark:border-gray-600 text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100 disabled:cursor-wait disabled:opacity-40"
                       }`}
                       title={v}
                     >
-                      {v === "accept" ? "✓" : v === "reject" ? "✕" : "done"}
+                      {VERDICT_LABELS[v as Exclude<Verdict, "">]}
                     </button>
                   ))}
                 </div>
               </div>
               {isOpen && (
                 <div className="px-3 pb-3 border-t border-gray-100 dark:border-gray-800 pt-2">
-                  <div className="report-content !max-w-none !p-0 text-sm">
+                  <div className="report-content issue-body !max-w-none !p-0 text-sm">
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
                       components={{ a: SafeMarkdownLink }}
