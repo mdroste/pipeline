@@ -11,13 +11,19 @@ fn destination(path: &Path) -> Result<Option<PathBuf>, String> {
         return Err("Unsafe path in command runtime archive".into());
     }
     let relative: PathBuf = path.components().skip(1).collect();
-    let text = relative.to_string_lossy();
-    Ok((text == "bin/node"
-        || text == "node.exe"
-        || text == "LICENSE"
-        || text.starts_with("lib/node_modules/npm/")
-        || text.starts_with("node_modules/npm/"))
-    .then_some(relative))
+    // Compare path components: collecting them uses backslashes on Windows.
+    let npm_file = ["lib/node_modules/npm", "node_modules/npm"]
+        .iter()
+        .any(|prefix| {
+            relative
+                .strip_prefix(prefix)
+                .is_ok_and(|suffix| suffix.components().next().is_some())
+        });
+    Ok((relative == Path::new("bin/node")
+        || relative == Path::new("node.exe")
+        || relative == Path::new("LICENSE")
+        || npm_file)
+        .then_some(relative))
 }
 
 fn write_file(
@@ -112,9 +118,52 @@ mod tests {
             destination(Path::new("node/bin/node")).unwrap(),
             Some("bin/node".into())
         );
+        for relative in [
+            "node.exe",
+            "LICENSE",
+            "lib/node_modules/npm/bin/npm-cli.js",
+            "node_modules/npm/bin/npm-cli.js",
+        ] {
+            assert_eq!(
+                destination(&Path::new("node").join(relative)).unwrap(),
+                Some(PathBuf::from(relative))
+            );
+        }
+        for relative in ["node_modules/npm", "node_modules/npm-other/bin/npm-cli.js"] {
+            assert!(destination(&Path::new("node").join(relative))
+                .unwrap()
+                .is_none());
+        }
         assert!(destination(Path::new("node/include/node/header.h"))
             .unwrap()
             .is_none());
+    }
+    #[test]
+    fn windows_zip_keeps_node_and_npm_but_excludes_other_packages() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("node.zip");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&archive).unwrap());
+        for name in [
+            "node/node.exe",
+            "node/node_modules/npm/bin/npm-cli.js",
+            "node/node_modules/npm/node_modules/example/index.js",
+            "node/node_modules/npm-other/index.js",
+        ] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b"fixture").unwrap();
+        }
+        zip.finish().unwrap();
+        let root = dir.path().join("runtime");
+        unpack(&archive, &root, true).unwrap();
+        for name in [
+            "node.exe",
+            "node_modules/npm/bin/npm-cli.js",
+            "node_modules/npm/node_modules/example/index.js",
+        ] {
+            assert_eq!(fs::read(root.join(name)).unwrap(), b"fixture");
+        }
+        assert!(!root.join("node_modules/npm-other").exists());
     }
     #[test]
     fn extraction_refuses_overwrite_and_oversized_entries() {
