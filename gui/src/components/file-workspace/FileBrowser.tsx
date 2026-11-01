@@ -102,6 +102,7 @@ export default function FileBrowser({
     pointer: boolean;
   } | null>(null);
   const menuAnchor = useRef<HTMLSpanElement>(null);
+  const focusFrame = useRef(0);
   const stamps = useRef<Record<string, string | null>>({});
   const fixedPaths = useRef(paths);
   fixedPaths.current = paths;
@@ -396,12 +397,13 @@ export default function FileBrowser({
       setSearching(false);
     }
   };
-  const focusRow = (path: string) =>
-    requestAnimationFrame(() =>
+  const focusRow = (path: string) => {
+    focusFrame.current = requestAnimationFrame(() =>
       root.current
         ?.querySelector<HTMLElement>(`[data-path="${CSS.escape(path)}"]`)
         ?.focus(),
     );
+  };
   const hasRowMenu = (entry: FileListEntry) =>
     (entry.kind === "file" || entry.kind === "folder") &&
     Boolean(
@@ -415,6 +417,8 @@ export default function FileBrowser({
     y: number,
     pointer: boolean,
   ) => {
+    // Focus handed back to a row now would close the menu opening here.
+    cancelAnimationFrame(focusFrame.current);
     setSelected(path);
     setRowMenu({ path, x, y, pointer });
   };
@@ -422,7 +426,7 @@ export default function FileBrowser({
     const path = rowMenu?.path;
     setRowMenu(null);
     // A chosen action may have opened a dialog, which keeps the focus.
-    requestAnimationFrame(() => {
+    focusFrame.current = requestAnimationFrame(() => {
       const focused = document.activeElement;
       if (path && (focused === menuAnchor.current || focused === document.body))
         focusRow(path);

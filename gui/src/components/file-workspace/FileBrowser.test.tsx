@@ -229,6 +229,34 @@ it("asks before the Trash and does nothing when declined", async () => {
   await waitFor(() => expect(onTrashed).toHaveBeenCalledWith("a.txt"));
 });
 
+it("keeps a menu opened while the last one is handing focus back", async () => {
+  dialogs.confirmDialog.mockResolvedValue(false);
+  const frames = new Map<number, FrameRequestCallback>();
+  let lastFrame = 0;
+  const nextFrame = () =>
+    act(async () => {
+      const due = [...frames.values()];
+      frames.clear();
+      due.forEach((frame) => frame(0));
+    });
+  render(<FileBrowser adapter={adapter()} paths={[]} onOpen={vi.fn()} />);
+  const row = await screen.findByRole("treeitem", { name: "a.txt" });
+  vi.stubGlobal("requestAnimationFrame", (frame: FrameRequestCallback) => {
+    frames.set(++lastFrame, frame);
+    return lastFrame;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+  fireEvent.contextMenu(row);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Move to Trash" }));
+  await waitFor(() => expect(dialogs.confirmDialog).toHaveBeenCalled());
+  await nextFrame();
+  fireEvent.contextMenu(row);
+  await nextFrame();
+  await nextFrame();
+  expect(screen.getByRole("menuitem", { name: "Move to Trash" })).toBeTruthy();
+  vi.unstubAllGlobals();
+});
+
 it("creates inside the selected folder and shows why a change failed", async () => {
   dialogs.promptDialog.mockResolvedValue("notes.md");
   const files = adapter({

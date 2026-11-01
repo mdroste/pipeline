@@ -169,6 +169,7 @@ fn choices_name_each_saved_passage_and_series_instead_of_their_kind() {
     // A record with nothing to show keeps its kind rather than an empty option.
     assert_eq!(labels("build"), ["build"]);
 }
+#[cfg(unix)] // Unix tools or journalled project writes
 #[test]
 fn figures_accept_a_python_script_profile_and_refuse_other_programs() {
     let f = fixture(true);
@@ -215,21 +216,17 @@ fn figures_accept_a_python_script_profile_and_refuse_other_programs() {
     // The plot runs in its own folder, where a relative interpreter means nothing.
     let venv = f.root.join(".venv/bin");
     fs::create_dir_all(&venv).unwrap();
-    #[cfg(unix)]
     std::os::unix::fs::symlink(python(), venv.join("python")).unwrap();
-    #[cfg(unix)]
-    {
-        let relative = saved("venv", "python", &[".venv/bin/python", "analysis.py"]);
-        let recipe = figure(&relative, "figure-venv").unwrap();
-        let plan = desk::record(&f.store, &f.ws, recipe.body["planId"].as_str().unwrap()).unwrap();
-        assert_eq!(
-            plan.body["profile"]["argv"][0],
-            Path::new(&relative.cwd)
-                .join(".venv/bin/python")
-                .to_string_lossy()
-                .as_ref()
-        );
-    }
+    let relative = saved("venv", "python", &[".venv/bin/python", "analysis.py"]);
+    let recipe = figure(&relative, "figure-venv").unwrap();
+    let plan = desk::record(&f.store, &f.ws, recipe.body["planId"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        plan.body["profile"]["argv"][0],
+        Path::new(&relative.cwd)
+            .join(".venv/bin/python")
+            .to_string_lossy()
+            .as_ref()
+    );
 
     let other = saved("other", "r", &["Rscript", "analysis.R"]);
     assert!(figure(&other, "figure-other").is_err());

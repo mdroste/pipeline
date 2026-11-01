@@ -959,7 +959,11 @@ fn project_with_command() -> (tempfile::TempDir, Store, PathBuf, String) {
             workspace_id: workspace.clone(),
             name: "Analysis".into(),
             adapter: "command".into(),
-            argv: vec!["/bin/sh".into(), "-c".into(), "true".into()],
+            argv: vec![
+                std::env::var("ComSpec").unwrap_or_else(|_| "/bin/sh".into()),
+                "-c".into(),
+                "true".into(),
+            ],
             cwd: cwd.to_string_lossy().into_owned(),
             environment: serde_json::json!({}),
             inputs: vec![],
@@ -1047,14 +1051,15 @@ fn a_project_restored_without_a_folder_asks_for_one() {
 #[test]
 fn only_a_path_inside_the_old_folder_moves() {
     use super::restore::moved_path;
+    let new = Path::new("/new");
     assert_eq!(
         moved_path("/old/a/b", "/old", "/new").as_deref(),
-        Some(Path::new("/new/a/b").to_str().unwrap())
+        new.join("a").join("b").to_str()
     );
     assert_eq!(moved_path("/old", "/old", "/new").as_deref(), Some("/new"));
     assert_eq!(
         moved_path(r"C:\old\a", r"C:\old", "/new").as_deref(),
-        Some(Path::new("/new/a").to_str().unwrap())
+        new.join("a").to_str()
     );
     assert_eq!(moved_path("/older/a", "/old", "/new"), None);
     assert_eq!(moved_path("/old/../etc", "/old", "/new"), None);
