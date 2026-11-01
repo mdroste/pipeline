@@ -230,7 +230,7 @@ test("every release script runs somewhere", () => {
   const callers = [...workflows, readText("gui", "package.json"), readText("gui", "src-tauri", "tauri.conf.json")];
   const within = (name) => scripts.filter((other) => other !== name).map((other) => readText("scripts", "release", other));
   // Run by hand: the runbook gives the command, and art changes are rare.
-  const manual = { "qualify-release.mjs": "docs/releasing.md", "render-installer-art.py": "CLAUDE.md" };
+  const manual = { "qualify-release.mjs": "docs/releasing.md", "render-installer-art.py": "docs/releasing.md" };
   for (const name of scripts) {
     if (name === "release.test.mjs") continue;
     if (manual[name]) {

@@ -139,6 +139,10 @@ hash of every bundled file. The release cache reuses a bundled Poppler folder
 only when every hash matches. See the
 [Tauri configuration](../gui/src-tauri/tauri.conf.json) for the exact inputs.
 
+The installer artwork in `gui/src-tauri/installer/` is committed, so builds don't
+render it. After changing it, run
+[render-installer-art.py](../scripts/release/render-installer-art.py) by hand.
+
 The release produces four installers, two macOS update archives, a checksum file
 for each, update signatures, and `latest.json`. It doesn't produce a software bill
 of materials or build attestations.
