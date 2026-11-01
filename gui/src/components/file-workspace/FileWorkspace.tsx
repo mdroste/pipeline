@@ -3,7 +3,8 @@
 // Links resolve through lib/fileLinks.ts: relative links stay inside the owning
 // root or capture, absolute links open only after the backend validates them,
 // and Git or task metadata, unsafe schemes and uncaptured assets never resolve.
-// Saves go through the adapter with the expected content hash.
+// Saves go through the adapter with the expected content hash. FilePane picks
+// the viewer, useFileBuffers owns drafts, and FileBrowser owns the folder tree.
 
 import useTabList from "../../hooks/useTabList";
 import SplitView from "../SplitView";
@@ -16,23 +17,20 @@ import {
   useRef,
   useState,
 } from "react";
-import { open as openExternal } from "@tauri-apps/plugin-shell";
-import type { FileAdapter, FilePreview } from "../../lib/fileWorkspaceClient";
+import { EmptyState, IconButton } from "../../ui";
+import { Icon } from "../../ui/icons";
+import type { FileAdapter } from "../../lib/fileWorkspaceClient";
 import type { FileLocation } from "../../lib/fileLinks";
+import type { FileMode } from "../../lib/fileKinds";
+import { movedPath } from "../../lib/fileTree";
 import { FileNavigationScope } from "./FileNavigation";
-import SourceEditor from "./SourceEditor";
-import SourceDiff from "./SourceDiff";
-import ReportViewer from "../ReportViewer";
-import ResearchTablePreview from "../ResearchTablePreview";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
-import { confirmDialog } from "../DialogService";
+import FileBrowser from "./FileBrowser";
+import FileIcon from "./FileIcon";
+import { isDirty, useFileBuffers } from "./useFileBuffers";
+import useFileChanges from "./useFileChanges";
 import "./files.css";
-const PdfReader = lazy(() => import("./PdfReader"));
-interface Buffer {
-  file: FilePreview;
-  draft: string;
-  status: string;
-}
+const FilePane = lazy(() => import("./FilePane"));
 export interface FilePassage {
   path: string;
   hash: string;
@@ -40,6 +38,8 @@ export interface FilePassage {
   start: number;
   end: number;
   line: number;
+  /** Set for a passage from a PDF, where offsets do not apply. */
+  page?: number;
   draft: boolean;
 }
 interface Props {
@@ -47,12 +47,15 @@ interface Props {
   paths: string[];
   initial?: FileLocation | null;
   onAsk?: (passage: FilePassage) => void;
+  onAskFile?: (path: string) => void;
   onSaved?: () => void;
+  onAddToDocuments?: (path: string) => Promise<void>;
 }
 function restoredLayout(id: string): {
   tabs: string[];
   active: FileLocation | null;
   split: string | null;
+  browser: boolean;
 } {
   try {
     const v = JSON.parse(
@@ -68,18 +71,21 @@ function restoredLayout(id: string): {
         tabs: [...new Set<string>(v.tabs)].slice(0, 30),
         active: v.active,
         split: typeof v.split === "string" ? v.split : null,
+        browser: v.browser !== false,
       };
   } catch {
     /* Optional layout. */
   }
-  return { tabs: [], active: null, split: null };
+  return { tabs: [], active: null, split: null, browser: true };
 }
 export default function FileWorkspace({
   adapter,
   paths,
   initial,
   onAsk,
+  onAskFile,
   onSaved,
+  onAddToDocuments,
 }: Props) {
   const workspaceRoot = useRef<HTMLDivElement>(null);
   const [layout] = useState(() => restoredLayout(adapter.id));
@@ -88,20 +94,45 @@ export default function FileWorkspace({
     initial ?? layout.active,
   );
   const [split, setSplit] = useState<string | null>(layout.split);
-  const [buffers, setBuffers] = useState<Record<string, Buffer>>({});
-  const latest = useRef(buffers);
-  latest.current = buffers;
   const [history, setHistory] = useState<FileLocation[]>([]);
   const [forward, setForward] = useState<FileLocation[]>([]);
-  const [query, setQuery] = useState("");
+  const [browserOpen, setBrowserOpen] = useState(layout.browser);
   const search = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState<string | null>(null);
   const [passage, setPassage] = useState<FilePassage | null>(null);
-  const [modes, setModes] = useState<
-    Record<string, "source" | "preview" | "split" | "diff">
-  >({});
-  const pending = useRef(new Map<string, Promise<void>>());
+  const [modes, setModes] = useState<Record<string, FileMode>>({});
+  const setMode = useCallback(
+    (path: string, mode: FileMode) =>
+      setModes((old) => ({ ...old, [path]: mode })),
+    [],
+  );
+  const {
+    buffers,
+    latest,
+    saving,
+    load,
+    retain,
+    evict,
+    update,
+    save,
+    compareWithCurrent,
+    remap,
+    forget,
+    release,
+  } = useFileBuffers({
+    adapter,
+    onSaved,
+    setError,
+    onConflict: (path) => setMode(path, "diff"),
+  });
+  useFileChanges({
+    adapter,
+    root: workspaceRoot,
+    latest,
+    load,
+    update,
+    release,
+  });
   const alive = useRef(true);
   useEffect(() => {
     alive.current = true;
@@ -109,67 +140,36 @@ export default function FileWorkspace({
       alive.current = false;
     };
   }, []);
-  const draftKey = useCallback(
-    (path: string) => `pipeline.files.draft.${adapter.id}.${path}`,
-    [adapter.id],
-  );
-  const load = useCallback(
-    async (path: string, reload = false) => {
-      if (!reload && latest.current[path]) return;
-      if (pending.current.has(path)) return pending.current.get(path);
-      const before = latest.current[path];
-      const operation = (async () => {
-        const file = await adapter.read(path);
-        let draft = file.text ?? "";
-        let base = file;
-        let status = "";
-        if (!reload && file.editable) {
-          try {
-            const retained = JSON.parse(
-              localStorage.getItem(draftKey(path)) ?? "null",
-            );
-            if (
-              typeof retained?.draft === "string" &&
-              typeof retained?.file?.hash === "string" &&
-              typeof retained?.file?.text === "string" &&
-              retained.file.path === path
-            ) {
-              draft = retained.draft;
-              base = {
-                ...file,
-                hash: retained.file.hash,
-                text: retained.file.text,
-              };
-              status =
-                file.hash === base.hash
-                  ? "Restored unsaved draft"
-                  : "Restored draft; the file changed externally. Compare with the current file or reload before saving.";
-            }
-          } catch {
-            /* Invalid draft ignored. */
-          }
-        }
-        if (alive.current)
-          setBuffers((old) => ({
-            ...old,
-            [path]:
-              reload && old[path] && old[path] !== before
-                ? {
-                    ...old[path],
-                    status:
-                      "The file was not reloaded because you made more edits. Your draft is still open.",
-                  }
-                : { file: base, draft, status },
-          }));
-      })();
-      pending.current.set(path, operation);
-      try {
-        await operation;
-      } finally {
-        pending.current.delete(path);
-      }
+  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set());
+  const shown = useRef({ tabs, active, split });
+  shown.current = { tabs, active, split };
+  /** Take tabs away together. Returns the tab beside the first one removed. */
+  const dropTabs = useCallback((paths: string[]) => {
+    const gone = new Set(paths);
+    const { tabs } = shown.current;
+    const remaining = tabs.filter((p) => !gone.has(p));
+    const first = Math.max(
+      tabs.findIndex((p) => gone.has(p)),
+      0,
+    );
+    const next = remaining[Math.min(first, remaining.length - 1)];
+    setTabs((old) => old.filter((p) => !gone.has(p)));
+    setActive((old) =>
+      old && gone.has(old.path) ? (next ? { path: next } : null) : old,
+    );
+    setSplit((old) => (old && gone.has(old) ? null : old));
+    return next;
+  }, []);
+  /** A file that is gone loses its tab; its retained draft stays in storage. */
+  const loadFailed = useCallback(
+    (path: string, cause: unknown) => {
+      setError(workbenchErrorMessage(cause));
+      if (latest.current[path]) return;
+      if ((cause as { code?: unknown } | null)?.code === "file_missing")
+        dropTabs([path]);
+      else setFailed((old) => new Set(old).add(path));
     },
-    [adapter, draftKey],
+    [dropTabs, latest],
   );
   const navigationSequence = useRef(0);
   const open = useCallback(
@@ -184,10 +184,8 @@ export default function FileWorkspace({
         return;
       }
       if (sequence !== navigationSequence.current || !alive.current) return;
-      if (location.line)
-        setModes((old) => ({ ...old, [location.path]: "source" }));
-      else if (location.fragment)
-        setModes((old) => ({ ...old, [location.path]: "preview" }));
+      if (location.line) setMode(location.path, "source");
+      else if (location.fragment) setMode(location.path, "preview");
       setTabs((old) =>
         old.includes(location.path) ? old : [...old, location.path],
       );
@@ -198,163 +196,53 @@ export default function FileWorkspace({
       setForward([]);
       setPassage(null);
     },
-    [load],
+    [load, setMode],
+  );
+  const openReporting = useCallback(
+    (location: FileLocation) =>
+      void open(location).catch((e) => loadFailed(location.path, e)),
+    [open, loadFailed],
   );
   useEffect(() => {
-    if (initial) void open(initial).catch((e) => setError(String(e)));
-  }, [initial, open]);
+    if (initial) void open(initial).catch((e) => loadFailed(initial.path, e));
+  }, [initial, open, loadFailed]);
   useEffect(() => {
+    setFailed((old) => (old.size ? new Set() : old));
     for (const path of new Set(
       [active?.path, split].filter((p): p is string => Boolean(p)),
     ))
-      void load(path).catch((e) => setError(String(e)));
-  }, [active?.path, split, load]);
+      void load(path).catch((e) => loadFailed(path, e));
+    evict([active?.path, split]);
+  }, [active?.path, split, load, evict, loadFailed]);
   useEffect(() => {
     try {
       localStorage.setItem(
         `pipeline.files.layout.${adapter.id}`,
-        JSON.stringify({ tabs, active, split }),
+        JSON.stringify({ tabs, active, split, browser: browserOpen }),
       );
     } catch {
       /* Layout is optional. */
     }
-  }, [tabs, active, split, adapter.id]);
-  const retain = useCallback(
-    (values: Record<string, Buffer>) => {
-      for (const [path, buffer] of Object.entries(values)) {
-        if (!buffer.file.editable) continue;
-        try {
-          if (buffer.draft !== buffer.file.text)
-            localStorage.setItem(
-              draftKey(path),
-              JSON.stringify({
-                file: { path, hash: buffer.file.hash, text: buffer.file.text },
-                draft: buffer.draft,
-              }),
-            );
-          else localStorage.removeItem(draftKey(path));
-        } catch {
-          if (alive.current)
-            setError(
-              "Draft storage is full. Save your files before closing Pipeline.",
-            );
-        }
-      }
-    },
-    [draftKey],
-  );
-  useEffect(() => {
-    const timer = setTimeout(() => retain(buffers), 250);
-    return () => clearTimeout(timer);
-  }, [buffers, retain]);
-  useEffect(() => {
-    const flush = () => retain(latest.current);
-    window.addEventListener("pagehide", flush);
-    return () => {
-      flush();
-      window.removeEventListener("pagehide", flush);
-    };
-  }, [retain]);
+  }, [tabs, active, split, browserOpen, adapter.id]);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "p") {
         e.preventDefault();
-        search.current?.focus();
+        setBrowserOpen(true);
+        requestAnimationFrame(() => search.current?.focus());
       }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
-  const save = async (path: string, replacement?: string) => {
-    const buffer = latest.current[path];
-    if (!buffer || !adapter.save || !buffer.file.editable || saving) return;
-    setSaving(path);
-    setError("");
-    const text = replacement ?? buffer.draft;
-    try {
-      const hash = await adapter.save(buffer.file, text);
-      if (!alive.current) return;
-      setBuffers((old) => ({
-        ...old,
-        [path]: {
-          ...old[path],
-          file: {
-            ...old[path].file,
-            hash,
-            text,
-            bytes: new TextEncoder().encode(text).length,
-          },
-          draft:
-            replacement !== undefined && old[path].draft === buffer.draft
-              ? text
-              : old[path].draft,
-          status: "Saved",
-        },
-      }));
-      onSaved?.();
-    } catch (e) {
-      if ((e as { code?: unknown } | null)?.code !== "storage_conflict") {
-        setError(workbenchErrorMessage(e));
-        return;
-      }
-      // A conflict means either a newer copy of the file or a save refused
-      // while a response runs; the file's current hash tells them apart.
-      let changed: boolean;
-      try {
-        changed = (await adapter.read(path)).hash !== buffer.file.hash;
-      } catch (readError) {
-        if (alive.current) setError(workbenchErrorMessage(readError));
-        return;
-      }
-      if (!alive.current) return;
-      setBuffers((old) =>
-        old[path]
-          ? {
-              ...old,
-              [path]: {
-                ...old[path],
-                status: changed
-                  ? "The file changed elsewhere after you opened it. Compare with the current file to keep your draft, or reload to discard it."
-                  : "Stop the running response before saving.",
-              },
-            }
-          : old,
-      );
-    } finally {
-      setSaving(null);
-    }
-  };
-  // Adopt the file's current bytes as the base and keep the draft, so Changes
-  // shows the draft against the current file and Save can replace it.
-  const compareWithCurrent = async (path: string) => {
-    setError("");
-    try {
-      const current = await adapter.read(path);
-      if (!alive.current) return;
-      setBuffers((old) =>
-        old[path]
-          ? {
-              ...old,
-              [path]: {
-                ...old[path],
-                file: current,
-                status:
-                  "Changes now compares your draft with the current file. Saving replaces the current file with your draft.",
-              },
-            }
-          : old,
-      );
-      setModes((old) => ({ ...old, [path]: "diff" }));
-    } catch (e) {
-      if (alive.current) setError(workbenchErrorMessage(e));
-    }
-  };
   const navigation = useMemo(
     () => ({
       path: active?.path ?? "",
       open,
       image: async (path: string) => {
-        const file = await adapter.read(path);
+        const file = await (adapter.readInline ?? adapter.read)(path);
+        // The bytes are inline, so nothing will use a stream opened with them.
+        if (file.streamToken) adapter.release?.(file.streamToken);
         if (!file.base64 || !file.mime.startsWith("image/"))
           throw new Error("This file is not a previewable image");
         return `data:${file.mime};base64,${file.base64}`;
@@ -362,6 +250,11 @@ export default function FileWorkspace({
     }),
     [active?.path, adapter, open],
   );
+  useEffect(() => {
+    workspaceRoot.current
+      ?.querySelector('.file-tab[data-active="true"]')
+      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [active?.path]);
   useEffect(() => {
     if (!active?.fragment || !buffers[active.path]) return;
     const frame = requestAnimationFrame(() => {
@@ -392,10 +285,7 @@ export default function FileWorkspace({
     }
     setActive(next);
     if (next.line || next.fragment)
-      setModes((old) => ({
-        ...old,
-        [next.path]: next.line ? "source" : "preview",
-      }));
+      setMode(next.path, next.line ? "source" : "preview");
     setPassage(null);
   };
   const completionTexts = useMemo(
@@ -409,76 +299,66 @@ export default function FileWorkspace({
     tabs,
     active?.path ?? "",
     (path) => {
-      void open({ path }).catch((e) => setError(String(e)));
+      openReporting({ path });
     },
     "manual",
   );
-  const closeTab = (path: string) => {
+  const closeTabs = (paths: string[]) => {
     navigationSequence.current++;
     retain(latest.current);
-    const remaining = tabs.filter((p) => p !== path);
-    const next = remaining[Math.min(tabs.indexOf(path), remaining.length - 1)];
-    setTabs(remaining);
-    if (active?.path === path) setActive(next ? { path: next } : null);
-    if (split === path) setSplit(null);
+    const next = dropTabs(paths);
     requestAnimationFrame(() => {
       if (next) tabList.focus(next);
       else search.current?.focus();
     });
   };
+  /** Tabs, panes and drafts follow a renamed file or folder. */
+  const followMove = (from: string, to: string) => {
+    navigationSequence.current++;
+    retain(latest.current);
+    const moved = remap(from, to);
+    const carry = (path: string) => movedPath(path, from, to) ?? path;
+    setTabs((old) => old.map(carry));
+    setActive((old) => (old ? { ...old, path: carry(old.path) } : old));
+    setSplit((old) => (old ? carry(old) : old));
+    setHistory((old) => old.map((l) => ({ ...l, path: carry(l.path) })));
+    setForward((old) => old.map((l) => ({ ...l, path: carry(l.path) })));
+    setModes((old) =>
+      Object.fromEntries(
+        Object.entries(old).map(([path, mode]) => [carry(path), mode]),
+      ),
+    );
+    // Open streams name the old path. A draft keeps its text and base hash.
+    setTimeout(() => {
+      for (const path of moved) {
+        const buffer = latest.current[path];
+        if (buffer && !isDirty(buffer))
+          void load(path, true).catch((e) =>
+            setError(workbenchErrorMessage(e)),
+          );
+      }
+    });
+  };
+  // A file with unsaved text keeps its tab. One never read has nothing to show.
+  const followTrash = (trashed: string) => {
+    const closing = [...tabs, ...(split ? [split] : [])].filter(
+      (path) =>
+        movedPath(path, trashed, "") !== null &&
+        (!latest.current[path] || forget(path)),
+    );
+    if (closing.length) closeTabs(closing);
+  };
   const renderPane = (location: FileLocation) => {
     const buffer = buffers[location.path];
-    if (!buffer) return <p className="file-status">Opening {location.path}…</p>;
-    const file = buffer.file;
-    const dirty = buffer.draft !== file.text;
-    const markdown = /\.(md|markdown|rmd|qmd)$/i.test(file.path);
-    const previewable = markdown || file.mime === "image/svg+xml";
-    const renderedPreview =
-      file.mime === "image/svg+xml" && file.base64 ? (
-        <img
-          alt={file.path}
-          src={`data:${file.mime};charset=utf-8,${encodeURIComponent(buffer.draft)}`}
-        />
-      ) : (
-        <ReportViewer markdown={buffer.draft} />
+    if (!buffer)
+      return (
+        <p className="file-status">
+          {failed.has(location.path)
+            ? `${location.path} could not be opened.`
+            : `Opening ${location.path}…`}
+        </p>
       );
-    const mode = modes[file.path] ?? (markdown ? "preview" : "source");
-    const editor = (
-      <SourceEditor
-        value={buffer.draft}
-        path={`${adapter.id}/${file.path}`}
-        label={`Source editor: ${file.path}`}
-        readOnly={!file.editable}
-        reveal={location}
-        completionTexts={completionTexts}
-        onSave={() => void save(file.path)}
-        onChange={(draft) =>
-          setBuffers((old) =>
-            old[file.path].draft === draft
-              ? old
-              : { ...old, [file.path]: { ...old[file.path], draft } },
-          )
-        }
-        onSelection={(s) =>
-          setPassage(
-            s.text
-              ? {
-                  path: file.path,
-                  hash: file.hash,
-                  quote: s.text,
-                  start: new TextEncoder().encode(
-                    buffer.draft.slice(0, s.start),
-                  ).length,
-                  end: new TextEncoder().encode(buffer.draft.slice(0, s.end))
-                    .length,
-                  line: s.line,
-                  draft: dirty,
-                }
-              : null,
-          )
-        }
-      />
-    );
+    const file = buffer.file;
     return (
       <FileNavigationScope
         value={{
@@ -487,278 +367,160 @@ export default function FileWorkspace({
           root: file.scopeRoot ?? undefined,
         }}
       >
-        <div key={file.path} className="file-pane" tabIndex={0}>
-          <div className="file-toolbar">
-            <strong className="mr-auto break-all">
-              {file.path}
-              {dirty && file.editable ? " •" : ""}
-            </strong>
-            {file.text !== null && (
-              <>
-                {(previewable
-                  ? ["source", "preview", "split", "diff"]
-                  : file.editable
-                    ? ["source", "diff"]
-                    : ["source"]
-                ).map((m) => (
-                  <button
-                    key={m}
-                    aria-pressed={mode === m}
-                    onClick={() =>
-                      setModes((old) => ({
-                        ...old,
-                        [file.path]: m as typeof mode,
-                      }))
-                    }
-                  >
-                    {m === "diff" ? "Changes" : m[0].toUpperCase() + m.slice(1)}
-                  </button>
-                ))}
-              </>
-            )}
-            {file.editable && (
-              <>
-                <button
-                  disabled={!dirty || saving !== null}
-                  onClick={() => void save(file.path)}
-                >
-                  {saving === file.path ? "Saving…" : "Save"}
-                </button>
-                <button
-                  disabled={!dirty}
-                  onClick={() =>
-                    setBuffers((old) => ({
-                      ...old,
-                      [file.path]: {
-                        ...old[file.path],
-                        draft: old[file.path].file.text ?? "",
-                      },
-                    }))
-                  }
-                >
-                  Discard draft
-                </button>
-                {dirty && (
-                  <button
-                    disabled={saving !== null}
-                    onClick={() => void compareWithCurrent(file.path)}
-                  >
-                    Compare with current file
-                  </button>
-                )}
-              </>
-            )}
-            <button
-              onClick={async () => {
-                if (
-                  dirty &&
-                  file.editable &&
-                  !(await confirmDialog(
-                    `Reload ${file.path} from the project and discard your unsaved draft?`,
-                    {
-                      title: "Discard unsaved draft",
-                      confirmLabel: "Discard and reload",
-                      destructive: true,
-                    },
-                  ))
-                )
-                  return;
-                void load(file.path, true).catch((e) => setError(String(e)));
-              }}
-            >
-              Reload
-            </button>
-            {(adapter.external || file.externalPath) && (
-              <button
-                onClick={() =>
-                  void (
-                    adapter.external
-                      ? adapter.external(file.path)
-                      : openExternal(file.externalPath!)
-                  ).catch((e) => setError(String(e)))
-                }
-              >
-                Open externally
-              </button>
-            )}
-            {adapter.reveal && (
-              <button
-                onClick={() =>
-                  void adapter.reveal!(file.path).catch((e) =>
-                    setError(String(e)),
-                  )
-                }
-              >
-                Reveal in folder
-              </button>
-            )}
-          </div>
-          {file.truncated && (
-            <p role="status" className="file-status">
-              This file preview is truncated. Editing is disabled.
-            </p>
-          )}
-          {buffer.status && (
-            <p role="status" className="file-status">
-              {buffer.status}
-            </p>
-          )}
-          {file.mime === "application/pdf" && file.base64 ? (
-            <Suspense fallback={<p>Loading PDF reader…</p>}>
-              <PdfReader
-                documentKey={`${adapter.id}:${file.path}:${file.hash}`}
-                title={file.path}
-                initialPage={location.page}
-                load={() => Promise.resolve(file.base64!)}
-              />
-            </Suspense>
-          ) : file.mime.startsWith("image/") &&
-            file.base64 &&
-            file.text === null ? (
-            <img
-              alt={file.path}
-              src={`data:${file.mime};base64,${file.base64}`}
-              className="max-w-full self-start"
-            />
-          ) : file.text === null ? (
-            <p className="file-status">
-              Binary file · {file.bytes.toLocaleString()} bytes.
-            </p>
-          ) : /\.(csv|tsv)$/i.test(file.path) && !file.editable ? (
-            <ResearchTablePreview text={file.text} path={file.path} />
-          ) : mode === "diff" ? (
-            <SourceDiff
-              before={file.text}
-              after={buffer.draft}
-              path={file.path}
-            />
-          ) : mode === "source" ? (
-            editor
-          ) : mode === "preview" ? (
-            <div className="min-h-0 flex-1 overflow-auto">
-              {renderedPreview}
-            </div>
-          ) : (
-            <SplitView
-              key={`${adapter.id}:${file.path}`}
-              storageKey={`pipeline.files.sourceSplit.${adapter.id}.${file.path}`}
-              firstLabel="Source"
-              secondLabel="Preview"
-              first={editor}
-              second={renderedPreview}
-            />
-          )}
-        </div>
+        <Suspense fallback={<p className="file-status">Loading file…</p>}>
+          <FilePane
+            // Text from Load more belongs to one version of one file. A file
+            // that can be edited keeps its editor across a save.
+            key={file.truncated ? `${file.path}:${file.hash}` : file.path}
+            adapter={adapter}
+            location={location}
+            buffer={buffer}
+            mode={modes[file.path]}
+            setMode={(mode) => setMode(file.path, mode)}
+            saving={saving}
+            completionTexts={completionTexts}
+            onDraft={(draft) =>
+              update(file.path, (old) =>
+                old.draft === draft ? old : { ...old, draft },
+              )
+            }
+            onDiscard={() =>
+              update(file.path, (old) => ({
+                ...old,
+                draft: old.file.text ?? "",
+              }))
+            }
+            onSave={() => void save(file.path)}
+            onCompare={() => void compareWithCurrent(file.path)}
+            onReload={() =>
+              void load(file.path, "discard").catch((e) =>
+                setError(workbenchErrorMessage(e)),
+              )
+            }
+            onExternal={() =>
+              void adapter
+                .external?.(file.path)
+                .catch((e) => setError(workbenchErrorMessage(e)))
+            }
+            onReveal={() =>
+              void adapter
+                .reveal?.(file.path)
+                .catch((e) => setError(workbenchErrorMessage(e)))
+            }
+            onPassage={setPassage}
+          />
+        </Suspense>
       </FileNavigationScope>
     );
   };
-  return (
-    <div
-      ref={workspaceRoot}
-      className="file-workspace"
-      aria-label="File workspace"
-    >
-      <div className="file-toolbar">
-        <button disabled={!history.length} onClick={() => moveHistory(true)}>
-          Back
-        </button>
-        <button disabled={!forward.length} onClick={() => moveHistory(false)}>
-          Forward
-        </button>
-        <input
-          ref={search}
-          aria-label="Quick open file"
-          placeholder="Find a file… ⌘/Ctrl+P"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && query.trim()) {
-              const path =
-                paths.find((p) =>
-                  p.toLowerCase().includes(query.toLowerCase()),
-                ) ?? query;
-              void open({ path }).catch((e) => setError(String(e)));
-              setQuery("");
-            }
-          }}
-        />
-        <button
-          disabled={!active}
-          onClick={() => setSplit(split ? null : (active?.path ?? null))}
-        >
-          {split ? "Close split" : "Split pane"}
-        </button>
-        {split && (
-          <select
-            aria-label="File in second pane"
-            value={split}
-            onChange={(e) => setSplit(e.target.value)}
+  const hasBrowser = Boolean(adapter.list) || paths.length > 1;
+  const files = (
+    <div className="file-workspace-main">
+      <div className="file-tabbar">
+        {hasBrowser && (
+          <IconButton
+            size="sm"
+            label={browserOpen ? "Hide file list" : "Show file list"}
+            tooltipSide="bottom"
+            onClick={() => setBrowserOpen(!browserOpen)}
           >
-            {[...new Set([...tabs, ...paths])].map((path) => (
-              <option key={path}>{path}</option>
-            ))}
-          </select>
+            <Icon name="sidebar" className="h-4 w-4" />
+          </IconButton>
         )}
-        {passage && onAsk && (
-          <button onClick={() => onAsk(passage)}>Ask about selection</button>
-        )}
-      </div>
-      {query && (
-        <div className="max-h-44 overflow-auto border-b p-2">
-          {paths
-            .filter((path) => path.toLowerCase().includes(query.toLowerCase()))
-            .slice(0, 100)
-            .map((path) => (
-              <button
-                className="block w-full p-1 text-left font-mono text-xs"
-                key={path}
-                onClick={() => {
-                  void open({ path }).catch((e) => setError(String(e)));
-                  setQuery("");
-                }}
-              >
-                {path}
-              </button>
-            ))}
-        </div>
-      )}
-      <div className="file-tabs" role="tablist" aria-label="Open files">
-        {tabs.map((path) => {
-          const props = tabList.tabProps(path);
-          return (
-            <div
-              key={path}
-              className="file-tab"
-              role="presentation"
-              data-active={active?.path === path}
+        {(history.length > 0 || forward.length > 0) && (
+          <>
+            <IconButton
+              size="sm"
+              label="Back"
+              tooltipSide="bottom"
+              disabled={!history.length}
+              onClick={() => moveHistory(true)}
             >
-              <button
-                {...props}
-                title={`${path} · Delete to close`}
-                onKeyDown={(event) => {
-                  if (event.key === "Delete") {
-                    event.preventDefault();
-                    closeTab(path);
-                  } else props.onKeyDown(event);
-                }}
+              <Icon name="arrow-left" className="h-4 w-4" />
+            </IconButton>
+            <IconButton
+              size="sm"
+              label="Forward"
+              tooltipSide="bottom"
+              disabled={!forward.length}
+              onClick={() => moveHistory(false)}
+            >
+              <Icon name="arrow" className="h-4 w-4" />
+            </IconButton>
+          </>
+        )}
+        <div className="file-tabs" role="tablist" aria-label="Open files">
+          {tabs.map((path) => {
+            const props = tabList.tabProps(path);
+            const name = path.split("/").pop() ?? path;
+            return (
+              <div
+                key={path}
+                className="file-tab"
+                role="presentation"
+                data-active={active?.path === path}
               >
-                {path.split("/").pop()}
-                {buffers[path]?.file.editable &&
-                buffers[path].draft !== buffers[path].file.text
-                  ? " •"
-                  : ""}
-              </button>
-              <button
-                type="button"
-                tabIndex={active?.path === path ? 0 : -1}
-                aria-label={`Close ${path}`}
-                onClick={() => closeTab(path)}
-              >
-                ×
-              </button>
-            </div>
-          );
-        })}
+                <button
+                  {...props}
+                  className="file-tab-name"
+                  title={`${path} · Delete to close`}
+                  onKeyDown={(event) => {
+                    if (event.key === "Delete") {
+                      event.preventDefault();
+                      closeTabs([path]);
+                    } else props.onKeyDown(event);
+                  }}
+                >
+                  <FileIcon name={name} />
+                  <span className="file-tab-label">
+                    {name}
+                    {buffers[path] && isDirty(buffers[path]) ? " •" : ""}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  className="file-tab-close"
+                  tabIndex={active?.path === path ? 0 : -1}
+                  aria-label={`Close ${path}`}
+                  onClick={() => closeTabs([path])}
+                >
+                  <Icon name="close" className="h-3 w-3" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <div className="file-tabbar-end">
+          {passage && onAsk && (
+            <button
+              className="file-action primary"
+              onClick={() => onAsk(passage)}
+            >
+              Ask about selection
+            </button>
+          )}
+          {split && (
+            <select
+              aria-label="File in second pane"
+              value={split}
+              onChange={(e) => setSplit(e.target.value)}
+            >
+              {[...new Set([...tabs, ...paths])].map((path) => (
+                <option key={path}>{path}</option>
+              ))}
+            </select>
+          )}
+          <IconButton
+            size="sm"
+            label={split ? "Close split" : "Split pane"}
+            tooltipSide="bottom"
+            aria-pressed={Boolean(split)}
+            disabled={!active}
+            onClick={() => setSplit(split ? null : (active?.path ?? null))}
+          >
+            <Icon name="columns" className="h-4 w-4" />
+          </IconButton>
+        </div>
       </div>
       {error && (
         <p role="alert" className="file-error">
@@ -790,10 +552,49 @@ export default function FileWorkspace({
           {renderPane(active)}
         </div>
       ) : (
-        <p className="file-status">
-          Choose a file above. Pipeline keeps unsaved drafts when you switch
-          files.
-        </p>
+        <div className="file-empty">
+          <EmptyState
+            icon={<Icon name="file" className="h-8 w-8" />}
+            title="No file open"
+            description={
+              hasBrowser
+                ? "Choose a file from the list. Unsaved drafts stay when you switch files."
+                : "Unsaved drafts stay when you switch files."
+            }
+          />
+        </div>
+      )}
+    </div>
+  );
+  return (
+    <div
+      ref={workspaceRoot}
+      className="file-workspace"
+      aria-label="File workspace"
+    >
+      {hasBrowser ? (
+        <div
+          className="file-workspace-body"
+          data-browser={browserOpen ? "open" : "closed"}
+        >
+          <div className="file-browser-slot" hidden={!browserOpen}>
+            <FileBrowser
+              adapter={adapter}
+              paths={paths}
+              activePath={active?.path}
+              onOpen={openReporting}
+              onChanged={onSaved}
+              onMoved={followMove}
+              onTrashed={followTrash}
+              onAddToDocuments={onAddToDocuments}
+              onAskFile={onAskFile}
+              searchRef={search}
+            />
+          </div>
+          {files}
+        </div>
+      ) : (
+        files
       )}
     </div>
   );

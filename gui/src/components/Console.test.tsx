@@ -570,4 +570,39 @@ describe("Console", () => {
       screen.getByText(/Copy prompt copies only the visible text/),
     ).toBeVisible();
   });
+
+  it("shrinks with the window and the column it shares", () => {
+    const logs = [log("Started")];
+    const innerHeight = window.innerHeight;
+    try {
+      render(<Console logs={logs} usage={EMPTY_USAGE} active />);
+      const panel = screen.getByTestId("console-panel");
+      const handle = screen.getByRole("separator", { name: "Resize console" });
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        value: 1000,
+      });
+      fireEvent.keyDown(handle, { key: "End" });
+      expect(panel.style.height).toBe("904px");
+
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        value: 500,
+      });
+      fireEvent(window, new Event("resize"));
+      expect(panel.style.height).toBe("404px");
+
+      Object.defineProperty(panel.parentElement, "clientHeight", {
+        configurable: true,
+        value: 300,
+      });
+      fireEvent(window, new Event("resize"));
+      expect(panel.style.height).toBe("204px");
+    } finally {
+      Object.defineProperty(window, "innerHeight", {
+        configurable: true,
+        value: innerHeight,
+      });
+    }
+  });
 });

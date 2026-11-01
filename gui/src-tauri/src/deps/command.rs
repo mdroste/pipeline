@@ -8,6 +8,8 @@
 /// package executable or to `node.exe` plus its JavaScript entry point, and
 /// preserve every later argument as a distinct process argument.
 use super::*;
+use std::sync::Mutex;
+use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedCommand {
@@ -384,6 +386,59 @@ pub(crate) fn find_on_path(name: &str) -> Option<PathBuf> {
     resolve_command(name).map(|command| command.discovered_path)
 }
 
+/// How long Git's failure stands before it is tried again, for someone who has
+/// since installed the developer tools.
+const GIT_FAILURE_LASTS: Duration = Duration::from_secs(5 * 60);
+
+struct GitProbe {
+    path: PathBuf,
+    works: bool,
+    at: Instant,
+}
+
+/// A probe's answer, kept so it runs once and not on every refresh. `probe` gives
+/// None when it could not finish, which is remembered as nothing: Git's own error
+/// says more than a guess would.
+fn remembered_git_probe(
+    memory: &mut Option<GitProbe>,
+    path: &Path,
+    now: Instant,
+    probe: impl FnOnce() -> Option<bool>,
+) -> bool {
+    if let Some(seen) = memory.as_ref().filter(|seen| seen.path == path) {
+        if seen.works || now.saturating_duration_since(seen.at) < GIT_FAILURE_LASTS {
+            return seen.works;
+        }
+    }
+    let Some(works) = probe() else {
+        return true;
+    };
+    *memory = Some(GitProbe {
+        path: path.to_path_buf(),
+        works,
+        at: now,
+    });
+    works
+}
+
+/// Find Git on PATH, if it can run. On a Mac with no developer tools `/usr/bin/git`
+/// is a stand-in that fails and can raise the system's install dialog each time it
+/// starts, so finding it proves nothing and it must not be started on a timer.
+pub(crate) fn find_working_git() -> Option<PathBuf> {
+    static PROBED: Mutex<Option<GitProbe>> = Mutex::new(None);
+    let git = resolve_command("git")?;
+    let path = git.discovered_path.clone();
+    let mut memory = PROBED.lock().unwrap_or_else(|e| e.into_inner());
+    let works = remembered_git_probe(&mut memory, &path, Instant::now(), || {
+        let mut process = git.command(["--version"]);
+        configure_probe_command(&mut process);
+        crate::process::run_bounded(&mut process, PROBE_TIMEOUT, PROBE_OUTPUT_LIMIT)
+            .ok()
+            .map(|output| output.status.success())
+    });
+    works.then_some(path)
+}
+
 pub(super) fn configure_probe_command(command: &mut Command) {
     command.env("PATH", env::full_path());
 }
@@ -401,4 +456,53 @@ pub(super) fn probe_resolved(command: &ResolvedCommand, version_args: &[&str]) -
     let version = if stdout.is_empty() { stderr } else { stdout };
     let first_line = version.lines().next().unwrap_or("").trim();
     (!first_line.is_empty()).then(|| first_line.to_string())
+}
+
+#[cfg(test)]
+mod git_probe_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn a_failing_git_is_started_once_until_its_failure_lapses() {
+        let (git, mut memory, runs) = (Path::new("/usr/bin/git"), None, Cell::new(0));
+        let failing = || {
+            runs.set(runs.get() + 1);
+            Some(false)
+        };
+        let start = Instant::now();
+        assert!(!remembered_git_probe(&mut memory, git, start, failing));
+        let soon = start + GIT_FAILURE_LASTS / 2;
+        assert!(!remembered_git_probe(&mut memory, git, soon, failing));
+        assert_eq!(runs.get(), 1);
+
+        let later = start + GIT_FAILURE_LASTS;
+        assert!(remembered_git_probe(&mut memory, git, later, || Some(true)));
+        let much_later = later + GIT_FAILURE_LASTS * 10;
+        assert!(remembered_git_probe(&mut memory, git, much_later, || {
+            panic!("a working Git is not probed again")
+        }));
+    }
+
+    #[test]
+    fn a_probe_that_could_not_finish_is_not_remembered() {
+        let (git, mut memory, start) = (Path::new("/usr/bin/git"), None, Instant::now());
+        assert!(remembered_git_probe(&mut memory, git, start, || None));
+        assert!(!remembered_git_probe(&mut memory, git, start, || Some(
+            false
+        )));
+    }
+
+    #[test]
+    fn a_different_git_is_probed_on_its_own() {
+        let (mut memory, start) = (None, Instant::now());
+        let shim = Path::new("/usr/bin/git");
+        assert!(!remembered_git_probe(&mut memory, shim, start, || Some(
+            false
+        )));
+        let installed = Path::new("/opt/homebrew/bin/git");
+        assert!(remembered_git_probe(&mut memory, installed, start, || {
+            Some(true)
+        }));
+    }
 }

@@ -4,7 +4,10 @@ interface StructuredWorkbenchError {
 }
 
 function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  // An earlier String(error) leaves this text behind; it tells a reader nothing.
+  return text && text !== "[object Object]" ? text : null;
 }
 
 /**

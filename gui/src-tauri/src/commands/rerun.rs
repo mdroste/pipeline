@@ -4,20 +4,24 @@ mod document;
 mod files;
 mod inputs;
 mod reuse;
+mod workflow;
 
+use files::read_parent_report;
 pub(super) use files::{load_run_report, load_run_report_in, read_run_file, read_run_file_in};
 use reuse::orientation_contract_error;
 #[cfg(test)]
 pub(super) use reuse::{
     collect_preloaded_outputs, failed_base_ids, incompatible_reuse_ids, resume_seed_ids,
+    select_reusable_outputs,
 };
 
 // --- Resume / partial re-run (1.3.2) ---
 
 /// Re-run a past run, reusing its captured document and orientation and (for
 /// partial modes) its successful step outputs, so only the necessary steps
-/// re-execute. Uses the *active* profile's steps, so editing a prompt and
-/// re-running is cheap. Modes:
+/// re-execute. `rerun/workflow.rs` decides which workflow runs: normally the
+/// run's own, so `variables` carries only re-entered secrets, which a run
+/// never retains. Modes:
 ///   - `from_step = Some(id)`: reuse steps before `id`; re-run `id` onward.
 ///   - `only_failed = true`: reuse successful steps except those downstream of
 ///     a failed step.
@@ -28,17 +32,70 @@ pub async fn rerun_run(
     run_id: String,
     from_step: Option<String>,
     only_failed: bool,
+    variables: Option<std::collections::HashMap<String, String>>,
 ) -> Result<serde_json::Value, String> {
-    crate::runs::recover_resumable_runs()?;
+    // Recovery is best effort: a failure here concerns other runs too, and
+    // this run's own files decide below whether it can continue.
+    let _ = crate::runs::recover_resumable_runs();
     let guard = acquire_run_slot()?;
     let run = crate::run_scope::ActiveScope::begin(super::run_queue::next_run_key());
     let bus = crate::emit::from_app(app);
     PipelineTask::spawn_future(run.scope().clone(), async move {
         let _guard = guard;
-        rerun_run_inner(&bus, &run_id, from_step, only_failed).await
+        rerun_run_inner(
+            &bus,
+            &run_id,
+            from_step,
+            only_failed,
+            variables.unwrap_or_default(),
+        )
+        .await
     })
     .join()
     .await
+}
+
+/// A secret a re-run must ask for again before it can start.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RerunSecret {
+    pub key: String,
+    pub label: String,
+}
+
+/// What the researcher must see or supply before a re-run can start.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RerunRequirements {
+    pub secrets: Vec<RerunSecret>,
+    pub notice: Option<String>,
+}
+
+/// Check a re-run before it is queued: this refuses a run whose workflow can
+/// no longer be established, and lists what to ask the researcher.
+#[tauri::command]
+pub async fn rerun_requirements(
+    run_id: String,
+    only_failed: bool,
+) -> Result<RerunRequirements, String> {
+    let settings = crate::settings::load_persisted_required()
+        .map_err(|e| format!("Cannot re-run because settings could not be loaded safely: {e}"))?;
+    let parent = crate::runs::load_manifest(&run_id)?;
+    let workflow =
+        workflow::load_rerun_workflow(&run_id, &parent, &settings.active_profile, only_failed)?;
+    let secrets = secrets_to_reenter(&workflow.document.config, &parent.variables)
+        .into_iter()
+        .map(|spec| RerunSecret {
+            key: spec.key.clone(),
+            label: if spec.label.trim().is_empty() {
+                spec.key.clone()
+            } else {
+                spec.label.clone()
+            },
+        })
+        .collect();
+    Ok(RerunRequirements {
+        secrets,
+        notice: workflow.notice,
+    })
 }
 
 pub(super) async fn rerun_run_inner(
@@ -46,17 +103,33 @@ pub(super) async fn rerun_run_inner(
     parent_run_id: &str,
     from_step: Option<String>,
     only_failed: bool,
+    secret_variables: std::collections::HashMap<String, String>,
 ) -> Result<serde_json::Value, String> {
     let _run_state = begin_run_state();
+    // Held for the whole re-run: another review's retention must not move the
+    // parent to Trash while its files are being read.
+    let _parent_hold = crate::runs::hold_from_retention(parent_run_id);
     let start = std::time::Instant::now();
-    let settings = crate::settings::load_persisted_required()
+    let mut settings = crate::settings::load_persisted_required()
         .map_err(|e| format!("Cannot re-run because settings could not be loaded safely: {e}"))?;
+    // Store-wide recovery waits until no review is running, so a parent that
+    // stopped since then may not have its report yet.
+    let parent_recovery = crate::runs::recover_stopped_run(parent_run_id);
+    let parent = crate::runs::load_manifest(parent_run_id)?;
+    let workflow = workflow::load_rerun_workflow(
+        parent_run_id,
+        &parent,
+        &settings.active_profile,
+        only_failed,
+    )?;
+    // As for a one-off CLI run, the run records the workflow it executes
+    // without changing the persisted active profile.
+    settings.active_profile = workflow.profile_id.clone();
     let _settings_snapshot = crate::settings::freeze_for_run(settings.clone());
 
-    let parent = crate::runs::load_manifest(parent_run_id)?;
     preflight_run_storage(std::path::Path::new(&parent.input_path))?;
-    let report_json = read_run_file(parent_run_id, "report.json")
-        .map_err(|_| "This run predates re-run support (no report.json). Re-run is only available for runs created after upgrading.".to_string())?;
+    let parent_dir = crate::runs::runs_dir()?.join(parent_run_id);
+    let report_json = read_parent_report(&parent_dir, parent_recovery.err())?;
     let parent_report: PipelineReport = serde_json::from_str(&report_json)
         .map_err(|e| format!("Invalid parent report.json: {e}"))?;
     let input_identity = crate::runs::input_identity(
@@ -65,16 +138,22 @@ pub(super) async fn rerun_run_inner(
         &parent_report.paper_hash,
         Some(&parent.input_identity),
     );
-    let parent_dir = crate::runs::runs_dir()?.join(parent_run_id);
     let document_rel = crate::runs::captured_document_rel_path(&parent_dir, &parent)?;
     let document_text = read_run_file(parent_run_id, document_rel)?;
     let mut orientation_value: serde_json::Value = parent_report.orientation.clone();
 
-    // Active profile drives the re-run (edited prompts take effect).
-    let workflow = pipeline_config::load_required_workflow_for(&settings.active_profile)?;
+    let workflow_notice = workflow.notice;
+    if let Some(notice) = &workflow_notice {
+        app.emit_event(
+            "pipeline:log",
+            serde_json::json!({ "line": format!("WARNING: {notice}") }),
+        )
+        .ok();
+    }
+    let workflow_source = workflow.source;
+    let workflow = workflow.document;
     let mut config = workflow.config.clone();
     let profile_name = workflow.name.clone();
-    let workflow_source = format!("profile:{}", settings.active_profile);
     let workflow_fingerprint = workflow.fingerprint.clone();
     let workflow_json = workflow.canonical_json.clone();
     pipeline_config::validate_enabled_sequential_step(&config.steps)?;
@@ -98,19 +177,15 @@ pub(super) async fn rerun_run_inner(
         );
     }
     pipeline_config::apply_agent_defaults(&mut config, &settings);
-    crate::safety::validate_runtime_context(&parent.variables, "Re-run variables")?;
+    let variables = rerun_variables(&config, &parent.variables, secret_variables)?;
+    crate::safety::validate_runtime_context(&variables, "Re-run variables")?;
     crate::safety::validate_runtime_context(
         &parent.extra_input_sources,
         "Re-run named input paths",
     )?;
     crate::safety::validate_runtime_context(&parent.extra_inputs, "Re-run captured input paths")?;
-    validate_runtime_bindings(
-        &config,
-        &parent.variables,
-        &parent.extra_input_sources,
-        true,
-    )?;
-    let durable_variables = durable_variables(&config, &parent.variables);
+    validate_runtime_bindings(&config, &variables, &parent.extra_input_sources, true)?;
+    let durable_variables = durable_variables(&config, &variables);
     crate::safety::validate_run_budget(&config, &settings)?;
 
     // Keep all reconstructed model-readable inputs in one private root.
@@ -133,8 +208,8 @@ pub(super) async fn rerun_run_inner(
         .as_deref()
         .and_then(|path| crate::pipeline::claude::normalize_cli_root(&path.to_string_lossy()));
 
-    // The active profile drives a re-run, so a cached orientation is reusable
-    // only when it still satisfies that profile's current schema and semantic
+    // Regenerate may run an edited workflow, so a cached orientation is
+    // reusable only when it still satisfies that workflow's schema and semantic
     // contract. Rebuilding it invalidates every downstream step.
     let orientation_error =
         orientation_contract_error(&config, &orientation_value, &parent.input_mode).err();
@@ -148,7 +223,7 @@ pub(super) async fn rerun_run_inner(
         };
         app.emit_event("pipeline:log", serde_json::json!({
             "line": format!(
-                "Re-run: rebuilding the parent orientation because it does not satisfy the active workflow ({contract_error})"
+                "Re-run: rebuilding the parent orientation because it does not satisfy this workflow ({contract_error})"
             )
         }))
             .ok();
@@ -254,7 +329,7 @@ pub(super) async fn rerun_run_inner(
         super::reuse_artifacts::retain_source(&scoped_source, writer)?;
         writer
             .add_text(
-                "context/workflow.json",
+                workflow::WORKFLOW_SNAPSHOT_PATH,
                 "Workflow snapshot",
                 "context",
                 &workflow_json,
@@ -271,7 +346,8 @@ pub(super) async fn rerun_run_inner(
         method: "resumed-document".to_string(),
         source_path: parent.input_path.clone(),
         paper_hash: parent_report.paper_hash.clone(),
-        quality_notes: Vec::new(),
+        // The report keeps what the researcher was told before continuing.
+        quality_notes: workflow_notice.into_iter().collect(),
     };
     let orientation_sampling = orient::orientation_sample(&document_text);
     let document::RestoredDocument {
@@ -341,7 +417,6 @@ pub(super) async fn rerun_run_inner(
         .map(|v| v.metadata.paper_type.to_string())
         .unwrap_or_default();
     let survey_hint = crate::models::survey_hint(&orientation_value);
-    let variables = parent.variables.clone();
 
     let result = executor::budget::counted_from(
         budget_start,

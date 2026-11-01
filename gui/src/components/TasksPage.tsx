@@ -107,12 +107,18 @@ export default function TasksPage({
           ? Promise.resolve([])
           : taskClient.list(view, null, offset),
         view === "scheduled" ? taskClient.schedules() : Promise.resolve([]),
-        selectedId ? taskClient.get(selectedId) : Promise.resolve(null),
+        // Cleanup can remove a run a saved route still names; the lists stand.
+        selectedId
+          ? taskClient.get(selectedId).catch(() => null)
+          : Promise.resolve(null),
       ]);
       if (version !== refreshVersion.current) return;
       setRuns(rows);
       setSchedules(planned);
-      if (selectedId === selectedRef.current) setSelected(detail);
+      if (selectedId === selectedRef.current) {
+        if (!detail) selectedRef.current = null;
+        setSelected(detail);
+      }
       setError("");
     } catch (e) {
       if (version === refreshVersion.current) setError(String(e));
@@ -277,6 +283,12 @@ export default function TasksPage({
                       schedule={s}
                       onUpdated={() => void refresh()}
                       onError={setError}
+                      onOpenRun={async (id) => {
+                        const run = await taskClient.get(id);
+                        if (!(await discardDraft())) return;
+                        setView("active");
+                        select(run);
+                      }}
                     />
                   ))
                 ) : (

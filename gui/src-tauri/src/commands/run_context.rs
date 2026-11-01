@@ -1,5 +1,8 @@
 use super::*;
 
+/// What a manifest keeps in place of a secret variable's value.
+const REDACTED_SECRET: &str = "[redacted secret; re-enter to rerun]";
+
 #[derive(Clone)]
 pub(super) struct RunSnapshot {
     pub(super) settings: crate::settings::Settings,
@@ -229,7 +232,7 @@ pub(super) fn validate_runtime_bindings(
         if require_required && spec.required && value.trim().is_empty() {
             return Err(format!("Missing required variable '{label}'"));
         }
-        if require_required && spec.secret && value == "[redacted secret; re-enter to rerun]" {
+        if require_required && spec.secret && value == REDACTED_SECRET {
             return Err(format!(
                 "Secret variable '{label}' must be entered again before this run"
             ));
@@ -304,11 +307,55 @@ pub(super) fn durable_variables(
             (
                 key.clone(),
                 if secret {
-                    "[redacted secret; re-enter to rerun]".to_string()
+                    REDACTED_SECRET.to_string()
                 } else {
                     value.clone()
                 },
             )
+        })
+        .collect()
+}
+
+/// A re-run's variables are built like a fresh run's: declared defaults, then
+/// the parent's retained values, then secrets entered again for this re-run.
+pub(super) fn rerun_variables(
+    config: &PipelineConfig,
+    parent_variables: &std::collections::HashMap<String, String>,
+    entered_secrets: std::collections::HashMap<String, String>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let mut variables: std::collections::HashMap<String, String> = config
+        .variables
+        .iter()
+        .map(|spec| (spec.key.clone(), spec.default.clone()))
+        .collect();
+    variables.extend(parent_variables.clone());
+    for (key, value) in entered_secrets {
+        if !config
+            .variables
+            .iter()
+            .any(|spec| spec.key == key && spec.secret)
+        {
+            return Err(format!(
+                "Re-run supplied '{key}', which is not a secret variable of this review"
+            ));
+        }
+        variables.insert(key, value);
+    }
+    Ok(variables)
+}
+
+/// Secret variables a re-run cannot fill from what the run retained.
+pub(super) fn secrets_to_reenter<'a>(
+    config: &'a PipelineConfig,
+    parent_variables: &std::collections::HashMap<String, String>,
+) -> Vec<&'a crate::pipeline_config::VarSpec> {
+    config
+        .variables
+        .iter()
+        .filter(|spec| spec.secret)
+        .filter(|spec| match parent_variables.get(&spec.key) {
+            Some(value) => value == REDACTED_SECRET,
+            None => spec.required && spec.default.trim().is_empty(),
         })
         .collect()
 }

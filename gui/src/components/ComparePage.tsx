@@ -2,12 +2,10 @@ import { reviewHistoryClient } from "../lib/reviewHistoryClient";
 import { reportExportClient } from "../lib/reportExportClient";
 import { artifactClient } from "../lib/artifactClient";
 import { useState, useEffect, useMemo } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { lineDiff, type DiffOp } from "../lib/diff";
 import type { PipelineReport, StepOutput } from "../lib/types";
 import type { RunManifest } from "./ArtifactExplorer";
-import SafeMarkdownLink from "./SafeMarkdownLink";
+import CompactMarkdown from "./report-viewer/CompactMarkdown";
 
 interface Props {
   runA: string;
@@ -29,6 +27,16 @@ function byStep(report: PipelineReport | null): Map<string, StepOutput> {
     else map.set(key, { ...o, step_id: key });
   }
   return map;
+}
+
+/** A Markdown code fence longer than any backtick run in the content, which
+ *  would otherwise close it early. */
+function fenceFor(content: string): string {
+  const longest = Math.max(
+    2,
+    ...(content.match(/`+/g) ?? []).map((run) => run.length),
+  );
+  return "`".repeat(longest + 1);
 }
 
 function DiffBlock({ ops }: { ops: DiffOp[] }) {
@@ -73,6 +81,8 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
 
   useEffect(() => {
     setLoading(true);
+    setReportA(null);
+    setReportB(null);
     Promise.all([
       reviewHistoryClient.report({ runId: runA }),
       reviewHistoryClient.report({ runId: runB }),
@@ -114,6 +124,10 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
     return keys;
   }, [reportA, reportB]);
 
+  // A run with no saved report, such as a failed one, leaves nothing to compare.
+  const reportsLoaded = !!reportA && !!reportB;
+  const canExport = reportsLoaded && stepKeys.length > 0;
+
   const comparisonSummary = useMemo(() => {
     let changed = 0;
     let added = 0;
@@ -131,17 +145,27 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
   }, [mapA, mapB, stepKeys]);
 
   const exportDiff = async () => {
+    if (!canExport) return;
     const blocks = stepKeys.map((key) => {
       const older = mapA.get(key);
       const newer = mapB.get(key);
-      const label = newer?.step_label || older?.step_label || key;
+      const label = (newer?.step_label || older?.step_label || key)
+        .replace(/\s+/g, " ")
+        .trim();
+      // An oversized or unchanged output arrives as one multi-line operation.
       const lines = lineDiff(older?.raw_text ?? "", newer?.raw_text ?? "")
-        .map(
-          (operation) =>
-            `${operation.type === "add" ? "+" : operation.type === "del" ? "-" : " "} ${operation.text}`,
-        )
+        .flatMap((operation) => {
+          const mark =
+            operation.type === "add"
+              ? "+"
+              : operation.type === "del"
+                ? "-"
+                : " ";
+          return operation.text.split("\n").map((line) => `${mark} ${line}`);
+        })
         .join("\n");
-      return `## ${label}\n\n\`\`\`diff\n${lines}\n\`\`\``;
+      const fence = fenceFor(lines);
+      return `## ${label}\n\n${fence}diff\n${lines}\n${fence}`;
     });
     const content = [
       "# Pipeline report comparison",
@@ -194,14 +218,14 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
         </span>
         <button
           onClick={() => void exportDiff()}
-          disabled={loading}
+          disabled={loading || !canExport}
           className="ml-auto px-3 py-1 text-xs rounded-lg border border-gray-300 dark:border-gray-700 disabled:opacity-40"
         >
           Export diff…
         </button>
         <button
           onClick={runReconcile}
-          disabled={reconciling || loading}
+          disabled={reconciling || loading || !reportsLoaded}
           className="px-3 py-1 text-xs rounded-lg bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:opacity-90 disabled:opacity-40"
           title="Ask AI which concerns were addressed, which remain, and which are new. Uses one model call."
         >
@@ -218,6 +242,11 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
         {loading ? (
           <p className="text-sm text-gray-500 dark:text-gray-400 px-2">
             Loading both reports…
+          </p>
+        ) : !reportsLoaded ? (
+          <p className="text-sm text-gray-500 dark:text-gray-400 px-2">
+            These reports cannot be compared because one of them could not be
+            opened.
           </p>
         ) : (
           <>
@@ -262,7 +291,7 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
                     </dd>
                     <dt className="text-gray-500">Provider</dt>
                     <dd>{manifest?.provider || "Unknown"}</dd>
-                    <dt className="text-gray-500">Workflow</dt>
+                    <dt className="text-gray-500">Review</dt>
                     <dd>{manifest?.profile_name || "Unknown"}</dd>
                     <dt className="text-gray-500">Artifacts</dt>
                     <dd>{manifest?.artifacts.length ?? 0}</dd>
@@ -270,6 +299,12 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
                 </section>
               ))}
             </div>
+            {stepKeys.length === 0 && (
+              <p className="px-2 text-sm text-gray-500 dark:text-gray-400">
+                Neither report has any step output, so there is no difference to
+                show or export.
+              </p>
+            )}
             <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600 dark:border-gray-800 dark:bg-gray-900/60 dark:text-gray-300">
               <span className="font-medium">Summary:</span>{" "}
               {comparisonSummary.changed} changed · {comparisonSummary.added}{" "}
@@ -291,12 +326,7 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
             {reconcile && (
               <div className="border border-gray-200 dark:border-gray-800 rounded-lg p-4 bg-white dark:bg-gray-900">
                 <div className="report-content !max-w-none !p-0">
-                  <ReactMarkdown
-                    remarkPlugins={[remarkGfm]}
-                    components={{ a: SafeMarkdownLink }}
-                  >
-                    {reconcile}
-                  </ReactMarkdown>
+                  <CompactMarkdown markdown={reconcile} />
                 </div>
               </div>
             )}

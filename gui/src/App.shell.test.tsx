@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { router } from "./lib/router";
@@ -191,7 +191,12 @@ describe("App shell", () => {
       await screen.findByRole("dialog", { name: "Ready to start" }),
     ).toBeVisible();
     expect(enqueue).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Generate report" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Ready to start" })).getByRole(
+        "button",
+        { name: "Start review" },
+      ),
+    );
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("get_execution_plan", {
         variables: null,

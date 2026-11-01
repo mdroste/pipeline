@@ -1,9 +1,16 @@
 import { reviewHistoryClient } from "../lib/reviewHistoryClient";
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import {
+  lazy,
+  Suspense,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+} from "react";
 import { listedRunStatus } from "../lib/reportPresentation";
 import { router } from "../lib/router";
 import { confirmDialog, notify } from "./DialogService";
-import ComparePage from "./ComparePage";
 import ErrorBoundary from "./ErrorBoundary";
 import ReportWorkspace from "./ReportWorkspace";
 import useListScrollMemory from "./history-page/useListScrollMemory";
@@ -15,6 +22,8 @@ import type {
   TrashedRun,
 } from "../lib/types";
 import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
+
+const ComparePage = lazy(() => import("./ComparePage"));
 
 interface Props {
   onClose: () => void;
@@ -257,7 +266,7 @@ export default function HistoryPage({
     if (trashOpen) void refreshTrash();
   }, [trashOpen, refreshTrash]);
 
-  useRefreshWhenRunsFinish(runs, refresh);
+  useRefreshWhenRunsFinish(refresh);
 
   const needle = filter.trim().toLowerCase();
   const providers = useMemo(
@@ -437,11 +446,13 @@ export default function HistoryPage({
   // ── Compare view: diff two runs ──
   if (comparing) {
     return (
-      <ComparePage
-        runA={comparing[0]}
-        runB={comparing[1]}
-        onBack={() => setComparing(null)}
-      />
+      <Suspense fallback={null}>
+        <ComparePage
+          runA={comparing[0]}
+          runB={comparing[1]}
+          onBack={() => setComparing(null)}
+        />
+      </Suspense>
     );
   }
 
@@ -864,7 +875,7 @@ export default function HistoryPage({
                           title={
                             runInProgress
                               ? "A report is already being generated"
-                              : "Continue from the last completed step"
+                              : `Continue from the last completed step with ${r.profile_name || "this run's review design"}`
                           }
                         >
                           Resume
@@ -887,7 +898,7 @@ export default function HistoryPage({
                                 title={
                                   runInProgress
                                     ? "A report is already being generated"
-                                    : "Run the current review design using the saved document and input assessment."
+                                    : `Run ${r.profile_name || "this run's review design"} again using the saved document and input assessment.`
                                 }
                               >
                                 Regenerate

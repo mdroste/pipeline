@@ -75,6 +75,9 @@ pub async fn merge_step_outputs(
         Option<StepCallRecord>,
     );
     let mut tasks: JoinSet<Result<(usize, StepOutput), MergeError>> = JoinSet::new();
+    // A task that panics returns no error of its own, so its group and pass
+    // are found from its task id.
+    let mut task_groups = std::collections::HashMap::<tokio::task::Id, (usize, String)>::new();
 
     for (idx, (_base_id, group)) in groups.into_iter().enumerate() {
         if group.len() == 1 {
@@ -203,7 +206,7 @@ pub async fn merge_step_outputs(
         let timeout = settings.step_timeout_secs.max(60);
         let run_settings = settings.clone();
 
-        tasks.spawn(async move {
+        let task = crate::run_scope::spawn_in(&mut tasks, async move {
             let early_error = |error: String| {
                 (
                     idx,
@@ -288,9 +291,8 @@ pub async fn merge_step_outputs(
             .await;
             let fallback = call.usage_limit_fallback.as_ref();
             let primary_usage = fallback.map_or(call.usage, |value| value.primary_usage);
-            let primary_duration = fallback.map_or(call.duration_secs, |value| {
-                value.primary_duration_secs
-            });
+            let primary_duration =
+                fallback.map_or(call.duration_secs, |value| value.primary_duration_secs);
             let mut response_capture = match call.output.as_ref() {
                 Ok(raw_text) => match super::response_journal::capture(
                     response_root.as_deref(),
@@ -315,10 +317,20 @@ pub async fn merge_step_outputs(
                 Err(_) => None,
             };
             let merge_call = call_record(
-                if fallback.is_some() { "usage_limit_primary_merge" } else { "merge" },
-                &provider, &provider, &resolution, &effort, primary_duration, primary_usage,
+                if fallback.is_some() {
+                    "usage_limit_primary_merge"
+                } else {
+                    "merge"
+                },
+                &provider,
+                &provider,
+                &resolution,
+                &effort,
+                primary_duration,
+                primary_usage,
             );
-            let fallback_merge_call = fallback.map(|fallback| fallback_record("usage_limit_fallback_merge", fallback));
+            let fallback_merge_call =
+                fallback.map(|fallback| fallback_record("usage_limit_fallback_merge", fallback));
             if let Some(error) = cancellation_error() {
                 if let Some(capture) = response_capture.take() {
                     if let Err(journal_error) = capture
@@ -372,9 +384,8 @@ pub async fn merge_step_outputs(
                         Err((rejection_status, error)) => {
                             let rejection_reason = error.clone();
                             if let Some(capture) = response_capture.take() {
-                                if let Err(journal_error) = capture
-                                    .finish(rejection_status, &rejection_reason)
-                                    .await
+                                if let Err(journal_error) =
+                                    capture.finish(rejection_status, &rejection_reason).await
                                 {
                                     let _ = app_handle.emit_event(
                                         "pipeline:log",
@@ -392,7 +403,9 @@ pub async fn merge_step_outputs(
                             failed.role = "failed_merge".to_string();
                             return Err((
                                 idx,
-                                format!("Merge for {base_id} returned an invalid artifact: {error}"),
+                                format!(
+                                    "Merge for {base_id} returned an invalid artifact: {error}"
+                                ),
                                 call.usage,
                                 call.duration_secs,
                                 Some(failed),
@@ -485,23 +498,40 @@ pub async fn merge_step_outputs(
                 }
             }
         });
+        task_groups.insert(task.id(), (idx, merge_key));
     }
 
     // Collect merge results
     let mut errors = Vec::new();
-    while let Some(res) = tasks.join_next().await {
+    let mut stop_by = None;
+    while let Some(res) = crate::run_scope::join_next_until_stopped(
+        &mut tasks,
+        &mut stop_by,
+        crate::pipeline::executor::UNIT_STOP_GRACE,
+    )
+    .await?
+    {
         match res {
             Ok(Ok((idx, output))) => {
                 results[idx] = Some(output);
             }
             Ok(Err(error)) => errors.push(error),
-            Err(e) => errors.push((
-                usize::MAX,
-                format!("Merge task panicked: {e}"),
-                Default::default(),
-                0,
-                None,
-            )),
+            Err(e) => {
+                let (idx, merge_key) = task_groups
+                    .remove(&e.id())
+                    .unwrap_or((usize::MAX, String::new()));
+                let _ = app.emit_event(
+                    "pipeline:pass",
+                    serde_json::json!({ "name": merge_key, "status": "error" }),
+                );
+                errors.push((
+                    idx,
+                    format!("Merge task panicked: {e}"),
+                    Default::default(),
+                    0,
+                    None,
+                ));
+            }
         }
     }
 
@@ -670,6 +700,61 @@ mod tests {
             merge_group: merge_group.to_string(),
             ..Default::default()
         }
+    }
+
+    /// Panics in the merge task itself, past every provider-call boundary.
+    struct PanicsWhenAMergeStarts;
+
+    impl crate::emit::Events for PanicsWhenAMergeStarts {
+        fn emit_event(
+            &self,
+            event: &str,
+            payload: serde_json::Value,
+        ) -> Result<(), crate::emit::EmitError> {
+            assert!(!(event == "pipeline:pass" && payload["status"] == "running"));
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_panicked_merge_falls_back_to_that_groups_agent_outputs() {
+        let agent_output = |id: &str, agent: &str, text: &str| StepOutput {
+            step_id: id.to_string(),
+            step_label: "Review".to_string(),
+            merge_group: "review".to_string(),
+            agent: agent.to_string(),
+            raw_text: text.to_string(),
+            ..Default::default()
+        };
+        let app: crate::emit::EventBus = Arc::new(PanicsWhenAMergeStarts);
+        let run = crate::run_scope::ActiveScope::begin("merge-panic-test");
+        let merged = crate::run_scope::scoped(run.scope().clone(), async {
+            merge_step_outputs(
+                &app,
+                vec![
+                    agent_output("review/claude", "claude", "first analysis"),
+                    agent_output("review/codex", "codex", "second analysis"),
+                    output("summary", ""),
+                ],
+                &MergeConfig {
+                    prompt: "{topic} {agent_reports}".to_string(),
+                    ..Default::default()
+                },
+                &Arc::new(Semaphore::new(1)),
+                None,
+                &crate::settings::Settings::default(),
+                &BTreeMap::new(),
+            )
+            .await
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].step_id, "review");
+        assert!(merged[0].raw_text.contains("first analysis"));
+        assert!(merged[0].raw_text.contains("second analysis"));
+        assert_eq!(merged[1].step_id, "summary");
     }
 
     #[test]

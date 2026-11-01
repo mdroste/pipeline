@@ -1,14 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DepStatus, DepsReport } from "../../lib/types";
-import type { ToolchainReport } from "../../lib/workbench/toolchains";
 import { makeSettings } from "../../test/settingsFixtures";
-import {
-  connectionRows,
-  connectionSummary,
-  groupTools,
-  pdfRows,
-  PERSONAS,
-} from "./guide";
+import { connectionRows, connectionSummary, pdfRows } from "./guide";
 
 const dep = (overrides: Partial<DepStatus>): DepStatus => ({
   name: "Claude CLI",
@@ -21,23 +14,6 @@ const dep = (overrides: Partial<DepStatus>): DepStatus => ({
 });
 
 const report = (deps: DepStatus[]): DepsReport => ({ deps, ready: true });
-
-const tool = (
-  kind: ToolchainReport["tools"][number]["kind"],
-  label: string,
-) => ({
-  kind,
-  adapter: null,
-  label,
-  path: `/opt/${kind}`,
-  source: "path" as const,
-  version: "1.0",
-  versionText: null,
-  versionSource: "probe",
-  sha256: null,
-  sizeBytes: null,
-  note: null,
-});
 
 describe("connection rows", () => {
   it("describes each connection's state and what it is for", () => {
@@ -123,27 +99,7 @@ describe("connection rows", () => {
   });
 });
 
-describe("tools and PDF readers", () => {
-  it("puts the chosen kind of work first and names missing tools", () => {
-    const found: ToolchainReport = {
-      platform: "macos",
-      tools: [tool("python", "Python 3.12"), tool("stata", "Stata 18 MP")],
-      project: null,
-      boundary: "Read-only detection.",
-    };
-    const stata = groupTools(found, "stata-latex");
-    expect(stata.featured.map((item) => item.kind)).toEqual(["stata"]);
-    expect(stata.others.map((item) => item.kind)).toEqual(["python"]);
-    expect(stata.missing).toEqual([]);
-    const notebooks = groupTools(found, "python-notebooks");
-    expect(notebooks.featured.map((item) => item.kind)).toEqual(["python"]);
-    expect(notebooks.missing).toEqual(["jupyter"]);
-    const other = groupTools(found, null);
-    expect(other.featured).toEqual([]);
-    expect(other.others).toHaveLength(2);
-    expect(PERSONAS["word-zotero"].templates).toEqual(["reference-check"]);
-  });
-
+describe("PDF readers", () => {
   it("summarizes bundled PDF tools and the optional Full Parser", () => {
     expect(pdfRows(null)).toEqual([]);
     const rows = pdfRows(

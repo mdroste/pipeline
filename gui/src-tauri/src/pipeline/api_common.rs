@@ -263,4 +263,4 @@ pub use wire::{
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-mod web_tests;
+pub(super) mod web_tests;

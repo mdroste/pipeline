@@ -327,9 +327,7 @@ pub fn import_candidate(
     if let Some(text) = c.abstract_text {
         let hash = desk::hash(text.as_bytes());
         let path = store.root_path().join("blobs").join(format!("{hash}.txt"));
-        if !path.exists() {
-            std::fs::write(&path, text).map_err(err)?;
-        }
+        desk::write_blob_atomic(&path, text.as_bytes(), &hash).map_err(err)?;
         store.connection()?.execute("UPDATE source_versions SET text_reference=?2,content_hash=?3,access_state='abstract' WHERE id=?1 AND text_reference IS NULL",params![source.version_id,path.to_string_lossy(),hash]).map_err(err)?;
     }
     desk::insert(
@@ -435,9 +433,7 @@ pub fn record_pdf(
         Ok(bytes) => {
             let hash = desk::hash(&bytes);
             let path = store.root_path().join("blobs").join(format!("{hash}.pdf"));
-            if !path.exists() {
-                std::fs::write(&path, bytes).map_err(err)?;
-            }
+            desk::write_blob_atomic(&path, &bytes, &hash).map_err(err)?;
             let imported = research::import_source(
                 store,
                 research::ImportSourceRequest {

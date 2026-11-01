@@ -195,6 +195,84 @@ fn build_messages(
     Ok(messages)
 }
 
+/// Warm the shared-context prefix once per compatible request shape. The slot
+/// ends `ready`, or `implicit` when the endpoint would not take the warm-up,
+/// which also drops the routing hint. Returns what the warm-up spent.
+#[allow(clippy::too_many_arguments)]
+async fn warm_shared_context(
+    app: &crate::emit::EventBus,
+    client: &reqwest::Client,
+    base_url: &str,
+    api_key: &str,
+    request: &mut OpenAIRequest,
+    context: &super::context_cache::PreparedContext,
+    system_prompt: Option<&str>,
+    pdf_attachment: Option<&std::path::Path>,
+    timeout_secs: u64,
+    label: &str,
+    access: &ToolAccess,
+) -> Result<Usage, String> {
+    let mut warm_usage = Usage::default();
+    let cache_key = request
+        .prompt_cache_key
+        .clone()
+        .unwrap_or_else(|| context.key().to_string());
+    let slot = context.slot(cache_key).await;
+    let mut state = slot.lock().await;
+    if state.is_none() {
+        let mut warm_request = request.clone();
+        warm_request.messages = build_messages(
+            "Acknowledge this shared context by replying only: Context prepared. Do not call tools.",
+            system_prompt,
+            pdf_attachment,
+            Some(context),
+        )?;
+        warm_request.max_completion_tokens = Some(32);
+        // Reasoning would spend the small cap. It is not part of the cached
+        // prefix, so the real request still reads what this one writes.
+        warm_request.reasoning_effort = None;
+        warm_request.response_format = None;
+        let warm_label = format!("{label} · cache warm-up");
+        super::logging::record_provider_attempt();
+        match openai_tool_loop(
+            app,
+            client,
+            base_url,
+            api_key,
+            "OpenAI",
+            warm_request,
+            timeout_secs,
+            &warm_label,
+            false,
+            true,
+            access,
+        )
+        .await
+        {
+            Ok((_text, usage)) => {
+                warm_usage = usage;
+                *state = Some("ready".to_string());
+                log(app, format!("{label}: OpenAI shared context warmed"));
+            }
+            Err(error) => {
+                *state = Some("implicit".to_string());
+                log(
+                    app,
+                    format!(
+                        "WARNING: {label}: OpenAI cache warm-up was unavailable ({error}); continuing with automatic prefix caching"
+                    ),
+                );
+            }
+        }
+    }
+    // Older compatible endpoints may reject the routing hint even though
+    // ordinary prefix caching still works.
+    if state.as_deref() == Some("implicit") {
+        request.prompt_cache_key = None;
+    }
+    Ok(warm_usage)
+}
+
 /// Call the OpenAI API directly, with tool-use loop for Read.
 #[allow(clippy::too_many_arguments)]
 pub async fn call_openai_api(
@@ -284,60 +362,20 @@ pub async fn call_openai_api(
 
     let mut warm_usage = Usage::default();
     if let Some(context) = shared_context {
-        let cache_key = request
-            .prompt_cache_key
-            .clone()
-            .unwrap_or_else(|| context.key().to_string());
-        let slot = context.slot(cache_key).await;
-        let mut state = slot.lock().await;
-        if state.is_none() {
-            let mut warm_request = request.clone();
-            warm_request.messages = build_messages(
-                "Acknowledge this shared context by replying only: Context prepared. Do not call tools.",
-                system_prompt,
-                overrides.pdf_attachment,
-                Some(context),
-            )?;
-            warm_request.max_completion_tokens = Some(32);
-            warm_request.response_format = None;
-            let warm_label = format!("{label} · cache warm-up");
-            super::logging::record_provider_attempt();
-            match openai_tool_loop(
-                app,
-                client,
-                base_url,
-                crate::connections::ApiProvider::OpenAi.key(settings)?,
-                "OpenAI",
-                warm_request,
-                timeout_secs,
-                &warm_label,
-                false,
-                &access,
-            )
-            .await
-            {
-                Ok((_text, usage)) => {
-                    warm_usage = usage;
-                    *state = Some("ready".to_string());
-                    log(app, format!("{label}: OpenAI shared context warmed"));
-                }
-                Err(error) => {
-                    *state = Some("implicit".to_string());
-                    // Older compatible endpoints may reject the routing hint
-                    // even though ordinary prefix caching still works.
-                    request.prompt_cache_key = None;
-                    log(
-                        app,
-                        format!(
-                            "WARNING: {label}: OpenAI cache warm-up was unavailable ({error}); continuing with automatic prefix caching"
-                        ),
-                    );
-                }
-            }
-        }
-        if state.as_deref() == Some("implicit") {
-            request.prompt_cache_key = None;
-        }
+        warm_usage = warm_shared_context(
+            app,
+            client,
+            base_url,
+            crate::connections::ApiProvider::OpenAi.key(settings)?,
+            &mut request,
+            context,
+            system_prompt,
+            overrides.pdf_attachment,
+            timeout_secs,
+            label,
+            &access,
+        )
+        .await?;
     }
 
     super::logging::record_provider_attempt();
@@ -350,6 +388,7 @@ pub async fn call_openai_api(
         request,
         timeout_secs,
         label,
+        false,
         false,
         &access,
     )
@@ -456,6 +495,7 @@ pub async fn call_local_api(
         timeout_secs,
         label,
         true,
+        false,
         &access,
     )
     .await?;
@@ -480,6 +520,79 @@ pub async fn call_local_api(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn warm_up_against(
+        finish_reason: &str,
+    ) -> (Option<String>, Option<String>, Usage, serde_json::Value) {
+        let (url, requests) = crate::pipeline::api_common::web_tests::server(vec![(
+            200,
+            serde_json::json!({
+                "choices": [{"finish_reason": finish_reason, "message": {"role": "assistant", "content": null}}],
+                "usage": {"prompt_tokens": 900, "completion_tokens": 32}
+            }),
+        )])
+        .await;
+        let context = super::super::context_cache::PreparedContext::new(
+            "Paper text",
+            &serde_json::Value::Null,
+        )
+        .unwrap();
+        let mut request = OpenAIRequest {
+            model: "fixture".to_string(),
+            messages: Vec::new(),
+            tools: Vec::new(),
+            reasoning_effort: Some("high".to_string()),
+            max_completion_tokens: None,
+            prompt_cache_key: Some("cache-key".to_string()),
+            response_format: Some(serde_json::json!({"type": "json_object"})),
+        };
+        let app: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+        let run = crate::run_scope::ActiveScope::begin(format!("warm-up-{finish_reason}"));
+        let usage = crate::run_scope::scoped(
+            run.scope().clone(),
+            warm_shared_context(
+                &app,
+                custom_endpoint_client(&url),
+                &url,
+                "",
+                &mut request,
+                &context,
+                None,
+                None,
+                120,
+                "fixture",
+                &ToolAccess::default(),
+            ),
+        )
+        .await
+        .unwrap();
+        let state = context
+            .slot("cache-key".to_string())
+            .await
+            .lock()
+            .await
+            .clone();
+        let sent = requests.await.unwrap().remove(0);
+        (state, request.prompt_cache_key, usage, sent)
+    }
+
+    #[tokio::test]
+    async fn a_warm_up_that_stops_at_its_cap_still_warmed_the_context() {
+        let (state, cache_key, usage, sent) = warm_up_against("length").await;
+        assert_eq!(state.as_deref(), Some("ready"));
+        assert_eq!(cache_key.as_deref(), Some("cache-key"));
+        assert_eq!(usage.input_tokens, 900);
+        assert_eq!(sent["max_completion_tokens"], 32);
+        assert!(sent.get("reasoning_effort").is_none());
+        assert!(sent.get("response_format").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_blocked_warm_up_falls_back_to_automatic_caching() {
+        let (state, cache_key, _, _) = warm_up_against("content_filter").await;
+        assert_eq!(state.as_deref(), Some("implicit"));
+        assert_eq!(cache_key, None);
+    }
 
     #[test]
     fn reasoning_effort_is_whitelisted_for_chat_completions() {

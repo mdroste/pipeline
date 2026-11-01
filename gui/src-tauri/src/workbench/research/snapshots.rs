@@ -5,7 +5,6 @@ use super::{hash_bytes, new_id, now, open_connection, PreparedHarness, HARNESS_S
 use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
 use rusqlite::{params, TransactionBehavior};
 use serde_json::json;
-use std::fs;
 
 pub fn prepare_turn(store: &Store, session_id: &str) -> WorkbenchResult<PreparedHarness> {
     let effective = resolve_harness(store, session_id)?;
@@ -23,11 +22,12 @@ pub fn prepare_turn(store: &Store, session_id: &str) -> WorkbenchResult<Prepared
             .root_path()
             .join("context")
             .join(format!("{hash}.txt"));
-        if !path.exists() {
-            fs::write(&path, effective.context_preview.as_bytes()).map_err(|error| {
-                WorkbenchError::storage("Failed to persist context snapshot", error)
-            })?;
-        }
+        crate::workbench::desk::write_blob_atomic(
+            &path,
+            effective.context_preview.as_bytes(),
+            &hash,
+        )
+        .map_err(|error| WorkbenchError::storage("Failed to persist context snapshot", error))?;
         Some(path.to_string_lossy().into_owned())
     };
     let mut connection = open_connection(store)?;

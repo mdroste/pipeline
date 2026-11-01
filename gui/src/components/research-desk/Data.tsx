@@ -1,3 +1,4 @@
+import { Fold } from "../../ui";
 import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -9,12 +10,23 @@ import {
   type SampleDefinition,
 } from "../../lib/deskClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
+import useReopenCount from "../../hooks/useReopenCount";
+import useReveal from "../../hooks/useReveal";
 import { addContextObject } from "../WorkspaceContextTray";
+import { folderName } from "../project-surface/shared";
 import DataConnectors from "./DataConnectors";
 import DatasetDictionary from "./DatasetDictionary";
 import { button, input, card, muted, type DeskProps } from "./shared";
-export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
+export default function Data({
+  workspaceId,
+  onOpen,
+  onError,
+  onChanged,
+  onActionStart,
+  active,
+}: DeskProps) {
   const [metadata, setMetadata] = useState("");
+  const [metadataTitle, setMetadataTitle] = useState("");
   const [preview, setPreview] = useState<Awaited<
     ReturnType<typeof deskClient.rows>
   > | null>(null);
@@ -43,14 +55,18 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
     setSamples(s);
     setPolicy(p);
   }, [workspaceId]);
+  const reopened = useReopenCount(active);
+  const rowPreview = useReveal<HTMLElement>();
   useEffect(() => {
     void refresh().catch((e) => onError(workbenchErrorMessage(e)));
-  }, [refresh, onError]);
+  }, [refresh, onError, reopened]);
   const run = async (fn: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(true);
+    onActionStart?.();
     try {
       await fn();
+      onChanged?.();
       await refresh();
     } catch (e) {
       onError(workbenchErrorMessage(e));
@@ -72,7 +88,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
       if (typeof path !== "string") return;
       await deskClient.importDataset(
         workspaceId,
-        title || path.split("/").pop() || "Dataset",
+        title || folderName(path) || "Dataset",
         path,
         {
           provider: "local import",
@@ -91,8 +107,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
     });
   return (
     <div className="space-y-5">
-      <section className={card}>
-        <h2 className="font-semibold">Dataset catalog</h2>
+      <Fold title="Add a dataset" open={!datasets.length}>
         <div className="grid gap-2">
           <input
             aria-label="Dataset title"
@@ -150,7 +165,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
           are catalogued without keeping a copy, so their rows cannot be
           previewed. For other formats, import metadata from an exporter.
         </p>
-      </section>
+      </Fold>
       <details className={card}>
         <summary className="font-semibold">Project sharing policy</summary>
         <p className={muted}>
@@ -198,6 +213,13 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
           externalReference to the saved data version. This imports metadata
           without reading the data rows.
         </p>
+        <input
+          aria-label="Dictionary dataset title"
+          className={input}
+          placeholder="Dataset title"
+          value={metadataTitle}
+          onChange={(e) => setMetadataTitle(e.target.value)}
+        />
         <textarea
           aria-label="Dataset metadata JSON"
           rows={6}
@@ -208,12 +230,12 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
         />
         <button
           className={button}
-          disabled={busy || !metadata.trim() || !title.trim()}
+          disabled={busy || !metadata.trim() || !metadataTitle.trim()}
           onClick={() =>
             void run(() =>
               deskClient.importMetadata(
                 workspaceId,
-                title,
+                metadataTitle,
                 JSON.parse(metadata) as DatasetVersion,
               ),
             )
@@ -221,9 +243,14 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
         >
           Import dataset details
         </button>
+        {(!metadata.trim() || !metadataTitle.trim()) && (
+          <p className={muted}>
+            Enter a dataset title and paste the JSON to import.
+          </p>
+        )}
       </details>
       {preview && (
-        <section className={card}>
+        <section ref={rowPreview.ref} tabIndex={-1} className={card}>
           <p className={muted}>
             {preview.coverage} Total rows: {preview.totalRows}
           </p>
@@ -305,17 +332,17 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
             className={button}
             disabled={busy || !d.body.artifactId}
             onClick={() =>
-              void run(async () =>
-                setPreview(await deskClient.rows(workspaceId, d.id)),
-              )
+              void run(async () => {
+                setPreview(await deskClient.rows(workspaceId, d.id));
+                rowPreview.reveal();
+              })
             }
           >
             Preview local rows
           </button>
         </article>
       ))}
-      <section className={card}>
-        <h2 className="font-semibold">Declare a sample</h2>
+      <Fold title="Declare a sample">
         <p className={muted}>
           Select the dataset versions above and record your sample rules. Saving
           these rules does not apply them to the data.
@@ -397,7 +424,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
             {s.title} · {s.contentHash.slice(0, 12)}
           </button>
         ))}
-      </section>
+      </Fold>
     </div>
   );
 }

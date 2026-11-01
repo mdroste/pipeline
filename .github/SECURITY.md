@@ -39,8 +39,12 @@ permission to run commands.
 
 ## How releases are built
 
-Releases are built by GitHub Actions from a signed version tag, after the
-automated checks pass. macOS installers are signed and notarized. Windows
-installers aren't signed. Every installer has a published checksum. See
-[Releasing](../docs/releasing.md) for the full process. Accepted dependency advisories
-are listed in the [Cargo audit configuration](../gui/src-tauri/.cargo/audit.toml).
+Releases are built by GitHub Actions from a signed version tag. Installers are
+built alongside the automated checks, and those checks must pass before the
+final draft verification. macOS installers are signed and notarized. Windows
+installers are signed through Azure Artifact Signing. Every installer has a
+published checksum. See [Releasing](../docs/releasing.md) for the full process.
+
+A weekly [workflow](workflows/advisories.yml) checks dependencies against
+published advisories. Accepted Rust advisories are listed in the
+[Cargo audit configuration](../gui/src-tauri/.cargo/audit.toml).

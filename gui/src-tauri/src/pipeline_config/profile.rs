@@ -180,6 +180,10 @@ pub struct ProfileSummary {
     pub step_count: usize,
     #[serde(default)]
     pub builtin: bool,
+    /// Why a saved profile can't be run, so that it stays visible and can be
+    /// repaired or exported. Absent for a usable profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invalid: Option<String>,
 }
 
 // ── Export/Import envelope ──────────────────────────────────────────
@@ -192,9 +196,10 @@ pub struct ProfileSummary {
 /// survey conditions; v8 adds explicit published run products; v9 adds live
 /// output-schema references, findings lineage, and artifact fan-out; v10 adds
 /// required and quorum dependency-success policies; v11 adds validated,
-/// secret-aware variables, constrained named inputs, and named products. v1
-/// (unversioned) profiles read fine because every added field is
-/// `#[serde(default)]`; exports are tagged so future format changes can
+/// secret-aware variables, constrained named inputs, and named products. Every
+/// added field is `#[serde(default)]`, and steps older than v6 get their
+/// implied context from `wire_implicit_context`, because an empty context
+/// means an isolated step. Exports are tagged so future format changes can
 /// migrate or reject gracefully.
 pub const CURRENT_SCHEMA_VERSION: u32 = 11;
 
@@ -270,6 +275,10 @@ pub struct ProfileExport {
     pub parallel_context_template: String,
     #[serde(default)]
     pub variables: Vec<VarSpec>,
+    /// Why the profile could not be run when it was backed up. A restore
+    /// keeps such a profile as it was instead of refusing the whole backup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invalid: Option<String>,
 }
 
 impl ProfileExport {
@@ -287,6 +296,7 @@ impl ProfileExport {
             extraction: profile.extraction,
             parallel_context_template: profile.parallel_context_template,
             variables: profile.variables,
+            invalid: None,
         }
     }
 

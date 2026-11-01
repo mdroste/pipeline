@@ -8,6 +8,40 @@ import { version as appVersion } from "../package.json";
 const now = "2026-09-29T17:20:00Z";
 const params = new URLSearchParams(window.location.search);
 
+const versionControlFixture = {
+  state: params.get("git") === "new" ? "notRepository" : "ready",
+  problem: null,
+  status: {
+    branch: "referee/round-2", head: "4f8fb37c0de", upstream: "origin/referee/round-2", ahead: 1, behind: 0,
+    fetchedAt: "2026-09-29T09:00:00Z", changed: 2, untracked: 2, conflicts: params.get("git") === "conflict" ? 1 : 0, changedPaths: [],
+    remote: { name: "origin", host: "github.com", owner: "mdroste", repo: "minwage", provider: "github", webUrl: "https://github.com/mdroste/minwage" },
+    commits: [], incoming: [],
+  },
+  files: [
+    ...(params.get("git") === "conflict"
+      ? [{ path: "output/table4.tex", oldPath: null, status: "conflicted", staged: false, unstaged: false, isDirectory: false, isSubmodule: false, conflict: "changed on both sides" }]
+      : []),
+    { path: "paper/main.tex", oldPath: null, status: "modified", staged: false, unstaged: true, isDirectory: false, isSubmodule: false, conflict: null },
+    { path: "analysis/event_study.do", oldPath: null, status: "modified", staged: true, unstaged: false, isDirectory: false, isSubmodule: false, conflict: null },
+    { path: "analysis/spillovers.do", oldPath: "analysis/robustness.do", status: "renamed", staged: true, unstaged: false, isDirectory: false, isSubmodule: false, conflict: null },
+    { path: "data/panel.dta", oldPath: null, status: "untracked", staged: false, unstaged: true, isDirectory: false, isSubmodule: false, conflict: null },
+    { path: "notes", oldPath: null, status: "untracked", staged: false, unstaged: true, isDirectory: true, isSubmodule: false, conflict: null },
+  ],
+  filesTruncated: false,
+  largeFiles: params.get("git") === "conflict" ? [] : [{ path: "data/panel.dta", size: 241 * 1024 * 1024 }],
+  branches: [
+    { name: "referee/round-2", current: true, upstream: "origin/referee/round-2", remoteRef: null },
+    { name: "main", current: false, upstream: "origin/main", remoteRef: null },
+    { name: "appendix", current: false, upstream: null, remoteRef: "origin/appendix" },
+  ],
+  operation: params.get("git") === "conflict" ? "merge" : null,
+  operationMessage: params.get("git") === "conflict" ? "Merge branch 'referee/round-2' of github.com:mdroste/minwage" : null,
+  outsideConflicts: 0,
+  identity: { name: "Michael Droste", email: "researcher@example.org" },
+  folderPrefix: "",
+  canUndoCommit: true,
+};
+
 const settings = {
   preferred_provider: "claude",
   default_parallel_agents: ["claude", "codex"],
@@ -351,6 +385,7 @@ const updateStatus = (automatic = true) => ({ automatic, automatic_available: tr
 
 const commandData: Record<string, unknown> = {
   mark_smoke_ready: true,
+  set_sidebar_menu_collapsed: null,
   get_execution_plan: executionPlan,
   list_analyzers: analyzers,
   get_settings: { settings, warnings: [] },
@@ -391,6 +426,7 @@ const commandData: Record<string, unknown> = {
   workbench_claude_rate_limits: { status: "allowed", resetsAt: Math.floor(Date.now() / 1000) + 3 * 3600, rateLimitType: "five_hour", usedPercent: 41, isUsingOverage: false, observedAt: Date.now() },
   workbench_codex_rate_limits: { source: "perBucket", buckets: [{ limitId: "codex", limitName: null, planType: "plus", primary: { usedPercent: 38, remainingPercent: 62, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 2 * 3600 }, secondary: null }] },
   workbench_codex_pending_requests: [],
+  workbench_active_turn: null,
   workbench_codex_connect: {},
   workbench_codex_model_catalog: workspaceModelCatalog,
   workbench_claude_model_catalog: { models: [{ id: "sonnet", model: "sonnet", displayName: "Sonnet", description: "Balanced reasoning and writing", isDefault: false, defaultReasoningEffort: "", supportedReasoningEfforts: efforts("low", "medium", "high") }, { id: "haiku", model: "haiku", displayName: "Haiku", description: "Fastest for quick answers", isDefault: false, defaultReasoningEffort: "", supportedReasoningEfforts: [] }] },
@@ -481,6 +517,32 @@ const commandData: Record<string, unknown> = {
             { object: { kind: "record", id: "bind-1", revision: "1" }, status: "review_needed", reason: "Input changed via Result binding execution", path: [{}, {}, {}] },
           ],
           relations: [], complete: true, limitations: [],
+        },
+        workbench_version_control_state: versionControlFixture,
+        workbench_version_control_action: { state: versionControlFixture, notice: null, undoneMessage: null },
+        workbench_version_control_cancel: null,
+        workbench_version_control_diff: (args: { request: { path: string } }) =>
+          args.request.path.endsWith(".dta")
+            ? { kind: "binary", text: "" }
+            : args.request.path === "output/table4.tex"
+              ? { kind: "conflict", text: "\\begin{tabular}{lcc}\n<<<<<<< HEAD\nEmployment & -0.042 & (0.018) \\\\\n=======\nEmployment & -0.039 & (0.017) \\\\\n>>>>>>> origin/main\n\\end{tabular}" }
+              : { kind: "diff", text: "diff --git a/paper/main.tex b/paper/main.tex\n--- a/paper/main.tex\n+++ b/paper/main.tex\n@@ -41,6 +41,7 @@ \\section{Identification}\n We compare counties on either side of a state border.\n-The estimate is identified from within-pair variation.\n+The estimate is identified from within-pair variation over time.\n+Standard errors are clustered by commuting zone.\n Results appear in Table 4.\n" },
+        workbench_version_control_history: {
+          hasMore: false,
+          commits: [
+            { sha: "4f8fb37c0de4f8fb37c0de4f8fb37c0de4f8fb37c", author: "Michael Droste", date: "2026-09-29T14:10:00Z", subject: "Re-estimate Table 4 with commuting-zone clusters", isMerge: false, refs: ["main"], unpushed: true },
+            { sha: "46b4ae946b4ae946b4ae946b4ae946b4ae946b4ae", author: "Jane Doe", date: "2026-09-29T08:30:00Z", subject: "Rewrite the identification section", isMerge: false, refs: ["origin/main", "v1.0"], unpushed: false },
+            { sha: "481e17a481e17a481e17a481e17a481e17a481e17", author: "Michael Droste", date: "2026-09-20T12:00:00Z", subject: "Add event-study figure", isMerge: false, refs: [], unpushed: false },
+          ],
+        },
+        workbench_version_control_commit: {
+          sha: "4f8fb37c0de4f8fb37c0de4f8fb37c0de4f8fb37c", author: "Michael Droste", date: "2026-09-29T14:10:00Z",
+          message: "Re-estimate Table 4 with commuting-zone clusters\n\nMatches the specification in the replication package.",
+          files: [
+            { path: "paper/main.tex", oldPath: null, status: "modified" },
+            { path: "output/table4.tex", oldPath: null, status: "modified" },
+          ],
+          filesTruncated: false,
         },
         workbench_repository_status: {
           branch: "main", head: "4f8fb37c0de", upstream: "origin/main", ahead: 1, behind: 2,

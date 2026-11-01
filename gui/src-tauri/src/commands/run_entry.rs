@@ -66,6 +66,9 @@ pub(super) fn complete_run(
         "The run completed model work but has no durable workspace; partial checkpoints were preserved where possible."
             .to_string()
     })?;
+    // Another review's retention must not trash this run while it finishes,
+    // and neither must its own: a later-started review can sit ahead of it.
+    let _retention_hold = crate::runs::hold_from_retention(writer.run_id());
     let run_id = finalize_run(app, writer, report, markdown, meta)?;
     enforce_retention(
         app,
@@ -215,6 +218,8 @@ pub struct HeadlessCheckReport {
     pub budget: crate::safety::RunBudgetEstimate,
     /// Rough calls, tokens, and API list-price range with the limits in force.
     pub usage_estimate: crate::pipeline::executor::budget::UsageEstimate,
+    /// Files in the selected folders that won't fit in the Review's copy.
+    pub input_notices: Vec<String>,
     /// Flatten the historical dependency report so existing `ready`/`deps`
     /// JSON consumers keep working as planning metadata is added.
     #[serde(flatten)]
@@ -233,6 +238,22 @@ async fn prepare_headless_snapshot(
     options: &HeadlessRunOptions,
     snapshot: RunSnapshot,
 ) -> Result<(RunSnapshot, crate::deps::DepsReport), String> {
+    let snapshot = bind_headless_snapshot(options, snapshot)?;
+    // Passing the concrete path is what makes `deps::check_snapshot` require
+    // the selected PDF parser for PDF inputs while leaving TeX/DOCX runs free
+    // of PDF-only dependencies.
+    let dependency_input =
+        (!options.input_path.trim().is_empty()).then_some(options.input_path.as_str());
+    let dependencies =
+        check_snapshot_dependencies(&snapshot, false, dependency_input, &options.extra_inputs)
+            .await?;
+    Ok((snapshot, dependencies))
+}
+
+fn bind_headless_snapshot(
+    options: &HeadlessRunOptions,
+    snapshot: RunSnapshot,
+) -> Result<RunSnapshot, String> {
     let snapshot = bind_review_limits(snapshot, &options.limits)?;
     crate::safety::validate_runtime_context(&options.variables, "Run variables")?;
     crate::safety::validate_runtime_context(&options.extra_inputs, "Named input paths")?;
@@ -249,21 +270,21 @@ async fn prepare_headless_snapshot(
     )?;
     validate_named_input_paths(&snapshot.config, &options.extra_inputs, true)?;
     let snapshot = bind_runtime_snapshot(snapshot, &options.variables, &options.extra_inputs)?;
-    let snapshot = bind_foreground_launch(
+    bind_foreground_launch(
         snapshot,
         &options.input_path,
         options.input_interpretation.as_deref(),
         false,
-    )?;
-    // Passing the concrete path is what makes `deps::check_snapshot` require
-    // the selected PDF parser for PDF inputs while leaving TeX/DOCX runs free
-    // of PDF-only dependencies.
-    let dependency_input =
-        (!options.input_path.trim().is_empty()).then_some(options.input_path.as_str());
-    let dependencies =
-        check_snapshot_dependencies(&snapshot, false, dependency_input, &options.extra_inputs)
-            .await?;
-    Ok((snapshot, dependencies))
+    )
+}
+
+/// Validate the workflow, input, variables, and limits of one prospective
+/// headless run without probing dependencies, so the CLI can tell invalid
+/// input from a run that failed.
+pub fn validate_headless_input(options: &HeadlessRunOptions) -> Result<(), String> {
+    let snapshot =
+        load_run_snapshot_for_workflow(options.profile_id.as_deref(), options.workflow.as_ref())?;
+    bind_headless_snapshot(options, snapshot).map(drop)
 }
 
 /// Check the exact dependency set for one prospective headless run without
@@ -298,6 +319,14 @@ pub async fn check_headless_plan(
         &options.input_path,
         options.input_interpretation.as_deref(),
     );
+    let input_notices = super::reuse_artifacts::folder_capture_notices(
+        &config,
+        &snapshot.settings,
+        Some(options.input_path.as_str()),
+        resolved_interpretation == "source_tree",
+        &options.extra_inputs,
+    )
+    .await;
     let mut stages = executor::execution_plan(&config)?;
     if let Some(stage) = stages.iter_mut().find(|stage| stage.kind == "extracting") {
         stage.label = executor::input_processing_label(resolved_interpretation).to_string();
@@ -331,6 +360,7 @@ pub async fn check_headless_plan(
         merge_agent,
         budget,
         usage_estimate,
+        input_notices,
         readiness,
     })
 }

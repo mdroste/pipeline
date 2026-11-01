@@ -375,6 +375,11 @@ export interface SeriesRecord {
   artifactId: string;
 }
 export type StudioAction =
+  | { action: "createFile"; checkpointId: null; path: string; base64: string }
+  | { action: "createFolder"; path: string }
+  | { action: "moveEntry"; from: string; to: string }
+  | { action: "trashEntry"; path: string }
+  | { action: "importFile"; directory: string; source: string }
   | {
       action: "saveText";
       checkpointId: string | null;

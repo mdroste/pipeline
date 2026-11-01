@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { expect, it, vi } from "vitest";
 import useWorkspaceTranscript from "./useWorkspaceTranscript";
@@ -9,6 +9,11 @@ import type {
 const mocks = vi.hoisted(() => ({ transcriptPage: vi.fn() }));
 vi.mock("../lib/workbench/conversationClient", () => ({
   conversationClient: mocks,
+}));
+// Paging does not depend on the window's size; these pages are 200 long.
+vi.mock("../lib/workspaceTranscript", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../lib/workspaceTranscript")>()),
+  TRANSCRIPT_WINDOW: 200,
 }));
 const items = (start: number): TranscriptItem[] =>
   Array.from({ length: 200 }, (_, i) => ({
@@ -26,7 +31,7 @@ const initial = {
   items: items(200),
   olderCursor: { createdAt: "now", id: "200" },
 } as ConversationSnapshot;
-it("fetches older pages on demand while rendering at most 200 messages", async () => {
+it("fetches older pages on demand while rendering at most one window", async () => {
   mocks.transcriptPage.mockResolvedValue({ items: items(0), nextCursor: null });
   const { result } = renderHook(() => {
     const [snapshot, setSnapshot] = useState<ConversationSnapshot | null>(
@@ -104,4 +109,29 @@ it("does not skip a boundary message when a page includes tool items", async () 
   });
   result.current.renderedItems.forEach((i) => seen.add(i.id));
   expect(seen.size).toBe(399);
+});
+
+it("reads back past tool-only pages until a message appears", async () => {
+  const tool = (id: string) =>
+    ({ ...items(1)[0], id, itemKind: "commandExecution" }) as any;
+  mocks.transcriptPage
+    .mockReset()
+    .mockResolvedValueOnce({ items: [tool("t1")], nextCursor: "older" })
+    .mockResolvedValueOnce({
+      items: items(1).slice(0, 1),
+      nextCursor: "oldest",
+    });
+  const toolsOnly = {
+    ...initial,
+    items: [tool("t2")],
+    olderCursor: "first",
+  } as any;
+  const { result } = renderHook(() => {
+    const [snapshot, setSnapshot] = useState<ConversationSnapshot | null>(
+      toolsOnly,
+    );
+    return useWorkspaceTranscript(snapshot, setSnapshot, vi.fn());
+  });
+  await waitFor(() => expect(result.current.renderedItems).toHaveLength(1));
+  expect(mocks.transcriptPage).toHaveBeenCalledTimes(2);
 });

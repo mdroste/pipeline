@@ -217,6 +217,24 @@ export default function Followups({
                 Check message status
               </button>
             )}
+            {r.state === "attention" && (
+              <button
+                className={button}
+                disabled={busy}
+                onClick={() =>
+                  void run(() =>
+                    programClient.queue(sessionId, {
+                      action: "control",
+                      id: r.id,
+                      revision: r.revision,
+                      control: "dismiss",
+                    }),
+                  )
+                }
+              >
+                Dismiss
+              </button>
+            )}
             <button className={button} onClick={() => edit(r.request.text)}>
               Copy to next draft
             </button>

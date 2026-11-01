@@ -84,6 +84,7 @@ export function NavChild({
   onClick,
   suffix,
   title,
+  ariaLabel,
   ref,
   ...rest
 }: {
@@ -95,6 +96,8 @@ export function NavChild({
   onClick: () => void;
   suffix?: ReactNode;
   title?: string;
+  /** Says what a row does when its label only names where it is. */
+  ariaLabel?: string;
   ref?: Ref<HTMLButtonElement>;
   "aria-haspopup"?: "menu";
   "aria-expanded"?: boolean;
@@ -105,6 +108,7 @@ export function NavChild({
       ref={ref}
       type="button"
       className="nav-child"
+      aria-label={ariaLabel}
       aria-current={current ? "page" : undefined}
       data-strong={strong || undefined}
       data-quiet={quiet || undefined}

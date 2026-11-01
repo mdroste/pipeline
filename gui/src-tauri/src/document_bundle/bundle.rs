@@ -1,5 +1,14 @@
 use super::*;
 
+/// Hash of the file itself, in the paper-hash style.
+fn file_sha256(path: &Path) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    crate::safety::open_regular_file(path)?
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+    Ok(format!("{:x}", Sha256::digest(&bytes))[..16].to_string())
+}
+
 pub fn build(extraction: &ExtractionResult, run_dir: &Path) -> Result<BundleBuild, String> {
     let kind = source_kind(extraction);
     let mut added_artifacts = Vec::new();
@@ -59,6 +68,9 @@ pub fn build(extraction: &ExtractionResult, run_dir: &Path) -> Result<BundleBuil
         kind: kind.clone(),
         path: extraction.source_path.clone(),
         role: "primary".to_string(),
+        sha256: (kind == "docx")
+            .then(|| file_sha256(Path::new(&extraction.source_path)))
+            .transpose()?,
     }];
     if let Some(pdf) = companion_pdf(&extraction.source_path) {
         origins.push(DocumentOrigin {
@@ -66,6 +78,7 @@ pub fn build(extraction: &ExtractionResult, run_dir: &Path) -> Result<BundleBuil
             kind: "pdf".to_string(),
             path: pdf.to_string_lossy().to_string(),
             role: "visual-companion".to_string(),
+            sha256: None,
         });
     }
     let mut bundle = DocumentBundle {

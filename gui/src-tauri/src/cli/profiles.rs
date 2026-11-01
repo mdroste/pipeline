@@ -13,7 +13,7 @@ pub(super) fn cmd_profiles(args: ProfilesArgs) -> i32 {
             }
             Err(error) => {
                 eprintln!("Error: {error}");
-                1
+                2
             }
         },
         ProfilesArgs::List { json } => match pipeline_config::list_profiles() {
@@ -37,8 +37,12 @@ pub(super) fn cmd_profiles(args: ProfilesArgs) -> i32 {
                 let active = pipeline_config::get_active_profile_id();
                 for profile in profiles {
                     let marker = if profile.id == active { "*" } else { " " };
+                    let repair = profile
+                        .invalid
+                        .map(|reason| format!(" needs repair: {reason}"))
+                        .unwrap_or_default();
                     emit_stdout(&format!(
-                        "{marker} {:22} {} ({} steps)",
+                        "{marker} {:22} {} ({} steps){repair}",
                         profile.id, profile.name, profile.step_count
                     ));
                 }

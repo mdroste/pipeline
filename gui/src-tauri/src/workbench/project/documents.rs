@@ -48,7 +48,9 @@ fn full_text(store: &Store, revision: &research::PaperRevision) -> WorkbenchResu
     };
     let p = Path::new(reference);
     if p.parent() != Some(store.root_path().join("blobs").as_path()) {
-        return Err(WorkbenchError::invalid(
+        return Err(crate::workbench::store::outside_folder_error(
+            "This document's text",
+            p,
             "Document text is outside immutable storage",
         ));
     }

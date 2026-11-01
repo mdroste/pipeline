@@ -2,20 +2,24 @@
 
 use super::format::{
     ArchiveManifest, ArchiveReport, BlobManifest, ExportArchiveRequest, ARCHIVE_FORMAT_VERSION,
-    MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES, MAX_ENTRY_BYTES,
+    MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES, MAX_ENTRY_BYTES, MAX_MANIFEST_BYTES,
 };
-use super::transcripts::{transcript_items, transcript_markdown};
+use super::omissions::{
+    archived_references, make_references_portable, missing_files, missing_files_error,
+};
+use super::transcripts::stage_transcripts;
 use super::{conversation_files, hash_reader, now, validate_absolute_file};
+use crate::workbench::research::without_page_images;
 use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult, CURRENT_SCHEMA_VERSION};
 use rusqlite::{backup::Backup, params, Connection};
-use serde_json::json;
+use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use zip::write::SimpleFileOptions;
 
-fn collect_files(root: &Path) -> WorkbenchResult<Vec<PathBuf>> {
+pub(super) fn collect_files(root: &Path) -> WorkbenchResult<Vec<PathBuf>> {
     fn visit(
         root: &Path,
         at: &Path,
@@ -77,9 +81,81 @@ fn snapshot_database(source: &Connection, target: &Path) -> WorkbenchResult<()> 
     Ok(())
 }
 
+/// Kept free for zip headers and deflate's overhead on incompressible files.
+const ZIP_OVERHEAD_RESERVE: u64 = 16 * 1024 * 1024;
+
+/// What is left of the archive limit for conversation files, which are the only
+/// optional content: everything else is measured first, so they can never push
+/// a finished backup over the limit.
+pub(super) fn conversation_byte_budget(
+    blob_bytes: u64,
+    database_bytes: u64,
+    transcript_bytes: u64,
+) -> u64 {
+    MAX_ARCHIVE_BYTES
+        .saturating_sub(blob_bytes)
+        .saturating_sub(database_bytes)
+        .saturating_sub(transcript_bytes)
+        .saturating_sub(MAX_MANIFEST_BYTES)
+        .saturating_sub(ZIP_OVERHEAD_RESERVE)
+}
+
+/// Receipts from before pages stopped being stored inline can fill the database
+/// on their own. The images are blobs in this same archive, so the backup
+/// carries locators, and replay reads the image back from the blob.
+fn compact_page_receipts(snapshot: &Connection) -> WorkbenchResult<()> {
+    let ids = {
+        let mut statement = snapshot
+            .prepare("SELECT id FROM tool_receipts WHERE tool_name='workbench_paper_page' AND instr(result_json,'base64,')>0")
+            .map_err(|error| WorkbenchError::storage("Failed to read page receipts", error))?;
+        let ids = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| WorkbenchError::storage("Failed to read page receipts", error))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| WorkbenchError::storage("Failed to decode page receipts", error))?;
+        ids
+    };
+    if ids.is_empty() {
+        return Ok(());
+    }
+    // One at a time: together these rows may not fit in memory.
+    for id in ids {
+        let result: String = snapshot
+            .query_row(
+                "SELECT result_json FROM tool_receipts WHERE id=?1",
+                [&id],
+                |row| row.get(0),
+            )
+            .map_err(|error| WorkbenchError::storage("Failed to read page receipts", error))?;
+        let Ok(response) = serde_json::from_str::<serde_json::Value>(&result) else {
+            continue;
+        };
+        snapshot
+            .execute(
+                "UPDATE tool_receipts SET result_json=?2 WHERE id=?1",
+                params![id, without_page_images(&response).to_string()],
+            )
+            .map_err(|error| WorkbenchError::storage("Failed to compact page receipts", error))?;
+    }
+    snapshot
+        .execute_batch("VACUUM")
+        .map_err(|error| WorkbenchError::storage("Failed to compact archive snapshot", error))
+}
+
 pub fn export_archive(
     store: &Store,
     request: ExportArchiveRequest,
+) -> WorkbenchResult<ArchiveReport> {
+    export_archive_without(store, request, &[])
+}
+
+/// `approved` holds the portable references the researcher agreed to leave out,
+/// from `missing_backup_files`. Any other missing file still stops the backup,
+/// so a file lost after that choice is never left out unseen.
+pub fn export_archive_without(
+    store: &Store,
+    request: ExportArchiveRequest,
+    approved: &[String],
 ) -> WorkbenchResult<ArchiveReport> {
     let target = validate_absolute_file(&request.path, "pwrx")?;
     if target.starts_with(store.root_path()) {
@@ -127,6 +203,29 @@ pub fn export_archive(
     let blob_root = store.root_path().join("blobs");
     let blob_files = collect_files(&blob_root)?;
     let logical_blob_root = "workspace://blobs";
+    // Restore refuses a reference with no file in the archive, so a backup that
+    // kept one quietly could never be used. Stop before any file is read.
+    let missing = missing_files(&snapshot, &archived_references(&blob_root, &blob_files)?)?;
+    let unapproved = missing
+        .iter()
+        .filter(|file| !approved.contains(&file.reference))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unapproved.is_empty() {
+        return Err(missing_files_error(&unapproved));
+    }
+    let omitted_references = missing
+        .iter()
+        .map(|file| file.reference.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let omitted_files = missing
+        .into_iter()
+        .map(|file| file.description)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
     let mut blobs = Vec::new();
     for path in &blob_files {
         let relative = path
@@ -154,6 +253,7 @@ pub fn export_archive(
         ("artifacts", "storage_reference"),
         ("paper_revisions", "text_reference"),
         ("source_versions", "text_reference"),
+        ("retained_blobs", "storage_reference"),
     ] {
         snapshot
             .execute(
@@ -173,6 +273,26 @@ pub fn export_archive(
                 WorkbenchError::storage("Failed to make archive blob references portable", error)
             })?;
     }
+    make_references_portable(&snapshot)?;
+    compact_page_receipts(&snapshot)?;
+    // A retention row left outside blobs/ keeps nothing in a restored store,
+    // and its path says where this folder used to be.
+    snapshot
+        .execute(
+            "DELETE FROM retained_blobs WHERE substr(storage_reference,1,length(?1))<>?1",
+            [format!("{logical_blob_root}/")],
+        )
+        .map_err(|error| {
+            WorkbenchError::storage(
+                "Failed to remove private retention paths from archive",
+                error,
+            )
+        })?;
+    snapshot
+        .execute("DELETE FROM store_location", [])
+        .map_err(|error| {
+            WorkbenchError::storage("Failed to remove the data folder from archive", error)
+        })?;
     snapshot
         .execute("UPDATE context_snapshots SET body_reference=NULL", [])
         .map_err(|error| {
@@ -191,13 +311,18 @@ pub fn export_archive(
     let portable_snapshot_path = temporary.path().join("portable-research.sqlite3");
     snapshot_database(&snapshot, &portable_snapshot_path)?;
     let note="Conversations from this backup may not continue on another computer or account. If one can't, start a new conversation from your notes and evidence.".to_string();
-    let conversation_files = conversation_files::stage(store, &snapshot, temporary.path())?;
-    if 2 + session_count * 2 + blobs.len() + conversation_files.len() > MAX_ARCHIVE_ENTRIES {
+    let reserved = 2 + session_count * 2 + blobs.len();
+    let blob_bytes = blobs.iter().map(|blob| blob.size_bytes).sum::<u64>();
+    let database_bytes = fs::metadata(&portable_snapshot_path)
+        .map_err(|error| WorkbenchError::storage("Failed to inspect archive database", error))?
+        .len();
+    if database_bytes > MAX_ENTRY_BYTES {
         return Err(WorkbenchError::invalid(
-            "Research archive contains too many entries",
+            "Research database exceeds the 512 MiB archive-entry limit",
         ));
     }
-    let manifest = ArchiveManifest {
+    let (transcripts, transcript_bytes) = stage_transcripts(&snapshot, temporary.path())?;
+    let mut manifest = ArchiveManifest {
         format: "pipeline-workspace-research".into(),
         format_version: ARCHIVE_FORMAT_VERSION,
         store_schema_version: CURRENT_SCHEMA_VERSION,
@@ -205,9 +330,34 @@ pub fn export_archive(
         original_blob_root: logical_blob_root.into(),
         workspace_roots,
         blobs,
-        conversation_files,
+        conversation_files: Vec::new(),
+        omitted_references,
         portability_note: note.clone(),
     };
+    let manifest_base = serde_json::to_string_pretty(&manifest)
+        .map_err(|error| {
+            WorkbenchError::invalid(format!("Failed to encode archive manifest: {error}"))
+        })?
+        .len() as u64;
+    let staged = conversation_files::stage(
+        store,
+        &snapshot,
+        temporary.path(),
+        conversation_files::Budget {
+            entries: MAX_ARCHIVE_ENTRIES.saturating_sub(reserved),
+            bytes: conversation_byte_budget(blob_bytes, database_bytes, transcript_bytes),
+            manifest_bytes: MAX_MANIFEST_BYTES.saturating_sub(manifest_base),
+        },
+    )?;
+    let omitted = staged.omitted;
+    manifest.conversation_files = staged.files;
+    if 2 + session_count * 2 + manifest.blobs.len() + manifest.conversation_files.len()
+        > MAX_ARCHIVE_ENTRIES
+    {
+        return Err(WorkbenchError::invalid(
+            "Research archive contains too many entries",
+        ));
+    }
     let parent = target
         .parent()
         .ok_or_else(|| WorkbenchError::invalid("Archive destination has no parent directory"))?;
@@ -246,16 +396,9 @@ pub fn export_archive(
         &mut zip,
     )
     .map_err(|error| WorkbenchError::storage("Failed to write archive database", error))?;
-    let database_bytes = fs::metadata(&portable_snapshot_path)
-        .map_err(|error| WorkbenchError::storage("Failed to inspect archive database", error))?
-        .len();
-    if database_bytes > MAX_ENTRY_BYTES {
-        return Err(WorkbenchError::invalid(
-            "Research database exceeds the 512 MiB archive-entry limit",
-        ));
-    }
     let mut expanded_bytes = database_bytes
         .saturating_add(manifest_json.len() as u64)
+        .saturating_add(transcript_bytes)
         .saturating_add(
             manifest
                 .blobs
@@ -273,55 +416,19 @@ pub fn export_archive(
     if expanded_bytes > MAX_ARCHIVE_BYTES {
         return Err(WorkbenchError::invalid("Expanded archive exceeds 2 GiB"));
     }
-    {
-        let mut statement = snapshot
-            .prepare("SELECT id,title FROM sessions ORDER BY id")
-            .map_err(|error| {
-                WorkbenchError::storage("Failed to prepare transcript archive", error)
-            })?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(|error| WorkbenchError::storage("Failed to list transcripts", error))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| WorkbenchError::storage("Failed to decode transcripts", error))?;
-        for (id, title) in rows {
-            let items = transcript_items(&snapshot, &id)?;
-            let md = transcript_markdown(&title, &items);
-            let payload = json!({
-                "schemaVersion": 1,
-                "session": {"id": id, "title": title},
-                "items": items,
-            });
-            let json = serde_json::to_string_pretty(&payload).map_err(|error| {
-                WorkbenchError::invalid(format!("Failed to encode transcript: {error}"))
-            })?;
-            if md.len() as u64 > MAX_ENTRY_BYTES || json.len() as u64 > MAX_ENTRY_BYTES {
-                return Err(WorkbenchError::invalid(
-                    "A readable transcript exceeds the 512 MiB archive-entry limit",
-                ));
-            }
-            expanded_bytes = expanded_bytes
-                .saturating_add(md.len() as u64)
-                .saturating_add(json.len() as u64);
-            if expanded_bytes > MAX_ARCHIVE_BYTES {
-                return Err(WorkbenchError::invalid(
-                    "Expanded research archive exceeds 2 GiB",
-                ));
-            }
-            zip.start_file(format!("transcripts/{id}.md"), options)
-                .map_err(|error| {
-                    WorkbenchError::storage("Failed to add Markdown transcript", error)
-                })?;
-            zip.write_all(md.as_bytes()).map_err(|error| {
-                WorkbenchError::storage("Failed to write Markdown transcript", error)
-            })?;
-            zip.start_file(format!("transcripts/{id}.json"), options)
-                .map_err(|error| WorkbenchError::storage("Failed to add JSON transcript", error))?;
-            zip.write_all(json.as_bytes()).map_err(|error| {
-                WorkbenchError::storage("Failed to write JSON transcript", error)
-            })?;
+    for transcript in &transcripts {
+        for (extension, path) in [("md", &transcript.markdown), ("json", &transcript.json)] {
+            zip.start_file(
+                format!("transcripts/{}.{extension}", transcript.id),
+                options,
+            )
+            .map_err(|error| WorkbenchError::storage("Failed to add transcript", error))?;
+            std::io::copy(
+                &mut File::open(path)
+                    .map_err(|error| WorkbenchError::storage("Failed to read transcript", error))?,
+                &mut zip,
+            )
+            .map_err(|error| WorkbenchError::storage("Failed to write transcript", error))?;
         }
     }
     for (blob, source_path) in manifest.blobs.iter().zip(&blob_files) {
@@ -372,6 +479,11 @@ pub fn export_archive(
         blob_count: manifest.blobs.len(),
         bytes,
         native_bindings_retired: 0,
-        portability_note: note,
+        portability_note: if omitted > 0 {
+            format!("{note}\n\nSome conversation working files were left out: links, special files, unreadable files, and files too large for a backup.")
+        } else {
+            note
+        },
+        omitted_files,
     })
 }

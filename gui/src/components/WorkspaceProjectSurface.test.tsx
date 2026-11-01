@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -7,13 +8,22 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceProjectSurface from "./WorkspaceProjectSurface";
+import { appEvents } from "../lib/appEvents";
 import { makeProjectHome as home } from "../test/projectSurfaceFixtures";
 import type { WorkbenchSession } from "../lib/workbenchTypes";
 const mocks = vi.hoisted(() => ({
   home: vi.fn(),
   mutate: vi.fn(),
   getWorkspace: vi.fn(),
+  read: vi.fn(),
 }));
+vi.mock("../lib/deskClient", async (original) => {
+  const module = await original<typeof import("../lib/deskClient")>();
+  return {
+    ...module,
+    deskClient: { ...module.deskClient, read: mocks.read },
+  };
+});
 vi.mock("../lib/projectClient", async (original) => ({
   ...(await original<typeof import("../lib/projectClient")>()),
   projectClient: mocks,
@@ -340,4 +350,49 @@ it("asks for the conversation first only when a project has nothing but conversa
   expect(brief).toHaveBeenLastCalledWith(
     "Do minimum wages reduce teen employment?",
   );
+});
+
+it("offers another try when a project fails to open", async () => {
+  mocks.home.mockRejectedValueOnce({ message: "The project store is busy." });
+  render(
+    <WorkspaceProjectSurface
+      workspaceId="workspace"
+      onConversation={vi.fn()}
+      onWorkspaceChanged={vi.fn()}
+    />,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The project store is busy.",
+  );
+  expect(screen.queryByText("Opening project…")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await screen.findByRole("heading", { name: "Local research" });
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("leaves a saved research item when told to go to a destination", async () => {
+  localStorage.setItem(
+    "pipeline.desk.workspace",
+    JSON.stringify({
+      tab: "tasks",
+      object: { kind: "source", id: "s", revision: "r" },
+    }),
+  );
+  mocks.read.mockResolvedValue({ title: "Saved source", text: "" });
+  render(
+    <WorkspaceProjectSurface
+      workspaceId="workspace"
+      destination="tasks"
+      onConversation={vi.fn()}
+      onWorkspaceChanged={vi.fn()}
+    />,
+  );
+  await screen.findByRole("region", { name: "Research item" });
+  act(() =>
+    appEvents.emit("workspace-destination", {
+      workspaceId: "workspace",
+      tab: "tasks",
+    }),
+  );
+  expect(screen.queryByRole("region", { name: "Research item" })).toBeNull();
 });

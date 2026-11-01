@@ -24,6 +24,13 @@ vi.mock("@tauri-apps/plugin-shell", () => ({ open: mocks.open }));
 vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
   GlobalWorkerOptions: {},
   getDocument: mocks.getDocument,
+  PDFDataRangeTransport: class {
+    constructor(
+      public length: number,
+      public initialData: unknown,
+    ) {}
+    onDataRange = vi.fn();
+  },
 }));
 vi.mock("pdfjs-dist/legacy/web/pdf_viewer.mjs", () => {
   class Bus {
@@ -406,6 +413,133 @@ it("fits a reader opened in a hidden pane once it is shown, and refits on resize
     expect(viewer().scaleAssignments).toHaveLength(2);
     unmount();
     expect(disconnect).toHaveBeenCalled();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+it("keeps reading a touched file from its new stream without reopening it", async () => {
+  const retired = "pipeline-file://localhost/old";
+  const current = "pipeline-file://localhost/new";
+  const fetchMock = vi.fn(async (url: string | URL | Request) =>
+    String(url) === retired
+      ? new Response(null, { status: 410 })
+      : new Response(new Uint8Array([1, 2, 3, 4]), {
+          status: 206,
+          headers: { "content-range": "bytes 10-13/1000" },
+        }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const reader = (url: string) => (
+    <PdfReader
+      documentKey="touched"
+      title="Paper"
+      load={async () => ""}
+      stream={{ url, size: 1000 }}
+    />
+  );
+  try {
+    const { rerender } = render(reader(retired));
+    await screen.findByText("of 2");
+    const opened = mocks.getDocument.mock.calls.length;
+    const options = last(mocks.getDocument.mock.calls)[0] as {
+      range: {
+        requestDataRange: (begin: number, end: number) => void;
+        onDataRange: ReturnType<typeof vi.fn>;
+      };
+    };
+    rerender(reader(current));
+    options.range.requestDataRange(10, 14);
+    await waitFor(() => expect(options.range.onDataRange).toHaveBeenCalled());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(current);
+    expect(mocks.getDocument).toHaveBeenCalledTimes(opened);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("retries a range on the new stream when the URL changes mid-request", async () => {
+  const retired = "pipeline-file://localhost/old";
+  const current = "pipeline-file://localhost/new";
+  let refuse = (_: Response) => {};
+  const fetchMock = vi.fn((url: string | URL | Request) =>
+    String(url) === retired
+      ? new Promise<Response>((done) => (refuse = done))
+      : Promise.resolve(
+          new Response(new Uint8Array([1, 2, 3, 4]), { status: 206 }),
+        ),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  const reader = (url: string) => (
+    <PdfReader
+      documentKey="touched-mid-request"
+      title="Paper"
+      load={async () => ""}
+      stream={{ url, size: 1000 }}
+    />
+  );
+  try {
+    const { rerender } = render(reader(retired));
+    await screen.findByText("of 2");
+    const options = last(mocks.getDocument.mock.calls)[0] as {
+      range: {
+        requestDataRange: (begin: number, end: number) => void;
+        onDataRange: ReturnType<typeof vi.fn>;
+      };
+    };
+    options.range.requestDataRange(10, 14);
+    rerender(reader(current));
+    refuse(new Response(null, { status: 410 }));
+    await waitFor(() => expect(options.range.onDataRange).toHaveBeenCalled());
+    expect(fetchMock.mock.calls[1][0]).toBe(current);
+    expect(screen.queryByText(/could not be read/)).toBeNull();
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+it("reads a streamed PDF on demand instead of loading the whole file", async () => {
+  const load = vi.fn(async () => "JVBERg==");
+  const fetchMock = vi.fn(
+    async () =>
+      new Response(new Uint8Array([1, 2, 3, 4]), {
+        status: 206,
+        headers: { "content-range": "bytes 10-13/1000" },
+      }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  try {
+    render(
+      <PdfReader
+        documentKey="stream"
+        title="Paper"
+        load={load}
+        stream={{ url: "pipeline-file://localhost/token", size: 1000 }}
+      />,
+    );
+    await screen.findByText("of 2");
+    expect(load).not.toHaveBeenCalled();
+    const options = last(mocks.getDocument.mock.calls)[0] as {
+      range: {
+        length: number;
+        requestDataRange: (begin: number, end: number) => void;
+        onDataRange: ReturnType<typeof vi.fn>;
+      };
+      disableAutoFetch: boolean;
+    };
+    expect(options.range.length).toBe(1000);
+    expect(options.disableAutoFetch).toBe(true);
+    options.range.requestDataRange(10, 14);
+    await waitFor(() =>
+      expect(options.range.onDataRange).toHaveBeenCalledWith(
+        10,
+        new Uint8Array([1, 2, 3, 4]),
+      ),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "pipeline-file://localhost/token",
+      expect.objectContaining({ headers: { Range: "bytes=10-13" } }),
+    );
   } finally {
     vi.unstubAllGlobals();
   }

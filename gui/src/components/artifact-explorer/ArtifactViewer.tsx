@@ -27,7 +27,8 @@ export const Viewer = memo(function Viewer({
   onSelectArtifact: (relPath: string) => void;
 }) {
   if (content.kind === "image") {
-    if (!content.base64) return <BinaryCard entry={entry} content={content} />;
+    if (!content.base64)
+      return <BinaryCard runId={runId} entry={entry} content={content} />;
     const mime = IMAGE_MIME[ext(entry?.rel_path ?? "")] ?? "image/png";
     return (
       <div className="p-4 flex justify-center">
@@ -59,7 +60,7 @@ export const Viewer = memo(function Viewer({
     );
   }
   if (content.kind === "binary" || content.text === null) {
-    return <BinaryCard entry={entry} content={content} />;
+    return <BinaryCard runId={runId} entry={entry} content={content} />;
   }
 
   const truncBanner = content.truncated && (

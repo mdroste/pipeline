@@ -299,7 +299,7 @@ export default function Campaigns(
                 ))}
               </div>
               {c.flags.map((f) => (
-                <p className="text-xs text-amber-700" key={f}>
+                <p className="text-xs text-warning" key={f}>
                   {f}
                 </p>
               ))}
@@ -320,14 +320,14 @@ export default function Campaigns(
             </p>
             <Sources
               sources={anchors}
-              choices={choices.filter((o) => o.title === "anchor")}
+              choices={choices.filter((o) => o.recordKind === "anchor")}
               onChange={setAnchors}
               onOpen={props.onOpen}
             />
             <p className={muted}>Declared dependency passages</p>
             <Sources
               sources={dependencies}
-              choices={choices.filter((o) => o.title === "anchor")}
+              choices={choices.filter((o) => o.recordKind === "anchor")}
               onChange={setDependencies}
               onOpen={props.onOpen}
             />

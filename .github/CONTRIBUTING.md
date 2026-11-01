@@ -12,7 +12,8 @@ described in [Security](SECURITY.md).
 
 Keep each pull request to one change. Explain what users will notice, why it's
 needed, and how you checked it. For changes users will notice, update the
-guides and add an entry under Unreleased in the [changelog](../CHANGELOG.md).
+guides and add an entry to the newest section of the
+[changelog](../CHANGELOG.md).
 
 ## Set up a development build
 
@@ -25,6 +26,10 @@ npm ci
 npm run tauri dev
 ```
 
+`npm run tauri dev` prepares the bundled notices before it compiles. Before you
+run `cargo` directly, run `npm ci` and `npm run prepare:release-resources` in
+`gui/`. The Rust build needs those notices and the KaTeX files in `node_modules`.
+
 Install your platform's native build tools. Linux also needs the WebKitGTK,
 application indicator, and SVG development libraries listed in
 [the CI workflow](workflows/build.yml). `npm run tauri build` puts
@@ -33,6 +38,14 @@ installers in `gui/src-tauri/target/release/bundle/`.
 Release tests need Python 3.11 or later. The test launcher tries `python3`,
 then `py -3` on Windows, then `python`. Set `PYTHON` to an interpreter path to
 choose one. The app itself doesn't need Python.
+
+The documentation and size checks call `rg`, so install
+[ripgrep](https://github.com/BurntSushi/ripgrep) and keep it on your `PATH`.
+
+A build from source doesn't include Poppler. It uses the `pdftotext` and
+`pdftoppm` on your `PATH`, unless you first fill
+`gui/src-tauri/resources/poppler/` with
+[bundle-poppler.sh](../scripts/release/bundle-poppler.sh).
 
 To keep test projects and conversations away from your own, set
 `PIPELINE_WORKBENCH_DEV_ROOT` to the absolute path of a scratch folder before
@@ -86,7 +99,9 @@ library test program can start.
 
 `npm run check:source-size` fails when a large source file grows. Split the
 file, or reduce it, rather than refreshing the baseline in
-`scripts/source-size-baseline.json` to hide the growth. Size limits per file
+`scripts/source-size-baseline.json` to hide the growth. It also fails when a
+baseline entry names a file that's deleted or back within the limit, so remove
+that entry. Size limits per file
 type are in `scripts/source-size-policy.json`. To see the full report, run
 `node scripts/source-size-report.mjs` from the repository root.
 
@@ -134,7 +149,7 @@ npm run clean -- --apply
 ```
 
 This removes the Rust `target/` folder, the frontend `dist/` folder, Vite
-caches, and generated Tauri schemas. It keeps dependencies, source,
+caches, TypeScript build-info files, and generated Tauri schemas. It keeps dependencies, source,
 lockfiles, local PDFs, bundled tools, credentials, and app data. The next
 build takes longer because Rust rebuilds everything. A custom
 `CARGO_TARGET_DIR` isn't cleaned. Add `--worktrees` to clean the same

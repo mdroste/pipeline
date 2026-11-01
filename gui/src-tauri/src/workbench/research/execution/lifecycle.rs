@@ -1,7 +1,8 @@
 //! Execution preparation, waiting, finalization, and cancellation ownership.
 
 use super::authorization::preview_host_execution;
-use super::outputs::{adopt_execution_outputs, observed_dependencies};
+use super::file_identity::SNAPSHOT_BUDGET;
+use super::outputs::{adopt_execution_outputs, observed_dependencies, snapshot_execution_inputs};
 use super::profiles::get_execution_profile;
 use super::types::{
     CancelExecutionRequest, ExecutionProfile, HostExecutionPreview, RunExecutionRequest,
@@ -29,10 +30,31 @@ pub(crate) struct PreparedExecution {
     pub manifest: Value,
     pub before_outputs: HashMap<String, Option<std::time::SystemTime>>,
     pub execution_id: String,
-    pub _project_guard: fs::File,
+}
+impl PreparedExecution {
+    /// A job can wait in line behind another that writes the same outputs, so
+    /// what counts as newly produced is measured when it starts.
+    pub(crate) fn record_output_times(&mut self) {
+        self.before_outputs = output_times(&self.profile);
+    }
+}
+fn output_times(profile: &ExecutionProfile) -> HashMap<String, Option<std::time::SystemTime>> {
+    profile
+        .outputs
+        .iter()
+        .map(|p| {
+            let path = Path::new(&profile.cwd).join(p);
+            (
+                p.clone(),
+                fs::metadata(path).ok().and_then(|m| m.modified().ok()),
+            )
+        })
+        .collect()
 }
 pub(crate) enum PreparedOrExisting {
-    Prepared(Box<PreparedExecution>),
+    /// The file is the project lock. The queue keeps it until the job is listed
+    /// as active, so no writer can slip between preparing and listing.
+    Prepared(Box<PreparedExecution>, fs::File),
     Existing(Box<ResearchExecution>),
 }
 
@@ -43,7 +65,8 @@ pub(crate) fn prepare_execution(
 ) -> WorkbenchResult<PreparedOrExisting> {
     validate_id("execution profile id", &request.profile_id)?;
     let mut profile = get_execution_profile(store, &request.profile_id)?;
-    let project_guard = crate::workbench::project::execution_lock(store, &profile.workspace_id)?;
+    // Held while the job is prepared. Its place in line is taken when it launches.
+    let guard = crate::workbench::project::execution_lock(store, &profile.workspace_id)?;
     let mut authorization = if request.plan_id.is_none() {
         Some(preview_host_execution(store, &profile.id)?)
     } else {
@@ -126,27 +149,24 @@ pub(crate) fn prepare_execution(
         authorization.ok_or_else(|| WorkbenchError::invalid("Missing execution authorization"))?;
     // Existing outputs cannot count as newly produced artifacts. Record their
     // metadata before launch; unchanged outputs remain explicitly unverified.
-    let before_outputs = profile
-        .outputs
-        .iter()
-        .map(|p| {
-            let path = Path::new(&profile.cwd).join(p);
-            (
-                p.clone(),
-                fs::metadata(path).ok().and_then(|m| m.modified().ok()),
-            )
-        })
-        .collect::<HashMap<_, _>>();
+    let before_outputs = output_times(&profile);
     let input_size = manifest["files"]
         .as_array()
         .into_iter()
         .flatten()
         .map(|f| f["sizeBytes"].as_u64().unwrap_or(0))
         .sum::<u64>();
-    if input_size <= 256 * 1024 * 1024 {
-        let mut input_profile = profile.clone();
-        input_profile.outputs = profile.inputs.clone();
-        manifest["snapshots"] = adopt_execution_outputs(store, &input_profile, &execution_id)?;
+    if input_size <= SNAPSHOT_BUDGET {
+        let snapshots = snapshot_execution_inputs(store, &profile, &execution_id);
+        // Nothing has run yet, so a promised snapshot can still stop the run.
+        if let Some(failed) = snapshots["notRetained"].get(0) {
+            return Err(WorkbenchError::invalid(format!(
+                "Declared input {} could not be saved: {}",
+                failed["path"].as_str().unwrap_or_default(),
+                failed["reason"].as_str().unwrap_or_default()
+            )));
+        }
+        manifest["snapshots"] = snapshots;
     } else {
         manifest["snapshotCapture"] =
             json!("Declared inputs exceed the 256 MiB snapshot budget; hashes only");
@@ -176,16 +196,18 @@ pub(crate) fn prepare_execution(
     queue.commit().map_err(|error| {
         WorkbenchError::storage("Failed to commit research execution receipt", error)
     })?;
-    Ok(PreparedOrExisting::Prepared(Box::new(PreparedExecution {
-        store: store.clone(),
-        request,
-        profile,
-        authorization,
-        manifest,
-        before_outputs,
-        execution_id,
-        _project_guard: project_guard,
-    })))
+    Ok(PreparedOrExisting::Prepared(
+        Box::new(PreparedExecution {
+            store: store.clone(),
+            request,
+            profile,
+            authorization,
+            manifest,
+            before_outputs,
+            execution_id,
+        }),
+        guard,
+    ))
 }
 
 pub(crate) fn start_execution(store: &Store, execution_id: &str) -> WorkbenchResult<()> {
@@ -209,6 +231,24 @@ pub(crate) fn wait_execution(prepared: &PreparedExecution) -> ExecutionOutput {
             process_started: false,
         };
     }
+    let _slot = match crate::workbench::project::job_slot(
+        &prepared.store,
+        &prepared.profile.workspace_id,
+    ) {
+        Ok(slot) => slot,
+        Err(error) => {
+            return ExecutionOutput {
+                outcome: "failed".into(),
+                status: None,
+                stdout: vec![],
+                stderr: error.message.into_bytes(),
+                stdout_truncated: false,
+                stderr_truncated: false,
+                wrapper_completed_after_stop: false,
+                process_started: false,
+            }
+        }
+    };
     if input_manifest(&prepared.profile)
         .map(|(m, _, _)| m["files"] != prepared.manifest["files"])
         .unwrap_or(true)
@@ -220,8 +260,9 @@ pub(crate) fn wait_execution(prepared: &PreparedExecution) -> ExecutionOutput {
         &prepared.profile,
         &prepared.authorization.launch,
     )
+    // Every error here comes before a process exists, so nothing can have run.
     .unwrap_or_else(|error| ExecutionOutput {
-        outcome: "outcome_unknown".into(),
+        outcome: "failed".into(),
         status: None,
         stdout: Vec::new(),
         stderr: error.into_bytes(),
@@ -230,6 +271,56 @@ pub(crate) fn wait_execution(prepared: &PreparedExecution) -> ExecutionOutput {
         wrapper_completed_after_stop: false,
         process_started: false,
     })
+}
+/// Tools such as latexmk rightly leave outputs alone when nothing changed. That
+/// is only provable against the last successful run of this profile: the same
+/// command and folder, the same declared inputs, and the same output bytes. Any
+/// other unchanged output may be one a real change should have rewritten.
+fn outputs_up_to_date(
+    store: &Store,
+    profile: &ExecutionProfile,
+    manifest: &Value,
+    outputs: &Value,
+    unchanged: &[String],
+) -> bool {
+    let inputs = manifest["files"].as_array();
+    if unchanged.is_empty() || manifest["complete"] != true || inputs.is_none_or(Vec::is_empty) {
+        return false;
+    }
+    let connection = match open_connection(store) {
+        Ok(connection) => connection,
+        Err(_) => return false,
+    };
+    let prior: Option<(String, String, String, String)> = connection
+        .query_row(
+            "SELECT command_json,cwd,input_manifest_json,output_manifest_json FROM research_executions WHERE profile_id=?1 AND outcome='completed' ORDER BY ended_at DESC,rowid DESC LIMIT 1",
+            [&profile.id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    let Some((command, cwd, prior_inputs, prior_outputs)) = prior else {
+        return false;
+    };
+    let parsed = |text: &str| serde_json::from_str::<Value>(text).unwrap_or(Value::Null);
+    let output_hash = |manifest: &Value, path: &str| {
+        ["artifacts", "notRetained"]
+            .iter()
+            .filter_map(|list| manifest[*list].as_array())
+            .flatten()
+            .find(|entry| entry["path"] == path)
+            .and_then(|entry| entry["contentHash"].as_str().map(str::to_owned))
+    };
+    let prior_outputs = parsed(&prior_outputs);
+    serde_json::to_string(&profile.argv).is_ok_and(|argv| argv == command)
+        && cwd == profile.cwd
+        && parsed(&prior_inputs)["files"] == manifest["files"]
+        && unchanged.iter().all(|path| {
+            output_hash(outputs, path).is_some_and(|hash| {
+                output_hash(&prior_outputs, path).as_deref() == Some(hash.as_str())
+            })
+        })
 }
 pub(crate) fn finalize_execution(
     store: &Store,
@@ -243,13 +334,14 @@ pub(crate) fn finalize_execution(
         manifest,
         before_outputs,
         execution_id,
-        _project_guard,
         store: _,
     } = prepared;
     let (validation, valid) = validate_execution_outputs(&profile, &output.outcome);
-    let (after_manifest, _, _) = input_manifest(&profile)?;
-    let inputs_changed = manifest["files"] != after_manifest["files"];
-    let stale_outputs = profile
+    let inputs_changed = input_manifest(&profile)
+        .map(|(after, _, _)| manifest["files"] != after["files"])
+        .unwrap_or(true);
+    let outputs = adopt_execution_outputs(store, &profile, &execution_id);
+    let unchanged_outputs = profile
         .outputs
         .iter()
         .filter(|p| {
@@ -262,18 +354,17 @@ pub(crate) fn finalize_execution(
         })
         .cloned()
         .collect::<Vec<_>>();
+    let (up_to_date_outputs, stale_outputs) =
+        if outputs_up_to_date(store, &profile, &manifest, &outputs, &unchanged_outputs) {
+            (unchanged_outputs, Vec::new())
+        } else {
+            (Vec::new(), unchanged_outputs)
+        };
     let valid = valid && stale_outputs.is_empty() && !inputs_changed;
     let outcome = if output.outcome == "completed" && !valid {
         "failed".to_string()
     } else {
         output.outcome
-    };
-    let outputs = match adopt_execution_outputs(store, &profile, &execution_id) {
-        Ok(outputs) => outputs,
-        Err(error) => {
-            open_connection(store)?.execute("UPDATE research_executions SET outcome='outcome_unknown',ended_at=?2,validation_json=?3 WHERE id=?1",params![execution_id,now(),json!({"adoptionError":error.message}).to_string()]).map_err(|e|WorkbenchError::storage("Failed to record adoption failure",e))?;
-            return Err(error);
-        }
     };
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -286,7 +377,7 @@ pub(crate) fn finalize_execution(
     } else {
         Value::Null
     };
-    let validation = json!({"observedDependencies":observed,"adapter":validation,"stdoutTruncated":output.stdout_truncated,"stderrTruncated":output.stderr_truncated,"executionBoundary":"explicitly_authorized_host","executionContainment":"host_access","capturedInputIdentity":manifest["snapshotConsistency"],"planId":request.plan_id,"authorizationFingerprint":authorization.fingerprint,"authorizedLaunch":authorization.launch,"dependencyCoverage":"declared_only","inputsChanged":inputs_changed,"unchangedPreexistingOutputs":stale_outputs,"stataWrapperReturnedAfterStop":output.wrapper_completed_after_stop,"processStarted":output.process_started,"stataLaunchMode":adapters::stata_mode_label(&profile.adapter, &profile.argv),"stataCleanupRequired":waits_for_launcher && output.process_started && outcome!="completed" && !output.wrapper_completed_after_stop,"runtimeIdentity":runtime_identity});
+    let validation = json!({"observedDependencies":observed,"adapter":validation,"stdoutTruncated":output.stdout_truncated,"stderrTruncated":output.stderr_truncated,"executionBoundary":"explicitly_authorized_host","executionContainment":"host_access","capturedInputIdentity":manifest["snapshotConsistency"],"planId":request.plan_id,"authorizationFingerprint":authorization.fingerprint,"authorizedLaunch":authorization.launch,"dependencyCoverage":"declared_only","inputsChanged":inputs_changed,"unchangedPreexistingOutputs":stale_outputs,"upToDateOutputs":up_to_date_outputs,"stataWrapperReturnedAfterStop":output.wrapper_completed_after_stop,"processStarted":output.process_started,"stataLaunchMode":adapters::stata_mode_label(&profile.adapter, &profile.argv),"stataCleanupRequired":waits_for_launcher && output.process_started && outcome!="completed" && !output.wrapper_completed_after_stop,"runtimeIdentity":runtime_identity});
     let ended = now();
     let journal = json!({"outcome":outcome,"endedAt":ended,"exitStatus":output.status,"stdout":stdout,"stderr":stderr,"outputs":outputs,"validation":validation,"testOnly":request.test_only,"profileId":profile.id,"profileRevision":profile.revision});
     open_connection(store)?
@@ -306,7 +397,8 @@ pub fn run_execution(
 ) -> WorkbenchResult<ResearchExecution> {
     match prepare_execution(store, request, None)? {
         PreparedOrExisting::Existing(e) => Ok(*e),
-        PreparedOrExisting::Prepared(p) => {
+        PreparedOrExisting::Prepared(p, guard) => {
+            drop(guard);
             start_execution(store, &p.execution_id)?;
             let output = wait_execution(&p);
             finalize_execution(store, *p, output)

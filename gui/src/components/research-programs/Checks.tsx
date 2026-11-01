@@ -12,7 +12,7 @@ import {
   useProgram,
   type DeskProps,
 } from "./shared";
-export default function Checks(props: DeskProps & { active?: boolean }) {
+export default function Checks(props: DeskProps) {
   const p = useProgram(props, ["dataset"]);
   const [title, setTitle] = useState("Tracked research change"),
     [monitor, setMonitor] = useState<Monitor>({
@@ -37,7 +37,9 @@ export default function Checks(props: DeskProps & { active?: boolean }) {
         .catch(() => undefined);
     };
     load();
-    const timer = setInterval(load, 15000);
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") load();
+    }, 15000);
     const event = listen<{ workspaceId: string }>(
       "workbench-research-attention",
       (e) => {

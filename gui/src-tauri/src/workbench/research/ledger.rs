@@ -2,6 +2,22 @@
 
 use super::*;
 
+const IMPORTED_MARK: &str = "imported:";
+
+/// The origin or assessor of a record whose status stayed with its sender.
+pub(crate) fn imported_mark(status: &str, original: &str) -> String {
+    format!("{IMPORTED_MARK}{status}:{original}")
+}
+
+/// The sender's status and the original value, from an imported mark.
+pub(crate) fn split_imported_mark(marked: &str) -> Option<(&str, &str)> {
+    marked.strip_prefix(IMPORTED_MARK)?.split_once(':')
+}
+
+pub(super) fn imported_status(marked: &str) -> Option<String> {
+    split_imported_mark(marked).map(|(status, _)| status.to_string())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaimRecord {
@@ -18,6 +34,9 @@ pub struct ClaimRecord {
     pub dependency_hash: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// What a package's sender recorded; not a decision made in this store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -56,6 +75,9 @@ pub struct EvidenceRecord {
     pub stale_reason: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// What a package's sender recorded; not a decision made in this store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -89,7 +111,9 @@ pub struct ResearchLedger {
 
 fn claim_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClaimRecord> {
     let locator: Option<String> = row.get(9)?;
+    let origin: String = row.get(8)?;
     Ok(ClaimRecord {
+        imported_status: imported_status(&origin),
         id: row.get(0)?,
         workspace_id: row.get(1)?,
         paper_id: row.get(2)?,
@@ -98,7 +122,7 @@ fn claim_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClaimRecord> {
         version: row.get(5)?,
         claim: row.get(6)?,
         kind: row.get(7)?,
-        origin: row.get(8)?,
+        origin,
         paper_locator: locator.and_then(|value| serde_json::from_str(&value).ok()),
         dependency_hash: row.get(10)?,
         created_at: row.get(11)?,
@@ -108,7 +132,9 @@ fn claim_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClaimRecord> {
 
 fn evidence_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EvidenceRecord> {
     let locator: Option<String> = row.get(5)?;
+    let assessor: String = row.get(8)?;
     Ok(EvidenceRecord {
+        imported_status: imported_status(&assessor),
         id: row.get(0)?,
         workspace_id: row.get(1)?,
         claim_version_id: row.get(2)?,
@@ -117,7 +143,7 @@ fn evidence_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EvidenceRecord
         locator: locator.and_then(|value| serde_json::from_str(&value).ok()),
         relation: row.get(6)?,
         assessment: row.get(7)?,
-        assessor: row.get(8)?,
+        assessor,
         dependency_hash: row.get(9)?,
         freshness: row.get(10)?,
         stale_reason: row.get(11)?,
@@ -394,6 +420,8 @@ pub fn research_ledger(store: &Store, workspace_id: &str) -> WorkbenchResult<Res
                     item.claim_version_id == claim.version_id
                         && item.relation == "supports"
                         && item.freshness == "current"
+                        // A model proposal or a failed check is not support.
+                        && matches!(item.assessment.as_str(), "human_confirmed" | "check_passed")
                 })
         })
         .map(|claim| claim.id.clone())

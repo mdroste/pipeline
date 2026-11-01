@@ -1,10 +1,31 @@
+import { stepDependencies } from "../../lib/pipelineHelpers";
 import type {
   PipelineConfig,
   StepConfig,
   ArtifactSelector,
+  DependencyPolicy,
   ExtractionConfig,
+  OutputConfig,
 } from "../../lib/types";
 export const DEFAULT_EXTRACTION: ExtractionConfig = { method: "" };
+const PRESERVE_FINDINGS_KEY = "x-pipeline-preserve-findings-from";
+/** The save validator's limit. Labels may be longer, so ids are cut to fit. */
+export const MAX_STEP_ID_CHARS = 64;
+export const MAX_STEP_LABEL_CHARS = 200;
+
+/** `base`, shortened to the id limit and numbered when already in use. */
+export function uniqueStepId(base: string, steps: StepConfig[]) {
+  const fitted = (suffix: string) => {
+    const room = MAX_STEP_ID_CHARS - suffix.length;
+    return base.length > room
+      ? `${base.slice(0, room).replace(/_+$/, "")}${suffix}`
+      : `${base}${suffix}`;
+  };
+  const taken = new Set(steps.map((step) => step.id));
+  let id = fitted("");
+  for (let number = 2; taken.has(id); number += 1) id = fitted(`_${number}`);
+  return id;
+}
 
 export function prepareExtractionChange(
   config: PipelineConfig,
@@ -53,20 +74,45 @@ export function prepareExtractionChange(
 export function referencingSteps(config: PipelineConfig, id: string) {
   return config.steps.filter(
     (step) =>
-      (step.after ?? []).includes(id) ||
-      step.context.include.some(
-        (selector) => selector.kind === "step" && selector.step === id,
-      ) ||
-      (step.run_if?.kind === "output_matches" && step.run_if.step === id),
+      stepDependencies(step).includes(id) ||
+      (step.run_if?.kind === "output_matches" && step.run_if.step === id) ||
+      step.output_schema?.[PRESERVE_FINDINGS_KEY] === id,
   );
+}
+/**
+ * Steps that repeat over this step's results. Without that source the fan-out
+ * has no items and its prompt no `{item}`, so the researcher chooses another
+ * source rather than the editor quietly turning it into a single run.
+ */
+export function fanOutSteps(steps: StepConfig[], id: string) {
+  return steps.filter((step) => step.for_each?.artifact?.step === id);
+}
+export function namedOutputs(config: PipelineConfig, id: string) {
+  return (config.outputs?.named ?? []).filter((product) => product.step === id);
+}
+function withoutPolicyReference(
+  policy: DependencyPolicy,
+  id: string,
+): DependencyPolicy {
+  const quorum = (policy.quorum ?? []).filter((member) => member !== id);
+  return {
+    required: (policy.required ?? []).filter((member) => member !== id),
+    quorum,
+    minimum_successes: Math.min(policy.minimum_successes ?? 0, quorum.length),
+  };
 }
 export function withoutStepReferences(
   step: StepConfig,
   id: string,
 ): StepConfig {
+  const { [PRESERVE_FINDINGS_KEY]: preserved, ...schema } =
+    step.output_schema ?? {};
   return {
     ...step,
     after: (step.after ?? []).filter((dependency) => dependency !== id),
+    ...(step.dependency_policy && {
+      dependency_policy: withoutPolicyReference(step.dependency_policy, id),
+    }),
     context: {
       include: step.context.include.filter(
         (selector) => selector.kind !== "step" || selector.step !== id,
@@ -76,5 +122,19 @@ export function withoutStepReferences(
       step.run_if?.kind === "output_matches" && step.run_if.step === id
         ? null
         : step.run_if,
+    ...(preserved === id && { output_schema: schema }),
+  };
+}
+export function withoutStepOutputs(
+  outputs: OutputConfig | undefined,
+  id: string,
+): OutputConfig {
+  return {
+    ...(outputs ?? {}),
+    primary_step: outputs?.primary_step === id ? "" : outputs?.primary_step,
+    findings_step: outputs?.findings_step === id ? "" : outputs?.findings_step,
+    ...(outputs?.named && {
+      named: outputs.named.filter((product) => product.step !== id),
+    }),
   };
 }

@@ -7,11 +7,12 @@
 //! carried as a tokio task-local, and as a thread-local inside blocking work
 //! started with [`spawn_blocking`], so several runs can share the process.
 //!
-//! Task-locals do not propagate across `tokio::spawn` or onto blocking threads.
-//! Run code therefore spawns through [`spawn`] and [`spawn_blocking`], which
-//! re-enter the caller's scope. Code outside any run (UI commands, model
-//! discovery, maintenance under the exclusive pipeline guard) resolves to one
-//! shared fallback scope that behaves like the former globals.
+//! Task-locals do not propagate across `tokio::spawn`, `JoinSet::spawn`, or onto
+//! blocking threads. Run code therefore spawns through [`spawn`], [`spawn_in`],
+//! and [`spawn_blocking`], which re-enter the caller's scope. Code outside any
+//! run (UI commands, model discovery, maintenance under the exclusive pipeline
+//! guard) resolves to one shared fallback scope that behaves like the former
+//! globals.
 
 use std::cell::RefCell;
 use std::future::Future;
@@ -94,6 +95,37 @@ where
     F::Output: Send + 'static,
 {
     tokio::spawn(SCOPE.scope(current(), fut))
+}
+
+/// `JoinSet::spawn` that keeps the caller's run scope.
+pub fn spawn_in<T, F>(tasks: &mut tokio::task::JoinSet<T>, fut: F) -> tokio::task::AbortHandle
+where
+    T: Send + 'static,
+    F: Future<Output = T> + Send + 'static,
+{
+    tasks.spawn(SCOPE.scope(current(), fut))
+}
+
+/// The next finished unit of a `JoinSet`, or `None` when none remain. Once the
+/// run is cancelled, units have `grace` to stop on their own and report what
+/// they spent, counted from the first wait that sees the cancellation (held in
+/// `stop_by`). `Err` means a unit outlasted it: a unit that ignores
+/// cancellation must not hold the run open, so the caller stops the rest.
+pub async fn join_next_until_stopped<T: 'static>(
+    tasks: &mut tokio::task::JoinSet<T>,
+    stop_by: &mut Option<tokio::time::Instant>,
+    grace: std::time::Duration,
+) -> Result<Option<Result<T, tokio::task::JoinError>>, String> {
+    let deadline = match *stop_by {
+        Some(deadline) => deadline,
+        None => match crate::commands::await_or_cancel(tasks.join_next(), None).await {
+            Ok(next) => return Ok(next),
+            Err(_) => *stop_by.insert(tokio::time::Instant::now() + grace),
+        },
+    };
+    tokio::time::timeout_at(deadline, tasks.join_next())
+        .await
+        .map_err(|_| "Pipeline cancelled".to_string())
 }
 
 /// `spawn_blocking` that keeps the caller's run scope, so cancellation checks,
@@ -338,6 +370,64 @@ impl RunScope {
 }
 
 #[cfg(test)]
+pub(crate) mod fixtures {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// A local OpenAI-compatible server that lists one model, then accepts
+    /// every model call and never answers it. Returns its URL and the number
+    /// of model calls received.
+    pub(crate) fn hanging_provider() -> (String, Arc<AtomicUsize>) {
+        use std::io::{BufRead, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        std::thread::spawn(move || {
+            let mut unanswered = Vec::new();
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { continue };
+                let mut reader = std::io::BufReader::new(stream);
+                let mut request = String::new();
+                if reader.read_line(&mut request).is_err() {
+                    continue;
+                }
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                }
+                if request.starts_with("GET") {
+                    let reply = r#"{"data":[{"id":"fixture"}]}"#;
+                    let _ = write!(
+                        reader.into_inner(),
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                        reply.len()
+                    );
+                } else {
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    unanswered.push(reader);
+                }
+            }
+        });
+        (format!("http://{address}/v1"), calls)
+    }
+
+    /// Waits until `calls` reaches `count` on the given provider.
+    pub(crate) async fn until_called(calls: &AtomicUsize, count: usize) {
+        let started = std::time::Instant::now();
+        while calls.load(Ordering::SeqCst) < count {
+            assert!(
+                started.elapsed() < std::time::Duration::from_secs(20),
+                "the provider never received the call"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -393,6 +483,111 @@ mod tests {
         assert_eq!(spawned, key);
         assert_eq!(blocking, key);
         assert!(current().is_fallback());
+    }
+
+    #[test]
+    fn join_set_work_inherits_the_scope() {
+        let run = ActiveScope::begin("scope-test-join-set");
+        let key = run.scope().key().to_string();
+        let joined = block_on(scoped(run.scope().clone(), async {
+            let mut tasks = tokio::task::JoinSet::new();
+            spawn_in(&mut tasks, async { current().key().to_string() });
+            tasks.join_next().await.unwrap().unwrap()
+        }));
+        assert_eq!(joined, key);
+    }
+
+    #[test]
+    fn a_unit_that_ignores_cancellation_cannot_hold_the_run_open() {
+        let run = ActiveScope::begin("scope-test-stubborn-unit");
+        let grace = std::time::Duration::from_millis(50);
+        block_on(scoped(run.scope().clone(), async {
+            let mut tasks = tokio::task::JoinSet::new();
+            spawn_in(&mut tasks, async { "finished" });
+            spawn_in(&mut tasks, std::future::pending::<&str>());
+            let mut stop_by = None;
+            // Nothing stops a unit before the run is cancelled.
+            let first = join_next_until_stopped(&mut tasks, &mut stop_by, grace)
+                .await
+                .unwrap();
+            assert_eq!(first.unwrap().unwrap(), "finished");
+            assert!(stop_by.is_none());
+
+            current().request_cancel();
+            let stopped = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                join_next_until_stopped(&mut tasks, &mut stop_by, grace),
+            )
+            .await
+            .expect("the wait must end with the grace period");
+            assert_eq!(stopped.unwrap_err(), "Pipeline cancelled");
+            assert_eq!(tasks.len(), 1);
+        }));
+    }
+
+    /// Every spawn site under these folders either re-enters the run scope or
+    /// is named here with the reason it owns no run state. Reviews lost Stop,
+    /// usage, and process ownership to a raw `JoinSet::spawn` once already.
+    #[test]
+    fn review_runtime_spawns_keep_the_run_scope() {
+        const RAW_SPAWNS: &[&str] = &[
+            "tokio::spawn(",
+            "tokio::task::spawn(",
+            "tokio::task::spawn_blocking(",
+            "tauri::async_runtime::spawn(",
+            "tauri::async_runtime::spawn_blocking(",
+            "tasks.spawn(",
+            "tasks.spawn_blocking(",
+            ".spawn(async",
+        ];
+        // Each entry is one Review-reachable site outside any single run.
+        const OWNED_OUTSIDE_A_RUN: &[(&str, usize)] = &[
+            // The launch preview runs before a run exists.
+            ("pipeline/executor/budget.rs", 1),
+            // The shared ChatGPT connection outlives every run that uses it.
+            ("pipeline/codex_server/connection.rs", 1),
+            // Interrupting a dropped turn outlives its run; it reads no scope.
+            ("pipeline/codex_server/invocation.rs", 1),
+        ];
+        fn visit(dir: &std::path::Path, found: &mut Vec<(String, usize)>, root: &std::path::Path) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if path.file_name().is_some_and(|name| name != "tests") {
+                        visit(&path, found, root);
+                    }
+                    continue;
+                }
+                let name = path.file_name().unwrap().to_string_lossy();
+                if !name.ends_with(".rs") || name.ends_with("tests.rs") {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                // Test modules sit at the end of each file and may spawn freely.
+                let production = source.split("#[cfg(test)]\nmod ").next().unwrap();
+                let raw = production
+                    .lines()
+                    .filter(|line| !line.trim_start().starts_with("//"))
+                    .filter(|line| RAW_SPAWNS.iter().any(|spawn| line.contains(spawn)))
+                    .count();
+                if raw > 0 {
+                    let relative = path.strip_prefix(root).unwrap();
+                    found.push((relative.to_string_lossy().replace('\\', "/"), raw));
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut found = Vec::new();
+        for module in ["pipeline", "commands/run", "runs", "document_bundle"] {
+            visit(&root.join(module), &mut found, &root);
+        }
+        found.sort();
+        let mut expected: Vec<(String, usize)> = OWNED_OUTSIDE_A_RUN
+            .iter()
+            .map(|(path, count)| (path.to_string(), *count))
+            .collect();
+        expected.sort();
+        assert_eq!(found, expected);
     }
 
     #[test]

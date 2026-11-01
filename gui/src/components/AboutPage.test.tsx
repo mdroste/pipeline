@@ -30,6 +30,24 @@ describe("AboutPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("uses the standard page header, with Help as its only title", async () => {
+    const close = vi.fn();
+    const { container } = render(<AboutPage onClose={close} />);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      /^Help$/,
+    );
+    expect(container.querySelector(".ui-page .ui-page-header")).toBeTruthy();
+    expect(container.querySelector(".ui-page-description")).toHaveTextContent(
+      /what each part of the app does/,
+    );
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Set up" }),
+    ).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(close).toHaveBeenCalledOnce();
+    await screen.findByText(`Pipeline v${appVersion}`);
+  });
+
   it("opens the game after the full Konami code and requires a pilot choice", async () => {
     localStorage.setItem(FLAPPY_HIGH_SCORE_KEY, "12");
     const context = {
@@ -78,7 +96,9 @@ describe("AboutPage", () => {
     ).not.toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: "Enter" });
-    const dialog = screen.getByRole("dialog", { name: "Flappy Pipeline" });
+    const dialog = await screen.findByRole("dialog", {
+      name: "Flappy Pipeline",
+    });
     expect(dialog).toHaveAttribute("aria-modal", "true");
     expect(dialog).toHaveTextContent(/Best\s*12/i);
 

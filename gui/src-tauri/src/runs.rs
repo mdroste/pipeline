@@ -25,6 +25,9 @@ const MAX_DOCUMENT_BUNDLE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_IMAGE_BYTES: u64 = 10_000_000;
 const MAX_MANIFEST_BYTES: usize = 4 * 1024 * 1024;
 const MAX_MANIFEST_ARTIFACTS: usize = 5_000;
+/// Manifest entries a run's folder copies and step outputs may fill. The rest
+/// holds what every run keeps: pages, figures, products, and the report.
+pub(crate) const MAX_RUN_PLANNED_ARTIFACTS: usize = MAX_MANIFEST_ARTIFACTS - 1_000;
 
 const MAX_REPORT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ANNOTATION_BYTES: usize = 1_000_000;
@@ -48,7 +51,8 @@ mod unlisted;
 mod writer;
 
 pub use artifacts::{
-    read_artifact, read_page_artifact, read_pdf_artifact_bytes, read_pdf_artifact_page,
+    open_artifact_stream, read_artifact, read_page_artifact, read_pdf_artifact_bytes,
+    read_pdf_artifact_page,
 };
 pub use history::{list_runs, load_latest_report_for_input, update_run_meta};
 pub use identity::{
@@ -63,10 +67,11 @@ pub use records::{
     RunsDiskUsage,
 };
 pub(crate) use recovery::captured_document_rel_path;
-pub use recovery::recover_resumable_runs;
+pub use recovery::{recover_resumable_runs, recover_stopped_run};
 pub use retention::{
-    disk_usage, preview_purge_runs_with_limits, purge_runs_with_expected_preview,
-    purge_runs_with_limits, read_annotations, write_annotations,
+    disk_usage, hold_from_retention, preview_purge_runs_with_limits,
+    purge_runs_with_expected_preview, purge_runs_with_limits, read_annotations, write_annotations,
+    RetentionHold,
 };
 pub use trash::{
     delete_run, list_trashed_runs, permanently_delete_trashed_run, restore_trashed_run, TrashedRun,
@@ -74,7 +79,9 @@ pub use trash::{
 pub use writer::RunWriter;
 
 #[cfg(test)]
-use artifacts::normalize_external_path;
+use crate::file_viewer::normalize_external_path;
+#[cfg(test)]
+use history::sort_newest_first;
 use inspection::{
     agent_response_label, inspect_file, read_at_most, read_utf8_at_most, short_sha256,
 };
@@ -87,10 +94,13 @@ use records::input_basename;
 #[cfg(test)]
 use recovery::{
     manifest_is_foreign_but_valid, recover_orphan_manifest, recover_resumable_run_dir,
-    recover_resumable_runs_at, run_has_resume_files, DELETE_TOMBSTONE,
+    recover_resumable_runs_at, recover_runs_in, recover_stopped_run_dir, run_has_resume_files,
+    store_walk, DELETE_TOMBSTONE,
 };
 #[cfg(test)]
-use retention::{retention_plan_from_state, validate_annotation_content};
+use retention::{
+    apply_retention_holds, retention_plan_from_state, trash_unheld, validate_annotation_content,
+};
 #[cfg(test)]
 use trash::restore_trashed_run_at;
 #[cfg(test)]

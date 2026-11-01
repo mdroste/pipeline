@@ -217,3 +217,116 @@ fn xlsx_refuses_malformed_ambiguous_and_oversized_workbooks() {
     assert!(!xlsx::is_date_format("#,##0.00 \"days\""));
     assert!(!xlsx::is_date_format("[Red]0.00"));
 }
+
+/// Written by openpyxl with its built-in formats, so Comma and Currency cells
+/// carry `numFmtId` 43 and 44 with no `numFmt` entry, as Excel saves them.
+const FINANCE: &[u8] = include_bytes!("../../../../tests/fixtures/data/openpyxl-finance.xlsx");
+
+#[test]
+fn comma_and_currency_columns_are_numbers_and_only_real_dates_are_flagged() {
+    let (p, w) = xlsx::read(FINANCE, Some("Finance"), Some(0)).unwrap();
+    assert_eq!(p.rows, 2);
+    let dates: Vec<_> = p
+        .limitations
+        .iter()
+        .filter(|l| l.starts_with("Columns with date"))
+        .collect();
+    assert_eq!(dates, ["Columns with date or time formats: opened."]);
+    assert_eq!(
+        column(&p, "revenue").display_format.as_deref(),
+        Some(r#"_(* #,##0.00_);_(* \(#,##0.00\);_(* "-"??_);_(@_)"#)
+    );
+    assert_eq!(
+        column(&p, "cost").display_format.as_deref(),
+        Some(r#"_("$"* #,##0.00_);_("$"* \(#,##0.00\);_("$"* "-"??_);_(@_)"#)
+    );
+    assert_eq!(
+        column(&p, "units").display_format.as_deref(),
+        Some(r#"_(* #,##0_);_(* \(#,##0\);_(* "-"_);_(@_)"#)
+    );
+    assert_eq!(
+        column(&p, "price").display_format.as_deref(),
+        Some(r##""$"#,##0.00_);[Red]\("$"#,##0.00\)"##)
+    );
+    assert_eq!(
+        column(&p, "opened").display_format.as_deref(),
+        Some("mm-dd-yy")
+    );
+    for name in ["revenue", "cost", "units", "price", "opened", "share"] {
+        assert_eq!(column(&p, name).inferred_type, "number", "{name}");
+    }
+    let row = |i: usize| {
+        w.as_ref().unwrap().rows[i]
+            .iter()
+            .map(|c| c.as_deref().unwrap())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        row(0),
+        ["2019", "1234.5", "987.25", "1500", "12.5", "43525", "0.125"]
+    );
+    assert_eq!(
+        row(1),
+        ["2020", "2345.75", "1100.5", "1625", "13.75", "43892", "0.25"]
+    );
+}
+
+#[test]
+fn unnamed_builtin_formats_are_dates_only_in_their_reserved_ranges() {
+    let cell = |id: u32| {
+        format!(
+            r#"<styleSheet {NS}><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="{id}"/></cellXfs></styleSheet>"#
+        )
+    };
+    let sheet = concat!(
+        r#"<row r="1"><c r="A1" t="inlineStr"><is><t>value</t></is></c></row>"#,
+        r#"<row r="2"><c r="A2" s="1"><v>45123</v></c></row>"#,
+    );
+    let flagged = |id: u32| {
+        let book = workbook(sheet, &[("xl/styles.xml", cell(id))]);
+        let (p, _) = xlsx::read(&book, None, None).unwrap();
+        assert_eq!(
+            column(&p, "value").display_format,
+            Some(format!("built-in format {id}"))
+        );
+        p.limitations
+            .iter()
+            .any(|l| l == "Columns with date or time formats: value.")
+    };
+    for id in [27, 31, 36, 50, 58, 71, 81] {
+        assert!(flagged(id), "{id} is a locale date format");
+    }
+    for id in [23, 26, 237, 59, 66, 70, 82, 163] {
+        assert!(!flagged(id), "{id} is not a known date format");
+    }
+}
+
+#[test]
+fn viewer_pages_keep_blank_rows_past_the_preview_length() {
+    let page = |start| file_table(FINANCE, FINANCE.len() as u64, "xlsx", Some("Paged"), start);
+    let first = page(0).unwrap();
+    assert_eq!((first.total_rows, first.rows.len()), (240, 200));
+    assert!(serde_json::to_value(&first)
+        .unwrap()
+        .get("preview")
+        .is_none());
+    let cells = |row: usize| {
+        first.rows[row]
+            .iter()
+            .map(|c| c.as_deref())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(cells(99), [Some("r99"), Some("148.5")]);
+    assert_eq!(cells(100), [None, None]);
+    assert_eq!(cells(101), [Some("r101"), Some("151.5")]);
+    assert_eq!(cells(150), [None, None]);
+    assert_eq!(cells(151), [Some("r151"), Some("226.5")]);
+    assert_eq!(cells(199), [Some("r199"), Some("298.5")]);
+    // A page that opens inside the gap keeps the blank row at its own offset.
+    let inside = page(100).unwrap();
+    assert_eq!(inside.rows[0], [None, None]);
+    assert_eq!(inside.rows[1][0].as_deref(), Some("r101"));
+    assert_eq!(inside.rows[50], [None, None]);
+    assert_eq!(inside.rows[139][0].as_deref(), Some("r239"));
+    assert_eq!(inside.rows.len(), 140);
+}

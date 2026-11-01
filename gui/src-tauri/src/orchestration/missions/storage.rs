@@ -23,7 +23,9 @@ pub fn previous(s: &Store, operation: &str, fingerprint: &str) -> Result<Option<
         .map_err(err)?;
     row.map(|(old, body)| {
         if old != fingerprint {
-            return Err("Mission operation was reused with a different request".into());
+            return Err(
+                "This research automation's start was reused with a different request".into(),
+            );
         }
         serde_json::from_str(&body).map_err(err)
     })
@@ -38,7 +40,7 @@ pub fn create(s: &Store, m: Mission, operation: &str, fingerprint: &str) -> Resu
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(err)?;
     tx.execute("INSERT INTO missions(id,operation,fingerprint,revision,state,workspace_id,due_at,updated_at,body) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![m.id,operation,fingerprint,m.revision,m.state,m.workspace_id,m.due_at,m.updated_at,serde_json::to_string(&m).map_err(err)?]).map_err(err)?;
-    event(&tx, &m.id, "prepared", "Mission scope and limits prepared")?;
+    event(&tx, &m.id, "prepared", "Scope and limits prepared")?;
     tx.commit().map_err(err)?;
     Ok(m)
 }
@@ -58,12 +60,12 @@ fn write(tx: &Transaction<'_>, m: &mut Mission, kind: &str, detail: &str) -> Res
     let body = serde_json::to_string(&m).map_err(err)?;
     if body.len() > 4 * 1024 * 1024 {
         return Err(
-            "Mission retained state exceeds 4 MiB; export the work before starting another mission"
+            "Research automation retained state exceeds 4 MiB; export the work before starting another"
                 .into(),
         );
     }
     if tx.execute("UPDATE missions SET revision=?2,state=?3,due_at=?4,updated_at=?5,body=?6 WHERE id=?1 AND revision=?7",params![m.id,m.revision,m.state,m.due_at,m.updated_at,body,expected]).map_err(err)?!=1 {
-        m.revision=expected;return Err("Mission changed; reload before continuing".into());
+        m.revision=expected;return Err("This research automation changed; reload before continuing".into());
     }
     event(tx, &m.id, kind, detail)
 }
@@ -74,6 +76,16 @@ pub fn save(s: &Store, m: &mut Mission, kind: &str, detail: &str) -> Result<()> 
         .map_err(err)?;
     write(&tx, m, kind, detail)?;
     tx.commit().map_err(err)
+}
+/// Refresh only the poll time, for a mission whose state did not change.
+pub fn touch_due(s: &Store, id: &str, due: Option<i64>) -> Result<()> {
+    s.connection()?
+        .execute(
+            "UPDATE missions SET due_at=?2 WHERE id=?1",
+            params![id, due],
+        )
+        .map_err(err)?;
+    Ok(())
 }
 pub fn list(s: &Store, workspace: Option<&str>, offset: u32) -> Result<Vec<Summary>> {
     let c = s.connection()?;
@@ -137,7 +149,7 @@ pub fn wake_owner(s: &Store, task: &str) -> Result<bool> {
 /// approved task can be launched between preparation and mission association.
 pub fn admit(s: &Store, m: &mut Mission, mut chain: Chain, scope: Scope) -> Result<TaskRun> {
     if m.state != "queued" || m.active_child.is_some() {
-        return Err("Mission is not ready to dispatch".into());
+        return Err("Research automation is not ready to dispatch".into());
     }
     let remaining = m.definition.budget.active_seconds as u64
         - m.active_seconds
@@ -146,13 +158,13 @@ pub fn admit(s: &Store, m: &mut Mission, mut chain: Chain, scope: Scope) -> Resu
         || remaining < 30
         || m.deadline_at.is_none_or(|d| d <= now())
     {
-        return Err("Mission action, active-time or elapsed budget reached".into());
+        return Err("Action, active-time or elapsed budget reached".into());
     }
     if chain.steps.len() != 1
         || chain.limits.max_actions != 1
         || chain.limits.action_timeout_secs as u64 > remaining
     {
-        return Err("Mission child must be one bounded action within its remaining time".into());
+        return Err("Each action must be one bounded step within the remaining time".into());
     }
     // Rendered prompts quote researcher and source text that may itself
     // contain '{{input:...}}' or '{{output:...}}'. Bind the prompt as one
@@ -254,7 +266,7 @@ pub fn answer(
         };
     }
     if m.terminal() || m.state == "stopping" {
-        return Err("This mission no longer accepts research input".into());
+        return Err("This research automation no longer accepts research input".into());
     }
     let q = m
         .questions

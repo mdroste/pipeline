@@ -1,3 +1,4 @@
+import { Fold } from "../../ui";
 import { useEffect, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { DeskRecord, OpenResearchObject } from "../../lib/deskClient";
@@ -57,8 +58,7 @@ export default function Delivery(props: DeskProps) {
   const drafts = (p.records.deliverable ?? []) as DeskRecord<Deliverable>[];
   return (
     <div className="space-y-5">
-      <section className={card}>
-        <h2 className="font-semibold">Research starter kits</h2>
+      <Fold title="Research starter kits">
         <p className={muted}>
           Create an editable outline and two action items. You can start without
           a manuscript or an AI call.
@@ -125,7 +125,7 @@ export default function Delivery(props: DeskProps) {
             </button>
           </div>
         )}
-      </section>
+      </Fold>
       <section className={card}>
         <h2 className="font-semibold">Build a draft</h2>
         <p className={muted}>
@@ -320,6 +320,7 @@ export default function Delivery(props: DeskProps) {
             artifacts={d.body.artifacts}
             choices={p.choices}
             onError={props.onError}
+            onChanged={props.onChanged}
           />
           {d.body.attachments.length > 0 && (
             <Inspect
@@ -384,9 +385,9 @@ export default function Delivery(props: DeskProps) {
         ))}
       </section>
       <p className={muted}>
-        To edit in another app, open Write → Review edits, choose a working
-        file, and open it externally. Then refresh the file list and review the
-        changes before accepting them.
+        To edit in another app, open the file under Files and choose Open
+        externally from its … menu. After saving, choose Refresh file list in
+        Project settings.
       </p>
     </div>
   );

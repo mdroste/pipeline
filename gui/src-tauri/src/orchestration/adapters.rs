@@ -12,9 +12,11 @@ mod snapshots;
 pub use execute::execute;
 pub use prepare::{available, prepare, task_binding};
 pub use preview::output_preview;
-pub(super) use preview::terminal_failure;
-pub(crate) use review::normalize_review;
-pub use review::{reconcile_abandoned_reviews, recover_review};
+pub(super) use preview::{failure_message, oversized_reply, terminal_failure};
+#[cfg(test)]
+pub(crate) use review::release_adopted;
+pub(crate) use review::{journaled_review, normalize_review};
+pub use review::{reconcile_abandoned_reviews, reconcile_adopted_reviews, recover_review};
 pub use snapshots::{artifact_path, snapshot};
 
 pub fn atomic_json(path: &Path, value: &Value) -> Result<()> {

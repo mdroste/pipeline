@@ -1,0 +1,92 @@
+/* The standard project page: one quiet line on what the page is for, then flat
+   sections divided by hairlines. Sections stay flat, so a page reads top to
+   bottom instead of as a stack of boxes. A section inside a section is a box. */
+.project-page {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+.project-page-body {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 18px 32px 56px;
+  color: var(--ui-text);
+}
+.project-page-hint {
+  margin: 0 0 8px;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-label);
+  line-height: 1.5;
+}
+.project-section {
+  min-width: 0;
+  padding: 16px 0 20px;
+  border-top: 1px solid var(--ui-border);
+}
+.project-section > * + * {
+  margin-top: 12px;
+}
+details.project-section {
+  padding: 11px 0;
+}
+details.project-section > summary {
+  cursor: pointer;
+  font-size: var(--ui-text-label);
+  font-weight: 550;
+}
+details.project-section > summary::marker {
+  color: var(--ui-muted);
+}
+.project-section h2 {
+  font-size: var(--ui-text-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.project-section h3 {
+  font-size: var(--ui-text-body);
+  font-weight: 550;
+}
+.project-page-hint + .project-section,
+.project-page-hint + div > .project-section:first-child,
+.project-page-hint + div > :first-child > .project-section:first-child {
+  border-top: 0;
+}
+.project-section .project-section {
+  padding: 14px 16px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+}
+.project-jobs {
+  flex-shrink: 0;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--ui-border);
+  font-size: var(--ui-text-meta);
+}
+.project-jobs > * + * {
+  margin-top: 8px;
+}
+.project-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.project-panel .workspace-research-content {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 4px 32px 56px;
+}
+.project-panel > * > .project-page-hint {
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 18px 32px 12px;
+}
+@media (max-width: 720px) {
+  .project-page-body {
+    padding: 14px 16px 40px;
+  }
+}

@@ -390,7 +390,7 @@ pub(crate) async fn deliver_task(
         .try_acquire_owned()
         .map_err(|_| "task_busy: Workspace is running another turn".to_string())?;
     run_store(move |store| {
-        crate::workbench::tasks::validate_binding(&store, &binding)?;
+        crate::workbench::tasks::validate_context(&store, &binding)?;
         let mut result =
             crate::workbench::tasks::deliver(&store, &binding.session_id, &operation, value)?;
         let next = crate::workbench::tasks::binding(&store, &binding.session_id)?;
@@ -407,11 +407,8 @@ pub async fn workbench_file_reveal(
     request: crate::workbench::project::FileReadRequest,
 ) -> WorkbenchResult<()> {
     run_store(move |store| {
-        let file = crate::workbench::project::read_workspace_file(&store, request)?;
-        let path = file.external_path.ok_or_else(|| {
-            WorkbenchError::invalid("Captured documents have no writable external file")
-        })?;
-        crate::file_viewer::reveal(std::path::Path::new(&path)).map_err(WorkbenchError::invalid)
+        let path = crate::workbench::project::reveal_target(&store, &request)?;
+        crate::file_viewer::reveal(&path).map_err(WorkbenchError::invalid)
     })
     .await
 }

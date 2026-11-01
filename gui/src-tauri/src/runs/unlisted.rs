@@ -43,15 +43,17 @@ impl RunWriter {
     /// Register files under `subdir` (relative to the run dir) that aren't
     /// already in the artifact index. Model-written supporting files land
     /// on disk without going through `add_text`; this picks them up at the
-    /// end of the run. Symlinks are skipped, oversized files are deleted,
-    /// and the walk is capped defensively. Returns how many were added.
+    /// end of the run. Symlinks are skipped, oversized unlisted files are
+    /// deleted, and the walk is capped defensively. A file the manifest already
+    /// references is left alone whatever its size. Returns how many were added.
     pub fn register_unlisted(&mut self, subdir: &str, group: &str) -> usize {
         self.register_tree(subdir, group, UnlistedPolicy::model_output(group))
             .unwrap_or_else(|added| added)
     }
 
-    /// Register a tree that `copy_tree` already bounded (256 MiB total, no
-    /// symlinks) such as a captured source snapshot. Never deletes anything:
+    /// Register a tree that was already bounded when it was copied (256 MiB
+    /// total, no symlinks) such as a captured source snapshot. Hashing it takes
+    /// as long as the disk takes, so no clock applies. Never deletes anything:
     /// a captured input must stay complete so reruns can verify it. Returns
     /// an error instead of truncating when a limit is hit.
     pub fn register_captured_tree(&mut self, subdir: &str, group: &str) -> Result<usize, String> {
@@ -67,12 +69,18 @@ impl RunWriter {
         group: &str,
         policy: UnlistedPolicy,
     ) -> Result<usize, usize> {
-        let known: std::collections::HashSet<String> =
+        let mut known: std::collections::HashSet<String> =
             self.artifacts.iter().map(|a| a.rel_path.clone()).collect();
+        if let Some(pages) = &self.page_artifacts {
+            known.extend((1..=pages.count).filter_map(|page| pages.rel_path(page).ok()));
+        }
         let mut added = 0usize;
         let mut total_bytes = 0u64;
         let mut stack = vec![self.dir.join(subdir)];
         let mut walk = crate::safety::WalkBudget::new("Run artifact discovery");
+        if !policy.delete_excess {
+            walk = walk.without_time_limit();
+        }
         let stop = |added: usize| {
             if policy.delete_excess {
                 Ok(added)
@@ -113,6 +121,15 @@ impl RunWriter {
                     let _ = fs::remove_file(&path);
                     continue;
                 }
+                let Ok(rel) = path.strip_prefix(&self.dir) else {
+                    continue;
+                };
+                let rel_str = rel.to_string_lossy().replace('\\', "/");
+                // Every limit below can delete, so a file the manifest already
+                // references must be recognized first.
+                if known.contains(&rel_str) {
+                    continue;
+                }
                 let Ok(metadata) = entry.metadata() else {
                     continue;
                 };
@@ -137,13 +154,6 @@ impl RunWriter {
                     // model sandbox. Remove runaway output rather than leave
                     // an unindexed, unbounded disk leak behind.
                     let _ = fs::remove_file(&path);
-                    continue;
-                }
-                let Ok(rel) = path.strip_prefix(&self.dir) else {
-                    continue;
-                };
-                let rel_str = rel.to_string_lossy().replace('\\', "/");
-                if known.contains(&rel_str) {
                     continue;
                 }
                 if added >= policy.max_files {

@@ -23,15 +23,21 @@ pub(super) async fn message(
         Some("tools/list") => json!({"tools":specs}),
         Some("tools/call") => {
             let turn = turn.ok_or("A tool call arrived before a conversation turn was accepted")?;
+            let input = message["params"]["arguments"].clone();
             let name = message["params"]["name"]
                 .as_str()
-                .ok_or("Tool name missing")?;
-            if !specs.iter().any(|spec| spec["name"] == name) {
-                return Err("Tool is not enabled for this conversation".into());
-            }
-            let input = message["params"]["arguments"].clone();
+                .filter(|name| specs.iter().any(|spec| spec["name"] == *name));
+            let Some(name) = name else {
+                return Ok(refused(
+                    id,
+                    "This tool is not enabled for this conversation",
+                ));
+            };
             if !input.is_object() || input.to_string().len() > 256 * 1024 {
-                return Err("Tool arguments must be an object through 256 KiB".into());
+                return Ok(refused(
+                    id,
+                    "Tool arguments must be an object of at most 256 KiB",
+                ));
             }
             let name = name.to_owned();
             let thread = turn.thread.clone();
@@ -41,7 +47,8 @@ pub(super) async fn message(
             let call_id = format!("claude-{:x}", Sha256::digest(format!("{turn_id}:{}", id)));
             let params = json!({"threadId":thread,"turnId":turn_id,"callId":call_id,"tool":name,"arguments":input});
             let response = if super::super::conversation_tools::owns(&name) {
-                super::super::conversation_tools::handle(params).await
+                // Boxed because this future is too large for a thread's stack unoptimized.
+                Box::pin(super::super::conversation_tools::handle(params)).await
             } else {
                 run_store(move |store| {
                     super::super::research::handle_dynamic_tool_call(&store, &params)
@@ -95,4 +102,10 @@ pub(super) async fn message(
         }
     };
     Ok(json!({"mcp_response":{"jsonrpc":"2.0","id":id,"result":result}}))
+}
+
+/// A failed tool result the model can read and correct, as opposed to an `Err`,
+/// which ends the turn.
+fn refused(id: &Value, message: &str) -> Value {
+    json!({"mcp_response":{"jsonrpc":"2.0","id":id,"result":{"content":[{"type":"text","text":message}],"isError":true}}})
 }

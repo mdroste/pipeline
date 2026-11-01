@@ -6,6 +6,7 @@ import {
   saveWorkspaceDraft,
 } from "../../lib/workspaceSessionState";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
+import { conversationProvider } from "../../lib/workspaceProviders";
 import type { WorkspaceConversationRuntime } from "./useWorkspaceConversationRuntime";
 
 type PersistenceContext = Pick<
@@ -18,9 +19,13 @@ type PersistenceContext = Pick<
   | "submittingRef"
   | "draftRef"
   | "draftEditRevision"
+  | "draftOwedRef"
   | "setDraft"
   | "setSnapshot"
   | "setError"
+  | "setModel"
+  | "setEffort"
+  | "setRuntime"
 >;
 /** Drafts and model selections share this one revision-ordered write lane. */
 export function useWorkspaceSessionPersistence({
@@ -32,9 +37,13 @@ export function useWorkspaceSessionPersistence({
   submittingRef,
   draftRef,
   draftEditRevision,
+  draftOwedRef,
   setDraft,
   setSnapshot,
   setError,
+  setModel,
+  setEffort,
+  setRuntime,
 }: PersistenceContext) {
   const selectionSaveRef = useRef<Promise<void>>(Promise.resolve());
   const sessionWriteRef = useRef<Promise<unknown>>(Promise.resolve());
@@ -70,6 +79,7 @@ export function useWorkspaceSessionPersistence({
       if (
         id &&
         snapshotRef.current?.session.id === id &&
+        draftOwedRef.current !== id &&
         !activeRef.current &&
         !submittingRef.current
       )
@@ -77,12 +87,15 @@ export function useWorkspaceSessionPersistence({
     },
     [persistDraft],
   );
+  // Only sending depends on a selection save. Leaving must still work when
+  // one failed, or that one failure would hold the researcher on this page.
   const saveCurrentDraft = useCallback(async () => {
-    await selectionSaveRef.current;
+    await selectionSaveRef.current.catch(() => undefined);
     const id = sessionRef.current;
     if (
       id &&
       snapshotRef.current?.session.id === id &&
+      draftOwedRef.current !== id &&
       !activeRef.current &&
       !submittingRef.current
     )
@@ -125,10 +138,19 @@ export function useWorkspaceSessionPersistence({
     sessionWriteRef.current = pending;
     selectionSaveRef.current = pending;
     void pending.catch((cause) => {
-      if (sessionRef.current === selectedSession)
-        setError(
-          `Model selection could not be saved: ${workbenchErrorMessage(cause)}. Select the model again to retry.`,
-        );
+      if (sessionRef.current !== selectedSession) return;
+      setError(
+        `Model selection could not be saved: ${workbenchErrorMessage(cause)}. Select the model again to retry.`,
+      );
+      // Show what is saved, so selecting the same model again counts as a
+      // change. A newer selection speaks for itself.
+      const saved = snapshotRef.current;
+      if (selectionSaveRef.current !== pending || !saved) return;
+      if (saved.session.id !== selectedSession) return;
+      const { overrides } = saved.session;
+      setRuntime(conversationProvider(overrides.runtime));
+      setModel(typeof overrides.model === "string" ? overrides.model : "");
+      setEffort(typeof overrides.effort === "string" ? overrides.effort : "");
     });
   };
 
@@ -158,8 +180,6 @@ export function useWorkspaceDraftAutosave(
     sessionId,
     snapshot,
     submitting,
-    sessionRef,
-    setSnapshot,
     setError,
   } = conversation;
   const { persistDraft } = persistence;
@@ -178,14 +198,9 @@ export function useWorkspaceDraftAutosave(
     const selectedSession = current.session.id;
     const text = draft;
     const timer = window.setTimeout(() => {
-      void persistDraft(selectedSession, text)
-        .then((next) => {
-          if (sessionRef.current === selectedSession)
-            setSnapshot((old) => mergeSessionSnapshot(old, next));
-        })
-        .catch((cause) =>
-          setError(`Draft could not be saved: ${workbenchErrorMessage(cause)}`),
-        );
+      void persistDraft(selectedSession, text).catch((cause) =>
+        setError(`Draft could not be saved: ${workbenchErrorMessage(cause)}`),
+      );
     }, 350);
     return () => window.clearTimeout(timer);
   }, [

@@ -5,6 +5,9 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { installerNames } from "./draft-release.mjs";
+import { updatePackages } from "./update-manifest.mjs";
+
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const STABLE_VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
@@ -12,19 +15,13 @@ export function expectedReleaseAssets(version) {
   if (!STABLE_VERSION.test(version)) {
     throw new Error(`release completeness requires a stable SemVer version, got ${JSON.stringify(version)}`);
   }
-  const platforms = [
-    ["macOS-AppleSilicon", `Pipeline-${version}-macOS-AppleSilicon.dmg`],
-    ["macOS-Intel", `Pipeline-${version}-macOS-Intel.dmg`],
-    ["Windows", `Pipeline-${version}-Windows.exe`],
-    ["Linux", `Pipeline-${version}-Linux.AppImage`],
-  ];
-  return platforms.flatMap(([platform, installer]) => [
-    installer,
-    `${installer}.sha256`,
-    `Pipeline-${version}-${platform}-Artifact-SBOM.cdx.json`,
-    `Pipeline-${version}-${platform}-Build-input-SBOM.cdx.json`,
-    `Pipeline-${version}-${platform}-Poppler-provenance.json`,
-  ]);
+  const updates = updatePackages(version).map(({ name }) => name);
+  const checksummed = [...new Set([...installerNames(version), ...updates])];
+  return [
+    ...checksummed.flatMap((name) => [name, `${name}.sha256`]),
+    ...updates.map((name) => `${name}.sig`),
+    "latest.json",
+  ].sort();
 }
 
 export function validateReleaseAssets({ version, assetNames }) {
@@ -65,7 +62,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === SCRIPT_PATH) {
   try {
     const options = parseArgs(process.argv.slice(2));
     const release = JSON.parse(fs.readFileSync(options.releaseJson, "utf8"));
-    if (!release || release.draft !== true) {
+    if (!release || release.isDraft !== true) {
       throw new Error("release completeness must run against the draft release");
     }
     const validated = validateReleaseAssets({

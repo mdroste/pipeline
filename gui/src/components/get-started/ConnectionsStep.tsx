@@ -79,8 +79,8 @@ export default function ConnectionsStep({
           Connections
         </h3>
         <p className="mt-1 text-ui-label text-ink-muted">
-          Pipeline uses your own model accounts. Conversations need ChatGPT or
-          Claude Code; Reviews can also use an API key or a local model server.
+          Pipeline uses your own model accounts. Conversations and Reviews can
+          use ChatGPT, Claude Code, an API key, or a local model server.
         </p>
       </div>
       <p

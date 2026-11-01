@@ -1,5 +1,6 @@
-//! Self-contained report HTML, math protection and embedded font rendering.
+//! Self-contained report HTML, math restoration and embedded font rendering.
 use crate::output;
+use crate::output::formats::{protect_math, ProtectedMath};
 
 pub(in crate::commands) fn offline_katex_css() -> Result<String, String> {
     use base64::Engine as _;
@@ -120,159 +121,6 @@ pub(in crate::commands) fn offline_katex_css() -> Result<String, String> {
     Ok(css)
 }
 
-#[derive(Debug)]
-pub(in crate::commands) struct ProtectedPrintMath {
-    token: String,
-    latex: String,
-    display: bool,
-}
-
-pub(in crate::commands) fn escaped_at(bytes: &[u8], index: usize) -> bool {
-    let mut slashes = 0usize;
-    let mut cursor = index;
-    while cursor > 0 && bytes[cursor - 1] == b'\\' {
-        slashes += 1;
-        cursor -= 1;
-    }
-    slashes % 2 == 1
-}
-
-pub(in crate::commands) fn math_close(
-    source: &str,
-    mut index: usize,
-    delimiter_len: usize,
-) -> Option<usize> {
-    let bytes = source.as_bytes();
-    while index < bytes.len() {
-        if bytes[index] == b'\\' {
-            index = (index + 2).min(bytes.len());
-            continue;
-        }
-        if bytes[index] == b'$' && !escaped_at(bytes, index) {
-            if delimiter_len == 2 {
-                if bytes.get(index + 1) == Some(&b'$') {
-                    return Some(index);
-                }
-            } else if bytes.get(index + 1) != Some(&b'$') {
-                return Some(index);
-            }
-        }
-        let character = source[index..].chars().next()?;
-        index += character.len_utf8();
-    }
-    None
-}
-
-pub(in crate::commands) fn protect_math_chunk(
-    source: &str,
-    token_base: &str,
-    protected: &mut Vec<ProtectedPrintMath>,
-) -> String {
-    let bytes = source.as_bytes();
-    let mut output = String::with_capacity(source.len());
-    let mut index = 0usize;
-    while index < bytes.len() {
-        // Copy code spans byte-for-byte. KaTeX auto-render ignores code tags,
-        // and dollar signs in examples must never become equations.
-        if bytes[index] == b'`' {
-            let ticks = bytes[index..]
-                .iter()
-                .take_while(|byte| **byte == b'`')
-                .count();
-            let marker = "`".repeat(ticks);
-            if let Some(relative_end) = source[index + ticks..].find(&marker) {
-                let end = index + ticks + relative_end + ticks;
-                output.push_str(&source[index..end]);
-                index = end;
-                continue;
-            }
-        }
-
-        if bytes[index] == b'$' && !escaped_at(bytes, index) {
-            let delimiter_len = usize::from(bytes.get(index + 1) == Some(&b'$')) + 1;
-            let content_start = index + delimiter_len;
-            if let Some(close) = math_close(source, content_start, delimiter_len) {
-                let latex = &source[content_start..close];
-                // Inline `$…$` must have non-whitespace ends and stay on one
-                // line without crossing a code span: math_close scans raw
-                // bytes, so "from $5 to $8 … `$x$`" would otherwise pair a
-                // currency `$` with a later paragraph's or code span's `$`
-                // and swallow the prose in between as an equation.
-                let valid_inline_spacing = delimiter_len == 2
-                    || (!latex.chars().next().is_some_and(char::is_whitespace)
-                        && !latex.chars().next_back().is_some_and(char::is_whitespace)
-                        && !latex.contains('\n')
-                        && !latex.contains('`'));
-                if !latex.trim().is_empty() && valid_inline_spacing {
-                    let token = format!("{token_base}{}END", protected.len());
-                    protected.push(ProtectedPrintMath {
-                        token: token.clone(),
-                        latex: latex.to_string(),
-                        display: delimiter_len == 2,
-                    });
-                    output.push_str(&token);
-                    index = close + delimiter_len;
-                    continue;
-                }
-            }
-        }
-
-        let character = source[index..]
-            .chars()
-            .next()
-            .expect("index remains on a UTF-8 boundary");
-        output.push(character);
-        index += character.len_utf8();
-    }
-    output
-}
-
-/// Replace math with alphanumeric placeholders before pulldown-cmark sees it.
-/// Otherwise `_`, `*`, and backslashes inside LaTeX can be consumed as Markdown
-/// emphasis/escapes before KaTeX's auto-render pass runs.
-pub(in crate::commands) fn protect_print_math(markdown: &str) -> (String, Vec<ProtectedPrintMath>) {
-    let mut discriminator = 0usize;
-    let token_base = loop {
-        let candidate = format!("PIPELINEMATHPLACEHOLDER{discriminator}X");
-        if !markdown.contains(&candidate) {
-            break candidate;
-        }
-        discriminator += 1;
-    };
-
-    let mut output = String::with_capacity(markdown.len());
-    let mut prose = String::new();
-    let mut protected = Vec::new();
-    let mut fence: Option<(u8, usize)> = None;
-    let flush_prose =
-        |output: &mut String, prose: &mut String, protected: &mut Vec<ProtectedPrintMath>| {
-            if !prose.is_empty() {
-                output.push_str(&protect_math_chunk(prose, &token_base, protected));
-                prose.clear();
-            }
-        };
-
-    for line in markdown.split_inclusive('\n') {
-        if let Some((marker, count)) = output::fence_marker(line) {
-            flush_prose(&mut output, &mut prose, &mut protected);
-            if let Some((open_marker, open_count)) = fence {
-                if marker == open_marker && count >= open_count {
-                    fence = None;
-                }
-            } else {
-                fence = Some((marker, count));
-            }
-            output.push_str(line);
-        } else if fence.is_some() {
-            output.push_str(line);
-        } else {
-            prose.push_str(line);
-        }
-    }
-    flush_prose(&mut output, &mut prose, &mut protected);
-    (output, protected)
-}
-
 pub(in crate::commands) fn escape_html_text(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -283,7 +131,7 @@ pub(in crate::commands) fn escape_html_text(text: &str) -> String {
 
 pub(in crate::commands) fn restore_print_math(
     mut html: String,
-    protected: &[ProtectedPrintMath],
+    protected: &[ProtectedMath],
 ) -> String {
     for item in protected {
         // Restore with backslash delimiters: the client-side renderMathInElement
@@ -331,7 +179,7 @@ pub(in crate::commands) fn render_print_markdown(markdown: &str) -> String {
     use pulldown_cmark::{html, Options, Parser};
 
     let markdown = output::normalize_math_delimiters(&output::clean_export_markdown(markdown));
-    let (markdown, protected_math) = protect_print_math(&markdown);
+    let (markdown, protected_math) = protect_math(&markdown);
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
@@ -466,7 +314,7 @@ pub(in crate::commands) fn build_print_report_html(
     html_doc.push_str(concat!(
         "\n<script>",
         // No `$`/`$$` delimiters here: all legitimate dollar-delimited math was
-        // already tokenized server-side by protect_print_math and restored as
+        // already tokenized server-side by protect_math and restored as
         // \( \) / \[ \]; a bare `$` reaching this pass is prose currency.
         "renderMathInElement(document.body,{delimiters:[",
         "{left:'\\\\(',right:'\\\\)',display:false},",

@@ -2,7 +2,7 @@
 // select an executable, profile path, JavaScript expression or local file.
 import { chromium } from "playwright";
 import { createInterface } from "node:readline";
-import { publicUrl, publicRequest } from "./public-request.mjs";
+import { answerRoute, publicUrl, RedirectChains } from "./public-request.mjs";
 
 const context = await chromium.launchPersistentContext(process.argv[2], {
   headless: false,
@@ -22,6 +22,7 @@ const context = await chromium.launchPersistentContext(process.argv[2], {
 });
 let pending = 0;
 let transferred = 0;
+const chains = new RedirectChains();
 await context.route("**/*", async (route) => {
   if (pending >= 32 || transferred >= 128 * 1024 * 1024) {
     await route.abort();
@@ -29,16 +30,7 @@ await context.route("**/*", async (route) => {
   }
   pending++;
   try {
-    const request = route.request();
-    const response = await publicRequest(request.url(), {
-      method: request.method(),
-      headers: await request.allHeaders(),
-      body: request.postDataBuffer(),
-    });
-    transferred += response.body.length;
-    await route.fulfill(response);
-  } catch {
-    await route.abort("blockedbyclient").catch(() => {});
+    transferred += await answerRoute(route, chains);
   } finally {
     pending--;
   }
@@ -67,7 +59,21 @@ context.on("page", (newPage) => {
   page = newPage;
   watchPage(page);
 });
+// A redirect page moves on by itself, so a command can finish while the frame
+// still shows one. Wait for the page it leads to. A chain that stalls ends the
+// wait, and the snapshot reports whatever the frame holds by then.
+async function settle() {
+  const frame = page.mainFrame();
+  if (!chains.redirecting(frame, page.url())) return;
+  await page
+    .waitForURL((url) => !chains.redirecting(frame, url.href), {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    })
+    .catch(() => {});
+}
 async function snapshot() {
+  await settle();
   invalidate();
   const capturedGeneration = generation;
   const elements = await page.$$(
@@ -159,6 +165,7 @@ async function command(args) {
       break;
     }
     case "screenshot": {
+      await settle();
       const data = await page.screenshot({
         type: "jpeg",
         quality: 70,

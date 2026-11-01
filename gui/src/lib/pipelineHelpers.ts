@@ -2,7 +2,7 @@
 // Kept separate from PipelinePage.tsx so the rules can be unit-tested or reused
 // by future UI surfaces (e.g. a step-test runner) without lifting the whole page.
 
-import type { PipelineConfig, StepConfig } from "./types";
+import type { InputSlot, PipelineConfig, StepConfig } from "./types";
 
 // ── Placeholder catalog ─────────────────────────────────────────────
 
@@ -15,19 +15,56 @@ export interface PlaceholderEntry {
 
 /** Editor surface that determines which placeholders are valid. */
 export type PromptContext =
-  | { kind: "parallel" } // step.prompt for a Parallel step (no auto-expansion)
+  | { kind: "parallel" } // step.prompt for a Parallel step
   | { kind: "sequential"; otherStepIds: string[] } // step.prompt for a Sequential step
   | { kind: "parallel_template" } // pipeline-level wrapping template
   | { kind: "merge" } // merge.prompt
   | { kind: "orientation"; autoReview?: boolean }; // orientation-map prompt
 
+/** Substituted both in a parallel step's prompt and in its wrapping template. */
+const PARALLEL_PLACEHOLDERS: PlaceholderEntry[] = [
+  {
+    token: "{orientation}",
+    description: "Survey / orientation map reference block",
+  },
+  {
+    token: "{input_path}",
+    description: "Path to the extracted input text",
+  },
+  {
+    token: "{document_bundle}",
+    description: "Path to canonical DocumentBundle JSON",
+  },
+  {
+    token: "{paper_type}",
+    description:
+      "theory / empirical / mixed (paper surveys only; empty otherwise)",
+  },
+  {
+    token: "{figure_hint}",
+    description: "Figure/table access instructions",
+  },
+  {
+    token: "{output_format}",
+    description: "Output delivery instructions (file write or markers)",
+  },
+  {
+    token: "{paper_path}",
+    description: "Alias of {input_path} (legacy)",
+  },
+];
+
 /** Return the placeholders that the executor will substitute in this context. */
 export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
   switch (ctx.kind) {
     case "parallel":
-      // The step's own prompt is dropped into {step_prompt} in the wrapping
-      // template; no per-step substitution is performed on it.
-      return [];
+      return [
+        ...PARALLEL_PLACEHOLDERS,
+        {
+          token: "{item}",
+          description: "The current item when the step runs once for each item",
+        },
+      ];
     case "sequential": {
       const base: PlaceholderEntry[] = [
         { token: "{orientation}", description: "Path to orientation map JSON" },
@@ -65,35 +102,7 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
     case "parallel_template":
       return [
         { token: "{step_prompt}", description: "The individual step's prompt" },
-        {
-          token: "{orientation}",
-          description: "Survey / orientation map reference block",
-        },
-        {
-          token: "{input_path}",
-          description: "Path to the extracted input text",
-        },
-        {
-          token: "{document_bundle}",
-          description: "Path to canonical DocumentBundle JSON",
-        },
-        {
-          token: "{paper_type}",
-          description:
-            "theory / empirical / mixed (paper surveys only; empty otherwise)",
-        },
-        {
-          token: "{figure_hint}",
-          description: "Figure/table access instructions",
-        },
-        {
-          token: "{output_format}",
-          description: "Output delivery instructions (file write or markers)",
-        },
-        {
-          token: "{paper_path}",
-          description: "Alias of {input_path} (legacy)",
-        },
+        ...PARALLEL_PLACEHOLDERS,
       ];
     case "merge":
       return [
@@ -136,6 +145,14 @@ export function placeholdersFor(ctx: PromptContext): PlaceholderEntry[] {
   }
 }
 
+/** File types the named-input picker offers: the slot's own, or every document
+ *  type a run accepts for a named input. */
+export function inputSlotExtensions(slot: InputSlot): string[] {
+  return slot.extensions?.length
+    ? slot.extensions
+    : ["pdf", "tex", "docx", "md", "markdown", "txt"];
+}
+
 // ── Linting ─────────────────────────────────────────────────────────
 
 const PLACEHOLDER_RE = /\{([a-zA-Z][a-zA-Z0-9_]*(?::[a-zA-Z0-9_./-]+)?)\}/g;
@@ -163,6 +180,14 @@ export function findUnknownPlaceholders(
     valid.add("{referee_reports}");
     valid.add("{editor_synthesis}");
   }
+  if (ctx.kind === "parallel_template") valid.add("{item}");
+  // Run values reach step prompts and the wrapping template. Merge and
+  // orientation prompts have their own short lists and leave them unchanged.
+  const takesRunValues = [
+    "parallel",
+    "sequential",
+    "parallel_template",
+  ].includes(ctx.kind);
   const hits: LintHit[] = [];
   for (const m of text.matchAll(PLACEHOLDER_RE)) {
     const token = m[0];
@@ -171,6 +196,11 @@ export function findUnknownPlaceholders(
     // the user might be drafting before the referenced step exists. We only flag
     // it if it doesn't look like a known token shape at all.
     if (ctx.kind === "sequential" && token.startsWith("{step:")) continue;
+    if (
+      takesRunValues &&
+      (token.startsWith("{var:") || token.startsWith("{input:"))
+    )
+      continue;
     const idx = m.index ?? 0;
     const line = text.slice(0, idx).split("\n").length;
     hits.push({ match: token, index: idx, line });
@@ -335,6 +365,19 @@ export interface SequentialWave {
 
 export type Wave = ParallelWave | SequentialWave;
 
+/** Every step this one waits on (mirrors the backend's resolve_dependencies). */
+export function stepDependencies(step: StepConfig): string[] {
+  return [
+    ...(step.after ?? []),
+    ...(step.context?.include ?? [])
+      .filter((selector) => selector.kind === "step")
+      .map((selector) => selector.step),
+    ...(step.for_each?.artifact?.step ? [step.for_each.artifact.step] : []),
+    ...(step.dependency_policy?.required ?? []),
+    ...(step.dependency_policy?.quorum ?? []),
+  ];
+}
+
 export function computeWaves(
   steps: StepConfig[],
   includeDisabled = false,
@@ -343,17 +386,7 @@ export function computeWaves(
   const eligibleIds = new Set(eligible.map((step) => step.id));
   const dependencies = eligible.map(
     (step) =>
-      new Set(
-        [
-          ...(step.after ?? []),
-          ...(step.context?.include ?? [])
-            .filter((selector) => selector.kind === "step")
-            .map((selector) => selector.step),
-          ...(step.for_each?.artifact?.step
-            ? [step.for_each.artifact.step]
-            : []),
-        ].filter((id) => eligibleIds.has(id)),
-      ),
+      new Set(stepDependencies(step).filter((id) => eligibleIds.has(id))),
   );
   const waves: Wave[] = [];
   const done = new Set<string>();

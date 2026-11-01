@@ -20,7 +20,9 @@ paper, reviewing it, and revising it a set number of times.
    limits, and start time, then choose **Start automation**.
 
 The **Active**, **Scheduled**, and **History** tabs list current work,
-schedules, and finished runs. Assistant steps use the conversation's
+schedules, and finished runs. Finished runs leave **History** 30 days after they
+end, once you've opened them, or if they saved no result. Their scheduled
+conversations move to the archive. Assistant steps use the conversation's
 provider, saved model, thinking level, tools, and file permissions. This
 applies to subscription, API, and local connections. A step can choose another
 model; in that case, set its thinking level for that model.
@@ -54,15 +56,22 @@ Under **When**, choose **Now**, **Later** for a single date and time, **At an
 interval** to repeat every so many minutes, or **On a schedule** for a time of
 day on chosen weekdays and time zone. The form shows the next three run
 times. To change a schedule later, use **Pause** or **Edit timing** on the
-**Scheduled** tab.
+**Scheduled** tab. **Delete schedule** stops future runs. Past runs stay in
+**History**, and a run in progress keeps going.
 
 - A time skipped by the spring daylight-saving change doesn't run. A time
   that occurs twice in autumn runs once, the first time.
 - Intervals stay tied to the first run time you chose.
 - Missed runs are combined into one, and runs from one schedule never
-  overlap.
+  overlap. While an earlier run is unresolved, the schedule shows **Waiting
+  for the previous run** and **Open previous run**.
 - Each scheduled run gets its own conversation, with the original
-  conversation's settings.
+  conversation's settings and selected sources.
+- Project activity, such as a new note or a delivered result, doesn't stop a
+  schedule. If the conversation's permissions, research profile, or folder
+  change, the next run asks for attention. Choose **Use current conversation
+  settings** on the **Scheduled** tab to accept the change, then **Stop** that
+  run so the next one can start. A changed connection needs a new schedule.
 
 ### Keep Pipeline running
 
@@ -88,7 +97,9 @@ app quit, the automation asks for attention:
   or check result. Use it before retrying.
 - **Use current conversation context** accepts changes made to the
   conversation since the automation started.
-- **Retry unfinished actions** runs the unfinished steps again.
+- **Retry unfinished actions** runs the unfinished steps again. Past the
+  automation's deadline, it continues with a new deadline, as does answering a
+  **Wait for input** step.
 
 **Activity log** keeps every earlier attempt and its output.
 
@@ -146,7 +157,8 @@ choose:
 
 - **Research discovery — choose projects yourself** pauses at a shortlist.
   Pick proposals under **Choose projects to develop**, then choose **Develop
-  selected projects**. It waits as long as you need.
+  selected projects**. It waits as long as you need, and **Finish within
+  (hours)** doesn't count that time.
 - **Research discovery — let Pipeline choose projects** picks proposals itself
   and continues without questions.
 
@@ -184,6 +196,11 @@ fewer papers. The final report compares the papers and lists unfinished work.
 Each manuscript includes Markdown, LaTeX, BibTeX, evidence references, and a
 response to reviewers. **Export papers and research** saves a ZIP. **Export
 portfolio report** saves a Markdown summary.
+
+If a step fails, or Pipeline quits during one, the run shows **Needs
+attention**. **Retry** repeats the step with the conversation as it is now, and
+**Stop** ends the run. A run marked **Stopped: needs review** has ended, and its
+recorded work stays available to export.
 
 ## In a project
 
@@ -224,7 +241,7 @@ its linked results are missing or out of date.
 
 | Limit | Default | Range or maximum |
 | --- | --- | --- |
-| Actions per automation | 64 | Up to 64 |
+| Actions per automation | 64 | Up to 1,024 |
 | Automation deadline | 168 hours | Up to 8,760 hours |
 | Time per step | 2 hours | |
 | Reviews in Review and revise | 3 | 1–32 |

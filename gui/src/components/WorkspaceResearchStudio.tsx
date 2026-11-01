@@ -29,7 +29,11 @@ export default function WorkspaceResearchStudio(
   );
   const tab = props.tool ?? selected;
   return (
-    <div className="space-y-5">
+    <div
+      className={
+        tab === "manuscript" ? "flex min-h-0 flex-1 flex-col" : "space-y-5"
+      }
+    >
       {!props.tool && (
         <nav aria-label="Research tools" className="flex flex-wrap gap-2">
           {[
@@ -64,6 +68,7 @@ export default function WorkspaceResearchStudio(
       )}
       <Jobs
         visible={props.active}
+        quiet={tab === "manuscript"}
         workspaceId={props.workspaceId}
         onCompleted={() => void props.onRefresh()}
       />

@@ -36,5 +36,18 @@ pub(in crate::orchestration) fn terminal_failure(value: &Value) -> bool {
     matches!(
         value["state"].as_str(),
         Some("failed" | "interrupted" | "cancelled")
-    )
+    ) || oversized_reply(value)
+}
+
+/// A turn that finished with a reply too long for a step to carry. The step
+/// fails on the record instead of passing on a cut answer as a complete one.
+pub(in crate::orchestration) fn oversized_reply(value: &Value) -> bool {
+    value["state"] == "completed" && value["replyTooLong"] == true
+}
+
+pub(in crate::orchestration) fn failure_message(value: &Value) -> String {
+    if oversized_reply(value) {
+        return "The assistant's reply is over 512 KiB, too long for this step to use. The complete reply stays in its conversation.".into();
+    }
+    format!("Workspace turn {}", value["state"])
 }

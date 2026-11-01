@@ -12,6 +12,24 @@ use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
 use serde_json::{json, Map, Value};
 
 pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<EffectiveHarness> {
+    resolve(store, session_id, None)
+}
+
+/// The fingerprint this conversation would have without one returned result,
+/// which separates that delivery's change from any other.
+pub fn fingerprint_without_result(
+    store: &Store,
+    session_id: &str,
+    result_id: &str,
+) -> WorkbenchResult<String> {
+    Ok(resolve(store, session_id, Some(result_id))?.fingerprint)
+}
+
+fn resolve(
+    store: &Store,
+    session_id: &str,
+    left_out: Option<&str>,
+) -> WorkbenchResult<EffectiveHarness> {
     validate_id("session id", session_id)?;
     let snapshot = store.session_snapshot(session_id)?;
     let global = load_config(store, None)?;
@@ -87,6 +105,13 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
             .overrides
             .get("projectCheckpointId")
             .is_some();
+    // Everything else runs in a project. This folder holds nothing of the
+    // researcher's, so its writes do not depend on the project access mode.
+    let private_folder = !in_task_copy
+        && snapshot
+            .workspace
+            .as_ref()
+            .is_none_or(|workspace| workspace.root.is_none());
     let module_availability = catalog
         .iter()
         .map(|spec| {
@@ -132,7 +157,7 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
         } else {
             (String::new(), false)
         };
-    let task_context = crate::workbench::tasks::returned_context(store, session_id)?;
+    let task_context = crate::workbench::tasks::returned_context(store, session_id, left_out)?;
     if !task_context.is_empty() {
         let remaining = budget.saturating_sub(task_context.len());
         context_truncated |= context_preview.len() > remaining;
@@ -268,6 +293,16 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
             text: text.into(),
         });
     }
+    if private_folder {
+        let text = "When a command tool is offered, it runs in this conversation's private working folder. Commands can create and change scripts, data, and other files there, and those files stay available in later messages. Save work there rather than in temporary folders, and refer to saved files by their relative paths so the researcher can open them.";
+        developer.push_str("\n\n");
+        developer.push_str(text);
+        sections.push(InstructionSection {
+            id: "working_folder".into(),
+            label: "Working folder".into(),
+            text: text.into(),
+        });
+    }
     let tools = dynamic_tools(&enabled);
     let requested_web_search = values
         .get("webSearch")
@@ -304,10 +339,11 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
         .get("commandNetwork")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let capabilities = crate::workbench::capabilities::ConversationCapabilities::resolve(
+    let mut capabilities = crate::workbench::capabilities::ConversationCapabilities::resolve(
         &values,
-        mode == "edit" && in_task_copy,
+        private_folder || (mode == "edit" && in_task_copy),
     )?;
+    capabilities.private_folder = private_folder;
     let permission_profile =
         if let Some((writer, _)) = crate::workbench::discovery::role_policy(store, session_id)? {
             if command_network
@@ -316,7 +352,7 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
                 || mode != if writer { "edit" } else { "inspect" }
             {
                 return Err(WorkbenchError::invalid(
-                    "Self-discovery role access cannot be changed outside its saved scope",
+                    "Research discovery access cannot be changed outside its saved scope",
                 ));
             }
             if writer {
@@ -358,13 +394,21 @@ pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<Effec
     };
     let conversation_tools = crate::workbench::conversation_tools::catalog(&effective);
     effective.dynamic_tools.extend(conversation_tools);
-    if crate::workbench::api::selected(&snapshot.session.overrides)?.is_some()
+    let provider = crate::workbench::api::selected(&snapshot.session.overrides)?;
+    // A local server may reject function calling, so a local conversation
+    // with nothing else enabled stays plain chat.
+    let folder_commands =
+        private_folder && !matches!(provider, Some(crate::connections::ApiProvider::Local));
+    if provider.is_some()
         && crate::workbench::shell::available()
-        && (has_workspace || mode == "edit" || !effective.dynamic_tools.is_empty())
+        && (has_workspace
+            || mode == "edit"
+            || folder_commands
+            || !effective.dynamic_tools.is_empty())
     {
         effective
             .dynamic_tools
-            .push(crate::workbench::shell::catalog());
+            .push(crate::workbench::shell::catalog(private_folder));
     }
     // The renamed default is a display change. Preserve existing native bindings
     // by retaining its legacy display metadata in the fingerprint only.

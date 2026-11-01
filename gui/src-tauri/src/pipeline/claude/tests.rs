@@ -512,3 +512,54 @@ async fn review_runs_check_the_claude_subscription_once() {
     once_per_run(check(true)).await.unwrap();
     assert_eq!(checks.load(Ordering::SeqCst), 5);
 }
+
+/// The call supervisor's deadline kills a forked call. The researcher must be
+/// told it timed out, and no self-contained fallback may start in the cleanup
+/// window. The script stands in for the Claude CLI and logs each start.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_deadline_killed_fork_reports_a_timeout_and_starts_no_fallback() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Arc;
+
+    let directory = tempfile::tempdir().unwrap();
+    let calls = directory.path().join("calls");
+    let script = directory.path().join("claude");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\ncase \"$*\" in\n  *--fork-session*) echo fork >> '{calls}'; exec sleep 30 ;;\n  *--resume*) echo fallback >> '{calls}'; exec sleep 30 ;;\n  *\"Context prepared\"*) echo warm-up >> '{calls}'; printf '%s\\n' '{{\"type\":\"result\",\"result\":\"Context prepared.\"}}' ;;\n  *) echo fallback >> '{calls}'; exec sleep 30 ;;\nesac\n",
+            calls = calls.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let run = crate::run_scope::ActiveScope::begin("claude-deadline-fork-test");
+    run.scope()
+        .claude_subscription()
+        .set(crate::deps::ResolvedCommand::direct(script))
+        .unwrap();
+    let app: crate::emit::EventBus = Arc::new(crate::emit::NullEvents);
+    let context = crate::pipeline::context_cache::PreparedContext::new(
+        "Paper text",
+        &serde_json::json!({"metadata": {}}),
+    )
+    .unwrap();
+    let mut request = crate::pipeline::call::OwnedRequest::new(&app, "step", "Step", "Review", 2);
+    request.agent = Some("claude".to_string());
+    request.model_resolved = true;
+    request.settings = Arc::new(crate::settings::Settings::default());
+    request.shared_context = Some(Arc::new(context));
+
+    let error = crate::run_scope::scoped(
+        run.scope().clone(),
+        crate::pipeline::call::execute_text(request),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(error.contains("timed out after 2s"), "{error}");
+    let started = std::fs::read_to_string(&calls).unwrap();
+    assert_eq!(started.lines().collect::<Vec<_>>(), ["warm-up", "fork"]);
+}

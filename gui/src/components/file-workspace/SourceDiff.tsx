@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { applyFileHunks, fileHunks } from "../../lib/fileDiff";
 import { fileLanguage } from "../../lib/fileLanguages";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 import HighlightedCode from "./HighlightedCode";
 export default function SourceDiff({
   before,
@@ -18,6 +19,7 @@ export default function SourceDiff({
   const [current, setCurrent] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [accepted, setAccepted] = useState("");
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
     setSelected(hunks.map((h) => h.id));
@@ -54,16 +56,24 @@ export default function SourceDiff({
             <button
               disabled={busy || !selected.length}
               onClick={() => {
+                const count = selected.length;
                 setBusy(true);
                 setError("");
+                setAccepted("");
                 void onAccept(applyFileHunks(before, hunks, selected))
-                  .catch((e) => setError(String(e)))
+                  .then(() =>
+                    setAccepted(
+                      `Accepted ${count} change${count === 1 ? "" : "s"}.`,
+                    ),
+                  )
+                  .catch((e) => setError(workbenchErrorMessage(e)))
                   .finally(() => setBusy(false));
               }}
             >
               Accept {selected.length} selected change
               {selected.length === 1 ? "" : "s"}
             </button>
+            {accepted && <span role="status">{accepted}</span>}
           </>
         )}
       </div>

@@ -411,7 +411,15 @@ pub async fn execute_steps(
                         &all_outputs,
                     ) {
                         emit_skip(app, step);
-                        all_outputs.push(skip_output(step));
+                        let skipped = skip_output(step);
+                        checkpoint_wave(
+                            write_dir,
+                            all_outputs.len(),
+                            vec![step.id.clone()],
+                            std::slice::from_ref(&skipped),
+                        )
+                        .await?;
+                        all_outputs.push(skipped);
                         done.insert(step.id.clone());
                         continue;
                     }
@@ -691,7 +699,15 @@ pub async fn execute_steps(
         if let Some(cond) = &step.run_if {
             if !crate::pipeline::conditions::condition_met(cond, orientation_value, &all_outputs) {
                 emit_skip(app, step);
-                all_outputs.push(skip_output(step));
+                let skipped = skip_output(step);
+                checkpoint_wave(
+                    write_dir,
+                    all_outputs.len(),
+                    vec![step.id.clone()],
+                    std::slice::from_ref(&skipped),
+                )
+                .await?;
+                all_outputs.push(skipped);
                 done.insert(step.id.clone());
                 continue;
             }
@@ -753,8 +769,10 @@ pub async fn execute_steps(
                 extra_input_sources,
                 outputs: &all_outputs,
                 run_artifact_dir: write_dir,
+                context_pool: &shared_context_pool,
             },
         )?;
+        resolved.log_warnings(app);
         let shared_context = prepare_selected_shared_context(
             app,
             config.context_cache.enabled,

@@ -101,7 +101,7 @@ pub fn bundle(s: &Store, p: &Portfolio) -> Result<Vec<u8>> {
     for paper in &p.papers {
         let prefix = format!("project-{}", paper.candidate_id);
         // Do not export native credentials, local execution grants or role scope settings.
-        add(&format!("{prefix}/research.json"),&serde_json::to_vec_pretty(&json!({"rounds":paper.rounds,"challenges":paper.challenges,"assessment":paper.assessment,"state":paper.state,"evidence":paper.evidence,"versions":paper.versions.iter().map(|v|json!({"version":v.version,"hash":v.hash,"manuscript":v.manuscript,"artifacts":v.artifacts,"reviews":v.reviews,"externalReview":v.external_review,"responseToReview":v.manuscript.response_to_review})).collect::<Vec<_>>()})).map_err(err)?)?;
+        add(&format!("{prefix}/research.json"),&serde_json::to_vec_pretty(&json!({"rounds":paper.rounds,"challenges":paper.challenges,"assessment":paper.assessment,"state":paper.state,"evidence":paper.evidence,"versions":super::artifacts::full_versions(s,paper).iter().map(|v|json!({"version":v.version,"hash":v.hash,"manuscript":v.manuscript,"artifacts":v.artifacts,"reviews":v.reviews,"externalReview":v.external_review,"responseToReview":v.manuscript.response_to_review})).collect::<Vec<_>>()})).map_err(err)?)?;
         if let Some(v) = paper.versions.last() {
             for (name, artifact) in &v.artifacts {
                 if artifact["kind"] != "artifact" {

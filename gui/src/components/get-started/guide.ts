@@ -1,99 +1,14 @@
-// Content and pure status derivation for the Get started sheet. Persona
-// choices only select which tips and tools are shown first.
+// Content and pure status derivation for the Get started sheet.
 
 import type { AccountStatus } from "../../lib/chatgptAccountClient";
-import type { GetStartedPersona } from "../../lib/getStarted";
 import type { DepsReport, DepStatus, Settings } from "../../lib/types";
-import type {
-  DetectedToolchain,
-  ToolchainKind,
-  ToolchainReport,
-} from "../../lib/workbench/toolchains";
+import type { ToolchainKind } from "../../lib/workbench/toolchains";
 
 export const STARTER_TEMPLATES = [
   "reference-check",
   "replication-package-readiness",
 ] as const;
 export type StarterTemplate = (typeof STARTER_TEMPLATES)[number];
-
-export interface PersonaGuide {
-  label: string;
-  description: string;
-  /** Tools listed first, with a note when they were not found. Empty lists
-   *  every detected tool without emphasis. */
-  tools: ToolchainKind[];
-  reviewHint: string;
-  templates: StarterTemplate[];
-  tips: string[];
-}
-
-export const PERSONAS: Record<GetStartedPersona, PersonaGuide> = {
-  "stata-latex": {
-    label: "Stata and LaTeX",
-    description: "Do-files, .tex manuscripts, and replication packages",
-    tools: ["stata"],
-    reviewHint:
-      "Choose the .tex file or the LaTeX project folder. Reviews read the source, so equations and structure are kept.",
-    templates: ["replication-package-readiness", "reference-check"],
-    tips: [
-      "In a project, add a Stata do-file as a local check. Pipeline reads the log and fails the check on an error code such as r(198).",
-      "LaTeX projects compile with latexmk, pdflatex, xelatex, lualatex or tectonic from your PATH, with shell escape off. Reviews of .tex source need no TeX installation.",
-      "Run Replication Package Readiness on the package folder before you submit it.",
-    ],
-  },
-  "r-word": {
-    label: "R and Word",
-    description: "R scripts, R Markdown or Quarto, and .docx drafts",
-    tools: ["r", "quarto"],
-    reviewHint: "Choose your Word (.docx) draft or a PDF.",
-    templates: ["reference-check", "replication-package-readiness"],
-    tips: [
-      "In a project, add an R script as a local check. Pipeline records the R version and the hash of renv.lock.",
-      "Quarto and R Markdown documents can be rendered as a check; list the rendered file as an expected output.",
-      "Reference Check looks up each reference in Crossref before you send a draft.",
-    ],
-  },
-  "python-notebooks": {
-    label: "Python and notebooks",
-    description: "Scripts, Jupyter notebooks, and virtual environments",
-    tools: ["python", "jupyter"],
-    reviewHint:
-      "Choose a PDF, a Word file, or a folder of source files for the paper.",
-    templates: ["replication-package-readiness", "reference-check"],
-    tips: [
-      "Pipeline finds a project's .venv interpreter and records the hashes of uv.lock, requirements.txt and similar files.",
-      "A notebook check runs every cell into a new file. Your original notebook is never overwritten.",
-      "Run Replication Package Readiness on a package folder before you share it.",
-    ],
-  },
-  "word-zotero": {
-    label: "Word and Zotero",
-    description: "Word manuscripts and a Zotero library",
-    tools: [],
-    reviewHint: "Choose your Word (.docx) manuscript or a PDF.",
-    templates: ["reference-check"],
-    tips: [
-      "Reference Check looks up each reference in Crossref for existence, matching details, retractions and corrections.",
-      "With Zotero open and its local API turned on, a project's Library → Literature notes can preview and import selected collection metadata. Pipeline only reads from Zotero.",
-    ],
-  },
-  other: {
-    label: "Something else",
-    description: "Show every tool and tip",
-    tools: [],
-    reviewHint:
-      "Choose a PDF, Word file, .tex file, or folder. LaTeX source keeps equations and structure.",
-    templates: ["reference-check", "replication-package-readiness"],
-    tips: [
-      "Open the example review first to see what a finished Review contains.",
-      "Projects keep conversations, files, notes, and local checks together.",
-    ],
-  },
-};
-
-export function personaGuide(persona: GetStartedPersona | null): PersonaGuide {
-  return PERSONAS[persona ?? "other"];
-}
 
 export const TOOL_NOTES: Record<ToolchainKind, { name: string; use: string }> =
   {
@@ -352,33 +267,4 @@ export function pdfRows(report: DepsReport | null): PdfRow[] {
           },
     );
   return rows;
-}
-
-export interface ToolGroups {
-  /** Found tools the persona asked about, in persona order. */
-  featured: DetectedToolchain[];
-  /** Persona tools that were not found. */
-  missing: ToolchainKind[];
-  others: DetectedToolchain[];
-}
-
-export function groupTools(
-  report: ToolchainReport,
-  persona: GetStartedPersona | null,
-): ToolGroups {
-  const wanted = personaGuide(persona).tools;
-  const rank = (tool: DetectedToolchain) => {
-    const index = wanted.indexOf(tool.kind);
-    return index < 0 ? wanted.length : index;
-  };
-  const featured = report.tools
-    .filter((tool) => wanted.includes(tool.kind))
-    .sort((a, b) => rank(a) - rank(b));
-  return {
-    featured,
-    missing: wanted.filter(
-      (kind) => !report.tools.some((tool) => tool.kind === kind),
-    ),
-    others: report.tools.filter((tool) => !wanted.includes(tool.kind)),
-  };
 }

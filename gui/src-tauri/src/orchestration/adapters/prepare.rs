@@ -20,6 +20,9 @@ pub async fn prepare(chain: &Chain, session: Option<String>, inputs: &Value) -> 
         scope.harness_fingerprint = Some(binding.harness_fingerprint);
         scope.connection_id = binding.connection_id;
         scope.runtime_root = Some(binding.runtime_root);
+        scope.permission_profile = binding.permission_profile;
+        scope.preset_id = binding.preset_id;
+        scope.access = binding.access;
     }
     let mut all = Vec::new();
     flatten(&chain.steps, &mut all);
@@ -161,6 +164,9 @@ pub fn task_binding(scope: &Scope) -> Result<tasks::TaskBinding> {
             .runtime_root
             .clone()
             .ok_or("No Workspace runtime root")?,
+        permission_profile: scope.permission_profile.clone(),
+        preset_id: scope.preset_id.clone(),
+        access: scope.access.clone(),
     })
 }
 

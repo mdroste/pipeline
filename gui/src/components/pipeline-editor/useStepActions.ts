@@ -20,10 +20,25 @@ import { analyzerStep } from "../../lib/analyzers";
 
 import type { WorkflowEditor } from "./useWorkflowEditor";
 import {
+  fanOutSteps,
+  namedOutputs,
   prepareExtractionChange,
   referencingSteps,
+  uniqueStepId,
+  withoutStepOutputs,
   withoutStepReferences,
 } from "./editorState";
+const plural = (count: number, noun: string) =>
+  `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+/** What a sequential step cannot keep: it runs once, with one agent. */
+function lostToSequential(step: StepConfig) {
+  return [
+    ...((step.agents?.length ?? 0) > 1 ? ["keeps only the first agent"] : []),
+    ...(step.for_each ? ["turns off “Run once for each item”"] : []),
+  ];
+}
+
 export function useStepActions(
   editor: WorkflowEditor,
   onStepAdded: () => void,
@@ -66,6 +81,17 @@ export function useStepActions(
     ) {
       return;
     }
+    const lost =
+      phase === "sequential" && target ? lostToSequential(target) : [];
+    if (
+      lost.length > 0 &&
+      !(await confirmDialog(
+        `A sequential step runs once with one agent, so switching ${lost.join(" and ")}. Continue?`,
+        { destructive: true },
+      ))
+    ) {
+      return;
+    }
     setConfig((current) => {
       if (!current) return current;
       const outputs = { ...(current.outputs ?? {}) };
@@ -85,7 +111,14 @@ export function useStepActions(
                   phase,
                   context: contextForParallel(step.context, inputMode).context,
                 }
-              : { ...step, phase },
+              : {
+                  ...step,
+                  phase,
+                  ...((step.agents?.length ?? 0) > 1 && {
+                    agents: step.agents.slice(0, 1),
+                  }),
+                  ...(step.for_each && { for_each: null }),
+                },
         ),
       };
     });
@@ -105,12 +138,20 @@ export function useStepActions(
         ...current,
         outputs,
         steps:
-          role === "findings_step" && enabled
-            ? current.steps.map((step) =>
-                step.id === id && !step.output_schema
+          role === "findings_step"
+            ? current.steps.map((step) => {
+                if (step.id !== id) return step;
+                // A check publishes Pipeline's own fixed findings and may not
+                // carry a schema, so this also clears one left in a draft.
+                if (step.kind === "analyzer") {
+                  return step.output_schema
+                    ? { ...step, output_schema: null }
+                    : step;
+                }
+                return enabled && !step.output_schema
                   ? { ...step, output_schema: ISSUES_SCHEMA }
-                  : step,
-              )
+                  : step;
+              })
             : current.steps,
       };
     });
@@ -138,7 +179,7 @@ export function useStepActions(
     if (
       removedSelectors > 0 &&
       !(await confirmDialog(
-        `This change removes ${removedSelectors} artifact access rule${removedSelectors === 1 ? "" : "s"} from workflow steps. Continue?`,
+        `This change removes ${removedSelectors} artifact access rule${removedSelectors === 1 ? "" : "s"} from review steps. Continue?`,
         { destructive: true },
       ))
     ) {
@@ -150,11 +191,29 @@ export function useStepActions(
 
   const updateStepEnabled = async (id: string, enabled: boolean) => {
     if (!config) return;
+    const repeating = fanOutSteps(
+      config.steps.filter((step) => step.enabled),
+      id,
+    );
+    if (!enabled && repeating.length > 0) {
+      notify(
+        `“${repeating[0].label}” runs once for each item in this step’s results. Change “Run once for each item” on that step before disabling this one.`,
+      );
+      return;
+    }
     const affected = enabled ? [] : referencingSteps(config, id);
+    const named = enabled ? [] : namedOutputs(config, id);
     if (
-      affected.length > 0 &&
+      affected.length + named.length > 0 &&
       !(await confirmDialog(
-        `Disabling this step removes dependencies or artifact access from ${affected.length} downstream step${affected.length === 1 ? "" : "s"}. Continue?`,
+        `Disabling this step removes ${[
+          ...(affected.length
+            ? [
+                `dependencies or artifact access from ${plural(affected.length, "downstream step")}`,
+              ]
+            : []),
+          ...(named.length ? [plural(named.length, "named output")] : []),
+        ].join(" and ")}. Continue?`,
         { destructive: true },
       ))
     ) {
@@ -164,17 +223,7 @@ export function useStepActions(
       ...config,
       outputs: enabled
         ? config.outputs
-        : {
-            ...(config.outputs ?? {}),
-            primary_step:
-              config.outputs?.primary_step === id
-                ? ""
-                : config.outputs?.primary_step,
-            findings_step:
-              config.outputs?.findings_step === id
-                ? ""
-                : config.outputs?.findings_step,
-          },
+        : withoutStepOutputs(config.outputs, id),
       steps: config.steps.map((step) => {
         if (step.id === id) return { ...step, enabled };
         if (enabled) return step;
@@ -263,11 +312,7 @@ export function useStepActions(
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, "_")
           .replace(/^_+|_+$/g, "") || "custom_step";
-    let id = baseId;
-    let suffix = 2;
-    while (config.steps.some((step) => step.id === id)) {
-      id = `${baseId}_${suffix++}`;
-    }
+    const id = uniqueStepId(baseId, config.steps);
 
     const priorReports: ArtifactSelector[] = config.steps
       .filter((step) => step.enabled)
@@ -375,11 +420,24 @@ export function useStepActions(
   const removeStep = async (id: string) => {
     if (!config) return;
     const step = config.steps.find((candidate) => candidate.id === id);
+    const repeating = fanOutSteps(config.steps, id);
+    if (repeating.length > 0) {
+      notify(
+        `“${repeating[0].label}” runs once for each item in this step’s results. Change “Run once for each item” on that step before removing this one.`,
+      );
+      return;
+    }
     const affected = referencingSteps(config, id);
-    const consequence =
-      affected.length > 0
-        ? ` It will also remove references from ${affected.length} downstream step${affected.length === 1 ? "" : "s"}.`
-        : "";
+    const named = namedOutputs(config, id);
+    const removed = [
+      ...(affected.length
+        ? [`references from ${plural(affected.length, "downstream step")}`]
+        : []),
+      ...(named.length ? [plural(named.length, "named output")] : []),
+    ];
+    const consequence = removed.length
+      ? ` It will also remove ${removed.join(" and ")}.`
+      : "";
     if (
       !(await confirmDialog(`Remove “${step?.label ?? id}”?${consequence}`, {
         title: "Remove step",
@@ -390,17 +448,7 @@ export function useStepActions(
       return;
     const nextConfig = {
       ...config,
-      outputs: {
-        ...(config.outputs ?? {}),
-        primary_step:
-          config.outputs?.primary_step === id
-            ? ""
-            : config.outputs?.primary_step,
-        findings_step:
-          config.outputs?.findings_step === id
-            ? ""
-            : config.outputs?.findings_step,
-      },
+      outputs: withoutStepOutputs(config.outputs, id),
       steps: config.steps
         .filter((step) => step.id !== id)
         .map((step) => withoutStepReferences(step, id)),

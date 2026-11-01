@@ -22,6 +22,7 @@ test("preview is read-only; apply removes outputs but preserves sources, depende
   const { root, write } = fixture(t);
   const output = write("gui/src-tauri/target/debug/incremental/query-cache.bin");
   const cache = write("gui/node_modules/.vite/results.json");
+  const buildInfo = ["gui/tsconfig.tsbuildinfo", "gui/tsconfig.node.tsbuildinfo"].map(write);
   const keep = ["gui/src/main.tsx", "gui/test.pdf", "gui/node_modules/vite/package.json",
     ".env", ".claude/settings.local.json", ".git/config", "gui/src-tauri/resources/poppler/pdfinfo",
     "docs/untracked-notes.md", "gui/src-tauri/gen/keep.json"].map(write);
@@ -31,6 +32,7 @@ test("preview is read-only; apply removes outputs but preserves sources, depende
   cleanBuildArtifacts(root, { ...quiet, apply: true });
   assert.ok(!fs.existsSync(output));
   assert.ok(!fs.existsSync(cache));
+  for (const file of buildInfo) assert.ok(!fs.existsSync(file), file);
   for (const file of keep) assert.ok(fs.existsSync(file), file);
   assert.deepEqual(cleanBuildArtifacts(root, { ...quiet, apply: true }), []);
 });

@@ -882,7 +882,8 @@ fn migration_16_keeps_profiles_and_accepts_structured_adapters() {
     let connection = rusqlite::Connection::open(store_root.join("research.sqlite3")).unwrap();
     connection
         .execute_batch(
-            "PRAGMA foreign_keys=OFF;
+            "DROP INDEX transcript_items_page;
+             PRAGMA foreign_keys=OFF;
              CREATE TABLE old_profiles AS SELECT * FROM execution_profiles;
              DROP TABLE execution_profiles;
              CREATE TABLE execution_profiles (

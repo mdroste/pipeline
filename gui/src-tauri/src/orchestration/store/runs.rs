@@ -1,5 +1,5 @@
 //! Task creation, saved state, readiness and startup recovery.
-use super::{err, hash, id, now, Result, Scope, Store, Summary, TaskRun};
+use super::{err, hash, id, now, Result, Scope, Store, Summary, TaskRun, HEARTBEAT};
 use crate::orchestration::{definition::Chain, state::Progress};
 use rusqlite::{params, OptionalExtension, TransactionBehavior};
 use serde_json::Value;
@@ -80,6 +80,13 @@ impl Store {
                     .into(),
             );
         }
+        self.write(run, kind, detail)
+    }
+
+    /// For a change that adds nothing to the run's context, such as stopping
+    /// it or marking it for attention. A run over its context budget can still
+    /// take these, so nothing is left unable to stop.
+    pub fn write(&self, run: &mut TaskRun, kind: &str, detail: &str) -> Result<()> {
         let mut c = self.connection()?;
         let tx = c
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -118,7 +125,8 @@ impl Store {
             "ready" => "state IN ('queued','running','waiting')",
             _ => "state NOT IN ('finished','cancelled','failed')",
         };
-        let sql=format!("SELECT id,revision,json_extract(body,'$.name'),state,json_extract(body,'$.reason'),json_extract(body,'$.createdAt'),updated_at,due_at,session_id,schedule_id FROM runs WHERE {predicate} AND NOT EXISTS (SELECT 1 FROM mission_children mc WHERE mc.task_id=runs.id) AND NOT EXISTS (SELECT 1 FROM discovery_children dc WHERE dc.task_id=runs.id) AND (?1 IS NULL OR session_id=?1) ORDER BY updated_at DESC,id LIMIT 50 OFFSET ?2");
+        // Bodies are parsed only for the page, not for every candidate row.
+        let sql=format!("SELECT r.id,r.revision,json_extract(r.body,'$.name'),r.state,json_extract(r.body,'$.reason'),json_extract(r.body,'$.createdAt'),r.updated_at,r.due_at,r.session_id,r.schedule_id FROM (SELECT id FROM runs WHERE {predicate} AND NOT EXISTS (SELECT 1 FROM mission_children mc WHERE mc.task_id=runs.id) AND NOT EXISTS (SELECT 1 FROM discovery_children dc WHERE dc.task_id=runs.id) AND (?1 IS NULL OR session_id=?1) ORDER BY updated_at DESC,id LIMIT 50 OFFSET ?2) page JOIN runs r ON r.id=page.id ORDER BY r.updated_at DESC,r.id");
         let mut s = c.prepare(&sql).map_err(err)?;
         let result = s
             .query_map(params![session, offset], |r| {
@@ -153,9 +161,12 @@ impl Store {
     }
 
     pub fn next_due(&self) -> Result<Option<i64>> {
-        self.connection()?.query_row("SELECT MIN(t) FROM (SELECT due_at t FROM runs WHERE state IN ('queued','running','waiting') UNION ALL SELECT json_extract(body,'$.deadlineAt') t FROM runs WHERE state IN ('queued','running','waiting') UNION ALL SELECT due_at t FROM missions WHERE state IN ('queued','running','waiting','paused','stopping') UNION ALL SELECT json_extract(body,'$.deadlineAt') t FROM missions WHERE state IN ('queued','running','waiting') UNION ALL SELECT due_at t FROM discovery_runs WHERE state IN ('running','awaitingSelection','paused','stopping') UNION ALL SELECT deadline_at t FROM discovery_runs WHERE state IN ('running','awaitingSelection','paused','stopping') UNION ALL SELECT next_due_at t FROM schedules s WHERE enabled=1 AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.schedule_id=s.id AND r.state NOT IN ('finished','cancelled','failed')))",[],|r|r.get(0)).map_err(err)
+        self.connection()?.query_row("SELECT MIN(t) FROM (SELECT due_at t FROM runs WHERE state IN ('queued','running','waiting') UNION ALL SELECT json_extract(body,'$.deadlineAt') t FROM runs WHERE state IN ('queued','running','waiting') UNION ALL SELECT due_at t FROM missions WHERE state IN ('queued','running','waiting','paused','stopping') UNION ALL SELECT json_extract(body,'$.deadlineAt') t FROM missions WHERE state IN ('queued','running','waiting') UNION ALL SELECT due_at t FROM discovery_runs WHERE state IN ('running','awaitingSelection','paused','stopping') UNION ALL SELECT deadline_at t FROM discovery_runs WHERE state IN ('running','awaitingSelection','paused','stopping') AND json_extract(body,'$.selectionSince') IS NULL UNION ALL SELECT next_due_at t FROM schedules s WHERE enabled=1 AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.schedule_id=s.id AND r.state NOT IN ('finished','cancelled','failed')))",[],|r|r.get(0)).map_err(err)
     }
 
+    /// One unreadable record must not keep the coordinator from starting, so
+    /// each interrupted run is handled alone. Nothing here adds to a run, so a
+    /// run already over its budget is still marked.
     pub fn recover(&self) -> Result<()> {
         let c = self.connection()?;
         let mut s=c.prepare("SELECT id FROM runs WHERE state NOT IN ('draft','finished','cancelled','failed') AND (state='cancelling' OR EXISTS(SELECT 1 FROM json_each(json_extract(body,'$.progress.receipts')) WHERE json_extract(value,'$.state')='running'))").map_err(err)?;
@@ -164,20 +175,33 @@ impl Store {
             .map_err(err)?
             .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(err)?;
+        // The app was not running after this, so a lost action isn't charged for
+        // the time it stayed closed.
+        let stopped = self
+            .preference(HEARTBEAT)
+            .ok()
+            .flatten()
+            .and_then(|v| v.as_i64());
         for id in ids {
-            let mut run = self.get(&id)?;
-            for receipt in run.progress.receipts.values_mut() {
-                if receipt.state == "running" {
-                    receipt.state = "unknown".into();
-                    receipt.error=Some("Pipeline stopped before the action outcome was recorded. Reconcile before retrying.".into());
-                }
+            if let Err(error) = self.recover_run(&id, stopped) {
+                eprintln!("Interrupted automation {id} needs attention: {error}");
             }
-            run.state = "attention".into();
-            run.reason =
-                Some("Interrupted task; inspect the recorded work before continuing".into());
-            self.save(&mut run, "recovery", "Task interrupted")?;
         }
         Ok(())
+    }
+
+    fn recover_run(&self, id: &str, stopped: Option<i64>) -> Result<()> {
+        let mut run = self.get(id)?;
+        for receipt in run.progress.receipts.values_mut() {
+            if receipt.state == "running" {
+                receipt.state = "unknown".into();
+                receipt.finished_at = stopped.map(|t| t.max(receipt.started_at));
+                receipt.error=Some("Pipeline stopped before the action outcome was recorded. Reconcile before retrying.".into());
+            }
+        }
+        run.state = "attention".into();
+        run.reason = Some("Interrupted task; inspect the recorded work before continuing".into());
+        self.write(&mut run, "recovery", "Task interrupted")
     }
 }
 

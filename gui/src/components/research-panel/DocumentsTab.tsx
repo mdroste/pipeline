@@ -1,8 +1,9 @@
+import { primaryButton } from "../../ui/classes";
 import { open } from "@tauri-apps/plugin-dialog";
-import { promptDialog } from "../DialogService";
+import { notify, promptDialog } from "../DialogService";
 import { researchClient } from "../../lib/workbench/researchClient";
 import { operation } from "./useResearchPanelController";
-import { compactHash } from "./format";
+import { compactHash, plainLabel } from "./format";
 import type { useResearchPanelController } from "./useResearchPanelController";
 import type { Workspace } from "../../lib/workbenchTypes";
 
@@ -23,7 +24,6 @@ type Props = Pick<
 > & {
   workspaceId: string;
   projectWorkspace?: Workspace | null;
-  onError: (message: string) => void;
 };
 
 export default function DocumentsTab({
@@ -40,7 +40,6 @@ export default function DocumentsTab({
   setHits,
   workspaceId,
   projectWorkspace,
-  onError,
 }: Props) {
   return (
     <div className="space-y-4">
@@ -86,7 +85,7 @@ export default function DocumentsTab({
                 await patchSession({ paperId: result.paper.id });
             })
           }
-          className="rounded bg-gray-900 px-3 py-2 text-xs font-medium text-white dark:bg-neutral-100 dark:text-neutral-900"
+          className={primaryButton}
         >
           Import paper
         </button>
@@ -171,8 +170,9 @@ export default function DocumentsTab({
                 operationId: operation("source-import"),
               });
               if (result.duplicateCandidates.length)
-                onError(
+                notify(
                   `Source imported separately; ${result.duplicateCandidates.length} possible duplicate${result.duplicateCandidates.length === 1 ? "" : "s"} retained for review.`,
+                  "info",
                 );
             })
           }
@@ -201,14 +201,19 @@ export default function DocumentsTab({
             >
               <span className="block font-medium">{item.paper.title}</span>
               <span className="block text-[11px] text-gray-500">
-                {item.paper.role} · {item.revision?.inputKind ?? "no revision"}{" "}
+                {plainLabel(item.paper.role)} ·{" "}
+                {item.revision
+                  ? plainLabel(item.revision.inputKind)
+                  : "No version yet"}{" "}
                 · {compactHash(item.revision?.contentHash)}
               </span>
               <span
                 className={`mt-1 block text-[11px] ${item.revision?.extraction.status === "failed" ? "text-red-600" : "text-gray-500"}`}
               >
                 Extraction:{" "}
-                {String(item.revision?.extraction.status ?? "unavailable")}
+                {plainLabel(
+                  String(item.revision?.extraction.status ?? "unavailable"),
+                )}
                 {item.revision?.extraction.error
                   ? ` — ${String(item.revision.extraction.error)}`
                   : ""}
@@ -221,6 +226,7 @@ export default function DocumentsTab({
         <section>
           <div className="flex gap-2">
             <input
+              aria-label="Search this version"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search this version"
@@ -276,7 +282,8 @@ export default function DocumentsTab({
             >
               <span className="font-medium">{source.title}</span>
               <span className="block text-[11px] text-gray-500">
-                {source.accessState} · {source.acquiredVia} ·{" "}
+                {plainLabel(source.accessState)} ·{" "}
+                {plainLabel(source.acquiredVia)} ·{" "}
                 {compactHash(source.contentHash)}
               </span>
             </div>

@@ -13,6 +13,9 @@ import {
   type TheoryOverview,
 } from "../../lib/studioClient";
 import type { ProjectRecord } from "../../lib/projectClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import useReopenCount from "../../hooks/useReopenCount";
+import useReveal from "../../hooks/useReveal";
 import {
   button,
   input,
@@ -24,6 +27,7 @@ import {
   ErrorNotice,
   Inspect,
   useAction,
+  useDraftGuard,
   type StudioProps,
 } from "./shared";
 
@@ -69,6 +73,8 @@ const emptyDirection: ResearchDirection = {
   theoryIds: [],
   dropReason: "",
 };
+// A check's note id follows the note that holds it; it is not typed text.
+const checkText = (check: TheoryCheck) => ({ ...check, theoryId: "" });
 const label = (s: string) => s.replaceAll("_", " ");
 const opts = (values: readonly string[]) =>
   values.map((v) => ({ value: v, label: label(v) }));
@@ -113,6 +119,7 @@ export default function Theory({
   data,
   onRefresh,
   onAnchors,
+  active,
 }: StudioProps) {
   const [overview, setOverview] = useState<TheoryOverview | null>(null);
   const [kindFilter, setKindFilter] = useState("");
@@ -129,11 +136,18 @@ export default function Theory({
   const [task, setTask] = useState("");
   const [path, setPath] = useState("appendix.tex");
   const [afterLine, setAfterLine] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<{
+    section: "note" | "check" | "direction";
+    text: string;
+  } | null>(null);
+  const noteGuard = useDraftGuard([note, assumptionsText, unresolvedText]);
+  const checkGuard = useDraftGuard(checkText(check));
+  const directionGuard = useDraftGuard(direction);
   const { error, busy, run, setError } = useAction();
   const load = useCallback(async () => {
     setOverview(await studioClient.theory(workspaceId));
   }, [workspaceId]);
+  const reopened = useReopenCount(active);
   useEffect(() => {
     let disposed = false;
     void studioClient
@@ -142,12 +156,12 @@ export default function Theory({
         if (!disposed) setOverview(o);
       })
       .catch((e) => {
-        if (!disposed) setError(String(e));
+        if (!disposed) setError(workbenchErrorMessage(e));
       });
     return () => {
       disposed = true;
     };
-  }, [workspaceId, setError]);
+  }, [workspaceId, setError, reopened]);
   const notes = overview?.notes ?? [];
   const current = notes.find((n) => n.id === noteId);
   const currentCheck = overview?.checks.find((c) => c.id === checkId);
@@ -166,16 +180,43 @@ export default function Theory({
     data.anchors.find((a) => a.id === id)?.body.selection.quote.slice(0, 160) ??
     id;
   const editNote = (body: TheoryNote) => {
+    const assumptions = body.assumptions.join("\n");
+    const unresolved = body.unresolvedSteps.join("\n");
+    noteGuard.markSaved([body, assumptions, unresolved]);
     setNote(body);
-    setAssumptionsText(body.assumptions.join("\n"));
-    setUnresolvedText(body.unresolvedSteps.join("\n"));
+    setAssumptionsText(assumptions);
+    setUnresolvedText(unresolved);
   };
-  const selectNote = (n: ProjectRecord<TheoryNote>) => {
-    setNoteId(n.id);
-    editNote(n.body);
-    setCheckId("");
-    setCheck(emptyCheck(n.id));
+  const editCheck = (id: string, body: TheoryCheck) => {
+    checkGuard.markSaved(checkText(body));
+    setCheckId(id);
+    setCheck(body);
   };
+  const editDirection = (id: string, body: ResearchDirection) => {
+    directionGuard.markSaved(body);
+    setDirectionId(id);
+    setDirection(body);
+  };
+  const noteForm = useReveal<HTMLElement>();
+  // Opening another note also replaces the check form beside it.
+  const replaceNote = (id: string, body: TheoryNote) =>
+    noteGuard.replace("theory note", () =>
+      checkGuard.replace("check", () => {
+        setNoteId(id);
+        editNote(body);
+        editCheck("", emptyCheck(id));
+        noteForm.reveal();
+      }),
+    );
+  const replaceCheck = (id: string, body: TheoryCheck) =>
+    checkGuard.replace("check", () => editCheck(id, body));
+  const replaceDirection = (id: string, body: ResearchDirection) =>
+    directionGuard.replace("research direction", () => editDirection(id, body));
+  const sectionNotice = (section: "note" | "check" | "direction") => (
+    <p role="status" className="text-xs">
+      {notice?.section === section ? notice.text : ""}
+    </p>
+  );
   const proofPartner = (n: ProjectRecord<TheoryNote>) =>
     n.body.relatedIds
       .map((id) => notes.find((x) => x.id === id))
@@ -202,15 +243,7 @@ export default function Theory({
             options={opts(THEORY_KINDS)}
             placeholder="All kinds"
           />
-          <button
-            className={button}
-            onClick={() => {
-              setNoteId("");
-              editNote(emptyNote);
-              setCheckId("");
-              setCheck(emptyCheck(""));
-            }}
-          >
+          <button className={button} onClick={() => replaceNote("", emptyNote)}>
             New note
           </button>
         </div>
@@ -237,7 +270,7 @@ export default function Theory({
                         </span>{" "}
                         {n.body.title}
                         {n.body.unresolvedSteps.length > 0 && (
-                          <p className="text-amber-700">
+                          <p className="text-warning">
                             {n.body.unresolvedSteps.length} unresolved step(s)
                           </p>
                         )}
@@ -257,7 +290,7 @@ export default function Theory({
                       <td className="space-x-1 p-2">
                         <button
                           className={button}
-                          onClick={() => selectNote(n)}
+                          onClick={() => replaceNote(n.id, n.body)}
                         >
                           Edit / checks
                         </button>
@@ -295,7 +328,7 @@ export default function Theory({
         )}
       </section>
       <div className="grid gap-4 lg:grid-cols-2">
-        <section className={panel}>
+        <section ref={noteForm.ref} tabIndex={-1} className={panel}>
           <h2 className="font-semibold">
             {current ? "Edit theory note" : "New theory note"}
           </h2>
@@ -420,12 +453,13 @@ export default function Theory({
                 setNoteId(saved.id);
                 editNote({ ...emptyNote, ...saved.body });
                 setCheck((c) => ({ ...c, theoryId: saved.id }));
-                setNotice("Theory note saved.");
+                setNotice({ section: "note", text: "Theory note saved." });
               })
             }
           >
             Save theory note
           </button>
+          {sectionNotice("note")}
           {current && (
             <Inspect label="Promotions and revision" value={current} />
           )}
@@ -454,10 +488,7 @@ export default function Theory({
                       </span>
                       <button
                         className={button}
-                        onClick={() => {
-                          setCheckId(c.id);
-                          setCheck(c.body.check);
-                        }}
+                        onClick={() => replaceCheck(c.id, c.body.check)}
                       >
                         Edit
                       </button>
@@ -466,10 +497,7 @@ export default function Theory({
               </ul>
               <button
                 className={button}
-                onClick={() => {
-                  setCheckId("");
-                  setCheck(emptyCheck(current.id));
-                }}
+                onClick={() => replaceCheck("", emptyCheck(current.id))}
               >
                 New check
               </button>
@@ -592,9 +620,9 @@ export default function Theory({
                       check,
                     });
                     // Later saves update this record instead of adding another.
-                    setCheckId(saved.id);
+                    editCheck(saved.id, check);
                     await load();
-                    setNotice("Check recorded.");
+                    setNotice({ section: "check", text: "Check recorded." });
                   })
                 }
               >
@@ -657,9 +685,10 @@ export default function Theory({
                     });
                     await load();
                     await onRefresh();
-                    setNotice(
-                      "The derivation is ready in the working copy. Review and accept it in Review edits.",
-                    );
+                    setNotice({
+                      section: "check",
+                      text: "The derivation is ready in the working copy. Review and accept it in Review edits.",
+                    });
                   })
                 }
               >
@@ -667,9 +696,7 @@ export default function Theory({
               </button>
             </>
           )}
-          <p role="status" className="text-xs">
-            {notice}
-          </p>
+          {sectionNotice("check")}
         </section>
       </div>
       <section className={panel}>
@@ -699,7 +726,7 @@ export default function Theory({
                   <td className="max-w-xs p-2">{d.body.mechanism}</td>
                   <td className="max-w-xs p-2">
                     {d.body.firstDiscriminatingTest || (
-                      <span className="text-amber-700">not stated</span>
+                      <span className="text-warning">not stated</span>
                     )}
                   </td>
                   <td className="max-w-xs p-2">{d.body.likelyFailureMode}</td>
@@ -717,10 +744,7 @@ export default function Theory({
                   <td className="space-x-1 p-2">
                     <button
                       className={button}
-                      onClick={() => {
-                        setDirectionId(d.id);
-                        setDirection(d.body);
-                      }}
+                      onClick={() => replaceDirection(d.id, d.body)}
                     >
                       Edit
                     </button>
@@ -740,7 +764,10 @@ export default function Theory({
                           });
                           await load();
                           await onRefresh();
-                          setNotice("Direction converted into an open task.");
+                          setNotice({
+                            section: "direction",
+                            text: "Direction converted into an open task.",
+                          });
                         })
                       }
                     >
@@ -754,10 +781,7 @@ export default function Theory({
         </div>
         <button
           className={button}
-          onClick={() => {
-            setDirectionId("");
-            setDirection(emptyDirection);
-          }}
+          onClick={() => replaceDirection("", emptyDirection)}
         >
           New direction
         </button>
@@ -841,14 +865,17 @@ export default function Theory({
                 direction,
               });
               await load();
-              setDirectionId(saved.id);
-              setDirection({ ...emptyDirection, ...saved.body });
-              setNotice("Research direction saved.");
+              editDirection(saved.id, { ...emptyDirection, ...saved.body });
+              setNotice({
+                section: "direction",
+                text: "Research direction saved.",
+              });
             })
           }
         >
           Save direction
         </button>
+        {sectionNotice("direction")}
       </section>
     </div>
   );

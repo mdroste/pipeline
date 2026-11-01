@@ -15,7 +15,9 @@ import {
   useWorkspaceChromeEffects,
 } from "./workspace/useWorkspaceChrome";
 import useWorkspaceModelCatalog from "./useWorkspaceModelCatalog";
-import useWorkspaceSessionList from "./useWorkspaceSessionList";
+import useWorkspaceSessionList, {
+  useOlderSessions,
+} from "./useWorkspaceSessionList";
 import useWorkspaceRequestResolution from "./useWorkspaceRequestResolution";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConversationActions } from "./useConversationActions";
@@ -23,9 +25,15 @@ import useWorkspaceEntry from "./useWorkspaceEntry";
 import { newOperation } from "../lib/workspaceSessionState";
 import useWorkspaceTranscript from "./useWorkspaceTranscript";
 import { isWorkspaceDestination } from "../lib/workspaceNavigation";
-import { payloadText, roleFor } from "../lib/workspaceTranscript";
+import { router } from "../lib/router";
+import {
+  payloadText,
+  roleFor,
+  TRANSCRIPT_WINDOW,
+} from "../lib/workspaceTranscript";
 import { deskClient, type ContextItem } from "../lib/deskClient";
 import { appEvents } from "../lib/appEvents";
+import { clearDeskObjects } from "../lib/deskLayout";
 import { asContextItems } from "../lib/workspaceAttachments";
 import {
   useWorkspaceRouteEntry,
@@ -110,9 +118,12 @@ export function useWorkspacePageController({
     setEffort,
     draft,
     setDraft,
-    stream,
+    streamStore,
+    clearStream,
     pendingUser,
+    setPendingUser,
     active,
+    setActive,
     submitting,
     setSubmitting,
     requests,
@@ -122,6 +133,7 @@ export function useWorkspacePageController({
     notice,
     setNotice,
     submissionOwner,
+    activeTurn,
     fileChangesRef,
     sessionRef,
     snapshotRef,
@@ -139,9 +151,16 @@ export function useWorkspacePageController({
   const messageRef = useRef<HTMLTextAreaElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const followLatestRef = useRef(true);
+  // The conversation being opened, which takes keyboard focus once it loads.
+  const composerFocusFor = useRef<string | null>(null);
+  // The route entry the page has finished applying. Its pane is revealed in the
+  // next commit, so the desk of a project being left keeps its layout and the
+  // desk of the next project is already there to see the request.
+  const [entryApplied, setEntryApplied] = useState(0);
   useWorkspaceEntry({
     workspaceId,
     entryRequest,
+    entryApplied: entryTarget ? entryApplied : entryRequest,
     entrySurface,
     newProjectRequest,
     onNewProjectRequestHandled,
@@ -154,9 +173,26 @@ export function useWorkspacePageController({
   const workspaceRef = useRef(workspaceId);
   workspaceRef.current = workspaceId;
   const sessionListSequence = useRef(0);
+  // A route entry being applied still names where the researcher is going; the
+  // state on the way there must not replace it as the place to reopen.
+  const enteringRoute = useRef(Boolean(entryTarget));
+  // A conversation a route entry opened in another project. It may be archived
+  // or on a later page, so that project's list must not choose a different one.
+  const routedSession = useRef<string | null>(null);
   const persistence = useWorkspaceSessionPersistence(conversation);
-  const { persistDraft, editDraft, saveCurrentDraft, saveSelection } =
-    persistence;
+  const { editDraft, saveCurrentDraft, saveSelection } = persistence;
+  const olderSessions = useOlderSessions(
+    workspaceRef,
+    sessionListSequence,
+    setSessions,
+    false,
+    setError,
+  );
+  const { position: sessionPosition, setHasOlder } = olderSessions;
+  const sessionPaging = useMemo(
+    () => ({ position: sessionPosition, setHasOlder }),
+    [sessionPosition, setHasOlder],
+  );
   const loadSessions = useWorkspaceSessionList(
     workspaceRef,
     sessionListSequence,
@@ -164,6 +200,7 @@ export function useWorkspacePageController({
     setSessionId,
     false,
     setError,
+    sessionPaging,
   );
 
   useEffect(() => {
@@ -201,7 +238,13 @@ export function useWorkspacePageController({
   );
 
   useEffect(() => {
-    void loadSessions(workspaceId);
+    const routed = routedSession.current;
+    routedSession.current = null;
+    void loadSessions(
+      workspaceId,
+      false,
+      routed !== null && routed === sessionRef.current,
+    );
   }, [loadSessions, workspaceId]);
 
   useEffect(() => {
@@ -233,10 +276,30 @@ export function useWorkspacePageController({
     }
   }, [sessionId, workspaceId, snapshot?.session.id]);
 
+  useEffect(() => {
+    if (enteringRoute.current) return;
+    router.remember({
+      page: "workspace",
+      surface,
+      ...(workspaceId ? { projectId: workspaceId, destination } : {}),
+      ...(sessionId ? { sessionId } : {}),
+    });
+  }, [workspaceId, sessionId, surface, destination]);
+
   useWorkspaceChromeSession(chrome, sessionId);
 
   useEffect(() => {
+    // Errors speak for the conversation that was on screen.
+    setError(null);
     if (!sessionId) {
+      // Hydration resets these for a conversation; with none selected, a
+      // response running elsewhere must not stay on this page. Its submission
+      // stays, so the background notice can still point to it.
+      activeRef.current = null;
+      setActive(null);
+      setPendingUser(null);
+      setSubmitting(false);
+      clearStream();
       setSnapshot(null);
       return;
     }
@@ -264,6 +327,13 @@ export function useWorkspacePageController({
       cancelled = true;
     };
   }, [hydrate, sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || snapshot?.session.id !== sessionId) return;
+    if (composerFocusFor.current !== sessionId) return;
+    composerFocusFor.current = null;
+    messageRef.current?.focus({ preventScroll: true });
+  }, [sessionId, snapshot?.session.id]);
 
   useWorkspaceDraftAutosave(conversation, persistence, contextBusy);
 
@@ -298,6 +368,7 @@ export function useWorkspacePageController({
       await saveCurrentDraft();
       if (generation !== navigationGeneration.current) return;
       if (id !== sessionId) {
+        composerFocusFor.current = id;
         setSnapshot(null);
         setDraft("");
       }
@@ -329,6 +400,8 @@ export function useWorkspacePageController({
       workspaceId !== workspaceRef.current
     )
       return;
+    appEvents.emit("conversations-changed", {});
+    composerFocusFor.current = created.record.id;
     setSnapshot(null);
     setDraft("");
     setSessionId(created.record.id);
@@ -404,11 +477,12 @@ export function useWorkspacePageController({
         workspaceId !== workspaceRef.current
       )
         return;
+      appEvents.emit("conversations-changed", {});
       setSessionId(session.id);
       setSurface("project");
       setAssistantRequest((value) => value + 1);
     },
-    [loadSessions, workspaceId, sessionId, draft, active, persistDraft],
+    [loadSessions, saveCurrentDraft, workspaceId],
   );
   useEffect(() => {
     return appEvents.on("context-add", (detail) => {
@@ -514,7 +588,9 @@ export function useWorkspacePageController({
     const index = allRenderedItems.findIndex((item) => item.id === id);
     if (index < 0) return;
     followLatestRef.current = false;
-    setTranscriptPage(Math.floor((allRenderedItems.length - 1 - index) / 200));
+    setTranscriptPage(
+      Math.floor((allRenderedItems.length - 1 - index) / TRANSCRIPT_WINDOW),
+    );
     setSelectedMessage(id);
     setJumpTarget(id);
   };
@@ -539,7 +615,8 @@ export function useWorkspacePageController({
   const visibleRequests = requests.filter(
     (request) =>
       request.params?.threadId === snapshot?.activeBinding?.providerThreadId ||
-      request.params?.threadId === active?.threadId,
+      request.params?.threadId === active?.threadId ||
+      (!!sessionId && request.sessionId === sessionId),
   );
   /** The pending file change an approval refers to: live events, then the saved transcript. */
   const requestItem = (request: WorkbenchEvent) => {
@@ -551,59 +628,110 @@ export function useWorkspacePageController({
       null
     );
   };
-  // A message still running in a conversation the researcher has left.
+  // Work this conversation can't show: a response in one the researcher has
+  // left, an approval waiting there, or an Automation here that hasn't started.
   const elsewhere =
-    submissionOwner && submissionOwner.sessionId !== sessionId
-      ? submissionOwner
-      : null;
-  const backgroundTurn = elsewhere && {
-    sessionId: elsewhere.sessionId,
-    title:
-      sessions.find((session) => session.id === elsewhere.sessionId)?.title ??
-      null,
-    waiting: elsewhere.threadId
-      ? requests.filter(
-          (request) => request.params?.threadId === elsewhere.threadId,
-        ).length
-      : 0,
-  };
+    [
+      activeTurn?.sessionId !== sessionId || (activeTurn?.automated && !active)
+        ? activeTurn?.sessionId
+        : null,
+      submissionOwner?.sessionId !== sessionId
+        ? submissionOwner?.sessionId
+        : null,
+      requests.find(
+        (request) => request.sessionId && request.sessionId !== sessionId,
+      )?.sessionId,
+    ].find(Boolean) ?? null;
+  const elsewhereTurn = activeTurn?.sessionId === elsewhere ? activeTurn : null;
+  const elsewhereThread =
+    elsewhereTurn?.threadId ??
+    (submissionOwner?.sessionId === elsewhere
+      ? submissionOwner?.threadId
+      : null);
+  const backgroundTurn = elsewhere
+    ? {
+        sessionId: elsewhere,
+        title:
+          sessions.find((session) => session.id === elsewhere)?.title ??
+          elsewhereTurn?.title ??
+          null,
+        waiting:
+          elsewhere === sessionId
+            ? 0
+            : requests.filter(
+                (request) =>
+                  request.sessionId === elsewhere ||
+                  (!!elsewhereThread &&
+                    request.params?.threadId === elsewhereThread),
+              ).length,
+        automated: Boolean(elsewhereTurn?.automated),
+      }
+    : null;
   useWorkspaceRouteEntry(
     entryRequest,
     entryTarget,
     async (target, current) => {
-      const generation = ++navigationGeneration.current;
-      await saveCurrentDraft();
-      const selected = target.sessionId
-        ? await conversationClient.sessionSnapshot(target.sessionId)
-        : null;
-      if (!current() || generation !== navigationGeneration.current) return;
-      const project = selected
-        ? selected.session.workspaceId
-        : target.projectId;
-      if (
-        project !== undefined &&
-        (project !== workspaceId ||
-          (target.sessionId !== undefined &&
-            target.sessionId !== sessionRef.current))
-      ) {
-        hydrationGeneration.current++;
-        sessionListSequence.current++;
-        setWorkspaceId(project);
-        setSnapshot(null);
-        snapshotRef.current = null;
-        setDraft("");
-        sessionRef.current = target.sessionId ?? null;
-        setSessionId(target.sessionId ?? null);
-        if (project !== workspaceId) setSessions([]);
-        if (target.sessionId) void hydrate(target.sessionId);
+      enteringRoute.current = true;
+      try {
+        const generation = ++navigationGeneration.current;
+        await saveCurrentDraft();
+        const selected = target.sessionId
+          ? await conversationClient.sessionSnapshot(target.sessionId)
+          : null;
+        if (!current() || generation !== navigationGeneration.current) return;
+        const project = selected
+          ? selected.session.workspaceId
+          : target.projectId;
+        if (
+          project !== undefined &&
+          (project !== workspaceId ||
+            (target.sessionId !== undefined &&
+              target.sessionId !== sessionRef.current))
+        ) {
+          hydrationGeneration.current++;
+          sessionListSequence.current++;
+          routedSession.current =
+            project !== workspaceRef.current
+              ? (target.sessionId ?? null)
+              : null;
+          composerFocusFor.current = target.sessionId ?? null;
+          setWorkspaceId(project);
+          setSnapshot(null);
+          snapshotRef.current = null;
+          setDraft("");
+          sessionRef.current = target.sessionId ?? null;
+          setSessionId(target.sessionId ?? null);
+          if (project !== workspaceId) setSessions([]);
+          // The sequence above retired any list load in flight, and an
+          // unchanged project starts no other. The target may be archived or
+          // on a later page, so the list must not choose a different one.
+          else void loadSessions(project, false, true);
+          if (target.sessionId) void hydrate(target.sessionId);
+        }
+        const entered = project ?? workspaceId;
+        const landing =
+          target.surface ?? (target.sessionId ? "chat" : "project");
+        if (target.destination && isWorkspaceDestination(target.destination)) {
+          setDestinationState({
+            workspaceId: entered,
+            tab: target.destination,
+          });
+          // A link names where to land, so a research item left open must not
+          // cover it. A relaunch (request 0) restores the view as it was left.
+          if (entered && entryRequest > 0 && landing === "project") {
+            clearDeskObjects(entered);
+            appEvents.emit("workspace-destination", {
+              workspaceId: entered,
+              tab: target.destination,
+            });
+          }
+        }
+        setSurface(landing);
+        setInspector(null);
+        setEntryApplied(entryRequest);
+      } finally {
+        if (current()) enteringRoute.current = false;
       }
-      if (target.destination && isWorkspaceDestination(target.destination))
-        setDestinationState({
-          workspaceId: project ?? workspaceId,
-          tab: target.destination,
-        });
-      setSurface(target.surface ?? (target.sessionId ? "chat" : "project"));
-      setInspector(null);
     },
     (cause) => setError(workbenchErrorMessage(cause)),
   );
@@ -631,6 +759,8 @@ export function useWorkspacePageController({
       workspaces,
       workspaceId,
       sessions,
+      hasOlderSessions: olderSessions.hasOlder,
+      loadOlderSessions: olderSessions.loadOlder,
       sessionId,
       tasksEnabled,
       projectRequest,
@@ -662,7 +792,7 @@ export function useWorkspacePageController({
       setRuntime,
       effort,
       setEffort,
-      stream,
+      streamStore,
       pendingUser,
       active,
       submitting,

@@ -265,7 +265,7 @@ function ArtifactContextEditor({
             </div>
           ) : (
             <p className="text-[10px] text-gray-600 dark:text-gray-400">
-              This profile has no primary input.
+              This review has no primary input.
             </p>
           )}
         </div>
@@ -281,7 +281,7 @@ function ArtifactContextEditor({
           Survey / orientation JSON
           {!surveyEnabled && (
             <span className="text-gray-600 dark:text-gray-400">
-              (disabled for profile)
+              (disabled for this review)
             </span>
           )}
         </label>

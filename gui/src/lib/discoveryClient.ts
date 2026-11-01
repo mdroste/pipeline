@@ -15,7 +15,8 @@ export const discoveryStatus = (state: string) =>
     completed: "Completed",
     partial: "Partially completed",
     exhausted: "Resource limit reached",
-    blocked: "Needs attention",
+    attention: "Needs attention",
+    blocked: "Stopped: needs review",
     failed: "Failed",
     cancelled: "Stopped",
     complete: "Complete draft",
@@ -242,7 +243,7 @@ export const discoveryClient = {
       candidateIds,
       operationId,
     }),
-  control: (run: DiscoveryRun, action: "pause" | "resume" | "stop") =>
+  control: (run: DiscoveryRun, action: "pause" | "resume" | "stop" | "retry") =>
     invoke<DiscoveryRun>("discovery_control", {
       id: run.id,
       revision: run.revision,

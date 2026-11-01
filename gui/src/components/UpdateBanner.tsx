@@ -21,7 +21,7 @@ const IDLE: UpdateInstallState = {
 };
 
 const PRIMARY_BUTTON =
-  "shrink-0 px-2.5 py-1 rounded-md bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 transition-colors";
+  "shrink-0 px-2.5 py-1 rounded-md bg-inverse text-on-inverse text-xs font-medium hover:opacity-85 transition-opacity";
 const QUIET_BUTTON =
   "shrink-0 px-2 py-1 text-xs text-blue-700 dark:text-blue-300 hover:text-blue-900 dark:hover:text-blue-100 transition-colors";
 

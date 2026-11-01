@@ -117,6 +117,7 @@ Each module's header comment has the details.
 | `auto_review/` | Specialist catalog and role selection |
 | `pipeline_config/` | Built-in workflows, validation, migrations |
 | `runs/`, `output/` | Review run store, recovery, retention, report formats |
+| `app_menu.rs` | The macOS menu bar and its sidebar item |
 | `settings/`, `storage.rs` | Device settings and research folder choice |
 | `updates.rs`, `updates/` | Update checks, their preference, and in-app install |
 | `agent_runtime/codex/` | Shared Codex transport, launch, and version checks |
@@ -131,7 +132,9 @@ Each module's header comment has the details.
 | `workbench/shell.rs`, `shell_policy.rs` | Optional API command engine and stateless sandbox policy shared with Claude Code |
 | `workbench/tool_setup.rs`, `tool_setup/` | Managed Node, locked conversation packages, cancellable staging and publication |
 | `workbench/research/` | Harness, sources, notes, evidence, tools, local jobs |
-| `workbench/project/` | Project files, working copies, edit acceptance |
+| `workbench/project/` | Project files, working copies, edit acceptance, file browsing and viewer formats |
+| `workbench/project/version_control/` | Researcher-directed Git: changes, commits, branches, sync, and conflicts. Reads and writes stay here; no assistant or automation reaches it |
+| `file_stream.rs` | Token-gated `pipeline-file` delivery to viewers: range reads, headers, and the token registry. Each owner validates paths and registers its own source |
 | `workbench/release/` | Backups, project packages, retention, recipes |
 | `workbench/desk/`, `workbench/data/`, `workbench/programs/` | Research desk, datasets, research programs |
 | `orchestration/` | Automations coordinator, missions, discovery |
@@ -260,8 +263,12 @@ observations are not fresh account balances.
 **One active turn.** One turn runs at a time across the app, for every
 provider. The permit in `workbench/commands.rs` spans setup, submission, and
 the matching terminal event. Only an event with the same connection epoch,
-thread, and turn releases it. Drafts are saved before sending. Pipeline never
-retries an ambiguous send.
+thread, and turn releases it. A composer send that finds the permit taken is
+refused with `turn_busy` before anything is written. It never waits, because
+the turn ahead may be waiting on an approval. The renderer reads the running
+turn from `workbench_active_turn`, on mount and after `activeTurnChanged`, so it
+survives page changes. Drafts are saved before sending. Pipeline never retries
+an ambiguous send.
 
 **Database gate.** Every production store operation goes through the helpers
 in `workbench/commands.rs`. Ordinary work shares a read gate and four blocking
@@ -280,7 +287,9 @@ stream lost.
 
 **Approvals.** A pending request is keyed by connection epoch, request ID, and
 method. The backend claims it before answering, so a duplicate click can't
-replay it, and an old connection can't approve on a new one.
+replay it, and an old connection can't approve on a new one. Requests reach the
+event bridge through a lossless queue, so lag can't drop one, and a method no
+screen can answer is refused at once rather than left waiting.
 
 **Harness.** Each turn saves a snapshot of the resolved harness. A changed
 fingerprint starts a new native binding. Bump `TOOL_CATALOG_VERSION` in
@@ -289,7 +298,8 @@ receipt before any side effect. Model-created notes and evidence stay
 proposals until the researcher accepts them.
 
 Plain chat must not load research stores or heavy editors. Streams reach the
-UI in 50 ms batches, and transcripts render 200 messages at a time.
+UI in batches of 50 to 300 ms, longer as an answer grows, and transcripts render
+50 messages at a time.
 
 ## Crash and recovery
 
@@ -315,8 +325,10 @@ a SQLite store in the research folder. `owner.lock` lets one process own it.
 The store uses WAL, optimistic revisions, unique schedule occurrences, and
 append-only events.
 
-- At most four leaf actions run at once, within the app-wide limits of one
-  conversation turn and one review run.
+- At most four leaf actions run at once, with one conversation turn and one
+  review action at a time. A review action takes the run lock exclusively, so
+  it waits until no other review is running. **Reviews at once** governs the
+  review queue, not these actions.
 - `orchestration/adapters/execute.rs` is the one cancellation and publication
   envelope.
 - A response is written to its action journal before the coordinator advances.
@@ -324,6 +336,9 @@ append-only events.
   inside the review adapter.
 - A task keeps its review pinned until it adopts the result
   (`commands/orchestration/pins.rs`).
+- Finished runs leave the store 30 days on, once opened or if they saved no
+  result (`orchestration/coordinator/retention.rs`). Actions of a research
+  automation stay. A blob goes only when no surviving record or journal names it.
 - Before an automated turn, the conversation adapter checks the project,
   connection, harness, root, and unsent draft. Any change needs attention.
   Older tasks without a saved connection require refreshed context; older
@@ -381,9 +396,12 @@ prints the schema. See the [CLI guide](cli.md).
 SQLite backup of the conversation store, blobs, conversation working files, and
 transcripts. It excludes external project folders, review and automation
 stores, Trash, the Codex home, and credentials. Restore requires an empty store
-and a remap-or-detach choice for every root. Older archive databases migrate on
-an extracted copy first. Native bindings are retired, and imported tools never
-run. Limits are 2 GiB, 20,000 entries, and 512 MiB per entry.
+and a remap-or-detach choice for every root. Every schema object must match what
+that schema version creates, and older archive databases then migrate on an
+extracted copy. Native bindings are retired, and imported tools never run. The
+manifest can list references the researcher chose to leave out because their
+files were lost; restore clears those and reports them. Limits are 2 GiB, 20,000
+entries, and 512 MiB per entry.
 
 **`.pwex` project package** is a zip, format version 1, with `manifest.json`,
 `README.md`, `objects/<kind>/<id>.json`, and `blobs/`. It imports into a
@@ -428,9 +446,9 @@ scored evaluation tasks. Harness snapshots are in
 **Disposable store.** In debug builds, set `PIPELINE_WORKBENCH_DEV_ROOT` to an
 absolute path before `npm run tauri dev`. Release builds ignore it.
 
-**No-model probe.** From `gui/src-tauri/`, run
-`cargo run --locked --example workbench_probe`. It needs a compatible Codex
-CLI but no sign-in. It checks the handshake, permission profiles, thread
+**No-model probe.** After `npm ci` and `npm run prepare:release-resources` in
+`gui/`, run `cargo run --locked --example workbench_probe` from `gui/src-tauri/`.
+It needs a compatible Codex CLI but no sign-in. It checks the handshake, permission profiles, thread
 lifecycle, sandbox rules, and process cleanup without a model turn. The
 `workflow_codex_probe` example checks the review connection. Run both after
 changing Codex transport, sandbox, or process code. Set

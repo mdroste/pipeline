@@ -3,6 +3,7 @@ import type {
   Workspace,
   ReviewHandoff,
   ConversationSnapshot,
+  SessionSnapshot,
   WorkbenchSession,
 } from "../../lib/workbenchTypes";
 import type { ProjectTab } from "./shared";
@@ -18,7 +19,7 @@ export interface WorkspaceProjectSurfaceProps {
   onDestination?: (tab: ProjectTab) => void;
   navigationInSidebar?: boolean;
   snapshot?: ConversationSnapshot | null;
-  onSnapshot?: (snapshot: ConversationSnapshot) => void;
+  onSnapshot?: (snapshot: SessionSnapshot) => void;
   workspaceId: string;
   sessionId?: string | null;
   sessions?: WorkbenchSession[];

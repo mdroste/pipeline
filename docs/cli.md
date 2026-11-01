@@ -12,10 +12,28 @@ The installer puts `pipeline-cli` beside the app. It doesn't add it to your
 "/Applications/Pipeline.app/Contents/MacOS/pipeline-cli" --help
 ```
 
+On Windows it's in the install folder, which is `%LOCALAPPDATA%\Pipeline` unless
+you chose another:
+
+```powershell
+& "$env:LOCALAPPDATA\Pipeline\pipeline-cli.exe" --help
+```
+
+The Linux AppImage has no installer, so `pipeline-cli` stays inside the image.
+Extract the image to reach it, or build it from source as shown below:
+
+```bash
+./Pipeline-*-Linux.AppImage --appimage-extract
+./squashfs-root/usr/bin/pipeline-cli --help
+```
+
 To build it from a source checkout:
 
 ```bash
-cd gui/src-tauri
+cd gui
+npm ci
+npm run prepare:release-resources
+cd src-tauri
 cargo build --locked --bin pipeline-cli
 ./target/debug/pipeline-cli --help
 ```
@@ -23,7 +41,7 @@ cargo build --locked --bin pipeline-cli
 The examples below call it `pipeline-cli`. Use the full path if it isn't on
 your `PATH`. During development you can also run
 `cargo run --locked --bin pipeline-cli -- <COMMAND> [OPTIONS]` from
-`gui/src-tauri/`.
+`gui/src-tauri/`, after the same two `npm` commands.
 
 ## Run a review
 
@@ -105,6 +123,7 @@ pipeline-cli run \
 `check` confirms the workflow, input files, variables, connections, and parser
 are ready. It doesn't call a model or extract the document. It also prints a
 rough range of model calls and, for API connections, the cost at list price.
+For a folder, it notes any files too large for the review's private copy.
 
 Add `--json` to see the planned stages, the workflow's fingerprint, the most steps and provider calls the run can use, and the usage
 estimate with the review limits that apply.
@@ -188,14 +207,19 @@ exports are converted to the current format, version 11.
 
 ### Give a step the document
 
-Each step chooses which forms of the main document it can read:
+Each step chooses which forms of the main document it can read. Add a `primary`
+selector to the step's `context.include` list, and name the parts in `parts`:
 
-| Setting | What the step can read |
+```json
+"context": {"include": [{"kind": "primary", "parts": ["text", "visuals"]}]}
+```
+
+| Part | What the step can read |
 | --- | --- |
-| `primary.text` | The extracted text |
-| `primary.structure` | An index of equations, tables, figures, and captions |
-| `primary.visuals` | Page images and figures |
-| `primary.source` | The original file or folder you selected |
+| `text` | The extracted text |
+| `structure` | An index of equations, tables, figures, and captions |
+| `visuals` | Page images and figures |
+| `source` | The original file or folder you selected |
 
 ### Add a Pipeline check
 
@@ -206,8 +230,9 @@ instead of a model call. It names the check and its version:
 "analyzer": {"id": "reference_audit", "version": 1, "options": {"network": true}}
 ```
 
-Such a step can't set a prompt, provider, model, effort, output schema, or
-fan-out (repeating the step over a list of files). The checks are `reference_audit`, with the options `network`,
+Set its `prompt` to an empty string. Such a step can't set a provider, model,
+effort, output schema, or fan-out (repeating the step over a list of files).
+The checks are `reference_audit`, with the options `network`,
 `check_retractions`, and `max_references`, and `replication_static`, with the
 option `max_files`. Pipeline 1.1.1 and earlier reject a workflow with an
 analyzer step.
@@ -274,7 +299,7 @@ Python on your system stay as they are.
 | Code | Meaning |
 | --- | --- |
 | `0` | Finished, or the planned run is ready |
-| `1` | A missing dependency, a failed run, a failed report write, a parser problem, or a failed file in a batch |
+| `1` | A missing dependency, a failed run, a failed report write, a parser problem, a failed file in a batch, or a workflow that `workflow validate` or `workflow install` rejects |
 | `2` | Invalid command or input, found before anything ran |
 | `130` | You interrupted a review or install |
 

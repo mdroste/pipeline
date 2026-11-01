@@ -5,6 +5,7 @@
 //! prefixes, block quotes, code blocks, and plain tables. Raw HTML in model
 //! output is dropped; link targets are written out after the link text.
 
+use super::math::{protect_source_math, restore_source_math, ProtectedMath};
 use super::text::escape_xml;
 
 #[derive(Debug, Clone, Default)]
@@ -176,6 +177,7 @@ struct Converter<'a> {
     links: Vec<String>,
     table: Option<Vec<Vec<Vec<Run>>>>,
     header_rows: usize,
+    math: Vec<ProtectedMath>,
 }
 
 impl<'a> Converter<'a> {
@@ -195,7 +197,13 @@ impl<'a> Converter<'a> {
             links: Vec::new(),
             table: None,
             header_rows: 0,
+            math: Vec::new(),
         }
+    }
+
+    /// Parsed text with protected equations back as their LaTeX source.
+    fn source_text(&self, text: &str) -> String {
+        restore_source_math(text, &self.math, str::to_string)
     }
 
     fn push_text(&mut self, text: &str, code: bool) {
@@ -248,7 +256,9 @@ impl<'a> Converter<'a> {
         let mut options = Options::empty();
         options.insert(Options::ENABLE_TABLES);
         options.insert(Options::ENABLE_STRIKETHROUGH);
-        for event in Parser::new_ext(markdown, options) {
+        let (markdown, math) = protect_source_math(markdown);
+        self.math = math;
+        for event in Parser::new_ext(&markdown, options) {
             match event {
                 Event::Start(Tag::Heading { level, .. }) => {
                     self.flush();
@@ -305,6 +315,7 @@ impl<'a> Converter<'a> {
                 Event::Start(Tag::Link { dest_url, .. }) => self.links.push(dest_url.to_string()),
                 Event::End(TagEnd::Link) => {
                     if let Some(target) = self.links.pop().filter(|target| !target.is_empty()) {
+                        let target = self.source_text(&target);
                         self.push_text(&format!(" ({target})"), false);
                     }
                 }
@@ -337,6 +348,7 @@ impl<'a> Converter<'a> {
                     }
                 }
                 Event::Text(text) => {
+                    let text = self.source_text(&text);
                     if let Some(code) = self.code_block.as_mut() {
                         code.push_str(&text);
                     } else {

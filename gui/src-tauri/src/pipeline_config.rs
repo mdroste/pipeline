@@ -31,6 +31,7 @@ mod migrations;
 mod persistence;
 mod profile;
 mod profiles;
+mod settings_restore;
 mod step;
 mod storage;
 mod validation;
@@ -80,12 +81,13 @@ use builtins::{
 };
 use declaude::{declaude_profile, DECLAUDE_ID};
 use legacy::{
-    convert_legacy_steps, post_step_to_step, referee_to_step, LegacyPostStepConfig,
-    LegacyProfileData, LegacyRefereeConfig,
+    convert_legacy_steps, older_step_with_context, post_step_to_step, referee_to_step,
+    wire_implicit_context, LegacyPostStepConfig, LegacyProfileData, LegacyRefereeConfig,
 };
 use migrations::ensure_migrated;
 use persistence::{
-    lock_profile_mutations, read_profile_file, save_profile_unlocked, save_profile_unlocked_at,
+    lock_profile_mutations, read_profile, read_profile_file, save_profile_unlocked,
+    save_profile_unlocked_at,
 };
 use profiles::restore_profile_bytes;
 use storage::{profile_path, profiles_dir, validate_profile_id};
@@ -96,14 +98,18 @@ use builtins::default_steps;
 #[cfg(test)]
 use migrations::{
     archive_retired_profile, compact_builtin_auto_review_prompts, migrate_builtin_catalog,
-    migrate_renamed_builtin_ids, migrate_review_quality_prompt_defaults, prompt_digest,
-    refresh_builtin_auto_review_contracts, CATALOG_MIGRATION_MARKERS,
+    migrate_legacy_files, migrate_renamed_builtin_ids, migrate_review_quality_prompt_defaults,
+    prompt_digest, refresh_builtin_auto_review_contracts, CATALOG_MIGRATION_MARKERS,
 };
 #[cfg(test)]
+use persistence::load_profile_at;
+#[cfg(test)]
 use profiles::{
-    delete_profile_file_transactionally, duplicate_profile_data, reset_defaults_at,
-    validate_bundle_profiles,
+    bundle_profiles_at, delete_profile_file_transactionally, duplicate_profile_data,
+    list_profiles_at, reset_defaults_at, validate_bundle_profiles,
 };
+#[cfg(test)]
+use settings_restore::{restored_settings, DEVICE_SETTINGS};
 #[cfg(test)]
 use validation::validate_run_conditions;
 

@@ -25,7 +25,7 @@ use home::save_home;
 pub use home::{
     excluded_notes, home, project_context, selected_manuscript, ProjectHome, ProjectHomeSettings,
 };
-use inventory::{ignored, inventory_at, refresh};
+use inventory::{check_for_changes, ignored, inventory_at, refresh};
 pub(crate) use inventory::{materialize_research_files, task_capture};
 pub use inventory::{FileEntry, Inventory};
 pub use records::{anchor_read, record, records, ProjectRecord};
@@ -35,12 +35,26 @@ pub(crate) mod assistant_files;
 pub(crate) mod conversation_copy;
 mod discovery_files;
 mod documents;
+mod file_browser;
+mod file_formats;
+mod file_open;
+mod file_search;
 mod file_workspace;
 mod files;
 mod index;
 pub use index::{project_index, ProjectIndexItem};
 pub mod relations;
 pub mod repository;
+pub mod version_control;
+pub use file_browser::{
+    external_target, list_workspace_directory, reveal_target, scoped_folder, search_folder,
+    stat_workspace_files, FileListEntry, FileListRequest, FileListing, FileStamp, FileStatRequest,
+};
+pub use file_formats::{
+    docx_text, file_table, tiff_preview, DocumentText, FileTableRequest, ImagePreview,
+};
+pub use file_open::open_workspace_file;
+pub use file_search::{search_files, FileSearchMatch, FileSearchRequest, FileSearchResult};
 pub use file_workspace::{
     read_conversation_file, read_workspace_file, snapshot_conversation_file, FilePreview,
     FileReadRequest,
@@ -153,6 +167,8 @@ pub enum ProjectAction {
         settings: ProjectHomeSettings,
     },
     Refresh,
+    /// A refresh that trusts size and modified time, for checks nobody asked for.
+    CheckForChanges,
     Annotate {
         selection: DocumentSelection,
         body: String,
@@ -181,6 +197,12 @@ pub enum ProjectAction {
         paths: Vec<String>,
         expected_revision: i64,
     },
+    AcceptChanges {
+        checkpoint_id: String,
+        path: String,
+        content: String,
+        expected_revision: i64,
+    },
     Undo {
         application_id: String,
     },
@@ -204,27 +226,35 @@ pub fn mutate(store: &Store, request: ProjectMutation) -> WorkbenchResult<Value>
     scope(store, &request.workspace_id)?;
     valid_id(&request.operation_id)?;
     let _lock = lock(store, &request.workspace_id)?;
-    let fingerprint = hash(&serde_json::to_vec(&request).map_err(err)?);
-    let saved: Option<(String, String)> = store
-        .connection()?
-        .query_row(
-            "SELECT request_hash,response_json FROM project_operations WHERE operation_id=?1",
-            [&request.operation_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()
-        .map_err(err)?;
-    if let Some((old, response)) = saved {
-        if old != fingerprint {
-            return Err(WorkbenchError::conflict(
-                "Operation ID was reused with different arguments",
-            ));
+    // A refresh only re-reads the folder, runs on every window focus, and is never
+    // replayed, so it keeps no row that would hold a copy of the whole inventory.
+    let journaled = !matches!(
+        request.action,
+        ProjectAction::Refresh | ProjectAction::CheckForChanges
+    );
+    if journaled {
+        let fingerprint = hash(&serde_json::to_vec(&request).map_err(err)?);
+        let saved: Option<(String, String)> = store
+            .connection()?
+            .query_row(
+                "SELECT request_hash,response_json FROM project_operations WHERE operation_id=?1",
+                [&request.operation_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(err)?;
+        if let Some((old, response)) = saved {
+            if old != fingerprint {
+                return Err(WorkbenchError::conflict(
+                    "Operation ID was reused with different arguments",
+                ));
+            }
+            return serde_json::from_str(&response).map_err(err);
         }
-        return serde_json::from_str(&response).map_err(err);
+        // Persist unknown before filesystem side effects. A failed/ambiguous mutation is
+        // never replayed; callers refresh and use the recovery operation where applicable.
+        store.connection()?.execute("INSERT INTO project_operations VALUES(?1,?2,?3,?4)",params![request.operation_id,fingerprint,json!({"outcome":"unknown","recovery":"Refresh the project; inspect interrupted applications before retrying with a new operation ID"}).to_string(),now()]).map_err(err)?;
     }
-    // Persist unknown before filesystem side effects. A failed/ambiguous mutation is
-    // never replayed; callers refresh and use the recovery operation where applicable.
-    store.connection()?.execute("INSERT INTO project_operations VALUES(?1,?2,?3,?4)",params![request.operation_id,fingerprint,json!({"outcome":"unknown","recovery":"Refresh the project; inspect interrupted applications before retrying with a new operation ID"}).to_string(),now()]).map_err(err)?;
     let ws = &request.workspace_id;
     let record = match request.action {
         ProjectAction::SaveHome {
@@ -232,6 +262,7 @@ pub fn mutate(store: &Store, request: ProjectMutation) -> WorkbenchResult<Value>
             settings,
         } => save_home(store, ws, expected_revision, settings),
         ProjectAction::Refresh => refresh(store, ws),
+        ProjectAction::CheckForChanges => check_for_changes(store, ws),
         ProjectAction::Annotate { selection, body } => {
             documents::annotate(store, ws, selection, body)
         }
@@ -266,23 +297,59 @@ pub fn mutate(store: &Store, request: ProjectMutation) -> WorkbenchResult<Value>
             paths,
             expected_revision,
         } => tasks::apply(store, ws, &checkpoint_id, paths, expected_revision),
+        ProjectAction::AcceptChanges {
+            checkpoint_id,
+            path,
+            content,
+            expected_revision,
+        } => tasks::accept_changes(
+            store,
+            ws,
+            &checkpoint_id,
+            &path,
+            &content,
+            expected_revision,
+        ),
         ProjectAction::Undo { application_id } => tasks::undo(store, ws, &application_id),
         ProjectAction::Recover { application_id } => tasks::recover(store, ws, &application_id),
         ProjectAction::Reject { checkpoint_id } => tasks::reject(store, ws, &checkpoint_id),
     }?;
     let value = serde_json::to_value(record).map_err(err)?;
-    store
-        .connection()?
-        .execute(
-            "UPDATE project_operations SET response_json=?2 WHERE operation_id=?1",
-            params![request.operation_id, value.to_string()],
-        )
-        .map_err(err)?;
+    if journaled {
+        store
+            .connection()?
+            .execute(
+                "UPDATE project_operations SET response_json=?2 WHERE operation_id=?1",
+                params![request.operation_id, value.to_string()],
+            )
+            .map_err(err)?;
+    }
     Ok(value)
 }
 
 pub(crate) fn execution_lock(store: &Store, workspace_id: &str) -> WorkbenchResult<fs::File> {
     lock(store, workspace_id)
+}
+
+/// Held for a job's whole run, apart from the short-lived mutation lock, so that
+/// a second Pipeline process cannot start a job in the same project.
+pub(crate) fn job_slot(store: &Store, workspace_id: &str) -> WorkbenchResult<fs::File> {
+    valid_id(workspace_id)?;
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(
+            store
+                .root_path()
+                .join(format!(".project-{workspace_id}.job.lock")),
+        )
+        .map_err(err)?;
+    file.try_lock_exclusive().map_err(|_| {
+        WorkbenchError::conflict("Another Pipeline window is running a job in this project")
+    })?;
+    Ok(file)
 }
 
 /// App-owned generated inputs live under the validated project root. This creates
@@ -330,7 +397,6 @@ pub(crate) fn program_file_hash(
     ws: &str,
     path: &str,
 ) -> WorkbenchResult<Option<String>> {
-    let _guard = lock(store, ws)?;
     files::relative(path)?;
     let source = files::SafeRoot::open(&root(store, ws)?)?;
     source

@@ -129,10 +129,18 @@ export default function WorkflowPanel({
       >
         {profiles.map((p) => (
           <option key={p.id} value={p.id}>
-            {p.name}
+            {p.invalid ? `${p.name} (needs repair)` : p.name}
           </option>
         ))}
       </select>
+      {profiles.find((p) => p.id === activeId)?.invalid && (
+        <p
+          role="alert"
+          className="mt-1 text-[11px] text-amber-800 dark:text-amber-200"
+        >
+          {profiles.find((p) => p.id === activeId)?.invalid}
+        </p>
+      )}
       {switching && (
         <p
           role="status"

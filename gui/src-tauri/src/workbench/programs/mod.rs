@@ -119,6 +119,7 @@ fn artifact_bytes(store: &Store, ws: &str, id: &str, limit: usize) -> WorkbenchR
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .map_err(err)?;
+    crate::workbench::store::require_available("This saved file", &path)?;
     let path = fs::canonicalize(path).map_err(err)?;
     if !path.starts_with(
         store

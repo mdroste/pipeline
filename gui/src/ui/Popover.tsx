@@ -155,6 +155,16 @@ export default function Popover({
     ).focus({ preventScroll: true });
   }, [open, autoFocus]);
 
+  // Focus above runs before placement caps the height, and it must not scroll.
+  // Once placed, a list taller than the window shows its chosen option.
+  const placed = position !== null;
+  useEffect(() => {
+    if (!open || !autoFocus || !placed) return;
+    layer.current
+      ?.querySelector<HTMLElement>("[data-autofocus]")
+      ?.scrollIntoView?.({ block: "nearest" });
+  }, [open, autoFocus, placed]);
+
   if (!open) return null;
   const origin = `${align === "end" ? "right" : align === "center" ? "center" : "left"} ${
     (position?.side ?? side) === "top" ? "bottom" : "top"

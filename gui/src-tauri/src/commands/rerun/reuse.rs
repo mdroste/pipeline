@@ -1,4 +1,4 @@
-//! Cached-output compatibility and active-profile rerun selection.
+//! Cached-output compatibility and rerun selection.
 
 use crate::models::PipelineReport;
 use crate::pipeline::executor;
@@ -69,10 +69,28 @@ pub(super) fn orientation_contract_error(
     Ok(())
 }
 
+/// Steps the parent deliberately skipped. They have no output to validate, and
+/// that is not a contract failure: each one re-evaluates its guard when the
+/// re-run reaches it, and its completed dependents stay reusable.
+fn skipped_step_ids(outputs: &[crate::models::StepOutput]) -> std::collections::HashSet<String> {
+    let ran: std::collections::HashSet<String> = outputs
+        .iter()
+        .filter(|output| !output.skipped)
+        .map(|output| base_step_id(&output.step_id))
+        .collect();
+    outputs
+        .iter()
+        .filter(|output| output.skipped)
+        .map(|output| base_step_id(&output.step_id))
+        .filter(|id| !ran.contains(id))
+        .collect()
+}
+
 pub(in crate::commands) fn incompatible_reuse_ids(
     config: &crate::pipeline_config::PipelineConfig,
     outputs: &[crate::models::StepOutput],
 ) -> std::collections::HashSet<String> {
+    let skipped = skipped_step_ids(outputs);
     let mut by_base = std::collections::HashMap::<&str, Vec<&crate::models::StepOutput>>::new();
     for output in outputs.iter().filter(|output| !output.skipped) {
         by_base
@@ -83,7 +101,7 @@ pub(in crate::commands) fn incompatible_reuse_ids(
     config
         .steps
         .iter()
-        .filter(|step| step.enabled)
+        .filter(|step| step.enabled && !skipped.contains(&step.id))
         .filter_map(|step| {
             let compatible = by_base.get(step.id.as_str()).is_some_and(|prior| {
                 // A live schema reference must resolve before a cached
@@ -113,7 +131,7 @@ pub(in crate::commands) fn incompatible_reuse_ids(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn select_reusable_outputs(
+pub(in crate::commands) fn select_reusable_outputs(
     app: &crate::emit::EventBus,
     parent_run_id: &str,
     parent_dir: &std::path::Path,
@@ -166,7 +184,9 @@ pub(super) fn select_reusable_outputs(
     // artifact produced under a different output mode or one that fails the
     // step's current schema. Its graph dependents are stale as well.
     let mut incompatible = incompatible_reuse_ids(execution_config, &parent_report.step_outputs);
+    let skipped = skipped_step_ids(&parent_report.step_outputs);
     // Missing retained producer trees cannot satisfy a downstream file selector.
+    // A skipped producer never had one, so nothing was lost.
     for step in execution_config.steps.iter().filter(|s| s.enabled) {
         for selector in &step.context.include {
             if let crate::pipeline_config::ArtifactSelector::Step {
@@ -176,6 +196,7 @@ pub(super) fn select_reusable_outputs(
             } = selector
             {
                 if parts.contains(&crate::pipeline_config::StepArtifactPart::Files)
+                    && !skipped.contains(producer)
                     && !parent_dir
                         .join("artifacts/by-step")
                         .join(executor::step_slug(producer))
@@ -194,7 +215,7 @@ pub(super) fn select_reusable_outputs(
         ));
         app.emit_event("pipeline:log", serde_json::json!({
             "line": format!(
-                "Re-run: invalidating {} cached step artifact(s) that do not satisfy the active output contracts",
+                "Re-run: invalidating {} cached step artifact(s) that do not satisfy the current output contracts",
                 incompatible.len()
             )
         })).ok();

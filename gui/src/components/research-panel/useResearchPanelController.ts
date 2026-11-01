@@ -8,6 +8,7 @@ import { executionClient } from "../../lib/workbench/executionClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type {
   ConversationSnapshot,
+  SessionSnapshot,
   EffectiveHarness,
   ExecutionProfile,
   HarnessCatalog,
@@ -34,6 +35,8 @@ export function useResearchPanelController({
   active,
   onBusy,
   beforeChange,
+  onChanged,
+  onActionStart,
 }: {
   snapshot: ConversationSnapshot | null;
   workspace?: Workspace | null;
@@ -41,7 +44,9 @@ export function useResearchPanelController({
   active: boolean;
   onBusy?: (busy: boolean) => void;
   beforeChange?: () => Promise<void>;
-  onSnapshot: (snapshot: ConversationSnapshot) => void;
+  onChanged?: () => void;
+  onActionStart?: () => void;
+  onSnapshot: (snapshot: SessionSnapshot) => void;
   onError: (message: string) => void;
 }) {
   const [width, setWidth] = usePersistentPanelWidth(
@@ -81,7 +86,7 @@ export function useResearchPanelController({
     let disposed = false,
       pending = false;
     const timer = setInterval(() => {
-      if (pending) return;
+      if (pending || document.visibilityState === "hidden") return;
       pending = true;
       void executionClient
         .listExecutions(workspaceId)
@@ -165,9 +170,11 @@ export function useResearchPanelController({
   const act = async (fn: () => Promise<void>) => {
     setBusy(true);
     onBusy?.(true);
+    onActionStart?.();
     try {
       await beforeChange?.();
       await fn();
+      onChanged?.();
       await Promise.all([loadBase(), loadTab()]);
     } catch (cause) {
       onError(workbenchErrorMessage(cause));
@@ -185,7 +192,7 @@ export function useResearchPanelController({
     }>,
   ) => {
     if (!snapshot) return;
-    const latest = await conversationClient.conversationSnapshot(
+    const latest = await conversationClient.sessionSnapshot(
       snapshot.session.id,
     );
     const updated = await conversationClient.updateSession({
@@ -210,6 +217,9 @@ export function useResearchPanelController({
     papers.find(
       (item) => item.paper.id === (projectPaperId ?? snapshot?.session.paperId),
     ) ?? null;
+  // Search hits belong to the version they were found in.
+  const searchedRevision = selectedPaper?.revision?.id;
+  useEffect(() => setHits([]), [searchedRevision]);
   const successor = Boolean(
     snapshot?.activeBinding?.harnessFingerprint &&
     effective &&

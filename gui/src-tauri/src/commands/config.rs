@@ -289,6 +289,8 @@ pub struct ExecutionPlanResponse {
     pub usage_estimate: executor::budget::UsageEstimate,
     /// Analyzer steps, with what each reads and any service it contacts.
     pub host_checks: Vec<crate::pipeline::analyzers::registry::HostCheck>,
+    /// Files in the selected folders that won't fit in the Review's copy.
+    pub input_notices: Vec<String>,
 }
 
 /// Return the canonical scheduler timeline for one immutable active-profile
@@ -388,6 +390,14 @@ pub async fn get_execution_plan(
         paper_path.as_deref(),
     )
     .await;
+    let input_notices = super::reuse_artifacts::folder_capture_notices(
+        &planning_config,
+        &snapshot.settings,
+        paper_path.as_deref(),
+        input_mode == "folder",
+        &extra_inputs,
+    )
+    .await;
     if let Some(stage) = stages.iter_mut().find(|stage| stage.kind == "extracting") {
         stage.label = executor::input_processing_label(&resolved_interpretation).to_string();
     }
@@ -419,6 +429,7 @@ pub async fn get_execution_plan(
         backup_unavailable,
         usage_estimate,
         host_checks: crate::pipeline::analyzers::registry::host_checks(&planning_config),
+        input_notices,
     })
 }
 
@@ -587,9 +598,13 @@ pub async fn export_item(
 
 #[tauri::command]
 pub async fn import_item(path: String) -> Result<serde_json::Value, String> {
-    let content = read_import_file(&path)?;
-    let envelope = pipeline_config::import_envelope(&content)?;
-    serde_json::to_value(&envelope).map_err(|e| format!("Serialize error: {e}"))
+    tokio::task::spawn_blocking(move || {
+        let content = read_import_file(&path)?;
+        let envelope = pipeline_config::import_envelope(&content)?;
+        serde_json::to_value(&envelope).map_err(|e| format!("Serialize error: {e}"))
+    })
+    .await
+    .map_err(|e| format!("Import failed: {e}"))?
 }
 
 #[tauri::command]
@@ -643,9 +658,13 @@ pub async fn import_profile_from_url(url: String) -> Result<ProfileSummary, Stri
 
 #[tauri::command]
 pub async fn import_profile(path: String) -> Result<ProfileSummary, String> {
-    let content = read_import_file(&path)?;
-    let envelope = pipeline_config::import_envelope(&content)?;
-    import_profile_envelope(envelope)
+    tokio::task::spawn_blocking(move || {
+        let content = read_import_file(&path)?;
+        let envelope = pipeline_config::import_envelope(&content)?;
+        import_profile_envelope(envelope)
+    })
+    .await
+    .map_err(|e| format!("Import failed: {e}"))?
 }
 
 #[tauri::command]
@@ -662,8 +681,12 @@ pub async fn export_bundle(
 
 #[tauri::command]
 pub async fn import_bundle(path: String) -> Result<(), String> {
-    let content = read_import_file(&path)?;
-    pipeline_config::import_bundle(&content)
+    tokio::task::spawn_blocking(move || {
+        let content = read_import_file(&path)?;
+        pipeline_config::import_bundle(&content)
+    })
+    .await
+    .map_err(|e| format!("Import failed: {e}"))?
 }
 
 #[tauri::command]

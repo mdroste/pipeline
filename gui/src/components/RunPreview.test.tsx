@@ -153,9 +153,30 @@ describe("RunPreview", () => {
         "Your backup, ChatGPT, isn’t connected. If you reach a usage limit, this review stops.",
       ),
     ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Generate report" }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Start review" })).toBeEnabled();
+  });
+
+  it("says what a selected folder will leave out", () => {
+    const notice =
+      "package holds 3.6 GB in 23 files. 13 files (3.4 GB) will be left out.";
+    render(
+      <RunPreview
+        plan={{
+          profileId: "review",
+          inputMode: "folder",
+          inputInterpretation: "source_tree",
+          providers: ["claude"],
+          orientationAgent: "claude",
+          stages: [],
+          inputNotices: [notice],
+        }}
+        config={config}
+        inputPath="/work/package"
+        onCancel={() => {}}
+        onRun={() => {}}
+      />,
+    );
+    expect(screen.getByText(notice)).toBeVisible();
   });
 
   it("requires an explicit confirmation", async () => {
@@ -176,7 +197,7 @@ describe("RunPreview", () => {
         onRun={onRun}
       />,
     );
-    await user.click(screen.getByRole("button", { name: "Generate report" }));
+    await user.click(screen.getByRole("button", { name: "Start review" }));
     expect(onRun).toHaveBeenCalledOnce();
     expect(onCancel).not.toHaveBeenCalled();
   });

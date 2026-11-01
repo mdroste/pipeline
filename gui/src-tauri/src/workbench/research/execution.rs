@@ -7,6 +7,7 @@ use serde_json::Value;
 
 mod adapters;
 mod authorization;
+mod file_identity;
 mod launch;
 mod lifecycle;
 mod outputs;
@@ -18,6 +19,7 @@ mod types;
 
 pub(crate) use authorization::input_manifest;
 pub use authorization::{authorize_host_execution, preview_host_execution};
+pub(super) use file_identity::{hash_regular_file, SNAPSHOT_BUDGET};
 pub(super) use launch::launch_manifest;
 #[cfg(test)]
 pub use lifecycle::run_execution;
@@ -86,6 +88,10 @@ fn execution_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResearchExecu
 
 const EXECUTION_SELECT: &str = "SELECT id, workspace_id, session_id, profile_id, adapter, command_json, cwd, input_manifest_json, dependency_hash, outcome, started_at, ended_at, exit_status, stdout_text, stderr_text, output_manifest_json, validation_json, snapshot_consistency, created_at FROM research_executions";
 
+/// Lists are polled and each run's output can reach 8 MiB, so they carry none.
+/// `jobs::execution_output` reads it for the one run someone opens.
+const EXECUTION_LIST_SELECT: &str = "SELECT id, workspace_id, session_id, profile_id, adapter, command_json, cwd, input_manifest_json, dependency_hash, outcome, started_at, ended_at, exit_status, NULL, NULL, output_manifest_json, validation_json, snapshot_consistency, created_at FROM research_executions";
+
 pub(crate) fn get_execution(
     store: &Store,
     execution_id: &str,
@@ -110,7 +116,7 @@ pub fn list_executions(
     let connection = open_connection(store)?;
     let mut statement = connection
         .prepare(&format!(
-            "{EXECUTION_SELECT} WHERE workspace_id = ?1 ORDER BY created_at DESC LIMIT 200"
+            "{EXECUTION_LIST_SELECT} WHERE workspace_id = ?1 ORDER BY created_at DESC LIMIT 200"
         ))
         .map_err(|error| WorkbenchError::storage("Failed to prepare execution list", error))?;
     let values = statement

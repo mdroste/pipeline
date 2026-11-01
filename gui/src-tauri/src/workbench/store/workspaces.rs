@@ -2,47 +2,79 @@
 
 use super::*;
 
+/// A workspace from `Store::prepare_workspace`, not yet saved.
+pub struct PendingWorkspace {
+    pub id: String,
+    name: String,
+    root: Option<String>,
+    root_identity: Option<String>,
+    operation_id: String,
+}
+
+impl PendingWorkspace {
+    /// Saves the workspace in `connection`'s open transaction.
+    pub fn insert(self, connection: &Connection) -> WorkbenchResult<Mutation<Workspace>> {
+        let timestamp = now();
+        ensure_operation_unused(connection, &self.operation_id)?;
+        connection
+            .execute(
+                "INSERT INTO workspaces (id, name, root, root_identity, settings_revision, revision, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 0, 1, ?5, ?5)",
+                params![self.id, self.name, self.root, self.root_identity, timestamp],
+            )
+            .map_err(|error| map_constraint("Failed to create workspace", error))?;
+        let workspace = load_workspace(connection, &self.id)?;
+        let sequence = insert_change(
+            connection,
+            &self.operation_id,
+            "workspace",
+            &self.id,
+            "workspace_created",
+            Some(&self.id),
+            None,
+            &json!({ "revision": 1, "hasRoot": workspace.root.is_some() }),
+            &timestamp,
+        )?;
+        Ok(Mutation {
+            record: workspace,
+            sequence,
+        })
+    }
+}
+
 impl Store {
     pub fn create_workspace(
         &self,
         request: CreateWorkspaceRequest,
     ) -> WorkbenchResult<Mutation<Workspace>> {
-        validate_id("operation id", &request.operation_id)?;
-        let name = validate_workspace_name(&request.name)?;
-        let (root, root_identity) = resolve_optional_root(request.root.as_deref(), &self.root)?;
-        let id = new_id("workspace")?;
-        let timestamp = now();
+        let pending = self.prepare_workspace(request)?;
         let mut connection = self.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| {
                 WorkbenchError::storage("Failed to start workspace creation", error)
             })?;
-        ensure_operation_unused(&transaction, &request.operation_id)?;
-        transaction
-            .execute(
-                "INSERT INTO workspaces (id, name, root, root_identity, settings_revision, revision, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 0, 1, ?5, ?5)",
-                params![id, name, root, root_identity, timestamp],
-            )
-            .map_err(|error| map_constraint("Failed to create workspace", error))?;
-        let workspace = load_workspace(&transaction, &id)?;
-        let sequence = insert_change(
-            &transaction,
-            &request.operation_id,
-            "workspace",
-            &id,
-            "workspace_created",
-            Some(&id),
-            None,
-            &json!({ "revision": 1, "hasRoot": workspace.root.is_some() }),
-            &timestamp,
-        )?;
+        let created = pending.insert(&transaction)?;
         transaction.commit().map_err(|error| {
             WorkbenchError::storage("Failed to commit workspace creation", error)
         })?;
-        Ok(Mutation {
-            record: workspace,
-            sequence,
+        Ok(created)
+    }
+
+    /// Checks a new workspace and gives it an id without saving it, so a caller
+    /// can save it in the same transaction as work that may fail.
+    pub fn prepare_workspace(
+        &self,
+        request: CreateWorkspaceRequest,
+    ) -> WorkbenchResult<PendingWorkspace> {
+        validate_id("operation id", &request.operation_id)?;
+        let name = validate_workspace_name(&request.name)?;
+        let (root, root_identity) = resolve_optional_root(request.root.as_deref(), &self.root)?;
+        Ok(PendingWorkspace {
+            id: new_id("workspace")?,
+            name,
+            root,
+            root_identity,
+            operation_id: request.operation_id,
         })
     }
 

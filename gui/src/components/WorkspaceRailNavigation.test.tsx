@@ -52,7 +52,7 @@ function renderNavigation(
   return props;
 }
 
-it("shows the project's sections and returns to its overview from its name", async () => {
+it("shows the project's sections and opens the overview", async () => {
   const user = userEvent.setup();
   const props = renderNavigation();
 
@@ -63,7 +63,7 @@ it("shows the project's sections and returns to its overview from its name", asy
     "aria-current",
     "page",
   );
-  await user.click(screen.getByRole("button", { name: "Trade paper" }));
+  await user.click(sections.getByRole("button", { name: "Overview" }));
   expect(props.onNavigate).toHaveBeenCalledWith("overview");
 });
 
@@ -96,7 +96,9 @@ it("switches between active projects and reaches every project", async () => {
   const user = userEvent.setup();
   const props = renderNavigation();
   const open = () =>
-    user.click(screen.getByRole("button", { name: "Switch project" }));
+    user.click(
+      screen.getByRole("button", { name: "Switch project: Trade paper" }),
+    );
 
   await open();
   expect(screen.queryByRole("menuitemradio", { name: "Old paper" })).toBeNull();
@@ -104,6 +106,10 @@ it("switches between active projects and reaches every project", async () => {
     screen.getByRole("menuitemradio", { name: "Minimum wages" }),
   );
   expect(props.onSelectProject).toHaveBeenCalledWith("wages");
+
+  await open();
+  await user.click(screen.getByRole("menuitem", { name: "Project settings" }));
+  expect(props.onNavigate).toHaveBeenCalledWith("project-settings");
 
   await open();
   await user.click(screen.getByRole("menuitem", { name: "All projects" }));
@@ -120,11 +126,26 @@ it("lists unfiled conversations without project controls", () => {
   expect(
     screen.queryByRole("navigation", { name: "Project sections" }),
   ).toBeNull();
-  expect(screen.queryByRole("button", { name: "Switch project" })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^Switch project/ })).toBeNull();
 });
 
 it("holds every control while an editor is busy", () => {
   renderNavigation({ disabled: true });
-  for (const name of ["Trade paper", "Analyze", "Switch project"])
+  for (const name of ["Switch project: Trade paper", "Analyze"])
     expect(screen.getByRole("button", { name })).toBeDisabled();
+});
+
+it("offers older conversations past the end of a long list", async () => {
+  const user = userEvent.setup();
+  const onLoadOlderSessions = vi.fn();
+  renderNavigation({ hasOlderSessions: true, onLoadOlderSessions });
+
+  expect(
+    screen.queryByRole("button", { name: "Show older conversations" }),
+  ).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Show all 5+" }));
+  await user.click(
+    screen.getByRole("button", { name: "Show older conversations" }),
+  );
+  expect(onLoadOlderSessions).toHaveBeenCalledOnce();
 });

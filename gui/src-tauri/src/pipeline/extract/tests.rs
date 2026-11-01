@@ -1026,3 +1026,160 @@ async fn markdown_document_extraction_preserves_bytes_and_bundle() {
 }
 
 mod pdf_characterization;
+
+#[test]
+fn a_latin1_main_file_extracts_with_its_accents_and_a_quality_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut source =
+        b"\\documentclass{article}\n\\usepackage[latin1]{inputenc}\n\\begin{document}\n".to_vec();
+    source.extend_from_slice(b"Caf\xE9 cost 5\x80.\n\\end{document}\n");
+    let main = dir.path().join("main.tex");
+    fs::write(&main, &source).unwrap();
+
+    let root = dir.path().canonicalize().unwrap();
+    let mut notes = Vec::new();
+    let text = extract_latex(&main, &root, &mut notes).unwrap();
+
+    assert!(text.contains("Café cost 5€."), "{text}");
+    assert_eq!(notes.len(), 1);
+    assert!(notes[0].contains("main.tex is not UTF-8"), "{}", notes[0]);
+}
+
+#[test]
+fn a_folder_with_a_latin1_main_file_still_finds_it_and_its_latin1_chapter() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(
+        dir.path().join("thesis.tex"),
+        b"\\documentclass{book}\n% Andr\xE9\n\\input{chapter}\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("chapter.tex"), b"Na\xEFve chapter\n").unwrap();
+
+    let main = find_main_tex(dir.path()).expect("the Latin-1 file is the main file");
+    let root = dir.path().canonicalize().unwrap();
+    let mut notes = Vec::new();
+    let text = extract_latex(&main, &root, &mut notes).unwrap();
+
+    assert!(text.contains("Naïve chapter"), "{text}");
+    assert_eq!(notes.len(), 2, "{notes:?}");
+}
+
+#[test]
+fn a_file_declaring_utf8_keeps_its_intact_characters_around_a_bad_byte() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main.tex");
+    let mut source = "\\usepackage[utf8]{inputenc}\nCafé ".as_bytes().to_vec();
+    source.extend_from_slice(b"\xFF");
+    fs::write(&main, &source).unwrap();
+
+    let root = dir.path().canonicalize().unwrap();
+    let mut notes = Vec::new();
+    let text = extract_latex(&main, &root, &mut notes).unwrap();
+
+    assert!(text.contains("Café \u{FFFD}"), "{text}");
+    assert!(notes[0].contains("declares UTF-8"), "{}", notes[0]);
+}
+
+#[test]
+fn an_unsupported_declared_encoding_is_named_in_the_note() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main.tex");
+    fs::write(&main, b"\\usepackage[latin2]{inputenc}\n\xB1\n").unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let mut notes = Vec::new();
+    extract_latex(&main, &root, &mut notes).unwrap();
+    assert!(notes[0].contains("latin2"), "{}", notes[0]);
+}
+
+fn figure_project(dir: &Path, figures: usize) -> PathBuf {
+    let includes = (0..figures)
+        .map(|index| format!("\\includegraphics{{figures/f{index}.png}}\n"))
+        .collect::<String>();
+    fs::write(
+        dir.join("main.tex"),
+        format!("\\documentclass{{book}}\n{includes}\\input{{late-chapter}}\n"),
+    )
+    .unwrap();
+    fs::write(dir.join("late-chapter.tex"), "Late chapter text.\n").unwrap();
+    fs::create_dir(dir.join("figures")).unwrap();
+    dir.join("main.tex")
+}
+
+#[tokio::test]
+async fn too_many_figures_are_left_out_with_a_note_and_the_text_still_extracts() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    fs::create_dir(&project).unwrap();
+    let main = figure_project(&project, MAX_SCOPED_SOURCE_FILES + 40);
+    for index in 0..MAX_SCOPED_SOURCE_FILES + 40 {
+        fs::write(project.join(format!("figures/f{index}.png")), b"png").unwrap();
+    }
+    let private = dir.path().join("private");
+    fs::create_dir(&private).unwrap();
+
+    let scoped = stage_selected_source(&main, "document", &private).unwrap();
+    let root = scoped.source_path.unwrap();
+
+    assert!(root.join("late-chapter.tex").exists());
+    let notes = fs::read_to_string(root.join(STAGING_NOTES_FILE)).unwrap();
+    // The two text files count toward the 512-file limit.
+    assert!(notes.contains("Left out 42 referenced files"), "{notes}");
+    assert!(notes.contains("and 22 more"), "{notes}");
+
+    let app: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+    let extraction = super::extract(
+        &app,
+        &root.to_string_lossy(),
+        &crate::pipeline_config::ExtractionConfig::default(),
+    )
+    .await
+    .unwrap();
+    assert!(extraction.text.contains("Late chapter text."));
+    assert!(extraction
+        .quality_notes
+        .iter()
+        .any(|note| note.contains("Left out 42 referenced files")));
+}
+
+#[test]
+fn figures_past_the_total_size_limit_are_left_out_but_later_text_is_staged() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    fs::create_dir(&project).unwrap();
+    let figures = 9;
+    let main = figure_project(&project, figures);
+    let size = MAX_SCOPED_SOURCE_FILE_BYTES - 1024;
+    for index in 0..figures {
+        let file = fs::File::create(project.join(format!("figures/f{index}.png"))).unwrap();
+        file.set_len(size).unwrap();
+    }
+    let staged = dir.path().join("staged");
+    fs::create_dir(&staged).unwrap();
+
+    stage_latex_project(&main, &project, &staged).unwrap();
+
+    assert!(staged.join("late-chapter.tex").exists());
+    let copied = fs::read_dir(staged.join("figures")).unwrap().count();
+    assert!(copied < figures, "{copied} figures were staged");
+    let notes = fs::read_to_string(staged.join(STAGING_NOTES_FILE)).unwrap();
+    assert!(notes.contains("Left out"), "{notes}");
+}
+
+#[test]
+fn too_many_text_files_still_stop_the_review() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    fs::create_dir(&project).unwrap();
+    let inputs = (0..MAX_SCOPED_SOURCE_FILES + 1)
+        .map(|index| format!("\\input{{c{index}}}\n"))
+        .collect::<String>();
+    fs::write(project.join("main.tex"), inputs).unwrap();
+    for index in 0..MAX_SCOPED_SOURCE_FILES + 1 {
+        fs::write(project.join(format!("c{index}.tex")), "text").unwrap();
+    }
+    let staged = dir.path().join("staged");
+    fs::create_dir(&staged).unwrap();
+
+    let error = stage_latex_project(&project.join("main.tex"), &project, &staged).unwrap_err();
+    assert!(error.contains("file limit"), "{error}");
+}

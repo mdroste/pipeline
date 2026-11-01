@@ -73,8 +73,14 @@ export default function WorkspaceStorageRetention({
                       {c.label}
                       <p className="text-gray-500">{c.note}</p>
                     </td>
-                    <td className="py-1 pr-2">{mb(c.bytes)}</td>
-                    <td className="py-1 pr-2">{c.entries}</td>
+                    <td className="py-1 pr-2">
+                      {c.partial ? "at least " : ""}
+                      {mb(c.bytes)}
+                    </td>
+                    <td className="py-1 pr-2">
+                      {c.partial ? "at least " : ""}
+                      {c.entries}
+                    </td>
                     <td className="py-1">
                       {c.disposable ? (
                         <input

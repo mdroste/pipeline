@@ -483,6 +483,33 @@ fn managed_children_wake_the_parent_without_cluttering_task_lists() {
     assert!(s.list("active", None, 0).unwrap().is_empty());
 }
 #[tokio::test]
+async fn a_mission_action_reaches_the_runtime_boundary_of_a_real_submission() {
+    let _turn = crate::orchestration::tests::exclusive_turn_state().await;
+    let w = crate::orchestration::tests::disposable_workspace();
+    let operation = store::id();
+    let session = crate::workbench::discovery::source(&w, &operation, "Mission", false).unwrap();
+    let source = crate::workbench::tasks::binding(&w, &session).unwrap();
+    let (mut scopes, authority_fingerprints, context) =
+        workspace::roles(&w, &source, &operation, "Mission", &Policy::default()).unwrap();
+    let (_temp, s, mut m) = fixture();
+    m.workspace_id = source.workspace_id.clone().unwrap();
+    m.source_session_id = session;
+    m.scope = scopes.remove(0);
+    m.planner_scope = scopes.remove(0);
+    m.challenger_scope = scopes.remove(0);
+    m.authority_fingerprints = authority_fingerprints;
+    m.context = context;
+    storage::save(&s, &mut m, "prepared", "Prepared").unwrap();
+    let coordinator = Arc::new(coordinator(s.clone()));
+    coordinator.tick().await.unwrap();
+    let id = storage::get(&s, &m.id).unwrap().active_child.unwrap();
+    let child = crate::orchestration::tests::settled(&coordinator, &id).await;
+    assert_eq!(
+        child.progress.receipts["action"].error.as_deref(),
+        Some("Workspace execution requires the desktop runtime")
+    );
+}
+#[tokio::test]
 async fn a_waiting_mission_observes_its_deadline_without_a_timer() {
     let (_temp, s, mut m) = fixture();
     m.state = "waiting".into();
@@ -610,4 +637,425 @@ fn failed_computation_cannot_complete_mission_with_goal_left_open() {
     c.criteria[0].evidence_ids.push("r1-memo".into());
     apply_challenge(&mut m, c, "challenge").unwrap();
     assert_eq!(m.state, "completed");
+}
+
+/// A round as planning leaves it, ready for its investigation.
+fn apply_round(m: &mut Mission) -> Round {
+    apply_plan(m, plan(), "planner-task").unwrap();
+    m.rounds.pop().unwrap()
+}
+
+fn receipt(state: &str, started_at: i64, finished_at: Option<i64>) -> Receipt {
+    Receipt {
+        sequence: 1,
+        address: "action".into(),
+        step_id: "action".into(),
+        label: "Research".into(),
+        state: state.into(),
+        operation: store::id(),
+        started_at,
+        finished_at,
+        wake_at: None,
+        output: None,
+        error: None,
+        child: None,
+    }
+}
+
+fn plain_task(s: &Store) -> TaskRun {
+    s.create(
+        "plain-work",
+        Chain {
+            schema_version: 1,
+            name: "Plain".into(),
+            description: String::new(),
+            steps: vec![Step {
+                id: "wait".into(),
+                label: "Wait".into(),
+                action: Action::Delay { seconds: 60 },
+            }],
+            limits: Limits::default(),
+        },
+        Scope::default(),
+        json!({}),
+        now(),
+        true,
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_mission_too_large_to_save_needs_attention_and_stops_nothing_else() {
+    let (_temp, s, mut m) = fixture();
+    let child = completed(
+        &s,
+        &mut m,
+        json!({"text":serde_json::to_string(&plan()).unwrap()}),
+    );
+    // Close enough to the record limit that adopting this plan passes it.
+    let body = serde_json::to_string(&m).unwrap().len();
+    m.context = "x".repeat(4 * 1024 * 1024 - body - 512);
+    m.due_at = Some(now());
+    storage::save(&s, &mut m, "large", "Large").unwrap();
+    let plain = plain_task(&s);
+    let c = Arc::new(coordinator(s.clone()));
+    c.tick().await.unwrap();
+    let stored = storage::get(&s, &m.id).unwrap();
+    assert_eq!(stored.state, "attention");
+    assert!(stored.reason.contains("4 MiB"), "{}", stored.reason);
+    assert_eq!(stored.active_child.as_ref(), Some(&child.id));
+    assert_eq!(s.get(&plain.id).unwrap().progress.actions, 1);
+}
+
+#[tokio::test]
+async fn a_mission_that_cannot_be_read_stops_nothing_else() {
+    let (_temp, s, m) = fixture();
+    let plain = plain_task(&s);
+    s.connection()
+        .unwrap()
+        .execute("UPDATE missions SET body='{}' WHERE id=?1", [&m.id])
+        .unwrap();
+    let c = Arc::new(coordinator(s.clone()));
+    assert!(c.tick().await.is_err());
+    assert_eq!(s.get(&plain.id).unwrap().progress.actions, 1);
+    // It waits its turn instead of failing the next tick at once.
+    let due: i64 = s
+        .connection()
+        .unwrap()
+        .query_row("SELECT due_at FROM missions WHERE id=?1", [&m.id], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert!(due > now());
+    c.tick().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_waiting_mission_polls_without_writing_a_revision_or_event() {
+    let w = crate::orchestration::tests::disposable_workspace();
+    let (_temp, s, mut m) = fixture();
+    let workspace = w
+        .create_workspace(crate::workbench::store::CreateWorkspaceRequest {
+            name: "Monitored".into(),
+            root: None,
+            operation_id: store::id(),
+        })
+        .unwrap()
+        .record
+        .id;
+    m.workspace_id = workspace;
+    m.definition.policy.monitor_ids = vec!["monitor".into()];
+    m.state = "waiting".into();
+    m.due_at = Some(now());
+    storage::save(&s, &mut m, "wait", "Waiting for a change").unwrap();
+    let revision = m.revision;
+    let events = storage::events(&s, &m.id, 0).unwrap().len();
+    let c = Arc::new(coordinator(s.clone()));
+    for _ in 0..3 {
+        s.connection()
+            .unwrap()
+            .execute(
+                "UPDATE missions SET due_at=?2 WHERE id=?1",
+                rusqlite::params![m.id, now()],
+            )
+            .unwrap();
+        tick(&c).await.unwrap();
+    }
+    assert_eq!(storage::get(&s, &m.id).unwrap().revision, revision);
+    assert_eq!(storage::events(&s, &m.id, 0).unwrap().len(), events);
+    assert!(
+        s.connection()
+            .unwrap()
+            .query_row("SELECT due_at FROM missions WHERE id=?1", [&m.id], |r| r
+                .get::<_, i64>(0))
+            .unwrap()
+            > now()
+    );
+}
+
+#[tokio::test]
+async fn a_running_child_polls_without_writing_a_revision_or_event() {
+    let (_temp, s, mut m) = fixture();
+    let chain = child_chain(&m).unwrap();
+    let scope = m.planner_scope.clone();
+    let mut child = storage::admit(&s, &mut m, chain, scope).unwrap();
+    child.state = "running".into();
+    child
+        .progress
+        .receipts
+        .insert("action".into(), receipt("running", now(), None));
+    s.save(&mut child, "running", "Started").unwrap();
+    m = storage::get(&s, &m.id).unwrap();
+    let revision = m.revision;
+    let events = storage::events(&s, &m.id, 0).unwrap().len();
+    let c = Arc::new(coordinator(s.clone()));
+    for _ in 0..3 {
+        advance(&c, &mut m).await.unwrap();
+    }
+    assert_eq!(storage::get(&s, &m.id).unwrap().revision, revision);
+    assert_eq!(storage::events(&s, &m.id, 0).unwrap().len(), events);
+}
+
+#[test]
+fn a_long_question_in_any_script_makes_a_valid_action() {
+    let (_temp, _s, mut m) = fixture();
+    m.definition.name = "研".repeat(53);
+    let mut round = apply_round(&mut m);
+    round.selected.as_mut().unwrap().question = "究".repeat(160);
+    m.rounds = vec![round];
+    m.phase = Phase::Investigate;
+    let chain = child_chain(&m).unwrap();
+    crate::orchestration::definition::validate(&chain).unwrap();
+    assert!(chain.steps[0].label.len() <= 200);
+    assert!(chain.name.len() <= 200);
+    assert!(chain.name.starts_with('研'));
+    assert!(chain.steps[0].label.starts_with('究'));
+}
+
+#[test]
+fn a_large_review_and_many_sources_leave_the_challenge_within_its_limit() {
+    let (_temp, _s, mut m) = fixture();
+    let mut evidence = BTreeMap::new();
+    for i in 0..400 {
+        evidence.insert(
+            format!("r1-source{i}"),
+            json!({"kind":"researchSource","reference":{"id":format!("s{i}")},
+                "object":{"title":"<title>","text":"<p>".repeat(2000)}}),
+        );
+    }
+    let mut round = apply_round(&mut m);
+    m.goals = (0..64)
+        .map(|i| Goal {
+            spec: GoalSpec {
+                id: format!("g{i}"),
+                ..goal("g")
+            },
+            state: "open".into(),
+            assessment: "<unresolved>".repeat(40),
+            resolved_round: None,
+        })
+        .collect();
+    round.finding = Some(Finding {
+        summary: "<s>".repeat(5000),
+        outcome: "Inconclusive".into(),
+        method: "Inspection".into(),
+        tested_domain: "All".into(),
+        limitations: vec!["None".into()],
+        sources: Vec::new(),
+        files: Vec::new(),
+    });
+    round.evidence = evidence;
+    round.review = Some(json!({"runId":"r","complete":true,"highPriorityCount":1,
+        "report":"<f>".repeat(128 * 1024 / 3),"paperText":"p".repeat(128 * 1024),
+        "findings":vec![json!({"claim":"c".repeat(1000)});100]}));
+    m.rounds = vec![round];
+    let prompt = prompts::challenge(&m).unwrap();
+    assert!(prompt.len() < 65536, "{}", prompt.len());
+    for i in 0..400 {
+        assert!(prompt.contains(&format!("r1-source{i}\"")), "r1-source{i}");
+    }
+}
+
+#[test]
+fn a_review_is_retained_as_a_bounded_summary_with_its_journal() {
+    let (_temp, s, mut m) = fixture();
+    let child = completed(&s, &mut m, json!({}));
+    let output = json!({"runId":"r","complete":false,"highPriorityCount":2,"unknownPriorityCount":0,
+        "report":"研".repeat(64 * 1024),"paperText":"p".repeat(128 * 1024),
+        "findings":vec![json!({"claim":"c".repeat(1000)});100]});
+    let review = prompts::retained_review(&output, &child);
+    assert!(review.to_string().len() < 20 * 1024);
+    assert_eq!(review["highPriorityCount"], 2);
+    assert_eq!(review["findingCount"], 100);
+    assert_eq!(review["journal"]["taskId"], child.id);
+    assert_eq!(
+        review["journal"]["operations"][0],
+        child.progress.receipts["action"].operation
+    );
+}
+
+#[test]
+fn a_lost_action_is_never_charged_for_the_time_the_app_was_closed() {
+    let (_temp, s, mut m) = fixture();
+    m.definition.budget.active_seconds = 3600;
+    m.definition.budget.action_timeout_seconds = 3600;
+    storage::save(&s, &mut m, "budget", "Limits").unwrap();
+    let chain = child_chain(&m).unwrap();
+    let scope = m.planner_scope.clone();
+    let mut child = storage::admit(&s, &mut m, chain, scope).unwrap();
+    child.state = "running".into();
+    // Started three days ago, last seen running ten minutes in.
+    let started = now() - 3 * 86400;
+    child
+        .progress
+        .receipts
+        .insert("action".into(), receipt("running", started, None));
+    s.save(&mut child, "running", "Started").unwrap();
+    s.set_preference(store::HEARTBEAT, &json!(started + 600))
+        .unwrap();
+    s.recover().unwrap();
+    let child = s.get(&child.id).unwrap();
+    assert_eq!(
+        child.progress.receipts["action"].finished_at,
+        Some(started + 600)
+    );
+    let mut lost = m.clone();
+    account(&mut lost, &child);
+    assert_eq!(lost.active_seconds, 600);
+    assert!(!exhausted(&lost));
+
+    // With no record of the last moment, the action's own time limit applies.
+    let mut unrecorded = child.clone();
+    unrecorded
+        .progress
+        .receipts
+        .get_mut("action")
+        .unwrap()
+        .finished_at = None;
+    let mut bounded = m.clone();
+    account(&mut bounded, &unrecorded);
+    assert_eq!(
+        bounded.active_seconds,
+        u64::from(child.chain.limits.action_timeout_secs)
+    );
+}
+
+/// A mission whose planner conversation is real, with its turn lost in a restart.
+fn lost_turn(s: &Store, mut m: Mission) -> (crate::workbench::store::Store, Mission, TaskRun) {
+    let w = crate::orchestration::tests::disposable_workspace();
+    let source = crate::workbench::discovery::source(&w, &store::id(), "Mission", false).unwrap();
+    let b = crate::workbench::tasks::binding(&w, &source).unwrap();
+    let planner = Scope {
+        session_id: Some(b.session_id),
+        workspace_id: b.workspace_id,
+        session_cursor: Some(b.cursor),
+        harness_fingerprint: Some(b.harness_fingerprint),
+        connection_id: b.connection_id,
+        runtime_root: Some(b.runtime_root),
+        root_identity: Some(b.root_identity),
+        ..Scope::default()
+    };
+    m.planner_scope = planner.clone();
+    m.authority_fingerprints
+        .insert(source.clone(), workspace::authority(&w, &source).unwrap());
+    let chain = child_chain(&m).unwrap();
+    let mut child = storage::admit(s, &mut m, chain, planner).unwrap();
+    let operation = store::id();
+    let thread = format!("thread-{operation}");
+    let binding = w
+        .bind_session(&source, crate::workbench::api::NAMESPACE, &thread)
+        .unwrap();
+    w.record_turn_submission(&binding.id, &format!("task-{operation}"), "turn-1")
+        .unwrap();
+    child.state = "running".into();
+    let mut started = receipt("running", now() - 3 * 86400, None);
+    started.operation = operation;
+    child.progress.receipts.insert("action".into(), started);
+    s.save(&mut child, "running", "Started").unwrap();
+    s.recover().unwrap();
+    let mut m = storage::get(s, &m.id).unwrap();
+    m.state = "attention".into();
+    m.due_at = None;
+    storage::save(s, &mut m, "attention", "Interrupted").unwrap();
+    (w, m, s.get(&child.id).unwrap())
+}
+
+#[tokio::test]
+async fn check_saved_results_settles_a_lost_turn_and_explains_what_it_found() {
+    let _turn = crate::orchestration::tests::exclusive_turn_state().await;
+    let (_temp, s, m) = fixture();
+    let c = coordinator(s.clone());
+    let (w, mut m, child) = lost_turn(&s, m);
+    let session = child.scope.session_id.clone().unwrap();
+    let operation = child.progress.receipts["action"].operation.clone();
+    let error = commands::reconcile(&c, &mut m).await.unwrap_err();
+    assert_eq!(
+        error,
+        "This step did not finish. Choose Retry interrupted action to run it again."
+    );
+    assert_eq!(
+        crate::workbench::tasks::outcome(&w, &session, &format!("task-{operation}"))
+            .unwrap()
+            .unwrap()["state"],
+        "interrupted"
+    );
+    // The result of the check is on record, not recomputed each time.
+    assert_eq!(
+        s.get(&child.id).unwrap().progress.receipts["action"].state,
+        "failed"
+    );
+    assert_eq!(m.state, "attention");
+}
+
+#[tokio::test]
+async fn check_saved_results_adopts_a_journaled_result_without_replaying_it() {
+    let _turn = crate::orchestration::tests::exclusive_turn_state().await;
+    let (_temp, s, m) = fixture();
+    let c = coordinator(s.clone());
+    let (_w, mut m, child) = lost_turn(&s, m);
+    let operation = child.progress.receipts["action"].operation.clone();
+    let result = json!({"state":"completed","text":serde_json::to_string(&plan()).unwrap()});
+    adapters::atomic_json(
+        &s.root.join("actions").join(&operation).join("result.json"),
+        &result,
+    )
+    .unwrap();
+    commands::reconcile(&c, &mut m).await.unwrap();
+    assert_eq!(m.state, "running");
+    let stored = s.get(&child.id).unwrap();
+    assert_eq!(stored.state, "queued");
+    assert_eq!(stored.progress.receipts["action"].state, "completed");
+    assert_eq!(stored.progress.outputs["action"], result);
+    assert_eq!(m.active_child.as_ref(), Some(&child.id));
+}
+
+#[tokio::test]
+async fn retry_after_a_restart_keeps_the_budget_the_closed_time_would_have_used() {
+    let _turn = crate::orchestration::tests::exclusive_turn_state().await;
+    let (_temp, s, m) = fixture();
+    let c = coordinator(s.clone());
+    let (_w, mut m, _child) = lost_turn(&s, m);
+    commands::retry(&c, &mut m).await.unwrap();
+    assert_eq!(m.state, "queued");
+    assert!(m.active_child.is_none());
+    assert!(m.active_seconds <= u64::from(m.definition.budget.action_timeout_seconds));
+    assert!(!exhausted(&m));
+}
+
+#[test]
+fn evidence_preview_shows_text_cut_inside_a_character_but_not_a_binary_file() {
+    let (_temp, s, mut m) = fixture();
+    apply_plan(&mut m, plan(), "planner").unwrap();
+    let snapshot = |bytes: Vec<u8>, name: &str| {
+        let path = s.root.join(name);
+        std::fs::write(&path, bytes).unwrap();
+        let root = path.parent().unwrap();
+        let scope = Scope {
+            runtime_root: Some(root.to_string_lossy().into_owned()),
+            root_identity: Some(crate::workbench::store::root_identity(root).unwrap()),
+            ..Scope::default()
+        };
+        adapters::snapshot(&s, &scope, json!({"path":name}), name).unwrap()
+    };
+    // Three bytes a character, so the 128 KiB cut lands inside one.
+    let long = "研".repeat(44_000).into_bytes();
+    assert_ne!(128 * 1024 % 3, 0);
+    m.rounds[0]
+        .evidence
+        .insert("text".into(), snapshot(long, "long.md"));
+    let mut binary = vec![b'a'; 128 * 1024 + 8];
+    binary[100] = 0xff;
+    m.rounds[0]
+        .evidence
+        .insert("binary".into(), snapshot(binary, "data.bin"));
+    storage::save(&s, &mut m, "fixture", "Evidence").unwrap();
+
+    let text = commands::evidence(&s, &m.id, "text").unwrap();
+    assert_eq!(text["truncated"], true);
+    let shown = text["text"].as_str().expect("readable text is shown");
+    assert!(shown.starts_with('研') && shown.ends_with('研'));
+    assert!(shown.len() > 128 * 1024 - 4);
+
+    let binary = commands::evidence(&s, &m.id, "binary").unwrap();
+    assert!(binary["text"].is_null());
 }

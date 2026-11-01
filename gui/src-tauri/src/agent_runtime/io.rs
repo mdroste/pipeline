@@ -4,6 +4,12 @@ pub struct BoundedLine {
     pub truncated: bool,
 }
 
+/// Valid UTF-8 becomes the text without a second copy of the line.
+fn line_text(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+}
+
 /// Read one newline-delimited record without allowing `lines()` to allocate an
 /// attacker-controlled line before the caller's total-output cap can run.
 pub async fn next_bounded_line<R>(
@@ -23,7 +29,7 @@ where
                 Ok(None)
             } else {
                 Ok(Some(BoundedLine {
-                    text: String::from_utf8_lossy(&bytes).into_owned(),
+                    text: line_text(bytes),
                     truncated,
                 }))
             };
@@ -41,7 +47,7 @@ where
                 bytes.pop();
             }
             return Ok(Some(BoundedLine {
-                text: String::from_utf8_lossy(&bytes).into_owned(),
+                text: line_text(bytes),
                 truncated,
             }));
         }

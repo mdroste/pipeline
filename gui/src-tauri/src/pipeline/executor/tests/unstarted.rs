@@ -176,3 +176,54 @@ async fn a_review_limit_reached_before_any_wave_skips_every_wave_first() {
         .unwrap();
     assert!(last_stage < first_pass);
 }
+
+#[tokio::test]
+async fn a_skipped_step_is_checkpointed_for_recovery() {
+    let skipped = |id: &str, phase: Phase| StepConfig {
+        run_if: Some(crate::pipeline_config::RunCondition::OutputMatches {
+            step: "absent".into(),
+            pattern: "x".into(),
+            negate: false,
+        }),
+        ..analyzer(id, phase)
+    };
+    let workflow = config(vec![
+        skipped("parallel-step", Phase::Parallel),
+        skipped("sequential-step", Phase::Sequential),
+    ]);
+    let run_dir = tempfile::tempdir().unwrap();
+    let bus: crate::emit::EventBus = Arc::new(crate::emit::NullEvents);
+    let empty = std::collections::HashMap::new();
+    let preloaded = std::collections::HashMap::new();
+    execute_steps(
+        &bus,
+        &workflow,
+        "",
+        &serde_json::Value::Null,
+        "",
+        "",
+        "",
+        "",
+        "",
+        &empty,
+        &empty,
+        &empty,
+        &preloaded,
+        run_dir.path().to_str(),
+        &crate::settings::Settings::default(),
+    )
+    .await
+    .unwrap();
+
+    let mut recorded = std::collections::BTreeMap::new();
+    for entry in std::fs::read_dir(run_dir.path().join("checkpoints")).unwrap() {
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(entry.unwrap().path()).unwrap()).unwrap();
+        recorded.insert(
+            value["steps"][0].as_str().unwrap().to_string(),
+            value["outputs"][0]["skipped"].clone(),
+        );
+    }
+    assert_eq!(recorded["parallel-step"], true);
+    assert_eq!(recorded["sequential-step"], true);
+}

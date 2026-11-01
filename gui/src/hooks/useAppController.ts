@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { notify } from "../components/DialogService";
 import { NAV_RAIL_WIDTH } from "../components/NavRail";
 import { appClient } from "../lib/appClient";
 import { EMPTY_USAGE } from "../lib/runViews";
@@ -117,17 +118,29 @@ export function useAppController() {
     setup.setConfigVersion((version) => version + 1);
   };
 
-  const inspectResearchAttention = async () => {
+  useEffect(() => {
     const notice = attention.researchNotice;
     if (!notice) return;
-    const allowed = await router.navigate({
-      page: "workspace",
-      projectId: notice.workspaceId,
-      surface: "project",
-      destination: "checks",
-    });
-    if (allowed) attention.setResearchNotice(null);
-  };
+    const announce = (project: string) =>
+      notify(`Something you’re tracking in ${project} has changed.`, "info", {
+        label: "View changes",
+        run: () =>
+          void router.navigate({
+            page: "workspace",
+            projectId: notice.workspaceId,
+            surface: "project",
+            destination: "checks",
+          }),
+      });
+    void import("../lib/workbench/workspaceClient")
+      .then(({ workspaceClient }) =>
+        workspaceClient.getWorkspace(notice.workspaceId),
+      )
+      .then(
+        (workspace) => announce(workspace.name),
+        () => announce("one of your projects"),
+      );
+  }, [attention.researchNotice]);
 
   const openActivityReview = async (id: string) => {
     const queued = runQueue.runs.find(
@@ -142,7 +155,7 @@ export function useAppController() {
     navigation,
     setup,
     reviewLaunch,
-    attention: { ...attention, inspectResearchAttention },
+    attention,
     appearance: {
       ...theme,
       ...closeProtection,

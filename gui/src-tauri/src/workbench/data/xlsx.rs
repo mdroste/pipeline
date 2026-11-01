@@ -181,6 +181,10 @@ fn builtin_format(id: u32) -> Option<&'static str> {
         2 => "0.00",
         3 => "#,##0",
         4 => "#,##0.00",
+        5 => r##""$"#,##0_);\("$"#,##0\)"##,
+        6 => r##""$"#,##0_);[Red]\("$"#,##0\)"##,
+        7 => r##""$"#,##0.00_);\("$"#,##0.00\)"##,
+        8 => r##""$"#,##0.00_);[Red]\("$"#,##0.00\)"##,
         9 => "0%",
         10 => "0.00%",
         11 => "0.00E+00",
@@ -199,6 +203,10 @@ fn builtin_format(id: u32) -> Option<&'static str> {
         38 => "#,##0 ;[Red](#,##0)",
         39 => "#,##0.00;(#,##0.00)",
         40 => "#,##0.00;[Red](#,##0.00)",
+        41 => r#"_(* #,##0_);_(* \(#,##0\);_(* "-"_);_(@_)"#,
+        42 => r#"_("$"* #,##0_);_("$"* \(#,##0\);_("$"* "-"_);_(@_)"#,
+        43 => r#"_(* #,##0.00_);_(* \(#,##0.00\);_(* "-"??_);_(@_)"#,
+        44 => r#"_("$"* #,##0.00_);_("$"* \(#,##0.00\);_("$"* "-"??_);_(@_)"#,
         45 => "mm:ss",
         46 => "[h]:mm:ss",
         47 => "mmss.0",
@@ -207,11 +215,20 @@ fn builtin_format(id: u32) -> Option<&'static str> {
         _ => return None,
     })
 }
+/// Stands in for a built-in format with no universal code. Those IDs depend on
+/// the workbook's locale, so only their reserved date ranges say what they are.
+const UNNAMED_BUILTIN: &str = "built-in format ";
+fn builtin_date(id: u32) -> bool {
+    matches!(id, 27..=36 | 50..=58 | 71..=81)
+}
 /// Whether a number format renders dates or times (quoted text and colour or
 /// locale blocks are ignored).
 pub(super) fn is_date_format(code: &str) -> bool {
     if code.eq_ignore_ascii_case("general") {
         return false;
+    }
+    if let Some(id) = code.strip_prefix(UNNAMED_BUILTIN) {
+        return id.parse().is_ok_and(builtin_date);
     }
     let mut plain = String::new();
     let (mut quoted, mut bracket, mut escaped) = (false, String::new(), false);
@@ -276,7 +293,7 @@ fn styles(xml: &[u8]) -> WorkbenchResult<Vec<String>> {
                             .get(&id)
                             .cloned()
                             .or_else(|| builtin_format(id).map(str::to_string))
-                            .unwrap_or_else(|| format!("built-in format {id}")),
+                            .unwrap_or_else(|| format!("{UNNAMED_BUILTIN}{id}")),
                     );
                     if formats.len() > 65_536 {
                         return Err(bad("it declares too many cell styles"));
@@ -341,6 +358,13 @@ pub(super) fn read(
     bytes: &[u8],
     sheet: Option<&str>,
     start: Option<usize>,
+) -> WorkbenchResult<(Profile, Option<Window>)> {
+    read_window(bytes, sheet, start.map(Window::new))
+}
+pub(super) fn read_window(
+    bytes: &[u8],
+    sheet: Option<&str>,
+    window: Option<Window>,
 ) -> WorkbenchResult<(Profile, Option<Window>)> {
     let mut archive = open(bytes)?;
     let root = part(&mut archive, "_rels/.rels", MAX_PART)?
@@ -426,7 +450,7 @@ pub(super) fn read(
         },
         None => Vec::new(),
     };
-    let mut state = Sheet::new(&formats, start.map(Window::new));
+    let mut state = Sheet::new(&formats, window);
     let entry = archive.by_name(&sheet_path).map_err(|_| {
         bad(format!(
             "worksheet part {sheet_path} is missing or unreadable"

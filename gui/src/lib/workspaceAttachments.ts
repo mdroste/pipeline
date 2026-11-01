@@ -55,7 +55,7 @@ export async function importResearchFiles(
 }
 
 export const isReadable = (item: PaperWithRevision) =>
-  item.revision?.extraction.status === "complete";
+  ["complete", "partial"].includes(String(item.revision?.extraction.status));
 
 /** The exact captured revision, as the conversation's source list refers to it. */
 export const paperSource = (

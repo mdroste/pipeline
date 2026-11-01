@@ -52,6 +52,12 @@ export const executionClient = {
       workspaceId,
     });
   },
+  executionOutput(workspaceId: string, executionId: string) {
+    return invoke<Pick<ResearchExecution, "stdout" | "stderr">>(
+      "workbench_execution_output",
+      { workspaceId, executionId },
+    );
+  },
   cancelExecution(executionId: string) {
     return invoke<void>("workbench_cancel_execution", {
       request: { executionId },

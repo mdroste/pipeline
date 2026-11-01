@@ -1,4 +1,4 @@
-import { memo, useId, useState } from "react";
+import { useId, useState } from "react";
 import useModalDialog from "../../hooks/useModalDialog";
 
 function PromptDialog({
@@ -76,4 +76,4 @@ function PromptDialog({
   );
 }
 
-export default memo(PromptDialog);
+export default PromptDialog;

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import useDraftText from "../../hooks/useDraftText";
 import {
   remoteLabel,
+  remoteSummary,
   repositoryClient,
   type RepositoryStatus,
 } from "../../lib/repositoryClient";
@@ -211,7 +212,7 @@ export default function ProjectSettings({
             >
               <p className="text-sm">
                 {repository.remote
-                  ? `${repository.remote.owner ? `${repository.remote.owner}/` : ""}${repository.remote.repo} on ${remoteLabel(repository.remote)}`
+                  ? remoteSummary(repository.remote)
                   : "Local Git repository with no remote"}
                 {repository.branch ? ` · branch ${repository.branch}` : ""}
               </p>

@@ -54,6 +54,11 @@ pub(super) async fn cmd_run(args: RunArgs) -> i32 {
         extra_inputs,
         limits: args.limits.overrides(),
     };
+    // Invalid input exits 2, as under `check`. Anything later is a failed run.
+    if let Err(error) = commands::validate_headless_input(&options) {
+        eprintln!("Error: {error}");
+        return 2;
+    }
     let bus: EventBus = Arc::new(CliEvents);
     match run_with_interrupt(bus, options, None).await {
         Ok(value) => finish_single_run(&value, args.out.as_deref(), args.force),
@@ -135,6 +140,9 @@ pub(super) async fn cmd_check(args: CheckArgs) -> i32 {
             plan.budget.provider_attempts_upper_bound
         ));
         emit_stdout(&usage_line(&plan.usage_estimate));
+        for notice in &plan.input_notices {
+            emit_stdout(&format!("Note: {notice}"));
+        }
         let required = plan
             .readiness
             .deps

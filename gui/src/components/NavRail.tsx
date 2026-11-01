@@ -62,7 +62,7 @@ interface Props extends Partial<
 const railToggleClass = (isMac: boolean, isWindows: boolean) =>
   `absolute ${
     isMac
-      ? "left-[76px] top-0.5 z-40 !h-6 !w-6"
+      ? "left-[76px] top-1 z-40 !h-6 !w-6"
       : isWindows
         ? "left-3 top-0.5 z-10"
         : "left-3 top-2 z-10"
@@ -534,7 +534,7 @@ export default function NavRail({
 
       <div
         className={`flex shrink-0 items-center text-sm font-semibold tracking-[-0.01em] text-gray-900 dark:text-neutral-100 ${
-          isMac ? "h-7 pl-[96px]" : isWindows ? "h-8 pl-8" : "h-11 pl-8"
+          isMac ? "h-7 pl-[96px] pt-1" : isWindows ? "h-8 pl-8" : "h-11 pl-8"
         }`}
       >
         Pipeline

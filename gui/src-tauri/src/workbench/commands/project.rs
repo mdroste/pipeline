@@ -67,6 +67,7 @@ pub async fn workbench_project_mutate(
         crate::workbench::project::ProjectAction::Checkpoint { .. }
             | crate::workbench::project::ProjectAction::CaptureChanges { .. }
             | crate::workbench::project::ProjectAction::Apply { .. }
+            | crate::workbench::project::ProjectAction::AcceptChanges { .. }
             | crate::workbench::project::ProjectAction::Undo { .. }
             | crate::workbench::project::ProjectAction::Recover { .. }
             | crate::workbench::project::ProjectAction::Reject { .. }
@@ -108,6 +109,176 @@ pub async fn workbench_file_read(
 }
 
 #[tauri::command]
+pub async fn workbench_file_external(
+    app: tauri::AppHandle,
+    request: crate::workbench::project::FileReadRequest,
+) -> WorkbenchResult<()> {
+    let path = run_store(move |store| crate::workbench::project::external_target(&store, &request))
+        .await?;
+    // Validated here: the plugin's JS `open` accepts only web and mail links.
+    #[allow(deprecated)]
+    app.shell()
+        .open(path.to_string_lossy().into_owned(), None)
+        .map_err(|error| WorkbenchError::storage("Failed to open file", error))
+}
+
+#[tauri::command]
+pub async fn workbench_file_open(
+    request: crate::workbench::project::FileReadRequest,
+) -> WorkbenchResult<crate::workbench::project::FilePreview> {
+    run_store(move |store| crate::workbench::project::open_workspace_file(&store, request)).await
+}
+
+/// Withdraw a stream token when its viewer closes.
+#[tauri::command]
+pub async fn workbench_file_release(token: String) {
+    crate::file_stream::revoke(&token);
+}
+
+/// Format readers run on a blocking thread: a large file must not hold a
+/// database worker.
+async fn run_file_reader<T, F>(
+    workspace_id: String,
+    checkpoint_id: Option<String>,
+    path: String,
+    operation: F,
+) -> WorkbenchResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&std::path::Path, &str) -> WorkbenchResult<T> + Send + 'static,
+{
+    let scoped = path.clone();
+    let folder = run_store(move |store| {
+        crate::workbench::project::scoped_folder(
+            &store,
+            &workspace_id,
+            checkpoint_id.as_deref(),
+            &scoped,
+        )
+    })
+    .await?;
+    tokio::task::spawn_blocking(move || operation(&folder, &path))
+        .await
+        .map_err(|error| WorkbenchError::worker(format!("File reader stopped: {error}"), true))?
+}
+
+#[tauri::command]
+pub async fn workbench_file_table(
+    request: crate::workbench::project::FileTableRequest,
+) -> WorkbenchResult<crate::workbench::data::FileTable> {
+    let crate::workbench::project::FileTableRequest {
+        workspace_id,
+        path,
+        checkpoint_id,
+        sheet,
+        start,
+        resume,
+    } = request;
+    run_file_reader(workspace_id, checkpoint_id, path, move |folder, path| {
+        crate::workbench::project::file_table(
+            folder,
+            path,
+            sheet.as_deref(),
+            start,
+            resume.as_ref(),
+        )
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn workbench_file_image_preview(
+    workspace_id: String,
+    checkpoint_id: Option<String>,
+    path: String,
+) -> WorkbenchResult<crate::workbench::project::ImagePreview> {
+    run_file_reader(
+        workspace_id,
+        checkpoint_id,
+        path,
+        crate::workbench::project::tiff_preview,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn workbench_file_document_text(
+    workspace_id: String,
+    checkpoint_id: Option<String>,
+    path: String,
+) -> WorkbenchResult<crate::workbench::project::DocumentText> {
+    run_file_reader(
+        workspace_id,
+        checkpoint_id,
+        path,
+        crate::workbench::project::docx_text,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn workbench_file_search(
+    request: crate::workbench::project::FileSearchRequest,
+) -> WorkbenchResult<crate::workbench::project::FileSearchResult> {
+    let crate::workbench::project::FileSearchRequest {
+        workspace_id,
+        checkpoint_id,
+        query,
+    } = request;
+    let folder = run_store(move |store| {
+        crate::workbench::project::search_folder(&store, &workspace_id, checkpoint_id.as_deref())
+    })
+    .await?;
+    tokio::task::spawn_blocking(move || crate::workbench::project::search_files(&folder, &query))
+        .await
+        .map_err(|error| WorkbenchError::worker(format!("File search stopped: {error}"), true))?
+}
+
+/// Change checks repeat every few seconds, so on a slow volume they must not
+/// hold a database worker.
+async fn run_folder_walk<T, F>(
+    workspace_id: String,
+    checkpoint_id: Option<String>,
+    operation: F,
+) -> WorkbenchResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce(&std::path::Path) -> WorkbenchResult<T> + Send + 'static,
+{
+    let folder = run_store(move |store| {
+        crate::workbench::project::search_folder(&store, &workspace_id, checkpoint_id.as_deref())
+    })
+    .await?;
+    tokio::task::spawn_blocking(move || operation(&folder))
+        .await
+        .map_err(|error| WorkbenchError::worker(format!("Folder check stopped: {error}"), true))?
+}
+
+#[tauri::command]
+pub async fn workbench_file_list(
+    request: crate::workbench::project::FileListRequest,
+) -> WorkbenchResult<crate::workbench::project::FileListing> {
+    let (workspace_id, checkpoint_id) =
+        (request.workspace_id.clone(), request.checkpoint_id.clone());
+    run_folder_walk(workspace_id, checkpoint_id, move |folder| {
+        crate::workbench::project::list_workspace_directory(folder, request)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn workbench_file_stat(
+    request: crate::workbench::project::FileStatRequest,
+) -> WorkbenchResult<Vec<crate::workbench::project::FileStamp>> {
+    let (workspace_id, checkpoint_id) =
+        (request.workspace_id.clone(), request.checkpoint_id.clone());
+    run_folder_walk(workspace_id, checkpoint_id, move |folder| {
+        crate::workbench::project::stat_workspace_files(folder, request)
+    })
+    .await
+}
+
+#[tauri::command]
 pub async fn workbench_conversation_file_open(
     app: tauri::AppHandle,
     session_id: String,
@@ -119,8 +290,28 @@ pub async fn workbench_conversation_file_open(
     .await?;
     #[allow(deprecated)]
     app.shell()
-        .open(path.to_string_lossy().into_owned(), None)
+        .open(
+            crate::file_viewer::system_path(&path)
+                .to_string_lossy()
+                .into_owned(),
+            None,
+        )
         .map_err(|error| WorkbenchError::storage("Failed to open conversation file", error))
+}
+
+#[tauri::command]
+pub async fn workbench_conversation_folder_reveal(session_id: String) -> WorkbenchResult<()> {
+    run_store(move |store| {
+        let effective = crate::workbench::research::resolve_harness(&store, &session_id)?;
+        if !effective.capabilities.private_folder {
+            return Err(WorkbenchError::invalid(
+                "This conversation works in its project folder",
+            ));
+        }
+        let folder = store.runtime_root(&session_id)?;
+        crate::file_viewer::reveal(&folder).map_err(WorkbenchError::invalid)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -172,9 +363,12 @@ pub async fn workbench_authorize_host_execution(
     .await
 }
 
+// Finding tools can wait on the login-shell probe, so this stays off the main thread.
 #[tauri::command]
-pub fn workbench_project_capabilities() -> Value {
-    crate::workbench::project::capabilities()
+pub async fn workbench_project_capabilities() -> Result<Value, String> {
+    tokio::task::spawn_blocking(crate::workbench::project::capabilities)
+        .await
+        .map_err(|error| format!("Tool check failed: {error}"))
 }
 
 #[tauri::command]
@@ -193,6 +387,16 @@ pub async fn workbench_list_jobs(
     workspace_id: String,
 ) -> WorkbenchResult<Vec<crate::workbench::research::jobs::JobStatus>> {
     run_store(move |store| crate::workbench::research::jobs::list_jobs(&store, &workspace_id)).await
+}
+#[tauri::command]
+pub async fn workbench_execution_output(
+    workspace_id: String,
+    execution_id: String,
+) -> WorkbenchResult<crate::workbench::research::jobs::ExecutionOutput> {
+    run_store(move |store| {
+        crate::workbench::research::jobs::execution_output(&store, &workspace_id, &execution_id)
+    })
+    .await
 }
 #[tauri::command]
 pub async fn workbench_job_log(
@@ -231,9 +435,14 @@ pub async fn workbench_studio_mutate(
         request.action,
         crate::workbench::project::StudioAction::SaveText { .. }
             | crate::workbench::project::StudioAction::GenerateValues { .. }
+            | crate::workbench::project::StudioAction::CreateFolder { .. }
+            | crate::workbench::project::StudioAction::MoveEntry { .. }
+            | crate::workbench::project::StudioAction::TrashEntry { .. }
+            | crate::workbench::project::StudioAction::ImportFile { .. }
+            | crate::workbench::project::StudioAction::CreateFile { .. }
     ) {
         Some(turn_queue().clone().try_acquire_owned().map_err(|_| {
-            WorkbenchError::conflict("Stop the active research turn before saving files")
+            WorkbenchError::conflict("Stop the active research turn before changing files")
         })?)
     } else {
         None
@@ -298,7 +507,12 @@ pub async fn workbench_editor_external(
     .await?;
     #[allow(deprecated)]
     app.shell()
-        .open(path, None)
+        .open(
+            crate::file_viewer::system_path(std::path::Path::new(&path))
+                .to_string_lossy()
+                .into_owned(),
+            None,
+        )
         .map_err(|e| WorkbenchError::storage("Failed to open external editor", e))
 }
 #[tauri::command]

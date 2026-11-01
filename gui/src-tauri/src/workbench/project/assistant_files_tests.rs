@@ -73,3 +73,45 @@ fn creates_reject_traversal_metadata_and_linked_parents() {
         assert!(!f._temp.path().join("escape").exists());
     }
 }
+
+#[test]
+fn a_taken_path_is_named_for_a_person_and_explained_to_an_assistant() {
+    let f = fixture();
+    fs::write(f.root.join("notes.md"), "mine").unwrap();
+    let person = create(&f, None, "notes.md", b"new", "person").unwrap_err();
+    assert_eq!(person.message, "Already exists: notes.md");
+
+    let session = f
+        .store
+        .create_session(crate::workbench::store::CreateSessionRequest {
+            workspace_id: Some(f.ws.clone()),
+            title: "Paper chat".into(),
+            operation_id: "session".into(),
+        })
+        .unwrap()
+        .record;
+    f.store
+        .update_session(crate::workbench::store::UpdateSessionRequest {
+            session_id: session.id.clone(),
+            expected_revision: session.revision,
+            operation_id: "edit".into(),
+            overrides: Some(json!({"mode":"edit","runtime":"openai-api","model":"fixture"})),
+            draft: None,
+            title: None,
+            archived: None,
+            preset_id: None,
+            paper_id: None,
+            clear_paper: None,
+        })
+        .unwrap();
+    let assistant = assistant_files::call(
+        &f.store,
+        &session.id,
+        "project_create",
+        &json!({"path":"notes.md","content":"new"}),
+        "assistant",
+    )
+    .unwrap_err();
+    assert!(assistant.message.contains("project_edit"), "{assistant:?}");
+    assert_eq!(fs::read_to_string(f.root.join("notes.md")).unwrap(), "mine");
+}

@@ -1,5 +1,7 @@
 //! Escaping and plain-text helpers shared by the report formats.
 
+use super::math::{protect_source_math, restore_source_math};
+
 /// True for characters XML 1.0 can carry. Model text may contain control
 /// characters (for example a stray NUL); a single one makes a Word part or
 /// an XHTML document unreadable, so they are dropped rather than escaped.
@@ -46,8 +48,9 @@ pub(super) fn one_line(text: &str) -> String {
 }
 
 /// Render Markdown as readable plain text for Word comments and PDF notes,
-/// where formatting markup would otherwise appear literally. Raw HTML is
-/// dropped; link targets are kept in parentheses so nothing is hidden.
+/// where formatting markup would otherwise appear literally. Text that parses
+/// as HTML stays: in a finding, `<treated>` is a word, and these notes are never
+/// rendered. Link targets are kept in parentheses so nothing is hidden.
 pub(super) fn markdown_to_plain(markdown: &str) -> String {
     use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
@@ -57,9 +60,12 @@ pub(super) fn markdown_to_plain(markdown: &str) -> String {
     let mut output = String::with_capacity(markdown.len());
     let mut links: Vec<String> = Vec::new();
     let mut list_depth = 0usize;
-    for event in Parser::new_ext(markdown, options) {
+    let (markdown, protected_math) = protect_source_math(markdown);
+    for event in Parser::new_ext(&markdown, options) {
         match event {
-            Event::Text(text) | Event::Code(text) => output.push_str(&text),
+            Event::Text(text) | Event::Code(text) | Event::Html(text) | Event::InlineHtml(text) => {
+                output.push_str(&text)
+            }
             Event::SoftBreak => output.push(' '),
             Event::HardBreak => output.push('\n'),
             Event::Start(Tag::List(_)) => list_depth += 1,
@@ -87,9 +93,9 @@ pub(super) fn markdown_to_plain(markdown: &str) -> String {
                     output.push_str(&format!(" ({target})"));
                 }
             }
-            Event::End(TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::BlockQuote(_)) => {
-                output.push_str("\n\n")
-            }
+            Event::End(
+                TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::BlockQuote(_) | TagEnd::HtmlBlock,
+            ) => output.push_str("\n\n"),
             Event::End(TagEnd::CodeBlock | TagEnd::TableRow | TagEnd::TableHead) => {
                 output.push('\n')
             }
@@ -98,6 +104,7 @@ pub(super) fn markdown_to_plain(markdown: &str) -> String {
             _ => {}
         }
     }
+    let output = restore_source_math(&output, &protected_math, str::to_string);
     let mut paragraphs = Vec::new();
     for block in output.split("\n\n") {
         let block = block
@@ -132,8 +139,28 @@ mod tests {
         );
         assert!(plain.starts_with("Problem. The estimate uses x."));
         assert!(plain.contains("• first\n• second (https://example.org)"));
-        assert!(!plain.contains("script"));
+        assert!(plain.ends_with("<script>alert(1)</script>"));
         assert!(!plain.contains("**"));
+    }
+
+    #[test]
+    fn plain_text_keeps_angle_bracket_words() {
+        assert_eq!(
+            markdown_to_plain("The <treated> group and n<N> units differ."),
+            "The <treated> group and n<N> units differ."
+        );
+        assert_eq!(
+            markdown_to_plain("<div>A block</div>\n\nNext **point**."),
+            "<div>A block</div>\n\nNext point."
+        );
+    }
+
+    #[test]
+    fn plain_text_keeps_latex_byte_for_byte() {
+        assert_eq!(
+            markdown_to_plain(r"Both $x^*$ and $y^*$ and $\{a_i\}$ at $a\,b$, *real* emphasis."),
+            r"Both $x^*$ and $y^*$ and $\{a_i\}$ at $a\,b$, real emphasis."
+        );
     }
 
     #[test]

@@ -6,6 +6,7 @@
 //! script, style, network request, or form submission even if sanitization
 //! were bypassed. Images lose their sources, so nothing remote is fetched.
 
+use super::math::{protect_source_math, restore_source_math};
 use super::model::{severity_label, ExportFinding, ReportExport, Verification};
 use super::text::escape_xml as escape;
 
@@ -107,20 +108,22 @@ pub(super) fn sanitized_markdown(markdown: &str) -> String {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
+    let (markdown, protected_math) = protect_source_math(markdown);
     // An offline file cannot show remote images; keep their alt text instead.
-    let events = Parser::new_ext(markdown, options).map(|event| match event {
+    let events = Parser::new_ext(&markdown, options).map(|event| match event {
         Event::Start(Tag::Image { .. }) => Event::Text(CowStr::Borrowed("[Image: ")),
         Event::End(TagEnd::Image) => Event::Text(CowStr::Borrowed("]")),
         other => other,
     });
     let mut rendered = String::new();
     html::push_html(&mut rendered, events);
-    ammonia::Builder::default()
+    let clean = ammonia::Builder::default()
         .url_schemes(["http", "https", "mailto"].into_iter().collect())
         .url_relative(ammonia::UrlRelative::Deny)
         .rm_tags(["img"])
         .clean(&rendered)
-        .to_string()
+        .to_string();
+    restore_source_math(&clean, &protected_math, escape)
 }
 
 fn token(value: &str) -> String {

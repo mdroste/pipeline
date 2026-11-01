@@ -64,9 +64,21 @@ pub fn list_runs() -> Result<Vec<RunSummary>, String> {
             summaries.push(summary);
         }
     }
-    // Sort by created timestamp (RFC3339 sorts lexically), newest first.
-    summaries.sort_by(|a, b| b.created.cmp(&a.created));
+    sort_newest_first(&mut summaries, |summary| &summary.created);
     Ok(summaries)
+}
+
+/// Order by the instant each run was created, newest first. `created` keeps
+/// the local offset it was written with, so its text sorts correctly only
+/// within one offset. A timestamp that cannot be read sorts last.
+pub(super) fn sort_newest_first<T>(items: &mut [T], created: impl Fn(&T) -> &str) {
+    items.sort_by_cached_key(|item| {
+        let text = created(item);
+        let instant = chrono::DateTime::parse_from_rfc3339(text)
+            .ok()
+            .map(|time| time.with_timezone(&chrono::Utc));
+        std::cmp::Reverse((instant, text.to_string()))
+    });
 }
 
 /// The manifest bytes when they could actually be read, or `None` on any
@@ -131,7 +143,7 @@ pub fn load_latest_report_for_input(
             candidates.push((manifest.created, entry.path().join("report.json")));
         }
     }
-    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    sort_newest_first(&mut candidates, |candidate| &candidate.0);
     for (_, path) in candidates {
         let Ok(json) = read_utf8_at_most(&path, MAX_REPORT_BYTES, "Run report") else {
             continue;

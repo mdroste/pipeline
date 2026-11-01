@@ -179,6 +179,12 @@ export default function Sharing(props: DeskProps) {
         >
           Create review brief
         </button>
+        {(!changes || !excluded) && (
+          <p className={muted}>
+            To create the brief, fill in the change summary and the excluded
+            material.
+          </p>
+        )}
       </section>
       {p.records.coauthor_review?.map((r) => (
         <section key={r.id} className={card}>
@@ -193,6 +199,7 @@ export default function Sharing(props: DeskProps) {
             artifacts={(r.body as { artifacts: Artifact[] }).artifacts}
             choices={p.choices}
             onError={props.onError}
+            onChanged={props.onChanged}
           />
         </section>
       ))}

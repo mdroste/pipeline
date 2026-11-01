@@ -226,11 +226,11 @@ fn summary_paragraphs(missing: &[&ExportFinding]) -> Vec<String> {
     )];
     for finding in missing {
         let mut lines = vec![finding.heading_line()];
-        let summary = if finding.problem.is_empty() {
-            markdown_to_plain(&finding.body)
+        let summary = markdown_to_plain(if finding.problem.is_empty() {
+            &finding.body
         } else {
-            finding.problem.clone()
-        };
+            &finding.problem
+        });
         if !summary.is_empty() {
             lines.push(truncate_chars(&summary, 600));
         }

@@ -58,6 +58,20 @@ fn remove_structured_format(config: &mut Option<serde_json::Value>) {
     }
 }
 
+/// The request that warms a shared context. It keeps the real request's
+/// `thinking` and effort: both are rendered into the prompt, so a warm-up
+/// without them would write a cache entry the real request never reads.
+fn warm_up_request(
+    request: &AnthropicRequest,
+    messages: Vec<AnthropicMessage>,
+) -> AnthropicRequest {
+    let mut warm_request = request.clone();
+    warm_request.max_tokens = 32;
+    remove_structured_format(&mut warm_request.output_config);
+    warm_request.messages = messages;
+    warm_request
+}
+
 /// Build Anthropic tools array from allowed tool names.
 fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
     let mut tools = Vec::new();
@@ -277,17 +291,17 @@ pub async fn call_anthropic_api(
         let slot = context.slot(cache_key).await;
         let mut state = slot.lock().await;
         if state.is_none() {
-            let mut warm_request = request.clone();
-            warm_request.max_tokens = 32;
-            remove_structured_format(&mut warm_request.output_config);
-            warm_request.messages = vec![AnthropicMessage {
-                role: "user".to_string(),
-                content: build_content(
-                    "Acknowledge this shared context by replying only: Context prepared. Do not call tools.",
-                    overrides.pdf_attachment,
-                    Some(context),
-                )?,
-            }];
+            let warm_request = warm_up_request(
+                &request,
+                vec![AnthropicMessage {
+                    role: "user".to_string(),
+                    content: build_content(
+                        "Acknowledge this shared context by replying only: Context prepared. Do not call tools.",
+                        overrides.pdf_attachment,
+                        Some(context),
+                    )?,
+                }],
+            );
             let warm_label = format!("{label} · cache warm-up");
             super::logging::record_provider_attempt();
             match anthropic_tool_loop(
@@ -297,6 +311,7 @@ pub async fn call_anthropic_api(
                 warm_request,
                 timeout_secs,
                 &warm_label,
+                true,
                 &access,
             )
             .await
@@ -329,6 +344,7 @@ pub async fn call_anthropic_api(
         request,
         timeout_secs,
         label,
+        false,
         &access,
     )
     .await;
@@ -353,6 +369,7 @@ pub async fn call_anthropic_api(
                 fallback_request,
                 retry_timeout,
                 label,
+                false,
                 &access,
             )
             .await?
@@ -381,6 +398,7 @@ pub async fn call_anthropic_api(
                 fallback_request,
                 retry_timeout,
                 label,
+                false,
                 &access,
             )
             .await?
@@ -409,6 +427,29 @@ pub async fn call_anthropic_api(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_warm_up_keeps_the_settings_rendered_into_the_cached_prefix() {
+        let request = AnthropicRequest {
+            model: "claude-opus-5-5".to_string(),
+            max_tokens: 4096,
+            system: None,
+            messages: Vec::new(),
+            tools: Vec::new(),
+            output_config: Some(serde_json::json!({
+                "effort": "high",
+                "format": {"type": "json_schema", "schema": {}}
+            })),
+            thinking: Some(serde_json::json!({"type": "adaptive"})),
+        };
+        let warm = warm_up_request(&request, Vec::new());
+        assert_eq!(warm.max_tokens, 32);
+        assert_eq!(warm.thinking, request.thinking);
+        assert_eq!(
+            warm.output_config,
+            Some(serde_json::json!({"effort": "high"}))
+        );
+    }
 
     #[test]
     fn resolve_model_uses_dateless_aliases() {

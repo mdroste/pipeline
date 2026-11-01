@@ -1,4 +1,7 @@
+import { primaryButton } from "../../ui/classes";
 import { researchClient } from "../../lib/workbench/researchClient";
+import { NOTE_KINDS, noteKindLabel } from "../project-surface/shared";
+import { importedLabel, plainLabel } from "./format";
 import { operation } from "./useResearchPanelController";
 import type { useResearchPanelController } from "./useResearchPanelController";
 import type {
@@ -37,21 +40,17 @@ export default function MemoryTab({
       <div>
         <div className="flex gap-2">
           <select
+            aria-label="Note type"
             value={noteKind}
             onChange={(event) =>
               setNoteKind(event.target.value as ResearchNote["kind"])
             }
             className="rounded border bg-white p-2 text-xs dark:bg-neutral-950"
           >
-            {[
-              "question",
-              "assumption",
-              "decision",
-              "next_step",
-              "notation",
-              "handoff",
-            ].map((kind) => (
-              <option key={kind}>{kind}</option>
+            {NOTE_KINDS.map(([kind, label]) => (
+              <option key={kind} value={kind}>
+                {label}
+              </option>
             ))}
           </select>
           <button
@@ -72,12 +71,13 @@ export default function MemoryTab({
                 setNoteBody("");
               })
             }
-            className="rounded bg-gray-900 px-3 text-xs text-white dark:bg-neutral-100 dark:text-neutral-900"
+            className={primaryButton}
           >
             Add reviewed note
           </button>
         </div>
         <textarea
+          aria-label="Note text"
           value={noteBody}
           onChange={(event) => setNoteBody(event.target.value)}
           rows={3}
@@ -92,11 +92,18 @@ export default function MemoryTab({
             className="rounded border bg-white p-3 dark:bg-neutral-950"
           >
             <div className="flex items-center gap-2 text-[11px] text-gray-500">
-              <span>{note.kind}</span>
-              <span>· {note.state}</span>
-              <span>· {note.origin}</span>
+              <span>{noteKindLabel(note.kind)}</span>
+              <span>· {plainLabel(note.state)}</span>
+              <span>
+                · {note.importedStatus ? "Imported" : plainLabel(note.origin)}
+              </span>
               {note.pinned && <span>· pinned</span>}
             </div>
+            {note.importedStatus && (
+              <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                {importedLabel(note.importedStatus)}
+              </p>
+            )}
             <p className="mt-1 whitespace-pre-wrap">{note.body}</p>
             <div className="mt-2 flex gap-1">
               {note.state === "proposed" && (

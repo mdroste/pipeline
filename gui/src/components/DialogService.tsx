@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface ConfirmOptions {
   title?: string;
@@ -6,6 +6,8 @@ interface ConfirmOptions {
   /** Label for the dismiss button when "Cancel" would be ambiguous. */
   cancelLabel?: string;
   destructive?: boolean;
+  /** A report to read, not a choice: only the confirm button is offered. */
+  acknowledgeOnly?: boolean;
 }
 
 interface PromptOptions extends ConfirmOptions {
@@ -13,6 +15,8 @@ interface PromptOptions extends ConfirmOptions {
   label?: string;
   defaultValue?: string;
   placeholder?: string;
+  /** Hide the typed text, for values such as API tokens. */
+  concealed?: boolean;
 }
 
 type DialogRequest =
@@ -35,6 +39,8 @@ interface Toast {
   kind: "error" | "success" | "info";
   action?: { label: string; run: () => void };
 }
+
+const TOAST_DURATION = 6000;
 
 let dialogHandler: ((request: DialogRequest) => void) | null = null;
 let toastHandler: ((toast: Toast) => void) | null = null;
@@ -98,16 +104,18 @@ export default function DialogService({
   const inputRef = useRef<HTMLInputElement>(null);
   const priorFocus = useRef<HTMLElement | null>(null);
   const request = queue[0] ?? null;
+  const dismissToast = useCallback(
+    (id: number) =>
+      setToasts((current) =>
+        current.filter((candidate) => candidate.id !== id),
+      ),
+    [],
+  );
 
   useEffect(() => {
     dialogHandler = (next) => setQueue((current) => [...current, next]);
     toastHandler = (toast) => {
       setToasts((current) => [...current.slice(-3), toast]);
-      window.setTimeout(() => {
-        setToasts((current) =>
-          current.filter((candidate) => candidate.id !== toast.id),
-        );
-      }, 6000);
     };
     return () => {
       dialogHandler = null;
@@ -167,7 +175,10 @@ export default function DialogService({
               if (request.kind === "prompt") finish(true);
             }}
           >
-            <h2 id="pipeline-confirm-title" className="text-lg font-semibold">
+            <h2
+              id="pipeline-confirm-title"
+              className="break-words text-lg font-semibold"
+            >
               {request.title ||
                 (request.kind === "prompt"
                   ? "Enter a value"
@@ -175,7 +186,7 @@ export default function DialogService({
             </h2>
             <p
               id="pipeline-confirm-description"
-              className="mt-3 whitespace-pre-line text-sm leading-6 text-gray-600 dark:text-gray-300"
+              className="mt-3 whitespace-pre-line break-words text-sm leading-6 text-gray-600 dark:text-gray-300"
             >
               {request.message}
             </p>
@@ -184,6 +195,8 @@ export default function DialogService({
                 {request.label && <span>{request.label}</span>}
                 <input
                   ref={inputRef}
+                  type={request.concealed ? "password" : "text"}
+                  autoComplete={request.concealed ? "off" : undefined}
                   aria-label={request.label ? undefined : request.message}
                   defaultValue={request.defaultValue ?? ""}
                   placeholder={request.placeholder}
@@ -192,15 +205,18 @@ export default function DialogService({
               </label>
             )}
             <div className="mt-6 flex justify-end gap-2">
+              {!request.acknowledgeOnly && (
+                <button
+                  autoFocus={request.kind === "confirm"}
+                  type="button"
+                  onClick={() => finish(false)}
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium dark:border-gray-700"
+                >
+                  {request.cancelLabel || "Cancel"}
+                </button>
+              )}
               <button
-                autoFocus={request.kind === "confirm"}
-                type="button"
-                onClick={() => finish(false)}
-                className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium dark:border-gray-700"
-              >
-                {request.cancelLabel || "Cancel"}
-              </button>
-              <button
+                autoFocus={request.acknowledgeOnly}
                 type={request.kind === "prompt" ? "submit" : "button"}
                 onClick={
                   request.kind === "confirm" ? () => finish(true) : undefined
@@ -224,46 +240,75 @@ export default function DialogService({
         className="pointer-events-none fixed right-4 top-4 z-[100] flex w-[min(24rem,calc(100%-2rem))] flex-col gap-2"
       >
         {toasts.map((toast) => (
-          <div
-            key={toast.id}
-            role={toast.kind === "error" ? "alert" : "status"}
-            className={`pointer-events-auto rounded-lg border px-4 py-3 text-sm shadow-lg ${
-              toast.kind === "error"
-                ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
-                : toast.kind === "success"
-                  ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
-                  : "border-gray-200 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
-            }`}
-          >
-            <div className="flex gap-3">
-              <span className="min-w-0 flex-1 whitespace-pre-line">
-                {toast.message}
-              </span>
-              {toast.action && (
-                <button
-                  type="button"
-                  className="pointer-events-auto underline"
-                  onClick={toast.action.run}
-                >
-                  {toast.action.label}
-                </button>
-              )}
-              <button
-                type="button"
-                aria-label="Dismiss notification"
-                onClick={() =>
-                  setToasts((current) =>
-                    current.filter((candidate) => candidate.id !== toast.id),
-                  )
-                }
-                className="pointer-events-auto shrink-0 rounded px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
-              >
-                ×
-              </button>
-            </div>
-          </div>
+          <ToastCard key={toast.id} toast={toast} onDismiss={dismissToast} />
         ))}
       </div>
     </>
+  );
+}
+
+/** Leaves on its own, but never while it is being read: the time starts over
+ *  once the pointer and keyboard focus have left it. */
+function ToastCard({
+  toast,
+  onDismiss,
+}: {
+  toast: Toast;
+  onDismiss: (id: number) => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const held = hovered || focused;
+  useEffect(() => {
+    if (held) return;
+    const timer = window.setTimeout(() => onDismiss(toast.id), TOAST_DURATION);
+    return () => window.clearTimeout(timer);
+  }, [held, onDismiss, toast.id]);
+
+  return (
+    <div
+      role={toast.kind === "error" ? "alert" : "status"}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget))
+          setFocused(false);
+      }}
+      className={`pointer-events-auto rounded-lg border px-4 py-3 text-sm shadow-lg ${
+        toast.kind === "error"
+          ? "border-red-200 bg-red-50 text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200"
+          : toast.kind === "success"
+            ? "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
+            : "border-gray-200 bg-white text-gray-800 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200"
+      }`}
+    >
+      <div className="flex gap-3">
+        <span className="min-w-0 flex-1 whitespace-pre-line break-words">
+          {toast.message}
+        </span>
+        {toast.action && (
+          <button
+            type="button"
+            className="pointer-events-auto underline"
+            onClick={() => {
+              // A click leaves focus here, which would hold the toast open.
+              onDismiss(toast.id);
+              toast.action?.run();
+            }}
+          >
+            {toast.action.label}
+          </button>
+        )}
+        <button
+          type="button"
+          aria-label="Dismiss notification"
+          onClick={() => onDismiss(toast.id)}
+          className="pointer-events-auto shrink-0 rounded px-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
+        >
+          ×
+        </button>
+      </div>
+    </div>
   );
 }

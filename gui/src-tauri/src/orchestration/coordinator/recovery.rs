@@ -5,6 +5,52 @@ use super::{adapters, Coordinator};
 use serde_json::Value;
 
 impl Coordinator {
+    /// Role conversations are hidden, so no window asks their runtime to settle
+    /// a turn that outlived its receipt. An unreachable runtime leaves the turn
+    /// open, and the action takes the same path as any turn with no live owner.
+    async fn settle_child_turn(&self, child: &TaskRun) {
+        if !child
+            .progress
+            .receipts
+            .values()
+            .any(|r| r.state == "unknown")
+        {
+            return;
+        }
+        let Some(session) = child.scope.session_id.clone() else {
+            return;
+        };
+        let local = crate::workbench::commands::reconcile_local_session(session.clone()).await;
+        if let (Ok(false), Some(app)) = (local, self.app.clone()) {
+            let _ =
+                crate::workbench::commands::workbench_codex_reconcile_session(app, session).await;
+        }
+    }
+
+    /// Settles and reads a managed child's interrupted action without replaying
+    /// it. A failure found here is saved before the owner classifies it.
+    pub(crate) async fn recover_child(&self, child: &TaskRun) -> Result<TaskRun> {
+        self.settle_child_turn(child).await;
+        let mut recovered = child.clone();
+        self.recover_results(&mut recovered).await?;
+        if recovered.progress.receipts.iter().any(|(key, receipt)| {
+            receipt.state == "failed"
+                && child
+                    .progress
+                    .receipts
+                    .get(key)
+                    .is_some_and(|old| old.state == "unknown")
+        }) {
+            self.save(
+                &mut recovered,
+                "reconciledFailure",
+                "Recovered a terminal action failure without replaying it",
+            )
+            .await?;
+        }
+        Ok(recovered)
+    }
+
     pub(crate) async fn recover_results(&self, run: &mut TaskRun) -> Result<()> {
         for receipt in run
             .progress
@@ -38,8 +84,16 @@ impl Coordinator {
             if result.is_none() {
                 if let Some(session) = run.scope.session_id.clone() {
                     let operation = receipt.operation.clone();
+                    let expected = adapters::task_binding(&run.scope).ok();
                     result = crate::workbench::commands::run_store(move |s| {
-                        crate::workbench::tasks::delivery_outcome(&s, &session, &operation)
+                        use crate::workbench::tasks;
+                        match (tasks::delivery_outcome(&s, &session, &operation)?, expected) {
+                            (Some(value), Some(expected)) => {
+                                tasks::with_delivery_context(&s, value, &expected, &operation)
+                                    .map(Some)
+                            }
+                            (value, _) => Ok(value),
+                        }
                     })
                     .await
                     .map_err(|e| e.message)?;
@@ -83,16 +137,17 @@ impl Coordinator {
                 if let Some(fingerprint) = value.get("harnessFingerprint").and_then(Value::as_str) {
                     run.scope.harness_fingerprint = Some(fingerprint.into());
                 }
+                // Keep the time recorded when the app stopped: the hours until
+                // this check are not action time.
+                receipt.finished_at = receipt.finished_at.or(Some(now()));
+                receipt.output = Some(adapters::output_preview(&value));
                 if adapters::terminal_failure(&value) {
                     receipt.state = "failed".into();
-                    receipt.error = Some(format!("Workspace turn {}", value["state"]));
-                    receipt.finished_at = Some(now());
+                    receipt.error = Some(adapters::failure_message(&value));
                     continue;
                 }
-                receipt.output = Some(adapters::output_preview(&value));
                 receipt.state = "completed".into();
                 receipt.error = None;
-                receipt.finished_at = Some(now());
                 run.progress.outputs[&receipt.step_id] = value;
             }
         }

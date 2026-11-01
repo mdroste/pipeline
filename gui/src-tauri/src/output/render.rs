@@ -22,11 +22,7 @@ pub fn render_markdown(
         .unwrap_or_else(|| "Selected input".to_string());
     md.push_str("# Referee Report\n\n");
 
-    let provider = capitalize(&settings.preferred_provider);
-    let model = settings
-        .model_selection(&settings.preferred_provider)
-        .label();
-    let effort = "default".to_string();
+    let (provider, model, effort) = models_that_ran(report);
 
     let type_prefix = meta
         .as_ref()
@@ -95,7 +91,17 @@ pub fn render_markdown(
                     == report.products.primary_step_id
         })
         .map(|findings| crate::findings::render_markdown(&findings))
-        .or_else(|| report.final_output().map(strip_to_report))
+        .or_else(|| {
+            // Only reports from before the quality ledger can open with
+            // narration that does not belong in the report.
+            report.final_output().map(|text| {
+                if report.quality.schema_version == 0 {
+                    strip_to_report(text)
+                } else {
+                    report_body(text)
+                }
+            })
+        })
         .filter(|text| !text.trim().is_empty());
     if let Some(final_text) = final_text {
         md.push_str(&normalize_math_delimiters(&final_text));
@@ -148,6 +154,47 @@ pub fn render_markdown(
 
     md.push_str("---\n");
     md
+}
+
+/// The provider, model, and effort for the report header, taken from the calls
+/// the run recorded rather than from settings: steps can choose their own
+/// models, and a usage limit can move a step to another provider.
+fn models_that_ran(report: &PipelineReport) -> (String, String, String) {
+    let mut providers = std::collections::BTreeSet::new();
+    let mut models = std::collections::BTreeSet::new();
+    let mut efforts = std::collections::BTreeSet::new();
+    for output in report.all_outputs().iter().filter(|output| !output.skipped) {
+        let mut record = |provider: &str, model: &str, effort: &str| {
+            // Host analyzers record this provider but call no model.
+            if provider == "pipeline" || (provider.is_empty() && model.is_empty()) {
+                return;
+            }
+            providers.insert(capitalize(provider));
+            models.insert(model.to_string());
+            efforts.insert(if effort.is_empty() { "default" } else { effort }.to_string());
+        };
+        if output.calls.is_empty() {
+            record(&output.provider, &output.model, "");
+        }
+        for call in &output.calls {
+            record(&call.provider, &call.model, &call.effort);
+        }
+    }
+    (
+        header_value(providers),
+        header_value(models),
+        header_value(efforts),
+    )
+}
+
+fn header_value(mut values: std::collections::BTreeSet<String>) -> String {
+    values.remove("");
+    let mut distinct = values.into_iter();
+    match (distinct.next(), distinct.next()) {
+        (Some(value), None) => value,
+        (Some(_), Some(_)) => "Mixed; see run summary".to_string(),
+        _ => "Not recorded".to_string(),
+    }
 }
 
 fn render_quality_section(md: &mut String, report: &PipelineReport, status_label: &str) {
@@ -250,5 +297,112 @@ pub(crate) fn capitalize(s: &str) -> String {
             let rest: String = chars.collect();
             upper + &rest
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{StepCallRecord, StepOutput};
+
+    fn report(step_outputs: Vec<StepOutput>) -> PipelineReport {
+        PipelineReport {
+            orientation: serde_json::Value::Null,
+            step_outputs,
+            failed_steps: Vec::new(),
+            products: Default::default(),
+            quality: Default::default(),
+            referee_reports: Vec::new(),
+            editor: None,
+            report_date: chrono::Local::now().date_naive(),
+            paper_hash: "hash".to_string(),
+        }
+    }
+
+    fn call(provider: &str, model: &str, effort: &str) -> StepCallRecord {
+        StepCallRecord {
+            provider: provider.to_string(),
+            model: model.to_string(),
+            effort: effort.to_string(),
+            ..Default::default()
+        }
+    }
+
+    fn step(calls: Vec<StepCallRecord>) -> StepOutput {
+        StepOutput {
+            step_id: "review".to_string(),
+            raw_text: "Report".to_string(),
+            calls,
+            ..Default::default()
+        }
+    }
+
+    fn header_of(report: &PipelineReport) -> String {
+        let settings = Settings {
+            preferred_provider: "preferred-provider".to_string(),
+            ..Default::default()
+        };
+        let markdown = render_markdown(report, None, Duration::from_secs(1), &settings);
+        let line = markdown.lines().find(|line| line.contains("**LLM**"));
+        line.unwrap().to_string()
+    }
+
+    #[test]
+    fn the_header_names_the_provider_that_ran() {
+        let header = header_of(&report(vec![step(vec![call(
+            "codex",
+            "gpt-5.6-sol",
+            "high",
+        )])]));
+        assert!(
+            header.contains("**LLM**: Codex · **Model**: gpt-5.6-sol · **Effort**: high"),
+            "{header}"
+        );
+    }
+
+    #[test]
+    fn the_header_does_not_summarize_a_mixed_run_as_one_model() {
+        let header = header_of(&report(vec![
+            step(vec![call("codex", "gpt-5.6-sol", "high")]),
+            step(vec![call("claude", "claude-opus-5-5", "high")]),
+        ]));
+        assert!(
+            header.contains("**LLM**: Mixed; see run summary"),
+            "{header}"
+        );
+        assert!(
+            header.contains("**Model**: Mixed; see run summary"),
+            "{header}"
+        );
+        assert!(header.contains("**Effort**: high"), "{header}");
+    }
+
+    #[test]
+    fn the_header_ignores_host_analyzers_and_skipped_steps() {
+        let analyzer = StepOutput {
+            provider: "pipeline".to_string(),
+            model: "replication_static@1".to_string(),
+            ..step(Vec::new())
+        };
+        let skipped = StepOutput {
+            skipped: true,
+            ..step(vec![call("claude", "claude-opus-5-5", "low")])
+        };
+        let header = header_of(&report(vec![
+            analyzer,
+            skipped,
+            step(vec![call("codex", "gpt-5.6-sol", "")]),
+        ]));
+        assert!(
+            header.contains("**LLM**: Codex · **Model**: gpt-5.6-sol · **Effort**: default"),
+            "{header}"
+        );
+    }
+
+    #[test]
+    fn a_report_without_call_records_does_not_guess_from_settings() {
+        let header = header_of(&report(vec![step(Vec::new())]));
+        assert!(!header.contains("Preferred-provider"), "{header}");
+        assert!(header.contains("**LLM**: Not recorded"), "{header}");
     }
 }

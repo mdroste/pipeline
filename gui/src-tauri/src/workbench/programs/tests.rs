@@ -5,6 +5,8 @@ use crate::workbench::{
 };
 #[cfg(unix)]
 mod capsule_unix;
+#[cfg(unix)]
+mod grid_recovery;
 struct Fixture {
     _temp: tempfile::TempDir,
     store: Store,
@@ -115,6 +117,122 @@ fn spec(source: ResearchObjectRef) -> assets::AssetSpec {
         notes: "Exact unrounded values retained in the companion JSON.".into(),
         sample_comparison_rationale: None,
     }
+}
+#[test]
+fn choices_name_each_saved_passage_and_series_instead_of_their_kind() {
+    let f = fixture(false);
+    let insert = |id: &str, kind: &str, body: Value| {
+        f.store
+            .connection()
+            .unwrap()
+            .execute(
+                "INSERT INTO project_records VALUES(?1,?2,?3,1,?4,'2026-09-07')",
+                params![id, f.ws, kind, body.to_string()],
+            )
+            .unwrap();
+    };
+    insert(
+        "anchor_a",
+        "anchor",
+        json!({"selection":{"quote":"Wages rise with tenure."},"body":"note"}),
+    );
+    insert(
+        "anchor_b",
+        "anchor",
+        json!({"selection":{"quote":""},"body":"Whole page table"}),
+    );
+    insert(
+        "series_a",
+        "series",
+        json!({"series":{"variable":"output","resultId":"irf_1","sampleId":"full"}}),
+    );
+    insert("task_a", "task", json!({"objective":"Check the sample"}));
+    insert("build_a", "build", json!({}));
+    let choices = commands::choices(&f.store, &f.ws).unwrap();
+    let labels = |record_kind: &str| {
+        let mut found = choices["objects"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|o| o["recordKind"] == record_kind)
+            .map(|o| o["label"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        found.sort();
+        found
+    };
+    assert_eq!(
+        labels("anchor"),
+        ["Wages rise with tenure.", "Whole page table"]
+    );
+    assert_eq!(labels("series"), ["output \u{b7} irf_1 \u{b7} full"]);
+    assert_eq!(labels("task"), ["Check the sample"]);
+    // A record with nothing to show keeps its kind rather than an empty option.
+    assert_eq!(labels("build"), ["build"]);
+}
+#[test]
+fn figures_accept_a_python_script_profile_and_refuse_other_programs() {
+    let f = fixture(true);
+    let saved = |id: &str, adapter: &str, argv: &[&str]| {
+        fs::write(f.root.join("analysis.py"), "# Fixture").unwrap();
+        research::save_execution_profile(
+            &f.store,
+            research::SaveExecutionProfileRequest {
+                profile_id: None,
+                workspace_id: f.ws.clone(),
+                name: id.into(),
+                adapter: adapter.into(),
+                argv: argv.iter().map(|a| a.to_string()).collect(),
+                cwd: f.root.to_string_lossy().into_owned(),
+                environment: json!({}),
+                inputs: vec!["analysis.py".into()],
+                timeout_seconds: 60,
+                outputs: vec![],
+                expected_revision: None,
+                operation_id: format!("profile-{id}"),
+            },
+        )
+        .unwrap()
+    };
+    let source = numeric(&f, "baseline", 1.5, "sample");
+    let figure = |profile: &research::ExecutionProfile, operation: &str| {
+        let mut request = spec(source.clone());
+        request.kind = "coefficient".into();
+        assets::figure_plan(
+            &f.store,
+            assets::FigureRequest {
+                workspace_id: f.ws.clone(),
+                spec: request,
+                python_profile_id: profile.id.clone(),
+                operation_id: operation.into(),
+            },
+        )
+    };
+    let script = saved("script", "python", &[&python(), "analysis.py"]);
+    let recipe = figure(&script, "figure-script").unwrap();
+    let plan = desk::record(&f.store, &f.ws, recipe.body["planId"].as_str().unwrap()).unwrap();
+    assert_eq!(plan.body["profile"]["argv"][1], "plot.py");
+
+    // The plot runs in its own folder, where a relative interpreter means nothing.
+    let venv = f.root.join(".venv/bin");
+    fs::create_dir_all(&venv).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(python(), venv.join("python")).unwrap();
+    #[cfg(unix)]
+    {
+        let relative = saved("venv", "python", &[".venv/bin/python", "analysis.py"]);
+        let recipe = figure(&relative, "figure-venv").unwrap();
+        let plan = desk::record(&f.store, &f.ws, recipe.body["planId"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            plan.body["profile"]["argv"][0],
+            Path::new(&relative.cwd)
+                .join(".venv/bin/python")
+                .to_string_lossy()
+                .as_ref()
+        );
+    }
+
+    let other = saved("other", "r", &["Rscript", "analysis.R"]);
+    assert!(figure(&other, "figure-other").is_err());
 }
 #[test]
 fn rootless_kit_is_small_idempotent_and_never_grants_execution() {
@@ -390,7 +508,16 @@ async fn grid_producer_retains_success_failure_timeout_exclusion_and_does_not_re
     for _ in 0..3 {
         experiments::tick(&f.store, &f.ws, &grid.id).unwrap();
     }
-    assert_eq!(research::list_executions(&f.store, &f.ws).unwrap().len(), 3);
+    let listed = research::list_executions(&f.store, &f.ws).unwrap();
+    assert_eq!(listed.len(), 3);
+    // Lists leave output out, and only the run's own project can read it.
+    assert!(listed
+        .iter()
+        .all(|e| e.stdout.is_none() && e.stderr.is_none()));
+    let saved = research::get_execution(&f.store, &listed[0].id).unwrap();
+    let output = research::jobs::execution_output(&f.store, &f.ws, &listed[0].id).unwrap();
+    assert_eq!((output.stdout, output.stderr), (saved.stdout, saved.stderr));
+    assert!(research::jobs::execution_output(&f.store, "other", &listed[0].id).is_err());
 }
 #[test]
 fn followup_queue_is_durable_scoped_reorderable_and_does_not_send() {

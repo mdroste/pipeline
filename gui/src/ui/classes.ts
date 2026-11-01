@@ -6,7 +6,7 @@
 export const button =
   "rounded-md border border-gray-300 px-3 py-1.5 text-xs hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:hover:bg-gray-800";
 export const primaryButton =
-  "rounded-md bg-gray-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-700 disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900 dark:hover:bg-gray-300";
+  "rounded-md bg-[var(--ui-page-accent)] px-3 py-1.5 text-xs font-medium text-[var(--ui-page-on-accent)] hover:opacity-90 disabled:opacity-40";
 export const dangerButton =
   "rounded-md border border-red-300 px-3 py-1.5 text-xs text-red-700 hover:bg-red-50 disabled:opacity-40 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40";
 export const linkButton =

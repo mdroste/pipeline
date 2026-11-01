@@ -1,0 +1,495 @@
+/* The Version control page fills the pane, like Files: a bar, then a file or
+   commit list beside its detail. Lists stay flat, divided by hairlines. */
+.vc-page {
+  position: relative;
+  container-type: inline-size;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  color: var(--ui-text);
+  font-size: var(--ui-text-label);
+}
+.vc-bar > button {
+  flex-shrink: 0;
+}
+.vc-bar {
+  display: flex;
+  min-height: 52px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--ui-border);
+}
+.vc-branch {
+  display: inline-flex;
+  max-width: 320px;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+}
+.vc-branch:hover:not(:disabled) {
+  border-color: var(--ui-border-strong);
+}
+.vc-branch-label,
+.vc-remote,
+.vc-checked {
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+}
+.vc-branch-name {
+  overflow: hidden;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vc-branch-list {
+  max-height: 280px;
+  overflow: auto;
+}
+.vc-remote {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vc-checked {
+  white-space: nowrap;
+}
+.vc-icon-button,
+.vc-row-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-muted);
+}
+.vc-icon-button {
+  width: 30px;
+  height: 30px;
+}
+.vc-row-more {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  opacity: 0;
+}
+.vc-file:hover .vc-row-more,
+.vc-file.is-selected .vc-row-more,
+.vc-row-more:focus-visible,
+.vc-row-more[aria-expanded="true"] {
+  opacity: 1;
+}
+.vc-icon-button:hover,
+.vc-row-more:hover {
+  background: var(--ui-page-soft);
+  color: var(--ui-text);
+}
+.vc-error {
+  margin: 0;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--ui-border);
+  color: var(--ui-danger);
+  line-height: 1.5;
+}
+.vc-operation {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--ui-border);
+  background: var(--ui-warning-soft);
+  color: var(--ui-warning);
+}
+.vc-operation p {
+  flex: 1;
+  margin: 0;
+  line-height: 1.45;
+}
+.vc-tabs {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--ui-border);
+}
+.vc-split {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+.vc-list {
+  display: flex;
+  width: 340px;
+  min-height: 0;
+  flex-shrink: 0;
+  flex-direction: column;
+  border-right: 1px solid var(--ui-border);
+}
+.vc-list-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--ui-border);
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+}
+.vc-list-empty,
+.vc-list-note {
+  margin: 0;
+  padding: 14px;
+  color: var(--ui-muted);
+  line-height: 1.5;
+}
+.vc-list-note {
+  padding: 8px 14px;
+  font-size: var(--ui-text-meta);
+}
+.vc-files,
+.vc-commits {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+.vc-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px 0 14px;
+}
+.vc-file:hover,
+.vc-commit-row:hover,
+.vc-commit-files .vc-file-open:hover {
+  background: var(--ui-page-soft);
+}
+.vc-file.is-selected,
+.vc-commit-row.is-selected,
+.vc-commit-files .vc-file-open.is-selected {
+  background: var(--ui-page-soft);
+  box-shadow: inset 2px 0 0 var(--ui-page-accent);
+}
+.vc-file-open {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  text-align: left;
+}
+.vc-status {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--ui-muted);
+}
+.vc-status.is-added,
+.vc-status.is-untracked {
+  color: var(--ui-page-accent);
+}
+.dark .vc-status.is-added,
+.dark .vc-status.is-untracked {
+  color: #4ade80;
+}
+.vc-status.is-deleted,
+.vc-status.is-conflicted {
+  color: var(--ui-danger);
+}
+.vc-status.is-modified,
+.vc-status.is-renamed,
+.vc-status.is-copied {
+  color: var(--ui-warning);
+}
+.vc-file-name {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+.vc-file-name > span:first-child {
+  overflow: hidden;
+  flex-shrink: 1;
+  text-overflow: ellipsis;
+}
+.vc-file-folder {
+  overflow: hidden;
+  flex-shrink: 100;
+  color: var(--ui-muted);
+  direction: rtl;
+  font-size: var(--ui-text-meta);
+  text-align: left;
+  text-overflow: ellipsis;
+}
+.vc-commit {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--ui-border);
+}
+.vc-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text);
+  font-size: var(--ui-text-label);
+  resize: vertical;
+}
+.vc-input:focus {
+  border-color: var(--ui-border-strong);
+  outline: none;
+}
+.vc-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.vc-identity p {
+  margin: 0;
+  color: var(--ui-muted);
+  line-height: 1.45;
+}
+.vc-banner {
+  margin: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--ui-border);
+  background: var(--ui-warning-soft);
+  color: var(--ui-warning);
+  font-size: var(--ui-text-meta);
+  line-height: 1.45;
+}
+.vc-banner p {
+  margin: 0 0 6px;
+}
+.vc-banner li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.vc-banner li > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vc-banner li > button {
+  flex-shrink: 0;
+}
+.vc-detail {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  overflow: auto;
+}
+.vc-detail-head,
+.vc-commit-head {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--ui-border);
+  background: var(--ui-surface);
+}
+.vc-detail-head h2,
+.vc-commit-head h2 {
+  overflow: hidden;
+  font-size: var(--ui-text-label);
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vc-commit-head {
+  position: static;
+  align-items: flex-start;
+}
+.vc-commit-head h2 {
+  white-space: normal;
+}
+.vc-detail-head p,
+.vc-commit-head p {
+  margin: 2px 0 0;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+}
+.vc-commit-head .vc-commit-body {
+  margin-top: 6px;
+  color: var(--ui-text);
+  font-size: var(--ui-text-label);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.vc-conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--ui-border);
+}
+.vc-diff-message {
+  margin: 0;
+  padding: 24px 20px;
+  color: var(--ui-muted);
+  line-height: 1.5;
+}
+.vc-diff-table {
+  font-family: var(
+    --ui-font-mono,
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace
+  );
+  font-size: 12px;
+  line-height: 1.55;
+}
+.vc-diff-row {
+  display: grid;
+  grid-template-columns: 48px 48px 18px minmax(0, 1fr);
+}
+.vc-diff-number {
+  padding-right: 8px;
+  color: var(--ui-muted);
+  text-align: right;
+  user-select: none;
+}
+.vc-diff-mark {
+  color: var(--ui-muted);
+  text-align: center;
+  user-select: none;
+}
+/* Manuscript paragraphs are single long lines, so changes wrap to be read. */
+.vc-diff-text {
+  min-width: 0;
+  padding-right: 20px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.vc-diff-row.is-add {
+  background: color-mix(in srgb, #22863a 13%, transparent);
+}
+.vc-diff-row.is-del {
+  background: color-mix(in srgb, #cb2431 12%, transparent);
+}
+.vc-diff-row.is-hunk {
+  background: var(--ui-page-soft);
+  color: var(--ui-muted);
+}
+.vc-diff-row.is-hunk .vc-diff-text {
+  min-height: 1.55em;
+}
+.vc-diff-row.is-note {
+  color: var(--ui-muted);
+  font-style: italic;
+}
+.vc-commit-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--ui-border);
+  text-align: left;
+}
+.vc-commit-subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.vc-commit-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+}
+.vc-pill {
+  padding: 0 6px;
+  border: 1px solid var(--ui-border);
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+}
+.vc-commit-files {
+  max-height: 180px;
+  flex-shrink: 0;
+  overflow: auto;
+  border-bottom: 1px solid var(--ui-border);
+}
+.vc-commit-files .vc-file-open {
+  width: 100%;
+  padding: 5px 20px;
+}
+.vc-connect {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  font-size: var(--ui-text-label);
+  line-height: 1.5;
+}
+.vc-connect p {
+  margin: 0;
+}
+.vc-connect label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.vc-connect-hosts {
+  display: flex;
+  gap: 8px;
+}
+.vc-connect-note {
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+}
+@container (max-width: 860px) {
+  .vc-bar .vc-checked {
+    display: none;
+  }
+}
+/* The chat panel can leave this page too narrow for two columns. */
+@container (max-width: 680px) {
+  .vc-split {
+    flex-direction: column;
+    overflow: auto;
+  }
+  .vc-list {
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--ui-border);
+  }
+  .vc-files,
+  .vc-commits {
+    flex: none;
+    max-height: 220px;
+  }
+  .vc-detail {
+    flex: none;
+    overflow: visible;
+  }
+  .vc-detail-head {
+    position: static;
+  }
+}

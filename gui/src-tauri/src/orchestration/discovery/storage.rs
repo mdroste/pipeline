@@ -5,7 +5,7 @@ use super::{
 };
 use rusqlite::{params, OptionalExtension, Transaction, TransactionBehavior};
 use serde::de::DeserializeOwned;
-use serde_json::json;
+use serde_json::{json, Value};
 
 pub fn get(s: &Store, id: &str) -> Result<Run> {
     let v: String = s
@@ -98,8 +98,39 @@ fn write(tx: &Transaction<'_>, r: &mut Run, kind: &str) -> Result<()> {
     if body.len() > 2 * 1024 * 1024 {
         return Err("Portfolio summary exceeds 2 MiB".into());
     }
-    if tx.execute("UPDATE discovery_runs SET revision=?2,state=?3,due_at=?4,deadline_at=?5,updated_at=?6,body=?7 WHERE id=?1 AND revision=?8",params![r.id,r.revision,r.state,r.due_at,r.deadline_at,r.updated_at,body,old]).map_err(err)?!=1 { return Err("Self-discovery changed; reload before continuing".into()); }
+    if tx.execute("UPDATE discovery_runs SET revision=?2,state=?3,due_at=?4,deadline_at=?5,updated_at=?6,body=?7 WHERE id=?1 AND revision=?8",params![r.id,r.revision,r.state,r.due_at,r.deadline_at,r.updated_at,body,old]).map_err(err)?!=1 { return Err("This research discovery changed; reload before continuing".into()); }
     event(tx, &r.id, kind, &r.reason)
+}
+const RECORD_LIMIT: usize = 4 * 1024 * 1024;
+/// The stored form of a record. Each manuscript version is also saved whole as
+/// its own artifacts, so a paper over the limit drops the inline copies of its
+/// oldest versions first and `artifacts::full_versions` reads them back. The
+/// newest version always stays inline: prompts and reviews work from it.
+fn bounded_record(value: &Value) -> String {
+    let mut body = value.to_string();
+    let last = value["versions"]
+        .as_array()
+        .map_or(0, |versions| versions.len().saturating_sub(1));
+    if body.len() <= RECORD_LIMIT || last == 0 {
+        return body;
+    }
+    let mut record = value.clone();
+    for index in 0..last {
+        let version = &mut record["versions"][index];
+        let saved = ["paper.md", "paper.tex", "references.bib"]
+            .iter()
+            .all(|name| version["artifacts"][name]["kind"] == "artifact");
+        if saved {
+            for field in ["markdown", "latex", "bibliography"] {
+                version["manuscript"][field] = json!("");
+            }
+            body = record.to_string();
+            if body.len() <= RECORD_LIMIT {
+                break;
+            }
+        }
+    }
+    body
 }
 fn write_records(tx: &Transaction<'_>, p: &Portfolio) -> Result<()> {
     for (kind, entries) in [
@@ -121,13 +152,23 @@ fn write_records(tx: &Transaction<'_>, p: &Portfolio) -> Result<()> {
         ),
     ] {
         for (index, value) in entries.iter().enumerate() {
-            let body = value.to_string();
-            if body.len() > 4 * 1024 * 1024 {
+            let body = bounded_record(value);
+            if body.len() > RECORD_LIMIT {
                 return Err("A retained research record exceeds 4 MiB".into());
             }
             tx.execute("INSERT INTO discovery_records VALUES(?1,?2,?3,?4) ON CONFLICT(run_id,kind,ordinal) DO UPDATE SET body=excluded.body",params![p.run.id,kind,index as i64,body]).map_err(err)?;
         }
     }
+    Ok(())
+}
+/// Refresh only the poll time, for a run whose state did not change.
+pub fn touch_due(s: &Store, id: &str, due: Option<i64>) -> Result<()> {
+    s.connection()?
+        .execute(
+            "UPDATE discovery_runs SET due_at=?2 WHERE id=?1",
+            params![id, due],
+        )
+        .map_err(err)?;
     Ok(())
 }
 pub fn save(s: &Store, p: &mut Portfolio, kind: &str, adopted: Option<&str>) -> Result<()> {
@@ -239,7 +280,7 @@ pub fn wake_owner(s: &Store, child: &str) -> Result<bool> {
 }
 pub fn due(s: &Store) -> Result<Vec<String>> {
     let c = s.connection()?;
-    let mut q=c.prepare("SELECT id FROM discovery_runs WHERE state IN ('running','awaitingSelection','paused','stopping') AND (due_at<=?1 OR deadline_at<=?1) ORDER BY COALESCE(due_at,deadline_at),id LIMIT 8").map_err(err)?;
+    let mut q=c.prepare("SELECT id FROM discovery_runs WHERE state IN ('running','awaitingSelection','paused','stopping') AND (due_at<=?1 OR (deadline_at<=?1 AND json_extract(body,'$.selectionSince') IS NULL)) ORDER BY COALESCE(due_at,deadline_at),id LIMIT 8").map_err(err)?;
     let rows = q
         .query_map([now()], |r| r.get(0))
         .map_err(err)?
@@ -288,7 +329,7 @@ pub fn select(s: &Store, p: &mut Portfolio, expected: &str, ids: Vec<u32>, op: &
     let r = &p.run;
     if r.definition.mode != Mode::Supervised
         || r.state != "awaitingSelection"
-        || r.deadline_at <= now()
+        || r.deadline_passed()
         || r.selection_hash.as_deref() != Some(expected)
         || ids.is_empty()
         || ids.len() > r.definition.paper_count
@@ -302,6 +343,11 @@ pub fn select(s: &Store, p: &mut Portfolio, expected: &str, ids: Vec<u32>, op: &
         return Err(
             "Choose distinct projects from the current shortlist within the paper limit".into(),
         );
+    }
+    // The elapsed clock stopped at the shortlist, so the time left to develop
+    // the papers is what it was then.
+    if let Some(since) = p.run.selection_since.take() {
+        p.run.deadline_at += now().saturating_sub(since).max(0);
     }
     p.run.selected = ids.clone();
     p.papers = ids.into_iter().map(Paper::new).collect();

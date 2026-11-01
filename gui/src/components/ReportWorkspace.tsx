@@ -122,12 +122,19 @@ export default function ReportWorkspace({
     [report],
   );
   const canOpenEvidence = !!runId || hasPageHeadings(extractedText);
+  // Without saved page images a page citation has nothing to open. An unloaded
+  // manifest proves nothing, so its chips stay live and Sources explains.
+  const pagesUnavailable =
+    !!runManifest &&
+    !runManifest.page_artifacts &&
+    !runManifest.artifacts.some((artifact) => artifact.group === "pages");
   const openEvidence = (evidence: IssueEvidence) => {
     if (!evidence.page && !evidence.artifactPath) return;
     setSourceRequest({
       key: Date.now(),
       page: evidence.page,
       relPath: evidence.artifactPath,
+      line: evidence.lineStart,
     });
     setTab("sources");
   };
@@ -216,6 +223,7 @@ export default function ReportWorkspace({
               issues={issues}
               runId={runId ?? null}
               onOpenEvidence={canOpenEvidence ? openEvidence : undefined}
+              pagesUnavailable={pagesUnavailable}
             />
           </div>
         )
@@ -458,7 +466,7 @@ export default function ReportWorkspace({
             <summary className="cursor-pointer font-medium">
               Show failure details
             </summary>
-            <ul className="mt-1 list-disc space-y-0.5 pl-4">
+            <ul className="mt-1 max-h-40 list-disc space-y-0.5 overflow-y-auto pl-4">
               {report.failed_steps.map((failure) => (
                 <li key={`${failure.step_id}-${failure.step_label}`}>
                   <span className="font-medium">{failure.step_label}:</span>{" "}

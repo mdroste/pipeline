@@ -9,7 +9,7 @@ use std::path::PathBuf;
 mod tests;
 
 fn error(e: impl std::fmt::Display) -> WorkbenchError {
-    WorkbenchError::storage("Self-discovery workspace", e)
+    WorkbenchError::storage("Research discovery", e)
 }
 fn key(value: &str) -> String {
     desk::hash(value.as_bytes())
@@ -152,7 +152,7 @@ pub fn source(
     } else {
         store
             .create_workspace(CreateWorkspaceRequest {
-                name: format!("Self-discovery: {title}"),
+                name: format!("Research discovery: {title}"),
                 root: None,
                 operation_id: project_op,
             })?
@@ -164,7 +164,7 @@ pub fn source(
     Ok(store
         .create_session(CreateSessionRequest {
             workspace_id: Some(workspace.id),
-            title: "Self-discovery research".into(),
+            title: "Research discovery".into(),
             operation_id: session_op,
         })?
         .record
@@ -208,7 +208,7 @@ pub fn role(
         store
             .create_session(CreateSessionRequest {
                 workspace_id: Some(ws.into()),
-                title: format!("Self-discovery · {role_key}"),
+                title: format!("Research discovery · {role_key}"),
                 operation_id: operation.clone(),
             })?
             .record
@@ -231,7 +231,7 @@ pub fn role(
                     source_workspace_id: None,
                     workspace_id: Some(ws.into()),
                     source_preset_id: h.preset.id.clone(),
-                    name: format!("Self-discovery · {role_key}"),
+                    name: format!("Research discovery · {role_key}"),
                     operation_id: preset_operation.clone(),
                 },
             )?
@@ -284,6 +284,7 @@ pub fn role(
         workspace_id: b.workspace_id,
         session_cursor: Some(b.cursor),
         harness_fingerprint: Some(b.harness_fingerprint),
+        connection_id: b.connection_id,
         runtime_root: Some(b.runtime_root),
         root_identity: Some(b.root_identity),
         profiles: source.profiles.clone(),

@@ -209,6 +209,8 @@ mod analyzers;
 
 mod artifacts;
 
+mod cancellation;
+
 mod findings;
 
 mod outputs;

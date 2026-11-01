@@ -132,6 +132,7 @@ pub async fn discovery_start(app: tauri::AppHandle, request: Start) -> Result<Va
         updated_at: time,
         due_at: Some(time),
         stop_outcome: None,
+        selection_since: None,
     };
     let copy = r.clone();
     c.db(move |s| storage::create(&s, &copy, &request.operation_id, &fp))
@@ -187,7 +188,7 @@ pub async fn discovery_paper(
 ) -> Result<Value> {
     super::super::manager(app).await?.db(move|s|{
         let p=storage::load(&s,&id)?.papers.into_iter().find(|p|p.candidate_id==candidate_id).ok_or("Paper unavailable")?;
-        Ok(json!({"candidateId":p.candidate_id,"state":p.state,"reason":p.reason,"rounds":p.rounds,"challenges":p.challenges,"evidence":p.evidence,"versions":p.versions,"assessment":p.assessment}))
+        Ok(json!({"candidateId":p.candidate_id,"state":p.state,"reason":p.reason,"rounds":p.rounds,"challenges":p.challenges,"evidence":p.evidence,"versions":super::artifacts::full_versions(&s,&p),"assessment":p.assessment}))
     }).await
 }
 #[tauri::command]
@@ -221,8 +222,9 @@ pub async fn discovery_control(
     let _gate = c.gate.lock().await;
     let mut p = c.db(move |s| storage::load(&s, &id)).await?;
     if p.run.revision != revision {
-        return Err("Self-discovery changed; reload before continuing".into());
+        return Err("This research discovery changed; reload before continuing".into());
     }
+    let mut adopted = None;
     match action.as_str() {
         "pause" if matches!(p.run.state.as_str(), "running" | "awaitingSelection") => {
             p.run.state = "paused".into();
@@ -244,7 +246,7 @@ pub async fn discovery_control(
             p.run.due_at = None;
         }
         "resume" if p.run.state == "paused" => {
-            if p.run.deadline_at <= now() {
+            if p.run.deadline_passed() {
                 return Err("This automation's elapsed deadline has passed".into());
             }
             p.run.state = if p.run.phase == Phase::Select {
@@ -268,39 +270,7 @@ pub async fn discovery_control(
                 .await?;
             }
         }
-        "retry" if p.run.state == "attention" => {
-            if p.run.deadline_at <= now() {
-                return Err("This automation's elapsed deadline has passed".into());
-            }
-            if let Some(id) = p.run.active_child.clone() {
-                let child = c.db(move |s| s.get(&id)).await?;
-                if child
-                    .progress
-                    .receipts
-                    .values()
-                    .any(|r| r.state == "running")
-                {
-                    return Err("The prior action has not stopped".into());
-                }
-            }
-            // Adopt the source conversation's current state; permissions,
-            // selected context and the folder still cannot change silently.
-            let source = p.run.source_scope.clone();
-            let expected = p.run.source_authority.clone();
-            p.run.source_scope =
-                run_store(move |s| research::readopt_scope(&s, &source, &expected, false))
-                    .await
-                    .map_err(|e| e.message)?;
-            p.run.active_child = None;
-            p.run.state = if p.run.phase == Phase::Select {
-                "awaitingSelection"
-            } else {
-                "running"
-            }
-            .into();
-            p.run.reason = "Retry authorized with the current conversation state".into();
-            p.run.due_at = Some(now());
-        }
+        "retry" if p.run.state == "attention" => adopted = retry(&c, &mut p).await?,
         "stop" if !p.run.terminal() => {
             if let Some(id) = p.run.active_child.clone() {
                 super::super::missions::stop_child(&c, &id).await?;
@@ -315,7 +285,7 @@ pub async fn discovery_control(
         }
         _ => return Err("This control is unavailable in the current state".into()),
     }
-    save(&c, &mut p, &action, None).await?;
+    save(&c, &mut p, &action, adopted).await?;
     if p.run.terminal() {
         let id = p.run.id.clone();
         run_store(move |s| workspace::revoke(&s, &id))
@@ -323,6 +293,58 @@ pub async fn discovery_control(
             .map_err(|e| e.message)?;
     }
     Ok(export::view(&p))
+}
+/// An explicit retry closes out the failed child, charging its active time,
+/// and returns its id so the save marks it adopted.
+pub(super) async fn retry(c: &Coordinator, p: &mut Portfolio) -> Result<Option<String>> {
+    if p.run.deadline_passed() {
+        return Err("This automation's elapsed deadline has passed".into());
+    }
+    let child = match p.run.active_child.clone() {
+        Some(id) => Some(c.db(move |s| s.get(&id)).await?),
+        None => None,
+    };
+    if child.iter().any(|child| {
+        child
+            .progress
+            .receipts
+            .values()
+            .any(|r| r.state == "running")
+    }) {
+        return Err("The previous step is still stopping. Try again in a moment.".into());
+    }
+    // Adopt the source conversation's current state; permissions,
+    // selected context and the folder still cannot change silently.
+    let source = p.run.source_scope.clone();
+    let expected = p.run.source_authority.clone();
+    p.run.source_scope = run_store(move |s| research::readopt_scope(&s, &source, &expected, false))
+        .await
+        .map_err(|e| e.message)?;
+    if let Some(child) = &child {
+        account(p, child);
+    }
+    // A failed author turn moved the paper's conversation past its recorded
+    // cursor. Re-adopt it here or every later Retry is refused.
+    let author = matches!(p.run.phase, Phase::Research { .. } | Phase::Draft { .. });
+    if let Some(paper) = p.run.phase.paper().filter(|_| author) {
+        let paper = p.papers.get_mut(paper).ok_or("Paper unavailable")?;
+        if let (Some(scope), Some(fp)) = (paper.scope.clone(), paper.authority.clone()) {
+            paper.scope = Some(
+                run_store(move |s| research::readopt_scope(&s, &scope, &fp, true))
+                    .await
+                    .map_err(|e| e.message)?,
+            );
+        }
+    }
+    p.run.state = if p.run.phase == Phase::Select {
+        "awaitingSelection"
+    } else {
+        "running"
+    }
+    .into();
+    p.run.reason = "Retry authorized with the current conversation state".into();
+    p.run.due_at = Some(now());
+    Ok(child.map(|child| child.id))
 }
 #[tauri::command]
 pub async fn discovery_export(
@@ -343,8 +365,8 @@ pub async fn discovery_export(
         .await?;
     crate::commands::save_via_dialog(
         &app,
-        &format!("self-discovery.{ext}"),
-        "Self-discovery research",
+        &format!("research-discovery.{ext}"),
+        "Research discovery",
         ext,
         bytes,
     )

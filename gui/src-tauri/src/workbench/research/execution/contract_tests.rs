@@ -42,6 +42,15 @@ fn fixture() -> Fixture {
 }
 
 fn prepare(f: &Fixture, script: &str, outputs: &[&str]) -> PreparedExecution {
+    prepare_with_inputs(f, script, &[], outputs)
+}
+
+fn prepare_with_inputs(
+    f: &Fixture,
+    script: &str,
+    inputs: &[&str],
+    outputs: &[&str],
+) -> PreparedExecution {
     let profile = save_execution_profile(
         &f.store,
         SaveExecutionProfileRequest {
@@ -52,8 +61,8 @@ fn prepare(f: &Fixture, script: &str, outputs: &[&str]) -> PreparedExecution {
             argv: vec!["/bin/sh".into(), "-c".into(), script.into()],
             cwd: f.root.to_string_lossy().into_owned(),
             environment: json!({}),
-            inputs: vec![],
-            timeout_seconds: 5,
+            inputs: inputs.iter().map(|value| (*value).into()).collect(),
+            timeout_seconds: 30,
             outputs: outputs.iter().map(|value| (*value).into()).collect(),
             expected_revision: None,
             operation_id: "save-profile".into(),
@@ -62,7 +71,7 @@ fn prepare(f: &Fixture, script: &str, outputs: &[&str]) -> PreparedExecution {
     .unwrap();
     let preview = preview_host_execution(&f.store, &profile.id).unwrap();
     authorize_host_execution(&f.store, &profile.id, &preview.fingerprint).unwrap();
-    let PreparedOrExisting::Prepared(prepared) = prepare_execution(
+    let PreparedOrExisting::Prepared(prepared, _) = prepare_execution(
         &f.store,
         RunExecutionRequest {
             plan_id: None,
@@ -145,7 +154,7 @@ fn cancellation_before_launch_retains_an_unstarted_interrupted_receipt() {
 }
 
 #[test]
-fn spawn_failure_retains_unknown_outcome_without_claiming_a_started_process() {
+fn spawn_failure_is_a_failed_run_that_claims_no_started_process() {
     let f = fixture();
     let prepared = prepare(&f, "exit 0", &[]);
     start_execution(&f.store, &prepared.execution_id).unwrap();
@@ -153,11 +162,11 @@ fn spawn_failure_retains_unknown_outcome_without_claiming_a_started_process() {
     // disappears between preparation and spawn.
     fs::remove_dir(&f.root).unwrap();
     let output = wait_execution(&prepared);
-    assert_eq!(output.outcome, "outcome_unknown");
+    assert_eq!(output.outcome, "failed");
     assert!(!output.process_started);
     assert!(String::from_utf8_lossy(&output.stderr).contains("Failed to start research execution"));
     let receipt = finalize_execution(&f.store, prepared, output).unwrap();
-    assert_eq!(receipt.outcome, "outcome_unknown");
+    assert_eq!(receipt.outcome, "failed");
     assert_eq!(receipt.validation["processStarted"], false);
     assert!(receipt.output_manifest["artifacts"]
         .as_array()
@@ -166,28 +175,222 @@ fn spawn_failure_retains_unknown_outcome_without_claiming_a_started_process() {
 }
 
 #[test]
-fn adoption_failure_leaves_unknown_receipt_without_a_completed_journal() {
+fn a_linked_output_is_reported_without_following_it_and_keeps_the_run() {
     let f = fixture();
     let prepared = prepare(&f, "exit 0", &["result.txt"]);
     let id = prepared.execution_id.clone();
-    let profile = prepared.profile.id.clone();
     start_execution(&f.store, &id).unwrap();
     let outside = f._temporary.path().join("outside.txt");
     fs::write(&outside, b"outside output").unwrap();
     std::os::unix::fs::symlink(&outside, f.root.join("result.txt")).unwrap();
-    let error = finalize_execution(&f.store, prepared, completed_output()).unwrap_err();
-    let receipt = get_execution(&f.store, &id).unwrap();
-    assert_eq!(receipt.outcome, "outcome_unknown");
-    assert_eq!(receipt.validation, json!({"adoptionError":error.message}));
-    assert_eq!(receipt.output_manifest, json!({}));
-    assert!(journal(&f.store, &id).is_none());
+    let receipt = finalize_execution(&f.store, prepared, completed_output()).unwrap();
+    assert_eq!(receipt.outcome, "completed");
+    assert_eq!(receipt.exit_status, Some(0));
+    assert_eq!(receipt.stdout.as_deref(), Some("completed output\n"));
+    assert!(journal(&f.store, &id).is_some());
+    let entry = &receipt.output_manifest["notRetained"][0];
+    assert_eq!(entry["path"], "result.txt");
+    assert!(entry.get("contentHash").is_none(), "{entry}");
+    let reason = entry["reason"].as_str().unwrap();
+    assert!(reason.contains("symbolic link"), "{reason}");
+    assert!(!reason.contains("Paper"), "{reason}");
     assert_eq!(artifact_count(&f.store), 0);
-    assert!(get_execution_profile(&f.store, &profile)
-        .unwrap()
-        .test_status
-        .is_none());
     assert_eq!(fs::read(&outside).unwrap(), b"outside output");
     assert!(crate::workbench::project::execution_lock(&f.store, &f.workspace_id).is_ok());
+}
+
+fn sparse_file(path: &std::path::Path, bytes: u64) {
+    fs::File::create(path).unwrap().set_len(bytes).unwrap();
+}
+
+const MIB: u64 = 1024 * 1024;
+
+#[test]
+fn oversized_declared_files_keep_their_hash_and_the_finished_run_keeps_its_logs() {
+    let f = fixture();
+    sparse_file(&f.root.join("panel.dta"), 257 * MIB);
+    let script = "printf 'read the panel\\n'; printf 'a warning\\n' >&2; \
+                  printf x | dd of=estimates.dta bs=1048576 seek=201 2>/dev/null; exit 0";
+    let prepared = prepare_with_inputs(&f, script, &["panel.dta"], &["estimates.dta"]);
+    let id = prepared.execution_id.clone();
+    let input = &prepared.manifest["files"][0];
+    assert_eq!(input["sizeBytes"], 257 * MIB);
+    assert!(input["contentHash"].is_string());
+    assert!(input["snapshot"].as_str().unwrap().contains("Hash only"));
+    assert!(prepared.manifest["snapshotCapture"].is_string());
+    assert!(prepared.manifest.get("snapshots").is_none());
+
+    start_execution(&f.store, &id).unwrap();
+    let output = wait_execution(&prepared);
+    assert_eq!(output.outcome, "completed", "{output:?}");
+    let receipt = finalize_execution(&f.store, prepared, output).unwrap();
+
+    assert_eq!(receipt.outcome, "completed");
+    assert_eq!(receipt.exit_status, Some(0));
+    assert!(receipt.output_manifest["artifacts"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let kept = &receipt.output_manifest["notRetained"][0];
+    assert_eq!(kept["path"], "estimates.dta");
+    assert_eq!(kept["sizeBytes"], 201 * MIB + 1);
+    assert_eq!(
+        kept["contentHash"].as_str().map(str::len),
+        Some(64),
+        "{kept}"
+    );
+    assert!(kept["reason"].as_str().unwrap().contains("200 MiB"));
+    assert_eq!(artifact_count(&f.store), 0);
+
+    let logs =
+        crate::workbench::research::jobs::execution_output(&f.store, &f.workspace_id, &id).unwrap();
+    assert_eq!(logs.stdout.as_deref(), Some("read the panel\n"));
+    assert_eq!(logs.stderr.as_deref(), Some("a warning\n"));
+    assert_eq!(
+        get_execution(&f.store, &id).unwrap().stdout.as_deref(),
+        Some("read the panel\n")
+    );
+}
+
+#[test]
+fn a_failed_command_reports_its_own_outcome_when_its_output_is_oversized() {
+    let f = fixture();
+    let prepared = prepare(
+        &f,
+        "printf partial; printf x | dd of=big.out bs=1048576 seek=201 2>/dev/null; exit 3",
+        &["big.out"],
+    );
+    let id = prepared.execution_id.clone();
+    start_execution(&f.store, &id).unwrap();
+    let output = wait_execution(&prepared);
+    let receipt = finalize_execution(&f.store, prepared, output).unwrap();
+    assert_eq!(receipt.outcome, "failed");
+    assert_eq!(receipt.exit_status, Some(3));
+    assert_eq!(receipt.stdout.as_deref(), Some("partial"));
+    assert_eq!(receipt.output_manifest["notRetained"][0]["path"], "big.out");
+    assert!(journal(&f.store, &id).is_some());
+}
+
+#[test]
+fn an_adoption_error_still_saves_the_logs_and_the_process_outcome() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let f = fixture();
+    let prepared = prepare(
+        &f,
+        "printf done; printf result > result.txt",
+        &["result.txt"],
+    );
+    let id = prepared.execution_id.clone();
+    start_execution(&f.store, &id).unwrap();
+    let output = wait_execution(&prepared);
+    assert_eq!(output.outcome, "completed", "{output:?}");
+    let blobs = f.store.root_path().join("blobs");
+    fs::set_permissions(&blobs, fs::Permissions::from_mode(0o500)).unwrap();
+    let result = finalize_execution(&f.store, prepared, output);
+    fs::set_permissions(&blobs, fs::Permissions::from_mode(0o700)).unwrap();
+    let receipt = result.unwrap();
+    assert_eq!(receipt.outcome, "completed");
+    assert_eq!(receipt.exit_status, Some(0));
+    assert_eq!(receipt.stdout.as_deref(), Some("done"));
+    assert!(journal(&f.store, &id).is_some());
+    let entry = &receipt.output_manifest["notRetained"][0];
+    assert_eq!(entry["path"], "result.txt");
+    assert!(entry["contentHash"].is_string(), "{entry}");
+    assert!(entry["reason"].is_string(), "{entry}");
+    assert_eq!(artifact_count(&f.store), 0);
+}
+
+#[test]
+fn an_input_within_the_snapshot_budget_is_kept_even_above_the_import_limit() {
+    let f = fixture();
+    sparse_file(&f.root.join("sample.dta"), 201 * MIB);
+    let profile = save_execution_profile(
+        &f.store,
+        SaveExecutionProfileRequest {
+            profile_id: None,
+            workspace_id: f.workspace_id.clone(),
+            name: "Budget".into(),
+            adapter: "command".into(),
+            argv: vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
+            cwd: f.root.to_string_lossy().into_owned(),
+            environment: json!({}),
+            inputs: vec!["sample.dta".into()],
+            timeout_seconds: 5,
+            outputs: vec![],
+            expected_revision: None,
+            operation_id: "save-budget".into(),
+        },
+    )
+    .unwrap();
+    let snapshots = super::outputs::snapshot_execution_inputs(&f.store, &profile, "execution");
+    assert!(snapshots.get("notRetained").is_none(), "{snapshots}");
+    assert_eq!(snapshots["artifacts"][0]["path"], "sample.dta");
+    assert_eq!(snapshots["artifacts"][0]["sizeBytes"], 201 * MIB);
+    assert_eq!(artifact_count(&f.store), 1);
+}
+
+fn input_error(f: &Fixture, inputs: &[&str]) -> (Value, String) {
+    let profile = save_execution_profile(
+        &f.store,
+        SaveExecutionProfileRequest {
+            profile_id: None,
+            workspace_id: f.workspace_id.clone(),
+            name: "Input problems".into(),
+            adapter: "command".into(),
+            argv: vec!["/bin/sh".into(), "-c".into(), "exit 0".into()],
+            cwd: f.root.to_string_lossy().into_owned(),
+            environment: json!({}),
+            inputs: inputs.iter().map(|value| (*value).into()).collect(),
+            timeout_seconds: 5,
+            outputs: vec![],
+            expected_revision: None,
+            operation_id: "save-input-problems".into(),
+        },
+    )
+    .unwrap();
+    let message = preview_host_execution(&f.store, &profile.id)
+        .unwrap_err()
+        .message;
+    let manifest = super::input_manifest(&get_execution_profile(&f.store, &profile.id).unwrap())
+        .unwrap()
+        .0;
+    (manifest, message)
+}
+
+#[test]
+fn inputs_are_absent_linked_or_unreadable_rather_than_all_missing() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let f = fixture();
+    let outside = f._temporary.path().join("outside.csv");
+    fs::write(&outside, b"outside").unwrap();
+    std::os::unix::fs::symlink(&outside, f.root.join("linked.csv")).unwrap();
+    let locked = f.root.join("locked.csv");
+    fs::write(&locked, b"locked").unwrap();
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let (manifest, message) = input_error(&f, &["gone.csv", "linked.csv", "locked.csv"]);
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o600)).unwrap();
+
+    assert_eq!(manifest["complete"], false);
+    let files = manifest["files"].as_array().unwrap();
+    assert_eq!(files[0], json!({"path":"gone.csv","missing":true}));
+    assert!(files[1]["unavailable"]
+        .as_str()
+        .unwrap()
+        .contains("symbolic link"));
+    assert!(files[1].get("missing").is_none());
+    assert!(files[2]["unavailable"]
+        .as_str()
+        .unwrap()
+        .contains("can't be read"));
+    assert!(files[2].get("missing").is_none());
+    for expected in [
+        "gone.csv was not found",
+        "linked.csv is a symbolic link",
+        "locked.csv can't be read",
+    ] {
+        assert!(message.contains(expected), "{message}");
+    }
+    assert!(!message.contains("Paper"), "{message}");
 }
 
 #[test]

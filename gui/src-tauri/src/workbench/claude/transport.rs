@@ -1,4 +1,5 @@
 //! One independently supervised CLI process per Workspace turn. No Review state.
+use super::super::turn_loop::{ModelClock, TurnEvents, HOST_TIME_LIMIT};
 use super::*;
 use std::process::Stdio;
 use std::time::Duration;
@@ -17,8 +18,24 @@ pub(super) struct Process {
 
 impl Process {
     /// `sandbox` adds Claude Code's command sandbox settings for a turn that
-    /// offers the Bash tool.
-    pub async fn start(args: &[String], sandbox: Option<&Value>) -> Result<Self, String> {
+    /// offers the Bash tool. `working` replaces the process's temporary
+    /// working directory when Bash may write in a lasting root.
+    pub async fn start(
+        args: &[String],
+        sandbox: Option<&Value>,
+        working: Option<&std::path::Path>,
+    ) -> Result<Self, String> {
+        let wsl = super::wsl::detect_async().await.environment()?;
+        Self::start_in(args, sandbox, working, wsl).await
+    }
+
+    /// `start` for a turn that already asked whether WSL is available.
+    pub async fn start_in(
+        args: &[String],
+        sandbox: Option<&Value>,
+        working: Option<&std::path::Path>,
+        wsl: Option<super::wsl::Environment>,
+    ) -> Result<Self, String> {
         let directory = tempfile::tempdir().map_err(|e| e.to_string())?;
         let mut args = args.to_vec();
         // macOS has a small argv budget. Keep large profile/context text in
@@ -31,14 +48,14 @@ impl Process {
                 args[i + 1] = path.to_string_lossy().into_owned();
             }
         }
-        let cwd = directory.path().to_str();
-        let (mut command, status, wsl) = if let Some(environment) = super::wsl::detect_async().await
-        {
+        let cwd = working.unwrap_or(directory.path()).to_str();
+        let (command, status, wsl) = if let Some(environment) = wsl {
             let sandbox = sandbox.cloned();
             let args = args.clone();
             let directory = directory.path().to_owned();
+            let working = working.map(std::path::Path::to_owned);
             let (command, status, group) = tokio::task::spawn_blocking(move || {
-                environment.prepare(sandbox.as_ref(), &args, &directory)
+                environment.prepare(sandbox.as_ref(), &args, &directory, working.as_deref())
             })
             .await
             .map_err(|e| e.to_string())??;
@@ -54,7 +71,16 @@ impl Process {
                 None,
             )
         };
-        let usage_account = super::usage::account_key(&status);
+        Self::attach(command, directory, super::usage::account_key(&status), wsl)
+    }
+
+    /// Takes ownership of a prepared CLI command and its private folder.
+    pub(super) fn attach(
+        mut command: tokio::process::Command,
+        directory: tempfile::TempDir,
+        usage_account: Option<String>,
+        wsl: Option<super::wsl::OwnedGroup>,
+    ) -> Result<Self, String> {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -107,12 +133,18 @@ impl Process {
     }
 
     pub async fn read(&mut self) -> Result<Value, String> {
+        self.read_sized().await.map(|(value, _)| value)
+    }
+
+    /// One frame and its size on the wire, which a turn counts against its budget.
+    async fn read_sized(&mut self) -> Result<(Value, usize), String> {
         let line = crate::pipeline::logging::next_bounded_line(&mut self.stdout, 2 * 1024 * 1024).await.map_err(|e| e.to_string())?
             .ok_or("Claude Code closed its output before completing the turn. Check its subscription sign-in and CLI version.")?;
         if line.truncated {
             return Err("Claude output exceeded its frame limit".into());
         }
         serde_json::from_str(&line.text)
+            .map(|value| (value, line.text.len()))
             .map_err(|_| "Claude Code emitted invalid stream-json".into())
     }
 
@@ -190,60 +222,28 @@ async fn control_answer(
 }
 
 /// Model time allowed for one turn, including exchanges with Claude's stdin
-/// and stdout. Time spent in Pipeline's project tools, including a local job
-/// that a research run waits for under its own profile timeout, is not counted.
+/// and stdout. Time spent running a command in Claude's Bash tool or in
+/// Pipeline's project tools, including a local job that a research run waits
+/// for under its own profile timeout, is not counted.
 const MODEL_TIME_LIMIT: Duration = Duration::from_secs(15 * 60);
-const MODEL_TIMEOUT: &str = "Claude turn timed out after 15 minutes of model time. Time spent in project tools and local jobs is not counted.";
-/// Project-tool time allowed for one turn: two research runs at the longest
-/// profile timeout (7,200 seconds), or one that first waits behind another job.
-const HOST_TIME_LIMIT: Duration = Duration::from_secs(4 * 60 * 60);
-const HOST_TIMEOUT: &str = "Claude turn stopped after 4 hours in project tools and local jobs.";
+const MODEL_TIMEOUT: &str = "Claude turn timed out after 15 minutes of model time. Time spent in commands, project tools and local jobs is not counted.";
+const HOST_TIMEOUT: &str =
+    "Claude turn stopped after 4 hours in commands, project tools and local jobs.";
 
-/// A turn deadline that stands still while Pipeline handles host work, which
-/// has its own allowance for the turn.
-pub(super) struct ModelClock {
-    deadline: tokio::time::Instant,
-    host_left: Duration,
+pub(super) fn turn_clock() -> ModelClock {
+    ModelClock::new(MODEL_TIME_LIMIT, HOST_TIME_LIMIT)
 }
 
-impl ModelClock {
-    pub(super) fn new(model_limit: Duration, host_limit: Duration) -> Self {
-        Self {
-            deadline: tokio::time::Instant::now() + model_limit,
-            host_left: host_limit,
-        }
-    }
-
-    /// Waits for model output or input; `None` once the model time is used up.
-    pub(super) async fn model<T>(&self, work: impl std::future::Future<Output = T>) -> Option<T> {
-        tokio::time::timeout_at(self.deadline, work).await.ok()
-    }
-
-    /// Runs host work and moves the deadline by the time it took; `None`
-    /// once the turn's host time is used up.
-    pub(super) async fn host<T>(
-        &mut self,
-        work: impl std::future::Future<Output = T>,
-    ) -> Option<T> {
-        let started = tokio::time::Instant::now();
-        let result = tokio::time::timeout(self.host_left, work).await.ok();
-        let elapsed = started.elapsed();
-        self.deadline += elapsed;
-        self.host_left = self.host_left.saturating_sub(elapsed);
-        result
-    }
-}
-
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn drive(
     process: &mut Process,
-    app: &tauri::AppHandle,
+    app: &impl TurnEvents,
     turn: &Turn,
-    user_text: &str,
     prompt: &protocol::Prompt,
     specs: Vec<Value>,
+    mut clock: ModelClock,
     mut cancel: watch::Receiver<bool>,
 ) -> Result<(), String> {
-    let mut clock = ModelClock::new(MODEL_TIME_LIMIT, HOST_TIME_LIMIT);
     let work = async {
         turn.emit(
             app,
@@ -255,7 +255,6 @@ pub(super) async fn drive(
             },
         )
         .await?;
-        turn.item(app, "user", "userMessage", user_text).await?;
         let message = json!({"type":"user","message":{"role":"user","content":prompt.text},"parent_tool_use_id":null,"session_id":""});
         clock
             .model(process.write(&message))
@@ -266,8 +265,18 @@ pub(super) async fn drive(
         let mut calls = 0;
         let mut activity = super::activity::Activity::default();
         loop {
-            let value = clock.model(process.read()).await.ok_or(MODEL_TIMEOUT)??;
-            bytes += value.to_string().len();
+            // Claude's own tools run inside the CLI, so a command in progress
+            // looks like silence here. It is host time, not model time.
+            let frame = if activity.running() {
+                clock.host(process.read_sized()).await.ok_or(HOST_TIMEOUT)?
+            } else {
+                clock
+                    .model(process.read_sized())
+                    .await
+                    .ok_or(MODEL_TIMEOUT)?
+            };
+            let (value, size) = frame?;
+            bytes += size;
             if bytes > 64 * 1024 * 1024 {
                 return Err("Claude turn exceeded its output budget".into());
             }
@@ -294,20 +303,13 @@ pub(super) async fn drive(
                 }
                 Some("stream_event") if value["parent_tool_use_id"].is_null() => {
                     if let Some(delta) = value["event"]["delta"]["text"].as_str() {
-                        let _ = app.emit(
-                            "workbench:event",
-                            NormalizedEvent::AgentMessageDelta {
-                                epoch: turn.epoch,
-                                thread_id: turn.thread.clone(),
-                                turn_id: turn.id.clone(),
-                                item_id: format!(
-                                    "{}-assistant-{}",
-                                    turn.id,
-                                    answers.stream_index()
-                                ),
-                                delta: delta.into(),
-                            },
-                        );
+                        let _ = app.publish(&NormalizedEvent::AgentMessageDelta {
+                            epoch: turn.epoch,
+                            thread_id: turn.thread.clone(),
+                            turn_id: turn.id.clone(),
+                            item_id: format!("{}-assistant-{}", turn.id, answers.stream_index()),
+                            delta: delta.into(),
+                        });
                     }
                 }
                 Some("rate_limit_event") => {
@@ -350,7 +352,7 @@ pub async fn workbench_claude_model_catalog(
         "--no-session-persistence",
     ]
     .map(str::to_owned);
-    let mut process = Process::start(&args, None).await?;
+    let mut process = Process::start(&args, None, None).await?;
     let result = process.initialize(&[]).await;
     process.stop().await;
     let initialization = result?;

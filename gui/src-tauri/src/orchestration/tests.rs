@@ -82,10 +82,47 @@ fn failed_attempt(s: &Store, status: &str) -> TaskRun {
     run
 }
 
+/// `run_store` always opens the default Workspace store, so tests that cross
+/// that boundary share one disposable root for the life of the test process.
+/// Only a debug build honors the override, and a release test run must stop
+/// here rather than reach real data.
+pub(crate) fn disposable_workspace() -> crate::workbench::store::Store {
+    static ROOT: std::sync::OnceLock<tempfile::TempDir> = std::sync::OnceLock::new();
+    if !cfg!(debug_assertions) {
+        panic!("Only a debug build can redirect the Workspace store");
+    }
+    ROOT.get_or_init(|| {
+        let root = tempfile::tempdir().unwrap();
+        std::env::set_var("PIPELINE_WORKBENCH_DEV_ROOT", root.path());
+        root
+    });
+    crate::workbench::store::Store::open_default().unwrap()
+}
+
+/// The turn permit and active turn state are process-wide, so tests that touch
+/// them take turns.
+pub(crate) async fn exclusive_turn_state() -> tokio::sync::MutexGuard<'static, ()> {
+    static GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    GATE.lock().await
+}
+
+/// Waits for a dispatched action and returns its run once the action settles.
+pub(super) async fn settled(c: &Coordinator, id: &str) -> TaskRun {
+    for _ in 0..1000 {
+        let run = c.store.get(id).unwrap();
+        if run.progress.receipts.values().any(|r| r.state != "running") {
+            return run;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("The dispatched action never settled");
+}
+
 mod coordinator;
 
 mod availability;
 mod interpreter;
 mod receipts;
+mod recovery;
 mod schedules;
 mod snapshots;

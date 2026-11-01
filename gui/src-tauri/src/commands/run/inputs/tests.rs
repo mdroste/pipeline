@@ -60,9 +60,16 @@ async fn captured_named_input_keeps_bytes_events_and_tempfile_lifetime() {
             extra_tmps,
             runtime_extra_sources,
             extra_sources,
-        } = capture_named_inputs(&bus, &config, &provided, &run_input_dir, &mut run_writer)
-            .await
-            .unwrap();
+        } = capture_named_inputs(
+            &bus,
+            &config,
+            &provided,
+            crate::pipeline::extract::MAX_FOLDER_COPY_FILES,
+            &run_input_dir,
+            &mut run_writer,
+        )
+        .await
+        .unwrap();
         assert_eq!(extra_sources, provided);
         assert_eq!(persisted_inputs["rubric"], "context/inputs/00_rubric.txt");
         let durable = run_writer

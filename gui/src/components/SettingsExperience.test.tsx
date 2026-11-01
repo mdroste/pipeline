@@ -146,7 +146,7 @@ it("does not persist an empty retention field and only commits valid input", asy
   const input = await screen.findByLabelText("Review history size limit in GB");
   await user.clear(input);
   await user.tab();
-  expect(input).toHaveAttribute("aria-invalid", "true");
+  await waitFor(() => expect(input).toHaveAttribute("aria-invalid", "true"));
   expect(
     mocks.invoke.mock.calls.some(([name]) => name === "save_settings"),
   ).toBe(false);

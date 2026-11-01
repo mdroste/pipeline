@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { deskClient, type DeskRecord } from "../../lib/deskClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 import ConnectorNotice from "./ConnectorNotice";
 import { button, card, input, muted } from "./shared";
 
@@ -27,7 +28,9 @@ export default function DataConnectors({
     run(async () => {
       const receipt = await fn();
       if (receipt.kind === "acquisition")
-        onError(String(receipt.body.error ?? "Acquisition failed"));
+        onError(
+          workbenchErrorMessage(receipt.body.error ?? "Acquisition failed"),
+        );
     });
   return (
     <>

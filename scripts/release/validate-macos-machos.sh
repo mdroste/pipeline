@@ -64,7 +64,10 @@ resolve_poppler_dependency() {
 
 count=0
 while IFS= read -r -d '' binary; do
-  if ! file "$binary" | grep -q 'Mach-O'; then
+  # Capture before matching: with pipefail, grep -q closing the pipe early
+  # kills the writer with SIGPIPE and turns a match into a failure.
+  description="$(file "$binary")"
+  if [[ "$description" != *Mach-O* ]]; then
     continue
   fi
   count=$((count + 1))
@@ -86,9 +89,12 @@ while IFS= read -r -d '' binary; do
   fi
 
   codesign --verify --strict --verbose=2 "$binary"
-  if $require_developer_id && ! codesign -dv --verbose=4 "$binary" 2>&1 | grep -q '^Authority=Developer ID Application:'; then
-    echo "Mach-O lacks a Developer ID Application signature: $binary" >&2
-    exit 1
+  if $require_developer_id; then
+    signature="$(codesign -dv --verbose=4 "$binary" 2>&1)"
+    if [[ "$signature" != *$'\nAuthority=Developer ID Application:'* ]]; then
+      echo "Mach-O lacks a Developer ID Application signature: $binary" >&2
+      exit 1
+    fi
   fi
 
   self_id="$(otool -D "$binary" 2>/dev/null | sed -n '2p' || true)"

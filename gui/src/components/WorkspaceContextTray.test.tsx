@@ -10,6 +10,7 @@ import WorkspaceContextTray, {
   addContextObject,
   addContextObjectsWhenReady,
 } from "./WorkspaceContextTray";
+import { appEvents } from "../lib/appEvents";
 import type { ContextSelection, OpenResearchObject } from "../lib/deskClient";
 const mocks = vi.hoisted(() => ({
   context: vi.fn(),
@@ -192,4 +193,52 @@ it("reloads authoritative selection after a concurrent edit conflict", async () 
       name: /Source revision-one, used as Source\./,
     }),
   ).toBeInTheDocument();
+});
+
+it("opens a source from its menu", async () => {
+  mocks.context.mockResolvedValue({
+    revision: 1,
+    items: [{ role: "source", object }],
+  });
+  mocks.read.mockResolvedValue({ title: "Paper" });
+  const opened = vi.fn();
+  const off = appEvents.on("open-object", opened);
+  render(tray());
+  await loaded();
+  fireEvent.click(
+    await screen.findByRole("button", { name: /^Paper, used as/ }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Open" }));
+  expect(opened).toHaveBeenCalledWith({ workspaceId: "w", object });
+  off();
+});
+
+it("keeps the names it could read when one source can't be read", async () => {
+  const items = [paper("good"), paper("bad")].map((object, index) => ({
+    object,
+    role: "source" as const,
+    position: index,
+  }));
+  mocks.context.mockResolvedValue({ revision: 1, items });
+  mocks.read.mockImplementation(async (_w: string, object: any) => {
+    if (object.id === "bad") throw new Error("gone");
+    return { title: "Readable paper" };
+  });
+  mocks.saveContext.mockImplementation(async (_s, _o, next) => ({
+    revision: 2,
+    items: next,
+  }));
+  render(tray());
+  await screen.findByLabelText("Remove Readable paper from context");
+  expect(
+    screen.getByLabelText("Remove paper (could not be read) from context"),
+  ).toBeInTheDocument();
+  expect(onError).not.toHaveBeenCalled();
+
+  // Reading a source loads its full text, so a change reads only what is new.
+  mocks.read.mockClear();
+  fireEvent.click(screen.getByLabelText("Remove Readable paper from context"));
+  await waitFor(() => expect(mocks.saveContext).toHaveBeenCalled());
+  await act(async () => {});
+  expect(mocks.read).not.toHaveBeenCalled();
 });

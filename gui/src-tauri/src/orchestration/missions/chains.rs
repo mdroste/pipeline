@@ -7,7 +7,12 @@ use crate::orchestration::{
     definition::{Action, Binding, Chain, Limits, Step},
     store::Result,
 };
+use crate::workbench::search::prefix;
 use std::collections::BTreeMap;
+
+/// A chain's name and step label are each limited to 200 bytes, not characters.
+const LABEL_BYTES: usize = 200;
+const NAME_PART_BYTES: usize = 98;
 
 pub(crate) fn child_chain(m: &Mission) -> Result<Chain> {
     let workspace = |prompt| Action::Workspace {
@@ -65,7 +70,7 @@ pub(crate) fn child_chain(m: &Mission) -> Result<Chain> {
                         .ok_or("Experiment identity is missing")?,
                 },
             };
-            (c.question.chars().take(160).collect(), action)
+            (prefix(&c.question, LABEL_BYTES).to_string(), action)
         }
     };
     let remaining = (m.definition.budget.active_seconds as u64)
@@ -75,8 +80,8 @@ pub(crate) fn child_chain(m: &Mission) -> Result<Chain> {
         schema_version: 1,
         name: format!(
             "{} · {}",
-            m.definition.name.chars().take(60).collect::<String>(),
-            label.chars().take(90).collect::<String>()
+            prefix(&m.definition.name, NAME_PART_BYTES),
+            prefix(&label, NAME_PART_BYTES)
         ),
         description: "Managed research mission action".into(),
         steps: vec![Step {

@@ -37,8 +37,8 @@ const RECORD_KINDS: Array<[string, string]> = [
   ["literature", "Literature notes"],
   ["bibliography", "Bibliography entries"],
   ["build", "Build configurations"],
-  ["checkpoint", "Task change sets"],
-  ["application", "Acceptance journals"],
+  ["checkpoint", "Captured edits"],
+  ["application", "Accepted edits"],
 ];
 const DEFAULT_KINDS = [
   "task",
@@ -77,7 +77,7 @@ export default function WorkspaceExchangePanel({
   const [includeNotes, setIncludeNotes] = useState(true);
   const [includeSources, setIncludeSources] = useState(true);
   const [includeLedger, setIncludeLedger] = useState(true);
-  const [includePdfs, setIncludePdfs] = useState(false);
+  const [includePdfs, setIncludePdfs] = useState(true);
   const [allPapers, setAllPapers] = useState(true);
   const [allExecutions, setAllExecutions] = useState(false);
   const [preview, setPreview] = useState<ExchangePreview | null>(null);
@@ -232,7 +232,7 @@ export default function WorkspaceExchangePanel({
               checked={includePdfs}
               onChange={(e) => setIncludePdfs(e.target.checked)}
             />
-            Compiled PDFs
+            Paper files
           </label>
         </div>
         <div className="mt-2 flex flex-wrap gap-2">
@@ -299,7 +299,7 @@ export default function WorkspaceExchangePanel({
               ))}
             </ul>
             {preview.externalReferences.length > 0 && (
-              <p className="mt-1 text-amber-700">
+              <p className="mt-1 text-warning">
                 {preview.externalReferences.length} referenced items are not
                 included: raw data, missing files, or files above the size
                 limit.
@@ -344,7 +344,8 @@ export default function WorkspaceExchangePanel({
               {Object.entries(inspection.counts)
                 .map(([k, n]) => `${k} ${n}`)
                 .join(", ")}{" "}
-              · {inspection.blobCount} blob(s), {mib(inspection.blobBytes)}
+              · {inspection.blobCount} stored file(s),{" "}
+              {mib(inspection.blobBytes)}
             </p>
             {inspection.workspaceRoot && (
               <p className="text-gray-600 dark:text-gray-400">
@@ -550,9 +551,7 @@ export default function WorkspaceExchangePanel({
             )}
           </div>
           <div>
-            <p className="font-medium">
-              Completed recipe runs in this conversation
-            </p>
+            <p className="font-medium">Completed steps in this conversation</p>
             {runs
               .filter((r) => r.status === "completed")
               .map((r) => (
@@ -574,7 +573,7 @@ export default function WorkspaceExchangePanel({
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <input
-            aria-label="Draft workflow name"
+            aria-label="Draft review name"
             className={input}
             value={draftName}
             onChange={(e) => setDraftName(e.target.value)}
@@ -597,7 +596,7 @@ export default function WorkspaceExchangePanel({
               )
             }
           >
-            Draft workflow
+            Draft review
           </button>
           <button
             type="button"
@@ -608,9 +607,7 @@ export default function WorkspaceExchangePanel({
                 if (!draft) return;
                 const path = await save({
                   defaultPath: `${draft.name.replace(/[^A-Za-z0-9]+/g, "-").toLowerCase() || "workflow"}.json`,
-                  filters: [
-                    { name: "Pipeline workflow", extensions: ["json"] },
-                  ],
+                  filters: [{ name: "Pipeline review", extensions: ["json"] }],
                 });
                 if (!path) return;
                 await invoke("workbench_studio_export_file", {
@@ -618,7 +615,7 @@ export default function WorkspaceExchangePanel({
                   content: draft.canonicalJson,
                 });
                 setNotice(
-                  `Saved draft workflow ${draft.fingerprint.slice(0, 19)}… Import it from Reviews → Designer to validate and preview it.`,
+                  `Saved draft review ${draft.fingerprint.slice(0, 19)}… Import it from Reviews → Designer to validate and preview it.`,
                 );
               })
             }
@@ -640,7 +637,7 @@ export default function WorkspaceExchangePanel({
               ))}
             </ul>
             {draft.unsupported.length > 0 && (
-              <div className="mt-1 text-amber-700">
+              <div className="mt-1 text-warning">
                 <p className="font-medium">
                   Steps to complete separately before running the review
                 </p>

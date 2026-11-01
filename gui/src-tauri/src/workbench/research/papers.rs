@@ -1,6 +1,7 @@
 //! Papers owned by the Workspace research service.
 
 use super::*;
+use crate::workbench::store::outside_folder_error;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -93,19 +94,6 @@ fn ensure_safe_regular_file(path: &Path) -> WorkbenchResult<u64> {
     Ok(metadata.len())
 }
 
-/// Hash a host-owned file through its resolved target (dotfile managers
-/// symlink shell startup files and environment configuration); the caller
-/// records the declared path so existing fingerprints are unchanged.
-pub(super) fn hash_resolved_file(
-    path: &Path,
-    label: &str,
-) -> WorkbenchResult<(PathBuf, String, u64)> {
-    let resolved = fs::canonicalize(path)
-        .map_err(|error| WorkbenchError::storage(&format!("Failed to resolve {label}"), error))?;
-    let (hash, size) = hash_file(&resolved)?;
-    Ok((resolved, hash, size))
-}
-
 pub(super) fn hash_file(path: &Path) -> WorkbenchResult<(String, u64)> {
     let size = ensure_safe_regular_file(path)?;
     let mut file = fs::File::open(path)
@@ -143,39 +131,51 @@ pub(super) fn copy_immutable(
     destination: &Path,
     expected_hash: &str,
 ) -> WorkbenchResult<()> {
+    copy_immutable_within(source, destination, expected_hash, MAX_IMPORT_BYTES)
+}
+
+/// Paper and source imports cap at their import limit. Host execution brings its
+/// own limits, because a run's inputs and outputs are not imports.
+pub(super) fn copy_immutable_within(
+    source: &Path,
+    destination: &Path,
+    expected_hash: &str,
+    limit: u64,
+) -> WorkbenchResult<()> {
     if destination.exists() {
         return Ok(());
     }
     let pending = destination.with_extension(format!("{}.pending", new_id("capture")?));
     let mut input = fs::File::open(source)
-        .map_err(|error| WorkbenchError::storage("Failed to open paper snapshot source", error))?;
+        .map_err(|error| WorkbenchError::storage("Failed to open snapshot source", error))?;
     let mut output = fs::File::create(&pending)
-        .map_err(|error| WorkbenchError::storage("Failed to create paper snapshot", error))?;
+        .map_err(|error| WorkbenchError::storage("Failed to create snapshot", error))?;
     let mut hasher = Sha256::new();
     let mut total = 0u64;
     let mut buffer = [0u8; 64 * 1024];
     loop {
         let count = input
             .read(&mut buffer)
-            .map_err(|error| WorkbenchError::storage("Failed to read paper snapshot", error))?;
+            .map_err(|error| WorkbenchError::storage("Failed to read snapshot", error))?;
         if count == 0 {
             break;
         }
         total += count as u64;
-        if total > MAX_IMPORT_BYTES {
+        if total > limit {
             let _ = fs::remove_file(&pending);
-            return Err(WorkbenchError::invalid(
-                "Paper input changed beyond the 200 MiB limit while copying",
-            ));
+            return Err(WorkbenchError::invalid(format!(
+                "The file grew beyond the {} MiB limit while it was being saved",
+                limit / (1024 * 1024)
+            )));
         }
         hasher.update(&buffer[..count]);
         output
             .write_all(&buffer[..count])
-            .map_err(|error| WorkbenchError::storage("Failed to write paper snapshot", error))?;
+            .map_err(|error| WorkbenchError::storage("Failed to write snapshot", error))?;
     }
     output
         .sync_all()
-        .map_err(|error| WorkbenchError::storage("Failed to sync paper snapshot", error))?;
+        .map_err(|error| WorkbenchError::storage("Failed to sync snapshot", error))?;
     let actual: String = hasher
         .finalize()
         .iter()
@@ -184,11 +184,11 @@ pub(super) fn copy_immutable(
     if actual != expected_hash {
         let _ = fs::remove_file(&pending);
         return Err(WorkbenchError::invalid(
-            "Paper changed while it was being captured; retry the import",
+            "The file changed while it was being saved; try again",
         ));
     }
     fs::rename(&pending, destination)
-        .map_err(|error| WorkbenchError::storage("Failed to publish paper snapshot", error))
+        .map_err(|error| WorkbenchError::storage("Failed to publish snapshot", error))
 }
 
 pub(super) fn extension_kind(path: &Path) -> WorkbenchResult<&'static str> {
@@ -368,6 +368,7 @@ fn capture_paper_input(store: &Store, requested: &str) -> WorkbenchResult<Captur
         })?;
     }
     let mut text = String::new();
+    let (mut latin1, mut skipped) = (Vec::new(), Vec::new());
     for (relative, _, _, _) in &files {
         let extension = relative
             .extension()
@@ -377,18 +378,57 @@ fn capture_paper_input(store: &Store, requested: &str) -> WorkbenchResult<Captur
         if !matches!(extension.as_str(), "tex" | "bib" | "md" | "txt") {
             continue;
         }
-        if let Ok(body) = fs::read_to_string(storage_reference.join(relative)) {
-            let addition = format!("\n\n===== {} =====\n{}", relative.to_string_lossy(), body);
-            if text.len() + addition.len() > MAX_TEXT_BYTES {
-                break;
+        let name = relative.to_string_lossy();
+        let Ok(bytes) = fs::read(storage_reference.join(relative)) else {
+            skipped.push(format!("{name} (unreadable)"));
+            continue;
+        };
+        let body = match String::from_utf8(bytes) {
+            Ok(body) => body,
+            // Older TeX sources are often Latin-1, where each byte is one
+            // character. A NUL byte means this is not such a text file at all.
+            Err(error) if !error.as_bytes().contains(&0) => {
+                latin1.push(name.to_string());
+                error.as_bytes().iter().map(|&b| char::from(b)).collect()
             }
-            text.push_str(&addition);
+            Err(_) => {
+                skipped.push(format!("{name} (not text)"));
+                continue;
+            }
+        };
+        let addition = format!("\n\n===== {name} =====\n{body}");
+        if text.len() + addition.len() > MAX_TEXT_BYTES {
+            skipped.push(format!("{name} (over the 16 MiB text limit)"));
+            continue;
         }
+        text.push_str(&addition);
+    }
+    let named = |paths: &[String]| {
+        let shown = paths
+            .iter()
+            .take(20)
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ");
+        match paths.len().saturating_sub(20) {
+            0 => shown,
+            more => format!("{shown}, and {more} more"),
+        }
+    };
+    let mut quality_notes = vec!["TeX, BibTeX, Markdown, and text files were concatenated in stable path order; generated and binary files remain available only through the immutable manifest.".to_string()];
+    if !latin1.is_empty() {
+        quality_notes.push(format!(
+            "Read as Latin-1 because they are not UTF-8: {}.",
+            named(&latin1)
+        ));
+    }
+    if !skipped.is_empty() {
+        quality_notes.push(format!("Left out of this text: {}.", named(&skipped)));
     }
     let extraction = if text.is_empty() {
         json!({"status":"failed","error":"No supported UTF-8 text files were found in the captured source tree","fallbackUsed":false})
     } else {
-        json!({"status":"complete","method":"source-tree-utf8","qualityNotes":["TeX, BibTeX, Markdown, and text files were concatenated in stable path order; generated and binary files remain available only through the immutable manifest."]})
+        json!({"status":if skipped.is_empty() {"complete"} else {"partial"},"method":"source-tree-utf8","qualityNotes":quality_notes})
     };
     let manifest_files = files.iter().map(|(relative, _, hash, size)| json!({"path":relative,"contentHash":hash,"sizeBytes":size})).collect::<Vec<_>>();
     Ok(CapturedPaperInput {
@@ -451,11 +491,9 @@ pub fn import_paper(
             .root_path()
             .join("blobs")
             .join(format!("{text_hash}.txt"));
-        if !path.exists() {
-            fs::write(&path, text.as_bytes()).map_err(|error| {
-                WorkbenchError::storage("Failed to store extracted paper text", error)
-            })?;
-        }
+        crate::workbench::desk::write_blob_atomic(&path, text.as_bytes(), &text_hash).map_err(
+            |error| WorkbenchError::storage("Failed to store extracted paper text", error),
+        )?;
         Some(path.to_string_lossy().into_owned())
     } else {
         None
@@ -490,7 +528,38 @@ pub fn import_paper(
     }
     let existing: Option<String> = transaction.query_row("SELECT pr.id FROM paper_revisions pr JOIN papers p ON p.id = pr.paper_id WHERE p.workspace_id = ?1 AND pr.paper_id = ?2 AND pr.content_hash = ?3", params![request.workspace_id, paper_id, captured.content_hash], |row| row.get(0)).optional().map_err(|error| WorkbenchError::storage("Failed to inspect paper revisions", error))?;
     if let Some(existing) = existing {
-        drop(transaction);
+        let replayed: bool = transaction
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM change_log WHERE operation_id = ?1)",
+                [&request.operation_id],
+                |row| row.get(0),
+            )
+            .map_err(|error| WorkbenchError::storage("Failed to inspect paper import", error))?;
+        if replayed {
+            drop(transaction);
+            return paper_with_revision(store, &request.workspace_id, &paper_id, Some(&existing));
+        }
+        // Importing an earlier revision again selects it, under the title and
+        // role given now, and its other revisions stop being current evidence.
+        transaction
+            .execute(
+                "UPDATE papers SET title = ?2, role = ?3, current_revision_id = ?4, updated_at = ?5 WHERE id = ?1",
+                params![paper_id, title, request.role, existing, timestamp],
+            )
+            .map_err(|error| WorkbenchError::storage("Failed to select paper revision", error))?;
+        transaction.execute("UPDATE evidence_links SET freshness = 'stale', stale_reason = 'Another paper revision was selected', updated_at = ?2 WHERE workspace_id = ?1 AND target_type = 'paper_revision' AND target_id IN (SELECT id FROM paper_revisions WHERE paper_id = ?3 AND id <> ?4) AND freshness = 'current'", params![request.workspace_id, timestamp, paper_id, existing]).map_err(|error| WorkbenchError::storage("Failed to propagate paper evidence freshness", error))?;
+        append_change(
+            &transaction,
+            &request.operation_id,
+            "paper_revision",
+            &existing,
+            (Some(&request.workspace_id), None),
+            "selected",
+            &json!({"paperId":paper_id,"contentHash":captured.content_hash}),
+        )?;
+        transaction
+            .commit()
+            .map_err(|error| WorkbenchError::storage("Failed to commit paper import", error))?;
         return paper_with_revision(store, &request.workspace_id, &paper_id, Some(&existing));
     }
     transaction.execute("INSERT INTO papers (id, workspace_id, title, role, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?5) ON CONFLICT(id) DO UPDATE SET title = excluded.title, role = excluded.role, updated_at = excluded.updated_at WHERE workspace_id = excluded.workspace_id", params![paper_id, request.workspace_id, title, request.role, timestamp]).map_err(|error| WorkbenchError::storage("Failed to create or update paper", error))?;
@@ -531,6 +600,22 @@ fn paper_with_revision(
     Ok(PaperWithRevision { paper, revision })
 }
 
+/// One paper by id, regardless of list limits (exchange export).
+pub(crate) fn paper_by_id(
+    store: &Store,
+    workspace_id: &str,
+    id: &str,
+) -> WorkbenchResult<Option<Paper>> {
+    open_connection(store)?
+        .query_row(
+            "SELECT id, workspace_id, title, role, current_revision_id, created_at, updated_at FROM papers WHERE id = ?1 AND workspace_id = ?2",
+            params![id, workspace_id],
+            paper_from_row,
+        )
+        .optional()
+        .map_err(|error| WorkbenchError::storage("Failed to read paper", error))
+}
+
 pub fn list_papers(store: &Store, workspace_id: &str) -> WorkbenchResult<Vec<PaperWithRevision>> {
     validate_id("workspace id", workspace_id)?;
     let connection = open_connection(store)?;
@@ -563,7 +648,9 @@ fn revision_text(
     // Immutable text lives directly under blobs/; a lexical prefix check would
     // accept `<blobs>/../x` from a tampered archive.
     if path.parent() != Some(store.root_path().join("blobs").as_path()) {
-        return Err(WorkbenchError::invalid(
+        return Err(outside_folder_error(
+            "This paper's text",
+            &path,
             "Paper text reference escaped Workspace storage",
         ));
     }

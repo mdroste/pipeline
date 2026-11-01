@@ -26,7 +26,10 @@ export default function ChatgptConnection({
   const [catalog, setCatalog] = useState<WorkspaceModelCatalog | null>(null);
   const [limits, setLimits] = useState<WorkspaceRateLimits | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // A poll reports only the account's state, so its success must not erase what
+  // went wrong with something the researcher asked for.
+  const [pollError, setPollError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const identity = useRef<string | null>(null);
   const readiness = useRef<string | null>(null);
   const mounted = useRef(true);
@@ -34,17 +37,20 @@ export default function ChatgptConnection({
     const next = await chatgptAccountClient.status();
     if (mounted.current) {
       setStatus(next);
-      setError(null);
+      setPollError(null);
     }
   }, []);
   useEffect(() => {
     mounted.current = true;
     const poll = () =>
       void refresh().catch((e) => {
-        if (mounted.current) setError(typeof e === "string" ? e : String(e));
+        if (mounted.current)
+          setPollError(typeof e === "string" ? e : String(e));
       });
     poll();
-    const timer = window.setInterval(poll, 5000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") poll();
+    }, 5000);
     let dispose: (() => void) | undefined;
     void listen("chatgpt:account-changed", poll).then((stop) => {
       if (mounted.current) dispose = stop;
@@ -77,17 +83,18 @@ export default function ChatgptConnection({
   }, [status, onAccountChange, onStatusChange]);
   async function act(action: () => Promise<unknown>) {
     setBusy(true);
-    setError(null);
+    setActionError(null);
     try {
       await action();
       await refresh();
     } catch (e) {
-      setError(typeof e === "string" ? e : String(e));
+      setActionError(typeof e === "string" ? e : String(e));
     } finally {
       setBusy(false);
     }
   }
   const signedIn = status?.account.status === "chatgpt";
+  const error = actionError || pollError || status?.error;
   const disabled = busy || !status || status.loginInProgress;
   return (
     <div role="group" aria-label="ChatGPT account" className="space-y-2">
@@ -216,9 +223,9 @@ export default function ChatgptConnection({
             : ""}
         </p>
       ))}
-      {(error || status?.error) && (
+      {error && (
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">
-          {error || status?.error}
+          {error}
         </p>
       )}
     </div>

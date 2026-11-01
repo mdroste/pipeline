@@ -47,13 +47,15 @@ export default function WaveDiagram({
   const waves = computeWaves(steps, false);
   const noEnabledSteps = waves.length === 0;
   const enabledSteps = steps.filter((step) => step.enabled);
-  const stepCalls = enabledSteps.reduce(
+  // A Pipeline check makes no provider call.
+  const modelSteps = enabledSteps.filter((step) => step.kind !== "analyzer");
+  const stepCalls = modelSteps.reduce(
     (total, step) =>
       total + Math.max(1, step.agents?.length ?? 0) * (step.for_each?.max ?? 1),
     0,
   );
   const mergeCalls = merge.enabled
-    ? enabledSteps.reduce(
+    ? modelSteps.reduce(
         (total, step) =>
           total +
           ((step.agents?.length ?? 0) > 1 ? (step.for_each?.max ?? 1) : 0),
@@ -93,7 +95,7 @@ export default function WaveDiagram({
     <div className="px-4 py-4">
       <div className="overflow-hidden rounded-ui-lg border border-line bg-surface">
         <div className="border-b border-line px-4 py-3">
-          <h3 className="text-sm font-semibold text-ink">Workflow overview</h3>
+          <h3 className="text-sm font-semibold text-ink">Review overview</h3>
           <p className="mt-0.5 text-ui-meta text-ink-muted">
             {adaptiveReview
               ? `${enabledSteps.length} saved steps plus ${adaptiveAgentCountLabel(adaptiveAgentCount, adaptiveAgentRange)} auto-selected specialists in ${waves.length} execution ${waves.length === 1 ? "wave" : "waves"}.`

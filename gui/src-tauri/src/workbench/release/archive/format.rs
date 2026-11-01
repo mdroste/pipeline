@@ -1,7 +1,9 @@
 //! Portable research archive format, limits, and command DTOs.
 //!
 //! Version 2 adds conversation working files; version 1 archives stay readable
-//! and must list none. Restore is whole-store into an empty destination and never
+//! and must list none. A version 2 manifest may also list references the
+//! researcher chose to leave out because their files were gone; see `omissions`.
+//! Restore is whole-store into an empty destination and never
 //! shares import policy or transactions with `.pwex`. Archives exclude external
 //! project folders, Review and automation stores, Trash, the Codex home and
 //! credentials.
@@ -37,6 +39,8 @@ pub(super) struct ArchiveManifest {
     pub(super) blobs: Vec<BlobManifest>,
     #[serde(default)]
     pub(super) conversation_files: Vec<BlobManifest>,
+    #[serde(default)]
+    pub(super) omitted_references: Vec<String>,
     pub(super) portability_note: String,
 }
 
@@ -64,6 +68,8 @@ pub struct ArchiveReport {
     pub bytes: u64,
     pub native_bindings_retired: usize,
     pub portability_note: String,
+    #[serde(default)]
+    pub omitted_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -74,4 +80,6 @@ pub struct ArchiveInspection {
     pub store_schema_version: u32,
     pub workspace_roots: Vec<String>,
     pub portability_note: String,
+    #[serde(default)]
+    pub omitted_file_count: usize,
 }

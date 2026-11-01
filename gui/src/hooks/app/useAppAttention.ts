@@ -1,14 +1,23 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { AppPage } from "../../components/NavRail";
 import type { WorkbenchEvent } from "../../lib/workbenchTypes";
-import { pendingRequestIds } from "../../lib/workspaceAttention";
+import { pendingRequestSessions } from "../../lib/workspaceAttention";
+import { useActiveTurn } from "../workspace/useActiveTurn";
+
+// Lazy like the pending-request read below: plain pages never load the client.
+const readActiveTurn = () =>
+  import("../../lib/workbench/runtimeClient").then(({ runtimeClient }) =>
+    runtimeClient.activeTurn(),
+  );
 
 export function useAppAttention(page: AppPage) {
   const [tasksAttention, setTasksAttention] = useState(false);
+  const pageRef = useRef(page);
+  pageRef.current = page;
   useEffect(() => {
     const changed = () => {
-      if (page !== "tasks") setTasksAttention(true);
+      if (pageRef.current !== "tasks") setTasksAttention(true);
     };
     const pending = [
       listen("tasks:notice", changed),
@@ -19,9 +28,12 @@ export function useAppAttention(page: AppPage) {
       for (const off of pending)
         void off.then((f) => f()).catch(() => undefined);
     };
-  }, [page]);
-  const [workspaceActive, setWorkspaceActive] = useState(false);
-  const [workspaceAttention, setWorkspaceAttention] = useState(false);
+  }, []);
+  const { activeTurn, refreshActiveTurn, observeActiveTurn } =
+    useActiveTurn(readActiveTurn);
+  const [waiting, setWaiting] = useState<ReadonlyMap<string, string | null>>(
+    new Map(),
+  );
   const [researchNotice, setResearchNotice] = useState<{
     workspaceId: string;
     checkId: string;
@@ -39,19 +51,19 @@ export function useAppAttention(page: AppPage) {
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    let unresolved = new Set<string>();
+    let unresolved: ReadonlyMap<string, string | null> = new Map();
     let bootstrapping = true;
     const observed: WorkbenchEvent[] = [];
     void import("../../lib/workbench/runtimeClient")
       .then(({ runtimeClient }) => runtimeClient.pendingRequests())
       .then((requests) => {
         if (!disposed) {
-          let ids = new Set<string>();
+          let ids: ReadonlyMap<string, string | null> = new Map();
           for (const r of [...requests, ...observed])
-            ids = pendingRequestIds(ids, r);
+            ids = pendingRequestSessions(ids, r);
           unresolved = ids;
           bootstrapping = false;
-          setWorkspaceAttention(ids.size > 0);
+          setWaiting(ids);
         }
       })
       .catch(() => {
@@ -65,29 +77,32 @@ export function useAppAttention(page: AppPage) {
         )
       )
         observed.push(payload);
-      if (payload.kind === "turnStarted") setWorkspaceActive(true);
-      if (
-        payload.kind === "turnCompleted" ||
-        payload.kind === "connectionClosed"
-      )
-        setWorkspaceActive(false);
-      unresolved = pendingRequestIds(unresolved, payload);
-      setWorkspaceAttention(unresolved.size > 0);
+      observeActiveTurn(payload);
+      unresolved = pendingRequestSessions(unresolved, payload);
+      setWaiting(unresolved);
     }).then((dispose) => {
       if (disposed) dispose();
-      else unlisten = dispose;
+      else {
+        unlisten = dispose;
+        // Read after subscribing, so no change can fall between the two.
+        void refreshActiveTurn();
+      }
     });
     return () => {
       disposed = true;
       unlisten?.();
     };
-  }, []);
+  }, [observeActiveTurn, refreshActiveTurn]);
   return {
     tasksAttention,
     setTasksAttention,
-    workspaceActive,
-    workspaceAttention,
+    workspaceActive: Boolean(activeTurn),
+    workspaceAttention: waiting.size > 0,
+    /** The running turn, which names the conversation doing the work. */
+    workspaceTurn: activeTurn ?? null,
+    /** The conversation an unresolved approval is waiting in. */
+    waitingSession:
+      [...waiting.values()].find(Boolean) ?? activeTurn?.sessionId ?? null,
     researchNotice,
-    setResearchNotice,
   };
 }

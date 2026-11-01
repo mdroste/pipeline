@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import type { GetStartedPersona } from "../../lib/getStarted";
 import type { DepsReport } from "../../lib/types";
 import { executionClient } from "../../lib/workbench/executionClient";
 import type {
@@ -8,13 +7,7 @@ import type {
 } from "../../lib/workbench/toolchains";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { Badge, Button } from "../../ui";
-import {
-  groupTools,
-  pdfRows,
-  REPLICATION_NOTE,
-  TOOL_NOTES,
-  type Tone,
-} from "./guide";
+import { pdfRows, REPLICATION_NOTE, TOOL_NOTES, type Tone } from "./guide";
 
 function Row({
   tone,
@@ -65,12 +58,10 @@ function ToolRow({ tool }: { tool: DetectedToolchain }) {
 
 /** Runs read-only toolchain detection only when asked. */
 export default function ToolsStep({
-  persona,
   dependencies,
   onOpenPdfSettings,
   headingId,
 }: {
-  persona: GetStartedPersona | null;
   dependencies: DepsReport | null;
   onOpenPdfSettings: () => void;
   headingId: string;
@@ -104,7 +95,6 @@ export default function ToolsStep({
       });
   };
 
-  const groups = report ? groupTools(report, persona) : null;
   const pdf = pdfRows(dependencies);
 
   return (
@@ -142,45 +132,21 @@ export default function ToolsStep({
           The check did not finish: {error}
         </p>
       )}
-      {groups && (
+      {report && (
         <div className="space-y-3" aria-live="polite">
-          {(groups.featured.length > 0 || groups.missing.length > 0) && (
-            <ul aria-label="Tools you work with" className="space-y-2">
-              {groups.featured.map((tool) => (
+          {report.tools.length > 0 && (
+            <ul aria-label="Tools found" className="space-y-2">
+              {report.tools.map((tool) => (
                 <ToolRow key={`${tool.kind}:${tool.path}`} tool={tool} />
-              ))}
-              {groups.missing.map((kind) => (
-                <Row
-                  key={kind}
-                  tone="idle"
-                  name={TOOL_NOTES[kind].name}
-                  status="Not found"
-                  detail={`Not in the standard folders or on your PATH. You can still enter its path when you set up a local check. ${TOOL_NOTES[kind].use}`}
-                />
               ))}
             </ul>
           )}
-          {groups.others.length > 0 && (
-            <div>
-              <p className="mb-1.5 text-ui-meta font-medium text-ink-muted">
-                {groups.featured.length || groups.missing.length
-                  ? "Also found on this computer"
-                  : "Found on this computer"}
-              </p>
-              <ul aria-label="Other tools found" className="space-y-2">
-                {groups.others.map((tool) => (
-                  <ToolRow key={`${tool.kind}:${tool.path}`} tool={tool} />
-                ))}
-              </ul>
-            </div>
-          )}
-          {report && report.tools.length === 0 && (
-            <p className="text-ui-label text-ink-muted">
-              No research tools were found. You can still enter a program's path
-              when you set up a local check.
-            </p>
-          )}
-          <p className="text-ui-meta text-ink-muted">{report?.boundary}</p>
+          <p className="text-ui-label text-ink-muted">
+            {report.tools.length > 0
+              ? "If a program is missing, you can still enter its path when you set up a local check."
+              : "No research tools were found. You can still enter a program's path when you set up a local check."}
+          </p>
+          <p className="text-ui-meta text-ink-muted">{report.boundary}</p>
         </div>
       )}
       <div>

@@ -8,7 +8,7 @@
   --nav-line: rgb(39 43 38 / 0.1);
 }
 .dark {
-  --nav-active: rgb(170 202 173 / 0.14);
+  --nav-active: rgb(255 255 255 / 0.11);
   --nav-hover: rgb(255 255 255 / 0.06);
   --nav-line: rgb(255 255 255 / 0.09);
 }
@@ -67,6 +67,12 @@
   color: var(--nav-strong);
   font-weight: 600;
 }
+.nav-switch-mark {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  opacity: 0.55;
+}
 .nav-child[data-quiet] {
   font-size: var(--ui-text-meta);
 }
@@ -115,6 +121,7 @@
 }
 .nav-children {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1px;
   margin: 2px 0 6px 16px;
   padding-left: 9px;
@@ -128,6 +135,7 @@
   }
 }
 .nav-slot {
+  grid-template-columns: minmax(0, 1fr);
   display: grid;
   gap: 1px;
   min-width: 0;

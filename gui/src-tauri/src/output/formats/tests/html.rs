@@ -137,3 +137,25 @@ fn unverified_runs_and_reports_without_findings_still_render() {
     assert!(!html.contains("<script>"));
     assert_eq!(html.matches("Quality and limitations").count(), 1);
 }
+
+#[test]
+fn latex_in_a_report_keeps_its_source_and_stays_escaped() {
+    let mut export = export_with(Vec::new());
+    export.report_markdown =
+        "Both $x^*$ and $y^*$ and $\\{a_i\\}$ at $a\\,b$, from \\(z^*\\) and *real* emphasis.\n\n$$\\sum_i x_i * y_i$$\n\nCosts $5 and $8.\n\nHostile $<script>alert(1)</script>$.".to_string();
+    let html = render_html_report(&export);
+    let body = html.split("<body>").nth(1).unwrap();
+    for span in [
+        "$x^*$ and $y^*$ and $\\{a_i\\}$ at $a\\,b$",
+        "$z^*$",
+        "$$\\sum_i x_i * y_i$$",
+        "Costs $5 and $8.",
+    ] {
+        assert!(body.contains(span), "{span} in {body}");
+    }
+    assert!(body.contains("<em>real</em>"));
+    assert!(!body.contains("x^<em>"));
+    assert!(!body.contains("PIPELINEMATHPLACEHOLDER"));
+    assert!(!body.contains("<script>alert"));
+    assert!(body.contains("$&lt;script&gt;alert(1)&lt;/script&gt;$"));
+}

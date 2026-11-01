@@ -34,15 +34,21 @@ const MIN_CONSOLE_HEIGHT = 96;
 const CONSOLE_VIEWPORT_MARGIN = 96;
 const MAX_RENDERED_LOG_LINES = 600;
 
-function maxConsoleHeight(): number {
+/** The console leaves room in the column it shares with the review view, which
+ *  banners can make shorter than the window. */
+function maxConsoleHeight(panel: HTMLElement | null): number {
+  const column = panel?.parentElement?.clientHeight || window.innerHeight;
   return Math.max(
     MIN_CONSOLE_HEIGHT,
-    window.innerHeight - CONSOLE_VIEWPORT_MARGIN,
+    Math.min(column, window.innerHeight) - CONSOLE_VIEWPORT_MARGIN,
   );
 }
 
-function clampConsoleHeight(height: number): number {
-  return Math.min(maxConsoleHeight(), Math.max(MIN_CONSOLE_HEIGHT, height));
+function clampConsoleHeight(height: number, panel: HTMLElement | null): number {
+  return Math.min(
+    maxConsoleHeight(panel),
+    Math.max(MIN_CONSOLE_HEIGHT, height),
+  );
 }
 
 /** The pipeline console: session filter, text search, level filter, timestamps,
@@ -67,12 +73,20 @@ export default function Console({ logs, usage, active = true }: Props) {
   // Each "jump to first error" request scrolls exactly once.
   const [errorJump, setErrorJump] = useState(0);
 
+  const panelRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const resizeCleanupRef = useRef<(() => void) | null>(null);
   const previousActiveRef = useRef(active);
 
   useEffect(() => () => resizeCleanupRef.current?.(), []);
+
+  useEffect(() => {
+    const fitWindow = () =>
+      setHeight((current) => clampConsoleHeight(current, panelRef.current));
+    window.addEventListener("resize", fitWindow);
+    return () => window.removeEventListener("resize", fitWindow);
+  }, []);
 
   useEffect(() => {
     if (previousActiveRef.current && !active) setOpen(false);
@@ -97,7 +111,12 @@ export default function Console({ logs, usage, active = true }: Props) {
       const startY = event.clientY;
 
       const onMouseMove = (moveEvent: MouseEvent) => {
-        setHeight(clampConsoleHeight(startHeight + startY - moveEvent.clientY));
+        setHeight(
+          clampConsoleHeight(
+            startHeight + startY - moveEvent.clientY,
+            panelRef.current,
+          ),
+        );
       };
       const onMouseUp = () => {
         document.removeEventListener("mousemove", onMouseMove);
@@ -122,10 +141,10 @@ export default function Console({ logs, usage, active = true }: Props) {
       if (event.key === "ArrowUp") next = height + delta;
       if (event.key === "ArrowDown") next = height - delta;
       if (event.key === "Home") next = MIN_CONSOLE_HEIGHT;
-      if (event.key === "End") next = maxConsoleHeight();
+      if (event.key === "End") next = maxConsoleHeight(panelRef.current);
       if (next == null) return;
       event.preventDefault();
-      setHeight(clampConsoleHeight(next));
+      setHeight(clampConsoleHeight(next, panelRef.current));
     },
     [height],
   );
@@ -285,6 +304,7 @@ export default function Console({ logs, usage, active = true }: Props) {
 
   return (
     <div
+      ref={panelRef}
       data-testid="console-panel"
       className="console-panel relative flex shrink-0 flex-col border-t border-gray-200 bg-white text-gray-700 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-300"
       style={{ height: open ? `${height}px` : undefined }}
@@ -295,7 +315,7 @@ export default function Console({ logs, usage, active = true }: Props) {
           aria-label="Resize console"
           aria-orientation="horizontal"
           aria-valuemin={MIN_CONSOLE_HEIGHT}
-          aria-valuemax={maxConsoleHeight()}
+          aria-valuemax={maxConsoleHeight(panelRef.current)}
           aria-valuenow={Math.round(height)}
           tabIndex={0}
           title="Drag to resize the console"

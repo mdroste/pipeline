@@ -8,6 +8,8 @@ use std::os::windows::{
     io::{AsRawHandle, FromRawHandle},
 };
 use std::path::{Path, PathBuf};
+
+use super::entries::{keep_listed, EntryKind, EntryStat};
 use windows_sys::Wdk::{
     Foundation::OBJECT_ATTRIBUTES,
     Storage::FileSystem::{
@@ -19,17 +21,20 @@ use windows_sys::Wdk::{
 use windows_sys::Win32::{
     Foundation::{
         RtlNtStatusToDosError, ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER,
-        ERROR_NOT_SUPPORTED, INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE, UNICODE_STRING,
+        ERROR_NOT_SUPPORTED, ERROR_NO_MORE_FILES, INVALID_HANDLE_VALUE, OBJ_CASE_INSENSITIVE,
+        UNICODE_STRING,
     },
     Storage::FileSystem::{
-        FileAttributeTagInfo, FileDispositionInfo, FileDispositionInfoEx,
-        GetFileInformationByHandleEx, GetFinalPathNameByHandleW, ReOpenFile,
-        SetFileInformationByHandle, DELETE, FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
+        FileAttributeTagInfo, FileDispositionInfo, FileDispositionInfoEx, FileIdBothDirectoryInfo,
+        FileIdBothDirectoryRestartInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
+        GetFinalPathNameByHandleW, ReOpenFile, SetFileInformationByHandle,
+        BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+        FILE_ATTRIBUTE_TAG_INFO, FILE_DISPOSITION_FLAG_DELETE,
         FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE, FILE_DISPOSITION_FLAG_POSIX_SEMANTICS,
         FILE_DISPOSITION_INFO, FILE_DISPOSITION_INFO_EX, FILE_FLAG_BACKUP_SEMANTICS,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_LIST_DIRECTORY,
-        FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
-        FILE_SHARE_WRITE, SYNCHRONIZE,
+        FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_ID_BOTH_DIR_INFO,
+        FILE_LIST_DIRECTORY, FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, SYNCHRONIZE,
     },
     System::IO::IO_STATUS_BLOCK,
 };
@@ -323,6 +328,12 @@ pub(super) fn create_new(parent: &File, name: &str) -> io::Result<File> {
 /// the new name is never replaced. This uses the NT call because the Win32
 /// wrapper resolves a bare name against the process's current directory.
 pub(super) fn rename_new(file: &File, name: &str) -> io::Result<()> {
+    rename_into(file, None, name)
+}
+
+/// With a target, the new name resolves relative to that directory handle, so
+/// a move cannot be redirected through a replaced pathname.
+fn rename_into(file: &File, target: Option<&File>, name: &str) -> io::Result<()> {
     component(name)?;
     let encoded: Vec<u16> = name.encode_utf16().collect();
     let name_bytes = encoded.len() * 2;
@@ -336,12 +347,15 @@ pub(super) fn rename_new(file: &File, name: &str) -> io::Result<()> {
     // trailing NUL; the name pointer derives from the whole buffer.
     unsafe {
         (*info).FileNameLength = u32::try_from(name_bytes).map_err(|_| invalid())?;
-        let target = buffer
+        if let Some(target) = target {
+            (*info).RootDirectory = target.as_raw_handle();
+        }
+        let name_field = buffer
             .as_mut_ptr()
             .cast::<u8>()
             .add(std::mem::offset_of!(FILE_RENAME_INFORMATION, FileName))
             .cast::<u16>();
-        std::ptr::copy_nonoverlapping(encoded.as_ptr(), target, encoded.len());
+        std::ptr::copy_nonoverlapping(encoded.as_ptr(), name_field, encoded.len());
     }
     let mut status_block = IO_STATUS_BLOCK::default();
     let status = unsafe {
@@ -357,6 +371,199 @@ pub(super) fn rename_new(file: &File, name: &str) -> io::Result<()> {
         return Err(nt_error(status));
     }
     Ok(())
+}
+
+/// Metadata for an open handle, including the volume and file identity that
+/// `File::metadata` does not expose on stable Rust.
+pub(super) fn handle_stat(file: &File) -> io::Result<EntryStat> {
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: the handle is live and the buffer is writable.
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut tag = FILE_ATTRIBUTE_TAG_INFO::default();
+    // SAFETY: the handle is live and the buffer is writable for its stated size.
+    let tagged = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileAttributeTagInfo,
+            (&mut tag as *mut FILE_ATTRIBUTE_TAG_INFO).cast(),
+            std::mem::size_of_val(&tag) as u32,
+        )
+    };
+    if tagged == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(EntryStat {
+        kind: entry_kind(info.dwFileAttributes, tag.ReparseTag),
+        size: u64::from(info.nFileSizeHigh) << 32 | u64::from(info.nFileSizeLow),
+        modified_ms: unix_ms(
+            u64::from(info.ftLastWriteTime.dwHighDateTime) << 32
+                | u64::from(info.ftLastWriteTime.dwLowDateTime),
+        ),
+        device: u64::from(info.dwVolumeSerialNumber),
+        inode: u64::from(info.nFileIndexHigh) << 32 | u64::from(info.nFileIndexLow),
+        executable: false,
+    })
+}
+
+/// Cloud Files placeholders are ordinary files or folders. Anything else with
+/// a reparse tag is a link or an unknown provider, which is never traversed.
+fn entry_kind(attributes: u32, tag: u32) -> EntryKind {
+    const CLOUD_TAG: u32 = 0x9000_001a;
+    const CLOUD_VARIANTS: u32 = 0x0000_f000;
+    if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 && tag & !CLOUD_VARIANTS != CLOUD_TAG {
+        EntryKind::Link
+    } else if attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+        EntryKind::Folder
+    } else {
+        EntryKind::File
+    }
+}
+
+/// FILETIME counts 100 ns intervals since 1601.
+fn unix_ms(filetime: u64) -> i64 {
+    (filetime / 10_000) as i64 - 11_644_473_600_000
+}
+
+/// Metadata for one entry without following a link or hydrating a placeholder.
+pub(super) fn stat(parent: &File, name: &str) -> io::Result<Option<EntryStat>> {
+    let file = match nt_open(
+        parent,
+        name,
+        FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        SHARE_ALL,
+        FILE_OPEN,
+        FILE_OPEN_REPARSE_POINT,
+    ) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if !permitted(&final_path(&file)?, None) {
+        return Err(invalid());
+    }
+    handle_stat(&file).map(Some)
+}
+
+pub(super) fn open_directory(root: &File, path: &str) -> io::Result<File> {
+    let mut directory = root.try_clone()?;
+    for name in path.split('/') {
+        directory = open_child(&directory, name, true)?;
+    }
+    Ok(directory)
+}
+
+/// One directory through its handle. The handle's own read position is
+/// restarted, so concurrent clones cannot skip entries. Hidden and reserved
+/// names are filtered here because the short name is available nowhere else.
+pub(super) fn list(
+    directory: &File,
+    limit: usize,
+    stop: &mut impl FnMut(bool) -> bool,
+) -> io::Result<(Vec<(String, EntryStat)>, bool)> {
+    // The API requires 8-byte alignment, which u64 storage provides.
+    let mut buffer = vec![0u64; 64 * 1024 / 8];
+    let size = (buffer.len() * 8) as u32;
+    let mut class = FileIdBothDirectoryRestartInfo;
+    let mut entries = Vec::new();
+    let mut truncated = false;
+    loop {
+        // SAFETY: the handle is live and the buffer is writable for its stated size.
+        let ok = unsafe {
+            GetFileInformationByHandleEx(
+                directory.as_raw_handle(),
+                class,
+                buffer.as_mut_ptr().cast(),
+                size,
+            )
+        };
+        if ok == 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(ERROR_NO_MORE_FILES as i32) {
+                return Ok((entries, truncated));
+            }
+            return Err(error);
+        }
+        class = FileIdBothDirectoryInfo;
+        let mut offset = 0usize;
+        loop {
+            if stop(entries.len() >= limit) {
+                return Ok((entries, true));
+            }
+            // SAFETY: the kernel filled the buffer with a chain of records, each
+            // aligned and within it, linked by NextEntryOffset.
+            let entry = unsafe {
+                &*buffer
+                    .as_ptr()
+                    .cast::<u8>()
+                    .add(offset)
+                    .cast::<FILE_ID_BOTH_DIR_INFO>()
+            };
+            // SAFETY: FileName holds FileNameLength bytes within the same record.
+            let units = unsafe {
+                std::slice::from_raw_parts(
+                    std::ptr::addr_of!(entry.FileName).cast::<u16>(),
+                    entry.FileNameLength as usize / 2,
+                )
+            };
+            if let Ok(name) = String::from_utf16(units) {
+                if name != "." && name != ".." && !super::reserved_component(&name) {
+                    let reparse = entry.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+                    let stat = EntryStat {
+                        kind: entry_kind(
+                            entry.FileAttributes,
+                            if reparse { entry.EaSize } else { 0 },
+                        ),
+                        size: entry.EndOfFile.max(0) as u64,
+                        modified_ms: unix_ms(entry.LastWriteTime as u64),
+                        device: 0,
+                        inode: entry.FileId as u64,
+                        executable: false,
+                    };
+                    if !keep_listed(&mut entries, limit, &mut truncated, (name, stat)) {
+                        return Ok((entries, true));
+                    }
+                }
+            }
+            if entry.NextEntryOffset == 0 {
+                break;
+            }
+            offset += entry.NextEntryOffset as usize;
+        }
+    }
+}
+
+pub(super) fn create_directory(parent: &File, name: &str) -> io::Result<()> {
+    nt_open(
+        parent,
+        name,
+        FILE_LIST_DIRECTORY | SYNCHRONIZE,
+        SHARE_ALL,
+        FILE_CREATE,
+        FILE_DIRECTORY_FILE,
+    )
+    .map(drop)
+}
+
+/// Move a file or folder by handle, verifying the source is not a link and is
+/// not reserved. An existing entry at the destination is never replaced.
+pub(super) fn move_new(
+    from_parent: &File,
+    from: &str,
+    to_parent: &File,
+    to: &str,
+) -> io::Result<()> {
+    let file = nt_open(
+        from_parent,
+        from,
+        DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        SHARE_ALL,
+        FILE_OPEN,
+        FILE_OPEN_REPARSE_POINT,
+    )?;
+    check_reparse(&file)?;
+    rename_into(&file, Some(to_parent), to)
 }
 
 /// Delete an open file. POSIX semantics remove the name at once; file systems

@@ -261,6 +261,35 @@ fn fresh_word_report_is_a_valid_package_with_escaped_content() {
 }
 
 #[test]
+fn latex_keeps_its_source_in_word_reports_and_comments() {
+    let source = r"Both $x^*$ and $y^*$ and $\{a\}$ at $a\,b$, with *emphasis*.";
+    let mut plain = export_with(Vec::new());
+    plain.report_markdown = format!("{source}\n\n    $indented^*$ code");
+    let text = docx_text(&render_docx_report(&plain).unwrap());
+    assert!(
+        text.contains(r"Both $x^*$ and $y^*$ and $\{a\}$ at $a\,b$, with emphasis."),
+        "{text}"
+    );
+    assert!(text.contains("$indented^*$ code"), "{text}");
+    assert!(!text.contains("PIPELINEMATHPLACEHOLDER"));
+
+    let mut quoted = quoted(1, "the minimum wage raises employment");
+    quoted.problem.clear();
+    quoted.body = source.to_string();
+    let export = export_with(vec![quoted]);
+    let annotated = annotate_docx(&original_docx(BODY, None), &export, DATE).unwrap();
+    let comments = zip_parts(&annotated.bytes)
+        .into_iter()
+        .find(|(name, _)| name == "word/comments.xml")
+        .map(|(_, content)| String::from_utf8(content).unwrap())
+        .unwrap();
+    assert!(
+        comments.contains(r"Both $x^*$ and $y^*$ and $\{a\}$ at $a\,b$, with emphasis."),
+        "{comments}"
+    );
+}
+
+#[test]
 fn ranges_cross_hyperlinks_and_extend_around_equations() {
     let body = concat!(
         r#"<w:p><w:r><w:t xml:space="preserve">As shown by </w:t></w:r>"#,
@@ -287,4 +316,31 @@ fn ranges_cross_hyperlinks_and_extend_around_equations() {
     assert!(document.contains(
         r#"</m:oMath><w:commentRangeEnd w:id="2"/><w:r><w:commentReference w:id="2"/></w:r>"#
     ));
+}
+
+#[test]
+fn structured_findings_read_as_plain_text_in_comments_and_notes() {
+    let mut finding = quoted(1, "the minimum wage raises employment");
+    finding.problem = "The **estimate** uses `x`.".to_string();
+    finding.consequence = "It *may* mislead.".to_string();
+    finding.recommended_action = "Report **both** at $x^*$.".to_string();
+    let lines = finding.note_paragraphs(None).join("\n");
+    assert!(lines.contains("Problem: The estimate uses x."), "{lines}");
+    assert!(lines.contains("Consequence: It may mislead."), "{lines}");
+    assert!(
+        lines.contains("Recommended action: Report both at $x^*$."),
+        "{lines}"
+    );
+
+    let mut unplaced = quoted(2, "words that appear nowhere in this manuscript");
+    unplaced.problem = "A **missing** passage.".to_string();
+    let export = export_with(vec![finding, unplaced]);
+    let annotated = annotate_docx(&original_docx(BODY, None), &export, DATE).unwrap();
+    let comments = zip_parts(&annotated.bytes)
+        .into_iter()
+        .find(|(name, _)| name == "word/comments.xml")
+        .map(|(_, content)| String::from_utf8(content).unwrap())
+        .unwrap();
+    assert!(comments.contains("A missing passage."), "{comments}");
+    assert!(!comments.contains("**"), "{comments}");
 }

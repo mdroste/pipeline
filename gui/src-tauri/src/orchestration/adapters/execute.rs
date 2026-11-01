@@ -16,6 +16,10 @@ fn resolve(binding: &Binding, run: &TaskRun, ready: &Ready) -> Result<Value> {
         .ok_or_else(|| format!("{}: required output is unavailable", ready.step.label))
 }
 
+/// A reply at the turn limit, held twice for its two output fields and escaped
+/// as JSON, fits, so only a result that no turn can produce is refused here.
+const MAX_ACTION_OUTPUT: usize = 3 * 1024 * 1024;
+
 /// Completed adapter results are journaled before the coordinator consumes them.
 pub async fn execute(
     app: Option<tauri::AppHandle>,
@@ -121,8 +125,7 @@ pub async fn execute(
                 )
             } else {
                 let sent = crate::workbench::commands::submit_turn(
-                    app.clone()
-                        .ok_or("Workspace execution requires the desktop runtime")?,
+                    app.clone(),
                     crate::workbench::commands::SendTurnRequest {
                         session_id: session.clone(),
                         text,
@@ -315,8 +318,8 @@ pub async fn execute(
         }
         _ => return Err("Control steps must execute in the coordinator".into()),
     };
-    if result.to_string().len() > 1024 * 1024 {
-        return Err("Task action output exceeds 1 MiB; select a smaller result".into());
+    if result.to_string().len() > MAX_ACTION_OUTPUT {
+        return Err("This step's output exceeds 3 MiB; select a smaller result".into());
     }
     atomic_json(&journal, &result)?;
     Ok(result)

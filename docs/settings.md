@@ -24,8 +24,8 @@ Review defaults apply to reviews you start afterward. A saved workflow can
 override them, and a running review keeps the settings it started with.
 
 Choose each conversation’s provider, model, and thinking level in its
-**Model and thinking** picker. Its **Assistant settings** controls tools and
-file access, including optional browser and command-engine setup. See
+**Model and thinking** picker. **Assistant settings → Manage agent profiles… → Access & inheritance** controls tools and
+file access, including browser and command setup. See
 [Conversation access](connections.md#conversation-access).
 
 ## Default model
@@ -54,7 +54,8 @@ default.
 Enter sends a message. If you prefer, choose Command+Enter on macOS or
 Ctrl+Enter on Windows and Linux.
 
-At startup, Pipeline reopens your last project or conversation.
+At startup, Pipeline reopens your last project, conversation, or review. If you
+last used **Settings** or **Help**, it opens **Home**.
 **General → Startup → Guided setup** reopens the **Get started** guide.
 
 ## Research data folder
@@ -84,6 +85,11 @@ work, choose the previous folder and restart. To move projects and
 conversations to another computer, use a research backup or project package.
 Reviews and automations aren't included. See
 [Back up and share](projects.md#back-up-and-share).
+
+If you moved or copied a folder, choose it here and Pipeline updates its saved
+file locations when it opens. If any files didn't come across, **Disk use**
+keeps every research file until they're back. Temporary command files and
+database backups can still be removed.
 
 Use the folder on one computer at a time, and pause cloud sync while Pipeline
 is open. If the folder goes missing, for example because an external drive is

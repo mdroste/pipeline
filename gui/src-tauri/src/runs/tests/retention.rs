@@ -67,6 +67,58 @@ fn retention_never_deletes_the_newest_run() {
 }
 
 #[test]
+fn retention_keeps_a_finished_run_behind_a_later_started_review() {
+    // The later-started review is newest and still running, so the run that
+    // just finished sits second. Its hold keeps it; the oldest run still goes.
+    let finished = "retention-test-finished";
+    let mut state = vec![
+        ("still-running".to_string(), true, 10),
+        (finished.to_string(), false, 20),
+        ("oldest".to_string(), false, 30),
+    ];
+    let hold = hold_from_retention(finished);
+    apply_retention_holds(&mut state);
+    assert_eq!(
+        retention_plan_from_state(&state, 1, 0).candidates,
+        vec!["oldest".to_string()]
+    );
+
+    drop(hold);
+    state[1].1 = false;
+    apply_retention_holds(&mut state);
+    assert_eq!(
+        retention_plan_from_state(&state, 1, 0).candidates,
+        vec!["oldest".to_string(), finished.to_string()]
+    );
+}
+
+#[test]
+fn retention_skips_a_parent_held_after_the_plan_was_made() {
+    let parent = "retention-test-parent";
+    let _hold = hold_from_retention(parent);
+    let trashed = std::sync::Mutex::new(Vec::new());
+    let removed = trash_unheld(
+        vec![parent.to_string(), "unheld".to_string()],
+        |run_id: &str| {
+            trashed.lock().unwrap().push(run_id.to_string());
+            Ok(())
+        },
+    );
+    assert_eq!(removed, 1);
+    assert_eq!(*trashed.lock().unwrap(), vec!["unheld".to_string()]);
+}
+
+#[test]
+fn run_order_follows_the_instant_across_offsets() {
+    // The clocks went back: the later run has the smaller local time.
+    let earlier = "2026-11-01T01:50:00-04:00".to_string();
+    let later = "2026-11-01T01:10:00-05:00".to_string();
+    let mut created = vec![earlier.clone(), "unreadable".to_string(), later.clone()];
+    sort_newest_first(&mut created, |value| value.as_str());
+    assert_eq!(created, vec![later, earlier, "unreadable".to_string()]);
+}
+
+#[test]
 fn retention_preview_token_binds_the_confirmed_deletion_plan() {
     let initial = retention_plan_from_state(
         &[

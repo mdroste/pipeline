@@ -67,22 +67,45 @@ async fn save(m: &Coordinator, mission: &mut Mission, kind: &str) -> Result<()> 
         .await?;
     Ok(())
 }
+/// Only the next poll time changed: no revision, event or rewritten brief.
+async fn touch(m: &Coordinator, mission: &Mission) -> Result<()> {
+    let id = mission.id.clone();
+    let due = mission.due_at;
+    m.db(move |s| storage::touch_due(&s, &id, due)).await
+}
 pub(crate) async fn tick(coordinator: &Arc<Coordinator>) -> Result<()> {
     let ids = coordinator.db(|s| storage::due(&s, now())).await?;
+    let mut outcome = Ok(());
     for id in ids {
-        let mut mission = coordinator.db(move |s| storage::get(&s, &id)).await?;
-        let previous = mission.state.clone();
-        let revision = mission.revision;
-        if let Err(reason) = advance(coordinator, &mut mission).await {
-            mission.state = "attention".into();
-            mission.reason = reason;
-            mission.due_at = None;
-            mission.attention_count += 1;
-            save(coordinator, &mut mission, "attention").await?;
+        if let Err(error) = tick_mission(coordinator, &id).await {
+            // A mission that can't record even its failure waits on its own.
+            let retry = Some(now() + store::RECORD_RETRY_SECS);
+            let _ = coordinator
+                .db(move |s| storage::touch_due(&s, &id, retry))
+                .await;
+            outcome = outcome.and(Err(error));
         }
-        if revision != mission.revision {
-            notify(coordinator, &mission, &previous);
-        }
+    }
+    outcome
+}
+async fn tick_mission(coordinator: &Arc<Coordinator>, id: &str) -> Result<()> {
+    let id = id.to_string();
+    let key = id.clone();
+    let mut mission = coordinator.db(move |s| storage::get(&s, &key)).await?;
+    let previous = mission.state.clone();
+    let revision = mission.revision;
+    if let Err(reason) = advance(coordinator, &mut mission).await {
+        // A rejected save must not become the basis for recovery: state that
+        // could not be committed could not be committed here either.
+        mission = coordinator.db(move |s| storage::get(&s, &id)).await?;
+        mission.state = "attention".into();
+        mission.reason = reason;
+        mission.due_at = None;
+        mission.attention_count += 1;
+        save(coordinator, &mut mission, "attention").await?;
+    }
+    if revision != mission.revision {
+        notify(coordinator, &mission, &previous);
     }
     Ok(())
 }
@@ -92,7 +115,7 @@ async fn advance(coordinator: &Arc<Coordinator>, m: &mut Mission) -> Result<()> 
         return Ok(());
     }
     if m.state != "paused" && m.state != "stopping" && m.deadline_at.is_some_and(|d| d <= now()) {
-        m.reason = "Mission elapsed deadline reached".into();
+        m.reason = "Research automation deadline reached".into();
         if let Some(id) = m.active_child.clone() {
             stop_child(coordinator, &id).await?;
             m.state = "stopping".into();
@@ -165,7 +188,7 @@ async fn advance(coordinator: &Arc<Coordinator>, m: &mut Mission) -> Result<()> 
             } else {
                 Some(now() + 60)
             };
-            return save(coordinator, m, "waitingForChild").await;
+            return touch(coordinator, m).await;
         }
     }
     if m.terminal() || m.state == "paused" {
@@ -216,14 +239,14 @@ async fn advance(coordinator: &Arc<Coordinator>, m: &mut Mission) -> Result<()> 
         } else {
             Some(now() + 60)
         };
-        return save(coordinator, m, "waiting").await;
+        return touch(coordinator, m).await;
     }
     if m.state != "queued" {
         return Ok(());
     }
     if exhausted(m) {
         m.state = "exhausted".into();
-        m.reason="Mission budget reached; retained results and unresolved questions are available in the brief".into();
+        m.reason="Research automation budget reached; retained results and unresolved questions are available in the brief".into();
         m.due_at = None;
         return save(coordinator, m, "budget").await;
     }
@@ -236,7 +259,9 @@ async fn advance(coordinator: &Arc<Coordinator>, m: &mut Mission) -> Result<()> 
         .authority_fingerprints
         .get(source.session_id.as_deref().unwrap_or(""))
         .cloned()
-        .ok_or("Mission authority record is unavailable")?;
+        .ok_or(
+            "This automation's permission record is unavailable. Start a new research automation.",
+        )?;
     let scope = source.clone();
     let scope = run_store(move |s| workspace::refresh_scope(&s, &scope, &fingerprint))
         .await
@@ -353,7 +378,7 @@ async fn consume(coordinator: &Coordinator, m: &mut Mission, child: &TaskRun) ->
         }
         Phase::Review => {
             let r = m.rounds.last_mut().ok_or("Review round is missing")?;
-            r.review = Some(output);
+            r.review = Some(prompts::retained_review(&output, child));
             r.child_ids.push(child.id.clone());
             m.phase = Phase::Challenge;
             m.state = "queued".into();
@@ -379,11 +404,11 @@ pub(crate) async fn stop_child(coordinator: &Coordinator, id: &str) -> Result<()
                 }
                 .into();
                 run.due_at = None;
-                run.reason = Some("Stopped by the owning mission".into());
-                s.save(
+                run.reason = Some("Stopped by the owning automation".into());
+                s.write(
                     &mut run,
                     "missionStop",
-                    "Owning mission stopped this action",
+                    "Owning automation stopped this action",
                 )?;
             }
             Ok(())

@@ -100,7 +100,7 @@ export default function AppSearch({
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const { projects, runs, tasks } = useSearchSources();
-  const { conversations } = useConversationIndex();
+  const { conversations } = useConversationIndex(true, false, true);
   const workspace = useNavRailSlot()?.workspace;
   const viewProject = workspace?.projectId ?? projects[0]?.id ?? null;
   const entries = useMemo<SearchEntry[]>(() => {

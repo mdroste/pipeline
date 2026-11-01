@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type {
   AutoReviewCatalog,
   AutoReviewCatalogRole,
   Phase,
 } from "../../lib/types";
 import useModalDialog from "../../hooks/useModalDialog";
+import { MAX_STEP_LABEL_CHARS } from "./editorState";
 import AnalyzerChoice, { type AnalyzerSelection } from "./AnalyzerChoice";
 
 export type StepContextPreset =
@@ -289,7 +290,7 @@ function AddStepDialog({
             id={titleId}
             className="text-base font-semibold text-gray-900 dark:text-gray-100"
           >
-            Add workflow step
+            Add review step
           </h2>
           <p
             id={descriptionId}
@@ -352,8 +353,8 @@ function AddStepDialog({
                 </p>
                 <p className="mt-1 text-[11px] leading-4 text-blue-800 dark:text-blue-200">
                   Choose a subject or method specialist. Its complete prompt and
-                  execution settings are copied into this workflow, where you
-                  can configure them like any other step.
+                  execution settings are copied into this review, where you can
+                  configure them like any other step.
                 </p>
               </div>
 
@@ -475,6 +476,7 @@ function AddStepDialog({
                 <input
                   id="new-step-name"
                   data-autofocus
+                  maxLength={MAX_STEP_LABEL_CHARS}
                   value={label}
                   onChange={(event) => setLabel(event.target.value)}
                   placeholder="e.g. Check identification strategy"
@@ -565,7 +567,7 @@ function AddStepDialog({
                         name="new-step-context"
                         value="isolated"
                         checked={contextPreset === "isolated"}
-                        title="No workflow artifacts"
+                        title="No review files"
                         description="Run only from the instructions written in the prompt."
                         onChange={() => setContextPreset("isolated")}
                       />
@@ -582,7 +584,7 @@ function AddStepDialog({
                         value="report"
                         checked={output === "report"}
                         title="Markdown report"
-                        description="A readable analysis for the final workflow output."
+                        description="A readable analysis for the final report."
                         onChange={() => setOutput("report")}
                       />
                       <ChoiceCard
@@ -651,4 +653,4 @@ function AddStepDialog({
   );
 }
 
-export default memo(AddStepDialog);
+export default AddStepDialog;

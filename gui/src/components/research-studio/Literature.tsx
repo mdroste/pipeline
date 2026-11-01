@@ -1,3 +1,4 @@
+import { Fold } from "../../ui";
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -11,6 +12,9 @@ import {
 import type { ProjectRecord } from "../../lib/projectClient";
 import type { SourceRecord } from "../../lib/workbenchTypes";
 import { researchClient } from "../../lib/workbench/researchClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import useReopenCount from "../../hooks/useReopenCount";
+import useReveal from "../../hooks/useReveal";
 import {
   button,
   panel,
@@ -20,6 +24,7 @@ import {
   ErrorNotice,
   Inspect,
   useAction,
+  useDraftGuard,
   type StudioProps,
 } from "./shared";
 const blank: LiteratureNote = {
@@ -40,6 +45,7 @@ export default function Literature({
   data,
   onRefresh,
   onDocument,
+  active,
 }: StudioProps) {
   const [bibliography, setBibliography] = useState<
     ProjectRecord<BibliographyRecord>[]
@@ -58,6 +64,7 @@ export default function Literature({
   > | null>(null);
   const [noteId, setNoteId] = useState("");
   const [note, setNote] = useState(blank);
+  const noteGuard = useDraftGuard(note);
   const [filter, setFilter] = useState("");
   const [sourceText, setSourceText] = useState<{
     text: string;
@@ -66,6 +73,7 @@ export default function Literature({
     accessState: string;
   } | null>(null);
   const sourceElement = useRef<HTMLPreElement>(null);
+  const noteForm = useReveal<HTMLElement>();
   const [sourceTitle, setSourceTitle] = useState("");
   const [versionLabel, setVersionLabel] = useState("");
   const [access, setAccess] = useState<"full" | "partial" | "abstract">("full");
@@ -85,6 +93,7 @@ export default function Literature({
     setNotes(n);
     setSources(s);
   };
+  const reopened = useReopenCount(active);
   useEffect(() => {
     let disposed = false;
     void Promise.all([
@@ -100,15 +109,23 @@ export default function Literature({
         }
       })
       .catch((e) => {
-        if (!disposed) setError(String(e));
+        if (!disposed) setError(workbenchErrorMessage(e));
       });
     return () => {
       disposed = true;
     };
-  }, [workspaceId, setError]);
+  }, [workspaceId, setError, reopened]);
   const toggle = (old: string[], id: string) =>
     old.includes(id) ? old.filter((i) => i !== id) : [...old, id];
   const chosen = notes.find((n) => n.id === noteId);
+  const openNote = (id: string, body: LiteratureNote) =>
+    noteGuard.replace("literature note", () => {
+      noteGuard.markSaved(body);
+      setNoteId(id);
+      setNote(body);
+      setSourceText(null);
+      noteForm.reveal();
+    });
   const useSelection = () => {
     const selection = window.getSelection();
     if (!sourceText || !sourceElement.current || !selection?.rangeCount) return;
@@ -136,8 +153,7 @@ export default function Literature({
     <div className="space-y-5">
       <ErrorNotice error={error} />
       <div className="grid gap-4 lg:grid-cols-2">
-        <section className={panel}>
-          <h2 className="font-semibold">Local bibliography</h2>
+        <Fold title="Local bibliography">
           <button
             className={button}
             disabled={busy}
@@ -243,15 +259,13 @@ export default function Literature({
               <div key={b.id} className="border-t py-2 text-xs">
                 <button
                   className="text-left underline"
-                  onClick={() => {
-                    setNoteId("");
-                    setNote({
+                  onClick={() =>
+                    openNote("", {
                       ...blank,
                       citationKey: b.body.entry?.key ?? "",
                       sourceVersionId: b.body.source.versionId,
-                    });
-                    setSourceText(null);
-                  }}
+                    })
+                  }
                 >
                   {b.body.entry?.key ?? b.body.item?.key ?? "Source"} ·{" "}
                   {b.body.source.title}
@@ -264,9 +278,8 @@ export default function Literature({
               </div>
             ))}
           </div>
-        </section>
-        <section className={panel}>
-          <h2 className="font-semibold">Zotero collection preview</h2>
+        </Fold>
+        <Fold title="Zotero collection preview">
           <p className="text-xs text-gray-500">
             Open Zotero and enable local application communication. Pipeline
             imports citation details from your collections. Attachments stay in
@@ -393,10 +406,9 @@ export default function Literature({
               )}
             </>
           )}
-        </section>
+        </Fold>
       </div>
-      <section className={panel}>
-        <h2 className="font-semibold">Citation-key navigation</h2>
+      <Fold title="Citation-key navigation">
         <Select
           label="Manuscript revision"
           value={manuscript}
@@ -427,7 +439,9 @@ export default function Literature({
               >
                 <button
                   className="underline"
-                  onClick={() => onDocument(manuscript)}
+                  onClick={() =>
+                    onDocument(manuscript, { start: c.start, end: c.end })
+                  }
                 >
                   {c.key} · bytes {c.start}–{c.end}
                 </button>
@@ -442,15 +456,13 @@ export default function Literature({
                   <button
                     className={button}
                     key={s.id}
-                    onClick={() => {
-                      setNoteId("");
-                      setNote({
+                    onClick={() =>
+                      openNote("", {
                         ...blank,
                         citationKey: c.key,
                         sourceVersionId: s.body.source.versionId,
-                      });
-                      setSourceText(null);
-                    }}
+                      })
+                    }
                   >
                     {s.body.source.title}
                   </button>
@@ -460,9 +472,8 @@ export default function Literature({
             ))}
           </div>
         )}
-      </section>
-      <section className={panel}>
-        <h2 className="font-semibold">Add a local source version</h2>
+      </Fold>
+      <Fold title="Add a local source version">
         <div className="grid gap-3 md:grid-cols-2">
           <Text
             label="Source title"
@@ -529,20 +540,13 @@ export default function Literature({
         >
           Choose and retain local source
         </button>
-      </section>
+      </Fold>
       <div className="grid gap-4 xl:grid-cols-2">
-        <section className={panel}>
+        <section ref={noteForm.ref} tabIndex={-1} className={panel}>
           <h2 className="font-semibold">
             Literature note and source-support checklist
           </h2>
-          <button
-            className={button}
-            onClick={() => {
-              setNoteId("");
-              setNote(blank);
-              setSourceText(null);
-            }}
-          >
+          <button className={button} onClick={() => openNote("", blank)}>
             New literature note
           </button>
           <Text
@@ -649,6 +653,7 @@ export default function Literature({
                   expectedRevision: chosen?.revision ?? 0,
                   note,
                 });
+                noteGuard.markSaved(note);
                 setNoteId(saved.id);
                 await refresh();
               })
@@ -676,9 +681,13 @@ export default function Literature({
             <>
               <p className="text-xs">
                 Access: {sourceText.accessState}. Bytes {sourceText.start}–
-                {sourceText.end}. Select supporting or contradicting text below.
+                {sourceText.end}.{" "}
+                {sourceText.text
+                  ? "Select supporting or contradicting text below."
+                  : "This is the end of the saved source."}
               </p>
               <pre
+                key={sourceText.start}
                 ref={sourceElement}
                 onMouseUp={useSelection}
                 onKeyUp={useSelection}
@@ -689,7 +698,7 @@ export default function Literature({
               </pre>
               <button
                 className={button}
-                disabled={busy}
+                disabled={busy || !sourceText.text}
                 onClick={() =>
                   void run(async () =>
                     setSourceText(
@@ -743,11 +752,7 @@ export default function Literature({
                     <td className="p-2">
                       <button
                         className="underline"
-                        onClick={() => {
-                          setNoteId(n.id);
-                          setNote(n.body.note);
-                          setSourceText(null);
-                        }}
+                        onClick={() => openNote(n.id, n.body.note)}
                       >
                         {n.body.note.question}
                       </button>

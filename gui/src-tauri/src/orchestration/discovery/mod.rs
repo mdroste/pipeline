@@ -32,6 +32,11 @@ use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
 use tauri::Emitter;
 
+/// How long an interrupted turn gets to stop, and how often it is checked.
+const SETTLE_SECS: i64 = 300;
+const SETTLE_POLL_SECS: i64 = 5;
+const SETTLING: &str = "Waiting for the interrupted step to stop";
+
 fn notice_transition(previous: &str, state: &str) -> bool {
     previous != state
         && matches!(
@@ -77,78 +82,144 @@ async fn save(
     notify(c, &p.run, &previous);
     Ok(())
 }
+/// Only the next poll time changed: no revision, event or rewritten records.
+async fn touch(c: &Coordinator, p: &Portfolio) -> Result<()> {
+    let id = p.run.id.clone();
+    let due = p.run.due_at;
+    c.db(move |s| storage::touch_due(&s, &id, due)).await
+}
 pub(crate) async fn tick(c: &Arc<Coordinator>) -> Result<()> {
     let ids = c.db(|s| storage::due(&s)).await?;
+    let mut outcome = Ok(());
     for id in ids {
-        let mut p = c.db(move |s| storage::load(&s, &id)).await?;
-        if let Err(e) = advance(c, &mut p).await {
-            // A rejected capture or database transaction must not become the
-            // basis for recovery. Retain the last committed portfolio.
-            let id = p.run.id.clone();
-            p = c.db(move |s| storage::load(&s, &id)).await?;
-            p.run.reason = e;
-            let child = match p.run.active_child.clone() {
-                Some(id) => Some(c.db(move |s| s.get(&id)).await?),
-                None => None,
-            };
-            // Only an ambiguous submission (a receipt still running or
-            // unknown) is terminal; a scope drift or a failed child turn is
-            // recoverable through Retry.
-            let state = failure_state(child.as_ref());
-            if state == "blocked" {
-                if let Some(id) = p.run.active_child.clone() {
-                    super::missions::stop_child(c, &id).await?;
-                    p.run.state = "stopping".into();
-                    p.run.stop_outcome = Some("blocked".into());
-                    p.run.due_at = Some(now() + 2);
-                } else {
-                    p.run.state = "blocked".into();
-                    p.run.due_at = None;
-                }
+        if let Err(error) = tick_run(c, &id).await {
+            // A run that can't record even its failure waits on its own.
+            let retry = Some(now() + store::RECORD_RETRY_SECS);
+            let _ = c.db(move |s| storage::touch_due(&s, &id, retry)).await;
+            outcome = outcome.and(Err(error));
+        }
+    }
+    outcome
+}
+async fn tick_run(c: &Arc<Coordinator>, id: &str) -> Result<()> {
+    let id = id.to_string();
+    let mut p = c.db(move |s| storage::load(&s, &id)).await?;
+    if let Err(e) = advance(c, &mut p).await {
+        // A rejected capture or database transaction must not become the
+        // basis for recovery. Retain the last committed portfolio.
+        let id = p.run.id.clone();
+        p = c.db(move |s| storage::load(&s, &id)).await?;
+        let child = match p.run.active_child.clone() {
+            Some(id) => Some(c.db(move |s| s.get(&id)).await?),
+            None => None,
+        };
+        // Only an action that is still running is terminal. A turn still
+        // settling is waited for, and anything else, including a turn the
+        // app lost in a restart, is recoverable through Retry. Nothing is
+        // resubmitted without that choice.
+        let running = match &child {
+            Some(child) => child_turn_running(child).await,
+            None => false,
+        };
+        let state = match (failure_state(child.as_ref(), running), &child) {
+            ("settling", Some(child)) if child.updated_at + SETTLE_SECS <= now() => "attention",
+            (state, _) => state,
+        };
+        if state == "settling" {
+            p.run.due_at = Some(now() + SETTLE_POLL_SECS);
+            if p.run.reason == SETTLING {
+                return touch(c, &p).await;
+            }
+            p.run.reason = SETTLING.into();
+            return save(c, &mut p, state, None).await;
+        }
+        p.run.reason = e;
+        if state == "blocked" {
+            if let Some(id) = p.run.active_child.clone() {
+                super::missions::stop_child(c, &id).await?;
+                p.run.state = "stopping".into();
+                p.run.stop_outcome = Some("blocked".into());
+                p.run.due_at = Some(now() + 2);
             } else {
-                p.run.state = "attention".into();
+                p.run.state = "blocked".into();
                 p.run.due_at = None;
             }
-            save(c, &mut p, state, None).await?;
+        } else {
+            p.run.state = "attention".into();
+            p.run.due_at = None;
         }
-        if p.run.terminal() {
-            let id = p.run.id.clone();
-            run_store(move |s| workspace::revoke(&s, &id))
-                .await
-                .map_err(|e| e.message)?;
-        }
+        save(c, &mut p, state, None).await?;
+    }
+    if p.run.terminal() {
+        let id = p.run.id.clone();
+        run_store(move |s| workspace::revoke(&s, &id))
+            .await
+            .map_err(|e| e.message)?;
     }
     Ok(())
 }
-/// A failure while a child still has a running or unknown receipt is an
-/// ambiguous submission and terminal; otherwise the run needs attention and
-/// may be retried once the researcher has reviewed the conversation.
-fn failure_state(child: Option<&TaskRun>) -> &'static str {
-    let ambiguous = child.is_some_and(|child| {
+/// A failure while the child's action is genuinely still running is terminal.
+/// A turn that outlived its action, as an interrupted turn does while it stops
+/// after a time limit, is left to settle. Otherwise the run needs attention and
+/// may be retried once the researcher has reviewed the conversation. An unknown
+/// receipt is not enough to end a run, because a restart leaves one behind for
+/// a turn that died with the app.
+fn failure_state(child: Option<&TaskRun>, turn_running: bool) -> &'static str {
+    let dispatched = child.is_some_and(|child| {
         child
             .progress
             .receipts
             .values()
-            .any(|r| r.state == "running" || r.state == "unknown")
+            .any(|r| r.state == "running")
     });
-    if ambiguous {
+    if dispatched {
         "blocked"
+    } else if turn_running {
+        "settling"
     } else {
         "attention"
     }
 }
 
+/// Whether a turn behind an unknown receipt still has a live owner.
+async fn child_turn_running(child: &TaskRun) -> bool {
+    let Some(session) = child.scope.session_id.clone() else {
+        return false;
+    };
+    let operations: Vec<_> = child
+        .progress
+        .receipts
+        .values()
+        .filter(|r| r.state == "unknown")
+        .map(|r| format!("task-{}", r.operation))
+        .collect();
+    run_store(move |s| {
+        for operation in &operations {
+            if crate::workbench::tasks::turn_running(&s, &session, operation)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    })
+    .await
+    .unwrap_or(false)
+}
+
 fn account(p: &mut Portfolio, child: &TaskRun) {
+    // A turn lost in a restart only ends when the app reopens. No action can
+    // outlast its timeout, so the time the app was closed is not charged.
+    let timeout = u64::from(child.chain.limits.action_timeout_secs);
     p.run.active_seconds = p.run.active_seconds.saturating_add(
         child
             .progress
             .receipts
             .values()
             .map(|r| {
-                r.finished_at
+                (r.finished_at
                     .unwrap_or(now())
                     .saturating_sub(r.started_at)
-                    .max(0) as u64
+                    .max(0) as u64)
+                    .min(timeout)
             })
             .sum::<u64>(),
     );
@@ -164,34 +235,35 @@ fn account(p: &mut Portfolio, child: &TaskRun) {
     p.run.active_child = None;
     p.run.active_scope = None;
 }
-// Persist recovered failures before the outer error handler reloads the child
-// to distinguish a known terminal failure from an ambiguous submission.
-async fn recover_child(c: &Coordinator, child: &TaskRun) -> Result<TaskRun> {
-    let mut recovered = child.clone();
-    c.recover_results(&mut recovered).await?;
-    if recovered.progress.receipts.iter().any(|(key, receipt)| {
-        receipt.state == "failed"
-            && child
-                .progress
-                .receipts
-                .get(key)
-                .is_some_and(|old| old.state == "unknown")
-    }) {
-        c.save(
-            &mut recovered,
-            "reconciledFailure",
-            "Recovered a terminal action failure without replaying it",
+/// Only a completed, journaled model response may receive a bounded repair turn.
+fn reject_response(p: &mut Portfolio, child: &TaskRun, e: String) {
+    account(p, child);
+    if p.run.repairs < 2
+        && !matches!(
+            p.run.phase,
+            Phase::Acquire { .. } | Phase::ExternalReview { .. } | Phase::Deliver
         )
-        .await?;
+    {
+        p.run.repairs += 1;
+        p.run.reason = format!("Repair the response contract: {e}");
+        p.run.due_at = Some(now());
+    } else {
+        p.run.state = "blocked".into();
+        p.run.reason = format!("Research response could not be adopted: {e}");
+        p.run.due_at = None;
     }
-    Ok(recovered)
 }
 
 async fn advance(c: &Arc<Coordinator>, p: &mut Portfolio) -> Result<()> {
     if p.run.terminal() {
         return Ok(());
     }
-    if p.run.deadline_at <= now() && p.run.state != "stopping" {
+    if p.run.state == "awaitingSelection" && p.run.selection_since.is_none() {
+        // Saved before the clock stopped during selection.
+        p.run.selection_since = Some(p.run.updated_at);
+        return save(c, p, "selectionClock", None).await;
+    }
+    if p.run.deadline_passed() && p.run.state != "stopping" {
         p.run.reason = "Elapsed research deadline reached; all recorded work is retained".into();
         if let Some(id) = p.run.active_child.clone() {
             super::missions::stop_child(c, &id).await?;
@@ -213,9 +285,11 @@ async fn advance(c: &Arc<Coordinator>, p: &mut Portfolio) -> Result<()> {
                 p.run.due_at = None;
                 return save(c, p, "stopped", Some(child.id)).await;
             }
+            let mut child = child;
+            let mut oversized = None;
             if child.state != "finished" {
                 // A lost acknowledgement can contain completed work. Reconcile, never resubmit.
-                let mut recovered = recover_child(c, &child).await?;
+                let mut recovered = c.recover_child(&child).await?;
                 if recovered
                     .progress
                     .receipts
@@ -233,45 +307,42 @@ async fn advance(c: &Arc<Coordinator>, p: &mut Portfolio) -> Result<()> {
                     .await?;
                     return Ok(());
                 }
-                return Err(format!(
-                    "{}; the recorded child was not replayed",
-                    child
-                        .reason
-                        .as_deref()
-                        .unwrap_or("A research action did not finish")
-                ));
+                // A turn that finished with a reply too long to use is a
+                // response like any other, so it gets the same repair.
+                oversized = recovered.progress.receipts.values().find_map(|r| {
+                    r.output
+                        .as_ref()
+                        .filter(|v| adapters::oversized_reply(v))
+                        .and(r.error.clone())
+                });
+                if oversized.is_none() {
+                    return Err(format!(
+                        "{}; the recorded child was not replayed",
+                        child
+                            .reason
+                            .as_deref()
+                            .unwrap_or("A research action did not finish")
+                    ));
+                }
+                child = recovered;
             }
             let paused = p.run.state == "paused";
-            let output = child
-                .progress
-                .outputs
-                .get("action")
-                .ok_or("Completed research action omitted its output")?
-                .clone();
-            let mut next = p.clone();
-            let result = consume(c, &mut next, &child, &output).await;
-            match result {
-                Ok(()) => {
-                    account(&mut next, &child);
-                    *p = next;
-                }
-                Err(e) => {
-                    // Only a completed, journaled model response may receive a bounded repair turn.
-                    account(p, &child);
-                    if p.run.repairs < 2
-                        && !matches!(
-                            p.run.phase,
-                            Phase::Acquire { .. } | Phase::ExternalReview { .. } | Phase::Deliver
-                        )
-                    {
-                        p.run.repairs += 1;
-                        p.run.reason = format!("Repair the response contract: {e}");
-                        p.run.due_at = Some(now());
-                    } else {
-                        p.run.state = "blocked".into();
-                        p.run.reason = format!("Research response could not be adopted: {e}");
-                        p.run.due_at = None;
+            if let Some(e) = oversized {
+                reject_response(p, &child, e);
+            } else {
+                let output = child
+                    .progress
+                    .outputs
+                    .get("action")
+                    .ok_or("Completed research action omitted its output")?
+                    .clone();
+                let mut next = p.clone();
+                match consume(c, &mut next, &child, &output).await {
+                    Ok(()) => {
+                        account(&mut next, &child);
+                        *p = next;
                     }
+                    Err(e) => reject_response(p, &child, e),
                 }
             }
             if paused && !p.run.terminal() {
@@ -281,8 +352,13 @@ async fn advance(c: &Arc<Coordinator>, p: &mut Portfolio) -> Result<()> {
             save(c, p, "adopted", Some(child.id)).await?;
         } else {
             p.run.due_at = Some(now() + 60);
-            return save(c, p, "waiting", None).await;
+            return touch(c, p).await;
         }
+    }
+    if p.run.state == "awaitingSelection" && p.run.due_at.is_some() {
+        // Nothing happens here until the researcher chooses.
+        p.run.due_at = None;
+        return touch(c, p).await;
     }
     if p.run.state != "running" {
         return Ok(());
@@ -306,7 +382,9 @@ async fn advance(c: &Arc<Coordinator>, p: &mut Portfolio) -> Result<()> {
     let persistent = matches!(phase, Phase::Research { .. } | Phase::Draft { .. });
     let source = p.run.source_scope.clone();
     let expected = p.run.source_authority.clone();
-    run_store(move |s| research::refresh_source_scope(&s, &source, &expected))
+    // Research context moves during a long run, so later steps use the
+    // refreshed scope rather than the one saved when the run began.
+    p.run.source_scope = run_store(move |s| research::refresh_source_scope(&s, &source, &expected))
         .await
         .map_err(|e| e.message)?;
     let scope = if let Some(index) = phase.paper().filter(|_| persistent) {
@@ -422,7 +500,7 @@ async fn advance(c: &Arc<Coordinator>, p: &mut Portfolio) -> Result<()> {
             .active_seconds
             .saturating_sub(p.run.active_seconds),
     ) as u32;
-    let name = format!("Self-discovery · {}", export::phase_name(&p.run.phase));
+    let name = format!("Research discovery · {}", export::phase_name(&p.run.phase));
     let chain = Chain {
         schema_version: 1,
         name: name.clone(),

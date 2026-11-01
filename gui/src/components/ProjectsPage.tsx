@@ -7,6 +7,7 @@ import type {
   TrashedProject,
 } from "../lib/types";
 import { listedRunStatus } from "../lib/reportPresentation";
+import { router } from "../lib/router";
 import ProjectIssueLedgerPanel from "./ProjectIssueLedgerPanel";
 import { confirmDialog, notify } from "./DialogService";
 import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
@@ -45,7 +46,11 @@ export default function ProjectsPage({
   const [projects, setProjects] = useState<Project[]>([]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // A link can name a collection; one that no longer exists falls to the first.
+  const [selectedId, setSelectedId] = useState<string | null>(() => {
+    const { route } = router.getSnapshot();
+    return route.page === "projects" ? (route.collectionId ?? null) : null;
+  });
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +59,7 @@ export default function ProjectsPage({
   const [createDescription, setCreateDescription] = useState("");
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const details = useRef<HTMLElement>(null);
   const draftProjectId = useRef<string | null>(null);
   const saveInFlight = useRef<Promise<boolean> | null>(null);
   const selectionSequence = useRef(0);
@@ -111,6 +117,10 @@ export default function ProjectsPage({
   useEffect(() => {
     if (trashOpen) void refreshTrash();
   }, [trashOpen]);
+
+  useEffect(() => {
+    if (details.current) details.current.scrollTop = 0;
+  }, [selectedId]);
 
   const selected =
     projects.find((project) => project.id === selectedId) ?? null;
@@ -523,7 +533,7 @@ export default function ProjectsPage({
           {trashOpen && (
             <div
               id="project-trash"
-              className="mt-1 space-y-1"
+              className="mt-1 max-h-64 space-y-1 overflow-y-auto"
               aria-label="Review collection Trash"
             >
               {trashLoading ? (
@@ -572,7 +582,7 @@ export default function ProjectsPage({
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-auto">
+      <main ref={details} className="min-w-0 flex-1 overflow-auto">
         {error && (
           <div
             role="alert"

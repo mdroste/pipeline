@@ -3,7 +3,7 @@
 use super::{attr, bad, push_text, Limited};
 use crate::workbench::data::{
     csv::missing as missing_token,
-    profile::{cell_text, ColumnStats, Window, MAX_COLUMNS, PREVIEW_COLUMNS, PREVIEW_ROWS},
+    profile::{cell_text, ColumnStats, Window, MAX_COLUMNS, PREVIEW_COLUMNS},
     MissingCell,
 };
 use crate::workbench::store::{WorkbenchError, WorkbenchResult};
@@ -206,7 +206,7 @@ impl<'a> Sheet<'a> {
             }
             if let Some(w) = self.window.as_mut() {
                 let from = self.rows.max(w.start);
-                let to = index.min(w.start.saturating_add(PREVIEW_ROWS));
+                let to = index.min(w.end());
                 for _ in from..to.max(from) {
                     w.rows.push(vec![None; width.min(PREVIEW_COLUMNS)]);
                 }

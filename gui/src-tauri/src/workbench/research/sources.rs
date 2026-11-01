@@ -1,6 +1,7 @@
 //! Sources owned by the Workspace research service.
 
 use super::*;
+use crate::workbench::store::outside_folder_error;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -71,7 +72,9 @@ pub fn source_read(
     })?;
     let path = PathBuf::from(reference);
     if !path.starts_with(store.root_path().join("blobs")) {
-        return Err(WorkbenchError::invalid(
+        return Err(outside_folder_error(
+            "This source's text",
+            &path,
             "Source text reference escaped Workspace storage",
         ));
     }
@@ -214,11 +217,8 @@ pub fn import_source(
                 .root_path()
                 .join("blobs")
                 .join(format!("{text_hash}.txt"));
-            if !path.exists() {
-                fs::write(&path, text.as_bytes()).map_err(|error| {
-                    WorkbenchError::storage("Failed to store source text", error)
-                })?;
-            }
+            crate::workbench::desk::write_blob_atomic(&path, text.as_bytes(), &text_hash)
+                .map_err(|error| WorkbenchError::storage("Failed to store source text", error))?;
             text_reference = Some(path.to_string_lossy().into_owned());
         }
         content_hash = Some(hash);

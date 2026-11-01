@@ -1,7 +1,7 @@
 //! Resolve and fingerprint the same executable and environment used at launch.
 use super::adapters;
+use super::file_identity::{hash_regular_file, hash_resolved_file};
 use super::types::ExecutionProfile;
-use crate::workbench::research::papers::{hash_file, hash_resolved_file};
 use crate::workbench::store::{WorkbenchError, WorkbenchResult};
 use serde_json::{json, Value};
 use std::fs;
@@ -69,7 +69,9 @@ pub(crate) fn launch_manifest(profile: &ExecutionProfile) -> WorkbenchResult<Val
     } else {
         Value::Null
     };
-    let (hash, size) = hash_file(&executable)?;
+    let (hash, size) = hash_regular_file(&executable).map_err(|problem| {
+        WorkbenchError::invalid(format!("The execution program {}", problem.reason()))
+    })?;
     let mut launch_files = Vec::new();
     let document_extensions = adapters::launch_file_extensions(&profile.adapter);
     for argument in prefix.iter().chain(profile.argv.iter().skip(1)) {

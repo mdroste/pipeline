@@ -1,3 +1,5 @@
+use super::persistence::{load_profile_at, read_profile_at};
+use super::settings_restore::restored_settings;
 use super::*;
 
 /// Save to the active profile.
@@ -13,7 +15,8 @@ pub fn save_for(profile_id: &str, config: &PipelineConfig) -> Result<(), String>
     let profile_id = resolve_renamed_profile_id(&profiles_dir()?, profile_id);
     validate_profile_steps(&config.steps)?;
     validate_enabled_sequential_step(&config.steps)?;
-    let name = load_profile(profile_id)?.name;
+    // Saving is how a profile that fails validation gets repaired.
+    let name = read_profile(profile_id)?.name;
     let profile = ProfileData::from_config(name, config);
     save_profile_unlocked(profile_id, &profile)
 }
@@ -60,10 +63,33 @@ pub fn get_active_profile_id() -> String {
 
 pub fn list_profiles() -> Result<Vec<ProfileSummary>, String> {
     ensure_migrated()?;
-    let dir = profiles_dir()?;
+    list_profiles_at(&profiles_dir()?)
+}
+
+/// What can be read of a saved profile that can't be used, with the reason.
+fn invalid_profile_summary(id: String, path: &Path, reason: String) -> ProfileSummary {
+    let saved = read_profile_file(path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok());
+    let field = |key: &str| saved.as_ref().and_then(|value| value.get(key).cloned());
+    ProfileSummary {
+        builtin: BUILTIN_PROFILES.contains(&id.as_str()),
+        name: field("name")
+            .and_then(|name| name.as_str().map(str::to_string))
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| id.clone()),
+        step_count: field("steps")
+            .and_then(|steps| steps.as_array().map(Vec::len))
+            .unwrap_or(0),
+        id,
+        invalid: Some(reason),
+    }
+}
+
+pub(super) fn list_profiles_at(dir: &Path) -> Result<Vec<ProfileSummary>, String> {
     let mut summaries = Vec::new();
     let mut walk = crate::safety::WalkBudget::new("Profile listing");
-    for entry in fs::read_dir(&dir).map_err(|e| format!("Failed to read profiles dir: {e}"))? {
+    for entry in fs::read_dir(dir).map_err(|e| format!("Failed to read profiles dir: {e}"))? {
         walk.entry()?;
         let entry = entry.map_err(|e| format!("Dir entry error: {e}"))?;
         let path = entry.path();
@@ -75,9 +101,14 @@ pub fn list_profiles() -> Result<Vec<ProfileSummary>, String> {
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_string();
-        match load_profile(&id) {
+        // A file name no profile can have is not a saved profile.
+        if let Err(error) = validate_profile_id(&id) {
+            eprintln!("WARNING: skipped file '{id}' in profiles: {error}");
+            continue;
+        }
+        match load_profile_at(&path, &id) {
             Ok(profile) => summaries.push(profile_summary(id, &profile)),
-            Err(error) => eprintln!("WARNING: skipped invalid profile '{id}': {error}"),
+            Err(error) => summaries.push(invalid_profile_summary(id, &path, error)),
         }
     }
     summaries.sort_by(|a, b| a.name.cmp(&b.name));
@@ -198,7 +229,7 @@ pub(super) fn delete_profile_file_transactionally(
 
 pub fn switch_profile(id: &str) -> Result<PipelineConfig, String> {
     let _ = ensure_migrated();
-    let profile = load_profile(id)?;
+    let profile = read_profile(id)?;
     crate::settings::set_active_profile(id)?;
     Ok(profile.into())
 }
@@ -207,7 +238,7 @@ pub fn switch_profile(id: &str) -> Result<PipelineConfig, String> {
 
 pub fn export_profile_data(id: &str) -> Result<String, String> {
     ensure_migrated()?;
-    let profile = load_profile(id)?;
+    let profile = read_profile(id)?;
     let envelope = ExportEnvelope::Profile {
         schema_version: CURRENT_SCHEMA_VERSION,
         name: profile.name,
@@ -233,30 +264,106 @@ pub fn export_bundle() -> Result<String, String> {
     settings.openai_api_key = String::new();
     settings.google_api_key = String::new();
     settings.local_api_key = String::new();
-    let summaries = list_profiles()?;
-    let mut profiles = Vec::new();
-    for s in &summaries {
-        let profile = load_profile(&s.id)?;
-        profiles.push(ProfileExport::from_profile(s.id.clone(), profile));
-    }
     let envelope = ExportEnvelope::Bundle {
         active_profile: settings.active_profile.clone(),
         settings,
-        profiles,
+        profiles: bundle_profiles_at(&profiles_dir()?)?,
     };
     serde_json::to_string_pretty(&envelope).map_err(|e| format!("Serialize error: {e}"))
 }
 
+/// Every saved profile, including those that need repair. Only a file too
+/// damaged to read as a profile is left out, and the listing still shows it.
+pub(super) fn bundle_profiles_at(dir: &Path) -> Result<Vec<ProfileExport>, String> {
+    let mut profiles = Vec::new();
+    for summary in list_profiles_at(dir)? {
+        let path = dir.join(format!("{}.json", summary.id));
+        match read_profile_at(&path, &summary.id) {
+            Ok((profile, _)) => {
+                let mut export = ProfileExport::from_profile(summary.id, profile);
+                export.invalid = summary.invalid;
+                profiles.push(export);
+            }
+            Err(error) => eprintln!("WARNING: backup left out a profile: {error}"),
+        }
+    }
+    Ok(profiles)
+}
+
+/// An export file with its older steps given the context they implied. `raw`
+/// is the same file before parsing, which still shows what each step left out.
+fn with_older_steps_wired(
+    envelope: ExportEnvelope,
+    raw: &serde_json::Value,
+) -> Result<ExportEnvelope, String> {
+    Ok(match envelope {
+        ExportEnvelope::Step { data } if raw["data"].get("context").is_none() => {
+            ExportEnvelope::Step {
+                data: older_step_with_context(data)?,
+            }
+        }
+        ExportEnvelope::Profile {
+            schema_version,
+            name,
+            steps,
+            merge,
+            outputs,
+            context_cache,
+            use_orientation,
+            orientation_prompt,
+            orientation_schema,
+            extraction,
+            parallel_context_template,
+            variables,
+        } => ExportEnvelope::Profile {
+            schema_version,
+            name,
+            steps: wire_implicit_context(&raw["steps"], steps, &extraction.input_mode)?,
+            merge,
+            outputs,
+            context_cache,
+            use_orientation,
+            orientation_prompt,
+            orientation_schema,
+            extraction,
+            parallel_context_template,
+            variables,
+        },
+        ExportEnvelope::Bundle {
+            settings,
+            mut profiles,
+            active_profile,
+        } => {
+            for (index, profile) in profiles.iter_mut().enumerate() {
+                let steps = std::mem::take(&mut profile.steps);
+                profile.steps = wire_implicit_context(
+                    &raw["profiles"][index]["steps"],
+                    steps,
+                    &profile.extraction.input_mode,
+                )
+                .map_err(|error| format!("Profile '{}': {error}", profile.name))?;
+            }
+            ExportEnvelope::Bundle {
+                settings,
+                profiles,
+                active_profile,
+            }
+        }
+        other => other,
+    })
+}
+
 /// Auto-detect and parse an export file, handling legacy formats.
 pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
-    // Try new format first
-    if let Ok(envelope) = serde_json::from_str::<ExportEnvelope>(json) {
-        return Ok(envelope);
-    }
-
-    // Parse as JSON value for legacy detection
+    let parsed = serde_json::from_str::<ExportEnvelope>(json);
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| format!("Invalid JSON: {e}"))?;
+    // Try new format first
+    if let Ok(envelope) = parsed {
+        return with_older_steps_wired(envelope, &value);
+    }
+
+    // Otherwise look for a legacy format
 
     match value.get("type").and_then(|t| t.as_str()) {
         Some("referee") => {
@@ -264,7 +371,7 @@ pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
                 let legacy: LegacyRefereeConfig = serde_json::from_value(data.clone())
                     .map_err(|e| format!("Invalid referee config: {e}"))?;
                 return Ok(ExportEnvelope::Step {
-                    data: referee_to_step(legacy),
+                    data: older_step_with_context(referee_to_step(legacy))?,
                 });
             }
         }
@@ -273,7 +380,7 @@ pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
                 let legacy: LegacyPostStepConfig = serde_json::from_value(data.clone())
                     .map_err(|e| format!("Invalid post-step config: {e}"))?;
                 return Ok(ExportEnvelope::Step {
-                    data: post_step_to_step(legacy),
+                    data: older_step_with_context(post_step_to_step(legacy))?,
                 });
             }
         }
@@ -399,9 +506,11 @@ pub fn install_workflow_document(workflow: &WorkflowDocument) -> Result<ProfileS
 }
 
 pub fn import_bundle(json: &str) -> Result<(), String> {
+    let raw: serde_json::Value =
+        serde_json::from_str(json).map_err(|e| format!("Invalid bundle: {e}"))?;
     let envelope: ExportEnvelope =
         serde_json::from_str(json).map_err(|e| format!("Invalid bundle: {e}"))?;
-    match envelope {
+    match with_older_steps_wired(envelope, &raw)? {
         ExportEnvelope::Bundle {
             settings: imported_settings,
             profiles,
@@ -413,6 +522,11 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
             // app would actually load, not the raw export.
             let imported_settings = imported_settings.normalized_for_import();
             imported_settings.validate()?;
+            let keep_as_saved: std::collections::HashSet<&str> = profiles
+                .iter()
+                .filter(|profile| profile.invalid.is_some())
+                .map(|profile| profile.id.as_str())
+                .collect();
             if imported_settings.active_profile != active_profile {
                 return Err(format!(
                     "Bundle active profile mismatch: settings name '{}', envelope names '{}'",
@@ -420,82 +534,15 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
                 ));
             }
             let _lock = lock_profile_mutations()?;
-            // Merge imported settings with existing, preserving local API keys.
-            let mut current = crate::settings::load_persisted_required()?;
-            current.preferred_provider = imported_settings.preferred_provider;
-            current.default_parallel_agents = imported_settings.default_parallel_agents;
-            current.default_parallel_model_overrides =
-                imported_settings.default_parallel_model_overrides;
-            current.default_parallel_effort_overrides =
-                imported_settings.default_parallel_effort_overrides;
-            current.default_merge_agent = imported_settings.default_merge_agent;
-            current.default_merge_model_overrides = imported_settings.default_merge_model_overrides;
-            current.default_merge_effort_overrides =
-                imported_settings.default_merge_effort_overrides;
-            current.default_sequential_agent = imported_settings.default_sequential_agent;
-            current.default_sequential_model_overrides =
-                imported_settings.default_sequential_model_overrides;
-            current.default_sequential_effort_overrides =
-                imported_settings.default_sequential_effort_overrides;
-            current.default_orientation_agent = imported_settings.default_orientation_agent;
-            current.default_orientation_model_overrides =
-                imported_settings.default_orientation_model_overrides;
-            current.default_orientation_effort_overrides =
-                imported_settings.default_orientation_effort_overrides;
-            current.usage_limit_fallback_agent = imported_settings.usage_limit_fallback_agent;
-            current.usage_limit_fallback_model_overrides =
-                imported_settings.usage_limit_fallback_model_overrides;
-            current.usage_limit_fallback_effort_overrides =
-                imported_settings.usage_limit_fallback_effort_overrides;
-            current.max_workers = imported_settings.max_workers;
-            current.claude_model = imported_settings.claude_model;
-            current.claude_cli_model_selection = imported_settings.claude_cli_model_selection;
-            current.claude_api_model_selection = imported_settings.claude_api_model_selection;
-            current.claude_effort = imported_settings.claude_effort;
-            current.codex_model = imported_settings.codex_model;
-            current.codex_cli_model_selection = imported_settings.codex_cli_model_selection;
-            current.codex_api_model_selection = imported_settings.codex_api_model_selection;
-            current.codex_effort = imported_settings.codex_effort;
-            current.antigravity_cli_model_selection =
-                imported_settings.antigravity_cli_model_selection;
-            current.antigravity_api_model_selection =
-                imported_settings.antigravity_api_model_selection;
-            current.antigravity_effort = imported_settings.antigravity_effort;
-            if current.local_base_url != imported_settings.local_base_url {
-                // A bearer token is scoped to its endpoint. Carrying a local
-                // token across an imported server URL can disclose it to a
-                // different host on the next request.
-                current.local_api_key.clear();
+            // The backup's settings over this computer's. A bearer token is
+            // scoped to its endpoint: carrying a local token across an imported
+            // server URL can disclose it to a different host on the next request.
+            let current = crate::settings::load_persisted_required()?;
+            let mut restored = restored_settings(&current, &imported_settings, &raw["settings"])?;
+            if current.local_base_url != restored.local_base_url {
+                restored.local_api_key.clear();
             }
-            current.local_base_url = imported_settings.local_base_url;
-            current.local_model = imported_settings.local_model;
-            current.pdf_extractor = imported_settings.pdf_extractor;
-            current.paddle_page_concurrency = imported_settings.paddle_page_concurrency;
-            current.paddle_mtmd_batch_tokens = imported_settings.paddle_mtmd_batch_tokens;
-            current.paddle_flash_attention = imported_settings.paddle_flash_attention;
-            current.paddle_max_output_tokens = imported_settings.paddle_max_output_tokens;
-            current.paddle_page_retries = imported_settings.paddle_page_retries;
-            current.paddle_full_layout_detection = imported_settings.paddle_full_layout_detection;
-            current.paddle_full_layout_threshold = imported_settings.paddle_full_layout_threshold;
-            current.paddle_full_layout_nms = imported_settings.paddle_full_layout_nms;
-            current.paddle_full_layout_merge_bboxes_mode =
-                imported_settings.paddle_full_layout_merge_bboxes_mode;
-            current.paddle_full_merge_layout_blocks =
-                imported_settings.paddle_full_merge_layout_blocks;
-            current.paddle_full_ocr_image_blocks = imported_settings.paddle_full_ocr_image_blocks;
-            current.paddle_full_format_block_content =
-                imported_settings.paddle_full_format_block_content;
-            current.paddle_full_merge_tables = imported_settings.paddle_full_merge_tables;
-            current.paddle_full_relevel_titles = imported_settings.paddle_full_relevel_titles;
-            current.paddle_full_show_formula_numbers =
-                imported_settings.paddle_full_show_formula_numbers;
-            current.pdf_extraction_timeout_secs = imported_settings.pdf_extraction_timeout_secs;
-            current.reuse_pdf_extraction_cache = imported_settings.reuse_pdf_extraction_cache;
-            current.verbose_logging = imported_settings.verbose_logging;
-            current.step_timeout_secs = imported_settings.step_timeout_secs;
-            current.max_retries = imported_settings.max_retries;
-            current.max_saved_runs = imported_settings.max_saved_runs;
-            current.active_profile = active_profile;
+            restored.active_profile = active_profile;
 
             // Snapshot every destination before the first mutation. If any
             // profile or the final settings write fails, restore the exact
@@ -518,7 +565,12 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
                 })
                 .collect::<Result<_, String>>()?;
             for (id, profile) in &validated {
-                if let Err(error) = save_profile_unlocked(id, profile) {
+                let saved = if keep_as_saved.contains(id.as_str()) {
+                    write_profile_as_saved(id, profile)
+                } else {
+                    save_profile_unlocked(id, profile)
+                };
+                if let Err(error) = saved {
                     let rollback = restore_profile_snapshots(&snapshots);
                     return Err(match rollback {
                         Ok(()) => error,
@@ -529,7 +581,7 @@ pub fn import_bundle(json: &str) -> Result<(), String> {
                 }
             }
             // API keys are intentionally NOT overwritten from the import
-            if let Err(error) = crate::settings::save(&current) {
+            if let Err(error) = crate::settings::save(&restored) {
                 let rollback = restore_profile_snapshots(&snapshots);
                 return Err(match rollback {
                     Ok(()) => error,
@@ -556,9 +608,12 @@ pub(super) fn validate_bundle_profiles(
             return Err(format!("Duplicate profile id '{}'", profile.id));
         }
         let data = profile.to_profile_data();
-        validate_profile_data(&data).map_err(|e| format!("Profile '{}': {e}", profile.name))?;
-        validate_enabled_sequential_step(&data.steps)
-            .map_err(|e| format!("Profile '{}': {e}", profile.name))?;
+        // Every load validates, so one kept as it was still can't be run.
+        if profile.invalid.is_none() {
+            validate_profile_data(&data).map_err(|e| format!("Profile '{}': {e}", profile.name))?;
+            validate_enabled_sequential_step(&data.steps)
+                .map_err(|e| format!("Profile '{}': {e}", profile.name))?;
+        }
         validated.push((profile.id.clone(), data));
     }
     if !ids.contains(active_profile) {
@@ -567,6 +622,15 @@ pub(super) fn validate_bundle_profiles(
         ));
     }
     Ok(validated)
+}
+
+/// A restored profile that needed repair when it was backed up, written
+/// without the validator it is already known to fail.
+fn write_profile_as_saved(id: &str, profile: &ProfileData) -> Result<(), String> {
+    let json =
+        serde_json::to_string_pretty(profile).map_err(|e| format!("Failed to serialize: {e}"))?;
+    restore_profile_bytes(&profile_path(id)?, json.as_bytes())
+        .map_err(|e| format!("Failed to save profile '{id}': {e}"))
 }
 
 fn restore_profile_snapshots(snapshots: &[(PathBuf, Option<Vec<u8>>)]) -> Result<(), String> {

@@ -23,6 +23,15 @@ describe("task templates", () => {
       template("review", "A macroeconomic idea", "auto-paper-review", 3),
     ).toEqual(reviewChain);
   });
+  it("allows enough actions for every review the builder offers", () => {
+    for (const rounds of [1, 3, 21, 22, 32]) {
+      const { limits } = template("review", "An idea", "auto", rounds);
+      // Draft, paper snapshot and delivery, plus one full cycle per review.
+      expect(limits.maxActions).toBeGreaterThanOrEqual(3 + 3 * rounds);
+      expect(limits.maxActions).toBeLessThanOrEqual(1024);
+    }
+    expect(template("review", "An idea", "auto", 3).limits.maxActions).toBe(64);
+  });
   it("always ends a revision round with a review of an immutable artifact", () => {
     const chain = template(
       "review",

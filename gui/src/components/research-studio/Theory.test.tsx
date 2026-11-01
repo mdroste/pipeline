@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -10,6 +11,7 @@ import Theory from "./Theory";
 import type { ProjectHome } from "../../lib/projectClient";
 import type { TheoryOverview } from "../../lib/studioClient";
 const mocks = vi.hoisted(() => ({
+  confirm: vi.fn(),
   theory: vi.fn(),
   mutate: vi.fn(),
   invoke: vi.fn(),
@@ -19,6 +21,10 @@ vi.mock("../../lib/studioClient", async (original) => ({
   studioClient: mocks,
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+vi.mock("../DialogService", async (original) => ({
+  ...(await original<typeof import("../DialogService")>()),
+  confirmDialog: mocks.confirm,
+}));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: vi.fn() }));
 const anchor = (id: string, quote: string) => ({
   id,
@@ -371,4 +377,106 @@ it("converts a direction into a task only after its discriminating test is state
       expectedRevision: 3,
     }),
   );
+});
+
+it("brings a refused save into view, and shows a save beside its own section", async () => {
+  mocks.theory.mockResolvedValue(
+    overview({ notes: [note("t1", "proposition")] }),
+  );
+  const scrolled = vi.fn();
+  const original = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = scrolled;
+  try {
+    render(<Theory {...props()} />);
+    fireEvent.click(await screen.findByText("Edit / checks"));
+    mocks.mutate.mockRejectedValueOnce({ message: "Unresolved steps remain" });
+    fireEvent.click(screen.getByText("Save theory note"));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Unresolved steps remain");
+    expect(scrolled.mock.contexts).toContain(alert);
+
+    fireEvent.change(screen.getByLabelText("Research question"), {
+      target: { value: "Does it hold?" },
+    });
+    mocks.mutate.mockResolvedValueOnce({ id: "d1", revision: 1, body: {} });
+    const save = screen.getByText("Save direction");
+    fireEvent.click(save);
+    const saved = await screen.findByText("Research direction saved.");
+    expect(saved).toBe(save.nextElementSibling);
+  } finally {
+    Element.prototype.scrollIntoView = original;
+  }
+});
+
+it("asks before another note or New note replaces unsaved text", async () => {
+  mocks.theory.mockResolvedValue(
+    overview({ notes: [note("t1", "proposition"), note("t2", "lemma")] }),
+  );
+  render(<Theory {...props()} />);
+  const [first, second] = await screen.findAllByText("Edit / checks");
+  fireEvent.click(first);
+  const title = screen.getByLabelText("Title");
+  // Choosing a note with nothing typed asks nothing.
+  expect(mocks.confirm).not.toHaveBeenCalled();
+  fireEvent.change(title, { target: { value: "My unsaved title" } });
+
+  mocks.confirm.mockResolvedValueOnce(false);
+  fireEvent.click(second);
+  await waitFor(() => expect(mocks.confirm).toHaveBeenCalledOnce());
+  await act(async () => {});
+  expect(title).toHaveValue("My unsaved title");
+
+  mocks.confirm.mockResolvedValueOnce(false);
+  fireEvent.click(screen.getByText("New note"));
+  await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(2));
+  await act(async () => {});
+  expect(title).toHaveValue("My unsaved title");
+
+  mocks.confirm.mockResolvedValueOnce(true);
+  fireEvent.click(second);
+  await waitFor(() => expect(title).toHaveValue("lemma title"));
+});
+
+it("does not ask once the note has been saved", async () => {
+  mocks.theory.mockResolvedValue(
+    overview({ notes: [note("t1", "proposition"), note("t2", "lemma")] }),
+  );
+  mocks.mutate.mockImplementation(
+    async (_w: string, action: { note: never }) => ({
+      id: "t1",
+      revision: 3,
+      body: action.note,
+    }),
+  );
+  render(<Theory {...props()} />);
+  const [first, second] = await screen.findAllByText("Edit / checks");
+  fireEvent.click(first);
+  fireEvent.change(screen.getByLabelText("Title"), {
+    target: { value: "Saved title" },
+  });
+  fireEvent.click(screen.getByText("Save theory note"));
+  await screen.findByText("Theory note saved.");
+  fireEvent.click(second);
+  await waitFor(() =>
+    expect(screen.getByLabelText("Title")).toHaveValue("lemma title"),
+  );
+  expect(mocks.confirm).not.toHaveBeenCalled();
+});
+
+it("brings the note form into view from a row in the list", async () => {
+  const scroll = vi.fn();
+  const original = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = scroll;
+  try {
+    mocks.theory.mockResolvedValue(overview({ notes: [note("t1", "lemma")] }));
+    render(<Theory {...props()} />);
+    fireEvent.click(await screen.findByText("Edit / checks"));
+    const form = (await screen.findByText("Edit theory note")).closest(
+      "section",
+    );
+    await waitFor(() => expect(form).toHaveFocus());
+    expect(scroll.mock.contexts).toContain(form);
+  } finally {
+    Element.prototype.scrollIntoView = original;
+  }
 });

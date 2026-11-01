@@ -228,6 +228,25 @@ describe("ReportWorkspace", () => {
     ).toBeVisible();
   });
 
+  it("limits the height of the failure details", async () => {
+    const report = makeReport();
+    report.failed_steps = [
+      { step_id: "a", step_label: "Technical", error: "provider error body" },
+    ];
+    render(<ReportWorkspace markdown="# Report" report={report} />);
+    const error = await screen.findByText("provider error body");
+    expect(error.closest("ul")).toHaveClass("max-h-40", "overflow-y-auto");
+  });
+
+  it("labels the run's recorded time as its start", async () => {
+    const user = userEvent.setup();
+    render(<ReportWorkspace markdown="# Report" report={makeReport()} />);
+    await user.click(
+      await screen.findByRole("tab", { name: "Report details" }),
+    );
+    expect(await screen.findByText("Started")).toBeVisible();
+  });
+
   it("quarantines an apparent refusal in a historical report", async () => {
     render(
       <ReportWorkspace

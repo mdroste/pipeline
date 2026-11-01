@@ -148,6 +148,11 @@ pub fn parse_bibtex(text: &str) -> WorkbenchResult<Vec<BibEntry>> {
             let name = name.trim().to_ascii_lowercase();
             bounded(&name, 100)?;
             let value = value.trim();
+            if value == "\"" {
+                return Err(WorkbenchError::invalid(format!(
+                    "BibTeX field {name} in {key} has an unclosed quote"
+                )));
+            }
             let value = if value.starts_with('{') && value.ends_with('}')
                 || value.starts_with('"') && value.ends_with('"')
             {
@@ -486,4 +491,22 @@ pub fn import_zotero(
         result.push(put(store,ws,&object_id,"bibliography",0,&json!({"origin":"zotero_local_preview","item":item,"serverId":preview.server_id,"collection":preview.collection,"source":source.source,"access":"metadata","attachmentAcquisition":"not_requested"}))?);
     }
     Ok(json!(result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_lone_quote_as_a_field_value_is_refused_by_name() {
+        let error = parse_bibtex("@article{k, \"=\"}").unwrap_err();
+        assert!(
+            error.message.contains("unclosed quote"),
+            "{}",
+            error.message
+        );
+        assert!(error.message.contains('k'), "{}", error.message);
+        let entries = parse_bibtex("@article{k, title=\"\"}").unwrap();
+        assert_eq!(entries[0].fields["title"], "");
+    }
 }

@@ -28,6 +28,19 @@ fn incomplete_provider_responses_are_identified() {
 }
 
 #[test]
+fn only_a_warm_up_accepts_stopping_at_the_anthropic_output_cap() {
+    assert!(super::loops::anthropic_stop_fails(
+        Some("max_tokens"),
+        false
+    ));
+    assert!(!super::loops::anthropic_stop_fails(
+        Some("max_tokens"),
+        true
+    ));
+    assert!(!super::loops::anthropic_stop_fails(Some("end_turn"), false));
+}
+
+#[test]
 fn blocked_google_candidates_deserialize_without_content_or_parts() {
     // SAFETY/RECITATION-blocked candidates omit `content` entirely.
     let blocked: GoogleResponse = serde_json::from_value(serde_json::json!({
@@ -70,6 +83,49 @@ fn exhausted_api_quota_survives_429_formatting() {
         transient,
         "Anthropic: Rate limited. Wait a moment and try again."
     );
+}
+
+#[test]
+fn real_openai_and_gemini_quota_bodies_are_usage_limits() {
+    let openai = format_api_error(
+        "OpenAI",
+        429,
+        r#"{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#,
+    );
+    assert!(super::super::provider_error::is_usage_limit_error(&openai));
+    assert!(openai.contains("Usage limit reached"), "{openai}");
+
+    let google = format_api_error(
+        "Google",
+        429,
+        r#"{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED"}}"#,
+    );
+    assert!(super::super::provider_error::is_usage_limit_error(&google));
+
+    // The code alone is enough when the message does not say so.
+    let coded = format_api_error(
+        "OpenAI",
+        429,
+        r#"{"error":{"message":"Billing issue.","type":"billing_error","code":"insufficient_quota"}}"#,
+    );
+    assert!(super::super::provider_error::is_usage_limit_error(&coded));
+    assert!(
+        coded.contains("insufficient_quota: Billing issue."),
+        "{coded}"
+    );
+}
+
+#[test]
+fn ordinary_rate_limit_bodies_stay_transient() {
+    for body in [
+        r#"{"error":{"message":"Rate limit reached for gpt-5 on tokens per min.","type":"tokens","code":"rate_limit_exceeded"}}"#,
+        r#"{"error":{"code":429,"message":"Resource has been exhausted.","status":"RESOURCE_EXHAUSTED"}}"#,
+    ] {
+        assert_eq!(
+            format_api_error("OpenAI", 429, body),
+            "OpenAI: Rate limited. Wait a moment and try again."
+        );
+    }
 }
 
 #[test]

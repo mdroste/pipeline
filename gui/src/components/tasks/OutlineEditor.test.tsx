@@ -105,7 +105,9 @@ it("composes the draft→review→revise loop from an empty outline and prepares
   const saveThis = screen.getByRole("combobox", {
     name: /Save this for Save a version/,
   });
-  fireEvent.change(saveThis, { target: { value: "output:workspace1:/text" } });
+  fireEvent.change(saveThis, {
+    target: { value: "output:workspace1:/answer" },
+  });
   add("repeat");
   add("review", "Steps inside Repeat until…");
   const reviewList = screen.getByRole("list", {
@@ -137,7 +139,7 @@ it("composes the draft→review→revise loop from an empty outline and prepares
   expect(snapshot.input).toEqual({
     kind: "output",
     step: "workspace1",
-    pointer: "/text",
+    pointer: "/answer",
   });
 });
 

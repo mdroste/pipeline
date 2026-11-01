@@ -103,6 +103,9 @@ export function useSettingsDraft(onSystemChange?: () => void) {
         } catch (e) {
           console.error("Failed to save settings:", e);
           if (latestSaveSequenceRef.current === saveSequence) {
+            // This value never reached disk, so it no longer counts as queued:
+            // reverting and making the same edit again must save it.
+            latestQueuedSnapshotRef.current = null;
             setSaveError(e instanceof Error ? e.message : String(e));
           }
         } finally {

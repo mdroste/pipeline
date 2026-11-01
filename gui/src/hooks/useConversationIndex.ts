@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { appEvents } from "../lib/appEvents";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import type { WorkbenchSession } from "../lib/workbenchTypes";
+import type {
+  SessionCursor,
+  SessionList,
+  WorkbenchEvent,
+  WorkbenchSession,
+} from "../lib/workbenchTypes";
+
+/** Host events after which a title or the newest-first order may have changed. */
+const CHANGES_THE_LIST = new Set(["sessionTitleUpdated", "turnCompleted"]);
 
 export interface IndexedConversation {
   session: WorkbenchSession;
@@ -9,11 +19,14 @@ export interface IndexedConversation {
 
 /**
  * Every conversation across projects, newest first. The sessions are read
- * project by project, so callers load this only while it is on screen.
+ * project by project, so callers load this only while it is on screen, and it
+ * stays current for as long as they do. A caller that shows only the newest can
+ * leave `everyPage` off.
  */
 export default function useConversationIndex(
   enabled = true,
   includeArchived = false,
+  everyPage = false,
 ) {
   const [conversations, setConversations] = useState<IndexedConversation[]>([]);
   const [loading, setLoading] = useState(enabled);
@@ -31,10 +44,17 @@ export default function useConversationIndex(
       const { workspaces } = await workspaceClient.listWorkspaces(false);
       const lists = await Promise.all(
         [null, ...workspaces].map(async (workspace) => {
-          const { sessions } = await conversationClient.listSessions(
-            workspace?.id ?? null,
-            includeArchived,
-          );
+          const sessions: WorkbenchSession[] = [];
+          let cursor: SessionCursor | null = null;
+          do {
+            const page: SessionList = await conversationClient.listSessions(
+              workspace?.id ?? null,
+              includeArchived,
+              cursor,
+            );
+            sessions.push(...page.sessions);
+            cursor = (everyPage && page.nextCursor) || null;
+          } while (cursor);
           return sessions.map((session) => ({
             session,
             projectName: workspace?.name ?? null,
@@ -59,7 +79,18 @@ export default function useConversationIndex(
     return () => {
       live = false;
     };
-  }, [enabled, includeArchived, request]);
+  }, [enabled, includeArchived, everyPage, request]);
   const refresh = useCallback(() => setRequest((value) => value + 1), []);
+  useEffect(() => {
+    if (!enabled) return;
+    const offChanged = appEvents.on("conversations-changed", refresh);
+    const offHost = listen<WorkbenchEvent>("workbench:event", ({ payload }) => {
+      if (CHANGES_THE_LIST.has(payload.kind)) refresh();
+    }).catch(() => null);
+    return () => {
+      offChanged();
+      void offHost.then((stop) => stop?.());
+    };
+  }, [enabled, refresh]);
   return { conversations, loading, error, refresh };
 }

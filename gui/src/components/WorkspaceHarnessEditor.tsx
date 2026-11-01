@@ -16,6 +16,7 @@ import { harnessClient } from "../lib/workbench/harnessClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type {
   ConversationSnapshot,
+  SessionSnapshot,
   EffectiveHarness,
   HarnessCatalog,
   HarnessPreset,
@@ -74,7 +75,7 @@ export default function WorkspaceHarnessEditor({
   beforeChange,
 }: {
   snapshot: ConversationSnapshot;
-  onSnapshot: (snapshot: ConversationSnapshot) => void;
+  onSnapshot: (snapshot: SessionSnapshot) => void;
   onClose: () => void;
   disabled?: boolean;
   onBusy?: (busy: boolean) => void;
@@ -206,7 +207,7 @@ export default function WorkspaceHarnessEditor({
     presetId?: string;
     overrides?: Record<string, unknown>;
   }) => {
-    const latest = await conversationClient.conversationSnapshot(sessionId);
+    const latest = await conversationClient.sessionSnapshot(sessionId);
     const updated = await conversationClient.updateSession({
       sessionId: latest.session.id,
       expectedRevision: latest.session.revision,
@@ -228,7 +229,7 @@ export default function WorkspaceHarnessEditor({
   ) =>
     void act(async () => {
       if (scope === "conversation") {
-        const latest = await conversationClient.conversationSnapshot(sessionId);
+        const latest = await conversationClient.sessionSnapshot(sessionId);
         const overrides = { ...latest.session.overrides };
         if (value === undefined) delete overrides[key];
         else overrides[key] = value;

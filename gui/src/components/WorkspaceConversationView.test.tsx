@@ -2,10 +2,24 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { createRef, type ComponentProps } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import WorkspaceConversationView from "./WorkspaceConversationView";
+import { createStreamStore } from "../hooks/workspace/streamStore";
 import type { TranscriptItem } from "../lib/workbenchTypes";
 import { appEvents } from "../lib/appEvents";
 
 const markdown = vi.hoisted(() => ({ rendered: [] as string[] }));
+// Called once per message each time the conversation renders.
+const conversationRenders = vi.hoisted(() => ({ count: 0 }));
+vi.mock("../lib/workspaceTranscript", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../lib/workspaceTranscript")>();
+  return {
+    ...actual,
+    payloadText: (...args: Parameters<typeof actual.payloadText>) => {
+      conversationRenders.count += 1;
+      return actual.payloadText(...args);
+    },
+  };
+});
 vi.mock("react-markdown", () => ({
   default: ({ children }: { children: string }) => {
     markdown.rendered.push(children);
@@ -38,7 +52,7 @@ const view = (
     renderedItems={[]}
     totalItems={0}
     pendingUser={null}
-    stream=""
+    streamStore={createStreamStore()}
     selectedMessage={null}
     transcriptStart={0}
     transcriptEnd={0}
@@ -87,6 +101,17 @@ it("states the send shortcut in the field and has no manual resize grip", () => 
   expect(field).toHaveAttribute("placeholder", "Ask ChatGPT… Enter to send");
   expect(field).toHaveAttribute("rows", "1");
   expect(field).toHaveClass("workspace-composer-input");
+});
+
+it("offers to start a conversation only while none is selected", () => {
+  const onNewConversation = vi.fn();
+  const page = render(view({ disabled: true, onNewConversation }));
+  fireEvent.click(screen.getByRole("button", { name: "New conversation" }));
+  expect(onNewConversation).toHaveBeenCalledOnce();
+  page.rerender(view({ disabled: true }));
+  expect(
+    screen.queryByRole("button", { name: "New conversation" }),
+  ).not.toBeInTheDocument();
 });
 
 it("shows where dropped files will go and when they are being added", () => {
@@ -190,19 +215,29 @@ it("stops following on a small upward scroll and resumes only at the end", () =>
   const transcriptRef = createRef<HTMLDivElement>();
   const followLatestRef = { current: true };
   const items = [message(0), message(1)];
+  const streamStore = createStreamStore();
   const props = {
     snapshot,
     transcriptRef,
     followLatestRef,
+    streamStore,
     renderedItems: items,
     totalItems: 2,
     transcriptEnd: 2,
   };
-  const page = render(view({ ...props, stream: "a" }));
+  stubResizeObserver();
+  streamStore.set("a");
+  render(view(props));
   const node = transcriptRef.current!;
   const size = { height: 1000, client: 400 };
   metrics(node, size);
-  page.rerender(view({ ...props, stream: "ab" }));
+  // Streamed text grows the content, which the transcript's observer sees.
+  const stream = (text: string) =>
+    act(() => {
+      streamStore.set(text);
+      observers.forEach((notify) => notify());
+    });
+  stream("ab");
   expect(node.scrollTop).toBe(600);
   fireEvent.scroll(node);
   // A slow trackpad gesture: two pixels up, then more text streams in.
@@ -210,7 +245,7 @@ it("stops following on a small upward scroll and resumes only at the end", () =>
   fireEvent.scroll(node);
   expect(followLatestRef.current).toBe(false);
   size.height = 1100;
-  page.rerender(view({ ...props, stream: "abc" }));
+  stream("abc");
   expect(node.scrollTop).toBe(598);
   // The control sits after the messages, out of flow, so the text stays put.
   const latest = screen.getByRole("button", { name: "↓ Latest" });
@@ -277,7 +312,10 @@ it("keeps following while the composer measures its height on each keystroke", (
     totalItems: 1,
     transcriptEnd: 1,
   };
-  const page = render(view({ ...props, stream: "a" }));
+  stubResizeObserver();
+  const streamStore = createStreamStore();
+  streamStore.set("a");
+  const page = render(view({ ...props, streamStore }));
   const node = transcriptRef.current!;
   const field = screen.getByRole("textbox", { name: "Message" });
   // While the field is collapsed to "auto" the transcript is taller.
@@ -288,7 +326,10 @@ it("keeps following while the composer measures its height on each keystroke", (
     },
   };
   metrics(node, size);
-  page.rerender(view({ ...props, stream: "ab" }));
+  act(() => {
+    streamStore.set("ab");
+    observers.forEach((notify) => notify());
+  });
   expect(node.scrollTop).toBe(600);
   // Measuring the field lays the page out, which clamps the transcript.
   Object.defineProperty(field, "scrollHeight", {
@@ -298,7 +339,7 @@ it("keeps following while the composer measures its height on each keystroke", (
       return 40;
     },
   });
-  page.rerender(view({ ...props, stream: "ab", draft: "A longer question" }));
+  page.rerender(view({ ...props, streamStore, draft: "A longer question" }));
   expect(field.style.height).toBe("40px");
   expect(node.scrollTop).toBe(600);
   fireEvent.scroll(node);
@@ -335,7 +376,7 @@ it("pages to newer messages from their start and to earlier messages without los
   node.scrollTop = 600;
   fireEvent.scroll(node);
   fireEvent.click(
-    screen.getByRole("button", { name: "Show 200 newer messages" }),
+    screen.getByRole("button", { name: "Show 50 newer messages" }),
   );
   expect(onNewer).toHaveBeenCalledOnce();
   page.rerender(
@@ -382,8 +423,10 @@ it("does not send the Enter that confirms an input-method candidate", () => {
 
 it("does not parse saved messages again while the researcher types or a response streams", () => {
   const items = Array.from({ length: 20 }, (_, index) => message(index));
+  const streamStore = createStreamStore();
   const props = {
     snapshot,
+    streamStore,
     renderedItems: items,
     totalItems: 20,
     transcriptEnd: 20,
@@ -391,7 +434,8 @@ it("does not parse saved messages again while the researcher types or a response
   const page = render(view(props));
   markdown.rendered = [];
   page.rerender(view({ ...props, draft: "a" }));
-  page.rerender(view({ ...props, draft: "ab", stream: "Partial" }));
+  act(() => streamStore.set("Partial"));
+  page.rerender(view({ ...props, draft: "ab" }));
   // Only the streaming bubble renders Markdown again.
   expect(
     markdown.rendered.filter((text) => text.startsWith("Message")),
@@ -404,4 +448,55 @@ it("shows a neutral notice apart from errors", () => {
   render(view({ notice: "Response stopped." }));
   expect(screen.getByRole("status")).toHaveTextContent("Response stopped.");
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("streams into its own message without re-rendering the conversation", () => {
+  const streamStore = createStreamStore();
+  render(
+    view({
+      snapshot,
+      streamStore,
+      renderedItems: [message(0)],
+      totalItems: 1,
+      transcriptEnd: 1,
+    }),
+  );
+  act(() => streamStore.set("First"));
+  conversationRenders.count = 0;
+  act(() => streamStore.set("First words"));
+  expect(screen.getByText("First words")).toBeInTheDocument();
+  expect(conversationRenders.count).toBe(0);
+});
+
+it("uses a readable token for the transcript paging buttons", () => {
+  render(view({ transcriptStart: 5, transcriptEnd: 10, totalItems: 20 }));
+  for (const name of ["Show earlier messages", /newer messages/])
+    expect(screen.getByRole("button", { name })).toHaveClass("text-ink-muted");
+});
+
+it("keeps keyboard focus in the composer through a response", () => {
+  const page = render(view({ draft: "Sent" }));
+  const field = screen.getByRole("textbox", { name: "Message" });
+  field.focus();
+  page.rerender(view({ active: true, disabled: true }));
+  // A disabled field would lose focus to the page.
+  expect(field).toBeEnabled();
+  expect(field).toHaveAttribute("readonly");
+  expect(field).toHaveFocus();
+  page.rerender(view());
+  expect(field).not.toHaveAttribute("readonly");
+  expect(field).toHaveFocus();
+});
+
+it("does not call a conversation empty while older pages are still unread", () => {
+  const empty = { session: { id: "s", overrides: {} } } as any;
+  const page = render(
+    view({ snapshot: empty, totalItems: 0, hasEarlier: true }),
+  );
+  expect(screen.queryByText("What are you working on?")).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Show earlier messages" }),
+  ).toBeInTheDocument();
+  page.rerender(view({ snapshot: empty, totalItems: 0, hasEarlier: false }));
+  expect(screen.getByText("What are you working on?")).toBeInTheDocument();
 });

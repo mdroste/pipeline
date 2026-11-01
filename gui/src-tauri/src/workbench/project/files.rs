@@ -1,6 +1,10 @@
 //! Descriptor-relative reads and journalled, no-clobber replacement on Unix
 //! and Windows.
 use super::*;
+mod entries;
+pub(super) use entries::{EntryKind, EntryStat};
+#[cfg(unix)]
+mod placement;
 #[cfg(windows)]
 mod windows;
 
@@ -340,19 +344,16 @@ impl SafeRoot {
                 let mut file = unsafe { fs::File::from_raw_fd(fd) };
                 file.write_all(bytes).map_err(err)?;
                 file.sync_all().map_err(err)?;
-                let placed = unsafe {
-                    libc::linkat(
-                        directory.as_raw_fd(),
-                        temporary.as_ptr(),
-                        directory.as_raw_fd(),
-                        name.as_ptr(),
-                        0,
-                    )
-                };
-                let placement_error = std::io::Error::last_os_error();
+                let placed = placement::move_no_clobber(&directory, &temporary, &name);
                 unsafe { libc::unlinkat(directory.as_raw_fd(), temporary.as_ptr(), 0) };
-                if placed != 0 {
-                    return Err(WorkbenchError::conflict(format!("Could not place {path} without overwriting another edit: {placement_error}. Recover this application.")));
+                match placed {
+                    Ok(()) => (),
+                    Err(error) if placement::unsupported(&error) => {
+                        return Err(WorkbenchError::conflict(format!("The drive holding this project cannot place {path} without risking an overwrite: {error}. Nothing was overwritten. Move the project to another drive, then recover this change.")));
+                    }
+                    Err(error) => {
+                        return Err(WorkbenchError::conflict(format!("Could not place {path} without overwriting another edit: {error}. Recover this application.")));
+                    }
                 }
             }
             directory.sync_all().map_err(err)?;
@@ -476,22 +477,11 @@ impl SafeRoot {
         name: &std::ffi::CStr,
         claim: &std::ffi::CStr,
     ) -> WorkbenchResult<()> {
-        use std::os::fd::AsRawFd;
-        if unsafe {
-            libc::linkat(
-                directory.as_raw_fd(),
-                claim.as_ptr(),
-                directory.as_raw_fd(),
-                name.as_ptr(),
-                0,
-            )
-        } != 0
-        {
-            return Err(WorkbenchError::conflict(
+        placement::move_no_clobber(directory, claim, name).map_err(|_| {
+            WorkbenchError::conflict(
                 "An external file prevents recovery; original remains in the recovery file",
-            ));
-        }
-        unsafe { libc::unlinkat(directory.as_raw_fd(), claim.as_ptr(), 0) };
+            )
+        })?;
         directory.sync_all().map_err(err)
     }
     pub(super) fn recover_claim(&self, path: &str, claim: &str) -> WorkbenchResult<bool> {

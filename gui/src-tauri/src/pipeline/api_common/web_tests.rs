@@ -5,7 +5,9 @@ use super::*;
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-async fn server(responses: Vec<(u16, Value)>) -> (String, tokio::task::JoinHandle<Vec<Value>>) {
+pub(in crate::pipeline) async fn server(
+    responses: Vec<(u16, Value)>,
+) -> (String, tokio::task::JoinHandle<Vec<Value>>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/v1", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
@@ -85,6 +87,7 @@ async fn run(url: &str, provider: &str, tools: Vec<Value>) -> Result<(String, Us
             120,
             "web fixture",
             provider == "Local",
+            false,
             &ToolAccess::default(),
         ),
     )

@@ -1,3 +1,4 @@
+import { Fold } from "../../ui";
 import { useCallback, useEffect, useState } from "react";
 import {
   deskClient,
@@ -11,13 +12,21 @@ import { researchClient } from "../../lib/workbench/researchClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { projectClient } from "../../lib/projectClient";
 import type { ResearchNote } from "../../lib/workbenchTypes";
+import useReopenCount from "../../hooks/useReopenCount";
+import { key } from "../research-programs/shared";
 import { button, input, card, muted, type DeskProps } from "./shared";
+
+/** Stays the same when a refresh reorders the conversation's sources. */
+const sourceKey = ({ object }: ContextItem) => key(object);
+
 export default function Decisions({
   workspaceId,
   sessionId,
   onOpen,
   onError,
   onRefresh,
+  onActionStart,
+  active,
 }: DeskProps) {
   const [records, setRecords] = useState<DeskRecord<Decision>[]>([]);
   const [impact, setImpact] = useState<ImpactReport | null>(null);
@@ -47,12 +56,14 @@ export default function Decisions({
     setContext(h.contextPreview);
     setSources(s.items);
   }, [workspaceId, sessionId]);
+  const reopened = useReopenCount(active);
   useEffect(() => {
     void refresh().catch((e) => onError(workbenchErrorMessage(e)));
-  }, [refresh, onError]);
+  }, [refresh, onError, reopened]);
   const run = async (fn: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(true);
+    onActionStart?.();
     try {
       await fn();
       await refresh();
@@ -63,6 +74,8 @@ export default function Decisions({
       setBusy(false);
     }
   };
+  const fromSource = sources.find((s) => sourceKey(s) === from);
+  const toSource = sources.find((s) => sourceKey(s) === to);
   const proposals = Array.isArray(handoff?.body.decisions)
     ? (handoff.body.decisions as ResearchNote[])
     : [];
@@ -159,8 +172,7 @@ export default function Decisions({
           </div>
         ))}
       </section>
-      <section className={card}>
-        <h2 className="font-semibold">Link a result to its input</h2>
+      <Fold title="Link a result to its input">
         <p className={muted}>
           Choose two sources from the conversation. The second depends on the
           first.
@@ -185,8 +197,13 @@ export default function Decisions({
             onChange={(e) => (set as (s: string) => void)(e.target.value)}
           >
             <option value="">Choose {String(label).toLowerCase()}</option>
-            {sources.map((s, i) => (
-              <option key={i} value={i}>
+            {!sources.some((s) => sourceKey(s) === value) && value !== "" && (
+              <option value={String(value)}>
+                No longer in this conversation
+              </option>
+            )}
+            {sources.map((s) => (
+              <option key={sourceKey(s)} value={sourceKey(s)}>
                 {s.object.kind} · {s.object.id.slice(-10)} ·{" "}
                 {s.object.revision.slice(0, 10)}
               </option>
@@ -203,13 +220,13 @@ export default function Decisions({
         <button
           className={button}
           disabled={
-            busy || from === "" || to === "" || from === to || !reason.trim()
+            busy || !fromSource || !toSource || from === to || !reason.trim()
           }
           onClick={() =>
             void run(() =>
               deskClient.relation(workspaceId, {
-                input: sources[Number(from)].object,
-                dependent: sources[Number(to)].object,
+                input: fromSource!.object,
+                dependent: toSource!.object,
                 origin: "user",
                 accepted: true,
                 reason,
@@ -219,7 +236,7 @@ export default function Decisions({
         >
           Save link
         </button>
-      </section>
+      </Fold>
       <section className={card}>
         <h2 className="font-semibold">Change impact</h2>
         {impact?.impacts.map((i, n) => (
@@ -243,8 +260,7 @@ export default function Decisions({
           {impact?.limitations.join(" ")}
         </p>
       </section>
-      <section className={card}>
-        <h2 className="font-semibold">End this session</h2>
+      <Fold title="End this session">
         <button
           className={button}
           disabled={busy || !sessionId}
@@ -303,7 +319,7 @@ export default function Decisions({
           <summary>Preview sources for a new conversation</summary>
           <pre className="whitespace-pre-wrap text-xs">{context}</pre>
         </details>
-      </section>
+      </Fold>
     </div>
   );
 }

@@ -424,9 +424,7 @@ pub fn focus_review(
     let digest = blob(store, &r.workspace_id, text.as_bytes(), "focused_review")?;
     // Neutral Markdown snapshot, then the ordinary immutable handoff/Workflow preview.
     let path = store.root_path().join("blobs").join(format!("{digest}.md"));
-    if !path.exists() {
-        fs::write(&path, text).map_err(err)?;
-    }
+    crate::workbench::desk::write_blob_atomic(&path, text.as_bytes(), &digest).map_err(err)?;
     let paper = research::import_paper(
         store,
         research::ImportPaperRequest {

@@ -1,10 +1,14 @@
 //! A bounded BibTeX reader for reference checks: entry type, key, and the
 //! fields a lookup needs. Macros and `@string` expansion are not performed;
-//! unreadable entries are skipped rather than guessed.
+//! unreadable entries are skipped rather than guessed. Keys also come from
+//! `\bibitem` and compiled `.bbl` files, which define citations without
+//! giving fields to check.
 
 use std::collections::BTreeMap;
 
-const MAX_ENTRIES: usize = 2_000;
+/// Above what a file under the reference check's 4 MB limit can hold in real
+/// entries, which leaves this as a bound on hand-made input.
+const MAX_ENTRIES: usize = 100_000;
 const MAX_FIELD_CHARS: usize = 2_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,6 +16,12 @@ pub struct BibEntry {
     pub kind: String,
     pub key: String,
     pub fields: BTreeMap<String, String>,
+}
+
+/// What one file yielded, and why reading ended early if it did.
+pub struct Parsed {
+    pub entries: Vec<BibEntry>,
+    pub stopped: Option<String>,
 }
 
 /// Reads a balanced `{...}` or `"..."` value starting at `start`, returning
@@ -123,11 +133,12 @@ fn fields(chars: &[char], mut i: usize, end: usize) -> BTreeMap<String, String> 
     fields
 }
 
-pub fn parse(text: &str) -> Vec<BibEntry> {
+pub fn parse(text: &str) -> Parsed {
     let chars: Vec<char> = text.chars().collect();
     let mut entries = Vec::new();
+    let mut stopped = None;
     let mut i = 0;
-    while i < chars.len() && entries.len() < MAX_ENTRIES {
+    while i < chars.len() {
         if chars[i] != '@' {
             i += 1;
             continue;
@@ -161,12 +172,17 @@ pub fn parse(text: &str) -> Vec<BibEntry> {
                 )
             })
         }) else {
+            stopped = Some("reading stopped at an unfinished entry".to_string());
             break;
         };
         let body: Vec<char> = body.chars().collect();
         let comma = body.iter().position(|c| *c == ',').unwrap_or(body.len());
         let key: String = body[..comma].iter().collect::<String>().trim().to_string();
         if !key.is_empty() {
+            if entries.len() == MAX_ENTRIES {
+                stopped = Some(format!("reading stopped after {MAX_ENTRIES} entries"));
+                break;
+            }
             entries.push(BibEntry {
                 kind,
                 key,
@@ -175,11 +191,40 @@ pub fn parse(text: &str) -> Vec<BibEntry> {
         }
         i = next;
     }
-    entries
+    Parsed { entries, stopped }
+}
+
+/// A letter TeX writes as a command, which would vanish with the command.
+fn letter_command(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "o" => "ø",
+        "O" => "Ø",
+        "ss" => "ß",
+        "ae" => "æ",
+        "AE" => "Æ",
+        "oe" => "œ",
+        "OE" => "Œ",
+        "aa" => "å",
+        "AA" => "Å",
+        "l" => "ł",
+        "L" => "Ł",
+        "i" => "i",
+        "j" => "j",
+        "dh" => "ð",
+        "DH" => "Ð",
+        "dj" => "đ",
+        "DJ" => "Đ",
+        "th" => "þ",
+        "TH" => "Þ",
+        "ng" => "ŋ",
+        "NG" => "Ŋ",
+        _ => return None,
+    })
 }
 
 /// Field text without braces, LaTeX commands, ties, or doubled whitespace.
-/// Case is kept; matching folds it separately.
+/// Letter commands become their letters. Case is kept; matching folds it
+/// separately.
 pub fn plain(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let chars: Vec<char> = value.chars().collect();
@@ -200,6 +245,15 @@ pub fn plain(value: &str) -> String {
                         out.push(chars[j]);
                     }
                     j += 1;
+                } else {
+                    let name: String = chars[i + 1..j].iter().collect();
+                    if let Some(letter) = letter_command(&name) {
+                        out.push_str(letter);
+                        // TeX ends a command name at the space after it.
+                        while j < chars.len() && chars[j].is_whitespace() {
+                            j += 1;
+                        }
+                    }
                 }
                 i = j;
                 continue;
@@ -232,16 +286,161 @@ pub fn family_names(authors: &str) -> Vec<String> {
         .collect()
 }
 
-/// Citation keys used by `\cite`-family commands in LaTeX source.
+/// The offset just past a `\bibitem[...]` label, which can hold braces,
+/// brackets, and line breaks.
+fn label_end(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, character) in text.char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            ']' if depth == 0 => return Some(index + 1),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn bibitem_key(after_command: &str) -> Option<String> {
+    let mut rest = after_command.trim_start();
+    if rest.starts_with('[') {
+        rest = rest[label_end(rest)?..].trim_start();
+    }
+    let body = rest.strip_prefix('{')?;
+    let key = body[..body.find('}')?].trim();
+    (!key.is_empty()).then(|| key.to_string())
+}
+
+/// Keys defined by `\bibitem`, skipping commented-out items.
+pub fn bibitem_keys(source: &str) -> Vec<String> {
+    const COMMAND: &str = "\\bibitem";
+    let visible = crate::pipeline::extract::latex_without_comments(source);
+    visible
+        .match_indices(COMMAND)
+        .filter_map(|(start, _)| bibitem_key(&visible[start + COMMAND.len()..]))
+        .collect()
+}
+
+/// Keys a compiled `.bbl` defines: `\bibitem` from BibTeX, `\entry` from Biber.
+pub fn compiled_keys(bbl: &str) -> Vec<String> {
+    let pattern = regex::Regex::new(r"(?m)^\s*\\entry\{([^{}]+)\}\{[^{}]*\}\{")
+        .expect("valid compiled entry pattern");
+    let mut keys = bibitem_keys(bbl);
+    keys.extend(
+        pattern
+            .captures_iter(bbl)
+            .map(|capture| capture[1].trim().to_string()),
+    );
+    keys
+}
+
+/// Source text outside `thebibliography`, where item labels can use commands
+/// such as `\citeauthoryear` that name no citation key.
+pub fn outside_bibliography(source: &str) -> std::borrow::Cow<'_, str> {
+    regex::Regex::new(r"(?s)\\begin\{thebibliography\}.*?\\end\{thebibliography\}")
+        .expect("valid bibliography pattern")
+        .replace_all(source, "")
+}
+
+/// Commands whose braces hold citation keys: LaTeX, natbib, biblatex, apacite,
+/// and harvard. Others with "cite" in their names, such as `\setcitestyle`,
+/// take settings.
+const CITATION_COMMANDS: &[&str] = &[
+    "cite",
+    "Cite",
+    "nocite",
+    "citet",
+    "Citet",
+    "citep",
+    "Citep",
+    "citealt",
+    "Citealt",
+    "citealp",
+    "Citealp",
+    "citeauthor",
+    "Citeauthor",
+    "citefullauthor",
+    "Citefullauthor",
+    "citeyear",
+    "citeyearpar",
+    "citenum",
+    "citetitle",
+    "Citetitle",
+    "citedate",
+    "citeurl",
+    "cites",
+    "Cites",
+    "parencite",
+    "Parencite",
+    "parencites",
+    "Parencites",
+    "footcite",
+    "Footcite",
+    "footcites",
+    "Footcites",
+    "footcitetext",
+    "Footcitetext",
+    "footfullcite",
+    "fullcite",
+    "textcite",
+    "Textcite",
+    "textcites",
+    "Textcites",
+    "smartcite",
+    "Smartcite",
+    "smartcites",
+    "Smartcites",
+    "autocite",
+    "Autocite",
+    "autocites",
+    "Autocites",
+    "supercite",
+    "supercites",
+    "volcite",
+    "Volcite",
+    "pvolcite",
+    "Pvolcite",
+    "fvolcite",
+    "Fvolcite",
+    "tvolcite",
+    "Tvolcite",
+    "avolcite",
+    "Avolcite",
+    "citeA",
+    "citeNP",
+    "citeN",
+    "citeyearNP",
+    "citeauthorNP",
+    "shortcite",
+    "shortciteA",
+    "shortciteNP",
+    "shortciteN",
+    "fullciteA",
+    "fullciteNP",
+    "citeasnoun",
+    "Citeasnoun",
+    "possessivecite",
+    "Possessivecite",
+];
+
+/// Citation keys used by citation commands in LaTeX source. Comments are not
+/// source LaTeX sees, and a macro's `#1` names no key.
 pub fn cited_keys(source: &str) -> Vec<String> {
-    let pattern =
-        regex::Regex::new(r"\\(?:[a-zA-Z]*cite[a-zA-Z]*|nocite)\*?(?:\[[^\]]*\]){0,2}\{([^}]*)\}")
-            .expect("valid citation pattern");
+    let visible = crate::pipeline::extract::latex_without_comments(source);
+    let pattern = regex::Regex::new(&format!(
+        r"\\(?:{})\*?(?:\s*\[[^\]]*\]){{0,2}}\s*\{{([^}}]*)\}}",
+        CITATION_COMMANDS.join("|")
+    ))
+    .expect("valid citation pattern");
     let mut keys = Vec::new();
-    for capture in pattern.captures_iter(source) {
+    for capture in pattern.captures_iter(&visible) {
         for key in capture[1].split(',') {
             let key = key.trim();
-            if !key.is_empty() && key != "*" && !keys.iter().any(|known: &String| known == key) {
+            let usable = !key.is_empty()
+                && key != "*"
+                && !key.contains(['#', '=', '\\'])
+                && !key.contains(char::is_whitespace);
+            if usable && !keys.iter().any(|known: &String| known == key) {
                 keys.push(key.to_string());
             }
         }

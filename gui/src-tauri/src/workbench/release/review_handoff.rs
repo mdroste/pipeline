@@ -165,6 +165,7 @@ pub fn prepare_review_handoff(
         }
     }
     let (revision_id, hash, kind, reference): (String,String,String,String) = connection.query_row("SELECT pr.id,pr.content_hash,a.media_kind,a.storage_reference FROM papers p JOIN paper_revisions pr ON pr.id=p.current_revision_id JOIN artifacts a ON a.workspace_id=p.workspace_id AND a.content_hash=pr.content_hash WHERE p.id=?1 AND p.workspace_id=?2 ORDER BY CASE WHEN a.media_kind=pr.input_kind THEN 0 ELSE 1 END LIMIT 1", params![request.paper_id, request.workspace_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?))).optional().map_err(|error| WorkbenchError::storage("Failed to resolve handoff revision", error))?.ok_or_else(|| WorkbenchError::invalid("The selected paper has no immutable current revision"))?;
+    crate::workbench::store::require_available("This paper's saved file", &reference)?;
     let source = PathBuf::from(reference);
     if !source.starts_with(store.root_path().join("blobs")) {
         return Err(WorkbenchError::invalid(

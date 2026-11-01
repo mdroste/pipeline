@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 fn error(e: impl std::fmt::Display) -> WorkbenchError {
-    WorkbenchError::storage("Research mission", e)
+    WorkbenchError::storage("Research automation", e)
 }
 
 pub fn authority(store: &Store, session: &str) -> WorkbenchResult<String> {
@@ -38,7 +38,7 @@ pub fn refresh_source_scope(
         .as_deref()
         .ok_or_else(|| WorkbenchError::invalid("Source conversation is missing"))?;
     if authority(store, session)? != fingerprint {
-        return Err(WorkbenchError::conflict("Source conversation permissions or selected context changed. Prepare a new automation for that scope."));
+        return Err(WorkbenchError::conflict("The project conversation's permissions or selected sources changed. Start a new research automation to use them."));
     }
     let actual = tasks::binding(store, session)?;
     if !tasks::compatible_cursor(
@@ -48,10 +48,13 @@ pub fn refresh_source_scope(
         || Some(&actual.runtime_root) != scope.runtime_root.as_ref()
         || Some(&actual.root_identity) != scope.root_identity.as_ref()
     {
-        return Err(WorkbenchError::conflict("The source conversation or folder changed outside the recorded work. Review it, then retry the automation."));
+        return Err(WorkbenchError::conflict("The project conversation or its folder changed outside this automation. Review it, then choose Retry."));
     }
     let mut result = scope.clone();
     result.harness_fingerprint = Some(actual.harness_fingerprint);
+    // The authority check above covers the runtime, so this only repairs
+    // scopes saved before they recorded their connection.
+    result.connection_id = actual.connection_id;
     Ok(result)
 }
 
@@ -68,10 +71,10 @@ pub fn readopt_scope(
     let session = scope
         .session_id
         .as_deref()
-        .ok_or_else(|| WorkbenchError::invalid("Mission conversation is missing"))?;
+        .ok_or_else(|| WorkbenchError::invalid("This automation's conversation is missing"))?;
     if authority(store, session)? != fingerprint {
         return Err(WorkbenchError::conflict(
-            "Mission authority changed; prepare a new mission",
+            "This conversation's permissions or selected sources changed. Start a new research automation to use them.",
         ));
     }
     let actual = tasks::binding(store, session)?;
@@ -79,7 +82,9 @@ pub fn readopt_scope(
         || Some(&actual.runtime_root) != scope.runtime_root.as_ref()
         || actual.workspace_id != scope.workspace_id
     {
-        return Err(WorkbenchError::conflict("Mission folder changed"));
+        return Err(WorkbenchError::conflict(
+            "This conversation's folder changed. Start a new research automation for that folder.",
+        ));
     }
     if require_no_draft {
         tasks::validate_binding(store, &actual)?;
@@ -87,6 +92,7 @@ pub fn readopt_scope(
     let mut result = scope.clone();
     result.session_cursor = Some(actual.cursor);
     result.harness_fingerprint = Some(actual.harness_fingerprint);
+    result.connection_id = actual.connection_id;
     Ok(result)
 }
 
@@ -94,9 +100,9 @@ pub fn refresh_scope(store: &Store, scope: &Scope, fingerprint: &str) -> Workben
     let session = scope
         .session_id
         .as_deref()
-        .ok_or_else(|| WorkbenchError::invalid("Mission conversation is missing"))?;
+        .ok_or_else(|| WorkbenchError::invalid("This automation's conversation is missing"))?;
     if authority(store, session)? != fingerprint {
-        return Err(WorkbenchError::conflict("Mission permissions or selected context changed. Prepare a new mission for that scope."));
+        return Err(WorkbenchError::conflict("This conversation's permissions or selected sources changed. Start a new research automation to use them."));
     }
     let actual = tasks::binding(store, session)?;
     if Some(&actual.cursor) != scope.session_cursor.as_ref()
@@ -104,11 +110,12 @@ pub fn refresh_scope(store: &Store, scope: &Scope, fingerprint: &str) -> Workben
         || Some(&actual.runtime_root) != scope.runtime_root.as_ref()
         || Some(&actual.root_identity) != scope.root_identity.as_ref()
     {
-        return Err(WorkbenchError::conflict("The mission conversation or folder changed outside its recorded work. Inspect the conversation before continuing."));
+        return Err(WorkbenchError::conflict("This automation's conversation or folder changed outside its recorded work. Inspect the conversation, then choose Retry."));
     }
     tasks::validate_binding(store, &actual)?;
     let mut result = scope.clone();
     result.harness_fingerprint = Some(actual.harness_fingerprint);
+    result.connection_id = actual.connection_id;
     Ok(result)
 }
 
@@ -156,14 +163,13 @@ pub fn roles(
                 .and_then(Value::as_str)
                 .is_none())
     {
-        return Err(WorkbenchError::invalid("Mission editing requires a source conversation already using an isolated project task in edit mode"));
+        return Err(WorkbenchError::invalid("Editing requires a source conversation already using an isolated project task in edit mode"));
     }
     if policy.command_network && !h.command_network {
         return Err(WorkbenchError::invalid(
             "Enable command networking in the selected conversation before delegating it",
         ));
     }
-    let selections = desk::context(store, &source.session_id)?;
     let op = format!("mission-preset-{operation}");
     let preset_id = if let Some(id) = existing(store, &op, "preset")? {
         id
@@ -174,7 +180,10 @@ pub fn roles(
                 source_workspace_id: None,
                 workspace_id: source.workspace_id.clone(),
                 source_preset_id: h.preset.id.clone(),
-                name: format!("Mission: {}", name.chars().take(100).collect::<String>()),
+                name: format!(
+                    "Research automation: {}",
+                    name.chars().take(100).collect::<String>()
+                ),
                 operation_id: op.clone(),
             },
         )?
@@ -186,7 +195,7 @@ pub fn roles(
             .presets
             .into_iter()
             .find(|p| p.id == preset_id)
-            .ok_or_else(|| WorkbenchError::invalid("Mission preset is unavailable"))?;
+            .ok_or_else(|| WorkbenchError::invalid("Research automation preset is unavailable"))?;
         let mut modules: Vec<_> = preset
             .modules
             .into_iter()
@@ -196,7 +205,7 @@ pub fn roles(
             modules.push("paper_tools".into());
         }
         research::update_preset(store,research::UpdatePresetRequest{base_prompt:None,preset_id:preset_id.clone(),expected_revision:preset.revision,
-            name:preset.name,description:"Mission research tools; host executions are admitted by the coordinator.".into(),
+            name:preset.name,description:"Research tools for one research automation.".into(),
             instructions:format!("{}\n\nThis conversation belongs to a bounded research mission. Report evidence and limitations. Research conclusions and reusable methods remain model assessments. Do not expand the mission remit, authorize host commands, or accept edits. Host checks are dispatched by the coordinator.",h.preset.instructions),
             modules,operation_id:update_op})?;
     }
@@ -228,10 +237,6 @@ pub fn roles(
                 clear_paper: None,
             })?;
         }
-        let current = desk::context(store, &b.session_id)?;
-        if current.revision == 0 && !selections.items.is_empty() {
-            desk::save_context(store, &b.session_id, 0, selections.items.clone())?;
-        }
         let b = tasks::binding(store, &b.session_id)?;
         fingerprints.insert(b.session_id.clone(), authority(store, &b.session_id)?);
         scopes.push(Scope {
@@ -239,6 +244,7 @@ pub fn roles(
             workspace_id: b.workspace_id,
             session_cursor: Some(b.cursor),
             harness_fingerprint: Some(b.harness_fingerprint),
+            connection_id: b.connection_id,
             runtime_root: Some(b.runtime_root),
             root_identity: Some(b.root_identity),
             ..Scope::default()
@@ -314,7 +320,7 @@ pub fn capabilities(store: &Store, ws: &str, policy: &Policy) -> WorkbenchResult
     }
     if ids.len() > 64 {
         return Err(WorkbenchError::invalid(
-            "A mission can authorize at most 64 captured experiment variants",
+            "A research automation can authorize at most 64 captured experiment variants",
         ));
     }
     for id in ids {
@@ -528,6 +534,66 @@ mod tests {
         );
         assert_ne!(scopes[0].session_id, scopes[1].session_id);
         assert_ne!(scopes[1].session_id, scopes[2].session_id);
+    }
+    fn select_runtime(s: &Store, session: &str, runtime: &str) {
+        let current = s.session_snapshot(session).unwrap().session;
+        s.update_session(UpdateSessionRequest {
+            session_id: session.into(),
+            expected_revision: current.revision,
+            operation_id: format!("select-{runtime}"),
+            title: None,
+            draft: None,
+            overrides: Some(json!({"runtime":runtime})),
+            archived: None,
+            preset_id: None,
+            paper_id: None,
+            clear_paper: None,
+        })
+        .unwrap();
+    }
+    #[test]
+    fn role_scopes_pass_the_check_every_submitted_turn_runs() {
+        for runtime in [
+            "codex",
+            "claude",
+            "openai-api",
+            "anthropic-api",
+            "google-api",
+            "local",
+        ] {
+            let (_temp, s, _ws, session) = fixture();
+            select_runtime(&s, &session, runtime);
+            let source = tasks::binding(&s, &session).unwrap();
+            let (scopes, _, _) = roles(&s, &source, "gate", "Mission", &Policy::default()).unwrap();
+            for scope in &scopes {
+                assert_eq!(scope.connection_id, source.connection_id);
+                let binding = crate::orchestration::adapters::task_binding(scope).unwrap();
+                tasks::validate_binding(&s, &binding).unwrap();
+            }
+        }
+    }
+    #[test]
+    fn saved_scopes_without_a_connection_recover_through_refresh() {
+        let (_temp, s, _ws, session) = fixture();
+        let source = tasks::binding(&s, &session).unwrap();
+        let (scopes, fingerprints, _) =
+            roles(&s, &source, "saved", "Mission", &Policy::default()).unwrap();
+        let mut saved = scopes[0].clone();
+        saved.connection_id = None;
+        let stale = crate::orchestration::adapters::task_binding(&saved).unwrap();
+        assert!(tasks::validate_binding(&s, &stale)
+            .unwrap_err()
+            .message
+            .contains("connection"));
+        let authority = &fingerprints[saved.session_id.as_ref().unwrap()];
+        for recovered in [
+            refresh_scope(&s, &saved, authority).unwrap(),
+            readopt_scope(&s, &saved, authority, true).unwrap(),
+        ] {
+            assert_eq!(recovered.connection_id, source.connection_id);
+            let binding = crate::orchestration::adapters::task_binding(&recovered).unwrap();
+            tasks::validate_binding(&s, &binding).unwrap();
+        }
     }
     #[test]
     fn mission_cannot_upgrade_edit_or_network_permissions() {

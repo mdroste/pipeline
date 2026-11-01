@@ -10,10 +10,12 @@ import {
 import { confirmDialog } from "../../components/DialogService";
 import type { AppPage } from "../../components/NavRail";
 import type { SettingsSection } from "../../components/SettingsPage";
+import { appEvents } from "../../lib/appEvents";
 import { startupRoute } from "../../lib/appPreferences";
 import { router, type AppRoute } from "../../lib/router";
 import type { ArtifactSelectionTarget } from "../../lib/artifactTypes";
 import { loadDeskLayout, saveDeskLayout } from "../../lib/deskLayout";
+import { forgetActiveWorkflowDraft } from "../../lib/workflowDraftRecovery";
 import type { WorkspaceDestination } from "../../lib/workspaceNavigation";
 import type { DepsReport } from "../../lib/types";
 
@@ -101,13 +103,15 @@ export function useAppNavigation() {
     const unsaved = unsavedRef.current;
     if (currentPage === "pipeline" && unsaved.workflowDirty) {
       const allowed = await confirmDialog(
-        "You have unsaved workflow changes. Leave and discard them?",
+        "You have unsaved review changes. Leave and discard them?",
         {
           confirmLabel: "Discard and leave",
           destructive: true,
         },
       );
-      return allowed && sequence === navigationSequence.current;
+      if (!allowed || sequence !== navigationSequence.current) return false;
+      await forgetActiveWorkflowDraft();
+      return sequence === navigationSequence.current;
     }
     if (currentPage === "settings" && unsaved.settingsDirty) {
       const allowed = await confirmDialog(
@@ -200,6 +204,9 @@ export function useAppNavigation() {
 
   /** A new conversation outside any project. */
   const startConversation = async () => {
+    // Asked first, so declining to leave this page creates nothing.
+    if (!(await confirmLeaveCurrentPage("workspace"))) return false;
+    const sequence = ++navigationSequence.current;
     const [{ conversationClient }, { newOperation }] = await Promise.all([
       import("../../lib/workbench/conversationClient"),
       import("../../lib/workspaceSessionState"),
@@ -209,7 +216,14 @@ export function useAppNavigation() {
       title: "New conversation",
       operationId: newOperation("create-session"),
     });
-    return openWorkspaceSession(created.record.id);
+    appEvents.emit("conversations-changed", {});
+    if (sequence !== navigationSequence.current) return false;
+    router.apply({
+      page: "workspace",
+      sessionId: created.record.id,
+      surface: "chat",
+    });
+    return true;
   };
 
   const createWorkspaceProject = async () => {
@@ -379,12 +393,14 @@ export function useAppRouteCommits(
       if (next.page === "workspace") {
         try {
           if (next.projectId) {
-            saveDeskLayout(next.projectId, {
-              ...loadDeskLayout(next.projectId),
-              tab: (next.destination ?? "overview") as WorkspaceDestination,
-              object: null,
-              comparison: null,
-            });
+            // Opening a conversation leaves the project's own tab as it was.
+            if (next.destination || !next.sessionId)
+              saveDeskLayout(next.projectId, {
+                ...loadDeskLayout(next.projectId),
+                tab: (next.destination ?? "overview") as WorkspaceDestination,
+                object: null,
+                comparison: null,
+              });
             localStorage.setItem(
               "pipeline.workspace.workspaceId",
               next.projectId,

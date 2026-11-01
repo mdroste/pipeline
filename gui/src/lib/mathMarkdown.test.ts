@@ -87,4 +87,48 @@ describe("normalizeMathDelimiters", () => {
     const math = "Assume $a < b$ holds and $c > d$ fails when x < y and z > 0.";
     expect(stripPresentationalHtml(math)).toBe(math);
   });
+
+  it.each([
+    "if N<T and T>0 then we reject",
+    "when x<y and z>w holds",
+    // Each of these names a real element, so only the shape of the text helps.
+    "if a<b and c>d then",
+    "for p<q and s>0 and u<i and j>k",
+    "Compare List<T> with Map<K, V> and <name>.",
+    "We keep p<0.05 and n>30.",
+  ])("keeps the unspaced inequality in %s", (text) => {
+    expect(stripPresentationalHtml(text)).toBe(text);
+  });
+
+  it.each([
+    "$i<j \\text{ and } k>l$",
+    "Since $a<b>c$ holds, we stop.",
+    "Display $$a<b>c$$ inline.",
+    "\\(a<b>c\\) and \\[a<i>c\\]",
+    "$$\na<b>c\n$$\n",
+    "$$ a<b>c\nd<i>e $$\n",
+    "\\[\na<b>c\n\\]\n",
+  ])("keeps math byte for byte in %j", (text) => {
+    expect(stripPresentationalHtml(text)).toBe(text);
+  });
+
+  it("still removes real tags around math and unpaired dollar signs", () => {
+    expect(
+      stripPresentationalHtml('<span class="x">Cost</span> of $a<b>c$<br/>'),
+    ).toBe("Cost of $a<b>c$\n");
+    expect(stripPresentationalHtml("It cost $5, <b>a lot</b>.")).toBe(
+      "It cost $5, a lot.",
+    );
+    expect(stripPresentationalHtml("\\$5 <b>and</b> \\$6")).toBe(
+      "\\$5 and \\$6",
+    );
+    expect(stripPresentationalHtml('<div class="a" hidden>x</div >')).toBe(
+      "\nx\n",
+    );
+    expect(
+      stripPresentationalHtml("<details open><DIV>y</DIV></details>"),
+    ).toBe("\ny\n");
+    expect(stripPresentationalHtml("<a href=x.md title='y'>z</a>")).toBe("z");
+    expect(stripPresentationalHtml("x<y and <b>bold</b>")).toBe("x<y and bold");
+  });
 });

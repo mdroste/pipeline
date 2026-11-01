@@ -10,6 +10,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceHarnessEditor from "./WorkspaceHarnessEditor";
 import type {
   ConversationSnapshot,
+  SessionSnapshot,
   EffectiveHarness,
   HarnessCatalog,
   HarnessPreset,
@@ -24,7 +25,7 @@ const mocks = vi.hoisted(() => ({
   saveWorkspaceConfig: vi.fn(),
   clonePreset: vi.fn(),
   updatePreset: vi.fn(),
-  conversationSnapshot: vi.fn(),
+  sessionSnapshot: vi.fn(),
   updateSession: vi.fn(),
   confirmDialog: vi.fn(),
 }));
@@ -255,7 +256,7 @@ beforeEach(() => {
           },
   );
   mocks.saveWorkspaceConfig.mockResolvedValue({});
-  mocks.conversationSnapshot.mockImplementation(async () => snapshot());
+  mocks.sessionSnapshot.mockImplementation(async () => snapshot());
   mocks.updateSession.mockImplementation(
     async (request: {
       presetId?: string;
@@ -283,7 +284,7 @@ afterEach(cleanup);
 function renderEditor(
   props: Partial<{
     snapshot: ConversationSnapshot;
-    onSnapshot: (next: ConversationSnapshot) => void;
+    onSnapshot: (next: SessionSnapshot) => void;
     onClose: () => void;
   }> = {},
 ) {
@@ -444,7 +445,7 @@ it("shows the inheritance table with the winning scope and writes to global, wor
 
   fireEvent.click(
     within(table).getByRole("button", {
-      name: "Inherit Internet access for commands for Workspace",
+      name: "Inherit Internet access for commands for Project",
     }),
   );
   await waitFor(() =>

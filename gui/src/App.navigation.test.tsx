@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import { router } from "./lib/router";
@@ -158,6 +164,88 @@ describe("App navigation", () => {
 
     await user.click(screen.getByRole("button", { name: /Review a paper/ }));
     expect(await screen.findByTestId("run-setup-panel")).toBeVisible();
+  });
+
+  it("says so when a listed conversation can't be opened", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("pipeline.ui.page", "home");
+    localStorage.setItem(
+      "pipeline.ui.navRailSections",
+      JSON.stringify({ conversations: true }),
+    );
+    const unhandled = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "workbench_list_workspaces")
+        return Promise.resolve({ workspaces: [] });
+      if (command === "workbench_list_sessions")
+        return Promise.resolve({
+          sessions: [{ id: "gone", title: "Deleted", updatedAt: "now" }],
+        });
+      if (command === "workbench_session_snapshot")
+        return Promise.reject(new Error("Conversation not found"));
+      return unhandled(command, args);
+    });
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: "Deleted" }));
+
+    await waitFor(() =>
+      expect(mocks.notify).toHaveBeenCalledWith(
+        expect.stringContaining("Conversation not found"),
+      ),
+    );
+  });
+
+  it("leaves Search closed behind a confirmation", async () => {
+    localStorage.setItem("pipeline.ui.page", "home");
+    render(<App />);
+    await screen.findByRole("button", { name: "Home" });
+    const search = () => screen.queryByRole("dialog", { name: "Search" });
+    const confirmation = document.createElement("dialog");
+    confirmation.setAttribute("open", "");
+    document.body.append(confirmation);
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await act(async () => {});
+    expect(search()).toBeNull();
+
+    confirmation.remove();
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await waitFor(() => expect(search()).not.toBeNull());
+  });
+
+  it("creates a conversation from New conversation on Home", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem("pipeline.ui.page", "home");
+    const unhandled = invoke.getMockImplementation()!;
+    invoke.mockImplementation((command: string, args?: unknown) => {
+      if (command === "workbench_create_session")
+        return Promise.resolve({ record: { id: "created" } });
+      if (command === "workbench_session_snapshot")
+        return Promise.resolve({
+          session: { id: "created", workspaceId: null },
+        });
+      return unhandled(command, args);
+    });
+    render(<App />);
+
+    await user.click(
+      await screen.findByRole("button", { name: /Ask questions or get help/ }),
+    );
+
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        "workbench_create_session",
+        expect.objectContaining({
+          request: expect.objectContaining({ workspaceId: null }),
+        }),
+      ),
+    );
+    await waitFor(() =>
+      expect(router.route).toMatchObject({
+        page: "workspace",
+        sessionId: "created",
+      }),
+    );
   });
 
   it("reopens guided setup and the example Review from Home", async () => {

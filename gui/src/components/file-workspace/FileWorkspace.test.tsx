@@ -46,6 +46,14 @@ const file = (
   externalPath: null,
 });
 beforeEach(() => localStorage.clear());
+function openFileMenu() {
+  fireEvent.click(screen.getByRole("button", { name: "More file actions" }));
+}
+function clickReload() {
+  openFileMenu();
+  fireEvent.click(screen.getByRole("menuitem", { name: "Reload" }));
+}
+
 it("retains per-file drafts across tabs and saves using the loaded hash", async () => {
   const adapter: FileAdapter = {
     id: "test",
@@ -63,10 +71,10 @@ it("retains per-file drafts across tabs and saves using the loaded hash", async 
   fireEvent.change(await screen.findByLabelText("Source editor: a.py"), {
     target: { value: "A draft" },
   });
-  fireEvent.change(screen.getByLabelText("Quick open file"), {
+  fireEvent.change(screen.getByLabelText("Find a file"), {
     target: { value: "b.py" },
   });
-  fireEvent.keyDown(screen.getByLabelText("Quick open file"), { key: "Enter" });
+  fireEvent.keyDown(screen.getByLabelText("Find a file"), { key: "Enter" });
   fireEvent.change(await screen.findByLabelText("Source editor: b.py"), {
     target: { value: "B draft" },
   });
@@ -166,7 +174,7 @@ it("preserves newer edits and their retained base while Reload is pending", asyn
     />,
   );
   const editor = await screen.findByLabelText("Source editor: a.py");
-  fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+  clickReload();
   fireEvent.change(editor, { target: { value: "New unsaved work" } });
   await act(async () => finish(file("a.py", "Changed on disk", "external")));
   expect(editor).toHaveValue("New unsaved work");
@@ -199,7 +207,7 @@ it("reloads an unchanged buffer and uses the new disk hash for its next save", a
     />,
   );
   const editor = await screen.findByLabelText("Source editor: a.py");
-  fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+  clickReload();
   await waitFor(() => expect(editor).toHaveValue("Changed on disk"));
   fireEvent.change(editor, { target: { value: "Edited refreshed file" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -228,7 +236,7 @@ it("gives tabs scoped panels, manual activation and keyboard closing with draft 
   fireEvent.change(await screen.findByLabelText("Source editor: a.py"), {
     target: { value: "Preserved draft" },
   });
-  const search = screen.getByRole("textbox", { name: "Quick open file" });
+  const search = screen.getByRole("textbox", { name: "Find a file" });
   await user.type(search, "b.py{Enter}");
   await screen.findByLabelText("Source editor: b.py");
   const a = screen.getByRole("tab", { name: "a.py •" });
@@ -277,7 +285,7 @@ it("keeps the last file selection when an earlier read completes late", async ()
     />,
   );
   await screen.findByLabelText("Source editor: a.py");
-  const search = screen.getByLabelText("Quick open file");
+  const search = screen.getByLabelText("Find a file");
   fireEvent.change(search, { target: { value: "slow.py" } });
   fireEvent.keyDown(search, { key: "Enter" });
   fireEvent.change(search, { target: { value: "b.py" } });
@@ -431,13 +439,14 @@ it("reloads a file with unsaved edits only after confirmation", async () => {
   );
   const editor = await screen.findByLabelText("Source editor: a.py");
   fireEvent.change(editor, { target: { value: "Unsaved" } });
+  openFileMenu();
   await act(async () =>
-    fireEvent.click(screen.getByRole("button", { name: "Reload" })),
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reload" })),
   );
   expect(confirmDialog).toHaveBeenCalledOnce();
   expect(read).toHaveBeenCalledOnce();
   expect(editor).toHaveValue("Unsaved");
-  fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+  clickReload();
   await waitFor(() => expect(editor).toHaveValue("Changed on disk"));
 });
 
@@ -458,12 +467,32 @@ it("opens each file tab in a fresh view instead of reusing the previous file's s
   );
   await screen.findByText("# a.md");
   const first = container.querySelector(".file-pane");
-  fireEvent.change(screen.getByLabelText("Quick open file"), {
+  fireEvent.change(screen.getByLabelText("Find a file"), {
     target: { value: "b.md" },
   });
-  fireEvent.keyDown(screen.getByLabelText("Quick open file"), {
+  fireEvent.keyDown(screen.getByLabelText("Find a file"), {
     key: "Enter",
   });
   await screen.findByText("# b.md");
   expect(container.querySelector(".file-pane")).not.toBe(first);
+});
+
+it("hides the file list, remembers that, and brings it back to find a file", async () => {
+  const adapter: FileAdapter = {
+    id: "hide-list",
+    read: vi.fn(async (path) => file(path)),
+  };
+  const view = render(
+    <FileWorkspace adapter={adapter} paths={["a.py", "b.py"]} />,
+  );
+  expect(await screen.findByText("No file open")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Hide file list" }));
+  expect(screen.getByLabelText("Find a file")).not.toBeVisible();
+  view.unmount();
+  render(<FileWorkspace adapter={adapter} paths={["a.py", "b.py"]} />);
+  expect(screen.getByRole("button", { name: "Show file list" })).toBeVisible();
+  fireEvent.keyDown(window, { key: "p", metaKey: true });
+  await waitFor(() =>
+    expect(screen.getByLabelText("Find a file")).toHaveFocus(),
+  );
 });

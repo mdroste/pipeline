@@ -54,13 +54,19 @@ export default function LocalSources({
   const active = options.find((option) => option.id === selected) ?? options[0];
   const requestedPage = selectionRequest?.page;
 
+  const pageMissing =
+    !!requestedPage &&
+    !new RegExp(`^#{1,6} ${pageHeading(requestedPage)}\\s*$`, "m").test(
+      extractedText,
+    );
+
   useEffect(() => {
     if (requestedPage) setSelected("extracted");
   }, [requestedPage, selectionRequest?.key]);
 
   return (
     <div className="flex h-full min-h-0">
-      <nav className="w-56 shrink-0 border-r border-gray-200 p-3 dark:border-gray-800">
+      <nav className="w-56 shrink-0 overflow-y-auto border-r border-gray-200 p-3 dark:border-gray-800">
         <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
           Sources
         </p>
@@ -79,20 +85,31 @@ export default function LocalSources({
           </button>
         ))}
       </nav>
-      <div className="min-w-0 flex-1">
-        {active && (
-          <ReportViewer
-            markdown={active.markdown}
-            scrollRequest={
-              requestedPage && selectionRequest && active.id === "extracted"
-                ? {
-                    key: selectionRequest.key,
-                    heading: pageHeading(requestedPage),
-                  }
-                : null
-            }
-          />
+      <div className="flex min-w-0 flex-1 flex-col">
+        {pageMissing && active?.id === "extracted" && (
+          <p
+            role="status"
+            className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-300"
+          >
+            Page {requestedPage} is not in the extracted text.
+          </p>
         )}
+        <div className="min-h-0 flex-1">
+          {active && (
+            <ReportViewer
+              key={active.id}
+              markdown={active.markdown}
+              scrollRequest={
+                requestedPage && selectionRequest && active.id === "extracted"
+                  ? {
+                      key: selectionRequest.key,
+                      heading: pageHeading(requestedPage),
+                    }
+                  : null
+              }
+            />
+          )}
+        </div>
       </div>
     </div>
   );

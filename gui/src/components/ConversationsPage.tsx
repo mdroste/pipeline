@@ -26,6 +26,7 @@ export default function ConversationsPage({
   const { conversations, loading, error, refresh } = useConversationIndex(
     true,
     filter === "archived",
+    true,
   );
   const term = search.trim().toLocaleLowerCase();
   const visible = conversations.filter(({ session, projectName }) => {

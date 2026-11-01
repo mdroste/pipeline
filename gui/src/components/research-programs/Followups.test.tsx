@@ -243,3 +243,38 @@ it("reviews and refreshes a queued message without sending, then uses its new fi
     }),
   );
 });
+
+it("offers Dismiss only for a message waiting for attention", async () => {
+  mocks.queue.mockResolvedValue([
+    {
+      id: "uncertain",
+      position: 1,
+      revision: 3,
+      request: { text: "Uncertain", context: { items: [] }, turnBudget: 1 },
+      state: "attention",
+      fingerprint: "f",
+      result: null,
+    },
+    {
+      id: "waiting",
+      position: 2,
+      revision: 1,
+      request: { text: "Waiting", context: { items: [] }, turnBudget: 1 },
+      state: "queued",
+      fingerprint: "g",
+      result: null,
+    },
+  ]);
+  render(<Followups {...props} active={false} />);
+  const dismiss = await screen.findAllByRole("button", { name: "Dismiss" });
+  expect(dismiss).toHaveLength(1);
+  fireEvent.click(dismiss[0]);
+  await waitFor(() =>
+    expect(mocks.queue).toHaveBeenCalledWith("session", {
+      action: "control",
+      id: "uncertain",
+      revision: 3,
+      control: "dismiss",
+    }),
+  );
+});

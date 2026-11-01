@@ -1,8 +1,9 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import {
   fileMarkdownComponents,
   fileMarkdownUrlTransform,
@@ -17,14 +18,22 @@ const REHYPE_PLUGINS = [rehypeKatex];
 /** Markdown, math and file links for one message; parsed again only when its text changes. */
 export const TranscriptMarkdown = memo(function TranscriptMarkdown({
   text,
+  messageId,
 }: {
   text: string;
+  /** Keeps this message's footnotes apart from those of other messages. */
+  messageId?: string;
 }) {
+  const options = useMemo(
+    () => (messageId ? { clobberPrefix: `message-${messageId}-` } : undefined),
+    [messageId],
+  );
   return (
     <ReactMarkdown
       urlTransform={fileMarkdownUrlTransform}
       remarkPlugins={REMARK_PLUGINS}
       rehypePlugins={REHYPE_PLUGINS}
+      remarkRehypeOptions={options}
       components={fileMarkdownComponents}
     >
       {text}
@@ -64,7 +73,7 @@ const TranscriptMessage = memo(function TranscriptMessage({
         {role}
       </div>
       <div className="workspace-message-body">
-        <TranscriptMarkdown text={text} />
+        <TranscriptMarkdown text={text} messageId={id} />
       </div>
       <WorkspaceMessageActions
         text={text}

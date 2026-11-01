@@ -54,38 +54,70 @@ pub(crate) fn normalize_review(value: Value, artifact: Value) -> Result<Value> {
     )
 }
 
+/// The Review an operation ran, from its ownership journal.
+pub(crate) fn journaled_review(store: &Store, operation: &str) -> Result<Option<String>> {
+    if operation.len() != 32 || !operation.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Invalid Task operation".into());
+    }
+    let path = store
+        .root
+        .join("actions")
+        .join(operation)
+        .join("review-run.json");
+    if !path.try_exists().map_err(err)? {
+        return Ok(None);
+    }
+    let mut bytes = Vec::new();
+    crate::safety::open_regular_file(&path)?
+        .take(4097)
+        .read_to_end(&mut bytes)
+        .map_err(err)?;
+    if bytes.len() > 4096 {
+        return Err("Review ownership journal exceeds its limit".into());
+    }
+    let metadata: Value = serde_json::from_slice(&bytes).map_err(err)?;
+    let id = metadata["runId"]
+        .as_str()
+        .ok_or("Review ownership journal omitted its run")?;
+    Ok(Some(id.to_string()))
+}
+
 /// Reconstruct abandonment from durable stop/retry records, including a crash
 /// after Task state committed but before its Review pin was released.
 pub fn reconcile_abandoned_reviews(store: &Store) -> Result<()> {
     for operation in store.abandoned_operations()? {
-        if operation.len() != 32 || !operation.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err("Invalid abandoned Task operation".into());
+        if let Some(id) = journaled_review(store, &operation)? {
+            crate::commands::orchestration::release_abandoned_pin(&id, &operation)?;
         }
-        let path = store
-            .root
-            .join("actions")
-            .join(&operation)
-            .join("review-run.json");
-        if !path.try_exists().map_err(err)? {
-            continue;
-        }
-        let mut bytes = Vec::new();
-        crate::safety::open_regular_file(&path)?
-            .take(4097)
-            .read_to_end(&mut bytes)
-            .map_err(err)?;
-        if bytes.len() > 4096 {
-            return Err("Review ownership journal exceeds its limit".into());
-        }
-        let metadata: Value = serde_json::from_slice(&bytes).map_err(err)?;
-        crate::commands::orchestration::release_abandoned_pin(
-            metadata["runId"]
-                .as_str()
-                .ok_or("Review ownership journal omitted its run")?,
-            &operation,
-        )?;
     }
     Ok(())
+}
+
+/// A pin outlives its Review only if the app stopped between saving a completed
+/// step and releasing it. One that can't be released doesn't hold up the rest.
+pub fn reconcile_adopted_reviews(store: &Store) -> Result<()> {
+    release_adopted(store, crate::commands::orchestration::release_abandoned_pin)
+}
+
+pub(crate) fn release_adopted(
+    store: &Store,
+    release: impl Fn(&str, &str) -> Result<()>,
+) -> Result<()> {
+    let mut errors = Vec::new();
+    for operation in store.adopted_operations()? {
+        let released = journaled_review(store, &operation).and_then(|id| match id {
+            Some(id) => release(&id, &operation),
+            None => Ok(()),
+        });
+        if let Err(error) = released {
+            errors.push(format!("{operation}: {error}"));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 pub fn recover_review(store: &Store, operation: &str) -> Result<Option<Value>> {

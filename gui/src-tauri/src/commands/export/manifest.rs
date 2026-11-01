@@ -22,6 +22,7 @@ struct ExportManifest {
     includes_raw_responses: bool,
     includes_logs: bool,
     includes_supporting_artifacts: bool,
+    includes_full_report: bool,
     payload_checksum: String,
     files: Vec<ExportFileRecord>,
 }
@@ -110,10 +111,14 @@ pub(in crate::commands) fn finalize_export_metadata(
     let includes_logs = mode == ExportMode::Forensic || selection.logs;
     let includes_supporting_artifacts =
         mode == ExportMode::Forensic || selection.supporting_artifacts;
+    // A custom report is the whole report; a Shareable one is verified only.
+    let includes_full_report =
+        mode == ExportMode::Forensic || (mode == ExportMode::Custom && selection.report);
     let sensitivity = if includes_source_material
         || includes_raw_responses
         || includes_logs
         || includes_supporting_artifacts
+        || includes_full_report
     {
         "sensitive"
     } else {
@@ -134,6 +139,7 @@ pub(in crate::commands) fn finalize_export_metadata(
         includes_raw_responses,
         includes_logs,
         includes_supporting_artifacts,
+        includes_full_report,
         payload_checksum,
         files,
     };

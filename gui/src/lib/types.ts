@@ -91,6 +91,8 @@ export interface StepConfig {
   effort_overrides?: Record<string, string>;
   /** Order-only dependencies. Upstream artifact selectors add dataflow edges automatically. */
   after?: string[];
+  /** Success requirements. Every step named here is also a scheduling edge. */
+  dependency_policy?: DependencyPolicy;
   /** Exact artifacts available to this step. */
   context: StepContext;
   /** Optional guard: skip the step unless this condition holds. */
@@ -99,6 +101,14 @@ export interface StepConfig {
   output_schema?: Record<string, unknown> | null;
   /** Fan-out: run once per matching file or upstream JSON-array item, with {item} bound. */
   for_each?: ForEach | null;
+}
+
+/** What must succeed before a step runs (mirrors DependencyPolicy). */
+export interface DependencyPolicy {
+  required?: string[];
+  quorum?: string[];
+  /** How many `quorum` members must succeed; zero when the quorum is empty. */
+  minimum_successes?: number;
 }
 
 /** A pinned host analyzer and its options (mirrors AnalyzerSpec). */
@@ -905,6 +915,8 @@ export interface ProfileSummary {
   name: string;
   step_count: number;
   builtin: boolean;
+  /** Why a saved profile can't be run; absent for a usable one. */
+  invalid?: string;
 }
 
 export interface ProfileExport {

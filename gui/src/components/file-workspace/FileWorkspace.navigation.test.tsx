@@ -83,3 +83,29 @@ it("keeps captured Markdown isolated from live absolute paths", async () => {
   await screen.findByText(/Image is not available/);
   expect(read).toHaveBeenCalledTimes(1);
 });
+
+it("releases the stream a Markdown image opens without needing it", async () => {
+  const read = vi.fn(async (path: string): Promise<FilePreview> => ({
+    path,
+    hash: path,
+    bytes: 10,
+    editable: false,
+    truncated: false,
+    externalPath: null,
+    mime: path.endsWith(".png") ? "image/png" : "text/plain",
+    base64: path.endsWith(".png") ? "QUJT" : null,
+    text: path.endsWith(".png") ? null : "![Chart](figure.png)",
+    streamToken: path.endsWith(".png") ? "image-token" : null,
+  }));
+  const release = vi.fn();
+  render(
+    <FileWorkspace
+      adapter={{ id: "report", read, release }}
+      paths={["report.md"]}
+      initial={{ path: "report.md" }}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Preview" }));
+  await screen.findByRole("img", { name: "Chart" });
+  expect(release).toHaveBeenCalledWith("image-token");
+});

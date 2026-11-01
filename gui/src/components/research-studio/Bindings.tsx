@@ -1,3 +1,4 @@
+import { Fold } from "../../ui";
 import { useEffect, useState } from "react";
 import {
   studioClient,
@@ -8,6 +9,8 @@ import {
 import type { ProjectRecord } from "../../lib/projectClient";
 import { executionClient } from "../../lib/workbench/executionClient";
 import type { ResearchResultV1 } from "../../lib/workbenchTypes";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import useReopenCount from "../../hooks/useReopenCount";
 import {
   button,
   input,
@@ -36,6 +39,8 @@ export default function Bindings({
   data,
   onRefresh,
   onDocument,
+  onAnchors,
+  active,
 }: StudioProps) {
   const [coverage, setCoverage] = useState<BindingCoverage[]>([]);
   const [results, setResults] = useState<ResearchResultV1[]>([]);
@@ -46,6 +51,7 @@ export default function Bindings({
   const [file, setFile] = useState("pipeline_values.tex");
   const [notice, setNotice] = useState("");
   const { error, busy, run, setError } = useAction();
+  const reopened = useReopenCount(active);
   useEffect(() => {
     let disposed = false;
     void Promise.all([
@@ -59,12 +65,12 @@ export default function Bindings({
         }
       })
       .catch((e) => {
-        if (!disposed) setError(String(e));
+        if (!disposed) setError(workbenchErrorMessage(e));
       });
     return () => {
       disposed = true;
     };
-  }, [workspaceId, setError]);
+  }, [workspaceId, setError, reopened]);
   const current = coverage.find((c) => c.record.id === selected);
   const set = (
     key: keyof NumericBinding,
@@ -84,9 +90,14 @@ export default function Bindings({
           className={button}
           disabled={busy}
           onClick={() =>
-            void run(async () =>
-              setCoverage(await studioClient.coverage(workspaceId)),
-            )
+            void run(async () => {
+              const [c, r] = await Promise.all([
+                studioClient.coverage(workspaceId),
+                executionClient.listStructuredResults(workspaceId),
+              ]);
+              setCoverage(c);
+              setResults(r);
+            })
           }
         >
           Refresh dependent results and passages
@@ -132,7 +143,11 @@ export default function Bindings({
                     </button>
                     <button
                       className={button}
-                      onClick={() => onDocument(c.anchor.selection.revisionId)}
+                      onClick={() =>
+                        onAnchors
+                          ? onAnchors(c.record.body.anchorId, null)
+                          : onDocument(c.anchor.selection.revisionId)
+                      }
                     >
                       Open exact passage
                     </button>
@@ -150,8 +165,7 @@ export default function Bindings({
         )}
       </section>
       <div className="grid gap-4 lg:grid-cols-2">
-        <section className={panel}>
-          <h2 className="font-semibold">Bind a reported number</h2>
+        <Fold title="Bind a reported number">
           <button
             className={button}
             onClick={() => {
@@ -274,7 +288,7 @@ export default function Bindings({
           >
             Save numeric binding
           </button>
-        </section>
+        </Fold>
         <section className={panel}>
           <h2 className="font-semibold">Evidence and dependencies</h2>
           {current ? (

@@ -9,7 +9,7 @@ import {
 import type { ConversationSnapshot } from "../lib/workbenchTypes";
 import { conversationClient } from "../lib/workbench/conversationClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import { isMessage } from "../lib/workspaceTranscript";
+import { isMessage, TRANSCRIPT_WINDOW } from "../lib/workspaceTranscript";
 
 export default function useWorkspaceTranscript(
   snapshot: ConversationSnapshot | null,
@@ -23,18 +23,21 @@ export default function useWorkspaceTranscript(
   current.current = snapshot;
   const allRenderedItems = useMemo(
     () => snapshot?.items.filter(isMessage) ?? [],
-    [snapshot],
+    [snapshot?.items],
   );
-  const maximumPage = Math.max(0, Math.ceil(allRenderedItems.length / 200) - 1);
+  const maximumPage = Math.max(
+    0,
+    Math.ceil(allRenderedItems.length / TRANSCRIPT_WINDOW) - 1,
+  );
   useEffect(
     () => setTranscriptPage((page) => Math.min(page, maximumPage)),
     [maximumPage],
   );
   const transcriptEnd = Math.max(
     0,
-    allRenderedItems.length - transcriptPage * 200,
+    allRenderedItems.length - transcriptPage * TRANSCRIPT_WINDOW,
   );
-  const transcriptStart = Math.max(0, transcriptEnd - 200);
+  const transcriptStart = Math.max(0, transcriptEnd - TRANSCRIPT_WINDOW);
   const renderedItems = useMemo(
     () => allRenderedItems.slice(transcriptStart, transcriptEnd),
     [allRenderedItems, transcriptStart, transcriptEnd],
@@ -72,7 +75,8 @@ export default function useWorkspaceTranscript(
       });
       // Fill a short window before advancing, so a tool-heavy page cannot
       // shift an unseen boundary message past the next displayed window.
-      if (renderedItems.length === 200) setTranscriptPage((value) => value + 1);
+      if (renderedItems.length === TRANSCRIPT_WINDOW)
+        setTranscriptPage((value) => value + 1);
     } catch (cause) {
       if (current.current?.session.id === session)
         setError(workbenchErrorMessage(cause));
@@ -81,6 +85,12 @@ export default function useWorkspaceTranscript(
       setLoadingEarlier(false);
     }
   };
+  // Tool activity alone shows nothing, so keep reading back to a message.
+  const olderCursor = snapshot?.olderCursor;
+  const nothingToShow = allRenderedItems.length === 0;
+  useEffect(() => {
+    if (nothingToShow && olderCursor) void loadEarlier();
+  }, [nothingToShow, olderCursor]);
   return {
     allRenderedItems,
     renderedItems,

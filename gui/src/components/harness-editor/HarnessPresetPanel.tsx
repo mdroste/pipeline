@@ -7,7 +7,7 @@ import { presetDescription } from "./harnessCopy";
 // summary, ownership badges, use/clone/restore/save actions, and Instructions
 // and Modules tabs. Built-ins render read-only; clones own their copy.
 
-import { memo, useState, type KeyboardEvent } from "react";
+import { useState, type KeyboardEvent } from "react";
 import type {
   EffectiveHarness,
   HarnessCatalog,
@@ -310,7 +310,7 @@ function HarnessPresetPanel({
           {effective.mode === "inspect" ? "read only" : "edits allowed"},
           command network {effective.commandNetwork ? "allowed" : "blocked"}.
           Use Access &amp; inheritance to change those permissions. The choices
-          below control additional Workspace capabilities.
+          below control additional project capabilities.
         </p>
         <HarnessModulesEditor
           catalog={catalog.modules}
@@ -327,4 +327,4 @@ function HarnessPresetPanel({
   );
 }
 
-export default memo(HarnessPresetPanel);
+export default HarnessPresetPanel;

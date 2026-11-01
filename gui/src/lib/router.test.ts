@@ -35,6 +35,7 @@ it("serializes and parses every destination round-trip", () => {
     { page: "gallery" },
     { page: "batch" },
     { page: "projects" },
+    { page: "projects", collectionId: "collection/α%?#" },
     { page: "history" },
     { page: "history", runId: "run-9" },
     { page: "settings" },
@@ -93,16 +94,36 @@ it("treats unreadable saved navigation as optional", () => {
 });
 
 it("persists committed routes and restores them, ignoring junk", () => {
-  router.apply({ page: "settings", section: "general" });
+  router.apply({ page: "history", runId: "run-7" });
   expect(restoreRoute(localStorage)).toEqual({
-    page: "settings",
-    section: "general",
+    page: "history",
+    runId: "run-7",
   });
   localStorage.setItem("pipeline.ui.route", "#/not/a/route");
   localStorage.setItem("pipeline.ui.page", "project-index");
   expect(restoreRoute(localStorage)).toEqual({ page: "project-index" });
   localStorage.removeItem("pipeline.ui.page");
   expect(restoreRoute(localStorage)).toBeNull();
+});
+
+it("remembers a page's own moves without navigating", () => {
+  router.apply({ page: "workspace", projectId: "first" });
+  const heard = vi.fn();
+  const stop = router.subscribe(heard);
+  const { revision } = router.getSnapshot();
+  router.remember({ page: "workspace", projectId: "second" });
+  stop();
+  expect(heard).not.toHaveBeenCalled();
+  expect(router.getSnapshot().revision).toBe(revision);
+  expect(router.route).toEqual({ page: "workspace", projectId: "first" });
+  expect(restoreRoute(localStorage)).toEqual({
+    page: "workspace",
+    projectId: "second",
+  });
+
+  router.apply({ page: "tasks" });
+  router.remember({ page: "workspace", projectId: "third" });
+  expect(restoreRoute(localStorage)).toEqual({ page: "tasks" });
 });
 
 it("runs the guard on navigate and skips it on apply", async () => {
@@ -146,4 +167,25 @@ it("recovers from malformed initial and changed hashes and still follows valid n
   window.location.hash = "#/automations";
   window.dispatchEvent(new HashChangeEvent("hashchange"));
   await vi.waitFor(() => expect(router.route).toEqual({ page: "tasks" }));
+});
+
+describe("file routes", () => {
+  it("round-trips a project file and its page", () => {
+    const route = {
+      page: "workspace",
+      projectId: "p1",
+      file: "paper folder/draft 1.pdf",
+      filePage: 12,
+    } as const;
+    expect(parseRoute(serializeRoute(route))).toEqual(route);
+  });
+
+  it("ignores a page number that is not one", () => {
+    const path = serializeRoute({ page: "workspace", projectId: "p1" });
+    expect(parseRoute(`${path}?file=a.pdf&filePage=-3`)).toEqual({
+      page: "workspace",
+      projectId: "p1",
+      file: "a.pdf",
+    });
+  });
 });

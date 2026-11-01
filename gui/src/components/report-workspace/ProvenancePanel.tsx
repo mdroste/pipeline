@@ -22,8 +22,8 @@ export default function ProvenancePanel({
 }) {
   const { models, usesProviderDefault } = namedModelSummary(provenance);
   const fields = [
-    ["Workflow", provenance.workflow],
-    ["Completed", formatRunDate(provenance.completed)],
+    ["Review", provenance.workflow],
+    ["Started", formatRunDate(provenance.started)],
     ["Duration", formatRunDuration(provenance.duration_secs)],
     ["Provider", provenance.provider_summary],
   ];

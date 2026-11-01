@@ -53,6 +53,7 @@ import { confirmDialog } from "./DialogService";
 import type { DepsReport, Settings } from "../lib/types";
 import type { ThemePreference } from "../lib/theme";
 import { useAppPreferences } from "../lib/appPreferences";
+import { router } from "../lib/router";
 import StorageSettings from "./StorageSettings";
 import WorkspaceResearchDataSettings from "./WorkspaceResearchDataSettings";
 import "./SettingsPage.css";
@@ -133,6 +134,9 @@ export default function SettingsPage({
   const [focusKey, setFocusKey] = useState(0);
   const [saveScope, setSaveScope] = useState("");
   const lastFocusedCard = useRef("");
+  const sectionRef = useRef(section);
+  const sectionUnfinishedRef = useRef(false);
+  const leaveSectionRef = useRef(async () => true);
   const setSettings = (next: Settings) => {
     const card = document.activeElement?.closest(".settings-card");
     setSaveScope(card?.id || lastFocusedCard.current);
@@ -150,32 +154,56 @@ export default function SettingsPage({
   }, [onDirtyChange, savePending]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   useEffect(() => {
-    setSection(sectionForTarget(initialSection, targetId));
-    setQuery("");
-    setDestination(
-      targetId ??
-        (
-          {
-            extraction: "workflow-extraction",
-            llm: "workflow-models",
-            workspace: "workspace-provider",
-            "api-keys": "anthropic-provider",
-          } as Partial<Record<SettingsSection, string>>
-        )[initialSection],
-    );
-    setFocusKey((key) => key + 1);
+    const next = sectionForTarget(initialSection, targetId);
+    const open = () => {
+      setSection(next);
+      setQuery("");
+      setDestination(
+        targetId ??
+          (
+            {
+              extraction: "workflow-extraction",
+              llm: "workflow-models",
+              workspace: "workspace-provider",
+              "api-keys": "anthropic-provider",
+            } as Partial<Record<SettingsSection, string>>
+          )[initialSection],
+      );
+      setFocusKey((key) => key + 1);
+    };
+    if (next === sectionRef.current || !sectionUnfinishedRef.current) {
+      open();
+      return;
+    }
+    // A sidebar or shortcut link stays on this page, so the app's leave guard
+    // lets it through; only this section's guard protects what is unfinished.
+    let current = true;
+    void leaveSectionRef.current().then((allowed) => {
+      if (!current) return;
+      if (allowed) open();
+      else
+        void router.navigate({ page: "settings", section: sectionRef.current });
+    });
+    return () => {
+      current = false;
+    };
   }, [initialSection, targetId, navigationKey]);
   useEffect(() => {
     if (loading || !destination) return;
     const frame = requestAnimationFrame(() => focusSettingsTarget(destination));
     return () => cancelAnimationFrame(frame);
   }, [loading, section, destination, focusKey]);
+  const sectionUnfinished =
+    storageSaving || researchDataSaving || operationPending;
   const canLeaveSection = async () =>
-    !(storageSaving || researchDataSaving || operationPending) ||
+    !sectionUnfinished ||
     (await confirmDialog(
       "This section has unfinished changes. Leave this section anyway?",
       { confirmLabel: "Leave section" },
     ));
+  sectionRef.current = section;
+  sectionUnfinishedRef.current = sectionUnfinished;
+  leaveSectionRef.current = canLeaveSection;
   const selectSection = async (next: Section, target?: string) => {
     if (next !== section && !(await canLeaveSection())) return;
     setSection(next);

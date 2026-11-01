@@ -77,7 +77,7 @@ export default function SetupTab({
           disabled={busy || settingsDisabled}
           onChange={(event) =>
             void act(async () => {
-              const latest = await conversationClient.conversationSnapshot(
+              const latest = await conversationClient.sessionSnapshot(
                 snapshot.session.id,
               );
               const overrides = { ...latest.session.overrides };

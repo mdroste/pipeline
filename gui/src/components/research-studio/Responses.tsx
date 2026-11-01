@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -12,6 +12,9 @@ import {
 import type { ProjectRecord } from "../../lib/projectClient";
 import { researchClient } from "../../lib/workbench/researchClient";
 import type { RunSummary } from "../../lib/types";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import useReopenCount from "../../hooks/useReopenCount";
+import useReveal from "../../hooks/useReveal";
 import {
   button,
   input,
@@ -23,6 +26,7 @@ import {
   Inspect,
   exportText,
   useAction,
+  useDraftGuard,
   type StudioProps,
 } from "./shared";
 const categories = [
@@ -39,10 +43,12 @@ export default function Responses({
   onRefresh,
   onDocument,
   onReviewHandoff,
+  active,
 }: StudioProps) {
   const [records, setRecords] = useState<ProjectRecord<ResponseRecord>[]>([]);
   const [selected, setSelected] = useState("");
   const [decision, setDecision] = useState<ResponseDecision | null>(null);
+  const decisionGuard = useDraftGuard(decision);
   const [checked, setChecked] = useState<string[]>([]);
   const [history, setHistory] = useState<unknown[]>([]);
   const [letter, setLetter] = useState<ResponseExport | null>(null);
@@ -62,6 +68,7 @@ export default function Responses({
   const [dependencies, setDependencies] = useState<string[]>([]);
   const refresh = async () =>
     setRecords(await studioClient.records(workspaceId, "response"));
+  const reopened = useReopenCount(active);
   useEffect(() => {
     let disposed = false;
     void studioClient
@@ -70,13 +77,23 @@ export default function Responses({
         if (!disposed) setRecords(v);
       })
       .catch((e) => {
-        if (!disposed) setError(String(e));
+        if (!disposed) setError(workbenchErrorMessage(e));
       });
     return () => {
       disposed = true;
     };
-  }, [workspaceId, setError]);
+  }, [workspaceId, setError, reopened]);
   const current = records.find((r) => r.id === selected);
+  const decisionForm = useReveal<HTMLDivElement>();
+  // A preview answers for this selection, format and these saved decisions only.
+  const letterInputs = JSON.stringify([
+    format,
+    checked,
+    records.filter((r) => checked.includes(r.id)).map((r) => r.revision),
+  ]);
+  const latestLetterInputs = useRef(letterInputs);
+  latestLetterInputs.current = letterInputs;
+  useEffect(() => setLetter(null), [letterInputs]);
   const set = (
     key: keyof ResponseDecision,
     value: ResponseDecision[keyof ResponseDecision],
@@ -224,7 +241,7 @@ export default function Responses({
                 }
               }}
             />
-            Enable importing Workflow findings
+            Enable importing review findings
           </label>
           {bridge && (
             <>
@@ -237,10 +254,10 @@ export default function Responses({
                   )
                 }
               >
-                Choose a completed Workflow run
+                Choose a completed review
               </button>
               <Select
-                label="Workflow run"
+                label="Completed review"
                 value={runId}
                 onChange={setRunId}
                 options={runs.map((r) => ({
@@ -344,7 +361,7 @@ export default function Responses({
           )}
           <p className="text-xs text-gray-500">
             Imported findings link to the original reports. Your existing
-            decisions are preserved; edits here do not change the Workflow
+            decisions are preserved; edits here do not change the review
             reports.
           </p>
         </section>
@@ -376,11 +393,15 @@ export default function Responses({
                   <td className="max-w-sm p-2">
                     <button
                       className="text-left underline"
-                      onClick={() => {
-                        setSelected(r.id);
-                        setDecision(r.body.decision);
-                        setHistory([]);
-                      }}
+                      onClick={() =>
+                        decisionGuard.replace("response", () => {
+                          decisionGuard.markSaved(r.body.decision);
+                          setSelected(r.id);
+                          setDecision(r.body.decision);
+                          setHistory([]);
+                          decisionForm.reveal();
+                        })
+                      }
                     >
                       {r.body.decision.number}.{" "}
                       {r.body.source.finding?.title ??
@@ -403,7 +424,11 @@ export default function Responses({
           </table>
         </div>
         {current && decision && (
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div
+            ref={decisionForm.ref}
+            tabIndex={-1}
+            className="grid gap-4 lg:grid-cols-2"
+          >
             <div className={panel}>
               <Text
                 label="Comment number"
@@ -479,6 +504,7 @@ export default function Responses({
                       expectedRevision: current.revision,
                       response: decision,
                     });
+                    decisionGuard.markSaved(decision);
                     await refresh();
                   })
                 }
@@ -610,15 +636,15 @@ export default function Responses({
           className={button}
           disabled={!checked.length || busy}
           onClick={() =>
-            void run(async () =>
-              setLetter(
-                await studioClient.exportResponses(
-                  workspaceId,
-                  checked,
-                  format,
-                ),
-              ),
-            )
+            void run(async () => {
+              const previewed = await studioClient.exportResponses(
+                workspaceId,
+                checked,
+                format,
+              );
+              if (latestLetterInputs.current === letterInputs)
+                setLetter(previewed);
+            })
           }
         >
           Preview selected responses and check links
@@ -626,7 +652,7 @@ export default function Responses({
         {letter && (
           <>
             {letter.warnings.map((w, i) => (
-              <p key={i} role="status" className="text-xs text-amber-700">
+              <p key={i} role="status" className="text-xs text-warning">
                 {w}
               </p>
             ))}
@@ -650,7 +676,7 @@ export default function Responses({
           </>
         )}
       </section>
-      {bridge && onReviewHandoff && (
+      {onReviewHandoff && (
         <section className={panel}>
           <h2 className="font-semibold">Focused re-review</h2>
           <p className="text-xs">

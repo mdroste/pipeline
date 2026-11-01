@@ -52,8 +52,9 @@
   --ui-warning-soft: #fffbeb;
   --ui-scrim: rgb(0 0 0 / 0.16);
 
-  /* The page palette: the quieter text, hairlines, and green accent of the
-     standard app page (ui/page.css). */
+  /* The page palette: the quieter text, hairlines, and accent of the standard
+     app page (ui/page.css). The accent is green here and gray in dark mode,
+     which keeps green for status. */
   --ui-page-text: #272b26;
   --ui-page-line: #e7e5e0;
   --ui-page-muted: #73766f;
@@ -94,12 +95,12 @@
   --ui-warning: #fcd34d;
   --ui-warning-soft: rgb(120 53 15 / 0.25);
   --ui-scrim: rgb(0 0 0 / 0.5);
-  --ui-page-text: #e7ece2;
-  --ui-page-line: #363a34;
-  --ui-page-muted: #a1a89b;
-  --ui-page-soft: #20251f;
-  --ui-page-accent: #aacaad;
-  --ui-page-on-accent: #1c2b20;
+  --ui-page-text: #e5e5e5;
+  --ui-page-line: #333333;
+  --ui-page-muted: #a3a3a3;
+  --ui-page-soft: #202020;
+  --ui-page-accent: #d4d4d4;
+  --ui-page-on-accent: #171717;
   --ui-shadow-1: 0 1px 2px rgb(0 0 0 / 0.4);
   --ui-shadow-2: 0 4px 24px rgb(0 0 0 / 0.45), 0 1px 3px rgb(0 0 0 / 0.3);
   --ui-shadow-3: 0 12px 40px rgb(0 0 0 / 0.6), 0 2px 6px rgb(0 0 0 / 0.4);
@@ -271,7 +272,13 @@ html.theme-switching *::after {
   color: theme("colors.gray.800");
   hyphens: auto;
   line-height: 1.7;
+  overflow-wrap: anywhere;
   text-align: left;
+}
+
+/* Keeps a jump target clear of the sticky text-size toolbar. */
+.report-content [id] {
+  scroll-margin-top: 3rem;
 }
 
 @media (max-width: 640px) {
@@ -647,6 +654,10 @@ mark.search-hit.current {
     border-top: 0.5pt solid #999;
     margin: 1rem 0;
   }
+}
+
+.report-reader.reader-compact .report-content [id] {
+  scroll-margin-top: 5.5rem;
 }
 
 .report-reader.reader-compact .report-content {

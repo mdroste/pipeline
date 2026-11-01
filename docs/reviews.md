@@ -17,6 +17,11 @@ sits beside the source, with the same name as the main file or named
 `paper.pdf`, `main.pdf`, or `manuscript.pdf`, Pipeline uses it for page
 images.
 
+A `.tex` file that isn't saved as UTF-8 is read as Windows-1252, and the report
+notes it so you can check accented characters. A project can bring up to 512
+files and 256 MB into a review. Figures past either limit are left out and
+listed in the report's quality notes, and the review continues.
+
 A PDF has to be converted to text first, which can lose equations, tables, or
 reading order. See [PDF extraction](#pdf-extraction). For slides, export the
 deck as PDF and choose **Slide Review**.
@@ -35,6 +40,15 @@ The gallery also has **Revision Response Check**, **Literature Positioning
 Scan**, **Thesis Chapter Review**, **Rubric-Based Review**, **Reference
 Check**, and **Replication Package Readiness**. Each template lists the inputs
 it needs.
+
+A review of a folder, such as a replication package, reads a private copy. The
+copy leaves out hidden items, symbolic links, and generated folders such as
+`.git` and `node_modules`. It holds up to 2,000 files and 256 MB,
+with no file over 32 MB, and keeps the smallest files when a folder is larger.
+A review of three or more folders gives each a smaller share of the file limit.
+The preview says when files won't fit, and the review's log lists everything
+left out. The review sees the names and sizes of large files but can't open
+them.
 
 ### Editing prose with Declaude
 
@@ -162,7 +176,9 @@ and limits.
 
 The report combines the reviewers' comments. You can open each reviewer's
 response and the source material to see where a comment came from. When a
-review produces findings, you can accept, reject, or annotate each one.
+review produces findings, you can accept, reject, or annotate each one. A
+decision applied to several selected findings adds its rationale after any
+note already there, and changes only the findings your filters are showing.
 
 Compare runs to see how the reports changed. In a project, a finding stays
 open across drafts until you resolve it, even if a later review doesn't
@@ -224,7 +240,8 @@ a label:
 **Quote found** means the quoted text is in your document where the comment
 says. It confirms the quote, not the comment's reasoning. A PDF that lost its
 equations during extraction can make a real quote look missing. The details
-are saved in the run as `products/evidence_verification.json`.
+are saved in the run as `products/evidence_verification.json`, listed in
+**Sources** under **Findings and products**.
 
 ## Pipeline checks
 
@@ -239,7 +256,17 @@ the designer, choose **+ Add step**, then **Pipeline check**. Or start from the
 
 The templates pair each check with a model step that explains the problems
 found. If Crossref can't find a reference, it may be a book, report, or
-dataset that Crossref doesn't list, or its details may be wrong.
+dataset that Crossref doesn't list, or its details may be wrong. If the
+reference check can't find a bibliography, or can't read all of one, it says
+so in a low-priority finding and doesn't report citation keys as undefined.
+
+A reference is reported as retracted only when its Crossref record is confirmed
+to be the cited work. If the record may be a different paper or another version,
+the finding says the retraction could not be confirmed. If Crossref can't be
+reached at all, you still get the checks that need no network, and a finding
+says which online checks did not run. If only some references could be looked
+up, or the list is longer than the limit, a finding says how many were not
+checked.
 
 With lookups on, the preview shows what's sent: the text of each reference as
 written in your bibliography, and nothing else from the manuscript. Lookups
@@ -248,13 +275,13 @@ run about one reference per second, within Crossref's public limits.
 ## Customize a review
 
 The designer lets you edit prompts, choose providers and models, set reasoning
-effort, turn on tools, and choose what each step can read. A saved review
-definition is called a **workflow**. Workflows can include conditional steps,
-structured responses, and steps that repeat over a set of files.
+effort, turn on tools, and choose what each step can read. A saved review can
+include conditional steps, structured responses, and steps that repeat over a
+set of files.
 
-Export a workflow as JSON to share it. Import one from a file or URL. A
-workflow contains steps and settings, never API keys. Before you run an
-imported workflow, check its prompts, providers, tools, and file access.
+Export a review as JSON to share it. Import one from a file or URL. The file
+is called a **workflow**. It contains steps and settings, never API keys. Before
+you run an imported review, check its prompts, providers, tools, and file access.
 
 For batches, workflow files, and scripting, see the
 [command-line guide](cli.md).
@@ -267,6 +294,6 @@ For batches, workflow files, and scripting, see the
 | PDF extraction fails | Read the error. Repair or install the parser, choose another method, or use LaTeX source |
 | The document is too long for the model | Use a shorter document, or give the step less context |
 | Calls are queued or rate-limited | Check your provider's limits and run fewer reviews at once |
-| The run was interrupted | Open the saved run, check which steps finished, and use the recovery options it offers |
+| The run was interrupted | Open the saved run, check which steps finished, and use the recovery options it offers. **Resume** always runs the review design saved with that run. **Regenerate** does too, unless that design is the one selected now, in which case your edits apply. If the run used a secret variable, Pipeline asks for it again, because a run never keeps secret values |
 
 To report a bug, see [Support](../.github/SUPPORT.md).

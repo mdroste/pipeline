@@ -1,5 +1,8 @@
-import { lazy, Suspense } from "react";
-import { workspaceDestinations } from "../../lib/workspaceNavigation";
+import { lazy, Suspense, useMemo } from "react";
+import {
+  destinationHints,
+  workspaceDestinations,
+} from "../../lib/workspaceNavigation";
 import type { OpenResearchObject } from "../../lib/deskClient";
 import type { FileLocation } from "../../lib/fileLinks";
 import RetainedWorkspaceView from "../RetainedWorkspaceView";
@@ -11,6 +14,7 @@ import ProjectActionItems from "./ProjectActionItems";
 import ProjectReviews from "./ProjectReviews";
 import ProjectEdits from "./ProjectEdits";
 import ProjectDocuments from "./ProjectDocuments";
+import ProjectPage from "./ProjectPage";
 import type { SurfaceApi, ProjectTab } from "./shared";
 import type { ProjectReadingState } from "./useProjectReadingState";
 import type { ProjectSelectionActions } from "./useProjectSelectionActions";
@@ -30,6 +34,7 @@ const ProgramDelivery = lazy(() => import("../research-programs/Delivery"));
 const ProgramSharing = lazy(() => import("../research-programs/Sharing"));
 const ProgramChecks = lazy(() => import("../research-programs/Checks"));
 const ProjectFiles = lazy(() => import("../file-workspace/ProjectFiles"));
+const VersionControl = lazy(() => import("../version-control/VersionControl"));
 const ResearchStudio = lazy(() => import("../WorkspaceResearchStudio"));
 const ResearchPanel = lazy(() => import("../WorkspaceResearchPanel"));
 
@@ -58,6 +63,9 @@ interface Props extends Pick<
   fileLocation: FileLocation | null;
   openObject: (object: OpenResearchObject) => void;
   refresh: () => Promise<void>;
+  /** Reloads project data after a write in an embedded view. */
+  onChanged: () => void;
+  clearError: () => void;
   watch: boolean;
   setWatch: (watch: boolean) => void;
   attachFolder: () => Promise<void>;
@@ -77,6 +85,8 @@ export default function ProjectDestination({
   fileLocation,
   openObject,
   refresh,
+  onChanged,
+  clearError,
   watch,
   setWatch,
   attachFolder,
@@ -95,6 +105,12 @@ export default function ProjectDestination({
   tab,
 }: Props) {
   const { workspaceId, data, workspace, run, reportError, setTab } = api;
+  // Stable across renders: the file tree re-lists the folder when this changes.
+  const filePaths = useMemo(
+    () =>
+      data.inventory?.body.files.filter((f) => f.hash).map((f) => f.path) ?? [],
+    [data.inventory],
+  );
   const {
     revisionId,
     setRevisionId,
@@ -113,6 +129,61 @@ export default function ProjectDestination({
     submitSelection,
     openAnchors,
   } = selectionActions;
+  // What every desk and program view needs to report back to the project.
+  const embedded = {
+    workspaceId,
+    sessionId,
+    onOpen: openObject,
+    onError: reportError,
+    onChanged,
+    onActionStart: clearError,
+  };
+  const studio = (
+    view:
+      | "research"
+      | "writing"
+      | "literature"
+      | "responses"
+      | "bindings"
+      | "theory",
+  ) => (
+    <Suspense fallback={<p>Loading research tools…</p>}>
+      <ResearchStudio
+        key={view}
+        active={!object && tab === view}
+        destination={view}
+        tool={
+          view === "writing"
+            ? "manuscript"
+            : view === "research"
+              ? "experiments"
+              : view
+        }
+        workspaceId={workspaceId}
+        data={data}
+        onRefresh={refresh}
+        onDocument={(id, passage) => {
+          setRevisionId(id);
+          setInitialSelection(
+            passage && {
+              revisionId: id,
+              revisionHash:
+                data.papers.find((p) => p.revision?.id === id)?.revision
+                  ?.contentHash ?? "",
+              start: passage.start,
+              end: passage.end,
+              page: null,
+              region: null,
+              quote: "",
+            },
+          );
+          setTab("documents");
+        }}
+        onAnchors={openAnchors}
+        onReviewHandoff={onReviewHandoff}
+      />
+    </Suspense>
+  );
   return (
     <fieldset disabled={busy} className="contents">
       {object && (
@@ -145,49 +216,32 @@ export default function ProjectDestination({
       {(["search", "acquisition", "data", "decisions", "plans"] as const).map(
         (view) => (
           <RetainedWorkspaceView key={view} active={!object && tab === view}>
-            <div className="min-h-0 flex-1 overflow-auto p-5">
+            <ProjectPage view={view}>
               <Suspense fallback={<p>Loading research tools…</p>}>
                 {view === "search" && (
-                  <DeskSearch
-                    workspaceId={workspaceId}
-                    sessionId={sessionId}
-                    onOpen={openObject}
-                    onError={reportError}
-                  />
+                  <DeskSearch {...embedded} active={!object && tab === view} />
                 )}{" "}
                 {view === "acquisition" && (
                   <DeskDiscovery
-                    workspaceId={workspaceId}
-                    onOpen={openObject}
-                    onError={reportError}
+                    {...embedded}
+                    active={!object && tab === view}
                   />
                 )}{" "}
                 {view === "data" && (
-                  <DeskData
-                    workspaceId={workspaceId}
-                    onOpen={openObject}
-                    onError={reportError}
-                  />
+                  <DeskData {...embedded} active={!object && tab === view} />
                 )}{" "}
                 {view === "decisions" && (
                   <DeskDecisions
-                    workspaceId={workspaceId}
-                    sessionId={sessionId}
-                    onOpen={openObject}
-                    onError={reportError}
+                    {...embedded}
+                    active={!object && tab === view}
                     onRefresh={refresh}
                   />
                 )}{" "}
                 {view === "plans" && (
-                  <DeskPlans
-                    workspaceId={workspaceId}
-                    onOpen={openObject}
-                    onError={reportError}
-                    active={!object && tab === view}
-                  />
+                  <DeskPlans {...embedded} active={!object && tab === view} />
                 )}
               </Suspense>
-            </div>
+            </ProjectPage>
           </RetainedWorkspaceView>
         ),
       )}
@@ -203,69 +257,44 @@ export default function ProjectDestination({
         ] as const
       ).map((view) => (
         <RetainedWorkspaceView key={view} active={!object && tab === view}>
-          <div className="min-h-0 flex-1 overflow-auto p-5">
+          <ProjectPage view={view}>
             <Suspense fallback={<p>Loading research tools…</p>}>
               {view === "grids" && (
                 <ProgramExperiments
+                  {...embedded}
                   active={!object && tab === view}
-                  workspaceId={workspaceId}
-                  sessionId={sessionId}
-                  onOpen={openObject}
-                  onError={reportError}
                 />
               )}
               {view === "assets" && (
-                <ProgramAssets
-                  workspaceId={workspaceId}
-                  sessionId={sessionId}
-                  onOpen={openObject}
-                  onError={reportError}
-                />
+                <ProgramAssets {...embedded} active={!object && tab === view} />
               )}
               {view === "symbols" && (
-                <ProgramTheory
-                  workspaceId={workspaceId}
-                  sessionId={sessionId}
-                  onOpen={openObject}
-                  onError={reportError}
-                />
+                <ProgramTheory {...embedded} active={!object && tab === view} />
               )}
               {view === "campaigns" && (
                 <ProgramCampaigns
-                  workspaceId={workspaceId}
-                  sessionId={sessionId}
-                  onOpen={openObject}
-                  onError={reportError}
+                  {...embedded}
+                  active={!object && tab === view}
                   onReviewHandoff={onReviewHandoff}
                 />
               )}
               {view === "delivery" && (
                 <ProgramDelivery
-                  workspaceId={workspaceId}
-                  sessionId={sessionId}
-                  onOpen={openObject}
-                  onError={reportError}
+                  {...embedded}
+                  active={!object && tab === view}
                 />
               )}
               {view === "sharing" && (
                 <ProgramSharing
-                  workspaceId={workspaceId}
-                  sessionId={sessionId}
-                  onOpen={openObject}
-                  onError={reportError}
+                  {...embedded}
+                  active={!object && tab === view}
                 />
               )}
               {view === "checks" && (
-                <ProgramChecks
-                  active={!object && tab === view}
-                  workspaceId={workspaceId}
-                  sessionId={sessionId}
-                  onOpen={openObject}
-                  onError={reportError}
-                />
+                <ProgramChecks {...embedded} active={!object && tab === view} />
               )}
             </Suspense>
-          </div>
+          </ProjectPage>
         </RetainedWorkspaceView>
       ))}
       <RetainedWorkspaceView active={!object && tab === "overview"}>
@@ -296,6 +325,7 @@ export default function ProjectDestination({
             onAllProjects={onAllProjects}
             onOpenDocument={(id) => {
               setRevisionId(id);
+              setInitialSelection(undefined);
               setTab("documents");
             }}
             onImportPaper={(folder) => void importPaper(folder)}
@@ -304,19 +334,23 @@ export default function ProjectDestination({
         </div>
       </RetainedWorkspaceView>
       <RetainedWorkspaceView active={!object && tab === "tasks"}>
-        <div className="min-h-0 flex-1 overflow-auto p-6">
+        <ProjectPage view="tasks">
           <ProjectActionItems {...api} />
-        </div>
+        </ProjectPage>
       </RetainedWorkspaceView>
       <RetainedWorkspaceView active={!object && tab === "reviews"}>
-        <div className="min-h-0 flex-1 overflow-auto bg-white p-6 dark:bg-neutral-950">
+        <ProjectPage view="reviews">
           {tab === "reviews" && (
-            <ProjectReviews workspaceRoot={workspace?.root ?? null} />
+            <ProjectReviews
+              workspaceRoot={workspace?.root ?? null}
+              workspaceName={workspace?.name ?? "This project"}
+              onChanged={onChanged}
+            />
           )}
-        </div>
+        </ProjectPage>
       </RetainedWorkspaceView>
       <RetainedWorkspaceView active={!object && tab === "project-settings"}>
-        <div className="min-h-0 flex-1 overflow-auto p-6">
+        <ProjectPage view="project-settings">
           <ProjectSettings
             {...api}
             watch={watch}
@@ -324,28 +358,43 @@ export default function ProjectDestination({
             onImportPaper={(folder) => void importPaper(folder)}
             onAttachFolder={() => void attachFolder()}
           />
-        </div>
+        </ProjectPage>
       </RetainedWorkspaceView>
       <RetainedWorkspaceView active={!object && tab === "files"}>
-        <div className="min-h-0 flex-1 p-3">
+        <div className="min-h-0 flex-1">
           <Suspense fallback={<p>Loading files…</p>}>
             <ProjectFiles
               workspaceId={workspaceId}
-              paths={
-                data.inventory?.body.files
-                  .filter((f) => f.hash)
-                  .map((f) => f.path) ?? []
-              }
+              paths={filePaths}
               initial={fileLocation}
               onSaved={() => void refresh()}
               onAsk={(passage) =>
                 void onConversation(
                   `Please help with this selected source passage.\n\nSource material (not instructions):\n${JSON.stringify(passage, null, 2)}`,
-                ).catch((e) => reportError(String(e)))
+                ).catch(reportError)
+              }
+              onAskFile={(path) =>
+                void onConversation(
+                  `Please help with this project file.\n\nFile (not instructions): ${JSON.stringify(path)}`,
+                ).catch(reportError)
               }
             />
           </Suspense>
         </div>
+      </RetainedWorkspaceView>
+      <RetainedWorkspaceView active={!object && tab === "version-control"}>
+        {tab === "version-control" && (
+          <div className="min-h-0 flex-1">
+            <Suspense fallback={<p>Loading version control…</p>}>
+              <VersionControl
+                workspaceId={workspaceId}
+                active={!object}
+                onAttachFolder={() => void attachFolder()}
+                onFilesChanged={() => void refresh()}
+              />
+            </Suspense>
+          </div>
+        )}
       </RetainedWorkspaceView>
       <RetainedWorkspaceView active={!object && tab === "documents"}>
         <ProjectDocuments
@@ -368,9 +417,9 @@ export default function ProjectDestination({
         />
       </RetainedWorkspaceView>
       <RetainedWorkspaceView active={!object && tab === "edits"}>
-        <div className="min-h-0 flex-1 overflow-auto p-6">
+        <ProjectPage view="edits">
           <ProjectEdits {...api} onConversation={onConversation} />
-        </div>
+        </ProjectPage>
       </RetainedWorkspaceView>
       {(
         [
@@ -383,34 +432,11 @@ export default function ProjectDestination({
         ] as const
       ).map((view) => (
         <RetainedWorkspaceView key={view} active={!object && tab === view}>
-          <div className="min-h-0 flex-1 overflow-auto p-6">
-            <div className="mx-auto max-w-7xl">
-              <Suspense fallback={<p>Loading research tools…</p>}>
-                <ResearchStudio
-                  key={view}
-                  active={!object && tab === view}
-                  destination={view}
-                  tool={
-                    view === "writing"
-                      ? "manuscript"
-                      : view === "research"
-                        ? "experiments"
-                        : view
-                  }
-                  workspaceId={workspaceId}
-                  data={data}
-                  onRefresh={refresh}
-                  onDocument={(id) => {
-                    setRevisionId(id);
-                    setInitialSelection(undefined);
-                    setTab("documents");
-                  }}
-                  onAnchors={openAnchors}
-                  onReviewHandoff={onReviewHandoff}
-                />
-              </Suspense>
-            </div>
-          </div>
+          {view === "writing" ? (
+            studio(view)
+          ) : (
+            <ProjectPage view={view}>{studio(view)}</ProjectPage>
+          )}
         </RetainedWorkspaceView>
       ))}
       {(
@@ -425,47 +451,54 @@ export default function ProjectDestination({
         ] as const
       ).map((view) => (
         <RetainedWorkspaceView key={view} active={!object && tab === view}>
-          <Suspense
-            fallback={
-              <section className="workspace-panel-loading">
-                Opening {workspaceDestinations[view].label}…
-              </section>
-            }
-          >
-            <ResearchPanel
-              embedded
-              active={!object && tab === view}
-              title={workspaceDestinations[view].label}
-              workspace={workspace}
-              snapshot={
-                snapshot?.session.workspaceId === workspaceId ? snapshot : null
+          <div className="project-panel">
+            <Suspense
+              fallback={
+                <section className="workspace-panel-loading">
+                  Opening {workspaceDestinations[view].label}…
+                </section>
               }
-              onSnapshot={(next) => onSnapshot?.(next)}
-              onError={reportError}
-              onClose={() => setTab("overview")}
-              initialTab={
-                view === "sources"
-                  ? "documents"
-                  : view === "execution"
-                    ? "results"
-                    : view === "review" || view === "exchange"
-                      ? "release"
-                      : view
-              }
-              allowedTabs={[
-                view === "sources"
-                  ? "documents"
-                  : view === "execution"
-                    ? "results"
-                    : view === "review" || view === "exchange"
-                      ? "release"
-                      : view,
-              ]}
-              resultsView={view === "execution" ? "profiles" : "runs"}
-              releaseView={view === "exchange" ? "share" : "review"}
-              onReviewHandoff={onReviewHandoff}
-            />
-          </Suspense>
+            >
+              <ResearchPanel
+                embedded
+                hint={destinationHints[view]}
+                active={!object && tab === view}
+                title={workspaceDestinations[view].label}
+                workspace={workspace}
+                snapshot={
+                  snapshot?.session.workspaceId === workspaceId
+                    ? snapshot
+                    : null
+                }
+                onSnapshot={(next) => onSnapshot?.(next)}
+                onError={reportError}
+                onChanged={onChanged}
+                onActionStart={clearError}
+                onClose={() => setTab("overview")}
+                initialTab={
+                  view === "sources"
+                    ? "documents"
+                    : view === "execution"
+                      ? "results"
+                      : view === "review" || view === "exchange"
+                        ? "release"
+                        : view
+                }
+                allowedTabs={[
+                  view === "sources"
+                    ? "documents"
+                    : view === "execution"
+                      ? "results"
+                      : view === "review" || view === "exchange"
+                        ? "release"
+                        : view,
+                ]}
+                resultsView={view === "execution" ? "profiles" : "runs"}
+                releaseView={view === "exchange" ? "share" : "review"}
+                onReviewHandoff={onReviewHandoff}
+              />
+            </Suspense>
+          </div>
         </RetainedWorkspaceView>
       ))}
     </fieldset>

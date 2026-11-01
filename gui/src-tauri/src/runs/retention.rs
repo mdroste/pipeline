@@ -1,6 +1,56 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
+/// Runs in use by a review in this process: the run it is finishing and the
+/// parent it is re-running from. Reviews share the run lock, so automatic
+/// retention can start while one of them still needs its run on disk.
+static RETENTION_HOLDS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn retention_holds() -> std::sync::MutexGuard<'static, Vec<String>> {
+    RETENTION_HOLDS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Keeps one run out of automatic retention until it drops.
+pub struct RetentionHold(String);
+
+pub fn hold_from_retention(run_id: &str) -> RetentionHold {
+    retention_holds().push(run_id.to_string());
+    RetentionHold(run_id.to_string())
+}
+
+impl Drop for RetentionHold {
+    fn drop(&mut self) {
+        let mut holds = retention_holds();
+        if let Some(index) = holds.iter().position(|run_id| run_id == &self.0) {
+            holds.swap_remove(index);
+        }
+    }
+}
+
+pub(super) fn apply_retention_holds(state: &mut [(String, bool, u64)]) {
+    let holds = retention_holds();
+    for (run_id, protected, _) in state {
+        *protected |= holds.contains(run_id);
+    }
+}
+
+/// Trash each candidate unless a hold arrived after the plan was made. The
+/// check and the move share the lock, so a re-run that takes its hold first
+/// keeps its parent, and one that comes later finds the run gone.
+pub(super) fn trash_unheld(
+    candidates: Vec<String>,
+    delete: impl Fn(&str) -> Result<(), String>,
+) -> usize {
+    let mut removed = 0usize;
+    for run_id in candidates {
+        let holds = retention_holds();
+        if !holds.contains(&run_id) && delete(&run_id).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 /// Count of runs on disk and total bytes they occupy (best-effort walk).
 pub fn disk_usage() -> Result<RunsDiskUsage, String> {
     let dir = runs_dir()?;
@@ -157,7 +207,7 @@ fn retention_plan_from_sized_runs(
         .iter()
         .flat_map(|project| project.run_ids.iter().cloned())
         .collect::<std::collections::HashSet<_>>();
-    let state = sized
+    let mut state = sized
         .iter()
         .map(|(summary, bytes)| {
             // Fail closed around user state: project membership, annotations,
@@ -188,6 +238,7 @@ fn retention_plan_from_sized_runs(
             )
         })
         .collect::<Vec<_>>();
+    apply_retention_holds(&mut state);
     Ok(retention_plan_from_state(&state, keep, max_bytes))
 }
 
@@ -271,13 +322,7 @@ pub fn purge_runs_with_limits(keep: usize, max_bytes: u64) -> Result<usize, Stri
     }
     let sized = sized_runs_for_retention()?;
     let plan = retention_plan_from_sized_runs(&sized, keep, max_bytes)?;
-    let mut removed = 0usize;
-    for run_id in plan.candidates {
-        if delete_run(&run_id).is_ok() {
-            removed += 1;
-        }
-    }
-    Ok(removed)
+    Ok(trash_unheld(plan.candidates, delete_run))
 }
 
 /// Apply a manually confirmed purge only when the current deletion plan still

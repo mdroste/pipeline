@@ -1,6 +1,14 @@
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import WorkspaceProjectSurface from "./WorkspaceProjectSurface";
 import type ProjectDocuments from "./project-surface/ProjectDocuments";
 import type ProjectSettings from "./project-surface/ProjectSettings";
@@ -11,19 +19,26 @@ const mocks = vi.hoisted(() => ({
   home: vi.fn(),
   workspace: vi.fn(),
   mutate: vi.fn(),
+  read: vi.fn(),
   note: vi.fn(),
+  importPaper: vi.fn(),
+  notify: vi.fn(),
   documents: vi.fn(),
   settings: vi.fn(),
 }));
 vi.mock("../lib/projectClient", async (original) => ({
   ...(await original<typeof import("../lib/projectClient")>()),
-  projectClient: { home: mocks.home, mutate: mocks.mutate },
+  projectClient: { home: mocks.home, mutate: mocks.mutate, read: mocks.read },
 }));
 vi.mock("../lib/workbench/workspaceClient", () => ({
   workspaceClient: { getWorkspace: mocks.workspace },
 }));
 vi.mock("../lib/workbench/researchClient", () => ({
-  researchClient: { createNote: mocks.note },
+  researchClient: { createNote: mocks.note, importPaper: mocks.importPaper },
+}));
+vi.mock("./DialogService", async (original) => ({
+  ...(await original<typeof import("./DialogService")>()),
+  notify: mocks.notify,
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 vi.mock("./project-surface/ProjectDocuments", () => ({
@@ -71,11 +86,13 @@ afterEach(() => {
 });
 async function mount(
   destination: "documents" | "project-settings" = "documents",
+  onDestination?: (tab: string) => void,
 ) {
   render(
     <WorkspaceProjectSurface
       workspaceId="workspace"
       destination={destination}
+      onDestination={onDestination}
       onConversation={vi.fn()}
       onWorkspaceChanged={vi.fn()}
     />,
@@ -182,6 +199,98 @@ it("anchors a revision action before creating the task with that anchor", async 
     },
   ]);
 });
+it("sends a proposed revision to Review edits with its action item chosen", async () => {
+  const onDestination = vi.fn();
+  await mount("documents", onDestination);
+  act(() => documentProps().onSelection(selected, "revision"));
+  act(() => documentProps().onSubmitSelection());
+  await waitFor(() => expect(onDestination).toHaveBeenCalledWith("edits"));
+  expect(onDestination).not.toHaveBeenCalledWith("overview");
+  expect(mocks.notify).not.toHaveBeenCalled();
+});
+it("keeps the reader open after adding an action item from a passage", async () => {
+  const onDestination = vi.fn();
+  await mount("documents", onDestination);
+  act(() => documentProps().onSelection(selected, "task"));
+  act(() => documentProps().setSelectionBody("Check this number"));
+  act(() => documentProps().onSubmitSelection());
+  await waitFor(() => expect(mocks.notify).toHaveBeenCalledOnce());
+  await waitFor(() => expect(documentProps().selectionAction).toBeNull());
+  expect(onDestination).not.toHaveBeenCalled();
+  const [message, kind, link] = mocks.notify.mock.calls[0];
+  expect(message).toBe("Action item added.");
+  expect(kind).toBe("success");
+  act(() => link.run());
+  expect(onDestination).toHaveBeenCalledWith("tasks");
+});
+describe("adding a version", () => {
+  const paper = {
+    paper: { id: "paper", title: "Draft", role: "manuscript" },
+    revision: { id: "latest", inputKind: "pdf" },
+  };
+  beforeEach(() => {
+    mocks.home.mockResolvedValue({ ...makeProjectHome(), papers: [paper] });
+    vi.mocked(open).mockResolvedValue("/research/new.pdf");
+    mocks.importPaper.mockResolvedValue({ revision: { id: "newest" } });
+  });
+  it("finds the paper of an earlier version that is open", async () => {
+    mocks.read.mockResolvedValue({
+      revision: { id: "earlier", paperId: "paper" },
+    });
+    await mount();
+    act(() => documentProps().setRevisionId("earlier"));
+    await act(async () => documentProps().onAddVersion());
+    await waitFor(() =>
+      expect(mocks.importPaper).toHaveBeenCalledWith(
+        expect.objectContaining({
+          paperId: "paper",
+          path: "/research/new.pdf",
+        }),
+      ),
+    );
+    await waitFor(() => expect(documentProps().revisionId).toBe("newest"));
+  });
+  it("says why when the open version has no paper left", async () => {
+    mocks.read.mockResolvedValue({
+      revision: { id: "earlier", paperId: "gone" },
+    });
+    await mount();
+    act(() => documentProps().setRevisionId("earlier"));
+    await act(async () => documentProps().onAddVersion());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "no longer in the project",
+    );
+    expect(open).not.toHaveBeenCalled();
+  });
+});
+describe("the project error banner", () => {
+  it("can be dismissed", async () => {
+    await mount("project-settings");
+    act(() => settingsProps().reportError("The save failed."));
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss this error" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+  it("shows a structured rejection as text instead of crashing", async () => {
+    await mount("project-settings");
+    act(() => settingsProps().reportError({ code: "busy", message: "Busy" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Busy");
+  });
+  it("does not follow the researcher to another view", async () => {
+    const surface = (destination: "documents" | "project-settings") => (
+      <WorkspaceProjectSurface
+        workspaceId="workspace"
+        destination={destination}
+        onConversation={vi.fn()}
+        onWorkspaceChanged={vi.fn()}
+      />
+    );
+    const page = render(surface("project-settings"));
+    await screen.findByText("Settings fixture");
+    act(() => settingsProps().reportError("The save failed."));
+    page.rerender(surface("documents"));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+});
 it("debounces focus refreshes for 400ms and watches only at the existing 30-second interval", async () => {
   await mount("project-settings");
   vi.useFakeTimers();
@@ -215,7 +324,9 @@ it("checks the folder on focus without disabling the project or clearing an erro
       }),
   );
   await focusRefresh();
-  expect(mocks.mutate).toHaveBeenCalledWith("workspace", { action: "refresh" });
+  expect(mocks.mutate).toHaveBeenCalledWith("workspace", {
+    action: "checkForChanges",
+  });
   expect(document.querySelector("fieldset")).not.toBeDisabled();
   expect(screen.queryByRole("status")).toBeNull();
   await act(async () => finish({}));
@@ -229,6 +340,17 @@ it("checks the folder on focus without disabling the project or clearing an erro
   expect(screen.getByRole("alert")).toHaveTextContent(
     "The earlier save failed.",
   );
+});
+it("says nothing when a focus check finds the project in use", async () => {
+  await mount("project-settings");
+  mocks.mutate.mockRejectedValueOnce({
+    code: "storage_conflict",
+    message: "Another project operation is in progress; retry when it finishes",
+  });
+  await focusRefresh();
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalledOnce());
+  await act(async () => {});
+  expect(screen.queryByRole("alert")).toBeNull();
 });
 it("starts a user action only after a focus check finishes", async () => {
   await mount("project-settings");

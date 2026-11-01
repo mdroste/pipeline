@@ -1,22 +1,8 @@
 {
   "description": "Current accepted source/test size debt; values are [physical lines, UTF-8 bytes]. Do not refresh merely to hide growth.",
   "files": {
-    "gui/src-tauri/src/auto_review.rs": [1582, 59929],
-    "gui/src-tauri/src/bin/cli.rs": [1517, 54402],
-    "gui/src-tauri/src/commands/export.rs": [1379, 57021],
-    "gui/src-tauri/src/orchestration/tests.rs": [1305, 41128],
-    "gui/src-tauri/src/pipeline/extract/pdf.rs": [1512, 57855],
-    "gui/src-tauri/src/runs.rs": [1204, 46417],
-    "gui/src-tauri/src/settings.rs": [1542, 59946],
     "gui/src-tauri/src/workbench/codex/probe.rs": [1283, 45964],
     "gui/src-tauri/src/workbench/programs/tests.rs": [1372, 50624],
-    "gui/src-tauri/src/workbench/project/tests.rs": [1207, 39756],
-    "gui/src-tauri/src/workbench/release.rs": [1124, 52095],
-    "gui/src-tauri/src/workbench/release/archive.rs": [1247, 53101],
-    "gui/src-tauri/src/workbench/release/exchange.rs": [1973, 85326],
-    "gui/src-tauri/src/workbench/research/execution.rs": [1560, 67499],
-    "gui/src/components/PipelinePage.test.tsx": [1395, 48875],
-    "gui/src/components/SettingsPage.test.tsx": [1464, 47213],
-    "gui/src/components/WorkspaceConversation.css": [1239, 26645]
+    "gui/src/components/PipelinePage.test.tsx": [1395, 48875]
   }
 }

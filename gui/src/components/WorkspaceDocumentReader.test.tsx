@@ -28,7 +28,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceDocumentReader from "./WorkspaceDocumentReader";
-import type { DocumentView } from "../lib/projectClient";
+import type { DocumentSelection, DocumentView } from "../lib/projectClient";
 const read = vi.hoisted(() => vi.fn());
 vi.mock("../lib/projectClient", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/projectClient")>()),
@@ -310,4 +310,93 @@ it("restores the saved scroll only for its own segment and opens a new segment a
   await screen.findByText("Second segment");
   await waitFor(() => expect(scroller.scrollTop).toBe(0));
   expect(layout()).toMatchObject({ start: 13, scroll: 0 });
+});
+
+const reader = (initialSelection: DocumentSelection) => (
+  <WorkspaceDocumentReader
+    workspaceId="workspace"
+    revisionId="revision"
+    initialSelection={initialSelection}
+    annotations={[]}
+    onSelection={vi.fn()}
+    onError={vi.fn()}
+  />
+);
+const position: DocumentSelection = {
+  revisionId: "revision",
+  revisionHash: "abcdef",
+  start: 40,
+  end: null,
+  quote: "",
+  page: null,
+  region: null,
+};
+it("treats an opened position as a place to read, not a selection", async () => {
+  read.mockResolvedValue(view("Opened passage"));
+  render(reader(position));
+  await screen.findByText("Opened passage");
+  expect(read).toHaveBeenCalledWith("workspace", "revision", 40, null);
+  expect(screen.queryByText("Page null region")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Create action item" }),
+  ).toBeNull();
+});
+it("starts from the saved position when the selection is another document's", async () => {
+  localStorage.setItem(
+    "pipeline.reader.workspace.revision",
+    JSON.stringify({ start: 90 }),
+  );
+  read.mockResolvedValue(view("Saved place"));
+  render(
+    reader({
+      ...position,
+      revisionId: "another",
+      start: 7,
+      end: 12,
+      quote: "Old passage",
+    }),
+  );
+  await screen.findByText("Saved place");
+  expect(read).toHaveBeenCalledWith("workspace", "revision", 90, null);
+  expect(screen.queryByText("Old passage")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
+});
+it("shows an opened passage in the text, whichever view was last used", async () => {
+  localStorage.setItem(
+    "pipeline.reader.workspace.revision",
+    JSON.stringify({ mode: "rendered" }),
+  );
+  read.mockResolvedValue(view("Opened passage"));
+  render(reader(position));
+  await screen.findByText("Opened passage");
+  expect(screen.getByRole("button", { name: "Text / source" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+});
+
+it("stops saying it is opening after a failed read, and can try again", async () => {
+  const onError = vi.fn();
+  read.mockRejectedValueOnce({ message: "Revision is unavailable" });
+  render(
+    <WorkspaceDocumentReader
+      workspaceId="workspace"
+      revisionId="revision"
+      annotations={[]}
+      onSelection={vi.fn()}
+      onError={onError}
+    />,
+  );
+  expect(
+    await screen.findByRole("heading", {
+      name: "This document could not be opened",
+    }),
+  ).toBeInTheDocument();
+  expect(onError).toHaveBeenCalledWith("Revision is unavailable");
+
+  read.mockResolvedValue(view("Recovered passage"));
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await screen.findByText("Recovered passage");
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
 });

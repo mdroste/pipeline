@@ -48,8 +48,9 @@ function NoteCard({ note, api }: { note: ResearchNote; api: SurfaceApi }) {
         <span className="font-medium">{noteKindLabel(note.kind)}</span>
         {note.state === "proposed" && (
           <span>
-            · Suggested by {note.origin === "user" ? "you" : "the assistant"},
-            not yet accepted
+            {note.importedStatus
+              ? "· Imported: the sender accepted this, you haven't yet"
+              : `· Suggested by ${note.origin === "user" ? "you" : "the assistant"}, not yet accepted`}
           </span>
         )}
         {note.state === "rejected" && <span>· Rejected</span>}

@@ -133,6 +133,17 @@ describe("run provenance", () => {
     );
   });
 
+  it("calls the manifest's creation time the start of the run", () => {
+    const { started } = buildRunProvenance({
+      report: report(),
+      manifest: {
+        created: "2026-10-31T15:00:00-04:00",
+        duration_secs: 3_000,
+      } as never,
+    });
+    expect(started).toBe("2026-10-31T15:00:00-04:00");
+  });
+
   it("keeps every provider and model visible and uses run-wide totals", () => {
     const provenance = buildRunProvenance({
       report: report(),
@@ -157,7 +168,7 @@ describe("run provenance", () => {
     const markdown = provenanceMarkdown(provenance);
     expect(markdown).toContain("# Pipeline");
     expect(markdown).toContain("**Document:** Networks and Policy");
-    expect(markdown).toContain("**Workflow:** Paper Review (Full)");
+    expect(markdown).toContain("**Review:** Paper Review (Full)");
     expect(markdown).toContain(
       "**Token usage:** 3,500 input · 350 output · 2,300 cached",
     );

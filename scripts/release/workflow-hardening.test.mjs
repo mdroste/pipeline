@@ -14,6 +14,7 @@ test("all third-party GitHub Actions are pinned to immutable commit SHAs", () =>
     "release.yml",
     "release-cache.yml",
     "paddle-parser-qualification.yml",
+    "advisories.yml",
   ]) {
     const contents = readText(".github", "workflows", workflow);
     const actions = [...contents.matchAll(/\buses:\s+([^@\s]+)@([^\s#]+)/g)];
@@ -32,12 +33,28 @@ test("CI and release use the repository's exact toolchains", () => {
   const nodeVersion = readText("gui", ".nvmrc").trim();
   const rustVersion = readText("rust-toolchain.toml")
     .match(/^channel\s*=\s*"([^"]+)"$/m)?.[1];
-  for (const workflow of ["build.yml", "release.yml", "release-cache.yml"]) {
+  for (const workflow of ["build.yml", "release.yml", "release-cache.yml", "advisories.yml"]) {
     const contents = readText(".github", "workflows", workflow);
     assert.ok(contents.includes(`NODE_VERSION: ${nodeVersion}`));
     assert.ok(contents.includes(`RUST_VERSION: ${rustVersion}`));
     assert.ok(!contents.includes("toolchain: stable"));
   }
+});
+
+test("package.json admits only the pinned Node major, where the frontend tests pass", () => {
+  const pinned = readText("gui", ".nvmrc").trim();
+  const { engines } = JSON.parse(readText("gui", "package.json"));
+  const major = pinned.split(".")[0];
+  assert.equal(engines.node, `>=${pinned} <${Number(major) + 1}`);
+  const lock = JSON.parse(readText("gui", "package-lock.json"));
+  assert.equal(lock.packages[""].engines.node, engines.node);
+});
+
+test("release checkouts leave no token in .git/config for install scripts to read", () => {
+  const release = readText(".github", "workflows", "release.yml");
+  const checkouts = release.split(/\n(?=\s*- (?:uses|name): )/).filter((step) => step.includes("uses: actions/checkout@"));
+  assert.ok(checkouts.length >= 3);
+  for (const step of checkouts) assert.match(step, /^\s+persist-credentials: false$/m);
 });
 
 test("automatic CI gates production builds and all native targets", () => {
@@ -55,6 +72,18 @@ test("clean checkouts retain a Poppler resource for native test builds", () => {
       fs.existsSync(path.join(directory, name))),
     "Tauri's Poppler resource glob must match a file before native tests can compile",
   );
+});
+
+test("a clean checkout prepares the bundled notices before Tauri compiles", () => {
+  const { build, bundle } = JSON.parse(readText("gui", "src-tauri", "tauri.conf.json"));
+  const prepare = /^npm run prepare:release-resources && /;
+  assert.match(build.beforeDevCommand, prepare);
+  assert.match(build.beforeBuildCommand, prepare);
+  // Exact paths fail tauri-build when missing, so the prepare step writes each.
+  const writers = readText("scripts", "release", "prepare-package-notices.mjs")
+    + readText("scripts", "release", "library-licenses.mjs");
+  for (const item of bundle.resources.filter((name) => name.startsWith("resources/notices/")))
+    assert.ok(writers.includes(path.basename(item)), item);
 });
 
 test("Windows PDF tests use the pinned Poppler tools before system executables", () => {
@@ -160,8 +189,69 @@ test("Tauri packages only the GUI and avoids persistent incremental caches", () 
   assert.deepEqual(config.bundle.resources.filter((item) => item.includes("notices/")), [
     "resources/notices/NOTICE.txt",
     "resources/notices/PIPELINE_LICENSE.txt",
+    "resources/notices/THIRD_PARTY_LIBRARIES.txt",
     "resources/notices/THIRD_PARTY_LICENSES.md",
   ]);
+});
+
+test("packaged apps are checked and launched before any upload", () => {
+  const release = readText(".github", "workflows", "release.yml");
+  const upload = release.indexOf("name: Upload immutable installer to draft");
+  const macos = release.split("name: Check the macOS app's binaries, Poppler, and launch")[1]?.split("- name:")[0] ?? "";
+  const linux = release.split("name: Check Poppler and launch the AppImage")[1]?.split("- name:")[0] ?? "";
+  for (const step of ["Check the macOS app's binaries, Poppler, and launch", "Check Poppler and launch the AppImage"])
+    assert.ok(release.indexOf(`name: ${step}`) < upload, step);
+  for (const required of ["validate-macos-machos.sh", "--poppler-layout", "--require-developer-id", "--max-minos 15.0",
+    "smoke-poppler.mjs", "smoke-packaged-app.mjs"])
+    assert.ok(macos.includes(required), required);
+  assert.ok(linux.includes("smoke-poppler.mjs"));
+  assert.ok(linux.includes("xvfb-run -a node scripts/release/smoke-packaged-app.mjs --process-stability-only"));
+  assert.match(release, /libfuse2 patchelf poppler-utils xvfb/);
+  assert.ok(readText("scripts", "release", "verify-windows-package.ps1").includes("smoke-poppler.mjs"));
+
+  const config = JSON.parse(readText("gui", "src-tauri", "tauri.conf.json"));
+  assert.equal(config.bundle.macOS.minimumSystemVersion, "15.0", "keep --max-minos in step");
+});
+
+test("the final job checks the asset list and the tag after verifying the draft", () => {
+  const release = readText(".github", "workflows", "release.yml");
+  const verify = release.split("verify-draft:")[1];
+  const order = ["draft-release.mjs verify", "validate-release-assets.mjs --version", "validate-signed-tag-binding.sh"];
+  const positions = order.map((item) => verify.indexOf(item));
+  assert.ok(positions.every((position) => position >= 0), order.join());
+  assert.deepEqual(positions, [...positions].sort((left, right) => left - right));
+});
+
+test("every release script runs somewhere", () => {
+  const folder = path.join(ROOT, "scripts", "release");
+  const scripts = fs.readdirSync(folder).filter((name) => /\.(mjs|sh|ps1|py)$/.test(name));
+  const workflows = fs.readdirSync(path.join(ROOT, ".github", "workflows"))
+    .map((name) => readText(".github", "workflows", name));
+  const callers = [...workflows, readText("gui", "package.json"), readText("gui", "src-tauri", "tauri.conf.json")];
+  const within = (name) => scripts.filter((other) => other !== name).map((other) => readText("scripts", "release", other));
+  // Run by hand: the runbook gives the command, and art changes are rare.
+  const manual = { "qualify-release.mjs": "docs/releasing.md", "render-installer-art.py": "CLAUDE.md" };
+  for (const name of scripts) {
+    if (name === "release.test.mjs") continue;
+    if (manual[name]) {
+      assert.ok(readText(manual[name]).includes(name), name);
+      continue;
+    }
+    assert.ok([...callers, ...within(name)].some((text) => text.includes(name)), `${name} has no caller`);
+  }
+});
+
+test("dependency advisories are checked on a schedule with a pinned tool", () => {
+  const advisories = readText(".github", "workflows", "advisories.yml");
+  for (const required of ["schedule:", "workflow_dispatch:", "cargo install cargo-audit --version ${{ env.CARGO_AUDIT_VERSION }} --locked",
+    "cargo audit", "npm audit --omit=dev"])
+    assert.ok(advisories.includes(required), required);
+  assert.match(advisories, /CARGO_AUDIT_VERSION: \d+\.\d+\.\d+\n/);
+  assert.doesNotMatch(advisories, /continue-on-error|pull_request|workflow_call/);
+  assert.ok(readText("gui", "src-tauri", ".cargo", "audit.toml").includes("advisories.yml"));
+  // A new advisory must not stop a release; the runbook has it reviewed instead.
+  for (const workflow of ["build.yml", "release.yml"])
+    assert.ok(!readText(".github", "workflows", workflow).includes("advisories.yml"));
 });
 
 test("real parser qualification and Dependabot remain manual and infrequent", () => {

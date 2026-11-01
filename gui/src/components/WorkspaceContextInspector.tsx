@@ -96,8 +96,8 @@ export default function WorkspaceContextInspector({
               </pre>
             ) : (
               <p className="mt-1 text-gray-500">
-                No project material is attached to this conversation yet. Use
-                Sources above your message to add some.
+                No project material is attached to this conversation yet. Choose
+                + (Add to message) in the message box to add some.
               </p>
             )}
           </div>

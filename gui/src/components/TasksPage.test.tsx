@@ -87,6 +87,30 @@ beforeEach(() => {
     },
   );
 });
+it("still lists automations when the saved run has been removed", async () => {
+  const implementation = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command, args) => {
+    if (command === "task_get")
+      return Promise.reject(new Error("Query returned no rows"));
+    if (command === "task_list")
+      return Promise.resolve([{ ...run, state: "running" }]);
+    return implementation(command, args);
+  });
+  render(<TasksPage initialTaskId="removed" />);
+  expect(
+    await screen.findByRole("button", { name: /Workspace follow-up/ }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  const asked = () =>
+    mocks.invoke.mock.calls.filter(([command]) => command === "task_get")
+      .length;
+  const before = asked();
+  await act(async () => {
+    mocks.listeners.get("tasks:changed")?.({ payload: null });
+    await new Promise((resolve) => setTimeout(resolve, 220));
+  });
+  expect(asked()).toBe(before);
+});
 it("titles the page without repeating the product name", async () => {
   render(<TasksPage />);
   expect(
@@ -394,4 +418,87 @@ it("brings the automation details into view when picked from the list", async ()
   } finally {
     Element.prototype.scrollIntoView = original;
   }
+});
+
+const inputWait = (state: string, deadlineAt: number): TaskRun => ({
+  ...run,
+  state,
+  deadlineAt,
+  progress: {
+    ...run.progress,
+    receipts: {
+      ask: {
+        address: "ask",
+        stepId: "ask",
+        label: "Supply the data",
+        state: "input",
+        operation: "ask-operation",
+        startedAt: 10,
+        finishedAt: null,
+        wakeAt: null,
+        output: null,
+        error: null,
+      },
+    },
+  },
+});
+const showing = (detail: TaskRun) => {
+  mocks.invoke.mockImplementation(
+    async (command: string, args: Record<string, unknown> = {}) => {
+      switch (command) {
+        case "task_get":
+          return detail;
+        case "task_input":
+          return { ...detail, state: "queued", args };
+        case "task_background":
+          return false;
+        default:
+          return [];
+      }
+    },
+  );
+  render(<TasksPage initialTaskId={detail.id} />);
+};
+
+it("takes input past the deadline and says what that does", async () => {
+  showing(inputWait("attention", 600));
+  await screen.findByLabelText("Supply the data");
+  expect(screen.getByText(/new \d+-hour deadline/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Supply the data"), {
+    target: { value: "The data" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Provide input" }));
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "task_input",
+      expect.objectContaining({
+        id: run.id,
+        address: "ask",
+        value: "The data",
+      }),
+    ),
+  );
+});
+
+it("hides the input form when the run cannot take input", async () => {
+  showing(inputWait("cancelled", 600));
+  await screen.findByText("This automation can’t take input right now.");
+  expect(
+    screen.queryByRole("button", { name: "Provide input" }),
+  ).not.toBeInTheDocument();
+});
+
+it("records a finished result as seen", async () => {
+  showing({ ...run, state: "finished" });
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("task_mark_seen", { id: run.id }),
+  );
+});
+
+it("does not record a run in progress as seen", async () => {
+  showing({ ...run, state: "running" });
+  await screen.findByRole("button", { name: "Stop" });
+  expect(mocks.invoke).not.toHaveBeenCalledWith("task_mark_seen", {
+    id: run.id,
+  });
 });

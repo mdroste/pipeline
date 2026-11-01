@@ -11,16 +11,15 @@ import {
   useRef,
   useState,
 } from "react";
-import ReviewRunView from "./components/ReviewRunView";
 import DepsCheck from "./components/DepsCheck";
 import Console from "./components/Console";
 import VariablePrompt from "./components/VariablePrompt";
 import RunPreview from "./components/RunPreview";
 import UpdateBanner from "./components/UpdateBanner";
+import WorkspaceBackgroundTurnNotice from "./components/WorkspaceBackgroundTurnNotice";
 import NavRail, { CollapsedNavBar } from "./components/NavRail";
 import { NavRailSlotProvider } from "./components/nav-rail/navRailSlot";
 import RunSetupPanel from "./components/RunSetupPanel";
-import RunPlanPreview from "./components/RunPlanPreview";
 import ErrorBoundary from "./components/ErrorBoundary";
 import GetStartedHost from "./components/get-started/GetStartedHost";
 import { openGetStarted } from "./lib/getStarted";
@@ -30,8 +29,11 @@ import { isMac, isWindows } from "./lib/platform";
 import { router, type AppPage } from "./lib/router";
 import { confirmUpdateRestart } from "./lib/updateRestart";
 import { confirmDialog, notify } from "./components/DialogService";
+import { appEvents } from "./lib/appEvents";
 import type { QueuedRun } from "./lib/types";
 
+const ReviewRunView = lazy(() => import("./components/ReviewRunView"));
+const RunPlanPreview = lazy(() => import("./components/RunPlanPreview"));
 const SettingsPage = lazy(() => import("./components/SettingsPage"));
 const HomePage = lazy(() => import("./components/HomePage"));
 const TasksPage = lazy(() => import("./components/TasksPage"));
@@ -152,12 +154,11 @@ function AppShell() {
     rerunReview,
   } = reviewLaunch;
   const {
-    researchNotice,
-    inspectResearchAttention,
-    setResearchNotice,
     tasksAttention,
     workspaceActive,
     workspaceAttention,
+    workspaceTurn,
+    waitingSession,
   } = attention;
   const {
     closeProtectionUnavailable,
@@ -207,7 +208,11 @@ function AppShell() {
       )
         return;
       // Another modal owns its keyboard.
-      if (!searchOpen && document.querySelector('[aria-modal="true"]')) return;
+      if (
+        !searchOpen &&
+        document.querySelector('[aria-modal="true"], dialog[open]')
+      )
+        return;
       event.preventDefault();
       setSearchOpen((open) => !open);
     };
@@ -270,6 +275,22 @@ function AppShell() {
       ),
     );
   };
+  // A listed conversation can be gone by the time it is clicked.
+  const openConversation = (id: string) => {
+    void openWorkspaceSession(id).catch((error: unknown) => {
+      notify(
+        `The conversation could not be opened: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      appEvents.emit("conversations-changed", {});
+    });
+  };
+  const newConversation = () => {
+    void startConversation().catch((error: unknown) =>
+      notify(
+        `The conversation could not be started: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+    );
+  };
 
   // The window itself never scrolls. Relative and clip contain visually hidden
   // elements that sit outside a page's scroller, so neither focus nor the
@@ -283,7 +304,7 @@ function AppShell() {
         <Suspense fallback={null}>
           <AppSearch
             onClose={() => setSearchOpen(false)}
-            onOpenConversation={(id) => void openWorkspaceSession(id)}
+            onOpenConversation={openConversation}
             onOpenRun={(id) => void openHistoryRun(id, null)}
           />
         </Suspense>
@@ -375,28 +396,6 @@ function AppShell() {
         </div>
       )}
 
-      {researchNotice && (
-        <div
-          role="status"
-          className="absolute bottom-5 right-5 z-50 max-w-sm space-y-2 rounded-lg border border-amber-300 bg-white p-4 shadow-lg dark:bg-neutral-950"
-        >
-          <p className="text-sm">
-            Something you’re tracking in this project has changed.
-          </p>
-          <button
-            className="rounded border px-3 py-1 text-xs"
-            onClick={() => void inspectResearchAttention()}
-          >
-            View changes
-          </button>
-          <button
-            className="px-3 py-1 text-xs"
-            onClick={() => setResearchNotice(null)}
-          >
-            Dismiss notification
-          </button>
-        </div>
-      )}
       {navRailCollapsed && (
         <CollapsedNavBar
           isMac={isMac}
@@ -422,16 +421,14 @@ function AppShell() {
           onCancelRun={(run) => void cancelReview(run)}
           onDismissRuns={dismissReviews}
           onSearch={() => setSearchOpen(true)}
-          onNewConversation={() =>
-            void startConversation().catch((error: unknown) =>
-              notify(
-                `The conversation could not be started: ${error instanceof Error ? error.message : String(error)}`,
-              ),
-            )
-          }
+          onNewConversation={newConversation}
           onNewProject={() => void createWorkspaceProject()}
-          onOpenConversation={(id) => void openWorkspaceSession(id)}
-          onOpenConversations={() => void openWorkspace("chat")}
+          onOpenConversation={openConversation}
+          onOpenConversations={() =>
+            waitingSession
+              ? openConversation(waitingSession)
+              : void openWorkspace("chat")
+          }
           onConfigureRuns={() =>
             void router.navigate({
               page: "settings",
@@ -538,6 +535,24 @@ function AppShell() {
               });
             }}
           />
+          {/* The Workspace page shows its own notice and the approval itself. */}
+          {page !== "workspace" && workspaceAttention && (
+            <div className="px-4 pt-3">
+              <WorkspaceBackgroundTurnNotice
+                title={
+                  workspaceTurn?.sessionId === waitingSession
+                    ? (workspaceTurn?.title ?? null)
+                    : null
+                }
+                waiting={1}
+                onOpen={() =>
+                  waitingSession
+                    ? openConversation(waitingSession)
+                    : void openWorkspace("chat")
+                }
+              />
+            </div>
+          )}
           {page === "main" && providerLimitNotices.length > 0 && (
             <ProviderLimitBanner
               notices={providerLimitNotices}
@@ -569,7 +584,7 @@ function AppShell() {
                   hasCurrentReview={continueRunKey !== null || batchActive}
                   reviewRunning={isRunning}
                   runningReviews={runningReviews}
-                  onAssistant={() => void openWorkspace("chat")}
+                  onAssistant={newConversation}
                   onNewProject={() => void createWorkspaceProject()}
                   onOpenProject={(id) => void openWorkspaceProject(id)}
                   onNewReview={() => void handleNewRun()}
@@ -590,19 +605,14 @@ function AppShell() {
               ) : page === "conversations" ? (
                 <ConversationsPage
                   onOpen={openWorkspaceSession}
-                  onNew={() =>
-                    void startConversation().catch((error: unknown) =>
-                      notify(
-                        `The conversation could not be started: ${error instanceof Error ? error.message : String(error)}`,
-                      ),
-                    )
-                  }
+                  onNew={newConversation}
                 />
               ) : page === "workspace" ? (
                 // A project's Reviews open saved runs (and cited sources)
                 // through the shell, like the other review entry points.
                 <HistoryRunOpener.Provider value={openHistoryRun}>
                   <WorkspacePage
+                    onOpenConversation={openConversation}
                     onAllProjects={() => void handleNavigate("project-index")}
                     onSaveHandlerChange={registerWorkspaceSave}
                     entryTarget={workspaceEntry.target}
@@ -687,7 +697,7 @@ function AppShell() {
                 <ResearchActivity
                   asPage
                   onClose={() => setPage("home")}
-                  onSession={(id) => void openWorkspaceSession(id)}
+                  onSession={openConversation}
                   onProject={(id) => void openActivityProject(id)}
                   onTasks={(id) => void openActivityTask(id)}
                   onReview={(id) => void openActivityReview(id)}
@@ -701,7 +711,7 @@ function AppShell() {
               ) : state.kind === "done" ? (
                 // A rendering defect in the finished-run view must not take
                 // down the whole app shell with it.
-                <ErrorBoundary nested>
+                <ErrorBoundary key={state.runId} nested>
                   <ReportWorkspace
                     runId={state.runId}
                     markdown={state.markdown}

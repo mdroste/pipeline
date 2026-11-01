@@ -1,7 +1,11 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterAll, beforeAll, expect, it } from "vitest";
-import DialogService, { confirmDialog, promptDialog } from "./DialogService";
+import { afterAll, beforeAll, expect, it, vi } from "vitest";
+import DialogService, {
+  confirmDialog,
+  notify,
+  promptDialog,
+} from "./DialogService";
 
 // jsdom has no modal dialog support; mirror the open attribute it toggles.
 const original = {
@@ -105,7 +109,102 @@ it("queues a second request instead of stranding the first", async () => {
   expect(document.querySelector("dialog")).not.toHaveAttribute("open");
 });
 
+it("offers only the confirm button for a report to read", async () => {
+  mount();
+  let answer: Promise<boolean> | undefined;
+  act(() => {
+    answer = confirmDialog("Backup saved without some files.", {
+      confirmLabel: "OK",
+      acknowledgeOnly: true,
+    });
+  });
+  expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "OK" }));
+  await expect(answer).resolves.toBe(true);
+});
+
 it("resolves to cancel when no dialog host is mounted", async () => {
   await expect(confirmDialog("Delete?")).resolves.toBe(false);
   await expect(promptDialog("Name?")).resolves.toBeNull();
+});
+
+function toastTimers() {
+  vi.useFakeTimers();
+  return () => vi.useRealTimers();
+}
+
+it("keeps a toast while the pointer is on it, then lets it leave", () => {
+  const restore = toastTimers();
+  try {
+    mount();
+    act(() => notify("Could not copy the file."));
+    const toast = screen.getByRole("alert");
+    fireEvent.mouseEnter(toast);
+    act(() => vi.advanceTimersByTime(20_000));
+    expect(toast).toBeInTheDocument();
+    fireEvent.mouseLeave(toast);
+    act(() => vi.advanceTimersByTime(6000));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    restore();
+  }
+});
+
+it("keeps a toast while keyboard focus is inside it", () => {
+  const restore = toastTimers();
+  try {
+    mount();
+    act(() => notify("Could not copy the file."));
+    const dismiss = screen.getByRole("button", {
+      name: "Dismiss notification",
+    });
+    act(() => dismiss.focus());
+    act(() => vi.advanceTimersByTime(20_000));
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    act(() => dismiss.blur());
+    act(() => vi.advanceTimersByTime(6000));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  } finally {
+    restore();
+  }
+});
+
+it("lets an untouched toast leave after six seconds, and a later one keeps its own time", () => {
+  const restore = toastTimers();
+  try {
+    mount();
+    act(() => notify("First", "info"));
+    act(() => vi.advanceTimersByTime(4000));
+    act(() => notify("Second", "info"));
+    act(() => vi.advanceTimersByTime(2000));
+    expect(screen.queryByText("First")).not.toBeInTheDocument();
+    expect(screen.getByText("Second")).toBeInTheDocument();
+  } finally {
+    restore();
+  }
+});
+
+it("closes a toast when its action runs", () => {
+  const run = vi.fn();
+  mount();
+  act(() => notify("Moved", "info", { label: "Undo", run }));
+  fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+  expect(run).toHaveBeenCalledOnce();
+  expect(screen.queryByText("Moved")).not.toBeInTheDocument();
+});
+
+it("wraps long unbroken paths in toasts and dialogs", async () => {
+  mount();
+  const path = `/Users/example/${"very-long-folder-name-".repeat(12)}/draft.tex`;
+  act(() => notify(path));
+  expect(screen.getByText(path)).toHaveClass("break-words");
+  act(() => {
+    void confirmDialog(path, { title: path });
+  });
+  expect(document.getElementById("pipeline-confirm-title")).toHaveClass(
+    "break-words",
+  );
+  expect(document.getElementById("pipeline-confirm-description")).toHaveClass(
+    "break-words",
+  );
 });

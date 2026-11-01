@@ -54,7 +54,7 @@ pub async fn run(spec: &AnalyzerSpec, context: &AnalyzerContext<'_>) -> Result<V
         registry::REPLICATION_STATIC => {
             let root = std::path::PathBuf::from(context.source_path);
             let options = spec.options.clone();
-            tokio::task::spawn_blocking(move || replication::run(&root, &options))
+            crate::run_scope::spawn_blocking(move || replication::run(&root, &options))
                 .await
                 .map_err(|error| format!("Replication package check stopped: {error}"))?
         }

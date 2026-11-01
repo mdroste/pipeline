@@ -28,7 +28,7 @@ it("offers outcome-first entry points without exposing runtime terminology", asy
   expect(
     screen.getByRole("heading", { name: "What would you like to do?" }),
   ).toBeVisible();
-  await user.click(screen.getByRole("button", { name: /^Chat/ }));
+  await user.click(screen.getByRole("button", { name: /^Conversation/ }));
   await user.click(screen.getByRole("button", { name: /^Review/ }));
   await user.click(screen.getByRole("button", { name: /^Automate/ }));
 

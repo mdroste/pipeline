@@ -65,7 +65,16 @@ pub(in crate::pipeline_config) fn archive_retired_profile(
     profiles: &Path,
     id: &str,
 ) -> Result<(), String> {
-    let source = profiles.join(format!("{id}.json"));
+    archive_profile_file(profiles, &profiles.join(format!("{id}.json")), id)
+}
+
+/// Move `source` into the archive as `<id>.json`. It leaves the places Pipeline
+/// reads from, and every byte of it stays recoverable.
+pub(in crate::pipeline_config) fn archive_profile_file(
+    profiles: &Path,
+    source: &Path,
+    id: &str,
+) -> Result<(), String> {
     if !source.exists() {
         return Ok(());
     }
@@ -89,7 +98,7 @@ pub(in crate::pipeline_config) fn archive_retired_profile(
         .find(|candidate| !candidate.exists())
         .ok_or_else(|| format!("Too many archived copies of profile '{id}'"))?;
 
-    fs::rename(&source, &destination).map_err(|error| {
+    fs::rename(source, &destination).map_err(|error| {
         format!(
             "Failed to archive retired profile '{}' as '{}': {error}",
             source.display(),

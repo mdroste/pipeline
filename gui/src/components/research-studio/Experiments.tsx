@@ -1,3 +1,4 @@
+import { Fold } from "../../ui";
 import { useEffect, useState } from "react";
 import {
   studioClient,
@@ -15,6 +16,9 @@ import type {
   ResearchResultV1,
 } from "../../lib/workbenchTypes";
 import type { ProjectRecord } from "../../lib/projectClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import useReopenCount from "../../hooks/useReopenCount";
+import DecimalField from "../DecimalField";
 import {
   button,
   input,
@@ -26,14 +30,23 @@ import {
   Inspect,
   lines,
   useAction,
+  useDraftGuard,
   type StudioProps,
 } from "./shared";
 import { JobLauncher } from "./Jobs";
 const key = (r: ResearchResultV1) => `${r.sourceExecutionId}/${r.resultId}`;
+const blankExperiment: Experiment = {
+  question: "",
+  baselineExecutionId: "",
+  intendedChange: "",
+  executionIds: [],
+  interpretation: "",
+};
 export default function Experiments({
   workspaceId,
   data,
   onRefresh,
+  active,
 }: StudioProps) {
   const [results, setResults] = useState<ResearchResultV1[]>([]);
   const [profiles, setProfiles] = useState<ExecutionProfile[]>([]);
@@ -55,13 +68,8 @@ export default function Experiments({
   const [offset, setOffset] = useState(0);
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const [experimentId, setExperimentId] = useState("");
-  const [experiment, setExperiment] = useState<Experiment>({
-    question: "",
-    baselineExecutionId: "",
-    intendedChange: "",
-    executionIds: [],
-    interpretation: "",
-  });
+  const [experiment, setExperiment] = useState<Experiment>(blankExperiment);
+  const experimentGuard = useDraftGuard(experiment);
   const [profileId, setProfileId] = useState("");
   const [profileName, setProfileName] = useState("");
   const [language, setLanguage] = useState("python3");
@@ -97,6 +105,7 @@ export default function Experiments({
     setSpecs(s);
     setSeries(irf);
   };
+  const reopened = useReopenCount(active);
   useEffect(() => {
     let disposed = false;
     void Promise.all([
@@ -118,12 +127,12 @@ export default function Experiments({
         }
       })
       .catch((e) => {
-        if (!disposed) setError(String(e));
+        if (!disposed) setError(workbenchErrorMessage(e));
       });
     return () => {
       disposed = true;
     };
-  }, [workspaceId, data.executions, setError]);
+  }, [workspaceId, data.executions, setError, reopened]);
   const execution = data.executions.find((e) => e.id === executionId);
   const artifacts = (execution?.outputManifest.artifacts ?? []) as {
     artifactId: string;
@@ -140,8 +149,7 @@ export default function Experiments({
     <div className="space-y-5">
       <ErrorNotice error={error} />
       <div className="grid gap-4 lg:grid-cols-2">
-        <section className={panel}>
-          <h2 className="font-semibold">Local commands</h2>
+        <Fold title="Local commands">
           <Select
             label="Configured profile"
             value={profileId}
@@ -157,7 +165,7 @@ export default function Experiments({
                 setArgv(JSON.stringify(p.argv, null, 2));
                 setLanguage(
                   p.adapter === "stata"
-                    ? "oldstata"
+                    ? "stata"
                     : p.adapter === "r"
                       ? "Rscript"
                       : p.adapter === "julia"
@@ -181,10 +189,13 @@ export default function Experiments({
             label="Toolchain"
             value={language}
             onChange={setLanguage}
-            options={["python3", "Rscript", "julia", "oldstata"].map((v) => ({
-              value: v,
-              label: v,
-            }))}
+            options={[
+              ...["python3", "Rscript", "julia"].map((v) => ({
+                value: v,
+                label: v,
+              })),
+              { value: "stata", label: "Stata (enter its command below)" },
+            ]}
           />
           <Text
             label="Script (relative to working directory)"
@@ -228,11 +239,11 @@ export default function Experiments({
             />
           </details>
           <p className="text-xs text-gray-500">
-            The oldstata choice runs that shell alias through /bin/zsh -lic. For
-            an installed Stata, enter the arguments under Advanced argv, such as
-            ["stata-mp", "-b", "do", "main.do"]. Include the Stata log among
-            expected outputs. Export structured JSON for repeatable result
-            comparisons.
+            For Stata, enter its command under Advanced argv, such as
+            ["stata-mp", "-b", "do", "main.do"]. To start it through a shell
+            alias, enter /bin/zsh -lic followed by the alias command. Include
+            the Stata log among expected outputs. Export structured JSON for
+            repeatable result comparisons.
           </p>
           <button
             className={button}
@@ -240,23 +251,20 @@ export default function Experiments({
             onClick={() =>
               void run(async () => {
                 const directory = cwd || root;
-                const quote = (s: string) => `'${s.replaceAll("'", "'\\''")}'`;
+                if (language === "stata" && !argv.trim())
+                  throw new Error(
+                    "Enter the Stata command under Advanced argv, then save.",
+                  );
                 const command = argv.trim()
                   ? JSON.parse(argv)
-                  : language === "oldstata"
-                    ? [
-                        "/bin/zsh",
-                        "-lic",
-                        `oldstata -q -b do ${quote(`${directory}/${script}`)}`,
-                      ]
-                    : [language, script];
+                  : [language, script];
                 const p = await executionClient.saveExecutionProfile({
                   profileId: profileId || null,
                   workspaceId,
                   name: profileName,
                   // Keep a loaded profile's structured adapter (R, Python, …).
                   adapter:
-                    language === "oldstata"
+                    language === "stata"
                       ? "stata"
                       : selectedProfile && selectedProfile.adapter !== "stata"
                         ? selectedProfile.adapter
@@ -280,24 +288,20 @@ export default function Experiments({
             Save local profile
           </button>
           {selectedProfile && <JobLauncher profile={selectedProfile} />}
-        </section>
-        <section className={panel}>
-          <h2 className="font-semibold">Experiment notebook</h2>
+        </Fold>
+        <Fold title="Experiment notebook">
           <Select
             label="Experiment"
             value={experimentId}
-            onChange={(id) => {
-              setExperimentId(id);
-              setExperiment(
-                experiments.find((e) => e.id === id)?.body ?? {
-                  question: "",
-                  baselineExecutionId: "",
-                  intendedChange: "",
-                  executionIds: [],
-                  interpretation: "",
-                },
-              );
-            }}
+            onChange={(id) =>
+              experimentGuard.replace("experiment", () => {
+                const loaded =
+                  experiments.find((e) => e.id === id)?.body ?? blankExperiment;
+                experimentGuard.markSaved(loaded);
+                setExperimentId(id);
+                setExperiment(loaded);
+              })
+            }
             options={experiments.map((e) => ({
               value: e.id,
               label: e.body.question,
@@ -375,6 +379,7 @@ export default function Experiments({
                     experiment,
                   },
                 );
+                experimentGuard.markSaved(experiment);
                 setExperimentId(e.id);
                 await refresh();
               })
@@ -382,7 +387,7 @@ export default function Experiments({
           >
             Save experiment
           </button>
-        </section>
+        </Fold>
       </div>
       <section className={panel}>
         <h2 className="font-semibold">Saved results</h2>
@@ -480,8 +485,7 @@ export default function Experiments({
           </table>
         </div>
       </section>
-      <section className={panel}>
-        <h2 className="font-semibold">Compare results</h2>
+      <Fold title="Compare results">
         <div className="grid gap-3 md:grid-cols-2">
           <Select
             label="Baseline result"
@@ -534,21 +538,17 @@ export default function Experiments({
         {convert && (
           <div className="grid gap-3 md:grid-cols-2">
             <Field label={`Multiply ${r?.units ?? "alternative"} by`}>
-              <input
+              <DecimalField
                 className={input}
-                type="number"
-                step="any"
                 value={factor}
-                onChange={(e) => setFactor(Number(e.target.value))}
+                onChange={setFactor}
               />
             </Field>
             <Field label={`Then add (in ${l?.units ?? "baseline units"})`}>
-              <input
+              <DecimalField
                 className={input}
-                type="number"
-                step="any"
                 value={offset}
-                onChange={(e) => setOffset(Number(e.target.value))}
+                onChange={setOffset}
               />
             </Field>
           </div>
@@ -590,7 +590,7 @@ export default function Experiments({
                 : "Comparison unavailable"}
             </p>
             {comparison.blockers.map((b) => (
-              <p className="text-xs text-amber-700" key={b}>
+              <p className="text-xs text-warning" key={b}>
                 {b}
               </p>
             ))}
@@ -633,7 +633,7 @@ export default function Experiments({
             </p>
           </>
         )}
-      </section>
+      </Fold>
       <section className={panel}>
         <h2 className="font-semibold">
           Specification, sample and calibration metadata
@@ -698,8 +698,7 @@ export default function Experiments({
         </button>
       </section>
       {series.length > 0 && (
-        <section className={panel}>
-          <h2 className="font-semibold">Impulse responses</h2>
+        <Fold title="Impulse responses">
           <div className="grid gap-3 md:grid-cols-2">
             <Select
               label="Baseline series"
@@ -762,7 +761,7 @@ export default function Experiments({
               </table>
             </>
           )}
-        </section>
+        </Fold>
       )}
     </div>
   );

@@ -39,7 +39,17 @@ impl Store {
             }
             return Ok(run);
         }
-        if !["waiting", "paused", "running", "queued"].contains(&run.state.as_str()) {
+        // Past its deadline a run sits in attention with the wait still open.
+        // The researcher's answer is the decision to continue, so it starts a
+        // new deadline rather than sending the run straight back.
+        let late = run.state == "attention"
+            && run.deadline_at <= now()
+            && !run
+                .progress
+                .receipts
+                .values()
+                .any(|r| matches!(r.state.as_str(), "unknown" | "failed"));
+        if !late && !["waiting", "paused", "running", "queued"].contains(&run.state.as_str()) {
             return Err("Task is not waiting for input".into());
         }
         let receipt = run
@@ -54,6 +64,12 @@ impl Store {
         receipt.finished_at = Some(now());
         receipt.output = Some(value.clone());
         run.progress.outputs[&receipt.step_id] = value.clone();
+        if !crate::orchestration::state::context_within_budget(&run.progress) {
+            return Err("This input would exceed the automation's context budget".into());
+        }
+        if late {
+            run.deadline_at = now() + run.chain.limits.deadline_hours as i64 * 3600;
+        }
         if run.state != "paused" {
             run.state = "queued".into();
         }

@@ -43,6 +43,11 @@ pub(super) type ParallelTaskResult = Result<((usize, String), StepOutput), UnitF
 /// Announced units by task: their pass key and display label.
 pub(super) type Announced = std::collections::HashMap<tokio::task::Id, (String, String)>;
 
+/// How long units get to stop after the run is cancelled. A provider call
+/// keeps five seconds to reap its children and the unit then journals what it
+/// received, so a unit still running after this is ignoring cancellation.
+pub(crate) const UNIT_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Run all parallel steps in a wave concurrently. Returns the outputs, the
 /// failures, and the provider calls of failed units, which no output records.
 #[allow(clippy::too_many_arguments)]
@@ -215,8 +220,10 @@ pub(super) async fn run_parallel_wave(
                         extra_input_sources,
                         outputs: prior_outputs,
                         run_artifact_dir: write_dir,
+                        context_pool: shared_context_pool,
                     },
                 )?;
+                resolved.log_warnings(app);
                 // File fan-out stages the matched file into the artifact view and
                 // binds its path; artifact fan-out binds the element text itself.
                 let item_path = match unit.item.as_deref() {
@@ -370,7 +377,7 @@ pub(super) async fn run_parallel_wave(
                 }),
             );
 
-            let task = tasks.spawn(async move {
+            let task = crate::run_scope::spawn_in(&mut tasks, async move {
                 let _context_view = context_view;
                 // Every early return settles the announced unit, so the
                 // progress view never shows it running after it stopped.
@@ -512,8 +519,23 @@ pub(super) async fn run_parallel_wave(
     }
 
     let mut results = immediate_results;
+    let mut stop_by = None;
 
-    while let Some(res) = tasks.join_next().await {
+    loop {
+        let res = match crate::run_scope::join_next_until_stopped(
+            &mut tasks,
+            &mut stop_by,
+            UNIT_STOP_GRACE,
+        )
+        .await
+        {
+            Ok(Some(res)) => res,
+            Ok(None) => break,
+            Err(error) => {
+                abandon(app, &mut tasks, &announced).await;
+                return Err(error);
+            }
+        };
         match res {
             Ok(Ok(report)) => {
                 // Durably checkpoint each unit as it completes, so a crash

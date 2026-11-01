@@ -6,6 +6,7 @@ import { workbenchErrorMessage } from "../lib/workbenchError";
 import { promptDialog } from "./DialogService";
 import type {
   ConversationSnapshot,
+  SessionSnapshot,
   RecipeInputCheck,
   RecipeRun,
   ResearchExecution,
@@ -25,7 +26,7 @@ function lines(value: string) {
 
 interface WorkspaceRecipesPanelProps {
   snapshot: ConversationSnapshot;
-  onSnapshot: (snapshot: ConversationSnapshot) => void;
+  onSnapshot: (snapshot: SessionSnapshot) => void;
   onError: (message: string) => void;
 }
 
@@ -104,7 +105,7 @@ export default function WorkspaceRecipesPanel({
   };
 
   const patchSession = async (overrides: Record<string, unknown>) => {
-    const latest = await conversationClient.conversationSnapshot(
+    const latest = await conversationClient.sessionSnapshot(
       snapshot.session.id,
     );
     const updated = await conversationClient.updateSession({
@@ -124,7 +125,7 @@ export default function WorkspaceRecipesPanel({
 
   if (!workspaceId) {
     return (
-      <p className="text-xs text-amber-700">
+      <p className="text-xs text-warning">
         Move this conversation to a project to use research recipes.
       </p>
     );
@@ -168,7 +169,7 @@ export default function WorkspaceRecipesPanel({
         {checks.map((check) => (
           <div
             key={check.input}
-            className={`rounded border p-2 text-xs ${check.available ? "border-emerald-200 text-emerald-700" : "border-amber-200 text-amber-700"}`}
+            className={`rounded border p-2 text-xs ${check.available ? "border-emerald-200 text-emerald-700" : "border-amber-200 text-warning"}`}
           >
             <span className="font-medium">
               {check.available ? "Ready" : "Missing"}:{" "}
@@ -453,7 +454,7 @@ export default function WorkspaceRecipesPanel({
               )}
               {(run.unresolvedIssues.length > 0 ||
                 run.missingEvidence.length > 0) && (
-                <ul className="mt-2 list-disc pl-4 text-[11px] text-amber-700">
+                <ul className="mt-2 list-disc pl-4 text-[11px] text-warning">
                   {[...run.unresolvedIssues, ...run.missingEvidence].map(
                     (item, index) => (
                       <li key={`${item}-${index}`}>{item}</li>

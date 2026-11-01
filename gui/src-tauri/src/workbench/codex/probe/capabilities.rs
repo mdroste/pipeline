@@ -16,6 +16,7 @@ pub(super) async fn verify(
             command_domains: vec!["example.org".into()],
             browser: false,
             shell_write: profile.contains("edit"),
+            private_folder: false,
         };
         let config = policy.codex_config(web, network, profile);
         let id = json!(format!("capabilities-{profile}-start"));

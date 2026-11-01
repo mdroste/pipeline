@@ -14,15 +14,28 @@ beforeEach(() => localStorage.clear());
 it("offers the guide once on a first launch and not after it is closed", () => {
   expect(readGetStarted()).toBeNull();
   expect(shouldOfferGetStarted()).toBe(true);
-  saveGetStarted({ persona: "r-word" });
-  // Choosing a persona alone does not count as closing the guide.
-  expect(shouldOfferGetStarted()).toBe(true);
   saveGetStarted({ dismissedAt: "2026-10-28T12:00:00.000Z" });
   expect(shouldOfferGetStarted()).toBe(false);
   expect(JSON.parse(localStorage.getItem(GET_STARTED_KEY)!)).toEqual({
     version: 1,
     dismissedAt: "2026-10-28T12:00:00.000Z",
-    persona: "r-word",
+  });
+});
+
+it("keeps a dismissal saved with the earlier kind-of-work choice", () => {
+  localStorage.setItem(
+    GET_STARTED_KEY,
+    JSON.stringify({
+      version: 1,
+      dismissedAt: "2026-10-28T12:00:00.000Z",
+      persona: "r-word",
+    }),
+  );
+  expect(shouldOfferGetStarted()).toBe(false);
+  saveGetStarted({ dismissedAt: "2026-10-29T12:00:00.000Z" });
+  expect(JSON.parse(localStorage.getItem(GET_STARTED_KEY)!)).toEqual({
+    version: 1,
+    dismissedAt: "2026-10-29T12:00:00.000Z",
   });
 });
 
@@ -39,11 +52,11 @@ it("tolerates corrupt records and unavailable storage", () => {
   expect(parseGetStarted("broken")).toEqual({
     version: 1,
     dismissedAt: null,
-    persona: null,
   });
-  expect(
-    parseGetStarted(JSON.stringify({ dismissedAt: 7, persona: "sas" })),
-  ).toEqual({ version: 1, dismissedAt: null, persona: null });
+  expect(parseGetStarted(JSON.stringify({ dismissedAt: 7 }))).toEqual({
+    version: 1,
+    dismissedAt: null,
+  });
   const unavailable = {
     getItem: () => {
       throw new Error("blocked");
@@ -57,7 +70,9 @@ it("tolerates corrupt records and unavailable storage", () => {
     key: () => null,
   };
   expect(shouldOfferGetStarted(unavailable)).toBe(false);
-  expect(() => saveGetStarted({ persona: "other" }, unavailable)).not.toThrow();
+  expect(() =>
+    saveGetStarted({ dismissedAt: null }, unavailable),
+  ).not.toThrow();
 });
 
 it("delivers open requests only to mounted listeners", () => {

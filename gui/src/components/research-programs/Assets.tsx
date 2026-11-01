@@ -1,4 +1,5 @@
 import { useState } from "react";
+import useReveal from "../../hooks/useReveal";
 import {
   deskClient,
   reference,
@@ -8,6 +9,8 @@ import {
 } from "../../lib/deskClient";
 import { executionClient } from "../../lib/workbench/executionClient";
 import type { AssetSpec, Entry, Publication } from "../../lib/programClient";
+import type { ExecutionProfile } from "../../lib/workbenchTypes";
+import DecimalField from "../DecimalField";
 import {
   button,
   input,
@@ -30,6 +33,12 @@ const empty: AssetSpec = {
   notes: "",
   sampleComparisonRationale: null,
 };
+/** Figures run plot.py with the profile's interpreter, so it must be Python. */
+const runsPython = (profile: ExecutionProfile) =>
+  ["command", "python"].includes(profile.adapter) &&
+  (profile.argv[0]?.split(/[\\/]/).pop() ?? "")
+    .toLowerCase()
+    .startsWith("python");
 export default function Assets(props: DeskProps) {
   const p = useProgram(props, ["publication_asset", "figure_recipe"]);
   const [spec, setSpec] = useState<AssetSpec>(empty),
@@ -41,6 +50,7 @@ export default function Assets(props: DeskProps) {
     [recipe, setRecipe] = useState<string | null>(null),
     [execution, setExecution] = useState("");
   const { workspaceId, onOpen, onError } = props;
+  const assetForm = useReveal<HTMLElement>();
   const records = (p.records.publication_asset ??
     []) as DeskRecord<Publication>[];
   const changeEntry = (i: number, patch: Partial<Entry>) =>
@@ -50,7 +60,7 @@ export default function Assets(props: DeskProps) {
     }));
   return (
     <div className="space-y-5">
-      <section className={card}>
+      <section ref={assetForm.ref} tabIndex={-1} className={card}>
         <h2 className="font-semibold">Tables & figures</h2>
         <p className={muted}>
           Create tables and figures from saved results. Each keeps its values,
@@ -94,7 +104,7 @@ export default function Assets(props: DeskProps) {
           }
           filter={(o) =>
             spec.kind === "irf"
-              ? o.reference.kind === "record" && o.title === "series"
+              ? o.recordKind === "series"
               : o.reference.kind === "result"
           }
           onChange={(r) => {
@@ -102,7 +112,7 @@ export default function Assets(props: DeskProps) {
             if (!label)
               setLabel(
                 p.choices?.objects.find((o) => o.reference.id === r?.id)
-                  ?.title ?? "",
+                  ?.label ?? "",
               );
           }}
         />
@@ -176,16 +186,12 @@ export default function Assets(props: DeskProps) {
                 {entry.manual && (
                   <div className="grid grid-cols-2 gap-2">
                     <Field label="Manual value">
-                      <input
+                      <DecimalField
                         className={input}
-                        type="number"
                         value={entry.manual.value}
-                        onChange={(e) =>
+                        onChange={(value) =>
                           changeEntry(i, {
-                            manual: {
-                              ...entry.manual!,
-                              value: Number(e.target.value),
-                            },
+                            manual: { ...entry.manual!, value },
                           })
                         }
                       />
@@ -267,13 +273,11 @@ export default function Assets(props: DeskProps) {
               onChange={(e) => setProfile(e.target.value)}
             >
               <option value="">Choose configured Python toolchain</option>
-              {p.choices?.profiles
-                .filter((pr) => pr.adapter === "command")
-                .map((pr) => (
-                  <option key={pr.id} value={pr.id}>
-                    {pr.name}
-                  </option>
-                ))}
+              {p.choices?.profiles.filter(runsPython).map((pr) => (
+                <option key={pr.id} value={pr.id}>
+                  {pr.name}
+                </option>
+              ))}
             </select>
           </Field>
         )}
@@ -441,6 +445,7 @@ export default function Assets(props: DeskProps) {
               onClick={() => {
                 setSpec(r.body.spec);
                 setSupersedes(r.id);
+                assetForm.reveal();
               }}
             >
               Edit as new version
@@ -465,6 +470,7 @@ export default function Assets(props: DeskProps) {
             artifacts={r.body.artifacts}
             choices={p.choices}
             onError={onError}
+            onChanged={props.onChanged}
           />
         </section>
       ))}

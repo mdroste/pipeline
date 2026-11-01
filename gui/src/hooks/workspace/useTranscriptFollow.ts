@@ -37,7 +37,7 @@ export default function useTranscriptFollow({
   transcriptRef,
   followLatestRef,
   sessionId,
-  stream,
+  streaming,
   pendingUser,
   items,
   start,
@@ -48,7 +48,7 @@ export default function useTranscriptFollow({
   transcriptRef: RefObject<HTMLDivElement | null>;
   followLatestRef: MutableRefObject<boolean>;
   sessionId: string | undefined;
-  stream: string;
+  streaming: boolean;
   pendingUser: string | null;
   items: readonly { id: string }[];
   start: number;
@@ -109,11 +109,12 @@ export default function useTranscriptFollow({
     lastTop.current = node.scrollTop;
   }, [transcriptRef, start, end, total, lastId, loadingEarlier]);
 
-  // Pin before paint so streamed text never drifts below the fold.
+  // Pin before paint when messages change. Streamed text growing inside a
+  // message reaches the observer below, which also runs before paint.
   useLayoutEffect(() => {
     setFollowing(followLatestRef.current);
     pin();
-  }, [followLatestRef, pin, stream, pendingUser, items, atLatest]);
+  }, [followLatestRef, pin, streaming, pendingUser, items, atLatest]);
 
   // Composer growth, notices, late images and task cards resize the
   // transcript without a scroll event; so does returning from a hidden pane.

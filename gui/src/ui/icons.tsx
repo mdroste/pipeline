@@ -29,7 +29,15 @@ export type IconName =
   | "arrow-up"
   | "warning"
   | "sidebar"
-  | "search";
+  | "search"
+  | "chevron-right"
+  | "arrow-left"
+  | "columns"
+  | "code"
+  | "image"
+  | "table"
+  | "media"
+  | "link";
 
 export function Icon({
   name,
@@ -330,6 +338,75 @@ export function Icon({
             strokeLinecap="round"
             strokeLinejoin="round"
             d="M5 12h14m-5-5 5 5-5 5"
+          />
+        </svg>
+      );
+    case "arrow-left":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M19 12H5m5-5-5 5 5 5"
+          />
+        </svg>
+      );
+    case "chevron-right":
+      return (
+        <svg {...common}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="m9 6 6 6-6 6" />
+        </svg>
+      );
+    case "columns":
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
+          <path strokeLinecap="round" d="M12 5v14" />
+        </svg>
+      );
+    case "code":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8L14 3.5ZM14 3.5V8h4.5M10.5 12l-2 2.25 2 2.25M13.5 12l2 2.25-2 2.25"
+          />
+        </svg>
+      );
+    case "image":
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="5" width="17" height="14" rx="2" />
+          <circle cx="8.75" cy="10" r="1.5" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="m4 17 4.75-4 3.25 2.75L15.5 12l5 4.5"
+          />
+        </svg>
+      );
+    case "table":
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="5" width="17" height="14" rx="2" />
+          <path strokeLinecap="round" d="M3.5 10h17M3.5 14.5h17M10 10v9" />
+        </svg>
+      );
+    case "media":
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="5" width="17" height="14" rx="2" />
+          <path strokeLinejoin="round" d="M10 9.25v5.5l4.5-2.75-4.5-2.75Z" />
+        </svg>
+      );
+    case "link":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M7 17 17 7m-8 0h8v8"
           />
         </svg>
       );

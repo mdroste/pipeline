@@ -1,6 +1,9 @@
 //! All conversation providers use the Studio's scoped handles and edit journal.
 use super::*;
 
+/// How a taken path is reported to a person. An assistant is told what to do next.
+const EXISTS: &str = "Already exists: ";
+
 pub(crate) fn catalog(edit: bool) -> Vec<Value> {
     let mut tools = vec![
         json!({"name":"project_files","description":"List up to 200 files in this conversation's project or working copy.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}}),
@@ -31,7 +34,6 @@ pub(crate) fn call(
         .overrides
         .get("projectCheckpointId")
         .and_then(Value::as_str);
-    let effective = research::resolve_harness(store, session_id)?;
     let root = store.runtime_root(session_id)?;
     let argument = |name: &str| {
         input
@@ -62,7 +64,7 @@ pub(crate) fn call(
             Ok(json!({"path":path,"hash":digest,"text":text}))
         }
         "project_edit" | "project_create" | "project_artifact" => {
-            if effective.mode != "edit" {
+            if research::resolve_harness(store, session_id)?.mode != "edit" {
                 return Err(WorkbenchError::invalid(
                     "File editing requires Edit access in Assistant settings",
                 ));
@@ -117,6 +119,12 @@ pub(crate) fn call(
                     },
                 },
             )
+            .map_err(|mut error| {
+                if error.message.starts_with(EXISTS) {
+                    error.message = "This file already exists; read it and use project_edit".into();
+                }
+                error
+            })
         }
         _ => Err(WorkbenchError::invalid("Unknown project file tool")),
     }
@@ -140,10 +148,9 @@ pub(super) fn create_file(
         Some(cp) => session_task_root(store, ws, cp)?,
         None => super::root(store, ws)?,
     };
+    research::jobs::ensure_paths_free(ws, &root, [path])?;
     if files::SafeRoot::open(&root)?.optional_read(path)?.is_some() {
-        return Err(WorkbenchError::conflict(
-            "This file already exists; read it and use project_edit",
-        ));
+        return Err(WorkbenchError::conflict(format!("{EXISTS}{path}")));
     }
     let (cp, task) = if let Some(cp) = checkpoint {
         (cp.to_owned(), None)

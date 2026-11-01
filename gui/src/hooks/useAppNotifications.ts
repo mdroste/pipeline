@@ -78,6 +78,8 @@ export function useAppNotifications(runs: QueuedRun[]) {
             kind: "attention",
             title: "Research check needs attention",
             body: "Open the project’s checks to inspect the change.",
+            // The app shows its own notice, which names the project.
+            toast: false,
           }),
       ),
       listen<BatchJob[]>("batch:progress", ({ payload }) => {

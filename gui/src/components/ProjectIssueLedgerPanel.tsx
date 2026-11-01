@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { confirmDialog } from "./DialogService";
 import type {
   Project,
   ProjectIssue,
@@ -231,6 +232,9 @@ export default function ProjectIssueLedgerPanel({
     setExpanded(new Set());
     setNoteDrafts({});
     setMergeTargets({});
+    setSearch("");
+    setStatusFilter("all");
+    setSeverityFilter("all");
     setWorkflowFilter("all");
     setRunFilter("all");
     void refresh();
@@ -361,6 +365,16 @@ export default function ProjectIssueLedgerPanel({
     const targetIssueId = mergeTargets[issue.id];
     if (!targetIssueId || pendingIssueId) return;
     const scope = scopeRef.current;
+    const target = ledger?.issues.find((i) => i.id === targetIssueId);
+    const confirmed = await confirmDialog(
+      `“${issue.title}” will be removed and its report observations moved to “${target?.title ?? "the chosen issue"}”. This can't be undone.`,
+      {
+        title: "Combine these issues?",
+        confirmLabel: "Combine",
+        destructive: true,
+      },
+    );
+    if (!confirmed || scope !== scopeRef.current) return;
     setPendingIssueId(issue.id);
     setError(null);
     try {
@@ -530,12 +544,12 @@ export default function ProjectIssueLedgerPanel({
           ))}
         </select>
         <select
-          aria-label="Issue workflow filter"
+          aria-label="Issue review type filter"
           value={workflowFilter}
           onChange={(event) => setWorkflowFilter(event.target.value)}
           className="rounded-lg border border-gray-300 bg-white px-2 py-2 text-xs dark:border-gray-700 dark:bg-gray-900"
         >
-          <option value="all">All workflows</option>
+          <option value="all">All review types</option>
           {workflows.map(([id, name]) => (
             <option key={id} value={id}>
               {name}
@@ -820,7 +834,7 @@ export default function ProjectIssueLedgerPanel({
             </article>
           );
         })}
-        {!loading && visibleIssues.length === 0 && (
+        {!loading && !error && visibleIssues.length === 0 && (
           <div className="rounded-xl border border-dashed border-gray-300 px-5 py-10 text-center dark:border-gray-700">
             <p className="text-sm text-gray-600 dark:text-gray-300">
               {ledger?.issues.length

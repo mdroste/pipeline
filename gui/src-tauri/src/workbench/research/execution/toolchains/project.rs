@@ -1,9 +1,9 @@
 //! Environment files and virtual environments in a project folder.
 
+use super::super::file_identity::hash_resolved_file;
 use super::locations::{launchable, Platform};
 use super::probe::extract_version;
 use super::{Candidate, EnvironmentFile, ProjectEnvironment, PythonEnvironment};
-use crate::workbench::research::papers::hash_resolved_file;
 use std::io::Read;
 use std::path::Path;
 

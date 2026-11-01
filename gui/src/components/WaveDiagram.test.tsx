@@ -135,6 +135,27 @@ describe("WaveDiagram", () => {
     expect(screen.getByText(/No enabled review steps/)).toBeInTheDocument();
   });
 
+  it("does not count a Pipeline check as a provider call", () => {
+    render(
+      <WaveDiagram
+        steps={[
+          step({ id: "review" }),
+          step({
+            id: "references",
+            kind: "analyzer",
+            analyzer: { id: "reference_audit", version: 1 },
+          }),
+        ]}
+        merge={merge}
+        selectedId={null}
+        onSelect={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(/up to 1 provider call before retries/),
+    ).toBeInTheDocument();
+  });
+
   it("summarizes execution size and provider calls", () => {
     render(
       <WaveDiagram
@@ -145,7 +166,7 @@ describe("WaveDiagram", () => {
       />,
     );
     expect(
-      screen.getByRole("heading", { name: "Workflow overview" }),
+      screen.getByRole("heading", { name: "Review overview" }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/1 enabled step in 1 execution wave/),

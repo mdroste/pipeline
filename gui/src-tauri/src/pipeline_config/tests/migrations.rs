@@ -636,3 +636,107 @@ fn catalog_migrations_never_rewrite_the_stock_slide_review() {
 
     assert_eq!(fs::read(&path).unwrap(), stock);
 }
+
+struct LegacyStore {
+    _directory: tempfile::TempDir,
+    root: std::path::PathBuf,
+    profiles: std::path::PathBuf,
+}
+
+fn legacy_store(name: &str, content: &str) -> LegacyStore {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().to_path_buf();
+    let profiles = root.join("profiles");
+    fs::create_dir(&profiles).unwrap();
+    fs::write(root.join(name), content).unwrap();
+    LegacyStore {
+        _directory: directory,
+        root,
+        profiles,
+    }
+}
+
+const REFEREE: &str =
+    r#"{"id":"methods","label":"Methods","prompt":"Check the methods.","enabled":true}"#;
+
+#[test]
+fn a_legacy_configuration_without_a_name_migrates_and_its_file_goes_only_then() {
+    let store = legacy_store("pipeline.json", &format!(r#"{{"referees":[{REFEREE}]}}"#));
+    migrate_legacy_files(&store.root, &store.profiles, false).unwrap();
+    let saved: ProfileData =
+        serde_json::from_slice(&fs::read(store.profiles.join("migrated.json")).unwrap()).unwrap();
+    assert_eq!(saved.name, "Migrated");
+    assert_eq!(saved.steps[0].id, "methods");
+    assert_eq!(saved.steps[0].prompt, "Check the methods.");
+    assert!(!store.root.join("pipeline.json").exists());
+}
+
+#[test]
+fn a_legacy_configuration_that_cannot_be_read_is_archived_and_survives_the_next_launch() {
+    for content in [
+        "not json at all",
+        r#"{"steps":[{"id":"methods"}]}"#,
+        r#"{"name":"Empty"}"#,
+    ] {
+        let store = legacy_store("pipeline.json", content);
+        migrate_legacy_files(&store.root, &store.profiles, false).unwrap();
+        migrate_legacy_files(&store.root, &store.profiles, true).unwrap();
+        assert!(!store.profiles.join("migrated.json").exists());
+        assert_eq!(
+            fs::read_to_string(store.profiles.join(".retired-builtins/pipeline.json")).unwrap(),
+            content
+        );
+    }
+}
+
+#[test]
+fn an_initialized_store_archives_a_leftover_configuration_instead_of_deleting_it() {
+    let store = legacy_store("pipeline.json", "my old settings");
+    migrate_legacy_files(&store.root, &store.profiles, true).unwrap();
+    assert!(!store.root.join("pipeline.json").exists());
+    assert_eq!(
+        fs::read(store.profiles.join(".retired-builtins/pipeline.json")).unwrap(),
+        b"my old settings"
+    );
+}
+
+#[test]
+fn a_legacy_configuration_that_fails_validation_never_blocks_startup() {
+    let bad = r#"{"id":"not a valid id!","label":"Bad","prompt":"Keep me.","enabled":true}"#;
+    for (name, content) in [
+        (
+            "pipeline.json",
+            format!(r#"{{"name":"Old","referees":[{bad}]}}"#),
+        ),
+        ("referees.json", format!("[{bad}]")),
+    ] {
+        let store = legacy_store(name, &content);
+        migrate_legacy_files(&store.root, &store.profiles, false).unwrap();
+        assert!(!store.profiles.join("migrated.json").exists());
+        assert!(!store.root.join(name).exists());
+        assert_eq!(
+            fs::read_to_string(store.profiles.join(".retired-builtins").join(name)).unwrap(),
+            content
+        );
+    }
+}
+
+#[test]
+fn a_legacy_configuration_never_replaces_a_migrated_profile() {
+    let store = legacy_store("pipeline.json", &format!(r#"{{"referees":[{REFEREE}]}}"#));
+    fs::write(store.root.join("referees.json"), format!("[{REFEREE}]")).unwrap();
+    fs::write(store.profiles.join("migrated.json"), "saved earlier").unwrap();
+    fs::write(store.profiles.join("default.json"), "an old default").unwrap();
+    migrate_legacy_files(&store.root, &store.profiles, false).unwrap();
+    assert_eq!(
+        fs::read(store.profiles.join("migrated.json")).unwrap(),
+        b"saved earlier"
+    );
+    let archive = store.profiles.join(".retired-builtins");
+    assert!(archive.join("pipeline.json").is_file());
+    assert!(archive.join("referees.json").is_file());
+    assert_eq!(
+        fs::read(archive.join("default.json")).unwrap(),
+        b"an old default"
+    );
+}

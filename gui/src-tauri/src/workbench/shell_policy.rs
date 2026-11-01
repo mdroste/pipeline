@@ -39,7 +39,9 @@ fn denied_reads() -> Vec<String> {
 }
 
 /// Settings for one turn. Starting fails rather than running unconfined, and
-/// the model cannot ask to leave the sandbox.
+/// the model cannot ask to leave the sandbox. With network on and no listed
+/// sites, `"*"` is Claude Code's rule for every host. The API command engine's
+/// schema refuses it, so `shell::run` stops that policy before launch.
 pub(crate) fn sandbox(
     root: &Path,
     access: &crate::workbench::capabilities::ConversationCapabilities,
@@ -71,11 +73,25 @@ pub(crate) fn sandbox(
 }
 
 /// Appended to the assistant instructions when the shell is offered.
-pub(crate) fn instructions(root: &Path, writable: bool, network: bool) -> String {
+pub(crate) fn instructions(
+    root: &Path,
+    access: &crate::workbench::capabilities::ConversationCapabilities,
+    network: bool,
+) -> String {
+    let network = if network {
+        "Command internet access follows the conversation domain policy."
+    } else {
+        "Commands have no internet access."
+    };
+    if access.private_folder {
+        return format!(
+            "Bash runs in a sandbox and starts in this conversation's private working folder, {}. Commands may create and change files there, and those files stay available in later messages. {network} Never write outside this folder.",
+            root.display(),
+        );
+    }
     format!(
-        "Bash runs in a sandbox rooted at {}. {} {} Use project_read, project_edit and project_create for recoverable file changes. Run host research jobs through authorized research profiles. Never write outside the supplied roots.",
+        "Bash runs in a sandbox rooted at {}. {} {network} Use project_read, project_edit and project_create for recoverable file changes. Run host research jobs through authorized research profiles. Never write outside the supplied roots.",
         root.display(),
-        if writable { "Commands may write in this isolated working copy; changes stay there until accepted." } else { "The project folder is read-only to commands; only scratch and temporary files are writable." },
-        if network { "Command internet access follows the conversation domain policy." } else { "Commands have no internet access." }
+        if access.shell_write { "Commands may write in this isolated working copy; changes stay there until accepted." } else { "The project folder is read-only to commands; only scratch and temporary files are writable." },
     )
 }

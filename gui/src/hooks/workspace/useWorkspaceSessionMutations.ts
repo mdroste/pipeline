@@ -1,6 +1,7 @@
 import { useState, type RefObject } from "react";
 import { confirmDialog, promptDialog } from "../../components/DialogService";
 import { conversationClient } from "../../lib/workbench/conversationClient";
+import { appEvents } from "../../lib/appEvents";
 import { newOperation } from "../../lib/workspaceSessionState";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type {
@@ -52,6 +53,7 @@ export function useWorkspaceSessionMutations({
       operationId: newOperation("archive-session"),
       archived: !latest.session.archivedAt,
     });
+    appEvents.emit("conversations-changed", {});
     await loadSessions(workspaceId, showArchived);
     if (sessionRef.current === session.id)
       await refreshSessionRecord(session.id);
@@ -77,19 +79,21 @@ export function useWorkspaceSessionMutations({
       operationId: newOperation("rename-session"),
       title,
     });
+    appEvents.emit("conversations-changed", {});
     await refreshSessionRecord(session.id);
   };
 
   const generateTitle = async (session: WorkbenchSession) => {
     setError(null);
     await conversationClient.generateSessionTitle(session.id);
+    appEvents.emit("conversations-changed", {});
     await refreshSessionRecord(session.id);
   };
 
   const deleteSession = async (session: WorkbenchSession) => {
     if (
       !(await confirmDialog(
-        `Delete “${session.title}”? Its transcript and ChatGPT history are removed permanently. Research records it produced stay with their project.`,
+        `Delete “${session.title}”? Its transcript, working files, and provider history are removed permanently. Research records it produced stay with their project.`,
         {
           title: "Delete conversation",
           confirmLabel: "Delete",
@@ -102,6 +106,7 @@ export function useWorkspaceSessionMutations({
       sessionId: session.id,
       operationId: newOperation("delete-session"),
     });
+    appEvents.emit("conversations-changed", {});
     if (sessionRef.current === session.id) {
       setSnapshot(null);
       setSessionId(null);
@@ -125,6 +130,7 @@ export function useWorkspaceSessionMutations({
         operationId: newOperation("move-session"),
         workspaceId: target,
       });
+      appEvents.emit("conversations-changed", {});
       setMoveTarget(null);
       if (sessionRef.current === session.id) {
         // Follow the conversation into its new project instead of losing it

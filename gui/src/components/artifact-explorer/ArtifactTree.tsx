@@ -3,7 +3,7 @@ import type { ArtifactEntry, RunManifest } from "../../lib/artifactTypes";
 import ResizeHandle from "../ResizeHandle";
 import usePersistentPanelWidth from "../../hooks/usePersistentPanelWidth";
 import { formatBytes } from "./format";
-import { GROUPS, groupAgentReports } from "./grouping";
+import { GROUPS, groupAgentReports, ungroupedArtifacts } from "./grouping";
 import { PageBrowser } from "./PageNavigator";
 const ArtifactList = memo(function ArtifactList({
   items,
@@ -108,6 +108,10 @@ export default function ArtifactTree({
     176,
     360,
   );
+  const otherArtifacts = useMemo(
+    () => ungroupedArtifacts(artifactsByGroup),
+    [artifactsByGroup],
+  );
   return (
     <>
       {navigationOpen ? (
@@ -183,6 +187,18 @@ export default function ArtifactTree({
                 </div>
               );
             })}
+            {otherArtifacts.length > 0 && (
+              <div>
+                <h4 className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
+                  Other files
+                </h4>
+                <ArtifactList
+                  items={otherArtifacts}
+                  selected={selected}
+                  onSelect={selectArtifact}
+                />
+              </div>
+            )}
           </div>
           <ResizeHandle
             currentWidth={treeWidth}

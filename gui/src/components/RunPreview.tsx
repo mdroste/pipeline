@@ -25,6 +25,8 @@ export interface RunPreviewPlan {
   backupUnavailable?: string | null;
   usageEstimate?: UsageEstimate;
   hostChecks?: HostCheck[];
+  /** Files in the selected folders that won’t fit in the Review’s copy. */
+  inputNotices?: string[];
 }
 
 interface Props {
@@ -263,6 +265,14 @@ export default function RunPreview({
             {batchCount > 1 ? `${batchCount} documents` : basename(inputPath)} ·{" "}
             {inputInterpretation.replaceAll("_", " ")}
           </p>
+          {plan.inputNotices?.map((notice) => (
+            <p
+              key={notice}
+              className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300"
+            >
+              {notice}
+            </p>
+          ))}
 
           <dl className="mt-6 space-y-4">
             <SummaryRow label="Steps">
@@ -366,7 +376,7 @@ export default function RunPreview({
               ? `Queue ${batchCount} reviews`
               : queued
                 ? "Add to queue"
-                : "Generate report"}
+                : "Start review"}
           </button>
         </footer>
       </div>

@@ -24,6 +24,7 @@ pub(crate) mod submission;
 pub(crate) mod tasks;
 pub mod titles;
 pub(crate) mod tool_setup;
+mod turn_loop;
 pub(crate) mod web;
 
 pub mod acquisition;

@@ -123,6 +123,9 @@ What is the most important remaining issue?]"#
                 return Err(error)
             }
             Err(error) if super::provider_error::is_usage_limit_error(&error) => return Err(error),
+            Err(error) if super::provider_error::is_non_retryable_error(&error) => {
+                return Err(error)
+            }
             Err(error) => {
                 last_error = error;
                 continue;
@@ -140,4 +143,87 @@ What is the most important remaining issue?]"#
     } else {
         last_error
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// A local model server that answers every request with `body` as a 400.
+    fn serve_rejection(requests: Arc<AtomicUsize>, body: &'static str) -> String {
+        use std::io::{BufRead as _, Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                requests.fetch_add(1, Ordering::SeqCst);
+                let mut reader = std::io::BufReader::new(stream);
+                let mut content_length = 0usize;
+                let mut line = String::new();
+                while reader.read_line(&mut line).unwrap_or(0) > 0 && line != "\r\n" {
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        content_length = value.trim().parse().unwrap_or(0);
+                    }
+                    line.clear();
+                }
+                let mut request = vec![0u8; content_length];
+                let _ = reader.read_exact(&mut request);
+                let _ = write!(
+                    reader.into_inner(),
+                    "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        format!("http://{address}/v1")
+    }
+
+    fn report(date: &str) -> PipelineReport {
+        PipelineReport {
+            orientation: serde_json::Value::Null,
+            step_outputs: Vec::new(),
+            failed_steps: Vec::new(),
+            products: Default::default(),
+            quality: Default::default(),
+            referee_reports: Vec::new(),
+            editor: None,
+            report_date: date.parse().unwrap(),
+            paper_hash: "hash".to_string(),
+        }
+    }
+
+    async fn requests_for(body: &'static str) -> (usize, String) {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let settings = crate::settings::Settings {
+            preferred_provider: "local".into(),
+            local_base_url: serve_rejection(requests.clone(), body),
+            local_model: "fixture".into(),
+            max_retries: 2,
+            ..Default::default()
+        };
+        let app: crate::emit::EventBus = Arc::new(crate::emit::NullEvents);
+        // A private run scope, so the frozen settings reach only this call.
+        let run = crate::run_scope::ActiveScope::begin(format!("reconcile-test-{}", body.len()));
+        let error = crate::run_scope::scoped(run.scope().clone(), async {
+            let _settings = crate::settings::freeze_for_run(settings);
+            reconcile(&app, &report("2026-01-01"), &report("2026-02-01")).await
+        })
+        .await
+        .unwrap_err();
+        (requests.load(Ordering::SeqCst), error)
+    }
+
+    #[tokio::test]
+    async fn an_uncertain_provider_outcome_is_not_submitted_again() {
+        // A local server's 400 can cost a second request inside one attempt,
+        // so compare against an error that takes every attempt.
+        let (every_attempt, _) = requests_for(r#"{"error":{"message":"malformed request"}}"#).await;
+        let (one_attempt, error) =
+            requests_for(r#"{"error":{"message":"[codex-outcome-unknown] outcome unknown"}}"#)
+                .await;
+        assert!(error.contains("[codex-outcome-unknown]"), "{error}");
+        assert_eq!(every_attempt, one_attempt * 3);
+    }
 }

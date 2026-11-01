@@ -11,13 +11,16 @@ mod conversation_files;
 mod export;
 mod format;
 mod inspection;
+mod omissions;
 mod restore;
 mod transcripts;
 
-pub use export::export_archive;
+pub use export::{export_archive, export_archive_without};
 pub use format::{ArchiveInspection, ArchiveReport, ExportArchiveRequest, ImportArchiveRequest};
 pub use inspection::inspect_archive;
+pub use omissions::{missing_backup_files, MissingBackupFile};
 pub use restore::import_archive;
+pub(crate) use transcripts::transcript_role;
 
 fn validate_absolute_file(path: &str, extension: &str) -> WorkbenchResult<PathBuf> {
     let path = PathBuf::from(path);
@@ -101,3 +104,6 @@ mod migration_tests;
 
 #[cfg(test)]
 mod regression_tests;
+
+#[cfg(test)]
+mod relocation_tests;

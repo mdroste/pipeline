@@ -35,3 +35,33 @@ it("names providers in the step summary", () => {
   expect(JSON.stringify(summary)).toContain("ChatGPT and Gemini");
   expect(JSON.stringify(summary)).not.toMatch(/Codex|Antigravity/);
 });
+
+it("names the source step of an artifact fan-out", () => {
+  const source = {
+    id: "synthesis",
+    label: "Synthesis",
+    prompt: "",
+    enabled: true,
+    phase: "sequential",
+    tools: [],
+    agents: [],
+    context: { include: [] },
+  } satisfies StepConfig;
+  const step = {
+    ...source,
+    id: "verify",
+    label: "Verify",
+    phase: "parallel",
+    for_each: {
+      glob: "",
+      max: 20,
+      artifact: { step: "synthesis", pointer: "/findings" },
+    },
+  } satisfies StepConfig;
+  const { sentence } = describeStep(step, {
+    steps: [source, step],
+  } as unknown as PipelineConfig);
+
+  expect(sentence).toContain("Fans out over up to 20 items from Synthesis.");
+  expect(sentence).not.toContain("files matching");
+});

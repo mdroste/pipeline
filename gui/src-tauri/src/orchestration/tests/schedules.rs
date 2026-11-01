@@ -236,6 +236,168 @@ fn coalescing_calendar_after_years_chooses_a_recent_occurrence() {
     assert!(now() - r.occurrence.unwrap() < 86400);
 }
 
+fn select_overrides(w: &crate::workbench::store::Store, session: &str, overrides: Value) {
+    let current = w.session_snapshot(session).unwrap().session;
+    w.update_session(crate::workbench::store::UpdateSessionRequest {
+        session_id: session.into(),
+        expected_revision: current.revision,
+        operation_id: store::id(),
+        title: None,
+        draft: None,
+        overrides: Some(overrides),
+        archived: None,
+        preset_id: None,
+        paper_id: None,
+        clear_paper: None,
+    })
+    .unwrap();
+}
+
+/// A schedule prepared the way a researcher prepares one, on a real conversation.
+async fn prepared_schedule() -> (crate::workbench::store::Store, String, Schedule) {
+    let w = super::disposable_workspace();
+    let operation = store::id();
+    let session = crate::workbench::discovery::source(&w, &operation, "Weekly", false).unwrap();
+    let plan = chain(vec![delay("x")]);
+    let inputs = json!({});
+    let scope = adapters::prepare(&plan, Some(session.clone()), &inputs)
+        .await
+        .unwrap();
+    let schedule = Schedule {
+        id: operation,
+        revision: 0,
+        name: "Weekly".into(),
+        enabled: true,
+        chain: plan,
+        scope,
+        inputs,
+        trigger: Trigger::Interval {
+            seconds: 60,
+            anchor: 0,
+        },
+        next_due_at: Some(now() - 1),
+        created_at: 0,
+        tzdb_version: chrono_tz::IANA_TZDB_VERSION.into(),
+    };
+    (w, session, schedule)
+}
+
+#[tokio::test]
+async fn occurrences_survive_ordinary_research_activity() {
+    let (w, session, schedule) = prepared_schedule().await;
+    let before = crate::workbench::tasks::binding(&w, &session).unwrap();
+    crate::workbench::tasks::deliver(&w, &session, "weekly-result", json!({"report":"New"}))
+        .unwrap();
+    let after = crate::workbench::tasks::binding(&w, &session).unwrap();
+    assert_ne!(before.harness_fingerprint, after.harness_fingerprint);
+
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::open(&temp.path().join("tasks")).unwrap();
+    let owner = std::fs::File::create(store.root.join("test-owner")).unwrap();
+    store.save_schedule(schedule, None).unwrap();
+    let coordinator = Arc::new(Coordinator {
+        store,
+        gate: tokio::sync::Mutex::new(()),
+        wake: Notify::new(),
+        active: Mutex::new(HashMap::new()),
+        stopping: AtomicBool::new(false),
+        background: AtomicBool::new(false),
+        _owner: owner,
+        app: None,
+    });
+    coordinator.tick().await.unwrap();
+    let rows = coordinator.store.list("active", None, 0).unwrap();
+    let run = coordinator.store.get(&rows[0].id).unwrap();
+    assert_ne!(run.state, "attention", "{:?}", run.reason);
+    assert!(run.progress.decisions.contains_key("occurrenceSession"));
+    assert_ne!(run.scope.session_id.as_ref(), Some(&session));
+}
+
+#[tokio::test]
+async fn a_changed_connection_fails_an_occurrence_and_cannot_be_refreshed_away() {
+    let (w, session, schedule) = prepared_schedule().await;
+    select_overrides(&w, &session, json!({"runtime":"claude"}));
+    let source = adapters::task_binding(&schedule.scope).unwrap();
+    assert!(
+        crate::workbench::tasks::occurrence_session(&w, &source, &store::id(), "Weekly")
+            .unwrap_err()
+            .message
+            .contains("connection")
+    );
+    assert!(commands::refreshed_scope(&schedule)
+        .await
+        .unwrap_err()
+        .contains("connection"));
+}
+
+#[tokio::test]
+async fn changed_permissions_fail_until_the_schedule_is_refreshed() {
+    let (w, session, mut schedule) = prepared_schedule().await;
+    select_overrides(&w, &session, json!({"commandNetwork":true}));
+    let source = adapters::task_binding(&schedule.scope).unwrap();
+    let current = crate::workbench::tasks::binding(&w, &session).unwrap();
+    assert_ne!(current.permission_profile, source.permission_profile);
+    assert!(
+        crate::workbench::tasks::occurrence_session(&w, &source, &store::id(), "Weekly")
+            .unwrap_err()
+            .message
+            .contains("Use current conversation settings")
+    );
+    schedule.scope = commands::refreshed_scope(&schedule).await.unwrap();
+    let refreshed = adapters::task_binding(&schedule.scope).unwrap();
+    crate::workbench::tasks::occurrence_session(&w, &refreshed, &store::id(), "Weekly").unwrap();
+}
+
+#[tokio::test]
+async fn access_changes_outside_the_permission_profile_fail_until_refreshed() {
+    for (name, overrides) in [
+        ("mode", json!({"mode":"edit"})),
+        ("web search", json!({"webSearch":true})),
+        ("browser", json!({"browser":true})),
+        ("command sites", json!({"commandDomains":"example.org"})),
+    ] {
+        let (w, session, mut schedule) = prepared_schedule().await;
+        select_overrides(&w, &session, json!({"mode":"inspect"}));
+        schedule.scope = commands::refreshed_scope(&schedule).await.unwrap();
+        let source = adapters::task_binding(&schedule.scope).unwrap();
+        let mut widened = json!({"mode":"inspect"});
+        widened
+            .as_object_mut()
+            .unwrap()
+            .extend(overrides.as_object().unwrap().clone());
+        select_overrides(&w, &session, widened);
+        let current = crate::workbench::tasks::binding(&w, &session).unwrap();
+        assert_ne!(current.harness_fingerprint, source.harness_fingerprint);
+        assert!(
+            crate::workbench::tasks::occurrence_session(&w, &source, &store::id(), "Weekly")
+                .is_err(),
+            "{name} changed what a scheduled run may do without stopping it"
+        );
+        schedule.scope = commands::refreshed_scope(&schedule).await.unwrap();
+        let refreshed = adapters::task_binding(&schedule.scope).unwrap();
+        crate::workbench::tasks::occurrence_session(&w, &refreshed, &store::id(), "Weekly")
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_schedule_without_a_recorded_identity_keeps_its_exact_check_until_refreshed() {
+    let (w, session, mut schedule) = prepared_schedule().await;
+    schedule.scope.permission_profile = None;
+    schedule.scope.preset_id = None;
+    schedule.scope.access = None;
+    let saved = adapters::task_binding(&schedule.scope).unwrap();
+    crate::workbench::tasks::occurrence_session(&w, &saved, &store::id(), "Weekly").unwrap();
+    select_overrides(&w, &session, json!({"mode":"edit"}));
+    assert!(
+        crate::workbench::tasks::occurrence_session(&w, &saved, &store::id(), "Weekly").is_err()
+    );
+    schedule.scope = commands::refreshed_scope(&schedule).await.unwrap();
+    assert!(schedule.scope.permission_profile.is_some());
+    let refreshed = adapters::task_binding(&schedule.scope).unwrap();
+    crate::workbench::tasks::occurrence_session(&w, &refreshed, &store::id(), "Weekly").unwrap();
+}
+
 #[tokio::test]
 async fn a_slot_blocked_task_records_its_wait_once() {
     let temp = tempfile::tempdir().unwrap();
@@ -308,4 +470,180 @@ async fn a_slot_blocked_task_records_its_wait_once() {
         coordinator.store.get(&run.id).unwrap().revision,
         started + 1
     );
+}
+
+fn fixture_coordinator(store: Store) -> Arc<Coordinator> {
+    let owner = std::fs::File::create(store.root.join("test-owner")).unwrap();
+    Arc::new(Coordinator {
+        store,
+        gate: tokio::sync::Mutex::new(()),
+        wake: Notify::new(),
+        active: Mutex::new(HashMap::new()),
+        stopping: AtomicBool::new(false),
+        background: AtomicBool::new(false),
+        _owner: owner,
+        app: None,
+    })
+}
+
+#[test]
+fn a_blocked_schedule_names_its_run_and_a_free_one_names_none() {
+    let temp = tempfile::tempdir().unwrap();
+    let s = Store::open(temp.path()).unwrap();
+    let schedule = interval_schedule("weekly", now() - 1);
+    s.save_schedule(schedule, None).unwrap();
+    assert!(s.schedule_views().unwrap()[0].blocking_run.is_none());
+    s.fire_schedules(now()).unwrap();
+    let id = s.list("active", None, 0).unwrap()[0].id.clone();
+    let mut run = s.get(&id).unwrap();
+    run.state = "attention".into();
+    s.save(&mut run, "attention", "Needs a decision").unwrap();
+    let views = s.schedule_views().unwrap();
+    let blocking = views[0].blocking_run.as_ref().unwrap();
+    assert_eq!(
+        (blocking.id.as_str(), blocking.state.as_str()),
+        (id.as_str(), "attention")
+    );
+    let value = serde_json::to_value(&views[0]).unwrap();
+    assert_eq!(value["blockingRun"]["state"], "attention");
+    assert_eq!(value["name"], "weekly");
+    run.state = "finished".into();
+    s.save(&mut run, "finished", "Done").unwrap();
+    assert!(s.schedule_views().unwrap()[0].blocking_run.is_none());
+}
+
+fn interval_schedule(id: &str, due: i64) -> Schedule {
+    Schedule {
+        id: id.into(),
+        revision: 0,
+        name: id.into(),
+        enabled: true,
+        chain: chain(vec![delay("x")]),
+        scope: Scope::default(),
+        inputs: json!({}),
+        trigger: Trigger::Interval {
+            seconds: 60,
+            anchor: 0,
+        },
+        next_due_at: Some(due),
+        created_at: 0,
+        tzdb_version: chrono_tz::IANA_TZDB_VERSION.into(),
+    }
+}
+
+#[test]
+fn a_deleted_schedule_starts_nothing_and_its_runs_stay_in_history() {
+    let temp = tempfile::tempdir().unwrap();
+    let s = Store::open(temp.path()).unwrap();
+    s.save_schedule(interval_schedule("weekly", now() - 1), None)
+        .unwrap();
+    s.fire_schedules(now()).unwrap();
+    let id = s.list("active", None, 0).unwrap()[0].id.clone();
+    let mut run = s.get(&id).unwrap();
+    run.state = "finished".into();
+    s.save(&mut run, "finished", "Done").unwrap();
+    assert!(s.delete_schedule("weekly", 7).is_err());
+    assert_eq!(s.schedules().unwrap().len(), 1);
+    s.delete_schedule("weekly", 0).unwrap();
+    assert!(s.schedules().unwrap().is_empty());
+    s.fire_schedules(now() + 120).unwrap();
+    assert!(s.list("active", None, 0).unwrap().is_empty());
+    assert_eq!(s.list("history", None, 0).unwrap().len(), 1);
+    assert!(!s.events(&id, 0).unwrap().is_empty());
+}
+
+#[test]
+fn one_unreadable_schedule_does_not_hold_back_the_others() {
+    let temp = tempfile::tempdir().unwrap();
+    let s = Store::open(temp.path()).unwrap();
+    s.save_schedule(interval_schedule("a-bad", now() - 2), None)
+        .unwrap();
+    s.save_schedule(interval_schedule("b-good", now() - 1), None)
+        .unwrap();
+    s.connection()
+        .unwrap()
+        .execute("UPDATE schedules SET body='{}' WHERE id='a-bad'", [])
+        .unwrap();
+    assert!(s.fire_schedules(now()).is_err());
+    let rows = s.list("active", None, 0).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].schedule_id.as_deref(), Some("b-good"));
+}
+
+#[tokio::test]
+async fn a_blocked_side_by_side_branch_records_its_wait_once() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::open(temp.path()).unwrap();
+    let branch = |id: &str| {
+        vec![step(
+            id,
+            Action::Workspace {
+                prompt: "Inspect".into(),
+                model: None,
+                effort: None,
+            },
+        )]
+    };
+    let mut run = store
+        .create(
+            "side-by-side",
+            chain(vec![step(
+                "parallel",
+                Action::Parallel {
+                    branches: vec![branch("a"), branch("b")],
+                },
+            )]),
+            Scope::default(),
+            json!({}),
+            now(),
+            true,
+        )
+        .unwrap();
+    // One branch runs and holds the single conversation slot.
+    let Advance::Ready(ready) = state::advance(&run.chain, &mut run.progress, &run.inputs) else {
+        panic!()
+    };
+    let running = &ready[0];
+    run.progress.receipts.insert(
+        running.address.clone(),
+        Receipt {
+            sequence: 1,
+            address: running.address.clone(),
+            step_id: running.step.id.clone(),
+            label: running.step.label.clone(),
+            state: "running".into(),
+            operation: store::id(),
+            started_at: now(),
+            finished_at: None,
+            wake_at: None,
+            output: None,
+            error: None,
+            child: None,
+        },
+    );
+    run.state = "running".into();
+    run.reason = Some(running.step.label.clone());
+    store.save(&mut run, "stepStarted", "First branch").unwrap();
+    let c = fixture_coordinator(store);
+    let id = run.id.clone();
+    let (holder, _watch) = watch::channel(false);
+    c.active.lock().unwrap().insert(
+        format!("{id}/{}", running.address),
+        ("workspace".into(), holder),
+    );
+    for _ in 0..4 {
+        c.store.touch_due(&id, Some(now() - 1)).unwrap();
+        c.tick().await.unwrap();
+    }
+    let stored = c.store.get(&id).unwrap();
+    assert_eq!(stored.state, "running");
+    assert_eq!(stored.revision, run.revision + 1);
+    let waits = c
+        .store
+        .events(&id, 0)
+        .unwrap()
+        .iter()
+        .filter(|e| e.kind == "queued")
+        .count();
+    assert_eq!(waits, 1);
 }

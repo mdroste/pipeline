@@ -160,3 +160,139 @@ fn csv_preserves_missing_unicode_and_newlines() {
     assert!(csv::parse("x,y\n1", b',').is_err());
     assert!(csv::parse("x\n\"bad", b',').is_err());
 }
+
+#[test]
+fn csv_windows_page_rows_and_keep_missing_cells_missing() {
+    let mut text = String::from("name,value\n");
+    for row in 0..450 {
+        text.push_str(&format!("r{row},{row}\n"));
+    }
+    let first = super::csv::window(text.as_bytes(), "csv", 0).unwrap();
+    assert_eq!(first.columns, ["name", "value"]);
+    let last = super::csv::window(text.as_bytes(), "csv", 440).unwrap();
+    assert_eq!(last.rows.len(), 10);
+    assert_eq!(last.rows[0][0].as_deref(), Some("r440"));
+    let duplicate = super::csv::window(b"a,a\n1,NA\n", "csv", 0).unwrap();
+    assert_eq!(duplicate.rows[0], [Some("1".to_string()), None]);
+}
+
+#[test]
+fn csv_within_the_stated_limits_imports_and_previews_past_two_million_cells() {
+    let (temp, store, ws) = store();
+    let path = temp.path().join("panel.csv");
+    let names = (0..10).map(|c| format!("c{c}")).collect::<Vec<_>>();
+    let mut text = names.join(",") + "\n";
+    for row in 0..300_000 {
+        text.push_str(&format!("r{row},{row},,3,4,5,6,7,8,{}.5\n", row % 7));
+    }
+    assert!(text.len() < 32 * 1024 * 1024);
+    std::fs::write(&path, &text).unwrap();
+    let record = import(&store, local(&ws, &path, "cells")).unwrap();
+    let version: DatasetVersion = serde_json::from_value(record.body.clone()).unwrap();
+    assert_eq!((version.rows, version.columns.len()), (300_000, 10));
+    assert_eq!(version.columns[0].inferred_type, "text");
+    assert_eq!(version.columns[1].inferred_type, "number");
+    assert_eq!(
+        (
+            version.columns[2].inferred_type.as_str(),
+            version.columns[2].missing
+        ),
+        ("unknown", 300_000)
+    );
+    assert_eq!(version.columns[9].inferred_type, "number");
+    let page = preview_rows(&store, &ws, &record.id, 250_000, false).unwrap();
+    assert_eq!((page.start, page.total_rows), (250_000, 300_000));
+    assert_eq!(page.rows.len(), 25);
+    let first: Vec<_> = page.rows[0].iter().map(|c| c.as_deref()).collect();
+    assert_eq!(
+        first,
+        [
+            Some("r250000"),
+            Some("250000"),
+            None,
+            Some("3"),
+            Some("4"),
+            Some("5"),
+            Some("6"),
+            Some("7"),
+            Some("8"),
+            Some("2.5"),
+        ]
+    );
+    assert_eq!(page.rows[24][0].as_deref(), Some("r250024"));
+    let past = preview_rows(&store, &ws, &record.id, 300_000, false).unwrap();
+    assert!(past.rows.is_empty());
+}
+
+#[test]
+fn csv_profile_enforces_the_row_limit_and_rejects_ragged_rows() {
+    let exact = "x\n".to_string() + &"1\n".repeat(1_000_000);
+    assert_eq!(
+        csv::profile(exact.as_bytes(), "csv").unwrap().rows,
+        1_000_000
+    );
+    let over = exact + "1\n";
+    assert!(csv::profile(over.as_bytes(), "csv")
+        .unwrap_err()
+        .message
+        .contains("one million rows"));
+    assert!(csv::profile(b"a,b\n1,2\n3\n", "csv")
+        .unwrap_err()
+        .message
+        .contains("row 3"));
+    assert!(csv::window(b"a,b\n1,2\n3\n", "csv", 0).is_err());
+    assert!(csv::profile(b"", "csv").is_err());
+    let tsv = csv::profile(b"a\tb\n1\t\n", "tsv").unwrap();
+    assert_eq!(
+        (tsv.rows, tsv.columns[1].inferred_type.as_str()),
+        (1, "unknown")
+    );
+}
+
+#[test]
+fn a_truncated_dataset_blob_is_repaired_by_the_next_import() {
+    let (temp, store, ws) = store();
+    let path = temp.path().join("wages.csv");
+    let text = "id,wage\n1,12.5\n2,14.25\n";
+    std::fs::write(&path, text).unwrap();
+    let digest = crate::workbench::desk::hash(text.as_bytes());
+    let blob = store
+        .root_path()
+        .join("blobs")
+        .join(format!("{digest}.csv"));
+    std::fs::write(&blob, &text.as_bytes()[..9]).unwrap();
+    let record = import(&store, local(&ws, &path, "repair")).unwrap();
+    assert_eq!(std::fs::read_to_string(&blob).unwrap(), text);
+    let page = preview_rows(&store, &ws, &record.id, 1, false).unwrap();
+    assert_eq!(page.rows[0][1].as_deref(), Some("14.25"));
+}
+
+#[test]
+fn csv_ending_in_blank_lines_keeps_its_rows() {
+    for text in ["a,b\n1,2\n\n", "a,b\r\n1,2\r\n\r\n\r\n", "a,b\n1,2\n\n\n\n"] {
+        assert_eq!(csv::parse(text, b',').unwrap().len(), 2, "{text:?}");
+    }
+    assert_eq!(csv::profile(b"a,b\n1,2\n\n", "csv").unwrap().rows, 1);
+    // In one column an empty line is a value, unless nothing follows it.
+    assert_eq!(csv::parse("a\n1\n\n2\n\n", b',').unwrap().len(), 4);
+    assert_eq!(csv::parse("a\n1\n\n2", b',').unwrap().len(), 4);
+    // Quotes make it a cell, not a blank line.
+    assert_eq!(csv::parse("a\n\"\"\n", b',').unwrap().len(), 2);
+    assert!(csv::parse("\n\n", b',').is_err());
+}
+
+#[test]
+fn csv_errors_name_the_row_and_the_encoding() {
+    let ragged = csv::profile(b"a,b\n1,2\n3\n4,5\n", "csv").unwrap_err();
+    assert_eq!(
+        ragged.message,
+        "CSV row 3 has 1 column, but the header has 2"
+    );
+    let gap = csv::profile(b"a,b\n1,2\n\n4,5\n", "csv").unwrap_err();
+    assert!(gap.message.contains("row 3"), "{}", gap.message);
+    let excel = csv::profile(b"name\ncaf\xe9\n", "csv").unwrap_err();
+    assert!(excel.message.contains("Windows-1252"), "{}", excel.message);
+    assert!(!excel.message.contains("utf-8 sequence"));
+    let wide = csv::window(b"\xff\xfea\0", "csv", 0).unwrap_err();
+    assert!(wide.message.contains("UTF-16"), "{}", wide.message);
+}

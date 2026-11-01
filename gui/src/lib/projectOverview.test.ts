@@ -655,6 +655,26 @@ describe("repository", () => {
     });
   });
 
+  it("names a remote whose address shows no host by its Git name", () => {
+    const block = repositoryBlock(
+      signals({
+        repository: repository({
+          behind: 1,
+          remote: {
+            name: "origin",
+            host: "",
+            owner: "",
+            repo: "",
+            webUrl: null,
+          },
+        }),
+      }),
+      now,
+    );
+    expect(row(block, "identity")).toMatchObject({ text: "Remote origin" });
+    expect(row(block, "incoming")?.text).toContain("on the remote");
+  });
+
   it("reports uncommitted work, coauthor commits, and unpushed commits", () => {
     const block = repositoryBlock(
       signals({
@@ -739,7 +759,7 @@ describe("repository", () => {
     );
     expect(row(block, "identity")?.action.kind).toBe("tab");
     expect(row(block, "incoming")).toMatchObject({
-      text: "1 new commit on git.overleaf.com",
+      text: "1 new commit on Overleaf",
       action: { kind: "fetch" },
     });
   });

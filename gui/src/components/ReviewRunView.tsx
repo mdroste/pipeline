@@ -164,7 +164,7 @@ export default function ReviewRunView({
                      transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2
                      focus-visible:ring-gray-400 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
           >
-            Start a new report
+            Start a new review
           </button>
         </div>
       ) : (
@@ -183,7 +183,7 @@ export default function ReviewRunView({
                      hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2
                      focus-visible:ring-red-300 dark:text-neutral-400 dark:hover:bg-red-950/40 dark:hover:text-red-400"
           >
-            Cancel report
+            Cancel review
           </button>
         </>
       )}

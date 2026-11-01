@@ -1,8 +1,12 @@
 import ResearchTablePreview from "./ResearchTablePreview";
 import { fileLanguage, highlightedSource } from "../lib/fileLanguages";
 import { FileNavigationContext } from "./file-workspace/FileNavigation";
-import { workspaceFileAdapter } from "../lib/fileWorkspaceClient";
+import {
+  readCapturedPdf,
+  workspaceFileAdapter,
+} from "../lib/fileWorkspaceClient";
 import type { FileLocation } from "../lib/fileLinks";
+import "./file-workspace/files.css";
 const PdfReader = lazy(() => import("./file-workspace/PdfReader"));
 const FileWorkspace = lazy(() => import("./file-workspace/FileWorkspace"));
 import {
@@ -58,6 +62,9 @@ export default function WorkspaceDocumentReader({
   const [linkedFile, setLinkedFile] = useState<FileLocation | null>(null);
   const [interactivePdf, setInteractivePdf] = useState(true);
   const key = `pipeline.reader.${workspaceId}.${revisionId}`;
+  // A selection left over from another document has no meaning in this one.
+  const opened =
+    initialSelection?.revisionId === revisionId ? initialSelection : undefined;
   const saved = useRef<{
     page?: number;
     start?: number;
@@ -69,15 +76,18 @@ export default function WorkspaceDocumentReader({
   } catch {
     /* Treat invalid local layout as empty. */
   }
-  const [start, setStart] = useState(
-    initialSelection?.start ?? saved.current.start ?? 0,
-  );
+  const [start, setStart] = useState(opened?.start ?? saved.current.start ?? 0);
   const [page, setPage] = useState(() =>
-    pageNumber(initialSelection?.page ?? saved.current.page),
+    pageNumber(opened?.page ?? saved.current.page),
   );
   const [view, setView] = useState<DocumentView | null>(null);
+  const [failed, setFailed] = useState(false);
   const [mode, setMode] = useState<"source" | "rendered" | "page">(
-    initialSelection?.page ? "page" : (saved.current.mode ?? "source"),
+    opened?.page
+      ? "page"
+      : opened?.start != null
+        ? "source"
+        : (saved.current.mode ?? "source"),
   );
   // The saved scroll offset belongs to the text segment it was measured in.
   // An opened passage begins at the top of its segment, so it starts there.
@@ -86,7 +96,7 @@ export default function WorkspaceDocumentReader({
     page,
     mode,
     scroll:
-      !initialSelection && start === saved.current.start
+      !opened && start === saved.current.start
         ? (saved.current.scroll ?? 0)
         : 0,
   });
@@ -111,8 +121,10 @@ export default function WorkspaceDocumentReader({
     setPage(pageCount ? Math.min(pageCount, next) : next);
   };
   const pageInput = useDraftText(String(page), goToPage);
+  // An opened position with no quote or region is a place to start reading,
+  // not something the researcher selected.
   const [selection, setSelection] = useState<DocumentSelection | null>(
-    initialSelection ?? null,
+    opened?.quote || opened?.region ? opened : null,
   );
   const [search, setSearch] = useState("");
   const [hits, setHits] = useState<Array<{ start: number; excerpt: string }>>(
@@ -135,6 +147,7 @@ export default function WorkspaceDocumentReader({
   const load = useCallback(async () => {
     const request = ++requestSequence.current;
     setBusy(true);
+    setFailed(false);
     try {
       const next = await projectClient.read(
         workspaceId,
@@ -158,8 +171,10 @@ export default function WorkspaceDocumentReader({
           if (scroll.current) scroll.current.scrollTop = top;
         });
     } catch (e) {
-      if (mounted.current && request === requestSequence.current)
+      if (mounted.current && request === requestSequence.current) {
+        setFailed(true);
         onError(workbenchErrorMessage(e));
+      }
     } finally {
       if (mounted.current && request === requestSequence.current)
         setBusy(false);
@@ -239,13 +254,21 @@ export default function WorkspaceDocumentReader({
         <header className="flex flex-wrap items-center gap-2 border-b p-3">
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-sm font-semibold">
-              {view?.title ?? "Opening document…"}
+              {view?.title ??
+                (failed
+                  ? "This document could not be opened"
+                  : "Opening document…")}
             </h2>
             <p className="text-[11px] text-gray-500">
               Captured revision {view?.revision.contentHash.slice(0, 12)}
               {busy && " · Loading…"}
             </p>
           </div>
+          {failed && !view && (
+            <button className={button} onClick={() => void load()}>
+              Try again
+            </button>
+          )}
           <button
             className={button}
             onClick={() => setMode("source")}
@@ -374,7 +397,7 @@ export default function WorkspaceDocumentReader({
             selection actions below always stay visible. */}
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           {view?.revision.extraction.status !== "complete" && view && (
-            <p className="p-2 text-xs text-amber-700">
+            <p className="p-2 text-xs text-warning">
               Some text could not be read. Check the original document or PDF
               pages; search may miss passages.
             </p>
@@ -427,11 +450,7 @@ export default function WorkspaceDocumentReader({
                   title={view.title}
                   position={pdfPosition}
                   onPosition={(value) => setPage(value.page)}
-                  load={async () => {
-                    const file = await adapter.read("");
-                    if (!file.base64) throw new Error("PDF bytes unavailable");
-                    return file.base64;
-                  }}
+                  load={() => readCapturedPdf(adapter)}
                   highlight={
                     selection?.page && selection.region
                       ? {
@@ -482,7 +501,7 @@ export default function WorkspaceDocumentReader({
                 tabIndex={0}
                 onMouseUp={selectText}
                 onKeyUp={selectText}
-                className="whitespace-pre-wrap break-words font-mono text-sm leading-7"
+                className="file-syntax whitespace-pre-wrap break-words font-mono text-sm leading-7"
               >
                 {highlighted ? (
                   <code dangerouslySetInnerHTML={{ __html: highlighted }} />

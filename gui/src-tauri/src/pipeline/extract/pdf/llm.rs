@@ -144,17 +144,20 @@ pub(in crate::pipeline::extract) async fn run_llm_ranges(
     let mut range_errors = Vec::new();
     while next < ranges.len() && tasks.len() < LLM_EXTRACTION_CONCURRENCY {
         let (start, end) = ranges[next];
-        tasks.spawn(request_llm_pages(
-            app.clone(),
-            path.to_path_buf(),
-            prompt_path.to_string(),
-            start,
-            end,
-            attach,
-            timeout_secs,
-            read_dirs.to_vec(),
-            settings.clone(),
-        ));
+        crate::run_scope::spawn_in(
+            &mut tasks,
+            request_llm_pages(
+                app.clone(),
+                path.to_path_buf(),
+                prompt_path.to_string(),
+                start,
+                end,
+                attach,
+                timeout_secs,
+                read_dirs.to_vec(),
+                settings.clone(),
+            ),
+        );
         next += 1;
     }
     while let Some(result) = tasks.join_next().await {
@@ -186,17 +189,20 @@ pub(in crate::pipeline::extract) async fn run_llm_ranges(
         }
         if next < ranges.len() {
             let (start, end) = ranges[next];
-            tasks.spawn(request_llm_pages(
-                app.clone(),
-                path.to_path_buf(),
-                prompt_path.to_string(),
-                start,
-                end,
-                attach,
-                timeout_secs,
-                read_dirs.to_vec(),
-                settings.clone(),
-            ));
+            crate::run_scope::spawn_in(
+                &mut tasks,
+                request_llm_pages(
+                    app.clone(),
+                    path.to_path_buf(),
+                    prompt_path.to_string(),
+                    start,
+                    end,
+                    attach,
+                    timeout_secs,
+                    read_dirs.to_vec(),
+                    settings.clone(),
+                ),
+            );
             next += 1;
         }
     }
@@ -407,4 +413,51 @@ pub(in crate::pipeline::extract) async fn extract_llm(
         paper_hash: hash.to_string(),
         quality_notes,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::run_scope::fixtures::{hanging_provider, until_called};
+
+    #[tokio::test]
+    async fn stopping_a_review_stops_its_extraction_ranges_and_keeps_their_usage() {
+        let (url, calls) = hanging_provider();
+        let settings = crate::settings::Settings {
+            preferred_provider: "local".into(),
+            local_base_url: url,
+            local_model: "fixture".into(),
+            ..Default::default()
+        };
+        let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+        let run = crate::run_scope::ActiveScope::begin("extraction-range-stop-test");
+
+        let ranges = crate::run_scope::scoped(
+            run.scope().clone(),
+            run_llm_ranges(
+                &bus,
+                Path::new("paper.pdf"),
+                "paper.pdf",
+                &[(1, 1), (2, 2)],
+                false,
+                300,
+                &[],
+                std::sync::Arc::new(settings),
+            ),
+        );
+        let stop = async {
+            until_called(&calls, 2).await;
+            run.scope().cancel();
+        };
+        let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(40), async {
+            tokio::join!(ranges, stop)
+        })
+        .await
+        .expect("stopped extraction must return");
+
+        assert!(crate::commands::is_pipeline_cancellation_error(
+            &result.unwrap_err()
+        ));
+        assert_eq!(run.scope().usage().provider_attempts, 2);
+    }
 }

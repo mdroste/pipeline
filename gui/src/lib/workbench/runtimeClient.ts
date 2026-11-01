@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ActiveTurn,
   ClaudeRateLimit,
   WorkbenchCodexStatus,
   WorkspaceAccountState,
@@ -68,5 +69,8 @@ export const runtimeClient = {
   },
   pendingRequests() {
     return invoke<WorkbenchEvent[]>("workbench_codex_pending_requests");
+  },
+  activeTurn() {
+    return invoke<ActiveTurn | null>("workbench_active_turn");
   },
 };

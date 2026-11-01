@@ -55,6 +55,7 @@ fn bundle_profile(id: &str, steps: Vec<StepConfig>) -> ProfileExport {
         extraction: ExtractionConfig::default(),
         parallel_context_template: String::new(),
         variables: Vec::new(),
+        invalid: None,
     }
 }
 
@@ -231,4 +232,12 @@ mod migrations;
 
 mod profiles;
 
+mod schema_dialect;
+
+mod step_editing;
+
+mod step_removal;
+
 mod migration_characterization;
+
+mod saved_formats;

@@ -36,7 +36,7 @@ pub struct BrowserStatus {
     pub setup_phase: Option<String>,
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn workbench_browser_status() -> Result<BrowserStatus, String> {
     let root = root()?;
     let installed = super::tool_setup::ready() && executable(&root).is_some();

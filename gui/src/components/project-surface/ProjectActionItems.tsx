@@ -4,6 +4,7 @@ import {
   type ProjectRecord,
   type ResearchTask,
 } from "../../lib/projectClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 import {
   TASK_STATUSES,
   button,
@@ -76,7 +77,7 @@ export default function ProjectActionItems(props: SurfaceApi) {
       ]);
       setCursor(page.nextCursor);
     } catch (e) {
-      if (current.current === base) setPageError(String(e));
+      if (current.current === base) setPageError(workbenchErrorMessage(e));
     } finally {
       setLoading(false);
     }

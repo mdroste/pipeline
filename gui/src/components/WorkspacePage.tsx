@@ -21,13 +21,17 @@ import WorkspaceContextTray from "./WorkspaceContextTray";
 import {
   lazy,
   Suspense,
+  useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { conversationClient } from "../lib/workbench/conversationClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
+import { turnStateLabel, turnTimeLabel } from "../lib/workspaceTurnLabels";
 import "./WorkspaceNavigation.css";
 import "./WorkspaceInspector.css";
 import RequestCard from "./WorkspaceRequestCard";
@@ -53,6 +57,7 @@ const DEFAULT_TITLE = "New conversation";
 
 export default function WorkspacePage({
   onAllProjects,
+  onOpenConversation,
   onSaveHandlerChange,
   entryTarget,
   entryRequest = 0,
@@ -63,6 +68,8 @@ export default function WorkspacePage({
   onTasks,
 }: {
   onAllProjects?: () => void;
+  /** Opens any conversation, including one in another project. */
+  onOpenConversation?: (sessionId: string) => void;
   onSaveHandlerChange?: (save: (() => Promise<boolean>) | null) => void;
   entryTarget?: Extract<AppRoute, { page: "workspace" }>;
   entryRequest?: number;
@@ -86,6 +93,8 @@ export default function WorkspacePage({
       workspaces,
       workspaceId,
       sessions,
+      hasOlderSessions,
+      loadOlderSessions,
       sessionId,
       tasksEnabled,
       projectRequest,
@@ -116,7 +125,7 @@ export default function WorkspacePage({
       setRuntime,
       effort,
       setEffort,
-      stream,
+      streamStore,
       pendingUser,
       active,
       submitting,
@@ -136,8 +145,6 @@ export default function WorkspacePage({
       notice,
       acceptSnapshot,
       setSubmitting,
-      sessionRef,
-      setSnapshot,
     },
     persistence: { draft, editDraft, saveCurrentDraft, saveSelection },
     context: { contextBusy, setContextBusy, contextBusyRef },
@@ -243,6 +250,34 @@ export default function WorkspacePage({
     return () => setRailWorkspace?.(null);
   }, [setRailWorkspace, workspaceId, projectName]);
   const dismissRail = () => rail?.dismissRef.current?.();
+  // The project pane is memoized, so typing here leaves it alone. Its callbacks
+  // stay stable and run the latest closures.
+  const paneActions = useRef({ createSession, onAllProjects, onReviewHandoff });
+  paneActions.current = { createSession, onAllProjects, onReviewHandoff };
+  const startConversation = useCallback(
+    () => paneActions.current.createSession(),
+    [],
+  );
+  const showAllProjects = useCallback(
+    () => paneActions.current.onAllProjects?.(),
+    [],
+  );
+  const handOffReview = useCallback(
+    (handoff: ReviewHandoff) => paneActions.current.onReviewHandoff?.(handoff),
+    [],
+  );
+  const openConversationFirst = useCallback(
+    () => setConversationFirst((request) => request + 1),
+    [],
+  );
+  const currentSession = snapshot?.session;
+  const paneSessions = useMemo(
+    () =>
+      sessions.map((session) =>
+        currentSession?.id === session.id ? currentSession : session,
+      ),
+    [sessions, currentSession],
+  );
   const reportError = (cause: unknown) =>
     setError(workbenchErrorMessage(cause));
   return (
@@ -255,6 +290,8 @@ export default function WorkspacePage({
             projects={workspaces}
             destination={destination}
             sessions={sessions}
+            hasOlderSessions={hasOlderSessions}
+            onLoadOlderSessions={() => void loadOlderSessions()}
             sessionId={sessionId}
             chatOpen={surface === "chat"}
             background={backgroundTurn}
@@ -295,6 +332,12 @@ export default function WorkspacePage({
                 setMoveError(null);
                 setMoveTarget(session);
               },
+              onRevealFiles: session.workspaceId
+                ? undefined
+                : () =>
+                    void conversationClient
+                      .revealConversationFolder(session.id)
+                      .catch(reportError),
               onArchive: () => void archiveSession(session).catch(reportError),
               onDelete: () => void deleteSession(session).catch(reportError),
             })}
@@ -376,26 +419,24 @@ export default function WorkspacePage({
                       key={workspaceId}
                       workspaceId={workspaceId}
                       sessionId={sessionId}
-                      sessions={sessions.map((session) =>
-                        snapshot?.session.id === session.id
-                          ? snapshot.session
-                          : session,
-                      )}
+                      sessions={paneSessions}
                       onResumeSession={selectSession}
-                      onStartConversation={createSession}
-                      onAllProjects={onAllProjects}
+                      onStartConversation={startConversation}
+                      onAllProjects={
+                        onAllProjects ? showAllProjects : undefined
+                      }
                       destination={destination}
                       onDestination={recordDestination}
                       navigationInSidebar
                       snapshot={snapshot}
                       onSnapshot={acceptSnapshot}
                       onConversation={openResearchConversation}
-                      onConversationFirst={() =>
-                        setConversationFirst((request) => request + 1)
-                      }
+                      onConversationFirst={openConversationFirst}
                       onProjectBrief={setProjectBrief}
                       onWorkspaceChanged={updateProjectWorkspace}
-                      onReviewHandoff={onReviewHandoff}
+                      onReviewHandoff={
+                        onReviewHandoff ? handOffReview : undefined
+                      }
                     />
                   </Suspense>
                 </div>
@@ -464,7 +505,7 @@ export default function WorkspacePage({
             </div>
             {workspaceId && (
               <IconButton
-                label="New chat"
+                label="New conversation"
                 tooltipSide="bottom"
                 disabled={contextBusy || harnessEditor}
                 onClick={() =>
@@ -658,9 +699,8 @@ export default function WorkspacePage({
                         .reverse()
                         .map((turn) => (
                           <div key={turn.id} className="workspace-activity-row">
-                            {turn.state ??
-                              (turn.terminalAt ? "Completed" : "Working")}
-                            <span>{turn.createdAt ?? ""}</span>
+                            {turnStateLabel(turn)}
+                            <span>{turnTimeLabel(turn.createdAt)}</span>
                           </div>
                         ))}
                     </details>
@@ -740,7 +780,7 @@ export default function WorkspacePage({
             hasEarlier={Boolean(snapshot?.olderCursor)}
             loadingEarlier={loadingEarlier}
             pendingUser={pendingUser}
-            stream={stream}
+            streamStore={streamStore}
             selectedMessage={selectedMessage}
             transcriptStart={transcriptStart}
             transcriptEnd={transcriptEnd}
@@ -763,6 +803,11 @@ export default function WorkspacePage({
             onDraft={editDraft}
             onSend={() => void send()}
             onStop={() => void stopCurrent()}
+            onNewConversation={
+              sessionId
+                ? undefined
+                : () => void createSession().catch(reportError)
+            }
             onLatest={latest}
             onEarlier={() => void loadEarlier()}
             onNewer={() => setTranscriptPage((v) => Math.max(0, v - 1))}
@@ -774,15 +819,22 @@ export default function WorkspacePage({
                     title={backgroundTurn.title}
                     waiting={backgroundTurn.waiting}
                     onOpen={() =>
-                      void selectSession(backgroundTurn.sessionId).catch(
-                        (cause) => setError(workbenchErrorMessage(cause)),
-                      )
+                      onOpenConversation
+                        ? onOpenConversation(backgroundTurn.sessionId)
+                        : void selectSession(backgroundTurn.sessionId).catch(
+                            (cause) => setError(workbenchErrorMessage(cause)),
+                          )
+                    }
+                    onOpenAutomations={
+                      backgroundTurn.automated && onTasks
+                        ? () => onTasks(backgroundTurn.sessionId)
+                        : undefined
                     }
                   />
                 )}
                 {visibleRequests.map((request) => (
                   <RequestCard
-                    key={String(request.requestId)}
+                    key={`${request.epoch}:${String(request.requestId)}`}
                     event={request}
                     item={requestItem(request)}
                     onResolve={resolve}
@@ -819,9 +871,7 @@ export default function WorkspacePage({
                 key={sessionId ?? "empty"}
                 snapshot={snapshot}
                 disabled={submitting || Boolean(active) || contextBusy}
-                onSnapshot={(next) => {
-                  if (sessionRef.current === next.session.id) setSnapshot(next);
-                }}
+                onSnapshot={acceptSnapshot}
                 onBusy={setComposerBusy}
                 onBrowseProjects={() => onAllProjects?.()}
                 onTasks={

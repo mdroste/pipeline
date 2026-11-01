@@ -16,6 +16,7 @@ pub(super) async fn capture_named_inputs(
     app: &crate::emit::EventBus,
     config: &crate::pipeline_config::PipelineConfig,
     provided_inputs: &std::collections::HashMap<String, String>,
+    folder_files: usize,
     run_input_dir: &tempfile::TempDir,
     run_writer: &mut Option<crate::runs::RunWriter>,
 ) -> Result<NamedInputs, String> {
@@ -62,7 +63,13 @@ pub(super) async fn capture_named_inputs(
             .join(executor::step_slug(&slot.key));
         let staged =
             extract::stage_selected_source(std::path::Path::new(path), &slot.mode, &private)?;
-        let captured = crate::commands::reuse_artifacts::snapshot_source(&staged, &private)?;
+        let captured = crate::commands::reuse_artifacts::capture_source(
+            staged,
+            &slot.mode,
+            &private,
+            folder_files,
+        )
+        .await?;
         let captured_path = captured
             .source_path
             .as_ref()
@@ -85,6 +92,9 @@ pub(super) async fn capture_named_inputs(
         } else {
             &slot.label
         };
+        for note in &ex.quality_notes {
+            crate::pipeline::logging::emit(app, format!("WARNING: {label}: {note}"));
+        }
         let writer = run_writer
             .as_mut()
             .ok_or_else(|| "Durable run workspace disappeared before named inputs".to_string())?;

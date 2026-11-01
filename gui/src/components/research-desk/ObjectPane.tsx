@@ -24,21 +24,26 @@ export default function ObjectPane({
   onError: (s: string) => void;
 }) {
   const [source, setSource] = useState<ResearchObject | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let alive = true;
     setSource(null);
+    setFailed(false);
     void deskClient
       .read(workspaceId, object)
       .then((s) => {
         if (alive) setSource(s);
       })
       .catch((e) => {
-        if (alive) onError(workbenchErrorMessage(e));
+        if (!alive) return;
+        setFailed(true);
+        onError(workbenchErrorMessage(e));
       });
     return () => {
       alive = false;
     };
-  }, [workspaceId, object, onError]);
+  }, [workspaceId, object, onError, attempt]);
   let record: Record<string, unknown> | null = null;
   try {
     record = source
@@ -54,8 +59,17 @@ export default function ObjectPane({
     >
       <header className="flex flex-wrap items-center gap-2 border-b p-3">
         <h2 className="min-w-0 flex-1 truncate font-semibold">
-          {source?.title ?? "Opening source…"}
+          {source?.title ??
+            (failed ? "This item could not be opened" : "Opening source…")}
         </h2>
+        {failed && (
+          <button
+            className={button}
+            onClick={() => setAttempt((count) => count + 1)}
+          >
+            Try again
+          </button>
+        )}
         <button
           className={button}
           onClick={() => addContextObject(workspaceId, object)}
@@ -103,7 +117,7 @@ export default function ObjectPane({
           <ReportViewer markdown={source?.text ?? ""} />
         )}{" "}
         {source?.truncated && (
-          <p className="mt-4 text-xs text-amber-700">
+          <p className="mt-4 text-xs text-warning">
             Only part of this record is shown.
           </p>
         )}

@@ -49,6 +49,16 @@ pub struct Mutation<T> {
 pub struct SessionList {
     pub sessions: Vec<WorkbenchSession>,
     pub sequence: i64,
+    /// Where older conversations continue; `None` on the last page.
+    pub next_cursor: Option<SessionCursor>,
+}
+
+/// The last conversation of a page, in the list's newest-first order.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionCursor {
+    pub updated_at: String,
+    pub id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -1,4 +1,5 @@
 //! Import identity mapping, content comparison, and decision previews.
+use super::authority::as_sent;
 use super::package::{extract, Extracted};
 use super::selection::{index, load_object, Package};
 use super::types::{ExchangeTarget, ImportPreview, ObjectDecision};
@@ -82,6 +83,7 @@ pub(super) fn local_object(
         blobs: BTreeMap::new(),
         external: Vec::new(),
         limitations: BTreeSet::new(),
+        unpackaged: Vec::new(),
     };
     // The row exists: it is never "new". A value that cannot be loaded (a
     // retired object, a kind beyond its list view) compares as a conflict
@@ -197,9 +199,11 @@ pub(super) fn plan(
                 resolve_hash_refs(store, ws, &mut value)?;
             }
             let id = new_id.clone().unwrap_or_else(|| o.id.clone());
-            let local = local_object(store, &o.kind, &id)?
+            let mut local = local_object(store, &o.kind, &id)?
                 .map(|l| l.value)
                 .unwrap_or(Value::Null);
+            as_sent(&o.kind, &mut local);
+            as_sent(&o.kind, &mut value);
             if fingerprint(&local) == fingerprint(&value) {
                 "identical".to_string()
             } else {

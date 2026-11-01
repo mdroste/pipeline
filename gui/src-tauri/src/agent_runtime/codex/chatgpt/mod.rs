@@ -7,7 +7,8 @@
 //! or receive the refresh token. A call holds a read lease for its whole life,
 //! including uncertain-outcome cleanup; login, sign-out and account choice take
 //! the write lease. The `account-migration-v1` marker stops old Conversation or
-//! Review sign-ins from being re-imported after an intentional sign-out.
+//! Review sign-ins from being re-imported after an intentional sign-out, which
+//! also removes them.
 mod commands;
 mod credentials;
 mod quota;
@@ -78,6 +79,7 @@ async fn launch_native(root: &Path, epoch: u64) -> Result<NativeSession, String>
         epoch,
         "pipeline_chatgpt",
         "Pipeline ChatGPT",
+        &[],
     )
     .await
 }
@@ -361,8 +363,9 @@ impl ChatgptAccount {
         let client = self.client().await?;
         match client.logout().await {
             Ok(()) => {
+                let removed = credentials::remove_legacy(&self.root, &self.user_home);
                 let _ = self.events.send(());
-                Ok(())
+                removed
             }
             Err(_) => {
                 self.native.lock().await.terminate().await;

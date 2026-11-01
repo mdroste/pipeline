@@ -1,8 +1,8 @@
 //! Bounded version probes, install-metadata versions and executable hashes.
 
+use super::super::file_identity::hash_resolved_file;
 use super::locations::{Host, Platform};
 use super::{Candidate, DetectedToolchain};
-use crate::workbench::research::papers::hash_resolved_file;
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::Path;

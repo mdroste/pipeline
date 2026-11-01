@@ -32,6 +32,7 @@ export default function ArtifactExplorer({
     retryManifest,
     selected,
     selectionHistory,
+    selectionNotice,
     content,
     loadError,
     navigationOpen,
@@ -113,6 +114,14 @@ export default function ArtifactExplorer({
       />
       {/* Viewer */}
       <div className="flex min-w-0 flex-1 flex-col">
+        {selectionNotice && (
+          <p
+            role="status"
+            className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-300"
+          >
+            {selectionNotice}
+          </p>
+        )}
         {(fileTab ||
           (selected && !selected.startsWith(PAGE_SELECTION_PREFIX))) && (
           <div className="file-toolbar">

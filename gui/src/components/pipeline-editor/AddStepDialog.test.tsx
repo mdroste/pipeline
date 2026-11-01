@@ -9,7 +9,7 @@ describe("AddStepDialog backdrop", () => {
   it("closes on a press that starts on the backdrop", () => {
     const onCancel = vi.fn();
     render(<AddStepDialog onCreate={vi.fn()} onCancel={onCancel} />);
-    const overlay = screen.getByRole("dialog", { name: "Add workflow step" })
+    const overlay = screen.getByRole("dialog", { name: "Add review step" })
       .parentElement as HTMLElement;
 
     fireEvent.mouseDown(overlay);
@@ -19,7 +19,7 @@ describe("AddStepDialog backdrop", () => {
   it("keeps the draft when a drag started inside the dialog releases over the backdrop", () => {
     const onCancel = vi.fn();
     render(<AddStepDialog onCreate={vi.fn()} onCancel={onCancel} />);
-    const overlay = screen.getByRole("dialog", { name: "Add workflow step" })
+    const overlay = screen.getByRole("dialog", { name: "Add review step" })
       .parentElement as HTMLElement;
     const nameField = screen.getByRole("textbox", { name: "Step name" });
 

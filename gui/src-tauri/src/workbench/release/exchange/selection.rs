@@ -16,6 +16,8 @@ pub(super) struct Package {
     pub(super) blobs: BTreeMap<String, (PathBuf, String, u64, String)>,
     pub(super) external: Vec<ExternalReference>,
     pub(super) limitations: BTreeSet<String>,
+    /// Selected paper files that can't travel, which stop an export.
+    pub(super) unpackaged: Vec<String>,
 }
 
 pub(super) struct Index {
@@ -24,6 +26,7 @@ pub(super) struct Index {
     notes: HashSet<String>,
     executions: HashSet<String>,
     revisions: HashMap<String, String>,
+    paper_files: HashMap<String, String>,
     papers: HashSet<String>,
     source_versions: HashMap<String, String>,
     sources: HashSet<String>,
@@ -67,6 +70,7 @@ pub(super) fn index(store: &Store, ws: &str) -> WorkbenchResult<Index> {
         .map(|(a, _)| a)
         .collect();
     let revisions = list("SELECT pr.id,pr.paper_id FROM paper_revisions pr JOIN papers p ON p.id=pr.paper_id WHERE p.workspace_id=?1")?.into_iter().collect();
+    let paper_files = list("SELECT pr.id,a.id FROM paper_revisions pr JOIN papers p ON p.id=pr.paper_id JOIN artifacts a ON a.workspace_id=p.workspace_id AND a.content_hash=pr.content_hash AND a.media_kind=pr.input_kind WHERE p.workspace_id=?1")?.into_iter().collect();
     let papers = list("SELECT id,id FROM papers WHERE workspace_id=?1")?
         .into_iter()
         .map(|(a, _)| a)
@@ -108,6 +112,7 @@ pub(super) fn index(store: &Store, ws: &str) -> WorkbenchResult<Index> {
         notes,
         executions,
         revisions,
+        paper_files,
         papers,
         source_versions,
         sources,
@@ -161,8 +166,7 @@ pub(super) fn load_object(
             (serde_json::to_value(n).unwrap_or(Value::Null), title)
         }),
         "paper" => {
-            let papers = research::list_papers(store, ws)?;
-            let Some(p) = papers.into_iter().find(|p| p.paper.id == id) else {
+            let Some(paper) = research::paper_by_id(store, ws, id)? else {
                 return Ok(None);
             };
             let mut stmt = conn.prepare("SELECT id,paper_id,input_kind,entrypoint,dependency_manifest_json,content_hash,text_reference,compiled_artifact_id,extraction_json,capture_complete,captured_at FROM paper_revisions WHERE paper_id=?1 ORDER BY captured_at").map_err(err)?;
@@ -203,8 +207,8 @@ pub(super) fn load_object(
                 );
                 encoded.push(v);
             }
-            let title = p.paper.title.clone();
-            let mut v = serde_json::to_value(&p.paper).map_err(err)?;
+            let title = paper.title.clone();
+            let mut v = serde_json::to_value(&paper).map_err(err)?;
             v["revisions"] = Value::Array(encoded);
             Some((v, title))
         }
@@ -257,8 +261,7 @@ pub(super) fn load_object(
             Some((v, title))
         }
         "source" => {
-            let sources = research::list_sources(store, ws)?;
-            let Some(s) = sources.into_iter().find(|s| s.id == id) else {
+            let Ok(s) = research::source_by_id(store, ws, id) else {
                 return Ok(None);
             };
             let mut stmt = conn.prepare("SELECT id,version_label,locator,access_state,acquired_via,accessed_at,content_hash,text_reference,created_at FROM source_versions WHERE source_id=?1 ORDER BY created_at").map_err(err)?;
@@ -280,6 +283,10 @@ pub(super) fn load_object(
                             .insert(name.clone(), (path, hash, size, "source_text".into()));
                         v["textReference"] = Value::String(name);
                     } else {
+                        pkg.limitations.insert(format!(
+                            "Extracted text for source version {} was unavailable at export.",
+                            v["id"].as_str().unwrap_or_default()
+                        ));
                         v["textReference"] = Value::Null;
                     }
                 }
@@ -362,6 +369,14 @@ fn include_artifact(ix: &Index, artifact_id: &str, role: &str, pkg: &mut Package
         return;
     }
     let path = PathBuf::from(reference);
+    if path.is_dir() {
+        pkg.external.push(ExternalReference {
+            kind: "artifact".into(),
+            id: artifact_id.into(),
+            reason: "This was captured from a folder, which a package can't hold. Its extracted text is included.".into(),
+        });
+        return;
+    }
     if !path.is_file() {
         pkg.external.push(ExternalReference {
             kind: "artifact".into(),
@@ -390,6 +405,61 @@ fn include_artifact(ix: &Index, artifact_id: &str, role: &str, pkg: &mut Package
     pkg.blobs
         .entry(name)
         .or_insert((path, hash.clone(), *size, role.into()));
+}
+/// A paper revision's own file. It is what page views, captured-file reads, and
+/// Reviews open, so a selected file that can't travel stops the export and is
+/// named. A folder capture or a text-only paper has no file to send, and is
+/// listed instead.
+fn include_paper_file(ix: &Index, id: &str, paper: &Value, revision: &Value, pkg: &mut Package) {
+    let title = paper["title"].as_str().unwrap_or(id);
+    let revision_id = revision["id"].as_str().unwrap_or(id);
+    let Some(artifact) = ix.paper_files.get(revision_id) else {
+        pkg.external.push(ExternalReference {
+            kind: "paper_file".into(),
+            id: revision_id.into(),
+            reason: format!("{title} has only its extracted text in this project"),
+        });
+        return;
+    };
+    let referenced = pkg.external.len();
+    include_artifact(ix, artifact, "paper_file", pkg);
+    if let Some(reason) = pkg.external.get(referenced) {
+        let is_folder = ix
+            .artifacts
+            .get(artifact)
+            .is_some_and(|(reference, ..)| Path::new(reference).is_dir());
+        if !is_folder {
+            pkg.unpackaged.push(format!("{title}: {}", reason.reason));
+        }
+    }
+}
+/// Refuses an oversized selection and says what it holds, so the researcher
+/// knows what to narrow.
+fn too_many_objects(
+    pkg: &Package,
+    queue: &VecDeque<(String, String)>,
+    next: &str,
+) -> WorkbenchError {
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for (kind, _) in pkg.objects.keys() {
+        *counts.entry(kind).or_default() += 1;
+    }
+    *counts.entry(next).or_default() += 1;
+    let waiting: HashSet<_> = queue
+        .iter()
+        .filter(|key| !pkg.objects.contains_key(key))
+        .collect();
+    for (kind, _) in waiting {
+        *counts.entry(kind).or_default() += 1;
+    }
+    let held = counts
+        .iter()
+        .map(|(kind, count)| format!("{kind} {count}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    WorkbenchError::invalid(format!(
+        "A package holds up to 5,000 items, and this selection needs more: {held}. Narrow the selection."
+    ))
 }
 fn record_title(kind: &str, body: &Value) -> String {
     let pick = |keys: &[&str]| {
@@ -447,6 +517,7 @@ pub(super) fn collect(
         blobs: BTreeMap::new(),
         external: Vec::new(),
         limitations: BTreeSet::new(),
+        unpackaged: Vec::new(),
     };
     let mut queue: VecDeque<(String, String)> = VecDeque::new();
     for (id, kind) in &ix.records {
@@ -494,9 +565,7 @@ pub(super) fn collect(
             continue;
         }
         if pkg.objects.len() >= MAX_OBJECTS {
-            return Err(WorkbenchError::invalid(
-                "The selection and its dependencies exceed 5,000 objects; narrow the selection",
-            ));
+            return Err(too_many_objects(&pkg, &queue, &kind));
         }
         let Some((value, title)) = load_object(store, ws, &ix, &kind, &id, &mut pkg)? else {
             pkg.external.push(ExternalReference {
@@ -548,20 +617,23 @@ pub(super) fn collect(
         pkg.titles.insert((kind.clone(), id.clone()), title);
         pkg.objects.insert((kind, id), value);
     }
+    let papers: Vec<_> = pkg
+        .objects
+        .iter()
+        .filter(|((k, _), _)| k == "paper")
+        .map(|((_, id), v)| (id.clone(), v.clone()))
+        .collect();
     if selection.include_compiled_pdfs {
-        let keys: Vec<_> = pkg
-            .objects
-            .iter()
-            .filter(|((k, _), _)| k == "paper")
-            .map(|(_, v)| v.clone())
-            .collect();
-        for paper in keys {
+        for (id, paper) in papers {
             for r in paper["revisions"].as_array().into_iter().flatten() {
                 if let Some(aid) = r["compiledArtifactId"].as_str() {
                     include_artifact(&ix, aid, "compiled_pdf", &mut pkg);
                 }
+                include_paper_file(&ix, &id, &paper, r, &mut pkg);
             }
         }
+    } else if !papers.is_empty() {
+        pkg.limitations.insert("Paper files are not included, so the recipient gets extracted text only: no page views and no Reviews of these papers.".into());
     }
     pkg.limitations.insert("Execution receipts are historical evidence from the exporting machine; their profiles, commands, working directories and declared inputs do not run or transfer.".into());
     if pkg

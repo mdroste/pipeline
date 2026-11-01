@@ -23,6 +23,7 @@ const BUNDLED_POLICY: &str = include_str!("../model-policy.json");
 
 const MAX_DISCOVERY_FLIGHTS: usize = 64;
 const DISCOVERY_FLIGHT_TTL: Duration = Duration::from_secs(15 * 60);
+const API_DISCOVERY_LIMIT: Duration = Duration::from_secs(15);
 
 /// A non-secret identity for one discovery context. Credentials and endpoints
 /// are reduced to one-way fingerprints before they can reach this process-wide
@@ -521,8 +522,24 @@ fn is_openai_chat_model(id: &str) -> bool {
     general_family && !specialty.iter().any(|word| id.contains(word))
 }
 
+/// A slow provider can't hold discovery open: the shared client limits only
+/// silence, so a reply that trickles in needs this limit on the whole request.
 async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog, String> {
-    let client = crate::agent_runtime::api::http::client(false, Some(Duration::from_secs(15)))?;
+    api_catalog_within(API_DISCOVERY_LIMIT, provider, settings).await
+}
+
+async fn api_catalog_within(
+    limit: Duration,
+    provider: &str,
+    settings: &Settings,
+) -> Result<ModelCatalog, String> {
+    tokio::time::timeout(limit, request_api_catalog(provider, settings))
+        .await
+        .map_err(|_| "Model discovery timed out.".to_string())?
+}
+
+async fn request_api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog, String> {
+    let client = crate::agent_runtime::api::http::client(false, Some(API_DISCOVERY_LIMIT))?;
     let mut catalog = base_catalog(provider, "api", "provider_api");
     match provider {
         "claude" => {

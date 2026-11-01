@@ -326,7 +326,12 @@ describe("App launch", () => {
     expect(
       await screen.findByRole("dialog", { name: "Ready to start" }),
     ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Generate report" }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: "Ready to start" })).getByRole(
+        "button",
+        { name: "Start review" },
+      ),
+    );
 
     await waitFor(() =>
       expect(enqueue).toHaveBeenCalledWith(
@@ -676,7 +681,9 @@ describe("App launch", () => {
     );
     await user.click(screen.getByRole("button", { name: "Start review" }));
     await user.click(
-      await screen.findByRole("button", { name: "Generate report" }),
+      within(
+        await screen.findByRole("dialog", { name: "Ready to start" }),
+      ).getByRole("button", { name: "Start review" }),
     );
     await waitFor(() => expect(enqueue).toHaveBeenCalledTimes(1));
     await openTools(user);
@@ -711,7 +718,9 @@ describe("App launch", () => {
     );
     await user.click(screen.getByRole("button", { name: "Start review" }));
     await user.click(
-      await screen.findByRole("button", { name: "Generate report" }),
+      within(
+        await screen.findByRole("dialog", { name: "Ready to start" }),
+      ).getByRole("button", { name: "Start review" }),
     );
     await waitFor(() =>
       expect(enqueue).toHaveBeenCalledWith(
@@ -828,7 +837,7 @@ describe("App launch", () => {
       name: "Report options",
     });
     expect(within(reopened).getByRole("alert")).toHaveTextContent(
-      "The workflow changed while you were entering run options.",
+      "The review changed while you were entering run options.",
     );
     expect(within(reopened).getByRole("alert")).not.toHaveTextContent(
       "Reload the run setup",
@@ -853,7 +862,9 @@ describe("App launch", () => {
       ),
     );
     expect(
-      await screen.findByRole("button", { name: "Generate report" }),
+      within(
+        await screen.findByRole("dialog", { name: "Ready to start" }),
+      ).getByRole("button", { name: "Start review" }),
     ).toBeVisible();
   });
 });

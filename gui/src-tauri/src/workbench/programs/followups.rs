@@ -178,6 +178,30 @@ pub fn control(
     let mut c = store.connection()?;
     let tx = c.transaction().map_err(err)?;
     let (state,pos):(String,i64)=tx.query_row("SELECT state,position FROM research_followups WHERE session_id=?1 AND id=?2 AND revision=?3",params![session,id,revision],|r|Ok((r.get(0)?,r.get(1)?))).map_err(err)?;
+    // Ends a message whose fate can't be established. Its receipt stays; nothing
+    // is sent again, and the owning conversation still shows what happened.
+    if action == "dismiss" {
+        if state != "attention" {
+            return Err(WorkbenchError::conflict(
+                "Only a follow-up waiting for your attention can be dismissed",
+            ));
+        }
+        let previous: Option<String> = tx
+            .query_row(
+                "SELECT result_json FROM research_followups WHERE id=?1",
+                [id],
+                |r| r.get(0),
+            )
+            .map_err(err)?;
+        let mut result = previous
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .filter(Value::is_object)
+            .unwrap_or_else(|| json!({}));
+        result["notice"] = json!("Dismissed by the researcher. It was not retried. Inspect the owning conversation before creating any replacement request.");
+        tx.execute("UPDATE research_followups SET state='cancelled',result_json=?2,revision=revision+1,updated_at=?3 WHERE id=?1",params![id,result.to_string(),desk::now()]).map_err(err)?;
+        tx.commit().map_err(err)?;
+        return list(store, session);
+    }
     if state != "queued" {
         return Err(WorkbenchError::conflict("Only unsubmitted follow-ups can be reordered or cancelled; use the owning turn's Stop control for running work"));
     }

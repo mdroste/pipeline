@@ -1,6 +1,7 @@
 import type { ArtifactEntry } from "../../lib/artifactTypes";
 export const GROUPS: { id: string; label: string; description?: string }[] = [
   { id: "report", label: "Report" },
+  { id: "product", label: "Findings and products" },
   { id: "document", label: "Document" },
   { id: "pages", label: "Pages" },
   { id: "figures", label: "Figures" },
@@ -20,6 +21,14 @@ export const GROUPS: { id: string; label: string; description?: string }[] = [
   },
   { id: "files", label: "Files" },
 ];
+
+/** Artifacts in a group the list above does not name, so none can disappear. */
+export function ungroupedArtifacts(
+  byGroup: Map<string, ArtifactEntry[]>,
+): ArtifactEntry[] {
+  const named = new Set(GROUPS.map(({ id }) => id));
+  return [...byGroup].flatMap(([id, items]) => (named.has(id) ? [] : items));
+}
 
 export interface AgentReportGroup {
   key: string;

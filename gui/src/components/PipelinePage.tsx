@@ -104,10 +104,10 @@ export default function PipelinePage({
       <div className="flex items-center justify-center h-full p-8">
         <div className="max-w-md text-center space-y-4">
           <h2 className="text-base font-semibold text-gray-800 dark:text-gray-100">
-            Pipeline editor could not be loaded
+            Review designer could not be loaded
           </h2>
           <p className="text-sm text-red-600 dark:text-red-400 break-words">
-            {loadError ?? "The profile configuration was unavailable."}
+            {loadError ?? "This review’s setup was unavailable."}
           </p>
           <div className="flex justify-center gap-2">
             <button

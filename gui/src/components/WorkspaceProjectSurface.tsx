@@ -6,8 +6,9 @@ import {
 } from "../lib/workspaceNavigation";
 import { loadDeskLayout, saveDeskLayout } from "../lib/deskLayout";
 import { appEvents } from "../lib/appEvents";
+import { router, type RouterSnapshot } from "../lib/router";
 import type { OpenResearchObject } from "../lib/deskClient";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { workspaceClient } from "../lib/workbench/workspaceClient";
 import { researchClient } from "../lib/workbench/researchClient";
@@ -29,6 +30,7 @@ import { useProjectReadingState } from "./project-surface/useProjectReadingState
 import { useProjectSurfaceData } from "./project-surface/useProjectSurfaceData";
 import { useProjectSelectionActions } from "./project-surface/useProjectSelectionActions";
 import ProjectDestination from "./project-surface/ProjectDestination";
+import ProjectSubnav from "./project-surface/ProjectSubnav";
 import type { WorkspaceProjectSurfaceProps } from "./project-surface/types";
 
 const PAPER_EXTENSIONS = [
@@ -47,7 +49,7 @@ const PAPER_EXTENSIONS = [
   "tsv",
 ];
 
-export default function WorkspaceProjectSurface({
+function WorkspaceProjectSurface({
   workspaceId,
   sessionId,
   sessions = [],
@@ -123,6 +125,27 @@ export default function WorkspaceProjectSurface({
     }
     return off;
   }, [workspaceId]);
+  // A route may name a file, so a link or notification can land on it. It
+  // applies once: later route changes must not pull the researcher back here.
+  const followedFile = useRef("");
+  useEffect(() => {
+    const follow = ({ route }: RouterSnapshot) => {
+      if (
+        route.page !== "workspace" ||
+        !route.file ||
+        (route.projectId && route.projectId !== workspaceId)
+      )
+        return;
+      const target = `${route.file}#${route.filePage ?? ""}`;
+      if (target === followedFile.current) return;
+      followedFile.current = target;
+      setFileLocation({ path: route.file, page: route.filePage });
+      setObject(null);
+      setTab("files");
+    };
+    follow(router.getSnapshot());
+    return router.subscribe(follow);
+  }, [workspaceId]);
   const [comparison, setComparison] = useState<OpenResearchObject | null>(
     layout.comparison,
   );
@@ -166,11 +189,15 @@ export default function WorkspaceProjectSurface({
     watch,
     setWatch,
     reportError,
+    clearError,
     refresh,
+    changed,
     run,
     act,
     saveSettings,
   } = dataModel;
+  // A failure belongs to the view it happened in.
+  useEffect(() => clearError(), [clearError, tab, object]);
 
   const attachFolder = () =>
     run(async () => {
@@ -208,10 +235,22 @@ export default function WorkspaceProjectSurface({
       setInitialSelection(undefined);
       setTab("documents");
     });
+  const paperOfRevision = async (id: string) => {
+    const { revision } = await projectClient.read(workspaceId, id);
+    const paper = data?.papers.find((p) => p.paper.id === revision.paperId);
+    if (!paper)
+      throw new Error(
+        "This version's paper is no longer in the project, so it can't take a new version.",
+      );
+    return paper;
+  };
   const addVersion = () =>
     run(async () => {
-      const paper = data?.papers.find((p) => p.revision?.id === revisionId);
-      if (!paper) return;
+      if (!revisionId) return;
+      // Each paper lists only its latest version, and an earlier one can be open.
+      const paper =
+        data?.papers.find((p) => p.revision?.id === revisionId) ??
+        (await paperOfRevision(revisionId));
       const path = await open({
         multiple: false,
         directory: paper.revision?.inputKind === "source_tree",
@@ -263,7 +302,7 @@ export default function WorkspaceProjectSurface({
       setInitialSelection({
         revisionId: value.id,
         revisionHash: value.revision,
-        start: value.start ?? 0,
+        start: value.start ?? null,
         end: value.end ?? null,
         page: null,
         region: null,
@@ -272,14 +311,35 @@ export default function WorkspaceProjectSurface({
       setTab("documents");
     } else setObject(value);
   }, []);
+  useEffect(
+    () =>
+      appEvents.on("open-object", (detail) => {
+        if (detail.workspaceId === workspaceId) openObject(detail.object);
+      }),
+    [workspaceId, openObject],
+  );
   if (!data)
     return (
       <section className="flex-1 p-8">
-        <p className={muted}>Opening project…</p>
+        <p className={muted}>
+          {error ? "This project could not be opened." : "Opening project…"}
+        </p>
         {error && (
-          <p role="alert" className="mt-4 text-red-700">
-            {error}
-          </p>
+          <>
+            <p role="alert" className="mt-4 text-danger">
+              {error}
+            </p>
+            <button
+              type="button"
+              className={`${button} mt-3`}
+              onClick={() => {
+                clearError();
+                void refresh().catch(reportError);
+              }}
+            >
+              Try again
+            </button>
+          </>
         )}
       </section>
     );
@@ -371,36 +431,25 @@ export default function WorkspaceProjectSurface({
       {error && (
         <div
           role="alert"
-          className="m-4 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950/30 dark:text-red-200"
+          className="m-4 flex items-start gap-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950/30 dark:text-red-200"
         >
-          {error}
+          <span className="min-w-0 flex-1">{error}</span>
+          <button
+            type="button"
+            className="shrink-0 underline"
+            aria-label="Dismiss this error"
+            onClick={clearError}
+          >
+            Dismiss
+          </button>
         </div>
       )}
-      {/* Section subnav: every destination in the current section is one
-          click away, so the palette is an accelerator, not the only map. */}
+      {/* Every destination in the section is at most two clicks away here, so
+          the palette is an accelerator, not the only map. */}
       {!object &&
         workspaceDestinations[tab].section !== "overview" &&
         destinationsInSection(tab).length > 1 && (
-          <nav
-            aria-label={`${workspaceDestinations[tab].section} destinations`}
-            className="flex shrink-0 flex-wrap gap-1 border-b border-gray-200 bg-white px-4 py-1.5 dark:border-neutral-800 dark:bg-neutral-950"
-          >
-            {destinationsInSection(tab).map((sibling) => (
-              <button
-                key={sibling}
-                type="button"
-                aria-current={sibling === tab ? "page" : undefined}
-                onClick={() => setTab(sibling)}
-                className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
-                  sibling === tab
-                    ? "bg-gray-100 text-gray-900 dark:bg-neutral-800 dark:text-neutral-100"
-                    : "text-gray-500 hover:bg-gray-50 hover:text-gray-800 dark:text-neutral-400 dark:hover:bg-neutral-900 dark:hover:text-neutral-200"
-                }`}
-              >
-                {workspaceDestinations[sibling].label}
-              </button>
-            ))}
-          </nav>
+          <ProjectSubnav tab={tab} onSelect={setTab} />
         )}
       <ProjectDestination
         api={api}
@@ -414,6 +463,8 @@ export default function WorkspaceProjectSurface({
         fileLocation={fileLocation}
         openObject={openObject}
         refresh={refresh}
+        onChanged={changed}
+        clearError={clearError}
         watch={watch}
         setWatch={setWatch}
         attachFolder={attachFolder}
@@ -442,3 +493,5 @@ export default function WorkspaceProjectSurface({
     </section>
   );
 }
+
+export default memo(WorkspaceProjectSurface);

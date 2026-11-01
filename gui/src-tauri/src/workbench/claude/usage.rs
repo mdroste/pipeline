@@ -184,7 +184,7 @@ pub(super) fn record(frame: &Value, account: Option<&str>) {
 
 #[tauri::command]
 pub async fn workbench_claude_rate_limits() -> Option<ClaudeRateLimit> {
-    let status = if let Some(environment) = super::wsl::detect_async().await {
+    let status = if let Some(environment) = super::wsl::detect_async().await.environment().ok()? {
         tokio::task::spawn_blocking(move || environment.status())
             .await
             .ok()?

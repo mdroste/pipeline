@@ -13,7 +13,8 @@ export function template(
   path = "",
 ): Chain {
   const limits = {
-    maxActions: 64,
+    // A review cycle takes three actions: revise, capture and review.
+    maxActions: kind === "review" ? Math.max(64, 3 * rounds + 4) : 64,
     deadlineHours: 168,
     actionTimeoutSecs: 7200,
   };
@@ -75,7 +76,7 @@ export function template(
           id: "initialPaper",
           label: "Save the paper",
           kind: "snapshot",
-          input: output("draft", "/text"),
+          input: output("draft", "/answer"),
           filename: "paper.md",
         },
       ];
@@ -118,7 +119,7 @@ export function template(
             id: "revisedPaper",
             label: "Capture the revised paper",
             kind: "snapshot",
-            input: output("revise", "/text"),
+            input: output("revise", "/answer"),
             filename: "paper.md",
             requireChange: true,
           },

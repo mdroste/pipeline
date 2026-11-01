@@ -108,30 +108,30 @@ def extract_tar(archive_path: Path, destination: Path, mode: str) -> None:
 
 
 def provision_layout_model(model_lock: dict[str, object], workspace: Path) -> Path:
+    """Fetch in the app's order: Hugging Face files, then Paddle's archive."""
     model_archive = workspace / "PP-DocLayoutV3_infer.tar"
     models = workspace / "models"
     models.mkdir()
-    try:
-        download_verified(
-            str(model_lock["url"]), model_archive, str(model_lock["sha256"])
-        )
-        extract_tar(model_archive, models, "r:")
-    except urllib.error.HTTPError:
-        fallback = model_lock.get("qualificationFallback")
-        if not isinstance(fallback, dict):
-            raise
-        base_url = str(fallback["baseUrl"]).rstrip("/")
-        revision = str(fallback["revision"])
-        files = fallback["files"]
+    model = models / "PP-DocLayoutV3_infer"
+    pinned = model_lock.get("qualificationFallback")
+    if isinstance(pinned, dict):
+        base_url = str(pinned["baseUrl"]).rstrip("/")
+        revision = str(pinned["revision"])
+        files = pinned["files"]
         if not isinstance(files, dict):
-            raise RuntimeError("Layout-model fallback files must be an object")
-        model = models / "PP-DocLayoutV3_infer"
+            raise RuntimeError("Layout-model pinned files must be an object")
         model.mkdir()
-        for name, expected in files.items():
-            download_verified(
-                f"{base_url}/{revision}/{name}", model / name, str(expected)
-            )
-    return models / "PP-DocLayoutV3_infer"
+        try:
+            for name, expected in files.items():
+                download_verified(
+                    f"{base_url}/{revision}/{name}", model / name, str(expected)
+                )
+            return model
+        except urllib.error.HTTPError:
+            shutil.rmtree(model)
+    download_verified(str(model_lock["url"]), model_archive, str(model_lock["sha256"]))
+    extract_tar(model_archive, models, "r:")
+    return model
 
 
 def extract_uv(archive_path: Path, destination: Path, windows: bool) -> Path:

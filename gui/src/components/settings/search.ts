@@ -151,13 +151,15 @@ export function settingsSearchEntries(
     "Ollama, LM Studio, llama.cpp, OpenAI-compatible server, local model, endpoint, API key",
     s.local_model || "No model selected",
   );
-  add(
-    "providers",
-    "Reviews Codex backend",
-    "Reviews connection",
-    "Codex App Server or legacy Codex CLI, compatibility",
-    s.codex_backend || "app_server",
-  );
+  // The control exists only with a subscription connection.
+  if (s.codex_access_mode !== "api")
+    add(
+      "providers",
+      "Reviews Codex backend",
+      "Reviews connection",
+      "Codex App Server or legacy Codex CLI, compatibility",
+      s.codex_backend || "app_server",
+    );
   add(
     "workflow",
     "workflow-models",

@@ -122,6 +122,7 @@ fn run_bounded_owned(
     });
 
     let started = Instant::now();
+    let mut wait = Duration::from_millis(1);
     let result = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
@@ -133,7 +134,10 @@ fn run_bounded_owned(
                 let _ = child.wait();
                 break Err(format!("Subprocess timed out after {}s", timeout.as_secs()));
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+            Ok(None) => {
+                std::thread::sleep(wait);
+                wait = (wait * 2).min(Duration::from_millis(25));
+            }
             Err(e) => {
                 if pid > 0 {
                     crate::commands::kill_process(pid);

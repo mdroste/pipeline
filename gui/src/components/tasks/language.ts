@@ -36,7 +36,7 @@ export const OUTPUT_FIELDS: Partial<
     { pointer: "/reviewedArtifact", label: "reviewed file" },
     { pointer: "/runId", label: "review run id" },
   ],
-  workspace: [{ pointer: "/text", label: "assistant reply text" }],
+  workspace: [{ pointer: "/answer", label: "assistant reply text" }],
   snapshot: [{ pointer: "", label: "saved file" }],
   input: [{ pointer: "", label: "provided input" }],
   literatureLookup: [{ pointer: "", label: "lookup results" }],

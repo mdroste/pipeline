@@ -7,6 +7,7 @@ import {
   type ProjectHome,
 } from "../../lib/projectClient";
 import { researchClient } from "../../lib/workbench/researchClient";
+import { notify } from "../DialogService";
 import { op, type ProjectTab } from "./shared";
 import type { ProjectReadingState } from "./useProjectReadingState";
 import type { ProjectSurfaceData } from "./useProjectSurfaceData";
@@ -104,7 +105,14 @@ export function useProjectSelectionActions({
           expectedChecks: [],
         });
         setTaskId(task.id);
-        setTab("overview");
+        // A revision continues in Review edits. An action item leaves the
+        // reader in place, so several passages can be marked up in a row.
+        if (action === "revision") setTab("edits");
+        else
+          notify("Action item added.", "success", {
+            label: "Open Action items",
+            run: () => setTab("tasks"),
+          });
       }
       if (action === "ask")
         await onConversation(

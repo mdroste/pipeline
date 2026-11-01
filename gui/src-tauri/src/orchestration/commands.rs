@@ -84,6 +84,14 @@ pub async fn task_control(
     action: String,
 ) -> Result<TaskRun> {
     let m = manager(app).await?;
+    control(&m, id, revision, action).await
+}
+pub(super) async fn control(
+    m: &Coordinator,
+    id: String,
+    revision: i64,
+    action: String,
+) -> Result<TaskRun> {
     let _gate = m.gate.lock().await;
     let child_id = id.clone();
     if m.db(move |s| {
@@ -97,7 +105,7 @@ pub async fn task_control(
     .await?
     .is_some()
     {
-        return Err("Use the owning mission's controls for this managed task".into());
+        return Err("Use the controls of the automation that owns this step".into());
     }
     let mut run = m.db(move |s| s.get(&id)).await?;
     if revision != run.revision {
@@ -147,11 +155,7 @@ pub async fn task_control(
         }
         "reconcile" if run.state == "attention" => {
             m.recover_results(&mut run).await?;
-            if !run.progress.receipts.values().any(|r| r.state == "unknown") {
-                run.state = "queued".into();
-                run.due_at = Some(now());
-                run.reason = None;
-            }
+            run.requeue_after_reconcile();
         }
         "refreshContext" if run.state == "attention" || run.state == "paused" => {
             let session = run
@@ -175,6 +179,9 @@ pub async fn task_control(
             run.scope.connection_id = fresh.connection_id;
             run.scope.runtime_root = Some(fresh.runtime_root);
             run.scope.root_identity = Some(fresh.root_identity);
+            run.scope.permission_profile = fresh.permission_profile;
+            run.scope.preset_id = fresh.preset_id;
+            run.scope.access = fresh.access;
             run.reason = Some(
                 "Context refreshed. Reconcile or explicitly retry an interrupted action.".into(),
             );
@@ -213,9 +220,22 @@ pub async fn task_input(
     m.notify();
     Ok(run)
 }
+/// Opening a finished run is what lets retention remove it later.
 #[tauri::command]
-pub async fn task_schedules(app: tauri::AppHandle) -> Result<Vec<Schedule>> {
-    manager(app).await?.db(|s| s.schedules()).await
+pub async fn task_mark_seen(app: tauri::AppHandle, id: String) -> Result<()> {
+    manager(app).await?.db(move |s| s.mark_seen(&id)).await
+}
+#[tauri::command]
+pub async fn task_schedules(app: tauri::AppHandle) -> Result<Vec<ScheduleView>> {
+    manager(app).await?.db(|s| s.schedule_views()).await
+}
+#[tauri::command]
+pub async fn task_delete_schedule(app: tauri::AppHandle, id: String, revision: i64) -> Result<()> {
+    let m = manager(app).await?;
+    let _gate = m.gate.lock().await;
+    m.db(move |s| s.delete_schedule(&id, revision)).await?;
+    m.notify();
+    Ok(())
 }
 #[tauri::command]
 pub async fn task_update_schedule(
@@ -224,9 +244,24 @@ pub async fn task_update_schedule(
     revision: i64,
     enabled: bool,
     trigger: Option<Trigger>,
+    refresh: Option<bool>,
 ) -> Result<Schedule> {
     let m = manager(app).await?;
     let _gate = m.gate.lock().await;
+    let refreshed = if refresh.unwrap_or(false) {
+        let key = id.clone();
+        let schedule = m
+            .db(move |s| {
+                s.schedules()?
+                    .into_iter()
+                    .find(|v| v.id == key)
+                    .ok_or_else(|| "Schedule not found".to_string())
+            })
+            .await?;
+        Some(refreshed_scope(&schedule).await?)
+    } else {
+        None
+    };
     let result = m
         .db(move |s| {
             let mut schedule = s
@@ -238,12 +273,35 @@ pub async fn task_update_schedule(
             if let Some(trigger) = trigger {
                 schedule.trigger = trigger;
             }
+            if let Some(scope) = refreshed {
+                schedule.scope = scope;
+            }
             schedule.next_due_at = schedule.trigger.next(now() - 1)?;
             s.save_schedule(schedule, Some(revision))
         })
         .await?;
     m.notify();
     Ok(result)
+}
+/// Rebinds a schedule to its conversation's current state and pins again what
+/// it runs, as preparing it would. A different connection or project still
+/// needs a new schedule.
+pub(super) async fn refreshed_scope(schedule: &Schedule) -> Result<Scope> {
+    let session = schedule.scope.session_id.clone();
+    let scope = adapters::prepare(&schedule.chain, session, &schedule.inputs).await?;
+    if schedule.scope.connection_id.is_some() && scope.connection_id != schedule.scope.connection_id
+    {
+        return Err(
+            "This conversation now uses a different connection. Prepare a new schedule.".into(),
+        );
+    }
+    if scope.workspace_id != schedule.scope.workspace_id {
+        return Err(
+            "The conversation moved to another project. Prepare a new schedule for that scope."
+                .into(),
+        );
+    }
+    Ok(scope)
 }
 #[tauri::command]
 pub fn task_preview_times(trigger: Trigger, after: i64) -> Result<Vec<i64>> {

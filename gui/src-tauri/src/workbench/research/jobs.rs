@@ -1,5 +1,10 @@
 //! Workspace-owned local queue. No database gate or worker spans a process wait.
 //!
+//! Jobs in one project run one at a time, in the order they were queued, so two
+//! commands never race on its files. Nothing else in the project waits for them:
+//! a write is refused only if it touches a queued or running job's declared
+//! inputs, outputs, or working copy, and the refusal names the job.
+//!
 //! A job is owned by its turn (it stops with the turn) or detached (stopped from
 //! the job view). Each job records the process instance that started it. A queued
 //! or running job from another instance becomes `outcome_unknown` and never
@@ -9,22 +14,115 @@
 use super::execution::*;
 use super::*;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::Semaphore;
+use tokio::sync::{oneshot, Semaphore};
 
 static LIMIT: Semaphore = Semaphore::const_new(2);
 static STOPPING: AtomicBool = AtomicBool::new(false);
 static INSTANCE: OnceLock<String> = OnceLock::new();
-static PENDING: OnceLock<Mutex<HashMap<String, Box<PreparedExecution>>>> = OnceLock::new();
-static ACTIVE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+static PENDING: OnceLock<Mutex<Vec<PreparedExecution>>> = OnceLock::new();
+static ACTIVE: OnceLock<Mutex<HashMap<String, ActiveJob>>> = OnceLock::new();
+/// The last job launched in each project; it signals by dropping its sender.
+type Turns = HashMap<(PathBuf, String), oneshot::Receiver<()>>;
+static TURNS: OnceLock<Mutex<Turns>> = OnceLock::new();
 static LOGS: OnceLock<Mutex<HashMap<String, JobLog>>> = OnceLock::new();
 pub(crate) fn process_instance() -> &'static str {
     INSTANCE.get_or_init(|| new_id("instance").expect("OS randomness"))
 }
-fn pending() -> &'static Mutex<HashMap<String, Box<PreparedExecution>>> {
+fn pending() -> &'static Mutex<Vec<PreparedExecution>> {
     PENDING.get_or_init(Mutex::default)
 }
-fn active() -> &'static Mutex<HashMap<String, String>> {
+fn active() -> &'static Mutex<HashMap<String, ActiveJob>> {
     ACTIVE.get_or_init(Mutex::default)
+}
+/// What a queued or running job has claimed in its project.
+#[derive(Clone)]
+struct ActiveJob {
+    workspace_id: String,
+    name: String,
+    cwd: PathBuf,
+    declared: Vec<PathBuf>,
+}
+impl ActiveJob {
+    fn new(profile: &ExecutionProfile) -> Self {
+        let cwd = resolved(Path::new(&profile.cwd));
+        Self {
+            workspace_id: profile.workspace_id.clone(),
+            name: profile.name.clone(),
+            declared: profile
+                .inputs
+                .iter()
+                .chain(&profile.outputs)
+                .map(|path| folded(&cwd.join(path)))
+                .collect(),
+            cwd: folded(&cwd),
+        }
+    }
+    fn claims(&self, target: &Path) -> bool {
+        self.declared
+            .iter()
+            .any(|path| path.starts_with(target) || target.starts_with(path))
+    }
+}
+fn resolved(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+/// Most Mac and Windows volumes ignore case. On the others a false match only
+/// asks a researcher to wait for the job.
+fn folded(path: &Path) -> PathBuf {
+    PathBuf::from(path.to_string_lossy().to_lowercase())
+}
+fn jobs_in(ws: &str) -> Vec<ActiveJob> {
+    active()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .filter(|job| job.workspace_id == ws)
+        .cloned()
+        .collect()
+}
+fn in_use(job: &ActiveJob, what: &str) -> WorkbenchError {
+    WorkbenchError::conflict(format!(
+        "The local job \"{}\" is using {what}. Wait for it to finish or stop it, then try again.",
+        job.name
+    ))
+}
+/// Refuse a write under `root` to a file that a queued or running job declares.
+pub(crate) fn ensure_paths_free<'a>(
+    ws: &str,
+    root: &Path,
+    paths: impl IntoIterator<Item = &'a str>,
+) -> WorkbenchResult<()> {
+    let jobs = jobs_in(ws);
+    if jobs.is_empty() {
+        return Ok(());
+    }
+    let root = resolved(root);
+    for path in paths {
+        let target = folded(&root.join(path));
+        if let Some(job) = jobs.iter().find(|job| job.claims(&target)) {
+            return Err(in_use(job, path));
+        }
+    }
+    Ok(())
+}
+/// Refuse to read or change a whole working copy while a job works inside it.
+pub(crate) fn ensure_copy_free(ws: &str, copy: &Path) -> WorkbenchResult<()> {
+    let target = folded(&resolved(copy));
+    match jobs_in(ws)
+        .iter()
+        .find(|job| job.cwd.starts_with(&target) || job.claims(&target))
+    {
+        Some(job) => Err(in_use(job, "this working copy")),
+        None => Ok(()),
+    }
+}
+/// Refuse a change that could reach any file in the project, such as a Git branch
+/// switch, while a job is queued or running there.
+pub(crate) fn ensure_project_free(ws: &str) -> WorkbenchResult<()> {
+    match jobs_in(ws).first() {
+        Some(job) => Err(in_use(job, "this project's files")),
+        None => Ok(()),
+    }
 }
 #[derive(Default)]
 struct JobLog {
@@ -60,13 +158,20 @@ pub(crate) fn workspace_active(ws: &str) -> bool {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .values()
-        .any(|id| id == ws)
+        .any(|job| job.workspace_id == ws)
 }
 pub(crate) fn has_active() -> bool {
     !active()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .is_empty()
+}
+
+// Lets a test look at the project in the moment before the queue lets go of it.
+#[cfg(test)]
+thread_local! {
+    pub(crate) static BEFORE_LOCK_RELEASE: std::cell::Cell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::Cell::new(None) };
 }
 
 pub(crate) fn queue(
@@ -111,27 +216,74 @@ pub(crate) fn queue(
     }
     match prepare_execution(store, request.clone(), origin)? {
         PreparedOrExisting::Existing(e) => Ok(*e),
-        PreparedOrExisting::Prepared(p) => {
+        PreparedOrExisting::Prepared(p, guard) => {
             open_connection(store)?.execute("INSERT INTO execution_jobs(execution_id,operation_id,request_hash,owner,process_instance,created_at) VALUES(?1,?2,?3,?4,?5,?6)",params![p.execution_id,request.operation_id,fingerprint,owner,process_instance(),now()]).map_err(|e|WorkbenchError::storage("Failed to record job ownership",e))?;
             let receipt = get_execution(store, &p.execution_id)?;
+            // Nothing after this point can fail, so a listed job always reaches
+            // launch_pending, and a refused one was never listed.
             active()
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .insert(p.execution_id.clone(), p.profile.workspace_id.clone());
-            pending()
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .insert(p.execution_id.clone(), p);
+                .insert(p.execution_id.clone(), ActiveJob::new(&p.profile));
+            pending().lock().unwrap_or_else(|e| e.into_inner()).push(*p);
+            #[cfg(test)]
+            BEFORE_LOCK_RELEASE.with(|probe| {
+                if let Some(check) = probe.take() {
+                    check();
+                }
+            });
+            // Writers take this lock and then look for jobs, so they see this one.
+            drop(guard);
             Ok(receipt)
+        }
+    }
+}
+
+/// Takes this job's place in its project's line: the receiver, if any, ends
+/// when the job before it does.
+fn join_line(p: &PreparedExecution) -> (oneshot::Sender<()>, Option<oneshot::Receiver<()>>) {
+    let (done, finished) = oneshot::channel();
+    let mut turns = TURNS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    turns.retain(|_, tail| matches!(tail.try_recv(), Err(oneshot::error::TryRecvError::Empty)));
+    let key = (
+        p.store.root_path().to_path_buf(),
+        p.profile.workspace_id.clone(),
+    );
+    (done, turns.insert(key, finished))
+}
+fn stop_requested(id: &str) -> bool {
+    cancelled_executions()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains(id)
+}
+/// Waits for the job ahead, or until this one is stopped. A stopped job records
+/// its receipt at once but keeps its place, so the job behind it still waits
+/// for the one that is running.
+async fn wait_for_turn(id: &str, ahead: &mut Option<oneshot::Receiver<()>>) {
+    while let Some(finished) = ahead.as_mut() {
+        tokio::select! {
+            _ = finished => *ahead = None,
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {
+                if stop_requested(id) {
+                    return;
+                }
+            }
         }
     }
 }
 
 pub(crate) fn launch_pending() {
     let work = std::mem::take(&mut *pending().lock().unwrap_or_else(|e| e.into_inner()));
-    for (id, p) in work {
+    for mut p in work {
+        let id = p.execution_id.clone();
+        let (turn, mut ahead) = join_line(&p);
         tokio::spawn(async move {
-            let _slot = LIMIT.acquire().await.expect("local job queue stays open");
+            wait_for_turn(&id, &mut ahead).await;
+            let slot = LIMIT.acquire().await.expect("local job queue stays open");
             let start_id = id.clone();
             let job_store = p.store.clone();
             let start_store = job_store.clone();
@@ -142,6 +294,7 @@ pub(crate) fn launch_pending() {
                 })
                 .await?;
                 let (p, output) = tokio::task::spawn_blocking(move || {
+                    p.record_output_times();
                     let output = wait_execution(&p);
                     (p, output)
                 })
@@ -150,7 +303,7 @@ pub(crate) fn launch_pending() {
                     WorkbenchError::worker(format!("Job worker ended unexpectedly: {e}"), false)
                 })?;
                 super::super::commands::run_store_owned(finalize_store, move |store| {
-                    finalize_execution(&store, *p, output)
+                    finalize_execution(&store, p, output)
                 })
                 .await
             }
@@ -173,6 +326,11 @@ pub(crate) fn launch_pending() {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .remove(&id);
+            drop(slot);
+            if let Some(finished) = ahead {
+                let _ = finished.await;
+            }
+            drop(turn);
         });
     }
 }
@@ -242,6 +400,24 @@ pub struct JobLogPage {
     pub text: String,
     pub next_offset: usize,
     pub truncated: bool,
+}
+#[derive(Debug, Serialize)]
+pub struct ExecutionOutput {
+    pub stdout: Option<String>,
+    pub stderr: Option<String>,
+}
+/// The saved output of one run, which execution lists leave out.
+pub fn execution_output(store: &Store, ws: &str, id: &str) -> WorkbenchResult<ExecutionOutput> {
+    let receipt = get_execution(store, id)?;
+    if receipt.workspace_id != ws {
+        return Err(WorkbenchError::invalid(
+            "Job log is not available in this project",
+        ));
+    }
+    Ok(ExecutionOutput {
+        stdout: receipt.stdout,
+        stderr: receipt.stderr,
+    })
 }
 pub fn log_page(
     store: &Store,
@@ -327,7 +503,7 @@ pub fn reconcile_job(store: &Store, ws: &str, id: &str) -> WorkbenchResult<Resea
                 fs::canonicalize(store.root_path().join("blobs"))
                     .map_err(|e| WorkbenchError::storage("Blob store is unavailable", e))?,
             ) || artifact["contentHash"] != digest
-                || hash_file(&reference)?.0 != digest
+                || !hash_regular_file(&reference).is_ok_and(|(hash, _)| hash == digest)
             {
                 return Err(WorkbenchError::invalid(
                     "Adopted output failed integrity validation; outcome remains unknown",

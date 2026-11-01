@@ -7,6 +7,7 @@ import type {
   StepContext,
 } from "../../lib/types";
 import { AUTO_REVIEW_CONTRACT } from "../../lib/autoReview";
+import { stepDependencies } from "../../lib/pipelineHelpers";
 
 /** Mirror the backend's effective graph and return transitive upstreams. */
 export function conditionUpstreamIds(
@@ -17,17 +18,9 @@ export function conditionUpstreamIds(
   const ids = new Set(enabled.map((step) => step.id));
   const dependencies = new Map<string, string[]>();
   for (const step of enabled) {
-    const selectedProducers = (step.context?.include ?? [])
-      .filter(
-        (selector): selector is Extract<ArtifactSelector, { kind: "step" }> =>
-          selector.kind === "step",
-      )
-      .map((selector) => selector.step);
     dependencies.set(
       step.id,
-      [...new Set([...(step.after ?? []), ...selectedProducers])].filter((id) =>
-        ids.has(id),
-      ),
+      [...new Set(stepDependencies(step))].filter((id) => ids.has(id)),
     );
   }
   const upstream = new Set<string>();
@@ -157,8 +150,16 @@ const OUTPUT_SCHEMA_KEYWORDS = new Set([
   "x-pipeline-catalog",
   "x-pipeline-catalog-policy",
   "x-pipeline-adaptive-agent-count",
+  "x-pipeline-findings-version",
+  "x-pipeline-findings-taxonomy",
+  "x-pipeline-validation-ledger",
   "x-pipeline-preserve-findings-from",
   "x-pipeline-schema",
+]);
+const OUTPUT_SCHEMA_REFERENCES = new Set([
+  "findings-v1",
+  "findings-v2",
+  "findings-v2-validation",
 ]);
 const OUTPUT_SCHEMA_CATALOGS = new Set([
   "auto-review.subjects",
@@ -218,6 +219,7 @@ export function outputSchemaError(
     "x-pipeline-contract",
     "x-pipeline-catalog",
     "x-pipeline-catalog-policy",
+    "x-pipeline-validation-ledger",
     "x-pipeline-preserve-findings-from",
     "x-pipeline-schema",
   ] as const) {
@@ -244,6 +246,36 @@ export function outputSchemaError(
     return `${path}.x-pipeline-catalog-policy: only 'live' is supported`;
   }
   if (
+    object["x-pipeline-schema"] !== undefined &&
+    !OUTPUT_SCHEMA_REFERENCES.has(object["x-pipeline-schema"] as string)
+  ) {
+    return `${path}.x-pipeline-schema: unknown Pipeline schema reference`;
+  }
+  const findingsVersion = object["x-pipeline-findings-version"];
+  if (
+    findingsVersion !== undefined &&
+    (typeof findingsVersion !== "number" ||
+      !Number.isSafeInteger(findingsVersion) ||
+      findingsVersion < 0)
+  ) {
+    return `${path}.x-pipeline-findings-version: expected a non-negative integer`;
+  }
+  const taxonomy = object["x-pipeline-findings-taxonomy"];
+  if (taxonomy !== undefined) {
+    if (!Array.isArray(taxonomy)) {
+      return `${path}.x-pipeline-findings-taxonomy: expected an array`;
+    }
+    if (
+      taxonomy.length === 0 ||
+      taxonomy.some((entry) => typeof entry !== "string" || !entry.trim())
+    ) {
+      return `${path}.x-pipeline-findings-taxonomy: expected non-empty strings`;
+    }
+    if (new Set(taxonomy).size !== taxonomy.length) {
+      return `${path}.x-pipeline-findings-taxonomy: taxonomy values must be unique`;
+    }
+  }
+  if (
     object["x-pipeline-adaptive-agent-count"] !== undefined &&
     (typeof object["x-pipeline-adaptive-agent-count"] !== "number" ||
       !Number.isSafeInteger(object["x-pipeline-adaptive-agent-count"]) ||
@@ -262,10 +294,13 @@ export function outputSchemaError(
     (object["x-pipeline-contract"] !== undefined ||
       object["x-pipeline-catalog-policy"] !== undefined ||
       object["x-pipeline-adaptive-agent-count"] !== undefined ||
+      object["x-pipeline-findings-version"] !== undefined ||
+      object["x-pipeline-findings-taxonomy"] !== undefined ||
+      object["x-pipeline-validation-ledger"] !== undefined ||
       object["x-pipeline-preserve-findings-from"] !== undefined ||
       object["x-pipeline-schema"] !== undefined)
   ) {
-    return `${path}: contract, policy, adaptive-count, preserve-findings, and schema-reference settings are root-only`;
+    return `${path}: contract, policy, adaptive-count, findings, ledger, preserve-findings, and schema-reference settings are root-only`;
   }
   if (object["x-pipeline-schema"] !== undefined) {
     const extra = Object.keys(object).find(

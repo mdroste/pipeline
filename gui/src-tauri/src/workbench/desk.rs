@@ -11,6 +11,36 @@ pub(crate) fn err(e: impl std::fmt::Display) -> WorkbenchError {
 pub(crate) fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
+/// Stores `bytes` at the content-addressed `path` by writing and syncing a
+/// temporary file, then renaming it into place, so a full disk or a crash leaves
+/// no partial file. A file already there is kept only if it hashes to
+/// `expected_hash`; anything else, such as one truncated by an older build, is
+/// replaced. Renaming over it is safe because these bytes are the same content.
+pub(crate) fn write_blob_atomic(
+    path: &std::path::Path,
+    bytes: &[u8],
+    expected_hash: &str,
+) -> std::io::Result<()> {
+    use std::io::{Read, Write};
+    if hash(bytes) != expected_hash {
+        return Err(std::io::Error::other("Blob does not match its hash"));
+    }
+    if let Ok(file) = crate::safety::open_regular_file(path) {
+        let mut stored = Vec::new();
+        file.take(bytes.len() as u64 + 1).read_to_end(&mut stored)?;
+        if hash(&stored) == expected_hash {
+            return Ok(());
+        }
+    }
+    let directory = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("Blob path has no folder"))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
+    temporary.write_all(bytes)?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(path).map_err(|e| e.error)?;
+    Ok(())
+}
 pub(crate) fn now() -> String {
     chrono::Utc::now().to_rfc3339()
 }

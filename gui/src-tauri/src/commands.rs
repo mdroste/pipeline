@@ -40,8 +40,8 @@ pub use rerun::*;
 pub use run_context::ReviewLimitOverrides;
 pub use run_entry::{
     check_headless_dependencies, check_headless_plan, run_headless, run_headless_batch_item,
-    run_headless_with_options, run_pipeline, HeadlessBatchSnapshot, HeadlessCheckReport,
-    HeadlessRunOptions, HeadlessWorkflow,
+    run_headless_with_options, run_pipeline, validate_headless_input, HeadlessBatchSnapshot,
+    HeadlessCheckReport, HeadlessRunOptions, HeadlessWorkflow,
 };
 
 pub use guard::pipeline_is_running;

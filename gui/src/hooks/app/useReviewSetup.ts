@@ -29,6 +29,7 @@ export function useReviewSetup() {
   const [depsError, setDepsError] = useState<string | null>(null);
   const [configVersion, setConfigVersion] = useState(0);
   const [selectionKey, setSelectionKey] = useState(0);
+  const [profileChanges, setProfileChanges] = useState(0);
   // Active profile's input mode ("document" | "folder" | "none") — refetched
   // whenever the pipeline config may have changed. "none" workflows can run
   // without selecting an input.
@@ -87,8 +88,8 @@ export function useReviewSetup() {
       }
     }, [applyRunProfile]);
 
-  const checkDependencies =
-    useCallback(async (): Promise<DepsReport | null> => {
+  const runDependencyCheck = useCallback(
+    async (includeInput: boolean): Promise<DepsReport | null> => {
       const request = ++dependencyRequest.current;
       const selected = selectedInputRef.current;
       setDepsLoading(true);
@@ -99,7 +100,12 @@ export function useReviewSetup() {
           extraInputs: null,
           expectedProfileConfigSnapshotId: null,
           diff: false,
-          paperPath: selected.inputMode === "none" ? "" : selected.paperPath,
+          paperPath:
+            selected.inputMode === "none"
+              ? ""
+              : includeInput
+                ? selected.paperPath
+                : null,
           inputInterpretation: plannedInterpretation(selected.inputSelection),
           ...(parallelOverridesRef.current
             ? { runParallelOverrides: parallelOverridesRef.current }
@@ -117,7 +123,13 @@ export function useReviewSetup() {
       } finally {
         if (request === dependencyRequest.current) setDepsLoading(false);
       }
-    }, []);
+    },
+    [],
+  );
+  const checkDependencies = useCallback(
+    () => runDependencyCheck(true),
+    [runDependencyCheck],
+  );
 
   const handleProfileChange = useCallback(
     (config?: PipelineConfig) => {
@@ -137,13 +149,21 @@ export function useReviewSetup() {
       setParallelOverrides(null);
       dependencyRequest.current += 1;
       setDepsReport(null);
-      setDepsLoading(false);
+      setDepsLoading(true);
       setDepsError(null);
       setRunConfigLoading(true);
       setConfigVersion((version) => version + 1);
+      setProfileChanges((changes) => changes + 1);
     },
     [inputMode],
   );
+
+  // Refreshes setup status without repeating the preflight of a selected input,
+  // which the launch preview runs. The cleared report stands for "checking"
+  // until then, not for a missing tool.
+  useEffect(() => {
+    if (profileChanges) void runDependencyCheck(false);
+  }, [profileChanges, runDependencyCheck]);
 
   return {
     paperPath,
@@ -178,6 +198,8 @@ export function useReviewSetup() {
 
 export type ReviewSetup = ReturnType<typeof useReviewSetup>;
 
+const STARTUP_DEPENDENCY_CHECK_DELAY = 2500;
+
 // Kept at the shell's original lifecycle position relative to route commits.
 export function useReviewSetupLifecycle(
   setup: ReviewSetup,
@@ -192,8 +214,15 @@ export function useReviewSetupLifecycle(
   const startupDependencyCheckStarted = useRef(false);
   useEffect(() => {
     if (startupDependencyCheckStarted.current) return;
-    startupDependencyCheckStarted.current = true;
-    void checkDependencies();
+    const start = () => {
+      startupDependencyCheckStarted.current = true;
+      void checkDependencies();
+    };
+    // Starting a review needs the result now. Elsewhere it only colors the
+    // status dot, so it waits for the first page to finish loading.
+    if (router.getSnapshot().route.page === "main") return start();
+    const timer = setTimeout(start, STARTUP_DEPENDENCY_CHECK_DELAY);
+    return () => clearTimeout(timer);
   }, [checkDependencies]);
 
   useEffect(() => {

@@ -35,8 +35,7 @@ fn shareable_export_has_an_exact_safe_allowlist_and_no_secret_payloads() {
     write_export_test_run(source.path());
     let manifest = export_test_manifest();
 
-    copy_export_file(source.path(), destination.path(), "report.md").unwrap();
-    write_shareable_products(source.path(), destination.path(), &manifest, true, true).unwrap();
+    write_shareable_package(source.path(), destination.path(), &manifest).unwrap();
     finalize_export_metadata(
         destination.path(),
         &manifest.run_id,
@@ -72,6 +71,66 @@ fn shareable_export_has_an_exact_safe_allowlist_and_no_secret_payloads() {
     assert!(!exported_text.contains("context/document.md"));
     assert!(!destination.path().join("report.json").exists());
     assert!(!destination.path().join("logs/run.log").exists());
+}
+
+#[test]
+fn shareable_report_omits_what_its_limitations_say_it_omits() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    write_export_test_run(source.path());
+    std::fs::write(
+        source.path().join("report.md"),
+        "# Report\n\n## TOPSECRET-unverified-finding\n\n> TOPSECRET-manuscript-quote\n",
+    )
+    .unwrap();
+    let manifest = export_test_manifest();
+
+    write_shareable_package(source.path(), destination.path(), &manifest).unwrap();
+
+    let report = std::fs::read_to_string(destination.path().join("report.md")).unwrap();
+    assert!(report.contains("Verified finding"), "{report}");
+    assert!(
+        report.contains("> Supported statement (page 4)"),
+        "{report}"
+    );
+    assert!(!report.contains("TOPSECRET"), "{report}");
+    let limitations = std::fs::read_to_string(destination.path().join("limitations.md")).unwrap();
+    assert!(limitations.contains("omit unverified findings"));
+}
+
+#[test]
+fn custom_full_report_is_labelled_for_what_it_contains_and_loses_run_telemetry() {
+    let source = tempfile::tempdir().unwrap();
+    let destination = tempfile::tempdir().unwrap();
+    write_export_test_run(source.path());
+    std::fs::write(
+        source.path().join("report.md"),
+        "# Report\n\n<!-- PIPELINE RUN DETAILS START -->\nRun details\n<!-- PIPELINE RUN DETAILS END -->\n\nUnverified claim.\n",
+    )
+    .unwrap();
+    let manifest = export_test_manifest();
+    let selection = ExportSelection {
+        report: true,
+        verified_findings: true,
+        ..Default::default()
+    };
+
+    write_custom_payload(source.path(), destination.path(), &manifest, &selection).unwrap();
+    let (_, _, _, sensitivity) = finalize_export_metadata(
+        destination.path(),
+        &manifest.run_id,
+        ExportMode::Custom,
+        &selection,
+    )
+    .unwrap();
+
+    assert_eq!(sensitivity, "sensitive");
+    let report = std::fs::read_to_string(destination.path().join("report.md")).unwrap();
+    assert!(report.contains("Unverified claim."));
+    assert!(!report.contains("Run details"), "{report}");
+    let limitations = std::fs::read_to_string(destination.path().join("limitations.md")).unwrap();
+    assert!(limitations.contains("includes the full report.md"));
+    assert!(!limitations.contains("omit unverified findings"));
 }
 
 #[test]

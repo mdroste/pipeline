@@ -100,7 +100,77 @@ fn plain_harness_and_empty_snapshot_match_frozen_contract() {
     assert!(effective.workspace_id.is_none());
     assert!(effective.dynamic_tools.is_empty());
     assert!(effective.context_preview.is_empty());
+    assert_eq!(effective.permission_profile, "workbench-edit");
+    assert!(effective.capabilities.private_folder);
+}
+
+#[test]
+fn only_conversations_without_a_project_folder_get_a_private_folder() {
+    let (_temporary, store) = store();
+    let create = |id: &str, root: Option<String>| {
+        let workspace = store
+            .create_workspace(crate::workbench::store::CreateWorkspaceRequest {
+                name: id.into(),
+                root,
+                operation_id: format!("{id}-workspace"),
+            })
+            .unwrap()
+            .record;
+        store
+            .create_session(crate::workbench::store::CreateSessionRequest {
+                workspace_id: Some(workspace.id),
+                title: id.into(),
+                operation_id: format!("{id}-session"),
+            })
+            .unwrap()
+            .record
+            .id
+    };
+    let folder = tempfile::tempdir().unwrap();
+    let project = create("project", Some(folder.path().to_string_lossy().into()));
+    let folderless = create("folderless", None);
+    let effective = resolve_harness(&store, &project).unwrap();
+    assert!(!effective.capabilities.private_folder);
+    assert!(!effective.capabilities.shell_write);
     assert_eq!(effective.permission_profile, "workbench-inspect");
+    assert!(!serde_json::to_string(&effective)
+        .unwrap()
+        .contains("privateFolder"));
+    let effective = resolve_harness(&store, &folderless).unwrap();
+    assert!(effective.capabilities.private_folder);
+    assert!(effective.capabilities.shell_write);
+}
+
+#[test]
+fn api_conversations_get_commands_except_local_chat_without_tools() {
+    if !crate::workbench::shell::available() {
+        return;
+    }
+    let (_temporary, store) = store();
+    let shell = |runtime: &str| {
+        let session = store
+            .create_session(crate::workbench::store::CreateSessionRequest {
+                workspace_id: None,
+                title: runtime.into(),
+                operation_id: format!("{runtime}-session"),
+            })
+            .unwrap()
+            .record
+            .id;
+        store
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE sessions SET overrides_json=?1 WHERE id=?2",
+                params![json!({ "runtime": runtime }).to_string(), session],
+            )
+            .unwrap();
+        let effective = resolve_harness(&store, &session).unwrap();
+        effective.dynamic_tools.iter().any(|t| t["name"] == "shell")
+    };
+    assert!(shell("anthropic-api"));
+    assert!(shell("openai-api"));
+    assert!(!shell("local"));
 }
 
 #[test]
@@ -192,7 +262,7 @@ fn layered_harness_and_context_snapshot_match_frozen_contract() {
     );
     assert!(effective.context_truncated);
     assert_eq!(effective.context_budget_bytes, 4096);
-    assert_eq!(effective.permission_profile, "workbench-inspect-network");
+    assert_eq!(effective.permission_profile, "workbench-edit-network");
     assert_eq!(effective.diagnostics.len(), 2);
     assert_eq!(effective.value_sources["mode"], "conversation");
     assert_eq!(effective.value_sources["commandNetwork"], "workspace");

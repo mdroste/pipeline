@@ -74,6 +74,8 @@ export default function useModalDialog<T extends HTMLElement>(
     const onKeyDown = (event: KeyboardEvent) => {
       const dialog = dialogRef.current;
       if (!dialog) return;
+      // That Escape belongs to the input method, cancelling its composition.
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === "Escape") {
         event.preventDefault();
         closeRef.current();

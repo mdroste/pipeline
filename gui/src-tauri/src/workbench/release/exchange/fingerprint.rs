@@ -28,6 +28,9 @@ pub fn fingerprint(value: &Value) -> String {
                     "freshness",
                     "staleReason",
                     "unavailable",
+                    // Local import markers, never part of what was sent.
+                    "importedFrom",
+                    "importedStatus",
                 ] {
                     o.remove(key);
                 }

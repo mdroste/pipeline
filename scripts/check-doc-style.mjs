@@ -80,11 +80,14 @@ for (const file of new Set(files)) {
   let lines = readFileSync(resolve(root, file), "utf8").split(/\r?\n/);
   let offset = 0;
   if (name === "CHANGELOG.md") {
-    // Released entries are history; only the Unreleased section is checked.
-    const start = lines.findIndex((line) => /^## Unreleased/.test(line));
+    // Released entries are history. Only the section in progress is checked:
+    // Unreleased, or the newest version when there is no Unreleased heading.
+    // Its heading is left out because a version heading carries a release date.
+    const unreleased = lines.findIndex((line) => /^## Unreleased/.test(line));
+    const start = unreleased < 0 ? lines.findIndex((line) => /^## /.test(line)) : unreleased;
     const end = lines.findIndex((line, index) => index > start && /^## /.test(line));
-    offset = Math.max(start, 0);
-    lines = start < 0 ? [] : lines.slice(start, end < 0 ? undefined : end);
+    offset = Math.max(start + 1, 0);
+    lines = start < 0 ? [] : lines.slice(start + 1, end < 0 ? undefined : end);
   }
   let fenced = false;
   let paragraph = [];

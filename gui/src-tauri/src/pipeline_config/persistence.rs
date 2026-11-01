@@ -57,36 +57,70 @@ pub(super) fn read_profile_file(path: &Path) -> Result<String, String> {
         .map_err(|e| format!("Profile '{}' is not valid UTF-8: {e}", path.display()))
 }
 
-pub(crate) fn load_profile(id: &str) -> Result<ProfileData, String> {
-    validate_profile_id(id)?;
-    let id = resolve_renamed_profile_id(&profiles_dir()?, id);
-    let path = profile_path(id)?;
-    let content =
-        read_profile_file(&path).map_err(|e| format!("Failed to read profile '{id}': {e}"))?;
-
+/// A profile file's contents and whether they are in the legacy format,
+/// without the save-time validator.
+fn parse_profile(content: &str) -> Option<Result<(ProfileData, bool), String>> {
     // Try the current format. `steps` may legitimately be empty; serde's
     // required current-format fields distinguish it from the legacy shape.
-    if let Ok(profile) = serde_json::from_str::<ProfileData>(&content) {
-        validate_profile_data(&profile).map_err(|e| format!("Profile '{id}' is invalid: {e}"))?;
-        return Ok(profile);
+    if let Ok(mut profile) = serde_json::from_str::<ProfileData>(content) {
+        let raw: serde_json::Value = serde_json::from_str(content).ok()?;
+        let steps = std::mem::take(&mut profile.steps);
+        return Some(
+            wire_implicit_context(&raw["steps"], steps, &profile.extraction.input_mode).map(
+                |steps| {
+                    profile.steps = steps;
+                    (profile, false)
+                },
+            ),
+        );
     }
 
     // Try legacy format (has referees/post_steps arrays)
-    if let Ok(legacy) = serde_json::from_str::<LegacyProfileData>(&content) {
-        if !legacy.referees.is_empty() || !legacy.post_steps.is_empty() {
-            let profile = ProfileData::new(
-                legacy.name,
-                convert_legacy_steps(legacy.referees, legacy.post_steps),
-                legacy.merge,
-            );
-            // Keep loading legacy profile files without mutating them during
-            // a read. Explicit saves/imports publish the current format under
-            // the cross-process profile lock.
-            return Ok(profile);
-        }
+    let legacy = serde_json::from_str::<LegacyProfileData>(content).ok()?;
+    if legacy.referees.is_empty() && legacy.post_steps.is_empty() {
+        return None;
     }
+    // Keep loading legacy profile files without mutating them during a read.
+    // Explicit saves/imports publish the current format under the
+    // cross-process profile lock.
+    let profile = ProfileData::new(
+        legacy.name,
+        convert_legacy_steps(legacy.referees, legacy.post_steps),
+        legacy.merge,
+    );
+    Some(Ok((profile, true)))
+}
 
-    Err(format!("Failed to parse profile '{id}'"))
+pub(super) fn read_profile_at(path: &Path, id: &str) -> Result<(ProfileData, bool), String> {
+    let content =
+        read_profile_file(path).map_err(|e| format!("Failed to read profile '{id}': {e}"))?;
+    match parse_profile(&content) {
+        Some(Ok(parsed)) => Ok(parsed),
+        Some(Err(error)) => Err(format!("Profile '{id}' is invalid: {error}")),
+        None => Err(format!("Failed to parse profile '{id}'")),
+    }
+}
+
+pub(super) fn load_profile_at(path: &Path, id: &str) -> Result<ProfileData, String> {
+    let (profile, legacy) = read_profile_at(path, id)?;
+    if !legacy {
+        validate_profile_data(&profile).map_err(|e| format!("Profile '{id}' is invalid: {e}"))?;
+    }
+    Ok(profile)
+}
+
+pub(crate) fn load_profile(id: &str) -> Result<ProfileData, String> {
+    validate_profile_id(id)?;
+    let id = resolve_renamed_profile_id(&profiles_dir()?, id);
+    load_profile_at(&profile_path(id)?, id)
+}
+
+/// A saved profile whether or not it passes validation, for showing, exporting,
+/// and repairing it. Running one always goes through `load_profile`.
+pub(super) fn read_profile(id: &str) -> Result<ProfileData, String> {
+    validate_profile_id(id)?;
+    let id = resolve_renamed_profile_id(&profiles_dir()?, id);
+    read_profile_at(&profile_path(id)?, id).map(|(profile, _)| profile)
 }
 
 pub(super) fn save_profile_unlocked(id: &str, profile: &ProfileData) -> Result<(), String> {
@@ -116,6 +150,15 @@ pub fn load() -> PipelineConfig {
     match load_profile(&settings.active_profile) {
         Ok(profile) => profile.into(),
         Err(e) => {
+            // The editor shows a profile that fails validation as it was
+            // saved, so that it can be repaired. Runs refuse it.
+            if let Ok(profile) = read_profile(&settings.active_profile) {
+                eprintln!(
+                    "WARNING: Profile '{}' needs repair: {e}",
+                    settings.active_profile
+                );
+                return profile.into();
+            }
             // Always warn when a profile fails to load so the user knows
             // they're running on defaults rather than their saved config.
             let file_exists = profile_path(&settings.active_profile)

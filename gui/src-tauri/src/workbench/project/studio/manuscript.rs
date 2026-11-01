@@ -72,6 +72,7 @@ pub(super) fn save_text(
     if content.len() > 2 * 1024 * 1024 {
         return Err(WorkbenchError::invalid("Text exceeds 2 MiB"));
     }
+    research::jobs::ensure_paths_free(ws, &editor_root(store, ws, checkpoint_id)?, [path])?;
     let current = editor_file(store, ws, checkpoint_id, path)?;
     if current.hash != expected_hash {
         return Err(WorkbenchError::conflict(
@@ -122,7 +123,9 @@ pub(super) fn stage_text(
     content: &str,
 ) -> WorkbenchResult<()> {
     files::relative(path)?;
-    let safe = files::SafeRoot::open(&session_task_root(store, ws, cp)?)?;
+    let task_root = session_task_root(store, ws, cp)?;
+    research::jobs::ensure_paths_free(ws, &task_root, [path])?;
+    let safe = files::SafeRoot::open(&task_root)?;
     let mode = safe.executable(path)?;
     let claim = id("editor")?;
     safe.replace(path, expected, mode, Some(content.as_bytes()), mode, &claim)?;
@@ -552,10 +555,12 @@ pub fn editor_external_path(
     path: &str,
 ) -> WorkbenchResult<String> {
     editor_file(store, ws, checkpoint, path)?;
-    Ok(editor_root(store, ws, checkpoint)?
-        .join(path)
-        .to_string_lossy()
-        .into_owned())
+    let root = editor_root(store, ws, checkpoint)?;
+    let executable = files::SafeRoot::open(&root)?
+        .stat(path)?
+        .is_some_and(|stat| stat.executable);
+    crate::file_viewer::check_openable(path, executable).map_err(WorkbenchError::invalid)?;
+    Ok(root.join(path).to_string_lossy().into_owned())
 }
 
 pub(super) fn inspect_pages(

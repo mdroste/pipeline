@@ -50,6 +50,13 @@ describe("Workbench DTO boundary", () => {
       workspaceId: "workspace_fixture",
       includeArchived: true,
     });
+    const cursor = { updatedAt: "2026-01-01", id: "session_fixture" };
+    await conversationClient.listSessions("workspace_fixture", false, cursor);
+    expect(invoke).toHaveBeenLastCalledWith("workbench_list_sessions", {
+      workspaceId: "workspace_fixture",
+      includeArchived: false,
+      cursor,
+    });
 
     const request = {
       sessionId: "session_fixture",
@@ -122,6 +129,8 @@ describe("Workbench DTO boundary", () => {
     });
     await runtimeClient.pendingRequests();
     expect(invoke).toHaveBeenLastCalledWith("workbench_codex_pending_requests");
+    await runtimeClient.activeTurn();
+    expect(invoke).toHaveBeenLastCalledWith("workbench_active_turn");
     await runtimeClient.reconcileSession("session_fixture");
     expect(invoke).toHaveBeenLastCalledWith(
       "workbench_codex_reconcile_session",

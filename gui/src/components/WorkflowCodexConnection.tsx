@@ -35,7 +35,9 @@ export default function WorkflowCodexConnection({
           if (live) setError(String(e));
         });
     poll();
-    const timer = window.setInterval(poll, 5000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") poll();
+    }, 5000);
     return () => {
       live = false;
       window.clearInterval(timer);

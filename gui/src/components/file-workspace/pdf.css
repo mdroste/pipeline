@@ -5,6 +5,26 @@
   height: 100%;
   min-width: 0;
 }
+.pdf-toolbars {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--ui-border);
+}
+.pdf-toolbars > .file-toolbar {
+  max-width: 100%;
+  border-bottom: 0;
+}
+.pdf-toolbars > form {
+  margin-left: auto;
+}
+.pdf-toolbars form input {
+  width: 150px;
+}
+.pdf-toolbars .file-line-input {
+  width: 48px;
+  text-align: center;
+}
 .pdf-layout {
   display: flex;
   flex: 1;
@@ -20,14 +40,15 @@
   position: absolute;
   inset: 0;
   overflow: auto;
-  background: #d4d4d4;
+  background: var(--ui-sunken);
 }
 .pdf-sidebar {
   width: 155px;
   flex-shrink: 0;
   overflow: auto;
-  padding: 4px;
-  background: #f3f4f6;
+  padding: 6px;
+  border-right: 1px solid var(--ui-border);
+  background: var(--ui-page-soft);
   font-size: 12px;
 }
 .pdf-sidebar > button {
@@ -35,6 +56,10 @@
   text-align: left;
   width: 100%;
   padding: 6px;
+  border-radius: var(--ui-radius-sm);
+}
+.pdf-sidebar > button:hover {
+  background: var(--ui-sunken);
 }
 .pdf-thumbnail {
   display: flex !important;
@@ -59,12 +84,6 @@
 }
 .pdf-region-mode .textLayer {
   pointer-events: none;
-}
-.dark .pdf-sidebar {
-  background: #262626;
-}
-.dark .pdf-scroll-container {
-  background: #1a1a1a;
 }
 .pdf-reader .pdfViewer {
   --viewer-container-height: 100%;

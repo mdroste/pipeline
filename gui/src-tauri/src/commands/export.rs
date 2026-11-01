@@ -19,13 +19,11 @@ pub use types::{ExportMode, ExportPackageResult, ExportRunArtifactsResult, Expor
 #[cfg(test)]
 pub(super) use desktop::{record_export_path, validated_recent_export};
 #[cfg(test)]
-pub(super) use files::{
-    copy_export_file, copy_export_tree, create_export_stage, finish_export_stage,
-};
+pub(super) use files::{copy_export_tree, create_export_stage, finish_export_stage};
 #[cfg(test)]
 pub(super) use manifest::{enumerate_export_files, finalize_export_metadata};
 #[cfg(test)]
-pub(super) use package::{write_custom_payload, write_shareable_products};
+pub(super) use package::{write_custom_payload, write_shareable_package};
 #[cfg(test)]
 pub(super) use print::build_print_report_html;
 
@@ -108,7 +106,7 @@ pub async fn export_run_package(
     package::export_run_package(run_id, destination, mode, selection).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn reveal_export_in_folder(path: String) -> Result<(), String> {
     desktop::reveal_export_in_folder(path)
 }

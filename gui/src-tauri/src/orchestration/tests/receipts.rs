@@ -265,3 +265,185 @@ fn paused_active_actions_are_recovered_too() {
     s.recover().unwrap();
     assert_eq!(s.get(&r.id).unwrap().state, "attention");
 }
+
+fn waiting_past_its_deadline(s: &Store) -> TaskRun {
+    let mut run = s
+        .create(
+            "late-input",
+            chain(vec![
+                step(
+                    "ask",
+                    Action::Input {
+                        prompt: "Supply the data".into(),
+                        timeout_seconds: None,
+                    },
+                ),
+                step(
+                    "paper",
+                    Action::Snapshot {
+                        input: output("ask", ""),
+                        filename: "paper.md".into(),
+                        require_change: false,
+                    },
+                ),
+            ]),
+            Scope::default(),
+            json!({}),
+            now(),
+            true,
+        )
+        .unwrap();
+    run.progress.receipts.insert(
+        "ask".into(),
+        Receipt {
+            sequence: 1,
+            address: "ask".into(),
+            step_id: "ask".into(),
+            label: "Supply the data".into(),
+            state: "input".into(),
+            operation: store::id(),
+            started_at: now() - 7200,
+            finished_at: None,
+            wake_at: None,
+            output: None,
+            error: None,
+            child: None,
+        },
+    );
+    run.deadline_at = now() - 1;
+    run.state = "attention".into();
+    run.reason = Some("Task deadline reached".into());
+    s.save(&mut run, "deadline", "Task deadline reached")
+        .unwrap();
+    run
+}
+
+#[test]
+fn late_input_is_accepted_and_starts_a_new_deadline() {
+    let temp = tempfile::tempdir().unwrap();
+    let s = Store::open(temp.path()).unwrap();
+    let run = waiting_past_its_deadline(&s);
+    let hours = run.chain.limits.deadline_hours as i64;
+    let next = s.signal(&run.id, "ask", "late", json!("Data")).unwrap();
+    assert_eq!(next.state, "queued");
+    assert!(next.deadline_at >= now() + hours * 3600 - 5);
+    assert_eq!(next.progress.receipts["ask"].state, "completed");
+}
+
+#[test]
+fn input_is_still_refused_for_a_stopped_run_or_one_with_a_failed_action() {
+    let temp = tempfile::tempdir().unwrap();
+    let s = Store::open(temp.path()).unwrap();
+    let mut run = waiting_past_its_deadline(&s);
+    run.state = "cancelled".into();
+    s.save(&mut run, "stop", "Stopped").unwrap();
+    assert!(s.signal(&run.id, "ask", "stopped", json!("Data")).is_err());
+    run.state = "attention".into();
+    run.progress.receipts.insert(
+        "other".into(),
+        Receipt {
+            state: "unknown".into(),
+            ..run.progress.receipts["ask"].clone()
+        },
+    );
+    s.save(&mut run, "attention", "Failed").unwrap();
+    assert!(s.signal(&run.id, "ask", "failed", json!("Data")).is_err());
+}
+
+#[test]
+fn retry_past_the_deadline_starts_a_new_one_so_the_run_cannot_bounce_back() {
+    let temp = tempfile::tempdir().unwrap();
+    let s = Store::open(temp.path()).unwrap();
+    let mut run = waiting_past_its_deadline(&s);
+    s.retry(&mut run).unwrap();
+    assert_eq!(run.state, "queued");
+    assert!(run.deadline_at > now());
+    // The open wait is not an action to repeat.
+    assert_eq!(run.progress.receipts["ask"].state, "input");
+    let mut fresh = s
+        .create(
+            "no-failure",
+            chain(vec![delay("wait")]),
+            Scope::default(),
+            json!({}),
+            now(),
+            true,
+        )
+        .unwrap();
+    fresh.state = "attention".into();
+    s.save(&mut fresh, "attention", "Condition").unwrap();
+    assert!(s.retry(&mut fresh).is_err());
+}
+
+#[test]
+fn checking_saved_results_past_the_deadline_leaves_the_run_to_retry() {
+    let temp = tempfile::tempdir().unwrap();
+    let s = Store::open(temp.path()).unwrap();
+    let mut run = waiting_past_its_deadline(&s);
+    run.requeue_after_reconcile();
+    assert_eq!(run.state, "attention");
+    assert!(run.reason.as_deref().unwrap().contains("Retry unfinished"));
+    run.deadline_at = now() + 3600;
+    run.requeue_after_reconcile();
+    assert_eq!(run.state, "queued");
+}
+
+#[test]
+fn input_that_would_pass_the_context_budget_is_refused() {
+    let temp = tempfile::tempdir().unwrap();
+    let s = Store::open(temp.path()).unwrap();
+    let mut run = waiting_past_its_deadline(&s);
+    run.deadline_at = now() + 3600;
+    run.state = "waiting".into();
+    let size = serde_json::to_vec(&run.progress).unwrap().len();
+    run.progress.outputs["large"] = json!("x".repeat(state::MAX_PROGRESS_BYTES - size - 1024));
+    s.save(&mut run, "large", "Large").unwrap();
+    assert!(s
+        .signal(&run.id, "ask", "over", json!("y".repeat(4096)))
+        .is_err());
+    assert_eq!(
+        s.get(&run.id).unwrap().progress.receipts["ask"].state,
+        "input"
+    );
+}
+
+#[test]
+fn startup_recovery_survives_a_bad_record_and_marks_an_over_budget_run() {
+    let temp = tempfile::tempdir().unwrap();
+    let s = Store::open(temp.path()).unwrap();
+    let mut good = waiting_past_its_deadline(&s);
+    good.state = "running".into();
+    good.progress.receipts.get_mut("ask").unwrap().state = "running".into();
+    s.save(&mut good, "running", "Running").unwrap();
+    // Input signals could once pass the budget, and old records can hold it.
+    let mut large = good.clone();
+    large.id = "over-budget".into();
+    large.progress.outputs["large"] = json!("x".repeat(state::MAX_PROGRESS_BYTES));
+    let bad = "unreadable";
+    {
+        let c = s.connection().unwrap();
+        for (id, operation, body) in [
+            (
+                large.id.as_str(),
+                "large",
+                serde_json::to_string(&large).unwrap(),
+            ),
+            (
+                bad,
+                "bad",
+                r#"{"progress":{"receipts":{"a":{"state":"running"}}}}"#.to_string(),
+            ),
+        ] {
+            c.execute(
+                "INSERT INTO runs(id,operation,fingerprint,revision,state,due_at,updated_at,body) VALUES(?1,?2,'f',?3,'running',NULL,0,?4)",
+                rusqlite::params![id, operation, large.revision, body],
+            )
+            .unwrap();
+        }
+    }
+    s.recover().unwrap();
+    assert_eq!(s.get(&good.id).unwrap().state, "attention");
+    let recovered = s.get("over-budget").unwrap();
+    assert_eq!(recovered.state, "attention");
+    assert_eq!(recovered.progress.receipts["ask"].state, "unknown");
+}

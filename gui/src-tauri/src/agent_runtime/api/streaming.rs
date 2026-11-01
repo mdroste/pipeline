@@ -234,7 +234,14 @@ impl Stream {
         }
         match self.provider {
             Provider::Anthropic => {
+                // A tool without arguments streams an empty delta and keeps the
+                // block's own `input: {}`. A reply cut off at the length limit
+                // can end mid-argument, and its calls never run.
+                let truncated = self.value["stop_reason"] == "max_tokens";
                 for (index, input) in self.inputs {
+                    if truncated || input.trim().is_empty() {
+                        continue;
+                    }
                     self.calls.get_mut(&index).ok_or("Missing tool block")?["input"] =
                         serde_json::from_str(&input)
                             .map_err(|_| "Invalid streamed tool arguments")?;
@@ -258,7 +265,8 @@ fn index(value: &Value) -> Result<usize, String> {
         .ok_or_else(|| "Invalid streamed content index".into())
 }
 fn append(value: &mut Value, text: &str) {
-    let mut joined = value.as_str().unwrap_or_default().to_owned();
-    joined.push_str(text);
-    *value = json!(joined);
+    match value {
+        Value::String(joined) => joined.push_str(text),
+        _ => *value = Value::String(text.to_owned()),
+    }
 }

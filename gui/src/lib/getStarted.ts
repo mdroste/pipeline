@@ -1,24 +1,12 @@
 // First-run guided setup: a device-local record of whether the researcher has
-// closed the Get started sheet and which kind of work they chose. The choice
-// only tailors tips; it is never copied into Settings or a Review.
+// closed the Get started sheet.
 
 export const GET_STARTED_KEY = "pipeline.ui.getStarted.v1";
-
-export const GET_STARTED_PERSONAS = [
-  "stata-latex",
-  "r-word",
-  "python-notebooks",
-  "word-zotero",
-  "other",
-] as const;
-
-export type GetStartedPersona = (typeof GET_STARTED_PERSONAS)[number];
 
 export interface GetStartedRecord {
   version: 1;
   /** When the sheet was last closed; null while it has never been closed. */
   dismissedAt: string | null;
-  persona: GetStartedPersona | null;
 }
 
 export type GetStartedView = "setup" | "example";
@@ -26,12 +14,7 @@ export type GetStartedView = "setup" | "example";
 const EMPTY: GetStartedRecord = {
   version: 1,
   dismissedAt: null,
-  persona: null,
 };
-
-function isPersona(value: unknown): value is GetStartedPersona {
-  return (GET_STARTED_PERSONAS as readonly unknown[]).includes(value);
-}
 
 export function parseGetStarted(raw: string | null): GetStartedRecord | null {
   if (raw === null) return null;
@@ -46,7 +29,6 @@ export function parseGetStarted(raw: string | null): GetStartedRecord | null {
         typeof record.dismissedAt === "string" && record.dismissedAt
           ? record.dismissedAt
           : null,
-      persona: isPersona(record.persona) ? record.persona : null,
     };
   } catch {
     // A corrupt record still means the sheet was seen before.

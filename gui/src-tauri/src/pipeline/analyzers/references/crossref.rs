@@ -3,11 +3,11 @@
 //! single-record lookups per second), bounded in size and time, and never
 //! follow redirects. No key or contact address is sent.
 
-use super::super::fold::{fold, tokens, Fold};
+use super::super::fold::{fold, tokens, unaccented, Fold};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
-const API: &str = "https://api.crossref.org";
+pub const API: &str = "https://api.crossref.org";
 const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const LIST_SPACING: Duration = Duration::from_millis(1_100);
 const SINGLE_SPACING: Duration = Duration::from_millis(250);
@@ -33,6 +33,7 @@ pub struct Notice {
 
 pub struct Client {
     http: reqwest::Client,
+    api: String,
     last_list: Option<Instant>,
     last_single: Option<Instant>,
     pub requests: u32,
@@ -148,7 +149,7 @@ pub enum LookupError {
 }
 
 impl Client {
-    pub fn new() -> Result<Self, String> {
+    pub fn new(api: &str) -> Result<Self, String> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(20))
             .redirect(reqwest::redirect::Policy::none())
@@ -161,6 +162,7 @@ impl Client {
             .map_err(|error| format!("Could not start the Crossref client: {error}"))?;
         Ok(Self {
             http,
+            api: api.to_string(),
             last_list: None,
             last_single: None,
             requests: 0,
@@ -239,7 +241,7 @@ impl Client {
     }
 
     pub async fn work(&mut self, doi: &str) -> Result<Option<Work>, LookupError> {
-        let mut url = reqwest::Url::parse(API).expect("valid base URL");
+        let mut url = reqwest::Url::parse(&self.api).expect("valid base URL");
         url.path_segments_mut()
             .expect("base URL has a path")
             .extend(["works", doi]);
@@ -250,7 +252,7 @@ impl Client {
     }
 
     pub async fn search(&mut self, citation: &str) -> Result<Vec<Work>, LookupError> {
-        let mut url = reqwest::Url::parse(&format!("{API}/works")).expect("valid URL");
+        let mut url = reqwest::Url::parse(&format!("{}/works", self.api)).expect("valid URL");
         let query: String = citation.chars().take(400).collect();
         url.query_pairs_mut()
             .append_pair("query.bibliographic", &query)
@@ -267,7 +269,7 @@ impl Client {
     }
 
     pub async fn notices(&mut self, doi: &str) -> Result<Vec<Notice>, LookupError> {
-        let mut url = reqwest::Url::parse(&format!("{API}/works")).expect("valid URL");
+        let mut url = reqwest::Url::parse(&format!("{}/works", self.api)).expect("valid URL");
         url.query_pairs_mut()
             .append_pair("filter", &format!("updates:{doi}"))
             .append_pair("rows", "20");
@@ -280,7 +282,7 @@ impl Client {
 }
 
 fn token_set(text: &str) -> std::collections::HashSet<String> {
-    let folded = fold(text, Fold::Latex).text;
+    let folded = unaccented(&fold(text, Fold::Latex).text);
     tokens(&folded)
         .into_iter()
         .map(|(_, token)| token.to_string())
@@ -300,6 +302,12 @@ pub fn title_coverage(title: &str, reference: &str) -> f64 {
         .filter(|token| reference_tokens.contains(*token))
         .count();
     shared as f64 / title_tokens.len() as f64
+}
+
+/// Words in a candidate's title, which a very short title has too few of to
+/// identify a work.
+pub fn title_words(title: &str) -> usize {
+    token_set(title).len()
 }
 
 /// Whether one of the candidate's first three authors appears in the text.

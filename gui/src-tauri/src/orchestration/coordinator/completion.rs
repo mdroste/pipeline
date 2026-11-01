@@ -11,14 +11,21 @@ impl Coordinator {
         let detail = detail.to_string();
         let (stored, mission_owned) = self
             .db(move |s| {
-                if !state::context_within_budget(&copy.progress) {
+                if state::context_within_budget(&copy.progress) {
+                    s.save(&mut copy, &stored_kind, &detail)?;
+                } else {
                     // Full action results already live in their immutable journals.
-                    // Preserve the last bounded state and require reconciliation.
+                    // Preserve the last saved state and require reconciliation. A
+                    // stop stands: no action is left to finish it, so it ends here.
                     copy.progress = s.get(&copy.id)?.progress;
-                    copy.state = "attention".into();
+                    let reason = "Task context budget reached; inspect durable action results";
+                    if copy.state == "cancelling" {
+                        copy.state = "cancelled".into();
+                    } else if copy.state != "cancelled" {
+                        copy.state = "attention".into();
+                        copy.reason = Some(reason.into());
+                    }
                     copy.due_at = None;
-                    copy.reason =
-                        Some("Task context budget reached; inspect durable action results".into());
                     for receipt in copy
                         .progress
                         .receipts
@@ -26,10 +33,12 @@ impl Coordinator {
                         .filter(|r| r.state == "running")
                     {
                         receipt.state = "unknown".into();
-                        receipt.error = copy.reason.clone();
+                        receipt.error = Some(reason.into());
                     }
+                    // The saved state may be over the budget too, and this adds to
+                    // neither.
+                    s.write(&mut copy, &stored_kind, &detail)?;
                 }
-                s.save(&mut copy, &stored_kind, &detail)?;
                 if copy.state == "cancelled" {
                     if let Err(error) = adapters::reconcile_abandoned_reviews(&s) {
                         eprintln!("Abandoned Review retention needs attention: {error}");
@@ -84,10 +93,16 @@ impl Coordinator {
         receipt.finished_at = Some(now());
         match result {
             Ok(value) if adapters::terminal_failure(&value) => {
-                let message = format!("Workspace turn {}", value["state"]);
+                let message = adapters::failure_message(&value);
                 receipt.state = "failed".into();
                 receipt.output = Some(adapters::output_preview(&value));
                 receipt.error = Some(message.clone());
+                if adapters::oversized_reply(&value) {
+                    // That turn did finish, so the conversation moved past it.
+                    if let Some(cursor) = value.get("cursor").and_then(Value::as_str) {
+                        run.scope.session_cursor = Some(cursor.into());
+                    }
+                }
                 if !["cancelled", "cancelling"].contains(&run.state.as_str()) {
                     run.state = "attention".into();
                     run.reason = Some(message.clone());

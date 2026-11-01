@@ -1,0 +1,141 @@
+{
+  "artifact": {
+    "schema_version": 2,
+    "taxonomy": [
+      "Correctness and Internal Consistency",
+      "Methodological and Evidentiary Concerns",
+      "Contribution and Scope",
+      "Exposition and Organization"
+    ],
+    "findings": [
+      {
+        "rank": 1,
+        "id": "sample-window",
+        "title": "The sample window disagrees with the appendix",
+        "category": "Correctness and Internal Consistency",
+        "severity": "critical",
+        "confidence": "high",
+        "verification_status": "unverified",
+        "reviewer_ids": [
+          "technical/claude",
+          "identification"
+        ],
+        "problem": "The main text uses 1990-2010.",
+        "consequence": "The estimates are not comparable.",
+        "recommended_action": "State one window.",
+        "evidence": [
+          {
+            "evidence_type": "external",
+            "verification_status": "unverified",
+            "description": "The data provider documents the series",
+            "url": "https://example.org/series/gdp",
+            "publisher": "Example Statistics Office",
+            "accessed_at": "2026-10-30"
+          },
+          {
+            "evidence_type": "external",
+            "verification_status": "unverified",
+            "description": "Published estimate of the same effect",
+            "doi": "10.1000/xyz123"
+          },
+          {
+            "evidence_type": "source",
+            "verification_status": "unverified",
+            "description": "Sample restriction",
+            "source_path": "analysis/main.do",
+            "artifact_path": "context/source-evidence/analysis/main.do",
+            "line_start": 120,
+            "line_end": 135
+          },
+          {
+            "evidence_type": "document",
+            "verification_status": "unverified",
+            "description": "Stated window",
+            "page": 7,
+            "quote": "from 1990 to 2010"
+          }
+        ]
+      }
+    ]
+  },
+  "source_step": {
+    "id": "synthesis",
+    "label": "Synthesis"
+  },
+  "step_outputs": [
+    {
+      "step_id": "technical/claude",
+      "step_label": "Technical review",
+      "phase": "parallel",
+      "raw_text": "Reviewed."
+    },
+    {
+      "step_id": "identification",
+      "step_label": "Identification review",
+      "phase": "parallel",
+      "raw_text": "Reviewed."
+    }
+  ],
+  "published": {
+    "schema_version": 2,
+    "source_step_id": "synthesis",
+    "source_step_label": "Synthesis",
+    "taxonomy": [
+      "Correctness and Internal Consistency",
+      "Methodological and Evidentiary Concerns",
+      "Contribution and Scope",
+      "Exposition and Organization"
+    ],
+    "findings": [
+      {
+        "rank": 1,
+        "id": "sample-window",
+        "reviewer_ids": [
+          "technical/claude",
+          "identification"
+        ],
+        "title": "The sample window disagrees with the appendix",
+        "category": "Correctness and Internal Consistency",
+        "priority": "high",
+        "confidence": "high",
+        "verification_status": "unverified",
+        "problem": "The main text uses 1990-2010.",
+        "consequence": "The estimates are not comparable.",
+        "recommended_action": "State one window.",
+        "body": "**Problem.** The main text uses 1990-2010.\n\n**Consequence.** The estimates are not comparable.\n\n**Recommended action.** State one window.",
+        "evidence": [
+          {
+            "evidence_type": "external",
+            "verification_status": "unverified",
+            "description": "The data provider documents the series",
+            "url": "https://example.org/series/gdp",
+            "publisher": "Example Statistics Office",
+            "accessed_at": "2026-10-30"
+          },
+          {
+            "evidence_type": "external",
+            "verification_status": "unverified",
+            "description": "Published estimate of the same effect",
+            "doi": "10.1000/xyz123"
+          },
+          {
+            "evidence_type": "source",
+            "verification_status": "unverified",
+            "description": "Sample restriction",
+            "source_path": "analysis/main.do",
+            "artifact_path": "context/source-evidence/analysis/main.do",
+            "line_start": 120,
+            "line_end": 135
+          },
+          {
+            "evidence_type": "document",
+            "verification_status": "unverified",
+            "description": "Stated window",
+            "page": 7,
+            "quote": "from 1990 to 2010"
+          }
+        ]
+      }
+    ]
+  }
+}

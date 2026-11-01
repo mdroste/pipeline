@@ -4,6 +4,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceResearchPanel from "./WorkspaceResearchPanel";
@@ -12,6 +13,7 @@ import { CATALOG } from "./harness-editor/harnessHelpers.test";
 
 const mocks = vi.hoisted(() => ({
   listPapers: vi.fn(),
+  paperSearch: vi.fn(),
   prepareReviewHandoff: vi.fn(),
   harnessCatalog: vi.fn(),
   effectiveHarness: vi.fn(),
@@ -359,4 +361,78 @@ it("switches execution adapters with batch templates while keeping typed argumen
   expect(
     screen.getByPlaceholderText("Expected output paths, one per line"),
   ).toHaveValue("");
+});
+
+const notesPanel = (embedded: boolean, onClose: () => void) => (
+  <WorkspaceResearchPanel
+    embedded={embedded}
+    workspace={
+      { id: "project", name: "Project" } as ConversationSnapshot["workspace"]
+    }
+    snapshot={null}
+    initialTab="memory"
+    allowedTabs={["memory"]}
+    onSnapshot={vi.fn()}
+    onClose={onClose}
+    onError={vi.fn()}
+  />
+);
+
+it("leaves Escape to the field on a project page", async () => {
+  const onClose = vi.fn();
+  render(notesPanel(true, onClose));
+  fireEvent.keyDown(await screen.findByLabelText("Note text"), {
+    key: "Escape",
+  });
+  expect(onClose).not.toHaveBeenCalled();
+});
+
+it("still closes the side panel on Escape", async () => {
+  const onClose = vi.fn();
+  render(notesPanel(false, onClose));
+  fireEvent.keyDown(await screen.findByLabelText("Note text"), {
+    key: "Escape",
+  });
+  expect(onClose).toHaveBeenCalledOnce();
+});
+
+it("clears search hits when another paper is chosen", async () => {
+  const paper = (id: string) => ({
+    paper: { id, title: `Paper ${id}`, role: "manuscript" },
+    revision: {
+      id: `revision-${id}`,
+      contentHash: "abc123",
+      inputKind: "pdf",
+      extraction: { status: "complete" },
+    },
+  });
+  mocks.listPapers.mockResolvedValue([paper("a"), paper("b")]);
+  mocks.paperSearch.mockResolvedValue([
+    { start: 1, end: 2, page: 1, line: 1, excerpt: "Found in the first paper" },
+  ]);
+  render(
+    <WorkspaceResearchPanel
+      embedded
+      workspace={
+        { id: "project", name: "Project" } as ConversationSnapshot["workspace"]
+      }
+      snapshot={null}
+      initialTab="documents"
+      allowedTabs={["documents"]}
+      onSnapshot={vi.fn()}
+      onClose={vi.fn()}
+      onError={vi.fn()}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: /Paper a/ }));
+  fireEvent.change(await screen.findByLabelText("Search this version"), {
+    target: { value: "wages" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Search" }));
+  await screen.findByText("Found in the first paper");
+
+  fireEvent.click(screen.getByRole("button", { name: /Paper b/ }));
+  await waitFor(() =>
+    expect(screen.queryByText("Found in the first paper")).toBeNull(),
+  );
 });

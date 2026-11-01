@@ -67,11 +67,21 @@ pub fn reconcile_failed_pins() -> Result<(), String> {
         Err(errors.join("; "))
     }
 }
-/// Explicit Task stop/retry may abandon a settled outcome. The global Review
-/// lock prevents an old/cross-process writer from racing this decision.
+/// A Review that a Task may still need keeps its pin, so its journal must stay.
+pub fn is_pinned(id: &str) -> Result<bool, String> {
+    crate::runs::validate_run_id(id)?;
+    let path = crate::runs::runs_dir()?.join(id).join(".task-pin");
+    path.try_exists().map_err(|e| e.to_string())
+}
+/// Explicit Task stop/retry may abandon a settled outcome, and a completed
+/// receipt has already taken what it needs from one. The global Review lock
+/// prevents an old/cross-process writer from racing this decision. A Review
+/// with no pin has nothing to release, even if it has since been deleted.
 pub fn release_abandoned_pin(id: &str, operation: &str) -> Result<(), String> {
     use fs2::FileExt as _;
-    crate::runs::validate_run_id(id)?;
+    if !is_pinned(id)? {
+        return Ok(());
+    }
     let root = crate::runs::runs_dir()?;
     let lock = crate::runs::open_run_lock(&crate::runs::run_lock_path()?)?;
     if lock.try_lock_exclusive().is_err() {
@@ -85,6 +95,12 @@ pub fn release_abandoned_pin(id: &str, operation: &str) -> Result<(), String> {
         active.as_ref().map(|(operation, _)| operation.as_str()),
         Some(operation),
     )
+}
+/// The decision `release_abandoned_pin` makes, for a run folder outside the
+/// real data root.
+#[cfg(test)]
+pub(crate) fn release_in(dir: &Path, status: &str, operation: &str) -> Result<(), String> {
+    reconcile(dir, status, None, Some(operation))
 }
 #[cfg(test)]
 mod tests {

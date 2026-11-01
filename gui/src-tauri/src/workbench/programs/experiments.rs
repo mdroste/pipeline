@@ -289,17 +289,25 @@ pub fn control(
         "cancel" => {
             let current = status(store, ws, id)?;
             if let Some(execution) = current["run"]["activeExecutionId"].as_str() {
-                research::cancel_execution(
-                    store,
-                    research::CancelExecutionRequest {
-                        execution_id: execution.into(),
-                    },
-                )?;
+                // An attempt that already ended needs no stopping, and one with
+                // an unknown outcome must not keep the family from ending.
+                let attempt = research::get_execution(store, execution)?;
+                if ["queued", "running"].contains(&attempt.outcome.as_str()) {
+                    research::cancel_execution(
+                        store,
+                        research::CancelExecutionRequest {
+                            execution_id: execution.into(),
+                        },
+                    )?;
+                }
             }
             store.connection()?.execute("UPDATE experiment_runs SET state='cancelled',revision=revision+1,updated_at=?2 WHERE plan_id=?1",params![id,desk::now()]).map_err(err)?;
         }
         "reconcile" => {
             reconcile(store, ws, id)?;
+        }
+        "continue_unknown" => {
+            continue_past_unknown(store, ws, id)?;
         }
         _ => return Err(WorkbenchError::invalid("Unknown experiment action")),
     }
@@ -309,7 +317,12 @@ fn reconcile(store: &Store, ws: &str, id: &str) -> WorkbenchResult<()> {
     let current = status(store, ws, id)?;
     if let Some(execution) = current["run"]["activeExecutionId"].as_str() {
         let e = research::get_execution(store, execution)?;
-        if ["queued", "running", "outcome_unknown"].contains(&e.outcome.as_str()) {
+        if e.outcome == "outcome_unknown" {
+            return Err(WorkbenchError::invalid(
+                "Pipeline can't tell whether this run finished. Reconcile it in Local jobs if it offers that. Otherwise continue without this run, or cancel the grid.",
+            ));
+        }
+        if ["queued", "running"].contains(&e.outcome.as_str()) {
             return Err(WorkbenchError::invalid(
                 "Inspect and reconcile this execution; its launch outcome is not established",
             ));
@@ -331,6 +344,36 @@ fn reconcile(store: &Store, ws: &str, id: &str) -> WorkbenchResult<()> {
             .map_err(err)?;
     }
     Ok(())
+}
+/// The researcher's explicit decision to keep an attempt whose outcome can't be
+/// established as unknown and move on. The family pauses at the next
+/// specification and resumes only when they start it again.
+fn continue_past_unknown(store: &Store, ws: &str, id: &str) -> WorkbenchResult<()> {
+    let current = status(store, ws, id)?;
+    let execution = current["run"]["activeExecutionId"]
+        .as_str()
+        .ok_or_else(|| WorkbenchError::invalid("This grid has no run to set aside"))?;
+    let e = research::get_execution(store, execution)?;
+    if e.outcome != "outcome_unknown" || research::jobs::execution_active(execution) {
+        return Err(WorkbenchError::invalid(
+            "Only a stopped run with an unknown outcome can be set aside",
+        ));
+    }
+    let index = current["run"]["nextIndex"].as_i64().unwrap_or(0);
+    let mut c = store.connection()?;
+    let tx = c.transaction().map_err(err)?;
+    tx.execute(
+        "UPDATE experiment_attempts SET state=?3,result_json=?4 WHERE plan_id=?1 AND ordinal=?2",
+        params![
+            id,
+            index,
+            e.outcome,
+            serde_json::to_string(&e).map_err(err)?
+        ],
+    )
+    .map_err(err)?;
+    tx.execute("UPDATE experiment_runs SET state='paused',next_index=?2,active_execution_id=NULL,reason=?3,revision=revision+1,updated_at=?4 WHERE plan_id=?1 AND state IN ('attention','paused')",params![id,index+1,format!("Specification {} was set aside with an unknown outcome.",index+1),desk::now()]).map_err(err)?;
+    tx.commit().map_err(err)
 }
 /// Bounded serial producer. It never holds the database gate over a process wait.
 pub fn tick(store: &Store, ws: &str, id: &str) -> WorkbenchResult<()> {
@@ -358,12 +401,12 @@ pub fn tick(store: &Store, ws: &str, id: &str) -> WorkbenchResult<()> {
     if let Some(id_run) = current["run"]["activeExecutionId"].as_str() {
         let e = research::get_execution(store, id_run)?;
         if ["queued", "running"].contains(&e.outcome.as_str()) {
-            if !research::jobs::execution_active(id_run) {
+            if !research::jobs::execution_active(id_run) && state != "cancelled" {
                 attention(store,id,"A prior process may have launched this attempt. Reconcile its receipt before continuing")?;
             }
             return Ok(());
         }
-        if e.outcome == "outcome_unknown" {
+        if e.outcome == "outcome_unknown" && state != "cancelled" {
             attention(store, id, "The active attempt has an unknown outcome")?;
             return Ok(());
         }

@@ -11,6 +11,7 @@ import type { ReviewHandoff } from "../../lib/workbenchTypes";
 import type { ExecutionPlanStage } from "../../lib/pipelineHelpers";
 import { notify } from "../../components/DialogService";
 import type { usePipeline } from "../usePipeline";
+import { confirmRerunRequirements } from "./rerunRequirements";
 import type { ReviewSetup } from "./useReviewSetup";
 import type { AppNavigation } from "./useAppNavigation";
 
@@ -105,7 +106,7 @@ export function useReviewLaunch(
     if (!reopen) {
       setLaunchError({
         message:
-          "The workflow changed while you were entering run options. Start the review again to use the updated workflow.",
+          "The review changed while you were entering run options. Start it again to use the updated version.",
       });
       return;
     }
@@ -116,7 +117,7 @@ export function useReviewLaunch(
       );
     setLaunchError({
       message:
-        "The workflow changed while you were entering run options. Check them against the updated workflow, then continue.",
+        "The review changed while you were entering run options. Check them against the updated version, then continue.",
       submitted: {
         snapshot: pending,
         values: declared(
@@ -223,7 +224,7 @@ export function useReviewLaunch(
       });
     } catch (error) {
       await rejectLaunch(
-        `The workflow execution plan could not be prepared: ${
+        `The review plan could not be prepared: ${
           error instanceof Error ? error.message : String(error)
         }`,
         snapshot,
@@ -300,7 +301,7 @@ export function useReviewLaunch(
       const selectedPath = inputMode === "none" ? "" : (paperPath ?? "");
       if (inputMode !== "none" && !selectedPath) {
         setRunConfigError(
-          "The active workflow requires an input. Select it again before running.",
+          "This review requires an input. Select it again before running.",
         );
         return;
       }
@@ -316,7 +317,7 @@ export function useReviewLaunch(
         snapshot.profileConfigSnapshotId !== expectedProfileConfigSnapshotId
       ) {
         setRunConfigError(
-          "The active profile or settings changed while run inputs were being collected. Review the updated setup and try again.",
+          "The active review or settings changed while run inputs were being collected. Review the updated setup and try again.",
         );
         return;
       }
@@ -377,7 +378,9 @@ export function useReviewLaunch(
   /** Queue a re-run of a past run and open it. */
   const rerunReview = async (runId: string, onlyFailed: boolean) => {
     try {
-      const run = await enqueueRerun(runId, { onlyFailed });
+      const variables = await confirmRerunRequirements(runId, onlyFailed);
+      if (variables === null) return;
+      const run = await enqueueRerun(runId, { onlyFailed, variables });
       await openRun(run.key);
     } catch (error) {
       notify(

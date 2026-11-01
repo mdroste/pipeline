@@ -56,11 +56,13 @@ function Switch({
       disabled={disabled}
       onClick={onToggle}
       className={`relative h-5 w-8 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-        checked ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
+        checked
+          ? "bg-green-600 dark:bg-neutral-200"
+          : "bg-gray-300 dark:bg-gray-600"
       }`}
     >
       <span
-        className={`absolute left-0 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${checked ? "translate-x-3.5" : "translate-x-0.5"}`}
+        className={`absolute left-0 top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform dark:bg-neutral-900 ${checked ? "translate-x-3.5" : "translate-x-0.5"}`}
       />
     </button>
   );
@@ -157,7 +159,7 @@ function HarnessModulesEditor({
                       </span>
                       {module.requiresWorkspace && (
                         <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
-                          Workspace
+                          Project
                         </span>
                       )}
                     </div>

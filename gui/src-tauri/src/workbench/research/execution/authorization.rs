@@ -1,9 +1,9 @@
 //! Declared input identities and exact host-execution authorization.
 
+use super::file_identity::{hash_regular_file, FileProblem, SNAPSHOT_BUDGET};
 use super::launch::launch_manifest;
 use super::profiles::get_execution_profile;
 use super::types::{ExecutionProfile, HostExecutionPreview};
-use crate::workbench::research::papers::hash_file;
 use crate::workbench::research::{hash_bytes, now, open_connection};
 use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
 use rusqlite::params;
@@ -19,13 +19,21 @@ pub(crate) fn input_manifest(
     let mut complete = true;
     for relative in &profile.inputs {
         let path = cwd.join(relative);
-        match hash_file(&path) {
+        match hash_regular_file(&path) {
+            // Usable and authorizable: its identity is the hash either way.
+            Ok((hash, size)) if size > SNAPSHOT_BUDGET => files.push(
+                json!({"path":relative,"contentHash":hash,"sizeBytes":size,"snapshot":"Hash only: larger than the 256 MiB snapshot budget"}),
+            ),
             Ok((hash, size)) => {
                 files.push(json!({"path":relative,"contentHash":hash,"sizeBytes":size}))
             }
-            Err(_) => {
+            Err(FileProblem::Absent) => {
                 complete = false;
                 files.push(json!({"path":relative,"missing":true}));
+            }
+            Err(problem) => {
+                complete = false;
+                files.push(json!({"path":relative,"unavailable":problem.reason()}));
             }
         }
     }
@@ -41,6 +49,28 @@ pub(crate) fn input_manifest(
     ))
 }
 
+/// Names each unusable input, because "unavailable" alone sends a researcher
+/// looking for a file that may be right there.
+fn input_problems(inputs: &Value) -> String {
+    let problems = inputs["files"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|file| {
+            let path = file["path"].as_str()?;
+            let reason = file["unavailable"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| (file["missing"] == true).then(|| FileProblem::Absent.reason()))?;
+            Some(format!("{path} {reason}"))
+        })
+        .collect::<Vec<_>>();
+    format!(
+        "Fix these declared inputs before authorizing this command: {}.",
+        problems.join("; ")
+    )
+}
+
 pub fn preview_host_execution(
     store: &Store,
     profile_id: &str,
@@ -49,7 +79,9 @@ pub fn preview_host_execution(
     let root = store
         .workspace(&profile.workspace_id)?
         .root
-        .ok_or_else(|| WorkbenchError::invalid("The execution root is unavailable"))?;
+        .ok_or_else(|| {
+            WorkbenchError::invalid("Attach a folder to this project before approving this command")
+        })?;
     let root = fs::canonicalize(root)
         .map_err(|e| WorkbenchError::storage("Failed to resolve execution root", e))?;
     let cwd = fs::canonicalize(&profile.cwd)
@@ -61,9 +93,7 @@ pub fn preview_host_execution(
     }
     let (inputs, _, _) = input_manifest(&profile)?;
     if inputs["complete"] != true {
-        return Err(WorkbenchError::invalid(
-            "All declared inputs must be available before authorizing execution",
-        ));
+        return Err(WorkbenchError::invalid(input_problems(&inputs)));
     }
     let launch = launch_manifest(&profile)?;
     let fingerprint=hash_bytes(&serde_json::to_vec(&json!({"profileId":profile.id,"revision":profile.revision,"argv":profile.argv,"cwd":cwd,"rootIdentity":crate::workbench::store::root_identity(&root)?,"environment":profile.environment,"launch":launch,"inputs":inputs,"outputs":profile.outputs,"timeout":profile.timeout_seconds})).map_err(|e|WorkbenchError::storage("Failed to fingerprint host execution",e))?);

@@ -81,3 +81,25 @@ it("honors send shortcuts without sending IME composition, newlines, or alternat
         shouldSendMessage({ ...enter, metaKey: true, [key]: true }, shortcut),
       ).toBe(false);
 });
+
+it.each([
+  ["#/settings/providers", "Settings"],
+  ["#/help", "Help"],
+])("opens Home instead of restoring %s (%s)", (stored) => {
+  localStorage.clear();
+  localStorage.setItem("pipeline.ui.route", stored);
+  localStorage.setItem("pipeline.ui.page", "workspace");
+  expect(startupRoute(localStorage)).toEqual({ page: "home" });
+});
+
+it("still continues research pages where the researcher left them", () => {
+  localStorage.clear();
+  localStorage.setItem("pipeline.ui.route", "#/reviews/history");
+  expect(startupRoute(localStorage)).toEqual({ page: "history" });
+  localStorage.setItem("pipeline.ui.route", "#/project/monetary?surface=chat");
+  expect(startupRoute(localStorage)).toEqual({
+    page: "workspace",
+    projectId: "monetary",
+    surface: "chat",
+  });
+});

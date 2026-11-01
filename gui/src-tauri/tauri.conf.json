@@ -4,7 +4,7 @@
   "version": "../package.json",
   "identifier": "com.pipeline.report",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run prepare:release-resources && npm run dev",
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run prepare:release-resources && npm run build",
     "beforeBundleCommand": "node ../scripts/release/sign-macos-cli.mjs",
@@ -26,7 +26,7 @@
     ],
     "security": {
       "capabilities": ["default"],
-      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self' blob:; img-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; connect-src 'self' ipc: http://ipc.localhost"
+      "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; style-src-elem 'self'; style-src-attr 'unsafe-inline'; font-src 'self' blob:; img-src 'self' data: pipeline-file: http://pipeline-file.localhost; media-src 'self' pipeline-file: http://pipeline-file.localhost; frame-src pipeline-file: http://pipeline-file.localhost; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; connect-src 'self' ipc: http://ipc.localhost pipeline-file: http://pipeline-file.localhost"
     }
   },
   "plugins": {
@@ -50,6 +50,7 @@
       "resources/poppler/**/*",
       "resources/notices/NOTICE.txt",
       "resources/notices/PIPELINE_LICENSE.txt",
+      "resources/notices/THIRD_PARTY_LIBRARIES.txt",
       "resources/notices/THIRD_PARTY_LICENSES.md"
     ],
     "copyright": "Copyright © 2026 Michael Droste",

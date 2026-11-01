@@ -46,9 +46,17 @@ export interface WorkspaceList {
   sequence: number;
 }
 
+/** The last conversation of a page, which is where the next page starts. */
+export interface SessionCursor {
+  updatedAt: string;
+  id: string;
+}
+
 export interface SessionList {
   sessions: WorkbenchSession[];
   sequence: number;
+  /** Set while older conversations remain. */
+  nextCursor?: SessionCursor | null;
 }
 
 export interface SessionSnapshot {
@@ -211,9 +219,28 @@ export interface SendTurnResult {
   draftCleared: boolean;
 }
 
+/** The app's one running turn, as the host reports it. */
+export interface ActiveTurn {
+  sessionId: string;
+  title: string | null;
+  threadId: string | null;
+  turnId: string | null;
+  epoch: number | null;
+  /** Still being prepared. With no turnId, the runtime has not acknowledged it. */
+  setup: boolean;
+  runtime: string;
+  /** Belongs to an Automation, which owns stopping it. */
+  automated: boolean;
+  /** Sent from the composer, so its text is the session draft until acknowledged. */
+  composer: boolean;
+}
+
 export interface WorkbenchEvent {
   kind: string;
   epoch: number;
+  /** The conversation behind a server request, or a failed `activeTurnChanged`. */
+  sessionId?: string | null;
+  sendError?: { code: string; message: string } | null;
   threadId?: string;
   turnId?: string;
   itemId?: string;
@@ -371,6 +398,7 @@ export interface EffectiveHarness {
     commandDomains: string[];
     browser: boolean;
     shellWrite: boolean;
+    privateFolder?: boolean;
   };
   permissionProfile: string;
   contextBudgetBytes: number;
@@ -428,6 +456,7 @@ export interface ResearchNote {
   revision: number;
   createdAt: string;
   updatedAt: string;
+  importedStatus?: string | null;
 }
 
 export interface PaperRevision {
@@ -511,6 +540,7 @@ export interface ClaimRecord {
   dependencyHash: string | null;
   createdAt: string;
   updatedAt: string;
+  importedStatus?: string | null;
 }
 
 export interface EvidenceRecord {
@@ -533,6 +563,7 @@ export interface EvidenceRecord {
   staleReason: string | null;
   createdAt: string;
   updatedAt: string;
+  importedStatus?: string | null;
 }
 
 export interface ResearchLedger {
@@ -704,6 +735,13 @@ export interface ResearchArchiveReport {
   bytes: number;
   nativeBindingsRetired: number;
   portabilityNote: string;
+  /** Records whose files the backup left out, by the names researchers use. */
+  omittedFiles: string[];
+}
+
+export interface MissingBackupFile {
+  description: string;
+  reference: string;
 }
 
 export interface ExchangeSelection {
@@ -807,6 +845,7 @@ export interface StorageCategory {
   entries: number;
   disposable: boolean;
   note: string;
+  partial?: boolean;
 }
 export interface TrashEntry {
   id: string;
@@ -846,6 +885,7 @@ export interface ResearchArchiveInspection {
   storeSchemaVersion: number;
   workspaceRoots: string[];
   portabilityNote: string;
+  omittedFileCount: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

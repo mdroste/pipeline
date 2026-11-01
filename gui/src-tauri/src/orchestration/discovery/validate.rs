@@ -23,7 +23,7 @@ fn strings(v: &[String], min: usize, max: usize, bytes: usize) -> Result<()> {
 }
 pub fn definition(d: &Definition) -> Result<()> {
     if d.schema_version != 1 {
-        return Err("Unsupported self-discovery definition".into());
+        return Err("Unsupported research discovery definition".into());
     }
     text(&d.prompt, 16000)?;
     text(&d.ranking_priorities, 4000)?;
@@ -68,8 +68,8 @@ pub fn response<T: DeserializeOwned>(v: &Value) -> Result<T> {
         .or_else(|| v["text"].as_str())
         .ok_or("The model omitted its final response")?
         .trim();
-    if raw.len() > 256 * 1024 {
-        return Err("Research response exceeds 256 KiB".into());
+    if raw.len() > 512 * 1024 {
+        return Err("Research response exceeds 512 KiB".into());
     }
     let raw = raw
         .strip_prefix("```json\n")

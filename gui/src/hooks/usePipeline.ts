@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { router } from "../lib/router";
 import type { QueuedRun, RunQueueSnapshot } from "../lib/types";
 import type {
   LlmRequestDetails,
@@ -26,8 +27,10 @@ import {
   type StartBatchRequest,
 } from "../lib/appClient";
 
-/** Interval (ms) at which buffered log lines are flushed to state. */
-const LOG_FLUSH_INTERVAL = 200;
+/** How long (ms) log lines wait before they are flushed to state. */
+const LOG_FLUSH_DELAY = 200;
+/** Only the review page shows logs. Elsewhere a flush re-renders for nothing. */
+const BACKGROUND_LOG_FLUSH_DELAY = 2000;
 
 export type { RunView };
 
@@ -42,9 +45,10 @@ export function usePipeline() {
   const [listenersReady, setListenersReady] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
   // Buffer incoming log lines per run to avoid O(n) array copies per event.
-  // A periodic timer flushes every buffer into state in a single update.
+  // The first line after a flush arms a timer, which then moves every buffer
+  // into state in a single update.
   const logBuffer = useRef(new Map<string, LogEntry[]>());
-  const flushTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestedResults = useRef(new Set<string>());
 
   const updateView = useCallback(
@@ -74,6 +78,22 @@ export function usePipeline() {
 
   useEffect(() => {
     let mounted = true;
+
+    const flushLogs = () => {
+      flushTimer.current = null;
+      if (!mounted || logBuffer.current.size === 0) return;
+      const pending = logBuffer.current;
+      logBuffer.current = new Map();
+      setViews((previous) => {
+        const next = { ...previous };
+        for (const [key, lines] of pending)
+          next[key] = {
+            ...(next[key] ?? emptyRunView()),
+            logs: appendLogs(next[key]?.logs ?? [], lines),
+          };
+        return next;
+      });
+    };
 
     async function setup(): Promise<UnlistenFn[]> {
       // Register all listeners concurrently so there's no window where
@@ -130,6 +150,12 @@ export function usePipeline() {
               : {}),
           });
           logBuffer.current.set(event.payload.runKey, pending);
+          flushTimer.current ??= setTimeout(
+            flushLogs,
+            router.getSnapshot().route.page === "main"
+              ? LOG_FLUSH_DELAY
+              : BACKGROUND_LOG_FLUSH_DELAY,
+          );
         }),
         // Usage events are infrequent (one per LLM call), so update state
         // directly rather than through the log buffer.
@@ -155,26 +181,6 @@ export function usePipeline() {
         // fails. Tear those down before surfacing the fatal setup error.
         unlisteners.forEach((unlisten) => unlisten());
         throw failed.reason;
-      }
-
-      // Periodically flush buffered log lines into React state. Don't start
-      // the timer if the component unmounted while listener registration was
-      // in flight — cleanup has already run and nothing would clear it.
-      if (mounted) {
-        flushTimer.current = setInterval(() => {
-          if (!mounted || logBuffer.current.size === 0) return;
-          const pending = logBuffer.current;
-          logBuffer.current = new Map();
-          setViews((previous) => {
-            const next = { ...previous };
-            for (const [key, lines] of pending)
-              next[key] = {
-                ...(next[key] ?? emptyRunView()),
-                logs: appendLogs(next[key]?.logs ?? [], lines),
-              };
-            return next;
-          });
-        }, LOG_FLUSH_INTERVAL);
       }
 
       if (mounted) setListenersReady(true);
@@ -206,15 +212,9 @@ export function usePipeline() {
 
     return () => {
       mounted = false;
-      if (flushTimer.current) clearInterval(flushTimer.current);
-      setupPromise
-        .then((fns) => {
-          fns.forEach((fn) => fn());
-          // Belt-and-braces: if setup managed to start the timer despite the
-          // unmount race, clear it now.
-          if (flushTimer.current) clearInterval(flushTimer.current);
-        })
-        .catch(() => {});
+      if (flushTimer.current) clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+      setupPromise.then((fns) => fns.forEach((fn) => fn())).catch(() => {});
     };
   }, [applyQueue, updateView]);
 
@@ -278,12 +278,17 @@ export function usePipeline() {
   const enqueueRerun = useCallback(
     async (
       runId: string,
-      opts?: { fromStep?: string; onlyFailed?: boolean },
+      opts?: {
+        fromStep?: string;
+        onlyFailed?: boolean;
+        variables?: Record<string, string>;
+      },
     ) => {
       const run = await appClient.enqueueRerun(
         runId,
         opts?.onlyFailed ?? false,
         opts?.fromStep,
+        opts?.variables,
       );
       adopt([run]);
       return run;

@@ -22,6 +22,10 @@ const STOP_HEADINGS: &[&str] = &[
     "supplementary materials",
     "tables",
     "figures",
+    // Sections Word extraction appends after the body.
+    "extracted tables",
+    "footnotes",
+    "endnotes",
 ];
 const MIN_ENTRY_CHARS: usize = 20;
 const MAX_ENTRY_CHARS: usize = 1_500;
@@ -39,7 +43,12 @@ pub struct RawEntry {
 }
 
 fn heading_text(text: &str) -> String {
-    let trimmed = text.trim().trim_end_matches(':');
+    // Extracted Markdown marks headings with `#`, or with bold or italics.
+    let trimmed = text
+        .trim()
+        .trim_matches(['#', '*', '_'])
+        .trim()
+        .trim_end_matches(':');
     // Drop leading numbering such as "7", "VII.", or "A.".
     let without_number = trimmed
         .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ')
@@ -56,6 +65,11 @@ fn heading_text(text: &str) -> String {
 
 fn is_heading(text: &str, candidates: &[&str]) -> bool {
     text.trim().chars().count() <= 40 && candidates.contains(&heading_text(text).as_str())
+}
+
+fn page_marker() -> &'static Regex {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN.get_or_init(|| Regex::new(r"(?im)^\s*<!--\s*PAGE\s+\d+\s*-->\s*$").expect("valid"))
 }
 
 fn numbered_marker() -> &'static Regex {
@@ -147,24 +161,28 @@ pub fn entries(blocks: &[Block<'_>]) -> Vec<RawEntry> {
     Vec::new()
 }
 
-/// Splits plain text into blocks at blank lines, for runs without nodes.
+/// Splits plain text into blocks at blank lines and page markers, for runs
+/// without paragraph-level nodes. A marker never joins an entry's text.
 pub fn text_blocks(text: &str) -> Vec<Block<'_>> {
     let mut blocks = Vec::new();
-    let mut start = 0;
-    for (offset, _) in text.match_indices("\n\n") {
-        if offset > start {
+    for page in page_marker().split(text) {
+        let page = page.trim();
+        let mut start = 0;
+        for (offset, _) in page.match_indices("\n\n") {
+            if offset > start {
+                blocks.push(Block {
+                    node_id: "",
+                    text: &page[start..offset],
+                });
+            }
+            start = offset + 2;
+        }
+        if start < page.len() {
             blocks.push(Block {
                 node_id: "",
-                text: &text[start..offset],
+                text: &page[start..],
             });
         }
-        start = offset + 2;
-    }
-    if start < text.len() {
-        blocks.push(Block {
-            node_id: "",
-            text: &text[start..],
-        });
     }
     // A heading glued to its first entry by a single newline is split off.
     let mut split = Vec::with_capacity(blocks.len());
@@ -195,6 +213,15 @@ pub fn doi(text: &str) -> Option<String> {
     let found = pattern.captures(text)?[1].to_string();
     let trimmed = found.trim_end_matches(['.', ',', ';', ')', ']']);
     Some(trimmed.to_ascii_lowercase())
+}
+
+/// Whether an entry labels a DOI, as `doi:` or a `doi.org` link, whether or not
+/// what follows is a valid one.
+pub fn names_doi(text: &str) -> bool {
+    static PATTERN: OnceLock<Regex> = OnceLock::new();
+    PATTERN
+        .get_or_init(|| Regex::new(r"(?i)\bdoi\s*:\s*\S|\bdoi\.org/\S").expect("valid"))
+        .is_match(text)
 }
 
 pub fn arxiv(text: &str) -> Option<String> {

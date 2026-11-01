@@ -3,7 +3,9 @@ use super::*;
 mod pins;
 #[cfg(test)]
 mod tests;
-pub use pins::{reconcile_failed_pins, release_abandoned_pin};
+#[cfg(test)]
+pub(crate) use pins::release_in;
+pub use pins::{is_pinned, reconcile_failed_pins, release_abandoned_pin};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};

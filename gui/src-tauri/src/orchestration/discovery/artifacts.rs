@@ -95,6 +95,43 @@ pub(super) async fn consume(
     }
     engine::consume(p, output, evidence, artifacts)
 }
+/// A paper's versions with any manuscript text moved out of its record read
+/// back from the artifacts of that version. A version whose files can't be
+/// read shows as stored rather than hiding the rest of the paper.
+pub(super) fn full_versions(s: &store::Store, paper: &Paper) -> Vec<PaperVersion> {
+    let read = |version: &PaperVersion, name: &str| -> Result<String> {
+        use std::io::Read;
+        let path = adapters::artifact_path(s, &version.artifacts[name])?;
+        let mut text = String::new();
+        crate::safety::open_regular_file(std::path::Path::new(&path))?
+            .take(64 * 1024 * 1024)
+            .read_to_string(&mut text)
+            .map_err(store::err)?;
+        Ok(text)
+    };
+    let mut versions = paper.versions.clone();
+    for version in versions
+        .iter_mut()
+        .filter(|v| v.manuscript.markdown.is_empty())
+    {
+        let saved = ["paper.md", "paper.tex", "references.bib"]
+            .iter()
+            .all(|name| version.artifacts.contains_key(*name));
+        if !saved {
+            continue;
+        }
+        if let (Ok(markdown), Ok(latex), Ok(bibliography)) = (
+            read(version, "paper.md"),
+            read(version, "paper.tex"),
+            read(version, "references.bib"),
+        ) {
+            version.manuscript.markdown = markdown;
+            version.manuscript.latex = latex;
+            version.manuscript.bibliography = bibliography;
+        }
+    }
+    versions
+}
 pub(super) fn check_artifacts(a: &BTreeMap<String, Value>) -> Result<()> {
     if a.values().any(|v| v["kind"] != "artifact") {
         return Err("List individual research files rather than directories".into());

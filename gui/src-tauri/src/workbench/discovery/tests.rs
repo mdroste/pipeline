@@ -232,6 +232,93 @@ fn roles_keep_the_source_conversation_provider() {
     }
 }
 
+fn source_scope(store: &Store, session: &str) -> Scope {
+    let binding = tasks::binding(store, session).unwrap();
+    Scope {
+        session_id: Some(binding.session_id),
+        workspace_id: binding.workspace_id,
+        session_cursor: Some(binding.cursor),
+        harness_fingerprint: Some(binding.harness_fingerprint),
+        connection_id: binding.connection_id,
+        runtime_root: Some(binding.runtime_root),
+        root_identity: Some(binding.root_identity),
+        ..Scope::default()
+    }
+}
+
+#[test]
+fn role_scopes_pass_the_check_every_submitted_turn_runs() {
+    for runtime in [
+        "codex",
+        "claude",
+        "openai-api",
+        "anthropic-api",
+        "google-api",
+        "local",
+    ] {
+        let temporary = tempfile::tempdir().unwrap();
+        let store = Store::open_at(&temporary.path().join("store")).unwrap();
+        let session = source(&store, "gate-start", "Gate sources", false).unwrap();
+        let current = store.session_snapshot(&session).unwrap().session;
+        store
+            .update_session(UpdateSessionRequest {
+                session_id: session.clone(),
+                expected_revision: current.revision,
+                operation_id: "select-runtime".into(),
+                title: None,
+                draft: None,
+                overrides: Some(json!({"runtime":runtime})),
+                archived: None,
+                preset_id: None,
+                paper_id: None,
+                clear_paper: None,
+            })
+            .unwrap();
+        let scope = source_scope(&store, &session);
+        let deadline = chrono::Utc::now().timestamp() + 3600;
+        for (role_key, writer) in [("paper-1", true), ("action-0", false)] {
+            let (role_scope, _) =
+                role(&store, &scope, "portfolio", role_key, writer, deadline).unwrap();
+            assert_eq!(role_scope.connection_id, scope.connection_id);
+            let binding = crate::orchestration::adapters::task_binding(&role_scope).unwrap();
+            tasks::validate_binding(&store, &binding).unwrap();
+        }
+    }
+}
+
+#[test]
+fn saved_scopes_without_a_connection_recover_through_refresh() {
+    let temporary = tempfile::tempdir().unwrap();
+    let store = Store::open_at(&temporary.path().join("store")).unwrap();
+    let session = source(&store, "saved-start", "Saved sources", false).unwrap();
+    let source = source_scope(&store, &session);
+    let connection = source.connection_id;
+    let deadline = chrono::Utc::now().timestamp() + 3600;
+    let (mut paper, authority) = role(&store, &source, "saved", "paper-1", true, deadline).unwrap();
+    paper.connection_id = None;
+    let stale = crate::orchestration::adapters::task_binding(&paper).unwrap();
+    assert!(tasks::validate_binding(&store, &stale)
+        .unwrap_err()
+        .message
+        .contains("connection"));
+    let recovered = missions::refresh_scope(&store, &paper, &authority).unwrap();
+    assert_eq!(recovered.connection_id, connection);
+    tasks::validate_binding(
+        &store,
+        &crate::orchestration::adapters::task_binding(&recovered).unwrap(),
+    )
+    .unwrap();
+    let mut saved_source = source.clone();
+    saved_source.connection_id = None;
+    let source_authority = missions::authority(&store, &session).unwrap();
+    assert_eq!(
+        missions::refresh_source_scope(&store, &saved_source, &source_authority)
+            .unwrap()
+            .connection_id,
+        connection
+    );
+}
+
 #[test]
 fn partial_setup_recovers_and_expired_grants_cannot_be_reused() {
     let temporary = tempfile::tempdir().unwrap();

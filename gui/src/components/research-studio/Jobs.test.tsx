@@ -192,3 +192,34 @@ it("refreshes the project when a job ended while hidden", async () => {
   await flush();
   expect(onCompleted).toHaveBeenCalledTimes(1);
 });
+
+it("names outputs a finished command left alone", async () => {
+  mocks.jobs.mockResolvedValue([
+    job("failed", { unchangedPreexistingOutputs: ["main.pdf", "main.log"] }),
+  ]);
+  render(<Jobs workspaceId="workspace" onCompleted={vi.fn()} />);
+  await flush();
+  expect(
+    screen.getByText(/without rewriting main\.pdf, main\.log/),
+  ).toHaveTextContent("confirm they match the current inputs");
+});
+
+it("says nothing about outputs when a run left none stale", async () => {
+  mocks.jobs.mockResolvedValue([
+    job("completed", {
+      unchangedPreexistingOutputs: [],
+      upToDateOutputs: ["main.pdf"],
+    }),
+  ]);
+  render(<Jobs workspaceId="workspace" onCompleted={vi.fn()} />);
+  await flush();
+  screen.getByText(/Local jobs/);
+  expect(screen.queryByText(/without rewriting/)).not.toBeInTheDocument();
+});
+
+it("shows the message of a structured failure", async () => {
+  mocks.jobs.mockRejectedValue({ message: "The job list is busy." });
+  render(<Jobs workspaceId="ws" onCompleted={() => {}} />);
+  await flush();
+  expect(screen.getByRole("alert")).toHaveTextContent("The job list is busy.");
+});

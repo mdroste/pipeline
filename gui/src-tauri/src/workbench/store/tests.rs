@@ -974,3 +974,70 @@ fn a_session_can_start_with_its_settings() {
         .create_session_with_overrides(request("third"), Some(&json!({"runtime":"other"})))
         .is_err());
 }
+
+#[test]
+fn an_idle_connection_keeps_the_log_until_it_closes() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::open_at(&temp.path().join("store")).unwrap();
+    let log = store.root_path().join("research.sqlite3-wal");
+    let idle = store.connection().unwrap();
+    store
+        .create_session(CreateSessionRequest {
+            workspace_id: None,
+            title: "kept".into(),
+            operation_id: "kept".into(),
+        })
+        .unwrap();
+    assert!(
+        log.exists(),
+        "the log survives an operation while one is open"
+    );
+    drop(idle);
+    assert!(
+        !log.exists(),
+        "the last close folds the log into the database"
+    );
+    let copy = rusqlite::Connection::open(store.root_path().join("research.sqlite3")).unwrap();
+    let sessions: i64 = copy
+        .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(sessions, 1);
+}
+
+#[test]
+fn a_backup_restores_past_an_idle_connection() {
+    use crate::workbench::release::{
+        export_archive, import_archive, ExportArchiveRequest, ImportArchiveRequest,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let source = Store::open_at(&temp.path().join("source")).unwrap();
+    source
+        .create_session(CreateSessionRequest {
+            workspace_id: None,
+            title: "restored".into(),
+            operation_id: "restored".into(),
+        })
+        .unwrap();
+    let path = temp.path().join("backup.pwrx");
+    export_archive(
+        &source,
+        ExportArchiveRequest {
+            path: path.to_string_lossy().into(),
+        },
+    )
+    .unwrap();
+    let target = Store::open_at(&temp.path().join("target")).unwrap();
+    let idle = target.connection().unwrap();
+    import_archive(
+        &target,
+        ImportArchiveRequest {
+            path: path.to_string_lossy().into(),
+            root_mappings: Default::default(),
+        },
+    )
+    .unwrap();
+    let sessions: i64 = idle
+        .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(sessions, 1);
+}

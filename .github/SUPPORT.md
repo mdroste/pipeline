@@ -23,8 +23,8 @@ methods still work. On Windows, working copies and accepting edits in
 
 ## Updates
 
-Pipeline checks GitHub for new stable releases when it starts, and shows a banner
-when one is available. Choose **Install update**, then **Restart now**. Version
+Pipeline checks GitHub for new stable releases each time it starts, and about once
+a day while it stays open. It shows a banner when one is available. Choose **Install update**, then **Restart now**. Version
 1.3.0 and earlier can't update themselves, so download and run the installer once.
 Only the latest stable release gets security and maintenance fixes.
 
@@ -36,7 +36,7 @@ Only the latest stable release gets security and maintenance fixes.
 | ChatGPT works in your terminal but not in Pipeline | Sign in inside Pipeline. It uses its own ChatGPT sign-in, separate from the terminal's |
 | Claude subscription access fails | Run `claude auth login` and choose a Claude subscription account. See [Connections](../docs/connections.md) |
 | An API or local conversation cannot use tools or images | Check that the selected model supports function calling and images. See [API conversations](../docs/connections.md#api-conversations) |
-| Commands are unavailable in an API or local conversation | Choose **Install command engine** in **Assistant settings** on macOS or Linux. See [setup requirements](../docs/connections.md#api-conversations) |
+| Commands are unavailable in an API or local conversation | On macOS or Linux, open **Assistant settings → Manage agent profiles… → Access & inheritance**. Setup starts there and shows its progress, with a retry button if it fails. See [setup requirements](../docs/connections.md#api-conversations) |
 | A PDF review fails during extraction | Read the error and check the parser in **Settings → Reviews**. See [PDF extraction](../docs/reviews.md#pdf-extraction) |
 | A review stops early | See [When a review can't finish](../docs/reviews.md#when-a-review-cant-finish) |
 | Research is missing after changing the data folder | Choose the previous folder and restart. Changing folders doesn't move data |

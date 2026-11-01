@@ -337,3 +337,82 @@ fn one_run_merge_override_replaces_the_workflow_merge_provider_and_policy() {
     assert_eq!(bound.settings.merge_effort("codex"), "high");
     assert_ne!(bound.fingerprint, "base");
 }
+
+#[test]
+fn rerun_variables_overlay_new_defaults_like_a_fresh_run() {
+    let mut config = empty_test_config();
+    config.variables = vec![
+        crate::pipeline_config::VarSpec {
+            key: "kept".to_string(),
+            default: "declared".to_string(),
+            ..Default::default()
+        },
+        crate::pipeline_config::VarSpec {
+            key: "added_later".to_string(),
+            default: "new default".to_string(),
+            ..Default::default()
+        },
+    ];
+    let parent = std::collections::HashMap::from([("kept".to_string(), "chosen".to_string())]);
+
+    let variables = rerun_variables(&config, &parent, Default::default()).unwrap();
+
+    assert_eq!(variables["kept"], "chosen");
+    assert_eq!(variables["added_later"], "new default");
+    validate_runtime_bindings(&config, &variables, &Default::default(), true).unwrap();
+}
+
+#[test]
+fn a_run_with_a_secret_resumes_only_with_the_secret_entered_again_and_never_keeps_it() {
+    let mut config = empty_test_config();
+    config.variables = vec![
+        crate::pipeline_config::VarSpec {
+            key: "token".to_string(),
+            label: "Token".to_string(),
+            required: true,
+            secret: true,
+            ..Default::default()
+        },
+        crate::pipeline_config::VarSpec {
+            key: "plain".to_string(),
+            ..Default::default()
+        },
+    ];
+    let parent = durable_variables(
+        &config,
+        &std::collections::HashMap::from([("token".to_string(), "original".to_string())]),
+    );
+    assert!(!serde_json::to_string(&parent).unwrap().contains("original"));
+
+    // The saved run can only offer the placeholder, which is refused.
+    assert_eq!(
+        secrets_to_reenter(&config, &parent)
+            .iter()
+            .map(|spec| spec.key.as_str())
+            .collect::<Vec<_>>(),
+        ["token"]
+    );
+    let without = rerun_variables(&config, &parent, Default::default()).unwrap();
+    let refused =
+        validate_runtime_bindings(&config, &without, &Default::default(), true).unwrap_err();
+    assert!(refused.contains("must be entered again"), "{refused}");
+
+    let entered = std::collections::HashMap::from([("token".to_string(), "typed".to_string())]);
+    let variables = rerun_variables(&config, &parent, entered).unwrap();
+    validate_runtime_bindings(&config, &variables, &Default::default(), true).unwrap();
+    assert_eq!(variables["token"], "typed");
+
+    // The child run's manifest is as redacted as its parent's.
+    let child = durable_variables(&config, &variables);
+    assert!(!serde_json::to_string(&child).unwrap().contains("typed"));
+    assert_eq!(secrets_to_reenter(&config, &child).len(), 1);
+
+    // Only declared secrets may arrive this way.
+    let error = rerun_variables(
+        &config,
+        &parent,
+        std::collections::HashMap::from([("plain".to_string(), "x".to_string())]),
+    )
+    .unwrap_err();
+    assert!(error.contains("not a secret variable"), "{error}");
+}

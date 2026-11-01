@@ -16,6 +16,9 @@ pub struct ResearchNote {
     pub revision: i64,
     pub created_at: String,
     pub updated_at: String,
+    /// What a package's sender recorded; not a decision made in this store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -43,14 +46,16 @@ pub struct UpdateNoteRequest {
 }
 
 fn note_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ResearchNote> {
+    let origin: String = row.get(6)?;
     Ok(ResearchNote {
+        imported_status: imported_status(&origin),
         id: row.get(0)?,
         workspace_id: row.get(1)?,
         paper_id: row.get(2)?,
         kind: row.get(3)?,
         body: row.get(4)?,
         state: row.get(5)?,
-        origin: row.get(6)?,
+        origin,
         pinned: row.get(7)?,
         revision: row.get(8)?,
         created_at: row.get(9)?,

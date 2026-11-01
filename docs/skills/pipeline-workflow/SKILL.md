@@ -9,7 +9,7 @@ Turn the user's objective into a bounded portable workflow, make the Pipeline CL
 
 ## Locate the CLI
 
-Prefer `pipeline-cli` when it is on PATH. In a Pipeline source checkout, use:
+Prefer `pipeline-cli` when it is on PATH. In a Pipeline source checkout, first run `npm ci` and `npm run prepare:release-resources` in `gui/`, then use:
 
 ```bash
 cargo run --locked --manifest-path gui/src-tauri/Cargo.toml --bin pipeline-cli -- <COMMAND>

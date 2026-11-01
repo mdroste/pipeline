@@ -1,10 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import {
   onGetStartedRequest,
-  readGetStarted,
   saveGetStarted,
   shouldOfferGetStarted,
-  type GetStartedPersona,
   type GetStartedView,
 } from "../../lib/getStarted";
 import { router } from "../../lib/router";
@@ -51,9 +49,6 @@ export default function GetStartedHost({
   );
   const [step, setStep] = useState(0);
   const [returnToSetup, setReturnToSetup] = useState(false);
-  const [persona, setPersona] = useState<GetStartedPersona | null>(
-    () => readGetStarted()?.persona ?? null,
-  );
 
   useEffect(
     () =>
@@ -94,11 +89,6 @@ export default function GetStartedHost({
       <GetStartedSheet
         step={step}
         onStepChange={setStep}
-        persona={persona}
-        onPersonaChange={(next) => {
-          setPersona(next);
-          saveGetStarted({ persona: next });
-        }}
         dependencies={dependencies}
         dependenciesLoading={dependenciesLoading}
         onCheckDependencies={onCheckDependencies}

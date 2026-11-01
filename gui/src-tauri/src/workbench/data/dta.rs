@@ -646,6 +646,7 @@ pub(super) struct Scan {
 }
 
 pub(super) fn scan<R: Read>(reader: R, len: u64, start: Option<usize>) -> WorkbenchResult<Scan> {
+    let mut window = start.map(Window::new);
     let mut input = Input {
         inner: reader,
         pos: 0,
@@ -660,7 +661,6 @@ pub(super) fn scan<R: Read>(reader: R, len: u64, start: Option<usize>) -> Workbe
         102..=112 | 116 => return Err(unsupported(u16::from(first))),
         _ => return Err(bad("it is not a Stata dataset")),
     };
-    let mut window = start.map(Window::new);
     if let Some(w) = window.as_mut() {
         w.columns = meta
             .vars

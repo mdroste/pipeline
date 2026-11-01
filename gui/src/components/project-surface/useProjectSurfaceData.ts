@@ -29,7 +29,13 @@ export function useProjectSurfaceData(
   const busyRef = useRef(false);
   const background = useRef<Promise<void> | null>(null);
   const [watch, setWatch] = useState(false);
-  const reportError = useCallback((message: string) => setError(message), []);
+  // Every failure shown in this banner passes through here, so a caught error
+  // of any shape reaches the researcher as text rather than a raw object.
+  const reportError = useCallback(
+    (cause: unknown) => setError(workbenchErrorMessage(cause)),
+    [],
+  );
+  const clearError = useCallback(() => setError(null), []);
   const refresh = useCallback(async () => {
     const [home, ws] = await Promise.all([
       projectClient.home(workspaceId),
@@ -104,6 +110,17 @@ export function useProjectSurfaceData(
     },
     [refresh],
   );
+  // An embedded view wrote something that other views show. Queue behind any
+  // quiet check, so an older answer cannot replace the newer one.
+  const changed = useCallback(() => {
+    const reloaded: Promise<void> = (background.current ?? Promise.resolve())
+      .then(() => refresh())
+      .catch((e) => reportError(e))
+      .finally(() => {
+        if (background.current === reloaded) background.current = null;
+      });
+    background.current = reloaded;
+  }, [refresh, reportError]);
   const act = useCallback(
     async (action: ProjectAction) =>
       run(() => projectClient.mutate(workspaceId, action)),
@@ -126,9 +143,13 @@ export function useProjectSurfaceData(
   const backgroundRefresh = useCallback(() => {
     if (busyRef.current || background.current) return;
     background.current = projectClient
-      .mutate(workspaceId, { action: "refresh" })
+      .mutate(workspaceId, { action: "checkForChanges" })
       .then(() => refresh())
       .catch((e) => {
+        // Something else holds the project, such as a Git action. The next
+        // check finds whatever it changed.
+        if ((e as { code?: unknown } | null)?.code === "storage_conflict")
+          return;
         const message = workbenchErrorMessage(e);
         setError((current) => current ?? message);
       })
@@ -168,7 +189,9 @@ export function useProjectSurfaceData(
     watch,
     setWatch,
     reportError,
+    clearError,
     refresh,
+    changed,
     run,
     act,
     saveSettings,

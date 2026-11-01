@@ -59,9 +59,19 @@ struct BundleExtraction {
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
+struct BundleOrigin {
+    #[serde(default)]
+    role: String,
+    #[serde(default)]
+    sha256: String,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
 struct BundleHead {
     #[serde(default)]
     extraction: BundleExtraction,
+    #[serde(default)]
+    origins: Vec<BundleOrigin>,
 }
 
 struct LoadedRun {
@@ -158,6 +168,35 @@ fn load_run(dir: &Path, manifest: RunManifest) -> Result<LoadedRun, String> {
     })
 }
 
+/// Whether a Word file is the version the run read. Its `paper_hash` covers
+/// extracted text, which moves when the extractor improves, so byte-level
+/// records decide first: the captured copy's fingerprint, then the hash a
+/// newer run keeps of the file. Only an older run with neither falls back to
+/// comparing text.
+fn is_reviewed_docx(
+    run: &LoadedRun,
+    path: &Path,
+    captured: bool,
+    bytes: &[u8],
+    expected: &str,
+) -> Result<bool, String> {
+    if captured {
+        let recorded = crate::commands::reuse_artifacts::retained_copy_matches(&run.dir, path);
+        if let Some(matches) = recorded {
+            return Ok(matches);
+        }
+    }
+    let primary = run
+        .bundle
+        .origins
+        .iter()
+        .find(|origin| origin.role == "primary" && !origin.sha256.is_empty());
+    if let Some(origin) = primary {
+        return Ok(short_hash(bytes) == origin.sha256);
+    }
+    Ok(expected.is_empty() || short_hash(docx_text(bytes)?.as_bytes()) == expected)
+}
+
 /// The reviewed manuscript, verified to be the exact version the run read.
 /// A captured copy inside the run is preferred to the original location.
 fn original_document(run: &LoadedRun, extension: &str) -> Result<(PathBuf, Vec<u8>), String> {
@@ -182,7 +221,8 @@ fn original_document(run: &LoadedRun, extension: &str) -> Result<(PathBuf, Vec<u
         ));
     }
     let captured = run.dir.join("source-snapshot").join(file_name(source));
-    let path = if crate::safety::open_regular_file(&captured).is_ok() {
+    let from_snapshot = crate::safety::open_regular_file(&captured).is_ok();
+    let path = if from_snapshot {
         captured
     } else {
         original.clone()
@@ -195,12 +235,12 @@ fn original_document(run: &LoadedRun, extension: &str) -> Result<(PathBuf, Vec<u
     } else {
         run.report.paper_hash.as_str()
     };
-    let actual = if extension == "pdf" {
-        short_hash(&bytes)
+    let unchanged = if extension == "pdf" {
+        expected.is_empty() || short_hash(&bytes) == expected
     } else {
-        short_hash(docx_text(&bytes)?.as_bytes())
+        is_reviewed_docx(run, &path, from_snapshot, &bytes, expected)?
     };
-    if !expected.is_empty() && actual != expected {
+    if !unchanged {
         return Err(format!(
             "The {kind} at {source} has changed since this Review ran, so its quotations may no longer line up. Pipeline annotates only the exact version that was reviewed."
         ));
@@ -354,10 +394,23 @@ fn write_atomically(target: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = target
         .parent()
         .ok_or("Choose a folder for the exported file")?;
-    let mut temporary = tempfile::Builder::new()
-        .prefix(".pipeline-export-")
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".pipeline-export-");
+    // A new export gets a saved file's usual permissions: the default is private,
+    // which would shut colleagues out of a shared folder.
+    #[cfg(unix)]
+    builder.permissions(std::os::unix::fs::PermissionsExt::from_mode(0o666));
+    let mut temporary = builder
         .tempfile_in(parent)
         .map_err(|error| format!("Could not write to the chosen folder: {error}"))?;
+    // A file being replaced keeps the permissions it had.
+    #[cfg(unix)]
+    if let Ok(existing) = std::fs::metadata(target) {
+        temporary
+            .as_file()
+            .set_permissions(existing.permissions())
+            .map_err(|error| format!("Could not write the exported file: {error}"))?;
+    }
     temporary
         .write_all(bytes)
         .and_then(|_| temporary.as_file().sync_all())

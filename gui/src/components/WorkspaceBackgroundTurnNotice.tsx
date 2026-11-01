@@ -3,13 +3,17 @@ export default function WorkspaceBackgroundTurnNotice({
   title,
   waiting,
   onOpen,
+  onOpenAutomations,
 }: {
   title: string | null;
   /** Approvals that response is waiting on. */
   waiting: number;
   onOpen: () => void;
+  /** Set for an Automation's turn, which the Automations page stops. */
+  onOpenAutomations?: () => void;
 }) {
   const conversation = title ? `“${title}”` : "another conversation";
+  const automation = onOpenAutomations && waiting === 0;
   return (
     <div
       role="status"
@@ -18,14 +22,16 @@ export default function WorkspaceBackgroundTurnNotice({
       <p className="min-w-0 flex-1">
         {waiting > 0
           ? `A response in ${conversation} is waiting for your approval.`
-          : `A response is still running in ${conversation}. You can send a message here when it finishes.`}
+          : automation
+            ? `An automation is running in ${conversation}. You can send a message here when it finishes.`
+            : `A response is still running in ${conversation}. You can send a message here when it finishes.`}
       </p>
       <button
         type="button"
-        onClick={onOpen}
+        onClick={automation ? onOpenAutomations : onOpen}
         className="shrink-0 rounded border border-amber-400 px-2 py-1 text-xs font-medium"
       >
-        Open conversation
+        {automation ? "Open Automations" : "Open conversation"}
       </button>
     </div>
   );

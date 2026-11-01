@@ -125,17 +125,20 @@ impl ExportFinding {
                 paragraphs.push(truncate_chars(&body, 3_000));
             }
         } else {
-            paragraphs.push(format!("Problem: {}", truncate_chars(&self.problem, 2_000)));
+            paragraphs.push(format!(
+                "Problem: {}",
+                truncate_chars(&markdown_to_plain(&self.problem), 2_000)
+            ));
             if !self.consequence.is_empty() {
                 paragraphs.push(format!(
                     "Consequence: {}",
-                    truncate_chars(&self.consequence, 1_500)
+                    truncate_chars(&markdown_to_plain(&self.consequence), 1_500)
                 ));
             }
             if !self.recommended_action.is_empty() {
                 paragraphs.push(format!(
                     "Recommended action: {}",
-                    truncate_chars(&self.recommended_action, 1_500)
+                    truncate_chars(&markdown_to_plain(&self.recommended_action), 1_500)
                 ));
             }
         }

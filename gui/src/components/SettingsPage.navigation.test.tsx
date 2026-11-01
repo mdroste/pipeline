@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import SettingsPageComponent from "./SettingsPage";
-import type { ComponentProps } from "react";
+import SettingsPageComponent, { type SettingsSection } from "./SettingsPage";
+import { useSyncExternalStore, type ComponentProps } from "react";
+import { readAppPreferences } from "../lib/appPreferences";
+import { router } from "../lib/router";
+import { settingsSearchEntries } from "./settings/search";
 // Existing Review behavior tests enter Reviews explicitly after the navigation redesign.
 const SettingsPage = (props: ComponentProps<typeof SettingsPageComponent>) => (
   <SettingsPageComponent initialSection="workflow" {...props} />
@@ -216,6 +219,102 @@ describe("SettingsPage navigation", () => {
         delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
       }
     }
+  });
+
+  it.each(["subscription", "api"] as const)(
+    "offers only search results that exist with OpenAI on %s access",
+    async (mode) => {
+      const settings = { ...makeSettings(), codex_access_mode: mode };
+      mockLoad(settings);
+      render(
+        <SettingsPage
+          onClose={() => {}}
+          theme="light"
+          onThemeChange={() => {}}
+          initialSection="providers"
+        />,
+      );
+      await screen.findByRole("heading", { level: 1 });
+      const targets = settingsSearchEntries(
+        settings,
+        readAppPreferences(),
+        "light",
+      )
+        .filter((entry) => entry.section === "providers")
+        .map((entry) => entry.target);
+      expect(targets.includes("Reviews Codex backend")).toBe(mode !== "api");
+      for (const target of targets)
+        expect(
+          document.getElementById(target) ??
+            document.querySelector(`[aria-label="${target}"]`),
+          target,
+        ).not.toBeNull();
+    },
+  );
+
+  describe("a route that changes section while a key is being typed", () => {
+    function Routed() {
+      const { route, revision } = useSyncExternalStore(
+        router.subscribe,
+        router.getSnapshot,
+      );
+      return (
+        <SettingsPageComponent
+          onClose={() => {}}
+          theme="light"
+          onThemeChange={() => {}}
+          initialSection={
+            ((route.page === "settings" && route.section) ||
+              "general") as SettingsSection
+          }
+          navigationKey={revision}
+        />
+      );
+    }
+    async function typeKey() {
+      mockLoad(makeSettings());
+      router.init({ page: "settings", section: "providers" });
+      render(<Routed />);
+      const key = await screen.findByLabelText("Gemini API Key");
+      await userEvent.type(key, "sk-unsaved");
+      await waitFor(() => expect(key).toHaveValue("sk-unsaved"));
+      return key;
+    }
+
+    it("stays and restores the route when leaving is declined", async () => {
+      confirmDialog.mockResolvedValue(false);
+      const key = await typeKey();
+      await act(async () => {
+        await router.navigate({ page: "settings" });
+      });
+      await waitFor(() =>
+        expect(confirmDialog).toHaveBeenCalledWith(
+          "This section has unfinished changes. Leave this section anyway?",
+          { confirmLabel: "Leave section" },
+        ),
+      );
+      await waitFor(() =>
+        expect(router.route).toEqual({
+          page: "settings",
+          section: "providers",
+        }),
+      );
+      expect(screen.getByLabelText("Gemini API Key")).toBe(key);
+      expect(key).toHaveValue("sk-unsaved");
+      expect(confirmDialog).toHaveBeenCalledOnce();
+    });
+
+    it("moves on when leaving is accepted", async () => {
+      confirmDialog.mockResolvedValue(true);
+      await typeKey();
+      await act(async () => {
+        await router.navigate({ page: "settings", section: "storage" });
+      });
+      await waitFor(() =>
+        expect(screen.queryByLabelText("Gemini API Key")).toBeNull(),
+      );
+      expect(router.route).toEqual({ page: "settings", section: "storage" });
+    });
   });
 
   it("shows essential explanations beside their controls", async () => {

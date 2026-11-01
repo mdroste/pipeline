@@ -1,4 +1,6 @@
+import { primaryButton } from "../../ui/classes";
 import { researchClient } from "../../lib/workbench/researchClient";
+import { importedLabel, plainLabel } from "./format";
 import { operation } from "./useResearchPanelController";
 import type { useResearchPanelController } from "./useResearchPanelController";
 import type { ConversationSnapshot } from "../../lib/workbenchTypes";
@@ -23,6 +25,7 @@ export default function EvidenceTab({
     <div className="space-y-4">
       <div>
         <textarea
+          aria-label="Claim text"
           value={claim}
           onChange={(event) => setClaim(event.target.value)}
           rows={3}
@@ -45,7 +48,7 @@ export default function EvidenceTab({
               setClaim("");
             })
           }
-          className="mt-2 rounded bg-gray-900 px-3 py-2 text-xs text-white dark:bg-neutral-100 dark:text-neutral-900"
+          className={`mt-2 ${primaryButton}`}
         >
           Add proposed claim
         </button>
@@ -54,8 +57,8 @@ export default function EvidenceTab({
         ledger.staleClaims.length > 0) && (
         <p className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200">
           {ledger.unsupportedAcceptedClaims.length} accepted claim(s) lack
-          current supporting evidence; {ledger.staleClaims.length} claim(s) have
-          stale evidence.
+          current supporting evidence that you confirmed or a check passed;{" "}
+          {ledger.staleClaims.length} claim(s) have stale evidence.
         </p>
       )}
       <div className="space-y-2">
@@ -65,8 +68,15 @@ export default function EvidenceTab({
             className="rounded border bg-white p-3 dark:bg-neutral-950"
           >
             <div className="text-[11px] text-gray-500">
-              {item.workflowState} · {item.origin} · v{item.version}
+              {plainLabel(item.workflowState)} ·{" "}
+              {item.importedStatus ? "Imported" : plainLabel(item.origin)} · v
+              {item.version}
             </div>
+            {item.importedStatus && (
+              <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                {importedLabel(item.importedStatus)}
+              </p>
+            )}
             <p className="mt-1">{item.claim}</p>
             {item.workflowState !== "accepted" && (
               <button
@@ -99,16 +109,25 @@ export default function EvidenceTab({
               className="rounded border bg-white p-2 text-xs dark:bg-neutral-950"
             >
               <div>
-                {item.relation} · {item.targetType}
+                {plainLabel(item.relation)} · {plainLabel(item.targetType)}
               </div>
               <div
                 className={
                   item.freshness === "stale" ? "text-red-600" : "text-gray-500"
                 }
               >
-                {item.assessment} by {item.assessor} · {item.freshness}
+                {plainLabel(item.assessment)}
+                {item.importedStatus || item.assessor === "user"
+                  ? ""
+                  : ` by ${item.assessor}`}{" "}
+                · {plainLabel(item.freshness)}
                 {item.staleReason ? ` — ${item.staleReason}` : ""}
               </div>
+              {item.importedStatus && (
+                <p className="text-amber-700 dark:text-amber-300">
+                  {importedLabel(item.importedStatus)}
+                </p>
+              )}
               {item.assessment !== "human_confirmed" && (
                 <button
                   type="button"

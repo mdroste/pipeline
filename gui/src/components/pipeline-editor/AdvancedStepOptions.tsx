@@ -1,6 +1,82 @@
 import { memo, useState } from "react";
+import useDraftText from "../../hooks/useDraftText";
 import type { InputSlot, StepConfig } from "../../lib/types";
 import ArtifactContextEditor from "./ArtifactContextEditor";
+
+/** A condition value as typed. A string that would read as JSON keeps its
+ *  quotes, so it stays a string when the field commits again. */
+function surveyValueText(value: unknown): string {
+  if (value === undefined) return "";
+  if (typeof value !== "string") return JSON.stringify(value);
+  try {
+    JSON.parse(value);
+    return JSON.stringify(value);
+  } catch {
+    return value;
+  }
+}
+
+/** JSON where the text is JSON, otherwise the text itself. Blank means no
+ *  value, and so does `null`, which the saved condition cannot hold. */
+function parseSurveyValue(text: string): unknown {
+  if (!text.trim()) return undefined;
+  try {
+    return JSON.parse(text) ?? undefined;
+  } catch {
+    return text;
+  }
+}
+
+function SurveyValueField({
+  label,
+  placeholder,
+  value,
+  className,
+  onCommit,
+}: {
+  label: string;
+  placeholder: string;
+  value: unknown;
+  className: string;
+  onCommit: (value: unknown) => void;
+}) {
+  const draft = useDraftText(surveyValueText(value), (text) =>
+    onCommit(parseSurveyValue(text)),
+  );
+  return (
+    <input
+      type="text"
+      aria-label={label}
+      placeholder={placeholder}
+      className={className}
+      {...draft}
+    />
+  );
+}
+
+function MaxItemsField({
+  value,
+  className,
+  onCommit,
+}: {
+  value: number;
+  className: string;
+  onCommit: (value: number) => void;
+}) {
+  const draft = useDraftText(String(value), (text) => {
+    const parsed = parseInt(text, 10);
+    if (!Number.isNaN(parsed)) onCommit(Math.max(1, parsed));
+  });
+  return (
+    <input
+      type="number"
+      aria-label="Maximum items"
+      min={1}
+      className={className}
+      {...draft}
+    />
+  );
+}
 
 function AdvancedStepOptions({
   step,
@@ -314,68 +390,40 @@ function AdvancedStepOptions({
                       placeholder="JSON pointer, e.g. /metadata/paper_type"
                       className={inputClass}
                     />
-                    <input
-                      type="text"
-                      aria-label="Survey value to equal"
-                      value={
-                        cond.equals === undefined
-                          ? ""
-                          : typeof cond.equals === "string"
-                            ? cond.equals
-                            : JSON.stringify(cond.equals)
-                      }
-                      onChange={(e) => {
-                        const raw = e.target.value;
-                        if (!raw) {
+                    <SurveyValueField
+                      label="Survey value to equal"
+                      value={cond.equals}
+                      onCommit={(value) => {
+                        if (value === undefined) {
                           const { equals: _drop, ...rest } = cond;
                           onChange({ run_if: { ...rest, exists: true } });
                           return;
-                        }
-                        let val: unknown = raw;
-                        try {
-                          val = JSON.parse(raw);
-                        } catch {
-                          /* keep as string */
                         }
                         onChange({
                           run_if: {
                             kind: "survey_path",
                             pointer: cond.pointer,
-                            equals: val,
+                            equals: value,
                           },
                         });
                       }}
                       placeholder='equals (optional), e.g. "empirical" or true'
                       className={inputClass}
                     />
-                    <input
-                      type="text"
-                      aria-label="Survey array value to contain"
-                      value={
-                        cond.contains === undefined
-                          ? ""
-                          : typeof cond.contains === "string"
-                            ? cond.contains
-                            : JSON.stringify(cond.contains)
-                      }
-                      onChange={(e) => {
-                        const raw = e.target.value;
-                        if (!raw) {
+                    <SurveyValueField
+                      label="Survey array value to contain"
+                      value={cond.contains}
+                      onCommit={(value) => {
+                        if (value === undefined) {
                           const { contains: _drop, ...rest } = cond;
                           onChange({ run_if: { ...rest, exists: true } });
                           return;
-                        }
-                        let val: unknown = raw;
-                        try {
-                          val = JSON.parse(raw);
-                        } catch {
-                          /* keep as string */
                         }
                         onChange({
                           run_if: {
                             kind: "survey_path",
                             pointer: cond.pointer,
-                            contains: val,
+                            contains: value,
                           },
                         });
                       }}
@@ -396,6 +444,7 @@ function AdvancedStepOptions({
                   <input
                     type="checkbox"
                     checked={!!step.for_each}
+                    disabled={step.phase === "sequential" && !step.for_each}
                     onChange={(e) =>
                       onChange({
                         for_each: e.target.checked
@@ -406,6 +455,12 @@ function AdvancedStepOptions({
                   />
                   Run once for each item
                 </label>
+                {step.phase === "sequential" && (
+                  <p className="pl-4 text-[10px] text-gray-600 dark:text-gray-400">
+                    Only a step that runs independently can repeat for each
+                    item.
+                  </p>
+                )}
                 {step.for_each && (
                   <div className="space-y-1.5 pl-4">
                     <select
@@ -515,21 +570,10 @@ function AdvancedStepOptions({
                     )}
                     <label className="flex items-center gap-2 text-[10px] text-gray-500">
                       {step.for_each.artifact ? "Max items" : "Max files"}
-                      <input
-                        type="number"
-                        aria-label="Maximum items"
-                        min={1}
+                      <MaxItemsField
                         value={step.for_each.max}
-                        onChange={(e) =>
-                          onChange({
-                            for_each: {
-                              ...step.for_each!,
-                              max: Math.max(
-                                1,
-                                parseInt(e.target.value, 10) || 1,
-                              ),
-                            },
-                          })
+                        onCommit={(max) =>
+                          onChange({ for_each: { ...step.for_each!, max } })
                         }
                         className={`${inputClass} w-20`}
                       />

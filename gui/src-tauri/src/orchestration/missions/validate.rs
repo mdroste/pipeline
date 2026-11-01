@@ -34,12 +34,12 @@ fn strings(values: &[String], max: usize, bytes: usize) -> Result<()> {
 }
 pub fn definition(d: &Definition) -> Result<()> {
     if d.schema_version != 1 {
-        return Err("Unsupported mission version".into());
+        return Err("Unsupported research automation version".into());
     }
     text(&d.name, 160)?;
     text(&d.objective, 8000)?;
     if d.background.len() > 16000 {
-        return Err("Mission background exceeds 16 KiB".into());
+        return Err("Background exceeds 16 KiB".into());
     }
     strings(&d.criteria, 12, 2000)?;
     if d.criteria.is_empty() {
@@ -54,7 +54,7 @@ pub fn definition(d: &Definition) -> Result<()> {
         || !(1..=720).contains(&b.deadline_hours)
         || !(1..=8).contains(&b.max_stagnant_rounds)
     {
-        return Err("Mission limits are outside the supported range".into());
+        return Err("Research automation limits are outside the supported range".into());
     }
     for list in [
         &d.policy.check_profile_ids,
@@ -64,7 +64,7 @@ pub fn definition(d: &Definition) -> Result<()> {
     ] {
         strings(list, 32, 200)?;
         if list.iter().collect::<BTreeSet<_>>().len() != list.len() {
-            return Err("Duplicate mission selections".into());
+            return Err("Duplicate selections".into());
         }
     }
     Ok(())
@@ -98,7 +98,7 @@ pub fn plan(m: &Mission, p: &Plan) -> Result<()> {
     text(&p.summary, 8000)?;
     text(&p.selection_reason, 4000)?;
     if p.new_goals.len() > 16 || m.goals.len() + p.new_goals.len() > 64 || p.candidates.len() > 8 {
-        return Err("Mission goal or candidate limit exceeded".into());
+        return Err("Research automation goal or candidate limit exceeded".into());
     }
     let mut goals: BTreeMap<_, _> = m
         .goals
@@ -175,7 +175,7 @@ pub fn plan(m: &Mission, p: &Plan) -> Result<()> {
             .any(|a| Some(&a.id) == c.capability_id.as_ref() && a.kind == kind)
         {
             return Err(
-                "Investigation requests a capability outside this mission's authorization".into(),
+                "Investigation requests a capability outside this research automation's authorization".into(),
             );
         }
     }
@@ -300,7 +300,10 @@ pub fn challenge(m: &Mission, c: &Challenge) -> Result<()> {
     for a in &c.criteria {
         text(&a.explanation, 4000)?;
         if a.criterion >= m.definition.criteria.len() || !criteria.insert(a.criterion) {
-            return Err("Challenge criterion is missing, duplicated or outside the mission".into());
+            return Err(
+                "Challenge criterion is missing, duplicated or outside the research automation"
+                    .into(),
+            );
         }
         if a.evidence_ids.len() > 32 || a.evidence_ids.iter().any(|id| !evidence.contains(id)) {
             return Err("Challenge cites evidence that the host did not retain".into());
@@ -332,7 +335,7 @@ pub fn challenge(m: &Mission, c: &Challenge) -> Result<()> {
     if c.mission_complete
         && (c.criteria.iter().any(|a| a.status != CriterionStatus::Met) || !c.unresolved.is_empty())
     {
-        return Err("Mission completion requires all criteria met and no unresolved checks".into());
+        return Err("Completion requires all criteria met and no unresolved checks".into());
     }
     questions(
         &c.questions,

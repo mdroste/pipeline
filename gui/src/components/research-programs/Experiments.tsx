@@ -7,6 +7,8 @@ import type {
   GridStatus,
 } from "../../lib/programClient";
 import { studioClient } from "../../lib/studioClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import { confirmDialog } from "../DialogService";
 import Jobs from "../research-studio/Jobs";
 import {
   button,
@@ -19,7 +21,19 @@ import {
   useProgram,
   type DeskProps,
 } from "./shared";
-export default function Experiments(props: DeskProps & { active?: boolean }) {
+/** What each grid state can do next, with the label for each control. */
+const GRID_CONTROLS: Record<string, [control: string, label: string][]> = {
+  running: [
+    ["pause", "Pause grid"],
+    ["cancel", "Cancel grid"],
+  ],
+  attention: [
+    ["reconcile", "Reconcile"],
+    ["cancel", "Cancel grid"],
+  ],
+  paused: [["cancel", "Cancel grid"]],
+};
+export default function Experiments(props: DeskProps) {
   const { workspaceId, onError } = props;
   const p = useProgram(props, ["experiment_plan"]);
   const [title, setTitle] = useState("Specification comparison"),
@@ -43,6 +57,7 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
       return;
     let alive = true;
     const timer = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
       void p
         .call<GridStatus>({ action: "experimentStatus", id: preview.record.id })
         .then((v) => {
@@ -159,6 +174,13 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
                 }
               />
             </Field>
+            <button
+              className={`${button} col-span-2 justify-self-start`}
+              aria-label={`Remove factor ${i + 1}`}
+              onClick={() => setFactors((old) => old.filter((_, j) => j !== i))}
+            >
+              Remove factor
+            </button>
           </div>
         ))}
         <button
@@ -284,28 +306,72 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
                 {preview.run.state === "paused" ? "resume" : "start"}
               </button>
             )}
-            {["running", "attention", "paused"].includes(preview.run.state) &&
-              ["pause", "cancel", "reconcile"].map((control) => (
+            {GRID_CONTROLS[preview.run.state]?.map(([control, label]) => (
+              <button
+                className={button}
+                key={control}
+                disabled={p.busy}
+                onClick={() =>
+                  void p.run(async () => {
+                    if (
+                      control === "cancel" &&
+                      !(await confirmDialog(
+                        "This stops any running command and ends the grid. A cancelled grid can't be resumed. Finished specifications and their results are kept.",
+                        {
+                          title: "Cancel this grid?",
+                          confirmLabel: "Cancel grid",
+                          cancelLabel: "Keep running",
+                          destructive: true,
+                        },
+                      ))
+                    )
+                      return;
+                    setPreview(
+                      await p.call<GridStatus>({
+                        action: "experimentControl",
+                        id: preview.record.id,
+                        control,
+                        fingerprint: preview.record.contentHash,
+                      }),
+                    );
+                  })
+                }
+              >
+                {label}
+              </button>
+            ))}
+            {preview.run.state === "attention" &&
+              preview.run.activeExecutionId && (
                 <button
                   className={button}
-                  key={control}
                   disabled={p.busy}
                   onClick={() =>
-                    void p.run(async () =>
+                    void p.run(async () => {
+                      if (
+                        !(await confirmDialog(
+                          "Pipeline can't tell whether this run finished. It stays in the list with an unknown outcome, and the grid pauses at the next specification. Any files the run wrote are left as they are.",
+                          {
+                            title: "Continue without this run?",
+                            confirmLabel: "Continue without this run",
+                            cancelLabel: "Go back",
+                          },
+                        ))
+                      )
+                        return;
                       setPreview(
                         await p.call<GridStatus>({
                           action: "experimentControl",
                           id: preview.record.id,
-                          control,
+                          control: "continue_unknown",
                           fingerprint: preview.record.contentHash,
                         }),
-                      ),
-                    )
+                      );
+                    })
                   }
                 >
-                  {control}
+                  Continue without this run
                 </button>
-              ))}
+              )}
             <button
               className={button}
               onClick={() =>
@@ -414,7 +480,8 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
         workspaceId={workspaceId}
         visible={props.active !== false}
         onCompleted={() => {
-          void p.refresh().catch(onError);
+          props.onChanged?.();
+          void p.refresh().catch((e) => onError(workbenchErrorMessage(e)));
         }}
       />
     </div>

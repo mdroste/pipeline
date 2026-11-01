@@ -71,9 +71,11 @@ mod archive;
 mod exchange;
 mod retention;
 mod workflow_draft;
+pub(crate) use archive::transcript_role;
 pub use archive::{
-    export_archive, import_archive, inspect_archive, refresh_retained_blobs, ArchiveInspection,
-    ArchiveReport, ExportArchiveRequest, ImportArchiveRequest,
+    export_archive, export_archive_without, import_archive, inspect_archive, missing_backup_files,
+    refresh_retained_blobs, ArchiveInspection, ArchiveReport, ExportArchiveRequest,
+    ImportArchiveRequest, MissingBackupFile,
 };
 pub use exchange::*;
 pub use retention::*;

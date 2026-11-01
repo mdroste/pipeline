@@ -39,7 +39,7 @@ mod snapshots;
 mod tool_catalog;
 
 pub use config::{clone_preset, harness_catalog, load_config, save_config, update_preset};
-pub use harness::resolve_harness;
+pub use harness::{fingerprint_without_result, resolve_harness};
 pub use snapshots::prepare_turn;
 
 fn open_connection(store: &Store) -> WorkbenchResult<Connection> {
@@ -77,7 +77,7 @@ fn validate_id(label: &str, value: &str) -> WorkbenchResult<()> {
     Ok(())
 }
 
-fn validate_text(label: &str, value: &str, maximum: usize) -> WorkbenchResult<String> {
+pub(crate) fn validate_text(label: &str, value: &str, maximum: usize) -> WorkbenchResult<String> {
     let value = value.trim();
     if value.is_empty() || value.len() > maximum || value.chars().any(|character| character == '\0')
     {
@@ -141,6 +141,7 @@ pub(super) fn paper_page_image(
     let connection = open_connection(store)?;
     let (content_hash, pdf_reference): (String, String) = connection.query_row("SELECT pr.content_hash, a.storage_reference FROM paper_revisions pr JOIN papers p ON p.id=pr.paper_id JOIN artifacts a ON a.workspace_id=p.workspace_id AND a.content_hash=pr.content_hash AND a.media_kind='pdf' WHERE pr.id=?1 AND p.workspace_id=?2 AND pr.input_kind='pdf'", params![revision_id, workspace_id], |row| Ok((row.get(0)?,row.get(1)?))).optional().map_err(|error| WorkbenchError::storage("Failed to resolve PDF revision page", error))?.ok_or_else(|| WorkbenchError::invalid("The requested revision is not an immutable PDF in this workspace"))?;
     drop(connection);
+    crate::workbench::store::require_available("This PDF", &pdf_reference)?;
     let rendered = tempfile::tempdir()
         .map_err(|error| WorkbenchError::storage("Failed to stage PDF page render", error))?;
     let preview = crate::pipeline::extract::render_pdf_page_preview(
@@ -203,6 +204,9 @@ pub use execution::*;
 #[cfg(test)]
 #[path = "research/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod evidence_tests;
 
 #[cfg(test)]
 mod harness_contract_tests;

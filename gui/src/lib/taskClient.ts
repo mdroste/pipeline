@@ -40,13 +40,21 @@ export const taskClient = {
     schedule: Schedule,
     enabled: boolean,
     trigger: Trigger | null = null,
+    refresh = false,
   ) =>
     invoke<Schedule>("task_update_schedule", {
       id: schedule.id,
       revision: schedule.revision,
       enabled,
       trigger,
+      refresh,
     }),
+  deleteSchedule: (schedule: Schedule) =>
+    invoke<void>("task_delete_schedule", {
+      id: schedule.id,
+      revision: schedule.revision,
+    }),
+  markSeen: (id: string) => invoke<void>("task_mark_seen", { id }),
   times: (trigger: Trigger) =>
     invoke<number[]>("task_preview_times", {
       trigger,

@@ -15,6 +15,7 @@ mod core;
 mod dispatch;
 mod document;
 mod folder;
+mod folder_snapshot;
 mod latex;
 mod pdf;
 mod rendering;
@@ -33,7 +34,13 @@ pub use core::MAX_RENDERED_PDF_PAGES;
 pub(crate) use core::{find_main_tex, ScopedSourceContext};
 pub use dispatch::extract;
 pub use folder::{effective_input_mode, ingest_folder, ingest_folder_async, ingest_none};
-pub(crate) use latex::stage_selected_source;
+#[cfg(test)]
+pub(crate) use folder_snapshot::FolderOmissions;
+pub(crate) use folder_snapshot::{
+    folder_omissions, plan_folder_copy, slow_scan_notice, FOLDER_OMISSIONS_FILE,
+    MAX_FOLDER_COPY_BYTES, MAX_FOLDER_COPY_FILES, MAX_FOLDER_COPY_FILE_BYTES,
+};
+pub(crate) use latex::{latex_without_comments, stage_selected_source, TEX_GRAPHICS_PATTERN};
 pub(crate) use pdf::{extract_pdftotext, is_withheld_image_text_note};
 pub use rendering::{
     render_pdf_page_preview, render_pdf_pages, RenderedPdfPagePreview, RenderedPdfPages,

@@ -15,7 +15,7 @@ export function useProjectReadingState(
   const [revisionId, setRevisionId] = useState<string | null>(
     layout.revisionId,
   );
-  const [pinnedRevision, setPinnedRevision] = useState<string | null>(() => {
+  const [pinnedRevision, pinRevision] = useState<string | null>(() => {
     try {
       return (
         layout.pinnedRevision ??
@@ -43,6 +43,11 @@ export function useProjectReadingState(
   const [pinnedSelection, setPinnedSelection] = useState<
     DocumentSelection | undefined
   >();
+  // A closed comparison keeps no position for the next one to open at.
+  const setPinnedRevision = useCallback((id: string | null) => {
+    pinRevision(id);
+    if (!id) setPinnedSelection(undefined);
+  }, []);
   const openAnnotation = useCallback(
     (annotation: ProjectRecord<Annotation>) => {
       setRevisionId(annotation.body.selection.revisionId);

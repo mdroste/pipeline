@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 pub mod agent_runtime;
+mod app_menu;
 pub mod auto_review;
 pub mod commands;
 pub mod connections;
@@ -9,6 +10,7 @@ pub mod document_bundle;
 pub mod emit;
 pub mod engines;
 pub mod env;
+pub mod file_stream;
 pub mod file_viewer;
 pub mod findings;
 pub mod model_catalog;
@@ -55,12 +57,37 @@ pub fn run() {
     let builder = builder
         .plugin(tauri_plugin_wdio::init())
         .plugin(tauri_plugin_wdio_webdriver::init());
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .menu(app_menu::build)
+        .on_menu_event(app_menu::handle_event);
 
     builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .register_asynchronous_uri_scheme_protocol(
+            file_stream::SCHEME,
+            |context, request, responder| {
+                static READERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
+                let is_main = context.webview_label() == "main";
+                tauri::async_runtime::spawn(async move {
+                    let permit = READERS.acquire().await;
+                    let response =
+                        tokio::task::spawn_blocking(move || file_stream::handle(&request, is_main))
+                            .await
+                            .unwrap_or_else(|_| {
+                                let mut response = tauri::http::Response::new(Vec::new());
+                                *response.status_mut() =
+                                    tauri::http::StatusCode::INTERNAL_SERVER_ERROR;
+                                response
+                            });
+                    drop(permit);
+                    responder.respond(response);
+                });
+            },
+        )
         .setup(|app| {
             // Pin storage before any recovery or background work opens a store.
             // Settings remains accessible if a configured drive is unavailable.
@@ -68,8 +95,18 @@ pub fn run() {
             env::initialize_resources(app.path().resource_dir().ok());
             commands::cleanup_stale_print_exports();
             engines::schedule_stale_managed_engine_cleanup();
-            let _ = runs::recover_resumable_runs();
-            orchestration::start_if_present(app.handle().clone());
+            // Recovery scales with run history, so it must not hold the window
+            // blank. The coordinator still starts after it.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let _ = runs::recover_resumable_runs();
+                orchestration::start_if_present(handle);
+            });
+            // The login shell can take seconds, so its PATH is ready before the
+            // first provider check has to wait for it.
+            std::thread::spawn(|| {
+                let _ = env::full_path();
+            });
             workbench::programs::commands::start(app.handle().clone());
             updates::start(app.handle().clone());
             Ok(())
@@ -116,6 +153,8 @@ pub fn run() {
             orchestration::commands::task_input,
             orchestration::commands::task_schedules,
             orchestration::commands::task_update_schedule,
+            orchestration::commands::task_delete_schedule,
+            orchestration::commands::task_mark_seen,
             orchestration::commands::task_preview_times,
             orchestration::commands::task_saved_chains,
             orchestration::commands::task_save_chain,
@@ -127,14 +166,12 @@ pub fn run() {
             orchestration::commands::task_export_artifact,
             orchestration::commands::task_export_chain,
             orchestration::commands::task_step_output,
-            commands::run_entry::run_pipeline,
             commands::export::save_report_md,
             commands::export::save_report_html,
             commands::export::save_report_docx,
             commands::export::save_report_docx_comments,
             commands::export::save_report_annotated_pdf,
             commands::export::save_all_artifacts,
-            commands::export::export_run_artifacts,
             commands::export::export_run_package,
             commands::export::reveal_export_in_folder,
             commands::export::print_report_html,
@@ -145,6 +182,8 @@ pub fn run() {
             commands::artifacts::read_pdf_artifact_page,
             commands::artifacts::read_pdf_artifact_bytes,
             commands::artifacts::reveal_run_artifact,
+            commands::artifacts::open_run_artifact,
+            commands::artifacts::open_run_artifact_stream,
             commands::artifacts::read_page_artifact,
             commands::artifacts::list_runs,
             commands::artifacts::get_run_report,
@@ -164,7 +203,7 @@ pub fn run() {
             commands::batch::cancel_batch,
             commands::batch::list_input_files,
             // Resume / partial re-run
-            commands::rerun::rerun_run,
+            commands::rerun::rerun_requirements,
             // Review run queue (several reviews at once)
             commands::run_queue::enqueue_run,
             commands::run_queue::enqueue_batch,
@@ -224,6 +263,12 @@ pub fn run() {
             workbench::commands::workbench_project_index,
             workbench::commands::workbench_repository_status,
             workbench::commands::workbench_repository_fetch,
+            workbench::commands::workbench_version_control_state,
+            workbench::commands::workbench_version_control_diff,
+            workbench::commands::workbench_version_control_history,
+            workbench::commands::workbench_version_control_commit,
+            workbench::commands::workbench_version_control_action,
+            workbench::commands::workbench_version_control_cancel,
             workbench::commands::workbench_capture_execution_plan,
             workbench::commands::workbench_execution_plan_status,
             workbench::commands::workbench_authorize_execution_plan,
@@ -279,7 +324,17 @@ pub fn run() {
             workbench::commands::workbench_project_mutate,
             workbench::commands::workbench_document_read,
             workbench::commands::workbench_file_read,
+            workbench::commands::workbench_file_external,
+            workbench::commands::workbench_file_open,
+            workbench::commands::workbench_file_release,
+            workbench::commands::workbench_file_table,
+            workbench::commands::workbench_file_image_preview,
+            workbench::commands::workbench_file_document_text,
+            workbench::commands::workbench_file_list,
+            workbench::commands::workbench_file_search,
+            workbench::commands::workbench_file_stat,
             workbench::commands::workbench_conversation_file_open,
+            workbench::commands::workbench_conversation_folder_reveal,
             workbench::commands::workbench_conversation_file_read,
             workbench::commands::workbench_file_reveal,
             workbench::commands::workbench_anchor_mapping,
@@ -299,6 +354,7 @@ pub fn run() {
             workbench::commands::workbench_detect_toolchains,
             workbench::commands::workbench_run_execution,
             workbench::commands::workbench_list_jobs,
+            workbench::commands::workbench_execution_output,
             workbench::commands::workbench_job_log,
             workbench::commands::workbench_reconcile_job,
             workbench::commands::workbench_list_executions,
@@ -320,6 +376,7 @@ pub fn run() {
             workbench::commands::workbench_list_research_evaluations,
             workbench::commands::workbench_prepare_review_handoff,
             workbench::commands::workbench_link_review_handoff,
+            workbench::commands::workbench_missing_backup_files,
             workbench::commands::workbench_export_research_archive,
             workbench::commands::workbench_inspect_research_archive,
             workbench::commands::workbench_preview_project_exchange,
@@ -358,6 +415,7 @@ pub fn run() {
             workbench::commands::workbench_codex_reconcile_session,
             workbench::commands::workbench_codex_resolve_server_request,
             workbench::commands::workbench_codex_pending_requests,
+            workbench::commands::workbench_active_turn,
             commands::config::get_settings,
             commands::config::save_settings,
             commands::config::discard_undecryptable_secret,
@@ -373,7 +431,6 @@ pub fn run() {
             commands::config::get_default_parallel_template,
             commands::config::get_default_prompt,
             commands::config::get_orientation_defaults,
-            commands::config::get_auto_review_orientation_prompt,
             commands::config::get_findings_output_schema,
             commands::config::preview_provider_schema,
             commands::config::get_auto_review_orientation_defaults,
@@ -391,7 +448,6 @@ pub fn run() {
             commands::config::import_item,
             commands::config::export_profile,
             commands::config::import_profile,
-            commands::config::import_profile_from_url,
             commands::config::export_bundle,
             commands::config::import_bundle,
             // Update check
@@ -416,8 +472,6 @@ pub fn run() {
             pipeline::codex_server::connection::workflow_codex_reconcile_attempt,
             pipeline::codex_server::connection::workflow_codex_login_start,
             pipeline::codex_server::connection::workflow_codex_login_cancel,
-            pipeline::codex_server::connection::workflow_codex_logout,
-            pipeline::codex_server::connection::workflow_codex_rate_limits,
             agent_runtime::codex::chatgpt::chatgpt_account_status,
             agent_runtime::codex::chatgpt::chatgpt_login_start,
             agent_runtime::codex::chatgpt::chatgpt_login_cancel,
@@ -425,6 +479,7 @@ pub fn run() {
             agent_runtime::codex::chatgpt::chatgpt_select_existing_account,
             agent_runtime::codex::chatgpt::chatgpt_model_catalog,
             agent_runtime::codex::chatgpt::chatgpt_rate_limits,
+            app_menu::set_sidebar_menu_collapsed,
             mark_smoke_ready,
         ])
         .build(tauri::generate_context!())
@@ -440,11 +495,13 @@ pub fn run() {
 /// Stop every runtime that owns child processes. Runs on normal exit and
 /// before the Windows updater ends the process, which skips the exit event.
 fn stop_runtimes() {
+    workbench::store::Store::close_idle_connection();
     tauri::async_runtime::block_on(orchestration::shutdown());
     tauri::async_runtime::block_on(workbench::claude::shutdown());
     tauri::async_runtime::block_on(workbench::api::shutdown());
     tauri::async_runtime::block_on(workbench::research::jobs::shutdown());
     tauri::async_runtime::block_on(pipeline::codex_server::shutdown());
+    tauri::async_runtime::block_on(workbench::commands::stop_codex_runtime());
     tauri::async_runtime::block_on(agent_runtime::codex::chatgpt::shutdown());
 }
 
@@ -455,5 +512,13 @@ mod smoke_tests {
     #[test]
     fn readiness_marker_is_a_noop_without_ci_environment() {
         assert!(!write_smoke_ready(None).unwrap());
+    }
+
+    #[test]
+    fn exit_stops_conversation_app_server_before_the_shared_account() {
+        let source = include_str!("lib.rs");
+        let stops = &source[source.find("fn stop_runtimes").unwrap()..];
+        let codex = stops.find("stop_codex_runtime()").unwrap();
+        assert!(codex < stops.find("chatgpt::shutdown()").unwrap());
     }
 }

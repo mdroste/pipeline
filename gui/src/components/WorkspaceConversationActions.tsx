@@ -2,7 +2,8 @@
 // actions menu on each row, and the shared move dialog that the menu and the
 // research panel's unfiled notice both open.
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
+import useModalDialog from "../hooks/useModalDialog";
 import type { WorkbenchSession, Workspace } from "../lib/workbenchTypes";
 import IconButton from "../ui/IconButton";
 import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
@@ -14,6 +15,7 @@ export function ConversationMenu({
   onRename,
   onGenerateTitle,
   onMove,
+  onRevealFiles,
   onArchive,
   onDelete,
 }: {
@@ -22,6 +24,7 @@ export function ConversationMenu({
   onRename: () => void;
   onGenerateTitle: () => void;
   onMove: () => void;
+  onRevealFiles?: () => void;
   onArchive: () => void;
   onDelete: () => void;
 }) {
@@ -50,6 +53,9 @@ export function ConversationMenu({
         <MenuItem onSelect={onRename}>Rename…</MenuItem>
         <MenuItem onSelect={onGenerateTitle}>Generate title</MenuItem>
         <MenuItem onSelect={onMove}>Move to project…</MenuItem>
+        {onRevealFiles && (
+          <MenuItem onSelect={onRevealFiles}>Reveal working files</MenuItem>
+        )}
         <MenuItem onSelect={onArchive}>
           {session.archivedAt ? "Restore" : "Archive"}
         </MenuItem>
@@ -88,19 +94,21 @@ export function MoveConversationDialog({
       .map((workspace) => ({ id: workspace.id, name: workspace.name })),
   ];
   const [target, setTarget] = useState<string>(targets[0]?.id ?? "");
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [busy, onClose]);
+  const dialog = useModalDialog<HTMLFormElement>(
+    () => {
+      if (!busy) onClose();
+    },
+    true,
+    true,
+  );
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/30 p-4">
       <form
+        ref={dialog}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        tabIndex={-1}
         onSubmit={(event) => {
           event.preventDefault();
           if (targets.length) onMove(target || null);

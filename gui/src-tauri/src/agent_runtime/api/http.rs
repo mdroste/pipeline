@@ -3,7 +3,7 @@
 use std::sync::LazyLock;
 pub(crate) fn client(
     no_proxy: bool,
-    timeout: Option<std::time::Duration>,
+    silence: Option<std::time::Duration>,
 ) -> Result<reqwest::Client, String> {
     let builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -14,8 +14,10 @@ pub(crate) fn client(
     } else {
         builder
     };
-    let builder = if let Some(timeout) = timeout {
-        builder.timeout(timeout)
+    // A limit on silence, not on the whole reply: a slow local model may stream
+    // for far longer than any model takes to send its next piece.
+    let builder = if let Some(silence) = silence {
+        builder.read_timeout(silence)
     } else {
         builder
     };

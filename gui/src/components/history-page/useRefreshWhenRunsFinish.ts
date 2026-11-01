@@ -1,31 +1,23 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import type { RunQueueSnapshot, RunSummary } from "../../lib/types";
+import type { RunQueueSnapshot } from "../../lib/types";
 
-/** Reloads history when a review listed as running finishes in the review
- *  queue, so its row gains its report and actions. */
-export default function useRefreshWhenRunsFinish(
-  runs: RunSummary[],
-  refresh: () => unknown,
-) {
-  const runningIds = runs
-    .filter((run) => run.status === "running")
-    .map((run) => run.run_id)
-    .join("\0");
-
+/** Reloads history whenever the review queue moves on, so a review appears once
+ *  its run exists and its row changes when it ends. Matches queue entries by
+ *  their own key: a failed or cancelled entry never carries a run id. */
+export default function useRefreshWhenRunsFinish(refresh: () => unknown) {
   useEffect(() => {
-    if (!runningIds) return;
-    const running = new Set(runningIds.split("\0"));
     let live = true;
     let unlisten: (() => void) | undefined;
+    const progress = new Map<string, string>();
     listen<RunQueueSnapshot>("runs:queue", ({ payload }) => {
-      const finished = payload.runs.some(
-        (run) =>
-          run.runId !== null &&
-          running.has(run.runId) &&
-          run.status !== "running",
+      const reached = payload.runs.map(
+        (run) => [run.key, `${run.status}:${run.stage}`] as const,
       );
-      if (live && finished) void refresh();
+      const moved = reached.some(([key, step]) => progress.get(key) !== step);
+      progress.clear();
+      reached.forEach(([key, step]) => progress.set(key, step));
+      if (live && moved) void refresh();
     })
       .then((off) => {
         if (live) unlisten = off;
@@ -36,5 +28,5 @@ export default function useRefreshWhenRunsFinish(
       live = false;
       unlisten?.();
     };
-  }, [runningIds, refresh]);
+  }, [refresh]);
 }

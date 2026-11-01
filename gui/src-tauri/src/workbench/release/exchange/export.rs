@@ -211,6 +211,12 @@ pub fn export_exchange(
     if pkg.objects.is_empty() {
         return Err(WorkbenchError::invalid("The selection contains no objects"));
     }
+    if !pkg.unpackaged.is_empty() {
+        return Err(WorkbenchError::invalid(format!(
+            "This package can't hold everything you selected: {}. Turn off Paper files to send the extracted text only.",
+            pkg.unpackaged.join("; ")
+        )));
+    }
     let manifest = manifest_for(store, ws, &request.selection, &pkg)?;
     let parent = target
         .parent()

@@ -5,6 +5,7 @@ import type {
   DeleteSessionRequest,
   MoveSessionRequest,
   Mutation,
+  SessionCursor,
   SessionList,
   SessionSnapshot,
   TitlePreferences,
@@ -43,10 +44,15 @@ export const conversationClient = {
   generateSessionTitle(sessionId: string) {
     return invoke<string>("workbench_generate_session_title", { sessionId });
   },
-  listSessions(workspaceId: string | null, includeArchived = false) {
+  listSessions(
+    workspaceId: string | null,
+    includeArchived = false,
+    cursor?: SessionCursor | null,
+  ) {
     return invoke<SessionList>("workbench_list_sessions", {
       workspaceId,
       includeArchived,
+      ...(cursor ? { cursor } : {}),
     });
   },
   sessionSnapshot(sessionId: string) {
@@ -71,6 +77,9 @@ export const conversationClient = {
       sessionId,
       path,
     });
+  },
+  revealConversationFolder(sessionId: string) {
+    return invoke<void>("workbench_conversation_folder_reveal", { sessionId });
   },
   readConversationFile(sessionId: string, path: string) {
     return invoke<FilePreview>("workbench_conversation_file_read", {

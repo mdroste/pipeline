@@ -285,13 +285,16 @@ pub fn push_str_limited(
 }
 
 /// State shared by recursive walkers. It independently bounds files, empty
-/// directories, and wall time so none can evade the other limits.
+/// directories, and wall time so none can evade the other limits. A walk that
+/// copies or hashes files is bounded by its bytes and takes as long as the disk
+/// takes, so it drops the clock with [`WalkBudget::without_time_limit`].
 pub struct WalkBudget {
     started: Instant,
     entries: usize,
     directories: usize,
     label: &'static str,
     cancellable: bool,
+    timed: bool,
 }
 
 impl WalkBudget {
@@ -302,6 +305,7 @@ impl WalkBudget {
             directories: 1,
             label,
             cancellable: false,
+            timed: true,
         }
     }
 
@@ -309,6 +313,22 @@ impl WalkBudget {
         Self {
             cancellable: true,
             ..Self::new(label)
+        }
+    }
+
+    pub fn without_time_limit(self) -> Self {
+        Self {
+            timed: false,
+            ..self
+        }
+    }
+
+    /// The same walk with its clock already past the time limit.
+    #[cfg(test)]
+    pub fn overdue(self) -> Self {
+        Self {
+            started: Instant::now() - MAX_WALK_TIME * 2,
+            ..self
         }
     }
 
@@ -332,7 +352,7 @@ impl WalkBudget {
                 self.label
             ));
         }
-        if self.started.elapsed() > MAX_WALK_TIME {
+        if self.timed && self.started.elapsed() > MAX_WALK_TIME {
             return Err(format!(
                 "{} exceeded the scan-time safety limit",
                 self.label
@@ -348,6 +368,20 @@ impl WalkBudget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_walk_without_a_time_limit_keeps_its_other_limits() {
+        let overdue = |walk: WalkBudget| WalkBudget {
+            started: Instant::now() - MAX_WALK_TIME * 2,
+            ..walk
+        };
+        let mut timed = overdue(WalkBudget::new("copy"));
+        assert!(timed.entry().unwrap_err().contains("scan-time"));
+        let mut untimed = overdue(WalkBudget::new("copy").without_time_limit());
+        assert!(untimed.entry().is_ok());
+        untimed.entries = MAX_WALK_ENTRIES;
+        assert!(untimed.entry().unwrap_err().contains("entry safety limit"));
+    }
 
     #[test]
     fn replacement_rejects_multiplicative_expansion_before_allocating() {

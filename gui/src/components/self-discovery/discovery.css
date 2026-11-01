@@ -38,6 +38,15 @@
 .discovery-selection {
   padding: 12px 0;
 }
+.discovery-attention {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--ui-page-line);
+  border-radius: 8px;
+}
+.discovery-attention p {
+  margin-top: 0;
+}
 .discovery-manuscript {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

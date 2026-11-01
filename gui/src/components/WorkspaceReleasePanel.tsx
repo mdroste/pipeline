@@ -22,6 +22,16 @@ function operation(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+/** Long enough to recognize the damage, short enough to fit in a dialog. */
+const LISTED_FILES = 12;
+function fileList(names: string[]) {
+  const listed = names.slice(0, LISTED_FILES).map((name) => `• ${name}`);
+  if (names.length > LISTED_FILES) {
+    listed.push(`• and ${names.length - LISTED_FILES} more`);
+  }
+  return listed.join("\n");
+}
+
 interface WorkspaceReleasePanelProps {
   snapshot?: ConversationSnapshot | null;
   workspaceId?: string | null;
@@ -74,16 +84,40 @@ export default function WorkspaceReleasePanel({
   }, [onError, view]);
 
   const exportArchive = async () => {
+    const missing = await releaseClient.missingBackupFiles();
+    if (
+      missing.length &&
+      !(await confirmDialog(
+        `The files behind ${plural(missing.length, "saved item")} are missing from your research data folder, so a backup can't include them:\n${fileList(missing.map((file) => file.description))}\n\nEverything else will be saved. After restoring, these items stay in your projects and show as unavailable. If you still have the files, cancel and copy them back first.`,
+        {
+          title: "Back up without these files?",
+          confirmLabel: "Back up without them",
+        },
+      ))
+    )
+      return;
     const path = await save({
       defaultPath: "workspace-research.pwrx",
       filters: [{ name: "Research backup", extensions: ["pwrx"] }],
     });
     if (!path) return;
-    const report = await releaseClient.exportResearchArchive(path);
-    notify(
-      `Exported ${plural(report.workspaceCount, "project")}, ${plural(report.sessionCount, "conversation")}, and ${plural(report.blobCount, "file")}.\n\n${report.portabilityNote}`,
-      "success",
+    const report = await releaseClient.exportResearchArchive(
+      path,
+      missing.map((file) => file.reference),
     );
+    const summary = `Exported ${plural(report.workspaceCount, "project")}, ${plural(report.sessionCount, "conversation")}, and ${plural(report.blobCount, "file")}.`;
+    if (report.omittedFiles.length) {
+      await confirmDialog(
+        `${summary}\n\nLeft out because their files were missing:\n${fileList(report.omittedFiles)}\n\n${report.portabilityNote}`,
+        {
+          title: "Backup saved without some files",
+          confirmLabel: "OK",
+          acknowledgeOnly: true,
+        },
+      );
+      return;
+    }
+    notify(`${summary}\n\n${report.portabilityNote}`, "success");
   };
 
   const restoreArchive = async () => {
@@ -96,9 +130,12 @@ export default function WorkspaceReleasePanel({
     const roots = inspection.workspaceRoots.length
       ? inspection.workspaceRoots.map((root) => `• ${root}`).join("\n")
       : "• None";
+    const leftOut = inspection.omittedFileCount
+      ? `This backup was made without ${plural(inspection.omittedFileCount, "file")} that had gone missing. The items that used them come back as unavailable.\n\n`
+      : "";
     if (
       !(await confirmDialog(
-        `You can restore only if Pipeline has no saved projects or conversations. Conversations restart from saved context. Test your command profiles again after restoring.\n\nProject folders in this backup:\n${roots}\n\n${inspection.portabilityNote}`,
+        `You can restore only if Pipeline has no saved projects or conversations. Conversations restart from saved context. Test your command profiles again after restoring.\n\nProject folders in this backup:\n${roots}\n\n${leftOut}${inspection.portabilityNote}`,
         { title: "Restore research backup", confirmLabel: "Continue" },
       ))
     )
@@ -108,8 +145,16 @@ export default function WorkspaceReleasePanel({
       : {};
     if (!mappings) return;
     const report = await releaseClient.importResearchArchive(path, mappings);
-    window.alert(
-      `Restored ${plural(report.workspaceCount, "project")} and ${plural(report.sessionCount, "conversation")}.\n\n${report.portabilityNote}`,
+    const unavailable = report.omittedFiles.length
+      ? `Unavailable because their files were missing from this backup:\n${fileList(report.omittedFiles)}\n\n`
+      : "";
+    await confirmDialog(
+      `Restored ${plural(report.workspaceCount, "project")} and ${plural(report.sessionCount, "conversation")}.\n\n${unavailable}${report.portabilityNote}`,
+      {
+        title: "Research backup restored",
+        confirmLabel: "OK",
+        acknowledgeOnly: true,
+      },
     );
     window.location.reload();
   };
@@ -188,7 +233,7 @@ export default function WorkspaceReleasePanel({
             Paper review
           </h3>
           <p className="mt-1 text-xs text-gray-500">
-            Review a saved copy of this paper. Choose the workflow and models in
+            Review a saved copy of this paper. Choose the review and models in
             the preview before starting.
           </p>
           <button

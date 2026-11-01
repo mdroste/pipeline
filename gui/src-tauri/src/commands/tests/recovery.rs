@@ -101,3 +101,100 @@ fn resume_starts_at_the_first_missing_step_after_recovery() {
     assert!(seeds.contains("empirical"));
     assert!(seeds.contains("synthesis"));
 }
+
+fn resume_step(id: &str, after: &[&str]) -> crate::pipeline_config::StepConfig {
+    crate::pipeline_config::StepConfig {
+        id: id.to_string(),
+        enabled: true,
+        after: after.iter().map(|id| id.to_string()).collect(),
+        ..Default::default()
+    }
+}
+
+fn resume_output(id: &str, text: &str, skipped: bool) -> crate::models::StepOutput {
+    crate::models::StepOutput {
+        step_id: id.to_string(),
+        raw_text: text.to_string(),
+        skipped,
+        ..Default::default()
+    }
+}
+
+fn parent_report(step_outputs: Vec<crate::models::StepOutput>) -> PipelineReport {
+    PipelineReport {
+        orientation: serde_json::Value::Null,
+        step_outputs,
+        failed_steps: Vec::new(),
+        products: Default::default(),
+        quality: Default::default(),
+        referee_reports: Vec::new(),
+        editor: None,
+        report_date: chrono::Local::now().date_naive(),
+        paper_hash: "test".into(),
+    }
+}
+
+fn resume_selection(
+    config: &PipelineConfig,
+    report: &PipelineReport,
+) -> std::collections::HashMap<String, Vec<crate::models::StepOutput>> {
+    let app: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+    let parent = tempfile::tempdir().unwrap();
+    select_reusable_outputs(
+        &app,
+        "parent",
+        parent.path(),
+        config,
+        report,
+        false,
+        None,
+        true,
+    )
+}
+
+fn parent_with_a_skipped_step() -> PipelineReport {
+    parent_report(vec![
+        resume_output("optional", "_(skipped: run_if condition not met)_", true),
+        resume_output("summary", "Completed summary", false),
+    ])
+}
+
+#[test]
+fn resume_reuses_the_dependents_of_a_skipped_step() {
+    let mut config = empty_test_config();
+    config.steps = vec![
+        resume_step("optional", &[]),
+        resume_step("summary", &["optional"]),
+    ];
+
+    let preloaded = resume_selection(&config, &parent_with_a_skipped_step());
+
+    assert_eq!(preloaded["summary"][0].raw_text, "Completed summary");
+    // The skipped step itself evaluates its guard again.
+    assert!(!preloaded.contains_key("optional"));
+}
+
+#[test]
+fn a_skipped_producer_needs_no_retained_files() {
+    let mut config = empty_test_config();
+    let mut summary = resume_step("summary", &["optional"]);
+    summary.context.include = vec![crate::pipeline_config::ArtifactSelector::Step {
+        step: "optional".to_string(),
+        parts: vec![crate::pipeline_config::StepArtifactPart::Files],
+        glob: String::new(),
+    }];
+    config.steps = vec![resume_step("optional", &[]), summary];
+
+    let preloaded = resume_selection(&config, &parent_with_a_skipped_step());
+
+    assert!(preloaded.contains_key("summary"));
+}
+
+#[test]
+fn a_step_with_no_output_still_invalidates_its_dependents() {
+    let mut config = empty_test_config();
+    config.steps = vec![resume_step("lost", &[]), resume_step("summary", &["lost"])];
+    let report = parent_report(vec![resume_output("summary", "Completed summary", false)]);
+
+    assert!(resume_selection(&config, &report).is_empty());
+}

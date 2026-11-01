@@ -21,6 +21,7 @@ import {
   type ProgramAction,
 } from "../../lib/programClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
+import useReopenCount from "../../hooks/useReopenCount";
 import {
   button,
   input,
@@ -46,7 +47,7 @@ export const exactRecord = (r: {
 export const key = (r: OpenResearchObject) =>
   JSON.stringify([r.kind, r.id, r.revision, r.start ?? null, r.end ?? null]);
 export function useProgram(
-  { workspaceId, onError }: DeskProps,
+  { workspaceId, onError, onChanged, onActionStart, active }: DeskProps,
   kinds: string[],
 ) {
   const [choices, setChoices] = useState<Choices | null>(null),
@@ -72,6 +73,7 @@ export function useProgram(
       ),
     );
   }, [workspaceId, kindKey]);
+  const reopened = useReopenCount(active);
   useEffect(() => {
     let alive = true;
     void refresh().catch((e) => {
@@ -80,13 +82,15 @@ export function useProgram(
     return () => {
       alive = false;
     };
-  }, [refresh, onError]);
+  }, [refresh, onError, reopened]);
   const run = async (fn: () => Promise<unknown>) => {
     if (gate.current) return;
     gate.current = true;
     setBusy(true);
+    onActionStart?.();
     try {
       await fn();
+      onChanged?.();
       await refresh();
     } catch (e) {
       onError(workbenchErrorMessage(e));
@@ -158,7 +162,8 @@ export function ObjectSelect({
         <option value="">Choose saved evidence</option>
         {shown.map((o) => (
           <option key={key(o.reference)} value={key(o.reference)}>
-            {o.title} · {o.reference.kind} · {o.reference.revision.slice(0, 8)}
+            {o.label} · {o.recordKind ?? o.reference.kind} ·{" "}
+            {o.reference.revision.slice(0, 8)}
           </option>
         ))}
       </select>
@@ -193,7 +198,7 @@ export function Sources({
             className="flex-1 text-left underline"
             onClick={() => onOpen(s)}
           >
-            {choices.find((c) => key(c.reference) === key(s))?.title ?? s.kind}{" "}
+            {choices.find((c) => key(c.reference) === key(s))?.label ?? s.kind}{" "}
             · {s.revision.slice(0, 8)}
           </button>
           <button
@@ -213,12 +218,14 @@ export function Artifacts({
   artifacts,
   choices,
   onError,
+  onChanged,
 }: {
   workspaceId: string;
   recordId: string;
   artifacts: Artifact[];
   choices: Choices | null;
   onError: DeskProps["onError"];
+  onChanged?: DeskProps["onChanged"];
 }) {
   const [preview, setPreview] = useState<{
       artifact: Artifact;
@@ -362,6 +369,7 @@ export function Artifacts({
                 path,
                 expectedHash: expected || null,
               });
+              onChanged?.();
               setNotice(
                 "Added to the working copy. Open Review edits to check and accept the change.",
               );

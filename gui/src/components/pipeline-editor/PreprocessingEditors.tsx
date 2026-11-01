@@ -60,10 +60,10 @@ function ExtractionEditor({
 
         <div>
           <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-            Input mode (per profile)
+            Input mode (per review)
           </label>
           <select
-            aria-label="Workflow input mode"
+            aria-label="Review input mode"
             value={inputMode}
             onChange={(e) => onChange({ input_mode: e.target.value })}
             className="w-full py-1.5 px-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
@@ -98,7 +98,7 @@ function ExtractionEditor({
 
         <div>
           <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-            Method (per profile)
+            Method (per review)
           </label>
           <select
             aria-label="PDF extraction method"
@@ -272,11 +272,11 @@ function OrientationEditor({
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="rounded bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-950/40 dark:text-green-300">
+          <span className="rounded bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-gray-800 dark:text-gray-300">
             Required
           </span>
           <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-            Runs before every workflow
+            Runs before every review
           </span>
           <span className="ml-auto rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
             {schema ? "Schema configured" : "Object-only schema"} · Schemas tab

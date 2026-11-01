@@ -26,6 +26,10 @@ function isIssuesSchema(
   );
 }
 
+function stepLabel(id: string, config: PipelineConfig): string {
+  return config.steps.find((step) => step.id === id)?.label ?? id;
+}
+
 function inputDescriptions(step: StepConfig, config: PipelineConfig): string[] {
   const labels = new Map(
     config.steps.map((candidate) => [candidate.id, candidate.label]),
@@ -84,7 +88,7 @@ export function describeStep(
 ): StepSummary {
   const providers = step.agents.length
     ? naturalList(step.agents.map(providerLabel))
-    : "the profile’s default provider";
+    : "the review’s default provider";
   const timing =
     step.phase === "parallel"
       ? "Runs independently"
@@ -98,7 +102,7 @@ export function describeStep(
   const inputs = inputDescriptions(step, config);
   const receives = inputs.length
     ? `Receives ${naturalList(inputs)}.`
-    : "Receives no workflow artifacts.";
+    : "Receives no review files.";
   const output = isIssuesSchema(step.output_schema)
     ? "Produces structured issues JSON."
     : step.output_schema
@@ -107,9 +111,12 @@ export function describeStep(
   const maxUnits = step.for_each?.max ?? 1;
   const agentCount = Math.max(1, step.agents.length);
   const maxCalls = maxUnits * agentCount;
-  const fanOut = step.for_each
-    ? ` Fans out over up to ${step.for_each.max} files matching ${step.for_each.glob}.`
-    : "";
+  const fanOutSource = step.for_each?.artifact;
+  const fanOut = !step.for_each
+    ? ""
+    : fanOutSource
+      ? ` Fans out over up to ${step.for_each.max} items from ${stepLabel(fanOutSource.step, config)}.`
+      : ` Fans out over up to ${step.for_each.max} files matching ${step.for_each.glob}.`;
   const calls =
     maxCalls === 1
       ? "One provider call before retries."

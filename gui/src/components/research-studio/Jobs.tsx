@@ -13,12 +13,19 @@ import type {
   ExecutionProfile,
   ResearchExecution,
 } from "../../lib/workbenchTypes";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import { plainLabel } from "../research-panel/format";
 import { button, panel, ErrorNotice, Inspect, useAction } from "./shared";
 import JobLog, { ACTIVE_JOB_STATES } from "./JobLog";
 
 const ACTIVE_POLL_MS = 1500;
 const RUNNING_POLL_MS = 5000;
 const IDLE_POLL_MS = 10_000;
+const OWNER_LABELS: Record<JobStatus["owner"], string> = {
+  turn: "Conversation",
+  detached: "Background job",
+  unknown: "Unknown source",
+};
 export function JobLauncher({
   profile,
   onQueued,
@@ -93,14 +100,22 @@ export function JobLauncher({
     </div>
   );
 }
+/** Outputs a run left alone although they can't be shown to be current. */
+function staleOutputs(job: JobStatus): string[] {
+  const outputs = job.execution.validation.unchangedPreexistingOutputs;
+  return Array.isArray(outputs) ? outputs.map(String) : [];
+}
 export default function Jobs({
   workspaceId,
   onCompleted,
   visible = true,
+  quiet = false,
 }: {
   workspaceId: string;
   onCompleted: () => void;
   visible?: boolean;
+  /** Stay out of the way unless a job is running or needs a look. */
+  quiet?: boolean;
 }) {
   const [jobs, setJobs] = useState<JobStatus[]>([]);
   const [selected, setSelected] = useState("");
@@ -116,6 +131,10 @@ export default function Jobs({
     let timer: ReturnType<typeof setTimeout>;
     let running = false;
     const refresh = async () => {
+      if (document.visibilityState === "hidden") {
+        timer = setTimeout(() => void refresh(), IDLE_POLL_MS);
+        return;
+      }
       try {
         const next = await studioClient.jobs(workspaceId);
         if (disposed) return;
@@ -128,7 +147,7 @@ export default function Jobs({
         }
         completed.current = { workspaceId, key };
       } catch (e) {
-        if (!disposed) setError(String(e));
+        if (!disposed) setError(workbenchErrorMessage(e));
       }
       // Collapsed, check less often: enough to notice a job ending or a
       // newly queued one.
@@ -146,19 +165,27 @@ export default function Jobs({
     };
   }, [visible, open, workspaceId, setError]);
   const active = jobs.filter((j) => ACTIVE_JOB_STATES.includes(j.state));
+  // Jobs are newest first, so an older failure stops mattering once repaired.
+  const settled =
+    quiet &&
+    !active.length &&
+    jobs[0]?.execution.outcome === "completed" &&
+    !jobs.some((j) => j.canReconcile);
+  if ((settled || !jobs.length) && !error) return null;
   return (
     <details
-      className={`${panel} bg-gray-50/60 dark:bg-neutral-900/30`}
+      className="project-jobs"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
-      <summary className="cursor-pointer text-sm font-semibold">
+      <summary className="cursor-pointer text-ink-muted">
         Local jobs · {active.length} active · {jobs.length} retained
       </summary>
       <ErrorNotice error={error} />
       <p className="text-xs text-gray-500">
-        Up to two jobs can run at once. Jobs that would write to the same
-        project cannot run together. Keep Pipeline open; interrupted jobs do not
-        restart automatically.
+        Up to two jobs can run at once. Jobs in the same project wait and run
+        one at a time, and files a waiting or running job uses stay locked until
+        it ends. Keep Pipeline open; interrupted jobs do not restart
+        automatically.
       </p>
       <div className="max-h-64 space-y-2 overflow-auto">
         {jobs.map((j) => (
@@ -173,7 +200,8 @@ export default function Jobs({
               {j.execution.command.join(" ")}
             </button>
             <span>
-              {j.state} · {j.owner} · {j.durationSeconds ?? 0}s
+              {plainLabel(j.state)} · {OWNER_LABELS[j.owner]} ·{" "}
+              {j.durationSeconds ?? 0}s
             </span>
             {["queued", "running"].includes(j.state) && (
               <button
@@ -227,8 +255,16 @@ export default function Jobs({
                 />
               </div>
             )}
+            {staleOutputs(j).length > 0 && (
+              <p className="w-full text-amber-700 dark:text-amber-400">
+                The command finished without rewriting{" "}
+                {staleOutputs(j).join(", ")}, so Pipeline can’t confirm{" "}
+                {staleOutputs(j).length > 1 ? "they match" : "it matches"} the
+                current inputs. Delete the old output and run this again.
+              </p>
+            )}
             {j.execution.validation.stataCleanupRequired === true && (
-              <p role="alert" className="w-full text-red-700">
+              <p role="alert" className="w-full text-danger">
                 {STATA_CLEANUP_NOTICE}
               </p>
             )}

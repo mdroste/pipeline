@@ -139,6 +139,7 @@ impl AppServerSupervisor {
             epoch,
             "pipeline_workbench",
             "Pipeline Workbench",
+            UNREAD_NOTIFICATIONS,
         )
         .await
         .map_err(RequestError::unavailable)?;
@@ -153,7 +154,11 @@ impl AppServerSupervisor {
     }
 
     #[cfg(test)]
-    fn from_test_client(epoch: u64, client: AppServerClient, initialize: InitializeResult) -> Self {
+    pub(crate) fn from_test_client(
+        epoch: u64,
+        client: AppServerClient,
+        initialize: InitializeResult,
+    ) -> Self {
         let mut native = NativeSession::simulated(client);
         native.initialize = initialize;
         Self {
@@ -181,6 +186,11 @@ impl AppServerSupervisor {
 
     pub fn subscribe(&self) -> broadcast::Receiver<NormalizedEvent> {
         self.native.client.subscribe()
+    }
+
+    /// Server requests on this connection, kept through event-queue lag.
+    pub fn request_sink(&self) -> crate::agent_runtime::codex::ServerRequestSink {
+        self.native.client.connection_request_sink()
     }
 
     pub async fn account_state(&self, refresh_token: bool) -> Result<AccountState, RequestError> {
@@ -509,20 +519,27 @@ impl AppServerSupervisor {
         }
     }
 
+    /// Reopens a bound thread at the project's current folder. `None` means
+    /// the thread can't continue here, so the caller must move to a successor:
+    /// Codex kept it at another folder, as it does for a thread it already has
+    /// loaded, or holds no history for it, as after a first send that never
+    /// became a turn. A folder or history problem is settled before anything
+    /// is sent, so moving on can't repeat a message.
     pub async fn resume_thread(
         &self,
         workbench_session_id: &str,
         thread_id: &str,
         permissions: &str,
+        cwd: &str,
         runtime_workspace_roots: Vec<String>,
         config: Option<Value>,
-    ) -> Result<ThreadConnection, RequestError> {
+    ) -> Result<Option<ThreadConnection>, RequestError> {
         validate_identifier("Workbench session id", workbench_session_id)?;
         validate_identifier("thread id", thread_id)?;
         validate_identifier("permissions profile", permissions)?;
-        validate_roots(&runtime_workspace_roots)?;
+        validate_cwd(cwd, &runtime_workspace_roots)?;
         let expected_roots = runtime_workspace_roots.clone();
-        let result = self
+        let result = match self
             .native
             .client
             .request(
@@ -530,6 +547,7 @@ impl AppServerSupervisor {
                 json!({
                     "threadId": thread_id,
                     "permissions": permissions,
+                    "cwd": cwd,
                     "runtimeWorkspaceRoots": runtime_workspace_roots,
                     "modelProvider": "openai",
                     // Only thread metadata is read here. History is paged
@@ -539,9 +557,18 @@ impl AppServerSupervisor {
                 }),
                 DEFAULT_REQUEST_TIMEOUT,
             )
-            .await?;
+            .await
+        {
+            Err(error) if has_no_history(&error) => return Ok(None),
+            result => result?,
+        };
         let mut connection = parse_thread_connection(result)?;
-        validate_thread_contract(&connection, None, &expected_roots, permissions, None)?;
+        if !same_path(Path::new(&connection.cwd), Path::new(cwd))
+            || !same_roots(&connection, &expected_roots)
+        {
+            return Ok(None);
+        }
+        validate_thread_contract(&connection, Some(cwd), &expected_roots, permissions, None)?;
         if self.projection_enabled {
             let binding = bind_session_projection(
                 workbench_session_id.to_string(),
@@ -553,7 +580,7 @@ impl AppServerSupervisor {
             self.attach_projection(connection.thread_id.clone(), binding.id)
                 .await;
         }
-        Ok(connection)
+        Ok(Some(connection))
     }
 
     pub async fn read_thread(&self, thread_id: &str) -> Result<Value, RequestError> {
@@ -703,7 +730,11 @@ impl AppServerSupervisor {
                             }
                             continue;
                         }
-                        let turn_id = turns::event_turn_id(&event).map(str::to_string);
+                        // Only turn and item events are projected, so token
+                        // deltas never reach the store.
+                        let Some(turn_id) = turns::event_turn_id(&event).map(str::to_string) else {
+                            continue;
+                        };
                         let ended = matches!(event, NormalizedEvent::TurnCompleted { .. });
                         let event_binding_id = binding_id.clone();
                         let result = crate::workbench::commands::run_store(move |store| {
@@ -712,10 +743,9 @@ impl AppServerSupervisor {
                         .await;
                         match result {
                             Ok(_) => {
-                                let Some(turn_id) = turn_id.filter(|id| ended && gaps.remove(id))
-                                else {
+                                if !(ended && gaps.remove(&turn_id)) {
                                     continue;
-                                };
+                                }
                                 if let Err(error) = turns::repair(
                                     &client,
                                     client.epoch(),
@@ -736,7 +766,7 @@ impl AppServerSupervisor {
                                     "Workbench could not persist a Codex event: {}",
                                     error.message
                                 ));
-                                gaps.extend(turn_id);
+                                gaps.insert(turn_id);
                             }
                         }
                     }
@@ -768,6 +798,22 @@ impl AppServerSupervisor {
         }
     }
 }
+
+/// Frequent notifications nothing here reads. Each would otherwise cross the pipe
+/// and be parsed, and `turn/diff/updated` repeats the turn's whole diff. Finished
+/// work still arrives in `item/completed`, which is what the transcript keeps.
+const UNREAD_NOTIFICATIONS: &[&str] = &[
+    "item/commandExecution/outputDelta",
+    "item/fileChange/outputDelta",
+    "item/mcpToolCall/progress",
+    "item/plan/delta",
+    "item/reasoning/summaryPartAdded",
+    "item/reasoning/summaryTextDelta",
+    "item/reasoning/textDelta",
+    "thread/tokenUsage/updated",
+    "turn/diff/updated",
+    "turn/plan/updated",
+];
 
 pub struct SupervisorManager {
     next_epoch: AtomicU64,
@@ -810,6 +856,11 @@ impl SupervisorManager {
         self.current.lock().await.clone()
     }
 
+    #[cfg(test)]
+    pub(crate) async fn install(&self, supervisor: Arc<AppServerSupervisor>) {
+        *self.current.lock().await = Some(supervisor);
+    }
+
     pub async fn shutdown(&self) {
         if let Some(supervisor) = self.current.lock().await.take() {
             supervisor.shutdown().await;
@@ -833,15 +884,18 @@ fn validate_thread_request(request: &StartThreadRequest) -> Result<(), RequestEr
         }
     }
     validate_identifier("permissions profile", &request.permissions)?;
-    let cwd = Path::new(&request.cwd);
+    validate_cwd(&request.cwd, &request.runtime_workspace_roots)
+}
+
+fn validate_cwd(cwd: &str, runtime_workspace_roots: &[String]) -> Result<(), RequestError> {
+    let cwd = Path::new(cwd);
     if !cwd.is_absolute() || !cwd.is_dir() {
         return Err(RequestError::invalid(
             "Thread cwd must be an existing absolute directory",
         ));
     }
-    validate_roots(&request.runtime_workspace_roots)?;
-    if !request
-        .runtime_workspace_roots
+    validate_roots(runtime_workspace_roots)?;
+    if !runtime_workspace_roots
         .iter()
         .any(|root| same_path(Path::new(root), cwd))
     {
@@ -923,6 +977,22 @@ fn approval_policy(permissions: &str) -> &'static str {
     }
 }
 
+/// Codex's definite answer that it holds nothing to resume. A timeout or a
+/// dropped connection says nothing about the thread and stays an error.
+fn has_no_history(error: &RequestError) -> bool {
+    error.rpc_code == Some(-32600) && error.message.contains("no rollout found")
+}
+
+fn same_roots(connection: &ThreadConnection, expected_roots: &[String]) -> bool {
+    connection.runtime_workspace_roots.len() == expected_roots.len()
+        && expected_roots.iter().all(|expected| {
+            connection
+                .runtime_workspace_roots
+                .iter()
+                .any(|actual| same_path(Path::new(actual), Path::new(expected)))
+        })
+}
+
 fn validate_thread_contract(
     connection: &ThreadConnection,
     expected_cwd: Option<&str>,
@@ -947,14 +1017,7 @@ fn validate_thread_contract(
             "Codex App Server did not honor the requested Workspace working directory",
         ));
     }
-    if connection.runtime_workspace_roots.len() != expected_roots.len()
-        || !expected_roots.iter().all(|expected| {
-            connection
-                .runtime_workspace_roots
-                .iter()
-                .any(|actual| same_path(Path::new(actual), Path::new(expected)))
-        })
-    {
+    if !same_roots(connection, expected_roots) {
         return Err(RequestError::unavailable(
             "Codex App Server did not honor the requested Workspace filesystem roots",
         ));

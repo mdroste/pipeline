@@ -7,7 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { listen } from "@tauri-apps/api/event";
 import { appEvents } from "../lib/appEvents";
 import WorkspacePage from "./WorkspacePage";
@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   conversationSnapshot: vi.fn(),
   sessionSnapshot: vi.fn(),
+  createSession: vi.fn(),
   openConversationFile: vi.fn(),
   readConversationFile: vi.fn(),
   reconcileSession: vi.fn(),
@@ -288,6 +289,27 @@ it("handles export cancellation, dialog/write failure and a successful retry vis
     "/exports/retry.md",
   );
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("offers a way out when no conversation exists to type into", async () => {
+  mocks.listSessions.mockResolvedValue({ sessions: [] });
+  mocks.createSession.mockImplementation(async () => {
+    mocks.listSessions.mockResolvedValue({ sessions: [snapshot.session] });
+    return { record: snapshot.session };
+  });
+  render(<WorkspacePage />);
+  const start = await screen.findByRole("button", {
+    name: "New conversation",
+  });
+  expect(screen.getByLabelText("Message")).toBeDisabled();
+
+  fireEvent.click(start);
+
+  await waitFor(() => expect(screen.getByLabelText("Message")).toBeEnabled());
+  expect(mocks.createSession).toHaveBeenCalledOnce();
+  expect(
+    screen.queryByRole("button", { name: "New conversation" }),
+  ).not.toBeInTheDocument();
 });
 
 it("places conversations in the sidebar and keeps the draft while switching", async () => {
@@ -557,7 +579,7 @@ it("sends the researcher to their projects before importing", async () => {
   expect(mocks.sendTurn).not.toHaveBeenCalled();
 });
 
-it("jumps to an older response through search while keeping at most 200 transcript messages mounted", async () => {
+it("jumps to an older response through search while keeping at most 50 transcript messages mounted", async () => {
   snapshot.items = Array.from({ length: 405 }, (_, index) => ({
     id: `message-${index}`,
     turnId: null,
@@ -574,7 +596,7 @@ it("jumps to an older response through search while keeping at most 200 transcri
     updatedAt: "now",
   }));
   await mount();
-  expect(screen.getAllByRole("article")).toHaveLength(200);
+  expect(screen.getAllByRole("article")).toHaveLength(50);
   expect(document.getElementById("workspace-message-message-1")).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Conversation menu" }));
   fireEvent.click(screen.getByRole("menuitem", { name: "Outline" }));
@@ -594,7 +616,7 @@ it("jumps to an older response through search while keeping at most 200 transcri
       document.getElementById("workspace-message-message-1"),
     ).toHaveFocus(),
   );
-  expect(screen.getAllByRole("article").length).toBeLessThanOrEqual(200);
+  expect(screen.getAllByRole("article").length).toBeLessThanOrEqual(50);
   expect(scrollIntoView).toHaveBeenCalled();
   fireEvent.click(
     outline.getByRole("button", { name: "Close conversation outline" }),
@@ -724,6 +746,9 @@ it("deletes a conversation only after confirmation and clears the open transcrip
   fireEvent.click(screen.getByRole("menuitem", { name: "Delete…" }));
   await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledTimes(1));
   expect(mocks.deleteSession).not.toHaveBeenCalled();
+  // The prompt also covers Claude and API conversations.
+  expect(mocks.confirmDialog.mock.calls[0][0]).toContain("provider history");
+  expect(mocks.confirmDialog.mock.calls[0][0]).not.toContain("ChatGPT");
   mocks.confirmDialog.mockResolvedValue(true);
   mocks.deleteSession.mockResolvedValue(7);
   mocks.listSessions.mockResolvedValue({ sessions: [] });
@@ -738,6 +763,36 @@ it("deletes a conversation only after confirmation and clears the open transcrip
   expect(
     screen.queryByRole("heading", { name: "Policy discussion" }),
   ).not.toBeInTheDocument();
+});
+
+it("reads recent responses in plain words, not stored values", async () => {
+  snapshot = {
+    ...snapshot,
+    turns: [
+      {
+        id: "turn-1",
+        bindingId: "binding",
+        clientSubmissionId: "submission",
+        providerTurnId: null,
+        state: "inProgress",
+        error: null,
+        createdAt: "2026-11-01T10:30:00Z",
+        updatedAt: "2026-11-01T10:30:00Z",
+        terminalAt: null,
+      },
+    ],
+  };
+  await mount();
+  fireEvent.click(screen.getByRole("button", { name: "Conversation menu" }));
+  fireEvent.click(
+    await screen.findByRole("menuitem", { name: "Activity & follow-ups" }),
+  );
+  const activity = await screen.findByRole("region", {
+    name: "Assistant activity",
+  });
+  await waitFor(() => expect(activity.textContent).toContain("Working"));
+  expect(activity.textContent).not.toContain("inProgress");
+  expect(activity.textContent).not.toContain("2026-11-01T10:30:00Z");
 });
 
 it("moves an unfiled conversation into a project and follows it there", async () => {
@@ -779,10 +834,12 @@ it("moves an unfiled conversation into a project and follows it there", async ()
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
   );
   await waitFor(() =>
-    expect(mocks.listSessions).toHaveBeenCalledWith("project", false),
+    expect(mocks.listSessions).toHaveBeenCalledWith("project", false, null),
   );
   expect(
-    await screen.findByRole("button", { name: "Monetary policy" }),
+    await screen.findByRole("button", {
+      name: "Switch project: Monetary policy",
+    }),
   ).toBeVisible();
   expect(localStorage.getItem("pipeline.workspace.workspaceId")).toBe(
     "project",
@@ -892,6 +949,87 @@ it("preserves the draft and blocks Send if the bottom model selector fails to sa
     "Keep this question",
   );
   expect(mocks.sendTurn).not.toHaveBeenCalled();
+});
+
+it("reverts a model that failed to save, so choosing it again retries", async () => {
+  mocks.accountState.mockResolvedValue({ status: "chatgpt" });
+  await mount();
+  const choose = async () => {
+    const menu = screen.getByRole("button", { name: /^Model and thinking/ });
+    if (menu.getAttribute("aria-expanded") !== "true") fireEvent.click(menu);
+    fireEvent.click(await screen.findByRole("option", { name: /Test model/ }));
+  };
+  mocks.updateSession.mockRejectedValueOnce(new Error("Revision conflict"));
+  await choose();
+  await screen.findByText(/Select the model again to retry/);
+  expect(mocks.updateSession).toHaveBeenCalledTimes(1);
+  await choose();
+  await waitFor(() => expect(mocks.updateSession).toHaveBeenCalledTimes(2));
+  expect(mocks.updateSession).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      overrides: expect.objectContaining({ model: "test-model" }),
+    }),
+  );
+});
+
+it("reads approvals and the transcript again after live events were lost", async () => {
+  await mount();
+  const lagged = vi
+    .mocked(listen)
+    .mock.calls.find(([name]) => name === "workbench:event-lagged")?.[1] as
+    (() => void) | undefined;
+  expect(lagged).toBeDefined();
+  mocks.pendingRequests.mockClear();
+  mocks.conversationSnapshot.mockClear();
+  await act(async () => lagged!());
+  expect(mocks.pendingRequests).toHaveBeenCalledTimes(1);
+  expect(mocks.conversationSnapshot).toHaveBeenCalledWith("conversation");
+});
+
+it("clears a sent message the host left saved as the draft", async () => {
+  mocks.sendTurn.mockImplementation(async ({ text }) => {
+    snapshot = { ...snapshot, session: { ...snapshot.session, draft: text } };
+    return {
+      epoch: 1,
+      threadId: "thread",
+      turnId: "turn",
+      draftCleared: false,
+    };
+  });
+  await mount();
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Already sent" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(snapshot.session.draft).toBe(""));
+});
+
+it("keeps text typed while a message was sending when the host keeps the draft", async () => {
+  let acknowledge!: (result: Record<string, unknown>) => void;
+  mocks.sendTurn.mockImplementation(
+    () => new Promise((resolve) => (acknowledge = resolve)),
+  );
+  await mount();
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Already sent" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(mocks.sendTurn).toHaveBeenCalled());
+  fireEvent.change(screen.getByLabelText("Message"), {
+    target: { value: "Typed while sending" },
+  });
+  mocks.updateSession.mockClear();
+  await act(async () =>
+    acknowledge({
+      epoch: 1,
+      threadId: "thread",
+      turnId: "turn",
+      draftCleared: false,
+    }),
+  );
+  expect(mocks.updateSession).not.toHaveBeenCalledWith(
+    expect.objectContaining({ draft: "" }),
+  );
 });
 
 it("waits for model selection to save before sending with the selected model", async () => {
@@ -1006,4 +1144,57 @@ it("loads an initial conversation deep link without blanking its saved draft", a
   expect(mocks.updateSession).not.toHaveBeenCalledWith(
     expect.objectContaining({ sessionId: "conversation", draft: "" }),
   );
+});
+
+describe("while the chat fills the page", () => {
+  const filedInProject = () => {
+    localStorage.setItem("pipeline.workspace.workspaceId", workspace.id);
+    localStorage.setItem("pipeline.workspace.sessionId", "conversation");
+    localStorage.setItem(
+      `pipeline.workspace.view.${workspace.id}`,
+      "assistant",
+    );
+    snapshot.workspace = { ...workspace, root: "/research" };
+    snapshot.session.workspaceId = workspace.id;
+  };
+  const hiddenProject = async () => {
+    render(<WorkspacePage />, { wrapper: RailHost });
+    await screen.findByRole("heading", { name: "Policy discussion" });
+    const project = await screen.findByLabelText("Project working area");
+    expect(project).not.toBeVisible();
+    return project;
+  };
+
+  it.each([
+    ["open-file", { location: { path: "paper.tex" } }],
+    ["open-object", { object: { id: "source" } }],
+    ["workspace-destination", { tab: "edits" }],
+  ] as const)("%s shows the project pane", async (event, detail) => {
+    filedInProject();
+    const project = await hiddenProject();
+    act(() =>
+      appEvents.emit(event, { workspaceId: workspace.id, ...detail } as never),
+    );
+    await waitFor(() => expect(project).toBeVisible());
+  });
+
+  it("ignores a request for another project", async () => {
+    filedInProject();
+    const project = await hiddenProject();
+    act(() =>
+      appEvents.emit("open-file", {
+        workspaceId: "another",
+        location: { path: "paper.tex" },
+      }),
+    );
+    expect(project).not.toBeVisible();
+  });
+
+  it("Review edits shows the project pane", async () => {
+    filedInProject();
+    snapshot.session.overrides = { automaticWorkingCopy: true };
+    const project = await hiddenProject();
+    fireEvent.click(screen.getByRole("button", { name: "Review edits" }));
+    await waitFor(() => expect(project).toBeVisible());
+  });
 });

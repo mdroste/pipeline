@@ -18,11 +18,17 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| WorkbenchError::storage("Failed to start session binding", error))?;
         let session = load_session(&transaction, session_id)?;
+        // A new connection reopening the same thread keeps what that thread was
+        // started with, so the next send can still resume it.
+        let mut same_thread = None;
         if let Some(existing) = load_active_binding(&transaction, session_id)? {
             if existing.runtime_namespace == runtime_namespace
                 && existing.provider_thread_id == provider_thread_id
             {
                 return Ok(existing);
+            }
+            if existing.provider_thread_id == provider_thread_id {
+                same_thread = Some(existing.id.clone());
             }
             transaction
                 .execute(
@@ -45,6 +51,14 @@ impl Store {
                 params![id, session_id, runtime_namespace, provider_thread_id, incarnation, timestamp],
             )
             .map_err(|error| map_constraint("Failed to bind Workbench session", error))?;
+        if let Some(previous) = same_thread {
+            transaction
+                .execute(
+                    "UPDATE session_bindings SET (harness_fingerprint, instruction_sources_json) = (SELECT harness_fingerprint, instruction_sources_json FROM session_bindings WHERE id = ?2) WHERE id = ?1",
+                    params![id, previous],
+                )
+                .map_err(|error| WorkbenchError::storage("Failed to carry over the thread's harness", error))?;
+        }
         insert_change(
             &transaction,
             &format!("binding-create-{id}"),
@@ -110,6 +124,21 @@ impl Store {
         transaction
             .commit()
             .map_err(|error| WorkbenchError::storage("Failed to commit turn reconciliation", error))
+    }
+
+    /// Provider turns of this binding with no recorded ending.
+    pub(crate) fn open_provider_turns(&self, binding_id: &str) -> WorkbenchResult<Vec<String>> {
+        validate_id("binding id", binding_id)?;
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare("SELECT provider_turn_id FROM turns WHERE binding_id = ?1 AND terminal_at IS NULL AND provider_turn_id IS NOT NULL ORDER BY created_at")
+            .map_err(|error| WorkbenchError::storage("Failed to prepare open turns", error))?;
+        let turns = statement
+            .query_map([binding_id], |row| row.get(0))
+            .map_err(|error| WorkbenchError::storage("Failed to read open turns", error))?
+            .collect::<Result<_, _>>()
+            .map_err(|error| WorkbenchError::storage("Failed to decode open turns", error))?;
+        Ok(turns)
     }
 
     pub(crate) fn set_binding_harness(

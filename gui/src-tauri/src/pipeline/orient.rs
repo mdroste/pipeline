@@ -3,6 +3,8 @@ use crate::models::ExtractionResult;
 
 const MAX_PAPER_TEXT: usize = 250_000;
 const MAX_RETRIES: usize = 2;
+/// Below every stock schema's 50-item cap, so host notes never fill the array.
+const MAX_HOST_QUALITY_NOTES: usize = 40;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct OrientationSampleRange {
@@ -306,8 +308,14 @@ pub async fn build_orientation_map(
     let sample = orientation_sample(&extraction.text);
     let paper_text = sample.text.as_str();
 
-    let mut quality_notes = extraction.quality_notes.clone();
-    if sample.truncated {
+    // The model echoes a bounded digest; the run's quality ledger keeps every
+    // note because it reads `extraction.quality_notes` directly.
+    let note_limit = host_note_limit(output_schema);
+    let mut quality_notes = bounded_host_notes(
+        &extraction.quality_notes,
+        note_limit.saturating_sub(usize::from(sample.truncated)),
+    );
+    if sample.truncated && note_limit > 0 {
         quality_notes.push(format!(
             "Orientation used a deterministic section-aware sample of {} / {} bytes across {} ranges (including the document tail); {} bytes were omitted. See context/orientation_sampling.json.",
             sample.included_bytes,
@@ -485,6 +493,112 @@ fn schema_accepts_quality_notes(schema: &serde_json::Value) -> bool {
             .and_then(|items| items.get("type"))
             .and_then(serde_json::Value::as_str)
             .is_none_or(|item_type| item_type == "object")
+}
+
+/// The most host notes one orientation must repeat. A schema's own `maxItems`
+/// lowers this further so the model always has a satisfiable contract.
+fn host_note_limit(schema: Option<&serde_json::Value>) -> usize {
+    let declared = schema
+        .filter(|schema| schema_accepts_quality_notes(schema))
+        .and_then(|schema| schema.pointer("/properties/extraction_quality_notes/maxItems"))
+        .and_then(serde_json::Value::as_u64)
+        .map(|max_items| usize::try_from(max_items).unwrap_or(usize::MAX));
+    match declared {
+        // Leave one slot for a note of the model's own when there is room.
+        Some(max_items) if max_items > 1 => MAX_HOST_QUALITY_NOTES.min(max_items - 1),
+        Some(max_items) => max_items,
+        None => MAX_HOST_QUALITY_NOTES,
+    }
+}
+
+fn page_note(note: &str) -> Option<(u32, &str)> {
+    let (page, detail) = note.strip_prefix("Page ")?.split_once(": ")?;
+    Some((page.parse().ok()?, detail))
+}
+
+/// Page notes that differ only in their numbers describe the same problem.
+fn page_note_shape(detail: &str) -> String {
+    let mut shape = String::with_capacity(detail.len());
+    for character in detail.chars() {
+        if !character.is_ascii_digit() {
+            shape.push(character);
+        } else if !shape.ends_with('#') {
+            shape.push('#');
+        }
+    }
+    shape
+}
+
+fn page_ranges(pages: &[u32]) -> String {
+    let mut sorted = pages.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let mut ranges: Vec<(u32, u32)> = Vec::new();
+    for page in sorted {
+        match ranges.last_mut() {
+            Some((_, end)) if end.saturating_add(1) == page => *end = page,
+            _ => ranges.push((page, page)),
+        }
+    }
+    ranges
+        .iter()
+        .map(|(start, end)| {
+            if start == end {
+                start.to_string()
+            } else {
+                format!("{start}-{end}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Reduce extraction notes to at most `limit` for the orientation contract:
+/// same-shaped page notes become one page-range note, then any excess becomes
+/// one count. Notes under the limit pass through unchanged.
+fn bounded_host_notes(notes: &[String], limit: usize) -> Vec<String> {
+    if notes.len() <= limit {
+        return notes.to_vec();
+    }
+    // Each entry is a standalone note, or the pages of one shape in document
+    // order; the first note of the shape stands for the group.
+    let mut digest: Vec<(&str, Vec<u32>, String)> = Vec::new();
+    for note in notes {
+        let Some((page, detail)) = page_note(note) else {
+            digest.push((note, Vec::new(), String::new()));
+            continue;
+        };
+        let shape = page_note_shape(detail);
+        match digest
+            .iter_mut()
+            .find(|(_, pages, known)| !pages.is_empty() && *known == shape)
+        {
+            Some((_, pages, _)) => pages.push(page),
+            None => digest.push((note, vec![page], shape)),
+        }
+    }
+    let mut bounded: Vec<String> = digest
+        .into_iter()
+        .map(|(note, pages, _)| match (pages.len(), page_note(note)) {
+            (2.., Some((_, detail))) => format!(
+                "Pages {}: {} similar notes, for example: {detail}",
+                page_ranges(&pages),
+                pages.len(),
+            ),
+            _ => note.to_string(),
+        })
+        .collect();
+    if bounded.len() > limit {
+        let kept = limit.saturating_sub(1);
+        let omitted = bounded.len() - kept;
+        bounded.truncate(kept);
+        if limit > 0 {
+            bounded.push(format!(
+                "{omitted} further extraction notes are recorded with this run's quality notes."
+            ));
+        }
+    }
+    bounded
 }
 
 fn quality_note_values(notes: &[String]) -> Vec<serde_json::Value> {
@@ -740,6 +854,178 @@ mod tests {
         .unwrap();
         assert!(prompt.contains("Include every object exactly once"));
         assert!(prompt.contains("ligatures mangled"));
+    }
+
+    #[test]
+    fn page_notes_coalesce_into_ranges_and_excess_notes_into_a_count() {
+        let mut notes = vec!["Math is garbled.".to_string()];
+        notes.extend((1..=30).map(|page| {
+            format!(
+                "Page {page}: recognized {} of 900 characters in the PDF text layer.",
+                page * 7
+            )
+        }));
+        notes.push("Page 40: recovered incomplete recognition".to_string());
+        notes.push("Page 41: recovered incomplete recognition".to_string());
+        notes.push("Page 43: recovered incomplete recognition".to_string());
+
+        let bounded = bounded_host_notes(&notes, 3);
+        assert_eq!(bounded[0], "Math is garbled.");
+        assert!(
+            bounded[1].starts_with("Pages 1-30: 30 similar notes"),
+            "{}",
+            bounded[1]
+        );
+        assert_eq!(
+            bounded[2],
+            "Pages 40-41, 43: 3 similar notes, for example: recovered incomplete recognition"
+        );
+
+        let capped = bounded_host_notes(&notes, 2);
+        assert_eq!(capped.len(), 2);
+        assert!(capped[1].starts_with("2 further extraction notes"));
+
+        // Under the limit the notes stay verbatim.
+        assert_eq!(bounded_host_notes(&notes, notes.len()), notes);
+    }
+
+    #[test]
+    fn host_note_limit_stays_below_the_schema_cap() {
+        let schema = |max_items: u64| {
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "extraction_quality_notes": {"type": "array", "maxItems": max_items}
+                }
+            })
+        };
+        assert_eq!(host_note_limit(None), MAX_HOST_QUALITY_NOTES);
+        assert_eq!(host_note_limit(Some(&schema(50))), MAX_HOST_QUALITY_NOTES);
+        assert_eq!(host_note_limit(Some(&schema(5))), 4);
+        assert_eq!(host_note_limit(Some(&schema(1))), 1);
+        assert_eq!(host_note_limit(Some(&schema(0))), 0);
+    }
+
+    /// A local OpenAI-compatible server that returns a Paper Review survey
+    /// echoing exactly the host notes in the prompt it received, and counts
+    /// its calls.
+    fn serve_echoing_survey(calls: std::sync::Arc<std::sync::atomic::AtomicUsize>) -> String {
+        use std::io::{BufRead, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { continue };
+                let mut reader = std::io::BufReader::new(stream);
+                let mut length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0; length];
+                let _ = reader.read_exact(&mut body);
+                if body.is_empty() {
+                    // The model list request made while resolving the model.
+                    let models = r#"{"data":[{"id":"fixture"}]}"#;
+                    let _ = write!(
+                        reader.into_inner(),
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{models}",
+                        models.len()
+                    );
+                    continue;
+                }
+                calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                let prompt = body["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|message| message["content"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let start = prompt.find("HOST EXTRACTION QUALITY NOTES").unwrap();
+                let start = start + prompt[start..].find("\n[").unwrap() + 1;
+                let notes = serde_json::Deserializer::from_str(&prompt[start..])
+                    .into_iter::<serde_json::Value>()
+                    .next()
+                    .unwrap()
+                    .unwrap();
+                let survey = serde_json::json!({
+                    "metadata": {
+                        "title": "T", "authors": [], "date": "", "paper_type": "mixed",
+                        "page_count": 0, "has_appendix": false, "has_online_appendix": false,
+                    },
+                    "sections": [], "formal_results": [], "tables_figures": [], "notation": [],
+                    "stated_contribution": "", "key_references": [],
+                    "extraction_quality_notes": notes,
+                });
+                let reply = serde_json::json!({
+                    "choices": [{
+                        "message": {"role": "assistant", "content": survey.to_string()},
+                        "finish_reason": "stop",
+                    }],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+                })
+                .to_string();
+                let _ = write!(
+                    reader.into_inner(),
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                    reply.len()
+                );
+            }
+        });
+        format!("http://{address}/v1")
+    }
+
+    #[tokio::test]
+    async fn orientation_succeeds_first_time_when_extraction_has_more_notes_than_the_schema_allows()
+    {
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let settings = crate::settings::Settings {
+            default_orientation_agent: "local".into(),
+            local_base_url: serve_echoing_survey(calls.clone()),
+            local_model: "fixture".into(),
+            ..Default::default()
+        };
+        let extraction = ExtractionResult {
+            text: "Paper text".to_string(),
+            quality_notes: (1..=60)
+                .map(|page| format!("Page {page}: recovered incomplete recognition"))
+                .collect(),
+            method: "full_structure".to_string(),
+            source_path: "paper.pdf".to_string(),
+            paper_hash: "hash".to_string(),
+        };
+        let schema = crate::orientation_contract::paper_schema();
+        let app: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+        // A private run scope, so the frozen settings reach only this call.
+        let run = crate::run_scope::ActiveScope::begin("orientation-host-notes-test");
+        let survey = crate::run_scope::scoped(run.scope().clone(), async {
+            let _settings = crate::settings::freeze_for_run(settings);
+            build_orientation_map(
+                &app,
+                &extraction,
+                Some("Survey {input_text}"),
+                Some(&schema),
+                None,
+            )
+            .await
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let notes = survey["extraction_quality_notes"].as_array().unwrap();
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0]["description"]
+            .as_str()
+            .unwrap()
+            .starts_with("Pages 1-60: 60 similar notes"));
     }
 
     #[test]

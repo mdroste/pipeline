@@ -65,7 +65,7 @@
 .workspace-composer-input::placeholder {
   color: var(--ui-muted);
 }
-.workspace-composer-input:disabled {
+.workspace-composer-input:read-only {
   opacity: 0.5;
 }
 

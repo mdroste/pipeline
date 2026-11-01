@@ -46,10 +46,10 @@ export default function HomePage({
 }) {
   const actions = [
     {
-      title: "Chat",
+      title: "Conversation",
       description:
         "Ask questions or get help with a draft, without setting up a project.",
-      label: "New chat",
+      label: "New conversation",
       icon: "assistant" as const,
       accent:
         "from-blue-500/15 via-blue-500/5 to-transparent text-blue-700 dark:text-blue-300",
@@ -73,7 +73,7 @@ export default function HomePage({
       label: "Open automations",
       icon: "tasks" as const,
       accent:
-        "from-emerald-500/15 via-emerald-500/5 to-transparent text-emerald-700 dark:text-emerald-300",
+        "from-emerald-500/15 via-emerald-500/5 to-transparent text-emerald-700 dark:from-neutral-400/15 dark:via-neutral-400/5 dark:text-neutral-300",
       onClick: () => onNavigate("tasks"),
     },
   ];

@@ -21,9 +21,17 @@ project. A typical order:
 outcome, command, exit status, log, and outputs. **Stop execution** stops a
 queued or running command.
 
-Up to two commands run at once, and up to 16 can wait. Commands keep running
-if you stop the assistant. Quitting Pipeline stops them, and they don't
-restart on their own.
+Up to two commands run at once, and up to 16 can wait. Commands in the same
+project run one at a time, in order. While one is waiting or running, you can
+keep working in the project, except on the files it reads or writes. Commands
+you start yourself keep running if you stop the assistant. Commands the
+assistant started stop with its turn. Quitting Pipeline stops them all, and they
+don't restart on their own.
+
+A command that finishes without rewriting its outputs still counts as finished
+when its inputs and outputs match the last successful run, as happens with
+**latexmk** when nothing changed. Otherwise the run fails, and **Local jobs**
+names the outputs it left alone.
 
 ### Experiments
 
@@ -135,14 +143,20 @@ on the FRED form and with every FRED dataset:
 1. Under **New execution profile**, name the command and choose its kind.
 2. Enter the arguments as a JSON list, then the input files and expected
    outputs. Give scripts as paths inside the project folder.
-3. Choose **Save profile**.
-4. Choose **Test**. **Review command before running** shows the exact command,
-   folder, inputs, and outputs. Choose **Authorize this command and test**.
-5. After a passing test, **Run** works the same way.
+3. Set **Time limit (seconds)**. Pipeline stops a command that runs longer.
+   The default is 300 seconds, and the longest allowed is 7,200 seconds.
+4. Choose **Save profile**.
+5. Choose **Test**. **Review command before running** shows the exact command,
+   folder, inputs, outputs, and time limit. Choose
+   **Authorize this command and test**.
+6. After a passing test, **Run** works the same way.
+
+Choose **Edit** on a saved profile to change it. Saving a change clears its
+test result, so test it again before running.
 
 Conversations with any provider can use these commands when you enable the
 research execution tools and choose **File changes → Direct edits** in
-**Assistant settings**. For general shell commands, see
+**Assistant settings → Manage agent profiles… → Access & inheritance**. For general shell commands, see
 [Conversation access](connections.md#conversation-access).
 
 | Kind | Runs | Also checks or records |
@@ -179,8 +193,10 @@ starts from the same files in a new working folder.
 
 1. In **Command settings**, list every script, helper, data file, and lockfile
    as an input.
-2. Here, **Choose a configured profile**. Optionally pick exact datasets and a
-   sample, set **Execution parameters** as JSON, and set a **Random seed**.
+2. Here, **Choose a configured profile** and enter the **Toolchain version**,
+   such as `Stata 18` or the name of your environment. Optionally pick exact
+   datasets and a sample, set **Execution parameters** as JSON, and set a
+   **Random seed**.
 3. Choose **Capture inputs and review plan**. Inputs can total up to 256 MB.
 4. Check the plan, then choose **Allow this plan to run on this computer**.
 5. Choose **Test saved plan**. After a passing test,
@@ -208,7 +224,9 @@ Pipeline runs the specifications one at a time, each from a fresh copy of the
 saved inputs. Your script reads each specification's values from
 `PIPELINE_PARAMETERS_FILE`. The list keeps every outcome in your declared
 order, including failures, timeouts, and exclusions. You can pause or cancel
-a running grid. If Pipeline restarts, the grid waits for you to resume it.
+a running grid. If Pipeline restarts, the grid waits for you to resume it. If
+it can't tell whether a run finished, choose **Continue without this run** to
+keep that run as unknown and move on, or cancel the grid.
 **Export all run attempts** saves the full record.
 
 ### Theory
@@ -251,32 +269,42 @@ a running grid. If Pipeline restarts, the grid waits for you to resume it.
 
 ### Manuscript
 
-**Manuscript** edits TeX, Markdown, BibTeX, and text files up to 2 MB. Under
-**Edit in**, choose the **Project working copy** or an edit's copy. Unsaved
-drafts are kept. If the file changed elsewhere, Pipeline stops the save so you
-can compare first.
+**Manuscript** edits TeX, Markdown, BibTeX, and text files up to 2 MB. It opens
+your main TeX file by itself, and the file menu at the top switches files. Under
+**Edit in**, choose the **Project working copy** or an edit's copy. This menu
+appears when an edit has its own copy. Unsaved drafts are kept for each file. If
+a file changed elsewhere, Pipeline stops the save so you can compare first.
+**Source** and **Changes** appear once you have a draft.
 
 To build the manuscript:
 
-1. Under **Build settings**, choose the engine: pdflatex, xelatex, lualatex,
-   or latexmk. Set the root TeX file, the expected PDF, and a timeout.
-2. List every section, bibliography, table, and figure the build uses.
-   Pipeline tracks changes only in the files you list.
+1. Choose **Build**. Pipeline suggests the root TeX file and the files beside
+   it. Check the engine: pdflatex, xelatex, lualatex, or latexmk.
+2. List every section, bibliography, table, and figure the build uses. Pipeline
+   tracks changes only in the files you list. **More build settings** holds the
+   expected PDF, working directory, and timeout.
 3. Choose **Save build settings**, then **Review test run** and
-   **Authorize and start test**. After a passing test, build the same way.
+   **Authorize and start test**. After a passing test, **Build** goes straight
+   to **Review run**.
 
-Shell escape is always off. A successful build keeps its PDF, log, and
-SyncTeX file. A failed build lists its errors with file and line, and shows no
-PDF. Choose an earlier successful build to see one.
+Shell escape is always off. A successful build keeps its PDF, log, and SyncTeX
+file. When a build ends, its result opens beside the source: the PDF, or its
+errors with file and line if there is no PDF. Double-click the PDF to find the
+source line.
 
-**Show build PDF beside source** opens the PDF next to the editor.
-Double-click the PDF to find the source line.
-**Build history and PDF comparison** compares two builds.
+The panel beside the source has two views. **PDF** shows the build. **Builds**
+lists past builds and the chosen build's messages, with **Find between source and
+PDF**, **Compare with another build**, and **Record a page check**. The button
+at the end of the top bar hides or shows this panel.
 
 ### Reviews & findings
 
 **Reviews & findings** shows reviews of this project's documents. Attach a
 folder to connect them. **Start a review** opens a new one.
+
+After a review finishes, choose **Track findings** to add it to **Findings
+across reviews** and to the Overview's finding counts. Choose it again after
+each later review.
 
 **Findings across reviews** follows each finding through later reports as
 **Open**, **Regressed**, **Addressed**, or **Dismissed**. A finding stays
@@ -290,7 +318,7 @@ combine duplicates. See [Reviews](reviews.md) for reading a single report.
 1. Under **Import referee or editor comments**, choose
    **Import local report**, then **Preview paragraph split**. Check the
    numbering and choose **Import selected comments**. You can also import
-   findings from a finished review with **Enable importing Workflow findings**.
+   findings from a finished review with **Enable importing review findings**.
 2. In the **Response matrix**, give each comment a category, severity, and
    disposition: addressed, deferred, or rejected. Draft the reply and link the
    manuscript change, run, or evidence behind it. Choose
@@ -328,19 +356,21 @@ For a smaller selection of files, create a copy yourself:
 3. Choose **Open conversation** to work with the assistant in the copy.
 4. When it's done, choose **Check for changes** and read each file's diff.
 5. Tick the files to keep and accept them. Within a text file, you can accept
-   only selected changes. **Discard this edit** drops the proposal and keeps
-   the copy for reference.
+   only selected changes. The diff then shows what is left, and you can accept
+   the rest later. **Discard this edit** drops what you haven't accepted and
+   keeps the copy for reference.
 
 Wait for the assistant to finish before you check for or accept changes. A
 file can be accepted only if your original hasn't changed since the copy was
-made. Afterward, rebuild the manuscript or rerun your checks.
+made or since you last accepted part of it. Afterward, rebuild the manuscript
+or rerun your checks.
 
 **Accepted edits** lists what you've accepted. **Undo** reverses an
 acceptance while the files still match it. If accepting was interrupted,
 **Restore original files** puts the originals back.
 
-Pipeline never commits or pushes. With a Git branch, you decide what to
-commit.
+Accepting an edit never commits or pushes. With a Git branch, you decide what
+to commit.
 
 ### Tables & figures
 
@@ -360,8 +390,11 @@ commit.
 Tables come out as Markdown, TeX, and CSV. The unrounded values are saved
 too.
 
-Figures run a Matplotlib script on your computer. Choose a Python profile that
-has Matplotlib, then **Preview figure setup**, **Review figure execution**,
+Figures run a Matplotlib script on your computer. In
+**Local Python profile with matplotlib**, choose a **Python script** profile
+from **Command settings**, or a **Command** profile that starts Python. The
+Python it uses must have Matplotlib. Then choose **Preview figure setup**,
+**Review figure execution**,
 and **Allow this plotting command to run**.
 **Create figure and save files** produces SVG, PDF, and PNG files. Then choose
 **Save figure to Tables & figures**.
@@ -409,5 +442,5 @@ and account, and project notes stay out of it. See [Reviews](reviews.md).
 and how conflicts work.
 
 **Create a review design from saved research steps** turns completed action
-items and theory notes into a draft review. Choose **Draft workflow**, then
+items and theory notes into a draft review. Choose **Draft review**, then
 **Save draft…**, and open the file in the review designer.

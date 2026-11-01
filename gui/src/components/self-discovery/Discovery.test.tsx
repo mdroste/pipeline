@@ -216,6 +216,44 @@ it("shows server rejection without losing the research or changing the selected 
   expect(screen.getByRole("checkbox", { name: "1. Project 1" })).toBeChecked();
 });
 
+it("offers Retry on a run that needs attention and labels the state", async () => {
+  const updated = vi.fn();
+  const attention = {
+    ...run,
+    state: "attention",
+    reason: "A research action did not finish",
+  };
+  mocks.invoke.mockImplementation(async (name: string) =>
+    name === "discovery_control" ? { ...attention, state: "running" } : [],
+  );
+  render(<Detail run={attention} onUpdated={updated} onClose={vi.fn()} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Needs attention");
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(updated).toHaveBeenCalledOnce());
+  expect(mocks.invoke).toHaveBeenCalledWith("discovery_control", {
+    id: "portfolio",
+    revision: 3,
+    action: "retry",
+  });
+});
+
+it("offers no Retry after a run has stopped for review", () => {
+  render(
+    <Detail
+      run={{ ...run, state: "blocked" }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("Stopped: needs review");
+  expect(
+    screen.queryByRole("button", { name: "Retry" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Stop" }),
+  ).not.toBeInTheDocument();
+});
+
 it("opens the exact portfolio selected by a shell notification", async () => {
   render(<SelfDiscovery initialRunId="portfolio" onBack={vi.fn()} />);
   await screen.findByRole("heading", { name: "Choose projects to develop" });

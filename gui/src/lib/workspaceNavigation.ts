@@ -5,6 +5,7 @@ export const workspaceDestinations = {
   decisions: { label: "Decisions & impact", section: "activity" },
   documents: { label: "Documents", section: "library" },
   files: { label: "Files", section: "library" },
+  "version-control": { label: "Version control", section: "library" },
   sources: { label: "Papers & sources", section: "library" },
   search: { label: "Search & collections", section: "library" },
   acquisition: { label: "Reading inbox", section: "library" },
@@ -89,6 +90,68 @@ export const destinationsInSection = (destination: WorkspaceDestination) =>
       workspaceDestinations[id].section ===
       workspaceDestinations[destination].section,
   );
+
+/** One line on what a view is for, shown at the top of its page. Views that
+ * fill the pane with their own work, such as Files, have none. */
+export const destinationHints: Partial<Record<WorkspaceDestination, string>> = {
+  sources: "Papers and sources saved in this project, with their versions.",
+  search: "Search everything in this project and keep reading collections.",
+  acquisition: "Papers waiting to be read, and ways to find more.",
+  literature:
+    "Your bibliography, citation notes, and comparisons across papers.",
+  results: "Runs and the numbers they produced.",
+  research: "Local commands, experiment notes, and saved results.",
+  bindings: "Connect numbers in the manuscript to the results behind them.",
+  data: "Datasets, data dictionaries, and analysis samples.",
+  plans: "Analysis plans you have saved, ready to review and run.",
+  execution: "The local commands Pipeline may run for this project.",
+  grids: "Run one analysis across a set of specifications.",
+  theory: "Theory notes, proofs, and the checks behind them.",
+  symbols: "Notation and assumptions used across the project.",
+  reviews: "Reviews of this project's documents and their findings.",
+  responses: "Replies to referees and editors, comment by comment.",
+  edits: "Proposed changes to accept or decline.",
+  assets: "Tables and figures, and where each one comes from.",
+  delivery: "Build drafts from templates and starter kits.",
+  sharing: "Coauthor review and replication packages.",
+  review: "Send a chosen version out for review.",
+  exchange: "Package this project to share with someone else.",
+  campaigns: "Revision rounds that run across several sessions.",
+  tasks: "What still needs doing in this project.",
+  checks: "Checks that run on a schedule and report back.",
+  memory: "Notes the assistant can use in this project.",
+  evidence: "Claims, and the evidence behind each one.",
+  decisions: "Decisions, their reasons, and what each change affects.",
+};
+
+/** The views each section shows as tabs. The rest stay one click away in the
+ * section's More menu and in project search. */
+const sectionTabViews: ReadonlySet<WorkspaceDestination> = new Set([
+  "documents",
+  "files",
+  "version-control",
+  "sources",
+  "results",
+  "data",
+  "research",
+  "writing",
+  "reviews",
+  "assets",
+  "tasks",
+  "checks",
+  "campaigns",
+  "memory",
+  "decisions",
+  "evidence",
+]);
+export function sectionTabs(destination: WorkspaceDestination) {
+  const views = destinationsInSection(destination);
+  return {
+    // The open view always shows, so the page never loses its own label.
+    tabs: views.filter((id) => sectionTabViews.has(id) || id === destination),
+    more: views.filter((id) => !sectionTabViews.has(id) && id !== destination),
+  };
+}
 
 export const defaultWorkspacePins: WorkspaceDestination[] = [
   "files",

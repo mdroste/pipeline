@@ -1,0 +1,639 @@
+{
+  "contracts": {
+    "findings": {
+      "properties": {
+        "findings": {
+          "description": "Findings in canonical global rank order.",
+          "items": {
+            "properties": {
+              "category": {
+                "enum": [
+                  "Correctness and Internal Consistency",
+                  "Methodological and Evidentiary Concerns",
+                  "Contribution and Scope",
+                  "Exposition and Organization"
+                ],
+                "type": "string"
+              },
+              "confidence": {
+                "enum": [
+                  "high",
+                  "medium",
+                  "low"
+                ],
+                "type": "string"
+              },
+              "consequence": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "evidence": {
+                "description": "Evidence locators supporting the finding. Every item needs a typed locator and begins unverified; only Pipeline's host verifier may promote it.",
+                "items": {
+                  "properties": {
+                    "accessed_at": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "artifact_path": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "asset_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "call_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "description": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "doi": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "evidence_type": {
+                      "enum": [
+                        "document",
+                        "source",
+                        "external",
+                        "call"
+                      ],
+                      "type": "string"
+                    },
+                    "line_end": {
+                      "description": "Last source line, at least line_start.",
+                      "type": "integer"
+                    },
+                    "line_start": {
+                      "description": "1-based source line.",
+                      "type": "integer"
+                    },
+                    "node_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "page": {
+                      "description": "1-based rendered page.",
+                      "type": "integer"
+                    },
+                    "publisher": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "query_id": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "quote": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "source_hash": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "source_path": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "url": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "verification_status": {
+                      "enum": [
+                        "unverified"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "evidence_type",
+                    "verification_status",
+                    "description"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 50,
+                "minItems": 1,
+                "type": "array"
+              },
+              "id": {
+                "description": "Stable descriptive identity; never an ordinal.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "problem": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "rank": {
+                "description": "Canonical 1-based global rank, equal to array position.",
+                "type": "integer"
+              },
+              "recommended_action": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "reviewer_ids": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "severity": {
+                "enum": [
+                  "critical",
+                  "high",
+                  "medium",
+                  "low"
+                ],
+                "type": "string"
+              },
+              "source_call_ids": {
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "source_key": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "title": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "verification_status": {
+                "enum": [
+                  "unverified"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "rank",
+              "id",
+              "title",
+              "category",
+              "severity",
+              "confidence",
+              "verification_status",
+              "reviewer_ids",
+              "problem",
+              "consequence",
+              "recommended_action",
+              "evidence"
+            ],
+            "type": "object"
+          },
+          "maxItems": 40,
+          "type": "array"
+        },
+        "schema_version": {
+          "enum": [
+            2
+          ],
+          "type": "integer"
+        },
+        "taxonomy": {
+          "items": {
+            "enum": [
+              "Correctness and Internal Consistency",
+              "Methodological and Evidentiary Concerns",
+              "Contribution and Scope",
+              "Exposition and Organization"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "schema_version",
+        "taxonomy",
+        "findings"
+      ],
+      "title": "Canonical findings v2",
+      "type": "object",
+      "x-pipeline-findings-taxonomy": [
+        "Correctness and Internal Consistency",
+        "Methodological and Evidentiary Concerns",
+        "Contribution and Scope",
+        "Exposition and Organization"
+      ],
+      "x-pipeline-findings-version": 2
+    },
+    "grant_synthesis": {
+      "type": "object",
+      "x-pipeline-findings-taxonomy": [
+        "Aims and Significance",
+        "Feasibility and Design",
+        "Internal Consistency",
+        "Panel Readability"
+      ],
+      "x-pipeline-schema": "findings-v2"
+    },
+    "grant_validate": {
+      "type": "object",
+      "x-pipeline-findings-taxonomy": [
+        "Aims and Significance",
+        "Feasibility and Design",
+        "Internal Consistency",
+        "Panel Readability"
+      ],
+      "x-pipeline-preserve-findings-from": "grant_synthesis",
+      "x-pipeline-schema": "findings-v2-validation"
+    }
+  },
+  "accepted": [
+    {
+      "name": "findings v1 reference",
+      "schema": {
+        "type": "object",
+        "x-pipeline-schema": "findings-v1"
+      }
+    },
+    {
+      "name": "findings v2 reference",
+      "schema": {
+        "type": "object",
+        "x-pipeline-schema": "findings-v2"
+      }
+    },
+    {
+      "name": "findings v2 validation reference",
+      "schema": {
+        "type": "object",
+        "x-pipeline-schema": "findings-v2-validation"
+      }
+    },
+    {
+      "name": "reference with a taxonomy",
+      "schema": {
+        "type": "object",
+        "x-pipeline-schema": "findings-v2",
+        "x-pipeline-findings-taxonomy": [
+          "Aims",
+          "Budget"
+        ]
+      }
+    },
+    {
+      "name": "zero findings version",
+      "schema": {
+        "type": "object",
+        "x-pipeline-findings-version": 0
+      }
+    },
+    {
+      "name": "validation ledger marker",
+      "schema": {
+        "type": "object",
+        "x-pipeline-validation-ledger": "required"
+      }
+    }
+  ],
+  "refused": [
+    {
+      "name": "unknown keyword",
+      "schema": {
+        "type": "object",
+        "pattern": "x"
+      }
+    },
+    {
+      "name": "unknown reference",
+      "schema": {
+        "type": "object",
+        "x-pipeline-schema": "findings-v9"
+      }
+    },
+    {
+      "name": "reference beside structure",
+      "schema": {
+        "type": "object",
+        "x-pipeline-schema": "findings-v2",
+        "properties": {}
+      }
+    },
+    {
+      "name": "nested version",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "nested": {
+            "type": "object",
+            "x-pipeline-findings-version": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "nested taxonomy",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "nested": {
+            "type": "object",
+            "x-pipeline-findings-taxonomy": [
+              "Aims"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "nested ledger",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "nested": {
+            "type": "object",
+            "x-pipeline-validation-ledger": "required"
+          }
+        }
+      }
+    },
+    {
+      "name": "negative version",
+      "schema": {
+        "type": "object",
+        "x-pipeline-findings-version": -1
+      }
+    },
+    {
+      "name": "text version",
+      "schema": {
+        "type": "object",
+        "x-pipeline-findings-version": "2"
+      }
+    },
+    {
+      "name": "taxonomy not an array",
+      "schema": {
+        "type": "object",
+        "x-pipeline-findings-taxonomy": "Aims"
+      }
+    },
+    {
+      "name": "empty taxonomy",
+      "schema": {
+        "type": "object",
+        "x-pipeline-findings-taxonomy": []
+      }
+    },
+    {
+      "name": "blank taxonomy entry",
+      "schema": {
+        "type": "object",
+        "x-pipeline-findings-taxonomy": [
+          "Aims",
+          " "
+        ]
+      }
+    },
+    {
+      "name": "repeated taxonomy entry",
+      "schema": {
+        "type": "object",
+        "x-pipeline-findings-taxonomy": [
+          "Aims",
+          "Aims"
+        ]
+      }
+    },
+    {
+      "name": "ledger not a string",
+      "schema": {
+        "type": "object",
+        "x-pipeline-validation-ledger": true
+      }
+    }
+  ],
+  "reference": {
+    "schema": {
+      "type": "object",
+      "x-pipeline-schema": "findings-v2"
+    },
+    "projected": {
+      "properties": {
+        "findings": {
+          "description": "Findings in canonical global rank order.",
+          "items": {
+            "properties": {
+              "category": {
+                "enum": [
+                  "Correctness and Internal Consistency",
+                  "Methodological and Evidentiary Concerns",
+                  "Contribution and Scope",
+                  "Exposition and Organization"
+                ],
+                "type": "string"
+              },
+              "confidence": {
+                "enum": [
+                  "high",
+                  "medium",
+                  "low"
+                ],
+                "type": "string"
+              },
+              "consequence": {
+                "type": "string"
+              },
+              "evidence": {
+                "description": "Evidence locators supporting the finding. Every item needs a typed locator and begins unverified; only Pipeline's host verifier may promote it.",
+                "items": {
+                  "properties": {
+                    "accessed_at": {
+                      "type": "string"
+                    },
+                    "artifact_path": {
+                      "type": "string"
+                    },
+                    "asset_id": {
+                      "type": "string"
+                    },
+                    "call_id": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "doi": {
+                      "type": "string"
+                    },
+                    "evidence_type": {
+                      "enum": [
+                        "document",
+                        "source",
+                        "external",
+                        "call"
+                      ],
+                      "type": "string"
+                    },
+                    "line_end": {
+                      "description": "Last source line, at least line_start.",
+                      "type": "integer"
+                    },
+                    "line_start": {
+                      "description": "1-based source line.",
+                      "type": "integer"
+                    },
+                    "node_id": {
+                      "type": "string"
+                    },
+                    "page": {
+                      "description": "1-based rendered page.",
+                      "type": "integer"
+                    },
+                    "publisher": {
+                      "type": "string"
+                    },
+                    "query_id": {
+                      "type": "string"
+                    },
+                    "quote": {
+                      "type": "string"
+                    },
+                    "source_hash": {
+                      "type": "string"
+                    },
+                    "source_path": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "verification_status": {
+                      "enum": [
+                        "unverified"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "evidence_type",
+                    "verification_status",
+                    "description"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 50,
+                "minItems": 1,
+                "type": "array"
+              },
+              "id": {
+                "description": "Stable descriptive identity; never an ordinal.",
+                "type": "string"
+              },
+              "problem": {
+                "type": "string"
+              },
+              "rank": {
+                "description": "Canonical 1-based global rank, equal to array position.",
+                "type": "integer"
+              },
+              "recommended_action": {
+                "type": "string"
+              },
+              "reviewer_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "type": "array"
+              },
+              "severity": {
+                "enum": [
+                  "critical",
+                  "high",
+                  "medium",
+                  "low"
+                ],
+                "type": "string"
+              },
+              "source_call_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "type": "array"
+              },
+              "source_key": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "verification_status": {
+                "enum": [
+                  "unverified"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "rank",
+              "id",
+              "title",
+              "category",
+              "severity",
+              "confidence",
+              "verification_status",
+              "reviewer_ids",
+              "problem",
+              "consequence",
+              "recommended_action",
+              "evidence"
+            ],
+            "type": "object"
+          },
+          "maxItems": 40,
+          "type": "array"
+        },
+        "schema_version": {
+          "enum": [
+            2
+          ],
+          "type": "integer"
+        },
+        "taxonomy": {
+          "items": {
+            "enum": [
+              "Correctness and Internal Consistency",
+              "Methodological and Evidentiary Concerns",
+              "Contribution and Scope",
+              "Exposition and Organization"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "schema_version",
+        "taxonomy",
+        "findings"
+      ],
+      "title": "Canonical findings v2",
+      "type": "object"
+    }
+  }
+}

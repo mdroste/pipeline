@@ -1009,21 +1009,35 @@ pub async fn sync_project_issue_ledger(project_id: String) -> Result<ProjectIssu
 }
 
 #[tauri::command]
-pub fn update_project_issue(
+pub async fn update_project_issue(
     project_id: String,
     issue_id: String,
     status: String,
     note: String,
 ) -> Result<ProjectIssueLedger, String> {
-    let dir = super::projects_dir()?;
-    let _lock = super::lock_projects(&dir)?;
-    let _ = super::load_project_from(&dir, &project_id)?;
+    tokio::task::spawn_blocking(move || {
+        let dir = super::projects_dir()?;
+        update_project_issue_in(&dir, &project_id, &issue_id, status, note)
+    })
+    .await
+    .map_err(|error| format!("Project issue-ledger task failed: {error}"))?
+}
+
+fn update_project_issue_in(
+    dir: &Path,
+    project_id: &str,
+    issue_id: &str,
+    status: String,
+    note: String,
+) -> Result<ProjectIssueLedger, String> {
+    let _lock = super::lock_projects(dir)?;
+    let _ = super::load_project_from(dir, project_id)?;
     if note.len() > MAX_NOTE_BYTES {
         return Err(format!(
             "Project issue note cannot exceed {MAX_NOTE_BYTES} bytes"
         ));
     }
-    let mut ledger = load_ledger_from(&dir, &project_id)?;
+    let mut ledger = load_ledger_from(dir, project_id)?;
     let issue = ledger
         .issues
         .iter_mut()
@@ -1041,23 +1055,36 @@ pub fn update_project_issue(
     }
     issue.updated = now();
     ledger.updated = issue.updated.clone();
-    write_ledger_to(&dir, &ledger)?;
+    write_ledger_to(dir, &ledger)?;
     Ok(ledger)
 }
 
 #[tauri::command]
-pub fn merge_project_issues(
+pub async fn merge_project_issues(
     project_id: String,
     source_issue_id: String,
     target_issue_id: String,
 ) -> Result<ProjectIssueLedger, String> {
+    tokio::task::spawn_blocking(move || {
+        let dir = super::projects_dir()?;
+        merge_project_issues_in(&dir, &project_id, &source_issue_id, &target_issue_id)
+    })
+    .await
+    .map_err(|error| format!("Project issue-ledger task failed: {error}"))?
+}
+
+fn merge_project_issues_in(
+    dir: &Path,
+    project_id: &str,
+    source_issue_id: &str,
+    target_issue_id: &str,
+) -> Result<ProjectIssueLedger, String> {
     if source_issue_id == target_issue_id {
         return Err("Choose two different project issues to combine".to_string());
     }
-    let dir = super::projects_dir()?;
-    let _lock = super::lock_projects(&dir)?;
-    let _ = super::load_project_from(&dir, &project_id)?;
-    let mut ledger = load_ledger_from(&dir, &project_id)?;
+    let _lock = super::lock_projects(dir)?;
+    let _ = super::load_project_from(dir, project_id)?;
+    let mut ledger = load_ledger_from(dir, project_id)?;
     let source_index = ledger
         .issues
         .iter()
@@ -1094,7 +1121,7 @@ pub fn merge_project_issues(
     }
     refresh_issue(target, true);
     ledger.updated = now();
-    write_ledger_to(&dir, &ledger)?;
+    write_ledger_to(dir, &ledger)?;
     Ok(ledger)
 }
 

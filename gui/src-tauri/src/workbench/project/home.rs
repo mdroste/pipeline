@@ -178,10 +178,17 @@ fn working_copy_status(store: &Store, ws: &str) -> WorkbenchResult<(String, usiz
             .strip_prefix(&project_root)
             .ok()
             .map(|p| p.to_string_lossy().into_owned());
-        let working = relative.and_then(|p| inventory.files.iter().find(|f| f.path == p));
+        let working = relative
+            .as_ref()
+            .and_then(|p| inventory.files.iter().find(|f| f.path == *p));
+        // The inventory lists a missing file for one refresh only. A path that
+        // can't be checked, say under an unreadable folder, isn't known to be gone.
+        let gone = relative
+            .is_some_and(|p| matches!(Path::new(&project_root).join(p).try_exists(), Ok(false)));
         match working {
             Some(f) if f.hash.as_deref() == file["contentHash"].as_str() => (),
             Some(f) if f.hash.is_some() || f.status == "missing" => changed += 1,
+            None if gone => changed += 1,
             _ => unknown += 1,
         }
     }

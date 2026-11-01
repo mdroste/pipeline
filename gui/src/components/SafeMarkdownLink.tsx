@@ -6,6 +6,7 @@ import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { notify } from "./DialogService";
 import { useFileNavigation } from "./file-workspace/FileNavigation";
 import { absoluteLocalFilePath, resolveFileLink } from "../lib/fileLinks";
+import { workbenchErrorMessage } from "../lib/workbenchError";
 
 type SafeMarkdownLinkProps = AnchorHTMLAttributes<HTMLAnchorElement> & {
   node?: unknown;
@@ -53,8 +54,9 @@ function openFromDesktop(
 
 /**
  * ReactMarkdown anchor renderer that keeps external navigation out of the
- * application WebView. Same-document fragments remain ordinary anchors so
- * footnotes continue to work; all other relative or unsafe URLs render inert.
+ * application WebView. Same-document fragments scroll to their target without
+ * touching the window hash, which holds the app's route; all other relative or
+ * unsafe URLs render inert.
  */
 export default function SafeMarkdownLink({
   href,
@@ -74,7 +76,14 @@ export default function SafeMarkdownLink({
         className={className}
         title={title}
         href={href}
-        onClick={onClick}
+        onClick={(event) => {
+          onClick?.(event);
+          if (event.defaultPrevented) return;
+          event.preventDefault();
+          document
+            .getElementById(href.slice(1))
+            ?.scrollIntoView({ block: "center" });
+        }}
         onAuxClick={onAuxClick}
       >
         {children}
@@ -98,7 +107,9 @@ export default function SafeMarkdownLink({
           onClick={(event) => {
             event.preventDefault();
             void Promise.resolve(navigation.open(location)).catch((error) =>
-              notify(`Could not open this file: ${String(error)}`),
+              notify(
+                `Could not open this file: ${workbenchErrorMessage(error)}`,
+              ),
             );
           }}
         >
@@ -117,7 +128,9 @@ export default function SafeMarkdownLink({
           onClick={(event) => {
             event.preventDefault();
             void Promise.resolve(openAbsolute(absolutePath)).catch((error) =>
-              notify(`Could not open this file: ${String(error)}`),
+              notify(
+                `Could not open this file: ${workbenchErrorMessage(error)}`,
+              ),
             );
           }}
         >

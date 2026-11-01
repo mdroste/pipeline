@@ -427,7 +427,7 @@ pub async fn workbench_followups(
         let (request, binding) =
             host::run_store(move |s| followups::prepare_dispatch(&s, &session, &key, &fingerprint))
                 .await?;
-        let result = host::submit_turn(app, request, Some(binding), Default::default()).await;
+        let result = host::submit_turn(Some(app), request, Some(binding), Default::default()).await;
         let transport = match result {
             Ok(receipt) => json!({"accepted":receipt}),
             Err(error) => json!({"error":error}),
@@ -471,10 +471,45 @@ pub async fn workbench_followups(
     })
     .await
 }
+/// What a researcher recognizes a saved record by, when its body says.
+fn record_label(kind: &str, body: &Value) -> Option<String> {
+    let text = |pointer: &str| {
+        body.pointer(pointer)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    };
+    let label = match kind {
+        "anchor" => text("/selection/quote")
+            .or_else(|| text("/body"))?
+            .to_string(),
+        // Series from different results can share a variable name.
+        "series" => ["/series/variable", "/series/resultId", "/series/sampleId"]
+            .iter()
+            .filter_map(|pointer| text(pointer))
+            .collect::<Vec<_>>()
+            .join(" \u{b7} "),
+        "task" => text("/objective")?.to_string(),
+        "theory" => text("/title")?.to_string(),
+        "direction" | "experiment" => text("/question")?.to_string(),
+        "binding" => text("/printed")?.to_string(),
+        "literature" => text("/note/statement")?.to_string(),
+        _ => return None,
+    };
+    (!label.is_empty()).then(|| crate::workbench::search::prefix(&label, 160).to_string())
+}
 pub fn choices(store: &Store, ws: &str) -> WorkbenchResult<Value> {
     let c = store.connection()?;
-    let mut q=c.prepare("SELECT kind,id,revision,title,provenance FROM research_search_sources WHERE workspace_id=?1 AND kind NOT IN ('message','artifact') GROUP BY kind,id,revision ORDER BY title,revision DESC LIMIT 1000").map_err(err)?;
-    let objects=q.query_map([ws],|r|Ok(json!({"reference":{"kind":r.get::<_,String>(0)?,"id":r.get::<_,String>(1)?,"revision":r.get::<_,String>(2)?,"start":null,"end":null},"title":r.get::<_,String>(3)?,"provenance":r.get::<_,String>(4)?}))).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
+    let mut q=c.prepare("SELECT kind,id,revision,title,provenance,CASE WHEN kind='record' THEN body END FROM research_search_sources WHERE workspace_id=?1 AND kind NOT IN ('message','artifact') GROUP BY kind,id,revision ORDER BY title,revision DESC LIMIT 1000").map_err(err)?;
+    let objects=q.query_map([ws],|r|{
+        let kind=r.get::<_,String>(0)?;
+        let title=r.get::<_,String>(3)?;
+        // The search view titles a project record with its kind.
+        let record_kind=(kind=="record").then(||title.clone());
+        let body=r.get::<_,Option<String>>(5)?.and_then(|b|serde_json::from_str::<Value>(&b).ok());
+        let label=body.and_then(|b|record_label(&title,&b)).unwrap_or_else(||title.clone());
+        Ok(json!({"reference":{"kind":kind,"id":r.get::<_,String>(1)?,"revision":r.get::<_,String>(2)?,"start":null,"end":null},"title":title,"label":label,"recordKind":record_kind,"provenance":r.get::<_,String>(4)?}))
+    }).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
     Ok(
         json!({"objects":objects,"plans":desk::records(store,ws,"execution_plan")?,"profiles":research::list_execution_profiles(store,ws)?,"executions":research::list_executions(store,ws)?,"checkpoints":crate::workbench::project::records(store,ws,"checkpoint")?,"responses":crate::workbench::project::records(store,ws,"response")?,"theory":crate::workbench::project::records(store,ws,"theory")?}),
     )

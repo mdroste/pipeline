@@ -83,7 +83,7 @@ it("previews a package with the selected kinds and all papers, never conversatio
   });
   render(<WorkspaceExchangePanel {...props()} />);
   await screen.findByText("Done task");
-  fireEvent.click(screen.getByLabelText("Acceptance journals"));
+  fireEvent.click(screen.getByLabelText("Accepted edits"));
   fireEvent.click(screen.getByText("Preview package"));
   await waitFor(() => expect(mocks.previewProjectExchange).toHaveBeenCalled());
   const [, selection] = mocks.previewProjectExchange.mock.calls[0];
@@ -247,9 +247,9 @@ it("drafts a workflow only from completed steps and saves it as a file", async (
   render(<WorkspaceExchangePanel {...props()} />);
   await screen.findByText("Done task");
   expect(screen.queryByText("Open task")).toBeNull();
-  expect(screen.getByText("Draft workflow")).toBeDisabled();
+  expect(screen.getByText("Draft review")).toBeDisabled();
   fireEvent.click(screen.getByLabelText("Done task", { exact: false }));
-  fireEvent.click(screen.getByText("Draft workflow"));
+  fireEvent.click(screen.getByText("Draft review"));
   await waitFor(() =>
     expect(mocks.draftWorkflow).toHaveBeenCalledWith({
       workspaceId: "ws",

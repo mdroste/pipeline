@@ -27,7 +27,15 @@ impl Drop for UsageReceipt<'_> {
     }
 }
 
+/// Whether an Anthropic stop reason fails the call. A cache warm-up accepts the
+/// output cap: the provider read the prompt, which was the point of the
+/// request, and adaptive thinking can spend a small cap before any answer.
+pub(crate) fn anthropic_stop_fails(reason: Option<&str>, accept_output_cap: bool) -> bool {
+    anthropic_output_incomplete(reason) && !accept_output_cap
+}
+
 /// Run the tool-use loop for Anthropic. Returns (text, usage).
+#[allow(clippy::too_many_arguments)]
 pub async fn anthropic_tool_loop(
     app: &crate::emit::EventBus,
     client: &reqwest::Client,
@@ -35,6 +43,7 @@ pub async fn anthropic_tool_loop(
     mut request: AnthropicRequest,
     timeout_secs: u64,
     label: &str,
+    accept_output_cap: bool,
     access: &ToolAccess,
 ) -> Result<(String, Usage), String> {
     let mut usage = UsageReceipt {
@@ -122,7 +131,7 @@ pub async fn anthropic_tool_loop(
 
         if !anthropic_has_tool_use(&body.content) || body.stop_reason.as_deref() != Some("tool_use")
         {
-            if anthropic_output_incomplete(body.stop_reason.as_deref()) {
+            if anthropic_stop_fails(body.stop_reason.as_deref(), accept_output_cap) {
                 return Err(format!(
                     "Anthropic truncated {label} because the output-token limit was reached"
                 ));
@@ -219,6 +228,7 @@ pub async fn openai_tool_loop(
     timeout_secs: u64,
     label: &str,
     drop_tools_on_400: bool,
+    accept_output_cap: bool,
     access: &ToolAccess,
 ) -> Result<(String, Usage), String> {
     let mut usage = UsageReceipt {
@@ -403,7 +413,11 @@ pub async fn openai_tool_loop(
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
-        if openai_output_incomplete(choice.finish_reason.as_deref()) {
+        // `accept_output_cap` is a warm-up's: see `anthropic_stop_fails`.
+        let stopped_at_cap = choice.finish_reason.as_deref() == Some("length");
+        if openai_output_incomplete(choice.finish_reason.as_deref())
+            && !(stopped_at_cap && accept_output_cap)
+        {
             return Err(format!(
                 "{provider} did not complete {label} (finish reason: {})",
                 choice.finish_reason.as_deref().unwrap_or("unknown")

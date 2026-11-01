@@ -20,8 +20,8 @@ vi.mock("../lib/workbench/conversationClient", () => ({
 }));
 vi.mock("../lib/workbench/runtimeClient", () => ({ runtimeClient: mocks }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (_: string, cb: any) => {
-    mocks.listeners.push(cb);
+  listen: vi.fn(async (name: string, cb: any) => {
+    if (name === "workbench:event") mocks.listeners.push(cb);
     return () => {};
   }),
 }));
@@ -114,7 +114,7 @@ it.each(
           },
         });
     });
-    expect(result.current.conversation.stream).toBe("");
+    expect(result.current.conversation.streamStore.get()).toBe("");
     expect(result.current.persistence.draft).toBe("B important draft");
     await act(async () => {
       for (const cb of mocks.listeners)
@@ -382,7 +382,7 @@ it("finishes an automation-driven turn on the viewed thread instead of leaving a
       });
     await new Promise((resolve) => setTimeout(resolve, 80));
   });
-  expect(result.current.conversation.stream).toBe("hi");
+  expect(result.current.conversation.streamStore.get()).toBe("hi");
   await act(async () => {
     for (const cb of mocks.listeners)
       cb({
@@ -396,7 +396,7 @@ it("finishes an automation-driven turn on the viewed thread instead of leaving a
       });
   });
   await waitFor(() => expect(result.current.conversation.active).toBeNull());
-  expect(result.current.conversation.stream).toBe("");
+  expect(result.current.conversation.streamStore.get()).toBe("");
   expect(mocks.reconcileSession).toHaveBeenCalledWith("A");
   await waitFor(() => expect(mocks.conversationSnapshot).toHaveBeenCalled());
   unmount();

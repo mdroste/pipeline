@@ -47,6 +47,20 @@ fn scoped_record(
     deny_unknown_fields
 )]
 pub enum StudioAction {
+    CreateFolder {
+        path: String,
+    },
+    MoveEntry {
+        from: String,
+        to: String,
+    },
+    TrashEntry {
+        path: String,
+    },
+    ImportFile {
+        directory: String,
+        source: String,
+    },
     CreateFile {
         checkpoint_id: Option<String>,
         path: String,
@@ -177,6 +191,16 @@ pub fn studio_mutate(store: &Store, request: StudioMutation) -> WorkbenchResult<
     store.connection()?.execute("INSERT INTO project_operations VALUES(?1,?2,?3,?4)",params![request.operation_id,digest,json!({"outcome":"unknown","recovery":"Refresh and inspect records; no automatic retry"}).to_string(),now()]).map_err(err)?;
     let ws = &request.workspace_id;
     let value = match request.action {
+        StudioAction::CreateFolder { path } => {
+            super::file_browser::create_folder(store, ws, &path)?
+        }
+        StudioAction::MoveEntry { from, to } => {
+            super::file_browser::move_entry(store, ws, &from, &to)?
+        }
+        StudioAction::TrashEntry { path } => super::file_browser::trash_entry(store, ws, &path)?,
+        StudioAction::ImportFile { directory, source } => {
+            super::file_browser::import_file(store, ws, &directory, &source)?
+        }
         StudioAction::CreateFile {
             checkpoint_id,
             path,
@@ -423,6 +447,7 @@ fn artifact_bytes(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .map_err(err)?;
+    crate::workbench::store::require_available("This saved file", &path)?;
     let path = fs::canonicalize(path).map_err(err)?;
     if !path.starts_with(fs::canonicalize(store.root_path().join("blobs")).map_err(err)?) {
         return Err(WorkbenchError::invalid("Artifact escaped private storage"));
@@ -500,7 +525,10 @@ pub fn stage_publication_files(
             "Staged publication exceeds its file or byte limit",
         ));
     }
-    let root = files::SafeRoot::open(&session_task_root(store, ws, checkpoint)?)?;
+    let task_root = session_task_root(store, ws, checkpoint)?;
+    // Capture below refuses a copy with a job in it, so refuse before writing.
+    research::jobs::ensure_copy_free(ws, &task_root)?;
+    let root = files::SafeRoot::open(&task_root)?;
     for (path, expected, bytes) in &files_to_write {
         files::relative(path)?;
         if bytes.len() > 8 * 1024 * 1024 {

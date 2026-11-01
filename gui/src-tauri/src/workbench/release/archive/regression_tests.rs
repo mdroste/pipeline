@@ -1,6 +1,6 @@
 use super::{
-    export_archive, import_archive, inspect_archive, ArchiveReport, ExportArchiveRequest,
-    ImportArchiveRequest,
+    export_archive, export_archive_without, import_archive, inspect_archive, missing_backup_files,
+    ArchiveReport, ExportArchiveRequest, ImportArchiveRequest,
 };
 use crate::workbench::store::CreateSessionRequest;
 use crate::workbench::store::{Store, WorkbenchResult};
@@ -314,6 +314,370 @@ fn restore_reconciles_unfinished_turns_and_discards_foreign_trash_authority() {
     assert!(turn.1.is_some());
     assert_eq!(fs::read_to_string(original).unwrap(), "keep");
 }
+/// Applies `sql` to the database inside a copy of `archive`, as a crafted file would.
+fn tampered(archive: &Path, output: &Path, name: &str, sql: &str) -> PathBuf {
+    let copy = output.join(format!("{name}.pwrx"));
+    fs::copy(archive, &copy).unwrap();
+    rewrite_entries(&copy, |entry, bytes| {
+        if entry != "database/research.sqlite3" {
+            return bytes;
+        }
+        let scratch = output.join(format!("{name}.sqlite3"));
+        fs::write(&scratch, bytes).unwrap();
+        let connection = Connection::open(&scratch).unwrap();
+        connection.execute_batch(sql).unwrap();
+        connection.close().unwrap();
+        fs::read(&scratch).unwrap()
+    });
+    copy
+}
+fn assert_destination_untouched(store: &Store, session: &str) {
+    assert!(store.session_snapshot(session).is_err());
+    let connection = store.connection().unwrap();
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM workspaces)+(SELECT COUNT(*) FROM sessions)+(SELECT COUNT(*) FROM desk_records)+(SELECT COUNT(*) FROM execution_plan_state)+(SELECT COUNT(*) FROM execution_authorizations)",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('keep_plan','keep_authorization','extra')",
+                [],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        fs::read_dir(store.root_path().join("blobs"))
+            .unwrap()
+            .count(),
+        0
+    );
+    assert!(!store.root_path().join("jobs/conversations").exists());
+}
+const AUTHORITY: &str = "INSERT INTO workspaces(id,name,created_at,updated_at) VALUES('w','Crafted','t','t');
+    INSERT INTO desk_records(id,workspace_id,kind,title,body_json,content_hash,created_at) VALUES('plan','w','execution_plan','Plan','{}','hash','t');
+    INSERT INTO execution_plan_state(plan_id,fingerprint,authorized,test_status) VALUES('plan','hash',1,'passed');";
+#[test]
+fn a_trigger_that_keeps_execution_authority_is_refused_before_any_retirement() {
+    let (_root, source, session) = fixture();
+    let output = tempfile::tempdir().unwrap();
+    let archive = export(&source, output.path());
+    let sql = format!(
+        "{AUTHORITY}
+        CREATE TRIGGER keep_plan BEFORE DELETE ON execution_plan_state BEGIN SELECT RAISE(IGNORE); END;"
+    );
+    let crafted = tampered(&archive, output.path(), "trigger", &sql);
+    let target = tempfile::tempdir().unwrap();
+    let store = Store::open_at(target.path()).unwrap();
+    let error = import(&store, &crafted).unwrap_err();
+    assert!(
+        error.message.contains("trigger keep_plan"),
+        "{}",
+        error.message
+    );
+    assert_destination_untouched(&store, &session);
+}
+#[test]
+fn a_store_with_no_extra_objects_loses_authority_on_restore() {
+    let (_root, source, _session) = fixture();
+    let output = tempfile::tempdir().unwrap();
+    let archive = export(&source, output.path());
+    let crafted = tampered(&archive, output.path(), "plain", AUTHORITY);
+    let target = tempfile::tempdir().unwrap();
+    let store = Store::open_at(target.path()).unwrap();
+    import(&store, &crafted).unwrap();
+    assert_eq!(
+        store
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM execution_plan_state", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    // The archived record of a folder on another computer is not kept either.
+    assert_eq!(
+        store
+            .connection()
+            .unwrap()
+            .query_row("SELECT root FROM store_location", [], |r| r
+                .get::<_, String>(0))
+            .unwrap(),
+        target.path().to_string_lossy()
+    );
+}
+#[test]
+fn any_schema_object_pipeline_did_not_create_is_refused() {
+    let (_root, source, session) = fixture();
+    let output = tempfile::tempdir().unwrap();
+    let archive = export(&source, output.path());
+    for (name, sql, expected) in [
+        ("view", "CREATE VIEW extra AS SELECT 1;", "view extra"),
+        ("table", "CREATE TABLE extra(value TEXT);", "table extra"),
+        (
+            "index",
+            "CREATE INDEX extra ON workspaces(name);",
+            "index extra",
+        ),
+        (
+            "definition",
+            "DROP INDEX transcript_items_page;
+             CREATE INDEX transcript_items_page ON transcript_items(binding_id);",
+            "index transcript_items_page",
+        ),
+        (
+            "column",
+            "ALTER TABLE execution_plan_state ADD COLUMN extra TEXT;",
+            "table execution_plan_state",
+        ),
+        (
+            "removed",
+            "DROP TABLE store_location;",
+            "table store_location",
+        ),
+        (
+            "authorization trigger",
+            "CREATE TRIGGER keep_authorization BEFORE DELETE ON execution_authorizations BEGIN SELECT RAISE(IGNORE); END;",
+            "trigger keep_authorization",
+        ),
+        (
+            "replaced trigger",
+            "DROP TRIGGER desk_note_delete;
+             CREATE TRIGGER desk_note_delete AFTER DELETE ON research_notes BEGIN SELECT 1; END;",
+            "trigger desk_note_delete",
+        ),
+    ] {
+        let crafted = tampered(&archive, output.path(), name, sql);
+        let target = tempfile::tempdir().unwrap();
+        let store = Store::open_at(target.path()).unwrap();
+        let error = import(&store, &crafted).unwrap_err();
+        assert!(error.message.contains(expected), "{name}: {}", error.message);
+        assert_destination_untouched(&store, &session);
+    }
+}
+#[test]
+fn an_older_archive_is_compared_at_its_own_schema_version() {
+    let (_root, source, session) = fixture();
+    let output = tempfile::tempdir().unwrap();
+    let archive = export(&source, output.path());
+    // A plausible rollback to the previous schema that keeps one object from
+    // this version, so it matches neither version's reference.
+    let crafted = tampered(
+        &archive,
+        output.path(),
+        "older",
+        &format!(
+            "PRAGMA user_version={};",
+            crate::workbench::store::CURRENT_SCHEMA_VERSION - 1
+        ),
+    );
+    rewrite_entries(&crafted, |entry, bytes| {
+        if entry != "manifest.json" {
+            return bytes;
+        }
+        let mut manifest: Value = serde_json::from_slice(&bytes).unwrap();
+        manifest["storeSchemaVersion"] =
+            Value::from(crate::workbench::store::CURRENT_SCHEMA_VERSION - 1);
+        serde_json::to_vec(&manifest).unwrap()
+    });
+    let target = tempfile::tempdir().unwrap();
+    let store = Store::open_at(target.path()).unwrap();
+    let error = import(&store, &crafted).unwrap_err();
+    assert!(
+        error.message.contains("store_location"),
+        "{}",
+        error.message
+    );
+    assert_destination_untouched(&store, &session);
+}
+/// A real backup made without a paper's lost text, with its project folder and
+/// the reference it left out.
+fn backup_with_a_left_out_file(output: &Path) -> (PathBuf, String, String) {
+    let (_root, source, _session) = fixture();
+    let project = output.join("project");
+    fs::create_dir(&project).unwrap();
+    fs::write(project.join("paper.tex"), "Output rises.\n").unwrap();
+    let workspace = source
+        .create_workspace(crate::workbench::store::CreateWorkspaceRequest {
+            name: "Research".into(),
+            root: Some(project.to_string_lossy().into_owned()),
+            operation_id: "workspace".into(),
+        })
+        .unwrap()
+        .record;
+    let revision = crate::workbench::research::import_paper(
+        &source,
+        crate::workbench::research::ImportPaperRequest {
+            workspace_id: workspace.id,
+            paper_id: None,
+            title: "Paper".into(),
+            role: "manuscript".into(),
+            path: project.join("paper.tex").to_string_lossy().into_owned(),
+            operation_id: "paper".into(),
+        },
+    )
+    .unwrap()
+    .revision
+    .unwrap();
+    fs::remove_file(revision.text_reference.unwrap()).unwrap();
+    let approved = missing_backup_files(&source)
+        .unwrap()
+        .into_iter()
+        .map(|file| file.reference)
+        .collect::<Vec<_>>();
+    let path = output.join("left-out.pwrx");
+    export_archive_without(
+        &source,
+        ExportArchiveRequest {
+            path: path.to_string_lossy().into(),
+        },
+        &approved,
+    )
+    .unwrap();
+    (path, workspace.root.unwrap(), approved[0].clone())
+}
+fn restore_detached(store: &Store, path: &Path, root: &str) -> WorkbenchResult<ArchiveReport> {
+    import_archive(
+        store,
+        ImportArchiveRequest {
+            path: path.to_string_lossy().into(),
+            root_mappings: BTreeMap::from([(root.to_string(), None)]),
+        },
+    )
+}
+fn with_manifest(path: &Path, output: &Path, name: &str, edit: impl Fn(&mut Value)) -> PathBuf {
+    let copy = output.join(format!("{name}.pwrx"));
+    fs::copy(path, &copy).unwrap();
+    rewrite_entries(&copy, |entry, bytes| {
+        if entry != "manifest.json" {
+            return bytes;
+        }
+        let mut manifest: Value = serde_json::from_slice(&bytes).unwrap();
+        edit(&mut manifest);
+        serde_json::to_vec(&manifest).unwrap()
+    });
+    copy
+}
+#[test]
+fn a_crafted_omission_list_is_refused_and_leaves_the_destination_untouched() {
+    let output = tempfile::tempdir().unwrap();
+    let (path, root, lost) = backup_with_a_left_out_file(output.path());
+    let archived = {
+        let mut zip = zip::ZipArchive::new(File::open(&path).unwrap()).unwrap();
+        let manifest: Value =
+            serde_json::from_reader(zip.by_name("manifest.json").unwrap()).unwrap();
+        manifest["blobs"][0]["originalReference"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    for (name, list) in [
+        (
+            "traversal",
+            vec!["workspace://blobs/../../outside.txt".to_string()],
+        ),
+        (
+            "nested traversal",
+            vec!["workspace://blobs/a/../../b".to_string()],
+        ),
+        ("absolute", vec!["/etc/passwd".to_string()]),
+        (
+            "other scheme",
+            vec!["unavailable://blobs/a.txt".to_string()],
+        ),
+        ("no name", vec!["workspace://blobs/".to_string()]),
+        ("backslash", vec![r"workspace://blobs/a\b".to_string()]),
+        (
+            "long",
+            vec![format!("workspace://blobs/{}", "a".repeat(2000))],
+        ),
+        ("duplicate", vec![lost.clone(), lost.clone()]),
+        ("in the archive", vec![archived.clone()]),
+        ("inside an archived file", vec![format!("{archived}/x")]),
+        (
+            "unused",
+            vec!["workspace://blobs/nothing-uses-this.txt".to_string()],
+        ),
+        (
+            "partly unused",
+            vec![lost.clone(), "workspace://blobs/nope.txt".to_string()],
+        ),
+    ] {
+        let crafted = with_manifest(&path, output.path(), name, |manifest| {
+            manifest["omittedReferences"] = serde_json::json!(list);
+        });
+        let target = tempfile::tempdir().unwrap();
+        fs::write(target.path().join("outside.txt"), "keep").unwrap();
+        let store = Store::open_at(target.path()).unwrap();
+        let error = restore_detached(&store, &crafted, &root).unwrap_err();
+        assert!(
+            error.message.contains("left-out files"),
+            "{name}: {}",
+            error.message
+        );
+        assert_destination_untouched(&store, "no-session");
+        assert_eq!(
+            fs::read_to_string(target.path().join("outside.txt")).unwrap(),
+            "keep"
+        );
+    }
+    // A list only ever speaks for portable archives.
+    let legacy = with_manifest(&path, output.path(), "legacy", |manifest| {
+        manifest["originalBlobRoot"] = Value::from("/original/blobs");
+    });
+    let target = tempfile::tempdir().unwrap();
+    let store = Store::open_at(target.path()).unwrap();
+    assert!(restore_detached(&store, &legacy, &root)
+        .unwrap_err()
+        .message
+        .contains("left-out files"));
+    assert!(inspect_archive(ExportArchiveRequest {
+        path: legacy.to_string_lossy().into()
+    })
+    .is_err());
+}
+#[test]
+fn a_backup_with_omissions_is_held_to_the_schema_and_retirement_checks() {
+    let output = tempfile::tempdir().unwrap();
+    let (path, root, _lost) = backup_with_a_left_out_file(output.path());
+    let trigger = format!(
+        "{AUTHORITY}
+        CREATE TRIGGER keep_plan BEFORE DELETE ON execution_plan_state BEGIN SELECT RAISE(IGNORE); END;"
+    );
+    let crafted = tampered(&path, output.path(), "omission-trigger", &trigger);
+    let target = tempfile::tempdir().unwrap();
+    let store = Store::open_at(target.path()).unwrap();
+    let error = restore_detached(&store, &crafted, &root).unwrap_err();
+    assert!(
+        error.message.contains("trigger keep_plan"),
+        "{}",
+        error.message
+    );
+    assert_destination_untouched(&store, "no-session");
+
+    let plain = tampered(&path, output.path(), "omission-plain", AUTHORITY);
+    let target = tempfile::tempdir().unwrap();
+    let store = Store::open_at(target.path()).unwrap();
+    let report = restore_detached(&store, &plain, &root).unwrap();
+    assert_eq!(report.omitted_files.len(), 1);
+    assert_eq!(
+        store
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM execution_plan_state", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
 #[test]
 fn conversation_files_round_trip_and_corruption_fails_before_restore() {
     let (root, source, session) = fixture();
@@ -391,6 +755,38 @@ fn export_strips_local_trash_and_restore_never_overwrites_conversation_files() {
 }
 #[cfg(unix)]
 #[test]
+fn links_inside_a_conversation_folder_are_left_out_without_failing_the_backup() {
+    let (root, source, session) = fixture();
+    let external = tempfile::tempdir().unwrap();
+    fs::write(external.path().join("private.txt"), "keep").unwrap();
+    let folder = root.path().join("jobs/conversations").join(&session);
+    fs::create_dir_all(folder.join(".venv/bin")).unwrap();
+    fs::write(folder.join("script.py"), "print(1)").unwrap();
+    std::os::unix::fs::symlink("/usr/bin/python3", folder.join(".venv/bin/python")).unwrap();
+    std::os::unix::fs::symlink(external.path(), folder.join("outside")).unwrap();
+    let output = tempfile::tempdir().unwrap();
+    let path = output.path().join("backup.pwrx");
+    let report = export_archive(
+        &source,
+        ExportArchiveRequest {
+            path: path.to_string_lossy().into(),
+        },
+    )
+    .unwrap();
+    assert!(report.portability_note.contains("left out"));
+    let target = tempfile::tempdir().unwrap();
+    let store = Store::open_at(target.path()).unwrap();
+    import(&store, &path).unwrap();
+    let restored = target.path().join("jobs/conversations").join(&session);
+    assert_eq!(
+        fs::read_to_string(restored.join("script.py")).unwrap(),
+        "print(1)"
+    );
+    assert!(!restored.join("outside").exists());
+    assert!(!restored.join(".venv/bin/python").exists());
+}
+#[cfg(unix)]
+#[test]
 fn conversation_symlinks_cannot_import_external_files_into_backups() {
     let (root, source, session) = fixture();
     let external = tempfile::tempdir().unwrap();
@@ -406,4 +802,260 @@ fn conversation_symlinks_cannot_import_external_files_into_backups() {
         }
     )
     .is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_conversation_folder_is_left_out_without_failing_the_backup() {
+    use std::os::unix::fs::PermissionsExt;
+    let (root, source, session) = fixture();
+    let folder = root.path().join("jobs/conversations").join(&session);
+    fs::create_dir_all(folder.join("locked")).unwrap();
+    fs::write(folder.join("locked/secret.txt"), "hidden").unwrap();
+    fs::write(folder.join("kept.txt"), "kept").unwrap();
+    let locked = folder.join("locked");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+    let output = tempfile::tempdir().unwrap();
+    let path = output.path().join("backup.pwrx");
+    let report = export_archive(
+        &source,
+        ExportArchiveRequest {
+            path: path.to_string_lossy().into(),
+        },
+    );
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(report.unwrap().portability_note.contains("left out"));
+    let target = tempfile::tempdir().unwrap();
+    let store = Store::open_at(target.path()).unwrap();
+    import(&store, &path).unwrap();
+    let restored = target.path().join("jobs/conversations").join(&session);
+    assert_eq!(
+        fs::read_to_string(restored.join("kept.txt")).unwrap(),
+        "kept"
+    );
+    assert!(!restored.join("locked").exists());
+}
+
+#[test]
+fn conversation_files_stop_at_every_budget_instead_of_failing_the_backup() {
+    use super::conversation_files::{stage, Budget};
+    use super::format::{MAX_ARCHIVE_BYTES, MAX_MANIFEST_BYTES};
+    let (root, source, session) = fixture();
+    let folder = root.path().join("jobs/conversations").join(&session);
+    fs::create_dir_all(&folder).unwrap();
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        fs::write(folder.join(name), "12345").unwrap();
+    }
+    let staging = tempfile::tempdir().unwrap();
+    let connection = source.connection().unwrap();
+    let wide = || Budget {
+        entries: 10,
+        bytes: 100,
+        manifest_bytes: 100_000,
+    };
+    let staged = stage(&source, &connection, staging.path(), wide()).unwrap();
+    assert_eq!((staged.files.len(), staged.omitted), (3, 0));
+
+    let staging = tempfile::tempdir().unwrap();
+    let bytes = Budget {
+        bytes: 11,
+        ..wide()
+    };
+    let staged = stage(&source, &connection, staging.path(), bytes).unwrap();
+    assert_eq!((staged.files.len(), staged.omitted), (2, 1));
+
+    // Thousands of small files must not outgrow the manifest restore accepts.
+    let staging = tempfile::tempdir().unwrap();
+    let manifest = Budget {
+        manifest_bytes: 600,
+        ..wide()
+    };
+    let staged = stage(&source, &connection, staging.path(), manifest).unwrap();
+    assert!(!staged.files.is_empty() && staged.omitted > 0);
+    let listed: usize = staged
+        .files
+        .iter()
+        .map(|file| serde_json::to_string_pretty(file).unwrap().len())
+        .sum();
+    assert!((listed as u64) < 600);
+    assert!(!staging
+        .path()
+        .join(format!("conversation-files/{session}/c.txt"))
+        .exists());
+
+    // The space offered leaves room for everything measured before the files.
+    let database = 300 * 1024 * 1024;
+    let budget = super::export::conversation_byte_budget(400, database, 1_000);
+    assert!(budget + 400 + database + 1_000 + MAX_MANIFEST_BYTES < MAX_ARCHIVE_BYTES);
+    assert_eq!(
+        super::export::conversation_byte_budget(MAX_ARCHIVE_BYTES, database, 0),
+        0
+    );
+}
+
+#[test]
+fn a_backup_keeps_page_locators_instead_of_image_copies_and_still_restores() {
+    let (_root, source, session) = fixture();
+    let workspace = source
+        .create_workspace(crate::workbench::store::CreateWorkspaceRequest {
+            name: "Pages".into(),
+            root: None,
+            operation_id: "workspace".into(),
+        })
+        .unwrap()
+        .record
+        .id;
+    let locator = serde_json::json!({"artifactId":"page","imageHash":"hash"}).to_string();
+    let image = format!("data:image/jpeg;base64,{}", "A".repeat(4 * 1024 * 1024));
+    let receipt = serde_json::json!({"success":true,"contentItems":[{"type":"inputText","text":locator},{"type":"inputImage","imageUrl":image}]});
+    let connection = source.connection().unwrap();
+    connection.execute("INSERT INTO tool_receipts (id, workspace_id, session_id, provider_turn_id, call_id, tool_name, catalog_version, arguments_json, state, result_json, started_at) VALUES ('receipt', ?1, ?2, 'turn', 'call', 'workbench_paper_page', 1, '{}', 'completed', ?3, 't')", params![workspace, session, receipt.to_string()]).unwrap();
+    drop(connection);
+    let output = tempfile::tempdir().unwrap();
+    let path = export(&source, output.path());
+
+    let mut archive = zip::ZipArchive::new(File::open(&path).unwrap()).unwrap();
+    let mut bytes = Vec::new();
+    archive
+        .by_name("database/research.sqlite3")
+        .unwrap()
+        .read_to_end(&mut bytes)
+        .unwrap();
+    assert!(bytes.len() < 3 * 1024 * 1024, "{}", bytes.len());
+    let db = output.path().join("snapshot.sqlite3");
+    fs::write(&db, bytes).unwrap();
+    let stored: String = Connection::open(db)
+        .unwrap()
+        .query_row("SELECT result_json FROM tool_receipts", [], |r| r.get(0))
+        .unwrap();
+    assert!(!stored.contains("base64,"));
+    assert!(stored.contains("artifactId"));
+
+    let target = tempfile::tempdir().unwrap();
+    let store = Store::open_at(target.path()).unwrap();
+    import(&store, &path).unwrap();
+}
+
+/// A project whose command, run receipt, and captured plan all sit in `analysis/`.
+fn project_with_command() -> (tempfile::TempDir, Store, PathBuf, String) {
+    let root = tempfile::tempdir().unwrap();
+    let project = root.path().join("project");
+    fs::create_dir_all(project.join("analysis")).unwrap();
+    let store = Store::open_at(&root.path().join("store")).unwrap();
+    let workspace = store
+        .create_workspace(crate::workbench::store::CreateWorkspaceRequest {
+            name: "Project".into(),
+            root: Some(project.to_string_lossy().into_owned()),
+            operation_id: "workspace".into(),
+        })
+        .unwrap()
+        .record
+        .id;
+    let cwd = fs::canonicalize(project.join("analysis")).unwrap();
+    let profile = crate::workbench::research::save_execution_profile(
+        &store,
+        crate::workbench::research::SaveExecutionProfileRequest {
+            profile_id: None,
+            workspace_id: workspace.clone(),
+            name: "Analysis".into(),
+            adapter: "command".into(),
+            argv: vec!["/bin/sh".into(), "-c".into(), "true".into()],
+            cwd: cwd.to_string_lossy().into_owned(),
+            environment: serde_json::json!({}),
+            inputs: vec![],
+            timeout_seconds: 30,
+            outputs: vec![],
+            expected_revision: None,
+            operation_id: "profile".into(),
+        },
+    )
+    .unwrap();
+    let connection = store.connection().unwrap();
+    connection.execute("INSERT INTO research_executions (id, workspace_id, adapter, command_json, cwd, input_manifest_json, dependency_hash, outcome, output_manifest_json, validation_json, snapshot_consistency, created_at) VALUES ('run', ?1, 'command', '[]', ?2, '{}', 'hash', 'completed', '{}', '{}', 'complete', 't')", params![workspace, cwd.to_string_lossy()]).unwrap();
+    connection.execute("INSERT INTO desk_records(id,workspace_id,kind,title,body_json,content_hash,created_at) VALUES('plan',?1,'execution_plan','Plan',?2,'captured-hash','t')", params![workspace, serde_json::json!({"profile":{"cwd":cwd.to_string_lossy()}}).to_string()]).unwrap();
+    drop(connection);
+    (root, store, cwd, profile.id)
+}
+
+#[test]
+fn a_remapped_folder_takes_its_commands_receipts_and_plans_with_it() {
+    let (_root, source, old_cwd, profile) = project_with_command();
+    let old_root = old_cwd.parent().unwrap().to_string_lossy().into_owned();
+    let output = tempfile::tempdir().unwrap();
+    let path = export(&source, output.path());
+
+    let target = tempfile::tempdir().unwrap();
+    let moved = target.path().join("moved");
+    fs::create_dir_all(moved.join("analysis")).unwrap();
+    let moved = fs::canonicalize(moved).unwrap();
+    let store = Store::open_at(&target.path().join("store")).unwrap();
+    import_archive(
+        &store,
+        ImportArchiveRequest {
+            path: path.to_string_lossy().into(),
+            root_mappings: BTreeMap::from([(old_root, Some(moved.to_string_lossy().into_owned()))]),
+        },
+    )
+    .unwrap();
+
+    let preview = crate::workbench::research::preview_host_execution(&store, &profile).unwrap();
+    assert_eq!(Path::new(&preview.cwd), moved.join("analysis"));
+    let connection = store.connection().unwrap();
+    let run: String = connection
+        .query_row("SELECT cwd FROM research_executions", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(Path::new(&run), moved.join("analysis"));
+    let (body, hash): (String, String) = connection
+        .query_row(
+            "SELECT body_json,content_hash FROM desk_records WHERE id='plan'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    let body: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(
+        Path::new(body["profile"]["cwd"].as_str().unwrap()),
+        moved.join("analysis")
+    );
+    assert_eq!(hash, "captured-hash");
+}
+
+#[test]
+fn a_project_restored_without_a_folder_asks_for_one() {
+    let (_root, source, old_cwd, profile) = project_with_command();
+    let old_root = old_cwd.parent().unwrap().to_string_lossy().into_owned();
+    let output = tempfile::tempdir().unwrap();
+    let path = export(&source, output.path());
+    let target = tempfile::tempdir().unwrap();
+    let store = Store::open_at(target.path()).unwrap();
+    import_archive(
+        &store,
+        ImportArchiveRequest {
+            path: path.to_string_lossy().into(),
+            root_mappings: BTreeMap::from([(old_root, None)]),
+        },
+    )
+    .unwrap();
+    let error = crate::workbench::research::preview_host_execution(&store, &profile).unwrap_err();
+    assert!(
+        error.message.contains("Attach a folder"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
+fn only_a_path_inside_the_old_folder_moves() {
+    use super::restore::moved_path;
+    assert_eq!(
+        moved_path("/old/a/b", "/old", "/new").as_deref(),
+        Some(Path::new("/new/a/b").to_str().unwrap())
+    );
+    assert_eq!(moved_path("/old", "/old", "/new").as_deref(), Some("/new"));
+    assert_eq!(
+        moved_path(r"C:\old\a", r"C:\old", "/new").as_deref(),
+        Some(Path::new("/new/a").to_str().unwrap())
+    );
+    assert_eq!(moved_path("/older/a", "/old", "/new"), None);
+    assert_eq!(moved_path("/old/../etc", "/old", "/new"), None);
 }

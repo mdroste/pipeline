@@ -22,19 +22,64 @@ fn resolve_artifact_path(run_id: &str, rel_path: &str) -> Result<PathBuf, String
     Ok(path)
 }
 
-/// Forward-slash a canonical path and strip Windows verbatim prefixes
-/// (`\\?\C:\…` → `C:/…`, `\\?\UNC\server\share` → `//server/share`), mirroring
-/// `pipeline::claude::normalize_canonical_cli_path`. "Open externally" hands
-/// this to ShellExecute, which rejects verbatim paths.
-pub(super) fn normalize_external_path(path: &str) -> String {
-    let normalized = path.replace('\\', "/");
-    if let Some(rest) = normalized.strip_prefix("//?/UNC/") {
-        format!("//{rest}")
-    } else if let Some(rest) = normalized.strip_prefix("//?/") {
-        rest.to_string()
-    } else {
-        normalized
+/// One retained artifact behind a stream token. Each request repeats the
+/// run-directory containment check, so a later swap cannot widen the token.
+struct ArtifactSource {
+    run_id: String,
+    rel_path: String,
+}
+impl crate::file_stream::FileSource for ArtifactSource {
+    fn open(&self) -> Result<Option<crate::file_stream::OpenedSource>, String> {
+        let Ok(path) = resolve_artifact_path(&self.run_id, &self.rel_path) else {
+            return Ok(None);
+        };
+        let file = crate::safety::open_regular_file(&path).map_err(|e| e.to_string())?;
+        let metadata = file.metadata().map_err(|e| e.to_string())?;
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |time| time.as_millis());
+        Ok(Some(crate::file_stream::OpenedSource {
+            stamp: format!("{}:{modified}", metadata.len()),
+            size: metadata.len(),
+            file,
+        }))
     }
+}
+/// Authorize a retained PDF or image for the file viewers. Unlike `read_artifact`,
+/// this checks the manifest here, because a token outlives the frontend's list.
+pub fn open_artifact_stream(run_id: &str, rel_path: &str) -> Result<String, String> {
+    let manifest = load_manifest(run_id)?;
+    if !manifest.artifacts.iter().any(|a| a.rel_path == rel_path) {
+        return Err("File is not in the retained artifact manifest".into());
+    }
+    let extension = Path::new(rel_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mime = match extension.as_str() {
+        "pdf" => "application/pdf",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        _ => return Err("This artifact type is not streamed".into()),
+    };
+    let source = ArtifactSource {
+        run_id: run_id.to_string(),
+        rel_path: rel_path.to_string(),
+    };
+    use crate::file_stream::FileSource as _;
+    let opened = source.open()?.ok_or("Artifact not found")?;
+    crate::file_stream::issue(
+        std::sync::Arc::new(source),
+        mime,
+        opened.stamp,
+        crate::file_stream::Presentation::Bytes,
+    )
 }
 
 /// Read an artifact for display. The single choke point for file bytes
@@ -43,7 +88,7 @@ pub(super) fn normalize_external_path(path: &str) -> String {
 pub fn read_artifact(run_id: &str, rel_path: &str) -> Result<ArtifactContent, String> {
     let path = resolve_artifact_path(run_id, rel_path)?;
 
-    let abs_path = normalize_external_path(&path.to_string_lossy());
+    let abs_path = crate::file_viewer::normalize_external_path(&path.to_string_lossy());
 
     // Sniff a small head for kind detection of extensionless files.
     let (head, size) = {

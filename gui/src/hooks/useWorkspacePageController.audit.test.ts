@@ -22,8 +22,8 @@ vi.mock("../lib/workbench/conversationClient", () => ({
 }));
 vi.mock("../lib/workbench/runtimeClient", () => ({ runtimeClient: mocks }));
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async (_: string, cb: any) => {
-    mocks.listeners.push(cb);
+  listen: vi.fn(async (name: string, cb: any) => {
+    if (name === "workbench:event") mocks.listeners.push(cb);
     return () => {};
   }),
 }));
@@ -355,7 +355,7 @@ it("keeps the finished prompt and answer on screen until the refreshed transcrip
   });
   await sendAcknowledged(result);
   await stream("agent-1", "The answer");
-  expect(result.current.conversation.stream).toBe("The answer");
+  expect(result.current.conversation.streamStore.get()).toBe("The answer");
   const refreshed = deferred<any>();
   mocks.conversationSnapshot.mockImplementationOnce(() => refreshed.promise);
   await emit({
@@ -367,11 +367,13 @@ it("keeps the finished prompt and answer on screen until the refreshed transcrip
   });
   expect(result.current.conversation.active).toBeNull();
   expect(result.current.conversation.pendingUser).toBe("Question");
-  expect(result.current.conversation.stream).toBe("The answer");
+  expect(result.current.conversation.streamStore.get()).toBe("The answer");
   await act(async () => {
     refreshed.resolve(recordedTurn(saved(), "The answer"));
   });
-  await waitFor(() => expect(result.current.conversation.stream).toBe(""));
+  await waitFor(() =>
+    expect(result.current.conversation.streamStore.get()).toBe(""),
+  );
   expect(result.current.conversation.pendingUser).toBeNull();
   expect(result.current.transcript.renderedItems).toHaveLength(2);
   unmount();
@@ -382,7 +384,7 @@ it("separates assistant messages that stream within one turn", async () => {
   await sendAcknowledged(result);
   await stream("agent-1", "I'll open the do-file first.");
   await stream("agent-2", "## Results");
-  expect(result.current.conversation.stream).toBe(
+  expect(result.current.conversation.streamStore.get()).toBe(
     "I'll open the do-file first.\n\n## Results",
   );
   unmount();
@@ -406,7 +408,9 @@ it("a stopped response keeps its prompt in the transcript instead of restoring i
     status: "interrupted",
   });
   expect(result.current.conversation.notice).toBe("Response stopped.");
-  await waitFor(() => expect(result.current.conversation.stream).toBe(""));
+  await waitFor(() =>
+    expect(result.current.conversation.streamStore.get()).toBe(""),
+  );
   await waitFor(() =>
     expect(result.current.transcript.renderedItems).toHaveLength(2),
   );

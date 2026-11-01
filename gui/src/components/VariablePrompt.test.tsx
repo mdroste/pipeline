@@ -58,7 +58,7 @@ describe("VariablePrompt accessibility", () => {
     await waitFor(() => expect(opener).toHaveFocus());
   });
 
-  it("offers only backend-supported formats for a document input slot", async () => {
+  it("offers every format a run accepts for a slot with no allowed types", async () => {
     open.mockResolvedValue("/inputs/rubric.pdf");
     const user = userEvent.setup();
     render(<Harness />);
@@ -71,7 +71,7 @@ describe("VariablePrompt accessibility", () => {
       filters: [
         {
           name: "Rubric",
-          extensions: ["pdf", "tex", "docx"],
+          extensions: ["pdf", "tex", "docx", "md", "markdown", "txt"],
         },
       ],
     });
@@ -103,6 +103,32 @@ describe("VariablePrompt accessibility", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Could not open the file picker for “Source data”: dialog unavailable",
+    );
+  });
+});
+
+describe("VariablePrompt layout", () => {
+  it("scrolls a long form between a fixed title and buttons", () => {
+    render(
+      <VariablePrompt
+        variables={Array.from({ length: 12 }, (_, index) => ({
+          key: `value${index}`,
+          label: `Value ${index}`,
+          kind: "text",
+        }))}
+        inputSlots={[]}
+        onCancel={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Report options" });
+    expect(dialog).toHaveClass("max-h-[90vh]", "flex", "flex-col");
+    const form = screen.getByLabelText("Value 0").closest(".overflow-y-auto");
+    expect(form).toHaveClass("min-h-0", "flex-1");
+    const buttons = screen.getByRole("button", { name: "Continue" });
+    expect(form).not.toContainElement(buttons);
+    expect(form).not.toContainElement(
+      screen.getByRole("heading", { name: "Report options" }),
     );
   });
 });
@@ -187,7 +213,7 @@ describe("VariablePrompt values", () => {
     await user.clear(code);
     await user.type(code, "abc");
     expect(code).toHaveAccessibleDescription(
-      "This value does not match the format the workflow requires.",
+      "This value does not match the format the review requires.",
     );
     expect(proceed).toBeDisabled();
 

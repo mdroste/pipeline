@@ -185,6 +185,50 @@ describe("PipelinePage", () => {
     expect(invoke).toHaveBeenCalledWith("list_profiles");
   });
 
+  it("uses opaque dark surfaces and a header per section in the navigator", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeConfig());
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findByRole("combobox", { name: "Active review" });
+
+    for (const [label, surface] of [
+      ["Review setup", "dark:bg-gray-800"],
+      ["Parallel", "dark:bg-blue-950"],
+      ["Sequential", "dark:bg-orange-950"],
+    ]) {
+      const header = screen.getByText(label).parentElement!;
+      expect(header).toHaveClass("sticky", surface);
+      expect(header.nextElementSibling).not.toBeNull();
+      // The section's own wrapper is what releases the header.
+      expect(header.parentElement?.children[0]).toBe(header);
+    }
+    const headers = ["Review setup", "Parallel", "Sequential"].map(
+      (label) => screen.getByText(label).parentElement!.parentElement,
+    );
+    expect(new Set(headers).size).toBe(3);
+
+    const reset = screen.getByRole("button", { name: "Reset" });
+    expect(reset).toHaveClass("dark:hover:bg-gray-800");
+    await user.click(screen.getByRole("button", { name: /^Export/ }));
+    const popover = screen.getByRole("button", {
+      name: "Export selected step",
+    }).parentElement;
+    expect(popover).toHaveClass("dark:bg-gray-900");
+  });
+
+  it("uses the app's word for a review in designer dialogs", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeConfig());
+    render(<PipelinePage onClose={() => {}} />);
+    await user.click(await screen.findByRole("button", { name: "New review" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("New review name");
+    expect(screen.getByRole("dialog")).not.toHaveTextContent(/profile/i);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Rename review");
+    expect(screen.getByRole("dialog")).not.toHaveTextContent(/profile/i);
+  });
+
   it("opens the workflow gallery from the former URL-import position", async () => {
     const user = userEvent.setup();
     const onOpenGallery = vi.fn();
@@ -203,7 +247,7 @@ describe("PipelinePage", () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
-    await screen.findByRole("combobox", { name: "Active workflow profile" });
+    await screen.findByRole("combobox", { name: "Active review" });
 
     dialogMocks.open.mockRejectedValueOnce(new Error("picker unavailable"));
     await user.click(screen.getByRole("button", { name: "Import" }));
@@ -224,7 +268,7 @@ describe("PipelinePage", () => {
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
     await user.click(screen.getByRole("button", { name: /^Export/ }));
-    await user.click(screen.getByRole("button", { name: /Export profile/ }));
+    await user.click(screen.getByRole("button", { name: /Export review/ }));
     await waitFor(() => {
       expect(notify).toHaveBeenCalledWith(
         "Export failed: save picker unavailable",
@@ -254,7 +298,7 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
 
     const selector = await screen.findByRole("combobox", {
-      name: "Active workflow profile",
+      name: "Active review",
     });
     await user.selectOptions(selector, "quick");
 
@@ -341,13 +385,13 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
 
     const selector = await screen.findByRole("combobox", {
-      name: "Active workflow profile",
+      name: "Active review",
     });
     expect(selector).toHaveValue("custom");
     await user.click(screen.getByRole("button", { name: "Delete" }));
 
     expect(selector).toBeDisabled();
-    expect(screen.getByRole("button", { name: "New profile" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New review" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Duplicate" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Rename" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Reset" })).toBeDisabled();
@@ -428,7 +472,7 @@ describe("PipelinePage", () => {
 
     await user.click(screen.getByRole("button", { name: "+ Add step" }));
     expect(
-      screen.getByRole("dialog", { name: "Add workflow step" }),
+      screen.getByRole("dialog", { name: "Add review step" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create step" })).toBeDisabled();
     await user.type(
@@ -450,7 +494,7 @@ describe("PipelinePage", () => {
       "Identification audit",
     );
     expect(screen.getByTestId("step-summary")).toHaveTextContent(
-      "Runs after its selected dependencies using the profile’s default provider",
+      "Runs after its selected dependencies using the review’s default provider",
     );
     expect(screen.getByTestId("step-summary")).toHaveTextContent(
       "Produces structured issues JSON",
@@ -746,7 +790,7 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Technical");
 
     expect(
-      screen.getByRole("combobox", { name: "Active workflow profile" }),
+      screen.getByRole("combobox", { name: "Active review" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Move Technical up" }),
@@ -774,7 +818,7 @@ describe("PipelinePage", () => {
       screen.getByRole("button", { name: "Input & extraction" }),
     );
     expect(
-      screen.getByRole("combobox", { name: "Workflow input mode" }),
+      screen.getByRole("combobox", { name: "Review input mode" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("combobox", { name: "PDF extraction method" }),
@@ -820,7 +864,7 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
-    await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
+    await user.click(screen.getByRole("button", { name: "Review settings" }));
     await user.click(screen.getByRole("button", { name: "Reset to generic" }));
     await user.click(
       screen.getByRole("switch", { name: "Reuse shared input context" }),
@@ -857,7 +901,7 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
-    await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
+    await user.click(screen.getByRole("button", { name: "Review settings" }));
     await user.click(screen.getByRole("button", { name: "Reset to generic" }));
     await waitFor(() => {
       expect(notify).toHaveBeenCalledWith(
@@ -948,7 +992,7 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
-    await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
+    await user.click(screen.getByRole("button", { name: "Review settings" }));
     const toggle = screen.getByRole("switch", {
       name: "Reuse shared input context",
     });
@@ -983,7 +1027,7 @@ describe("PipelinePage", () => {
     expect(orientation).not.toHaveTextContent("Required");
     await user.click(orientation);
 
-    expect(screen.getByText("Runs before every workflow")).toBeInTheDocument();
+    expect(screen.getByText("Runs before every review")).toBeInTheDocument();
     expect(
       screen.queryByRole("switch", { name: "Build orientation map" }),
     ).not.toBeInTheDocument();
@@ -999,18 +1043,18 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Technical");
 
     // No selection: the right pane shows the overview, never an instruction.
-    expect(screen.getByText("Workflow overview")).toBeInTheDocument();
+    expect(screen.getByText("Review overview")).toBeInTheDocument();
     expect(screen.queryByText("Select a step to edit")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Extract" })).toBeInTheDocument();
 
     // Selecting a stage from the overview opens its editor in place.
     await user.click(screen.getAllByText("Technical")[0]);
     expect(await screen.findByLabelText("Step label")).toHaveValue("Technical");
-    expect(screen.queryByText("Workflow overview")).not.toBeInTheDocument();
+    expect(screen.queryByText("Review overview")).not.toBeInTheDocument();
 
     // The navigator's own Overview tab still works.
     await user.click(screen.getByRole("tab", { name: "Overview" }));
-    expect(screen.getByText("Workflow overview")).toBeInTheDocument();
+    expect(screen.getByText("Review overview")).toBeInTheDocument();
   });
 
   it("keeps effective artifact schemas visible in a dedicated low-clutter view", async () => {
@@ -1233,7 +1277,7 @@ describe("PipelinePage", () => {
     mockLoad(config);
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
-    await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
+    await user.click(screen.getByRole("button", { name: "Review settings" }));
     const choices = screen.getByRole("textbox", {
       name: "Variable Tone choices",
     });

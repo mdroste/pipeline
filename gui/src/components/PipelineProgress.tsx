@@ -34,9 +34,9 @@ function fmtElapsed(ms: number): string {
 const BASE_STAGES = [
   { key: "extracting", label: "Creating document bundle" },
   { key: "orienting", label: "Creating orientation map" },
-  { key: "dispatching", label: "Parallel agent wave" },
+  { key: "dispatching", label: "Reviewers working together" },
   { key: "merging", label: "Merge cross-agent reports" },
-  { key: "synthesizing", label: "Sequential agent wave" },
+  { key: "synthesizing", label: "Next step" },
   { key: "done", label: "Complete" },
 ];
 
@@ -82,6 +82,8 @@ interface DisplayStage {
   kind: string;
   label: string;
   status: DisplayStatus;
+  /** A failed stage that only stopped because the researcher stopped the run. */
+  cancelled?: boolean;
   subitems: DisplaySubitem[];
 }
 
@@ -124,8 +126,8 @@ function historyPlan(history: RuntimeStage[]): ExecutionPlanStage[] {
 }
 
 function waveLabel(kind: string, fallback: string): string {
-  if (kind === "dispatching") return "Parallel agent wave";
-  if (kind === "synthesizing") return "Sequential agent wave";
+  if (kind === "dispatching") return "Reviewers working together";
+  if (kind === "synthesizing") return "Next step";
   return fallback;
 }
 
@@ -188,8 +190,14 @@ function processingLabel(stage: DisplayStage): string {
   if (/source.?tree|inventory/i.test(stage.label))
     return "Creating source-tree inventory";
   if (/workflow context|prepare run/i.test(stage.label))
-    return "Preparing workflow context";
+    return "Preparing review context";
   return "Creating document bundle";
+}
+
+/** One row covering several stages reads "cancelled" only if no real failure is among them. */
+function allCancelled(stages: DisplayStage[]): boolean {
+  const failed = stages.filter((stage) => stage.status === "failed");
+  return failed.length > 0 && failed.every((stage) => stage.cancelled);
 }
 
 function combinedProcessingStatus(stages: DisplayStage[]): DisplayStatus {
@@ -238,6 +246,7 @@ function groupAdjacentSequentialStages(stages: DisplayStage[]): DisplayStage[] {
   for (const stage of stages) {
     const previous = grouped[grouped.length - 1];
     if (stage.kind === "synthesizing" && previous?.kind === "synthesizing") {
+      previous.cancelled = allCancelled([previous, stage]);
       previous.status = combinedSequentialStatus([previous, stage]);
       previous.subitems.push(...stage.subitems);
     } else {
@@ -544,7 +553,15 @@ export default function PipelineProgress({
       id: stage.id,
       kind: stage.kind,
       label: waveLabel(stage.kind, stage.label),
-      status,
+      // A failed reviewer lets the run go on, but its stage did not succeed.
+      status:
+        status === "done" &&
+        Object.values(currentPasses).some((pass) => pass === "error")
+          ? "failed"
+          : status,
+      // Only the stage running when the stop arrived was cancelled. An earlier
+      // reviewer's failure stays a failure.
+      cancelled: isCancelled && status === "failed",
       subitems,
     };
   });
@@ -565,6 +582,7 @@ export default function PipelineProgress({
       kind: "processing",
       label: "Processing inputs",
       status: combinedProcessingStatus(processingStages),
+      cancelled: allCancelled(processingStages),
       subitems: processingStages.map((stage) => ({
         key: stage.id,
         label: processingLabel(stage),
@@ -580,15 +598,20 @@ export default function PipelineProgress({
 
   // Screen readers hear stage transitions only. The view itself is not a live
   // region, because its elapsed clocks change every second.
-  const failedStage = stages.find((stage) => stage.status === "failed");
+  const failedStages = stages.filter((stage) => stage.status === "failed");
   const activeStage = stages.find((stage) => stage.status === "active");
-  const announcement = failedStage
-    ? `${failedStage.label} ${isCancelled ? "cancelled" : "failed"}.`
-    : state.kind === "done"
-      ? "Review complete."
-      : activeStage
-        ? `${activeStage.label} in progress.`
-        : "";
+  const announcement = [
+    ...failedStages.map(
+      (stage) => `${stage.label} ${stage.cancelled ? "cancelled" : "failed"}.`,
+    ),
+    state.kind === "done" && "Review complete.",
+    state.kind !== "done" &&
+      !isError &&
+      activeStage &&
+      `${activeStage.label} in progress.`,
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div className="space-y-1">
@@ -659,7 +682,7 @@ export default function PipelineProgress({
                 </span>
                 {status === "failed" && (
                   <span className="text-red-600 dark:text-red-400 text-xs ml-auto">
-                    {isCancelled ? "cancelled" : "failed"}
+                    {stage.cancelled ? "cancelled" : "failed"}
                   </span>
                 )}
                 {status === "active" && stage.subitems.length === 0 && (

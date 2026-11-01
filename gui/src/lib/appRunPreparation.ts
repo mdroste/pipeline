@@ -45,6 +45,8 @@ export interface ExecutionPlanEnvelope {
   backupUnavailable?: string | null;
   usageEstimate?: UsageEstimate;
   hostChecks?: HostCheck[];
+  /** Files in the selected folders that won’t fit in the Review’s copy. */
+  inputNotices?: string[];
 }
 
 export interface PreparedLaunch {

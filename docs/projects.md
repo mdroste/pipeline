@@ -25,18 +25,39 @@ name to open the Overview, or **Resume conversation** to go back to the last
 conversation. **Pin project** keeps a project at the top on this computer.
 
 Inside a project, the sidebar lists its six areas and its conversations.
-**Switch project** moves to another project. Press Command/Ctrl+K, or choose
+**Show all** opens the full list, and **Show older conversations** reads further
+back in a long one. Each area's main views are tabs at the top of the page, and the rest are under
+**More**. Choose the project's name in the sidebar to move to another project or
+open **Project settings**. Press Command/Ctrl+K, or choose
 **Search** in the sidebar, to find any project, conversation, review,
-automation, or view by name. The layout menu switches between **Project only**, **Chat only**, and **Project + chat**. Project areas
+automation, or view by name. The layout menu switches between **Project only**, **Conversation only**, and **Project + conversation**. Project areas
 work without a model connection. Conversations and reviews need one. See
 [Connections](connections.md).
 
 ## Work in a conversation
 
-Start a conversation from the Overview, with **New chat** above the chat, or
+Start a conversation from the Overview, with **New conversation** above the conversation, or
 from **New → New conversation** in the sidebar. Outside a project, **New →
 New conversation** starts one with no project. **Conversations** in the sidebar
 lists every conversation, and filters to **Unfiled** and **Archived**.
+
+### Work with files outside a project
+
+A conversation with no project folder has its own private working folder. The
+assistant can create and change scripts, data, and other files there, and they
+stay available in later messages. This works under **Read only** too, because
+the folder holds only what the conversation made. Commands can't reach your
+other folders.
+
+API and **Local / custom** models need general commands for this, which run on
+macOS, or Linux with `bubblewrap` and `socat`. **Local / custom** models also
+need **Allow edits** or an enabled tool. See
+[API conversations](connections.md#api-conversations).
+
+Select a file the assistant names to open it, or choose **Reveal working files**
+from the conversation's actions menu. Deleting the conversation deletes its
+folder. **Move to project…** leaves the files in that folder, and the
+conversation works in the project instead.
 
 ### Choose a model
 
@@ -68,7 +89,7 @@ receives, choose **Context** in the conversation menu.
 
 Open **Assistant settings**, the gear below the message. Choose an agent
 profile, which is a saved set of instructions and tools. Set
-**Access mode** to **Inspect** or **Edit**.
+**Access mode** to **Read only** or **Allow edits**.
 
 **Manage agent profiles…** opens the profile editor:
 
@@ -77,6 +98,8 @@ profile, which is a saved set of instructions and tools. Set
 - On **System prompt**, keep the provider's base prompt or choose
   **Replace base prompt**. **Additional instructions** are added either way.
 - On **Tools & context**, choose which Pipeline tools the profile can use.
+- On **Access & inheritance**, set file changes, web search, the browser, and
+  command internet access.
 
 Editing a custom profile changes every conversation that uses it, starting
 with the next message. These settings apply to every connection.
@@ -87,6 +110,11 @@ Replies stream as the assistant works. Choose **Stop** to interrupt the turn
 and its tools. API billing after an interruption is explained under
 [API conversations](connections.md#api-conversations).
 
+Pipeline runs one response at a time. If you send a message while another
+conversation or an automation is running, it isn't sent: it stays in the message
+box, and a notice names what's running with a button to open it. A response
+that needs your approval shows the same notice wherever you are in the app.
+
 ### Queue your next message
 
 While the assistant works, choose **Activity & follow-ups** in the
@@ -94,6 +122,8 @@ conversation menu. Under **Follow-up messages**, write your next message and
 choose **Queue next message**. It's sent only when you choose **Run next**.
 You can queue up to 20 messages, reorder them, or cancel them. If your
 sources or settings change, **Review current context** shows the difference.
+If Pipeline can't tell whether a message was sent, it's marked `attention`.
+**Check message status** looks again, and **Dismiss** ends it without resending.
 
 ### Start fresh with selected sources
 
@@ -133,7 +163,9 @@ Choose **Project settings** at the top of the Overview to set up the project.
   sets the run that new results are compared with.
 - **Folder** has **Attach folder**, **Refresh file list**,
   **Check for changes every 30 seconds**, and
-  **Folders and files to leave out**.
+  **Folders and files to leave out**. **Refresh file list** reads every file.
+  The 30-second check, and the check when you return to Pipeline, compare each
+  file's size and modified time.
 - **Target date** shows a deadline under the project name.
 
 A project with no folder and no paper has a shorter Overview: the brief,
@@ -149,7 +181,8 @@ copy.
 **Check GitHub** runs `git fetch` with your own Git credentials, only when you
 choose it. For other hosts, the button names the host. It updates what
 Pipeline knows about the remote and leaves your files and branches as they
-are. Pipeline never commits, merges, or pushes.
+are. It ignores the folder's own Git settings, as described under
+[Version control](#version-control), where you can also commit, push, and pull.
 
 ## Library
 
@@ -166,27 +199,161 @@ beside the first.
 
 ### Files
 
-**Files** shows the attached folder. Press Command/Ctrl+P to find a file, and
-use tabs or **Split pane** to see two. A file link in a conversation or report
-opens the file at that line, heading, or PDF page.
+**Files** shows the attached folder as a list on the left. Click a folder to
+open it and a file to read it. Type in **Find a file**, or press Command/Ctrl+P
+from anywhere, to find a file by name. Press Enter to open the first match, or
+choose **Search inside files** to search its text. Use tabs or **Split pane** to
+see two files, and **Hide file list** for more room. A file link in a
+conversation or report opens the file at that line, heading, or PDF page.
+
+The **+** button offers **New file**, **New folder**, and **Add files**, which
+act on the folder you selected. You can also drop files from your desktop onto
+the list. Right-click an item, or use the **…** button on its row, to **Ask about
+this**, **Add to Documents**, **Rename**, **Move**, or **Move to Trash**. A
+rename or move offers **Undo**, and open tabs and unsaved drafts follow the file.
+Items go to your computer's Trash and are never deleted permanently. On Windows,
+a network or removable drive has no Recycle Bin, so Pipeline says so and leaves
+the item in place. **Add to Documents** copies a file into the reader, where you can keep notes on it. File
+changes wait while a response is running.
+
+Files opens these types:
+
+| Type | What you see |
+| --- | --- |
+| PDF | The PDF reader |
+| PNG, JPEG, GIF, WebP, BMP, AVIF, SVG | The image with zoom, rotation, and its size. Rotation changes only the view |
+| TIFF | The first page, reduced if it is very large |
+| Excel (.xlsx, .xlsm) | A table, 200 rows at a time, with a sheet menu |
+| CSV and TSV | A table of the first 100 rows, exactly as written in the file. **Load more** adds the next 100. Large files open at once, and the row total appears once you reach the end |
+| Jupyter notebooks | Cells and saved outputs. Nothing runs |
+| HTML | The rendered page, with scripts and online content off |
+| Word (.docx) | The text, without the page layout |
+| Audio and video | A player, if your computer can decode the format |
+
+Other files show their size, with **Open externally** and **Reveal in folder**.
+This includes Stata (.dta) files, which are usually too large to read here.
+Every open file has these in its **…** menu, along with **Reload**. Pipeline
+will not open a program or script with **Open externally** or **Open external
+editor**. On a Mac, that includes Python files.
 
 The editor handles LaTeX, BibTeX, Markdown, Stata, Python, R, Julia, MATLAB,
-and other common languages. Markdown has **Source** and **Preview** views.
-LaTeX completion suggests labels and citation keys.
+and other common languages. Markdown has **Source** and **Preview** views, and
+notebooks and HTML have their own view beside **Source**. LaTeX completion
+suggests labels and citation keys.
 
-Press Command/Ctrl+S to save. Unsaved drafts survive closing a tab. If another
-program changed the file, choose **Compare with current file** or **Reload**
-before saving. Select text and choose **Ask about selection** to ask the
-assistant.
+**Save** and **Discard draft** appear once you change a file. You can also press
+Command/Ctrl+S to save. Unsaved drafts survive closing a tab. Pipeline watches
+open files while **Files** is showing. A file with no unsaved changes updates by
+itself. If you have a draft, Pipeline tells you, and you can choose **Compare
+with current file** or **Reload**. Select text and choose **Ask about selection**
+to ask the assistant.
 
-You can open files up to 32 MB and edit text files up to 2 MB. Larger text
-files open read-only.
+You can read PDF, image, audio, and video files of any practical size, and edit
+text files up to 2 MB. Larger text files open read-only, with **Load more**.
+Files that aren't UTF-8 also open read-only. Files added with **Add files** can
+be up to 32 MB.
+
+### Version control
+
+**Version control** tracks this project's folder with Git. Pipeline commits,
+pushes, and pulls only when you choose it here. Assistants, reviews, and
+automations don't use this page.
+
+Choices here that change your files wait while a response is running, as they do
+in **Files**. They also wait for a local job, which the message names. A commit
+goes ahead if it leaves out the job's files. Git uses saved files, so Pipeline asks first if a file it would
+touch has an unsaved draft. Your commit message and a running push stay in place
+when you leave the page and come back.
+
+A folder's own Git settings can name programs, such as filters or an SSH
+command, and can decide where a connection goes. Pipeline ignores them when it
+reads a repository or looks at a remote, so opening or checking a folder you
+were sent can't start them. That covers **Check GitHub** on the project's
+overview, **Check for updates**, and the first step of **Pull**. **Commit**,
+**Push**, and the merge that finishes **Pull** do use them, as Git does in a
+terminal, so look at a folder you don't trust before you choose one.
+
+If a repository needs a connection setting of its own, such as an SSH command
+for a second account, those checks can fail. So can a remote that's a group of
+remotes or that uses a Git helper program. The error names the setting. If you
+set it up yourself, run `git fetch` from a terminal in the folder.
+
+A submodule shows as changed when its commit changes, not when it has
+uncommitted work inside.
+
+**To start**, choose **Start tracking this folder**. Pipeline creates a
+repository and a starter `.gitignore`. Your files stay on your computer until
+you connect a remote and push.
+
+**To save your work**:
+
+1. Open **Changes** and select a file to see what changed.
+2. Clear the checkbox beside anything you want to leave out.
+3. Write a summary, then choose **Commit**.
+
+The first time, Pipeline asks for the name and email to record on your commits.
+They're saved for this repository only. **Undo last commit**, in the **…** menu,
+puts a commit's changes back in your list if you haven't pushed it.
+
+**Discard changes**, in a file's **…** menu, returns the file to its last
+commit. Your current copy goes to the Trash.
+
+**Add to .gitignore** keeps a new file out of Git. Use it for raw data and other
+large files. GitHub refuses files over 100 MB, so Pipeline lists any new file
+that size above your changes.
+
+**History** lists the commits that touch this folder. Select one to see its
+message and changed files. Commits marked **Not pushed** exist only on this
+computer.
+
+**Branch**, at the top, shows the current branch. Open it to switch branches or
+choose **New branch…**. If a project folder is part of a larger repository, the
+page shows only that folder, but branches apply to the whole repository.
+
+#### Connect GitHub or Bitbucket
+
+1. Choose **Connect remote**, then **Create on GitHub** or **Create on
+   Bitbucket**.
+2. Create an empty repository on the host's site, with no README or license.
+3. Paste its HTTPS or SSH address and choose **Connect**.
+4. Choose **Publish branch**.
+
+Other Git hosts work the same way, including Overleaf. If **Publish branch** says
+the remote already has commits, choose **Change remote…** in the **…** menu to
+connect an empty repository, or combine the two from a terminal.
+
+Pipeline signs in with your computer's Git setup and never sees your password or
+token. If a push or pull is refused, set up Git once:
+
+| Host | What to set up |
+| --- | --- |
+| GitHub | Run `gh auth login` from [GitHub CLI](https://cli.github.com), install [Git Credential Manager](https://github.com/git-ecosystem/git-credential-manager), or add an SSH key |
+| Bitbucket | Create an [API token](https://support.atlassian.com/bitbucket-cloud/docs/using-api-tokens/) with repository access, or add an SSH key. App passwords don't work |
+
+#### Work with coauthors
+
+The main button shows the next step: **Push**, **Pull**, **Publish branch**, or
+**Check for updates**. **Stop** ends a push or pull that's taking too long.
+
+On a branch other than `main` or `master`, **Open pull request** opens the
+pull request page on GitHub or Bitbucket.
+
+When a pull finds the same lines changed on both sides, Pipeline stops and
+marks those files as conflicts. For each one, choose **Keep this branch's
+version** or **Keep incoming version**. Pipeline asks first, and your current
+copy of the file goes to the Trash. To combine them, edit the file, remove
+Git's conflict markers, and choose **I fixed this file**. Then commit to finish.
+**Abort** puts everything back as it was before the pull.
+
+Finish a rebase from a terminal. **Version control** shows that one is
+unfinished and can abort it.
 
 ### PDFs
 
-The PDF reader has search, an outline, thumbnails, zoom, and rotation. In
-imported papers, you can save quotations and page regions, tied to the version
-you read. When a manuscript build has SyncTeX data, double-click its PDF to
+The PDF reader has search, an outline, thumbnails, zoom, and rotation. It reads
+pages as you reach them, so large PDFs open quickly. In imported papers, you can
+save quotations and page regions, tied to the version you read. In **Files**,
+select text in a PDF and choose **Ask about selection**. When a manuscript build has SyncTeX data, double-click its PDF to
 jump to the matching source line.
 
 When you compare two PDFs, they can scroll together or separately.
@@ -303,6 +470,15 @@ backups of your project folders and datasets.
 Open **Settings → Data & Storage**, then **Manage research data**, and choose
 **Export research backup**.
 
+A backup includes conversation working files. It leaves out links, special
+files, files it can't read, and files too large for a backup, and says so when
+it does.
+
+If a saved file is missing from your research data folder, Pipeline lists what
+it affects and asks whether to back up without it. Everything else is saved.
+After a restore, those items stay in your projects and show as unavailable, and
+Pipeline lists them when the restore finishes.
+
 A backup restores only into an empty research data folder:
 
 1. Choose an empty folder under
@@ -317,14 +493,21 @@ A backup restores only into an empty research data folder:
 To export, open **Write → Share project** and tick what to include, such as
 **Research notes**, **Sources**, **All papers**, and
 **All completed executions**. Pipeline adds anything those items refer to.
-Choose **Preview package**, then **Export package…**. Raw data stays out
-unless you turn on **Allow raw data in sharing packages** in
-**Data & samples**.
+**Paper files** sends each paper's own file, so your coauthor can open its
+pages and start a Review. Files over 64 MB stop the export; turn off
+**Paper files** to send extracted text only. Choose **Preview package**, then
+**Export package…**. Raw data stays out unless you turn on
+**Allow raw data in sharing packages** in **Data & samples**.
 
 To import, choose **Inspect package…**, then
 **Into a new separate project (default)** or **Merge into this project**.
 **Preview import** shows what's new, identical, or in conflict. Imported
 command runs show their results but never run again.
+
+Decisions stay with the person who made them. Notes and claims the sender
+accepted and evidence the sender confirmed arrive as proposals marked
+**Imported**. They stay out of future conversations and don't count as support
+until you accept or confirm them yourself.
 
 When an incoming item differs from yours, Pipeline keeps your version and
 lists it under **Import conflicts awaiting review**. **Compare** shows both,
@@ -358,4 +541,5 @@ To free space, open **Settings → Data & Storage**, then
 **Preview deletion**, then **Move to Trash**. Reviews have their own
 cleanup, described in [Settings](settings.md#storage-and-cleanup). Cleanup offers only files
 nothing refers to, such as finished run files. **Restore** brings items back
-until you choose **Empty Trash**, which deletes them permanently.
+until you choose **Empty Trash**, which deletes them permanently. A folder with
+too many items to count shows its size as "at least" that amount.

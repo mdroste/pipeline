@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { conversationClient } from "../../lib/workbench/conversationClient";
 import { runtimeClient } from "../../lib/workbench/runtimeClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type {
   TitlePreferences,
   WorkspaceModelCatalog,
@@ -27,7 +28,7 @@ export default function ConversationTitleSettings() {
         if (live) setTitles(v);
       })
       .catch((e) => {
-        if (live) setTitlesError(String(e));
+        if (live) setTitlesError(workbenchErrorMessage(e));
       });
     runtimeClient
       .accountState(false)
@@ -59,7 +60,9 @@ export default function ConversationTitleSettings() {
           }
         } catch (e) {
           if (request === sequence.current)
-            setTitlesError(`Could not save conversation titles: ${String(e)}`);
+            setTitlesError(
+              `Could not save conversation titles: ${workbenchErrorMessage(e)}`,
+            );
         } finally {
           if (request === sequence.current) setSaving(false);
         }

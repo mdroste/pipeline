@@ -187,6 +187,99 @@ fn annotation_requires_the_reviewed_version_and_matching_input_type() {
     assert_eq!(commented.anchored, 1);
 }
 
+/// Retain the manuscript exactly as a run does and move the result into the
+/// fixture's run folder, so the record is the real one.
+fn capture_source(fixture: &Fixture) {
+    let mut writer =
+        crate::runs::RunWriter::create_in(fixture._root.path(), "captured_run").unwrap();
+    crate::commands::reuse_artifacts::retain_source(
+        &crate::pipeline::extract::ScopedSourceContext {
+            source_path: Some(fixture.original.clone()),
+            read_root: None,
+        },
+        &mut writer,
+    )
+    .unwrap();
+    std::fs::create_dir_all(fixture.run_dir.join("source-snapshot")).unwrap();
+    for name in ["source-snapshot/draft.docx", "context/source-snapshot.json"] {
+        std::fs::copy(writer.dir().join(name), fixture.run_dir.join(name)).unwrap();
+    }
+}
+
+/// A hash from an older extractor: nothing about the file itself has changed.
+const OLDER_TEXT_HASH: &str = "0123456789abcdef";
+
+#[test]
+fn comments_on_a_captured_manuscript_survive_an_extractor_change() {
+    let fixture = fixture("draft.docx", &docx(PARAGRAPHS), OLDER_TEXT_HASH, QUOTE);
+    capture_source(&fixture);
+    let run = load_run(&fixture.run_dir, fixture.manifest.clone()).unwrap();
+    assert_eq!(
+        generate(&run, ReportFormat::DocxComments).unwrap().anchored,
+        1
+    );
+    // The live file plays no part once the run holds its own copy.
+    std::fs::write(&fixture.original, docx(&["A revised draft."])).unwrap();
+    assert_eq!(
+        generate(&run, ReportFormat::DocxComments).unwrap().anchored,
+        1
+    );
+}
+
+#[test]
+fn a_captured_manuscript_that_changed_is_refused_even_with_matching_text() {
+    let bytes = docx(PARAGRAPHS);
+    let hash = short_hash(docx_text(&bytes).unwrap().as_bytes());
+    let fixture = fixture("draft.docx", &bytes, &hash, QUOTE);
+    capture_source(&fixture);
+    let run = load_run(&fixture.run_dir, fixture.manifest.clone()).unwrap();
+
+    // Same words, different bytes: the stored text hash would still agree.
+    let mut altered = bytes.clone();
+    altered.extend_from_slice(b"appended");
+    std::fs::write(fixture.run_dir.join("source-snapshot/draft.docx"), altered).unwrap();
+    let error = generate(&run, ReportFormat::DocxComments).err().unwrap();
+    assert!(error.contains("has changed"), "{error}");
+}
+
+#[test]
+fn a_manuscript_without_a_copy_is_compared_by_the_recorded_file_hash() {
+    let bytes = docx(PARAGRAPHS);
+    let fixture = fixture("draft.docx", &bytes, OLDER_TEXT_HASH, QUOTE);
+    let extraction = crate::models::ExtractionResult {
+        text: docx_text(&bytes).unwrap(),
+        method: "docx".into(),
+        source_path: fixture.original.to_string_lossy().into_owned(),
+        paper_hash: OLDER_TEXT_HASH.into(),
+        quality_notes: Vec::new(),
+    };
+    let bundle = crate::document_bundle::build(&extraction, &fixture.run_dir)
+        .unwrap()
+        .bundle;
+    std::fs::write(
+        fixture.run_dir.join("context/document_bundle.json"),
+        bundle.to_json_pretty().unwrap(),
+    )
+    .unwrap();
+    let run = load_run(&fixture.run_dir, fixture.manifest.clone()).unwrap();
+    assert_eq!(
+        generate(&run, ReportFormat::DocxComments).unwrap().anchored,
+        1
+    );
+
+    std::fs::write(&fixture.original, docx(&["A revised draft."])).unwrap();
+    let error = generate(&run, ReportFormat::DocxComments).err().unwrap();
+    assert!(error.contains("has changed"), "{error}");
+}
+
+#[test]
+fn an_older_run_with_no_byte_record_still_compares_text() {
+    let fixture = fixture("draft.docx", &docx(PARAGRAPHS), OLDER_TEXT_HASH, QUOTE);
+    let run = load_run(&fixture.run_dir, fixture.manifest.clone()).unwrap();
+    let error = generate(&run, ReportFormat::DocxComments).err().unwrap();
+    assert!(error.contains("has changed"), "{error}");
+}
+
 #[test]
 fn running_reviews_are_not_exported() {
     let fixture = docx_fixture();
@@ -240,4 +333,23 @@ fn saving_never_replaces_the_reviewed_manuscript() {
         std::os::unix::fs::symlink(&fixture.original, &link).unwrap();
         assert!(check_destination(&link, &protected).is_err());
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn an_export_has_a_saved_files_permissions_and_a_replaced_file_keeps_its_own() {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+    let folder = tempfile::tempdir().unwrap();
+    let usual = folder.path().join("usual.txt");
+    std::fs::write(&usual, b"x").unwrap();
+
+    let new = folder.path().join("report.html");
+    write_atomically(&new, b"new").unwrap();
+    assert_eq!(mode(&new), mode(&usual));
+
+    std::fs::set_permissions(&new, std::fs::Permissions::from_mode(0o640)).unwrap();
+    write_atomically(&new, b"again").unwrap();
+    assert_eq!(std::fs::read(&new).unwrap(), b"again");
+    assert_eq!(mode(&new), 0o640);
 }

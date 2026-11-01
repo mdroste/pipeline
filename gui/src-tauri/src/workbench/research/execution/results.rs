@@ -2,8 +2,8 @@
 
 use super::get_execution;
 use super::types::{
-    CompareResultsRequest, RecordStructuredResultRequest, ResearchResultV1, ResultComparison,
-    VerificationRecord, VerifyEvidenceResultsRequest,
+    CompareResultsRequest, RecordStructuredResultRequest, ResearchExecution, ResearchResultV1,
+    ResultComparison, VerificationRecord, VerifyEvidenceResultsRequest,
 };
 use crate::workbench::research::{
     append_change, new_id, now, open_connection, validate_id, validate_text,
@@ -143,35 +143,81 @@ fn verification_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Verificati
     })
 }
 
+/// Whether evidence with this target points at the run or at one of its outputs.
+fn produces_target(execution: &ResearchExecution, target_type: &str, target_id: &str) -> bool {
+    match target_type {
+        "execution" => execution.id == target_id,
+        "artifact" => execution.output_manifest["artifacts"]
+            .as_array()
+            .is_some_and(|artifacts| {
+                artifacts
+                    .iter()
+                    .any(|artifact| artifact["artifactId"].as_str() == Some(target_id))
+            }),
+        _ => false,
+    }
+}
+
 pub fn verify_evidence_results(
     store: &Store,
     request: VerifyEvidenceResultsRequest,
 ) -> WorkbenchResult<VerificationRecord> {
     validate_id("evidence id", &request.evidence_id)?;
     let connection = open_connection(store)?;
-    let workspace_id: String = connection
+    let (workspace_id, target_type, target_id): (String, String, String) = connection
         .query_row(
-            "SELECT workspace_id FROM evidence_links WHERE id=?1",
+            "SELECT workspace_id,target_type,target_id FROM evidence_links WHERE id=?1",
             [&request.evidence_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(|error| {
             WorkbenchError::storage("Failed to inspect evidence for verification", error)
         })?
         .ok_or_else(|| WorkbenchError::invalid("Evidence link was not found"))?;
-    let load_result = |result_id: &str| -> WorkbenchResult<(ResearchResultV1, String)> {
+    let load_result = |result_id: &str| -> WorkbenchResult<(ResearchResultV1, String, String)> {
         validate_id("result id", result_id)?;
-        let (body, dependency): (String, String) = connection.query_row("SELECT sr.body_json, e.dependency_hash FROM structured_results sr JOIN research_executions e ON e.id=sr.execution_id WHERE sr.result_id=?1 AND e.workspace_id=?2 ORDER BY sr.created_at DESC LIMIT 1", params![result_id, workspace_id], |row| Ok((row.get(0)?,row.get(1)?))).optional().map_err(|error| WorkbenchError::storage("Failed to load verification input", error))?.ok_or_else(|| WorkbenchError::invalid("Verification result was not found in this workspace"))?;
+        let (body, dependency, execution): (String, String, String) = connection.query_row("SELECT sr.body_json, e.dependency_hash, e.id FROM structured_results sr JOIN research_executions e ON e.id=sr.execution_id WHERE sr.result_id=?1 AND e.workspace_id=?2 ORDER BY sr.created_at DESC LIMIT 1", params![result_id, workspace_id], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).optional().map_err(|error| WorkbenchError::storage("Failed to load verification input", error))?.ok_or_else(|| WorkbenchError::invalid("Verification result was not found in this workspace"))?;
         Ok((
             serde_json::from_str(&body).map_err(|error| {
                 WorkbenchError::storage("Stored verification result is invalid", error)
             })?,
             dependency,
+            execution,
         ))
     };
-    let (left, left_hash) = load_result(&request.left_result_id)?;
-    let (right, right_hash) = load_result(&request.right_result_id)?;
+    let (left, left_hash, left_execution) = load_result(&request.left_result_id)?;
+    let (right, right_hash, right_execution) = load_result(&request.right_result_id)?;
+    // A run always agrees with itself, so that says nothing about either result.
+    if left_execution == right_execution {
+        return Err(WorkbenchError::invalid(
+            "Both results come from the same run. Choose a result from another run to compare it with.",
+        ));
+    }
+    let executions = [
+        get_execution(store, &left_execution)?,
+        get_execution(store, &right_execution)?,
+    ];
+    // A comparison speaks only for the runs it read. Evidence pointing anywhere
+    // else keeps its status, because this check says nothing about it.
+    if !executions
+        .iter()
+        .any(|execution| produces_target(execution, &target_type, &target_id))
+    {
+        return Err(WorkbenchError::invalid(
+            "These results don't come from what this evidence points at, so comparing them can't check it. Choose results from that run.",
+        ));
+    }
+    // Two receipts from a package only repeat what the sender said. One run
+    // from this computer is a real check of the sender's number.
+    if executions
+        .iter()
+        .all(|execution| !execution.validation["importedFrom"].is_null())
+    {
+        return Err(WorkbenchError::invalid(
+            "Both results were imported from a package. Run the command here to check them.",
+        ));
+    }
     let comparison = compare_results(CompareResultsRequest {
         left,
         right,
@@ -188,7 +234,18 @@ pub fn verify_evidence_results(
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| WorkbenchError::storage("Failed to start evidence verification", error))?;
     transaction.execute("INSERT INTO verification_records (id, evidence_link_id, method, checker_identity, input_hashes_json, observed_result_json, limitations, passed, created_at) VALUES (?1, ?2, 'research-results-v1 comparison', 'workspace-host-v1', ?3, ?4, ?5, ?6, ?7)", params![id, request.evidence_id, serde_json::to_string(&hashes).unwrap_or_default(), serde_json::to_string(&observed).unwrap_or_default(), comparison.limitations, comparison.passed, timestamp]).map_err(|error| WorkbenchError::storage("Failed to record evidence verification", error))?;
-    transaction.execute("UPDATE evidence_links SET assessment=?2, assessor='workspace-host-v1', freshness='current', stale_reason=NULL, updated_at=?3 WHERE id=?1", params![request.evidence_id, if comparison.passed {"check_passed"} else {"check_failed"}, timestamp]).map_err(|error| WorkbenchError::storage("Failed to apply evidence verification", error))?;
+    // Freshness tracks the target and only a new capture changes it. A passing
+    // check never replaces a researcher's confirmation; a failing one does, so
+    // the failure shows and the researcher can confirm again knowingly. Nothing
+    // else displaces a confirmation, so a failed link with one on record lost it
+    // to a failing check, and a passing check puts it back.
+    let displaced: bool = transaction.query_row("SELECT assessment='check_failed' AND EXISTS(SELECT 1 FROM change_log WHERE entity_type='evidence_link' AND entity_id=?1 AND action='human_confirmed') FROM evidence_links WHERE id=?1", [&request.evidence_id], |row| row.get(0)).map_err(|error| WorkbenchError::storage("Failed to inspect evidence for verification", error))?;
+    let (assessment, assessor) = match (comparison.passed, displaced) {
+        (true, true) => ("human_confirmed", "user"),
+        (true, false) => ("check_passed", "workspace-host-v1"),
+        (false, _) => ("check_failed", "workspace-host-v1"),
+    };
+    transaction.execute("UPDATE evidence_links SET assessment=?2, assessor=?4, updated_at=?3 WHERE id=?1 AND (?2<>'check_passed' OR assessment<>'human_confirmed')", params![request.evidence_id, assessment, timestamp, assessor]).map_err(|error| WorkbenchError::storage("Failed to apply evidence verification", error))?;
     append_change(
         &transaction,
         &request.operation_id,

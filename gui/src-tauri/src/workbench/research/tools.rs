@@ -23,6 +23,64 @@ pub(super) fn tool_response(success: bool, value: &Value) -> Value {
     json!({"success":success,"contentItems":[{"type":"inputText","text":text}]})
 }
 
+/// A receipt keeps a rendered page's locator, never its image. The bytes are
+/// already an immutable blob, and base64 copies would grow the database with
+/// every page a model reads until backups refuse it.
+pub(crate) fn without_page_images(response: &Value) -> Value {
+    let mut stored = response.clone();
+    let Some(items) = stored.get_mut("contentItems").and_then(Value::as_array_mut) else {
+        return stored;
+    };
+    let has_image = |item: &Value| item.get("type").and_then(Value::as_str) == Some("inputImage");
+    if !items.iter().any(has_image) {
+        return stored;
+    }
+    let locator = items.iter().find_map(|item| {
+        serde_json::from_str::<Value>(item.get("text")?.as_str()?)
+            .ok()
+            .filter(|locator| locator.get("artifactId").is_some())
+    });
+    for item in items {
+        if has_image(item) {
+            if let Some(locator) = &locator {
+                *item = json!({"type":"inputImage","artifactId":locator["artifactId"],"imageHash":locator["imageHash"]});
+            }
+        }
+    }
+    stored
+}
+
+fn stored_page_image(store: &Store, workspace_id: &str, item: &Value) -> Option<String> {
+    let artifact_id = item.get("artifactId")?.as_str()?;
+    let (reference, hash): (String, String) = open_connection(store).ok()?.query_row("SELECT storage_reference,content_hash FROM artifacts WHERE id=?1 AND workspace_id=?2 AND media_kind='page_image'", params![artifact_id, workspace_id], |row| Ok((row.get(0)?, row.get(1)?))).ok()?;
+    let (actual, size) = hash_file(Path::new(&reference)).ok()?;
+    if actual != hash || size > 8 * 1024 * 1024 {
+        return None;
+    }
+    let bytes = fs::read(reference).ok()?;
+    Some(format!(
+        "data:image/jpeg;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
+/// Replays a receipt with its page images read back from their blobs.
+fn with_page_images(store: &Store, workspace_id: &str, mut response: Value) -> Value {
+    let items = response
+        .get_mut("contentItems")
+        .and_then(Value::as_array_mut);
+    for item in items.into_iter().flatten() {
+        if item.get("artifactId").is_none() {
+            continue;
+        }
+        *item = match stored_page_image(store, workspace_id, item) {
+            Some(url) => json!({"type":"inputImage","imageUrl":url}),
+            None => json!({"type":"inputText","text":"This page's image is no longer stored."}),
+        };
+    }
+    response
+}
+
 pub fn handle_dynamic_tool_call(store: &Store, params: &Value) -> WorkbenchResult<Value> {
     let thread_id = params
         .get("threadId")
@@ -84,9 +142,11 @@ pub fn handle_dynamic_tool_call(store: &Store, params: &Value) -> WorkbenchResul
     let existing: Option<(String, Option<String>, Option<String>)> = connection.query_row("SELECT state, result_json, error_json FROM tool_receipts WHERE binding_id = ?1 AND provider_turn_id = ?2 AND call_id = ?3", params![binding_id, turn_id, call_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional().map_err(|error| WorkbenchError::storage("Failed to inspect dynamic tool receipt", error))?;
     if let Some((state, result, error)) = existing {
         return match (state.as_str(), result, error) {
-            ("completed", Some(result), _) => serde_json::from_str(&result).map_err(|error| {
-                WorkbenchError::storage("Failed to decode recorded tool result", error)
-            }),
+            ("completed", Some(result), _) => serde_json::from_str(&result)
+                .map(|response| with_page_images(store, &workspace_id, response))
+                .map_err(|error| {
+                    WorkbenchError::storage("Failed to decode recorded tool result", error)
+                }),
             ("failed", _, Some(error)) => Ok(tool_response(
                 false,
                 &serde_json::from_str(&error)
@@ -228,7 +288,8 @@ pub fn handle_dynamic_tool_call(store: &Store, params: &Value) -> WorkbenchResul
                 store,
                 &workspace_id,
                 required_argument(&arguments, "revisionId")?,
-                arguments.get("page").and_then(Value::as_u64).unwrap_or(0) as u32,
+                u32::try_from(arguments.get("page").and_then(Value::as_u64).unwrap_or(0))
+                    .map_err(|_| WorkbenchError::invalid("That page is not in this paper"))?,
             ),
             "workbench_source_read" => {
                 let value = source_read(
@@ -379,9 +440,10 @@ pub fn handle_dynamic_tool_call(store: &Store, params: &Value) -> WorkbenchResul
                 .cloned()
                 .map(|content_items| json!({"success":true,"contentItems":content_items}))
                 .unwrap_or_else(|| tool_response(true, &value));
-            let encoded = serde_json::to_string(&response).map_err(|error| {
-                WorkbenchError::storage("Failed to encode dynamic tool response", error)
-            })?;
+            let encoded =
+                serde_json::to_string(&without_page_images(&response)).map_err(|error| {
+                    WorkbenchError::storage("Failed to encode dynamic tool response", error)
+                })?;
             open_connection(store)?.execute("UPDATE tool_receipts SET state = 'completed', result_json = ?2, ended_at = ?3 WHERE id = ?1 AND state = 'running'", params![receipt_id, encoded, finished]).map_err(|error| WorkbenchError::storage("Failed to complete dynamic tool receipt", error))?;
             Ok(response)
         }

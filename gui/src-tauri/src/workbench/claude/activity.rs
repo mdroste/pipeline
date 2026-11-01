@@ -9,11 +9,16 @@ pub(super) struct Activity {
     calls: HashMap<String, Value>,
 }
 impl Activity {
+    /// Whether a native tool has started and its result hasn't come back.
+    pub(super) fn running(&self) -> bool {
+        !self.calls.is_empty()
+    }
+
     pub(super) async fn observe(
         &mut self,
         frame: &Value,
         turn: &Turn,
-        app: &tauri::AppHandle,
+        app: &impl super::super::turn_loop::TurnEvents,
     ) -> Result<(), String> {
         if !frame["parent_tool_use_id"].is_null() {
             return Ok(());

@@ -8,13 +8,17 @@ import {
 import { executionClient } from "../../lib/workbench/executionClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type { ExecutionProfile } from "../../lib/workbenchTypes";
+import useReopenCount from "../../hooks/useReopenCount";
+import useReveal from "../../hooks/useReveal";
 import Jobs from "../research-studio/Jobs";
 import { button, input, card, muted, type DeskProps } from "./shared";
 export default function Plans({
   workspaceId,
   onError,
+  onChanged,
+  onActionStart,
   active = true,
-}: DeskProps & { active?: boolean }) {
+}: DeskProps) {
   const [inputs, setInputs] = useState<DeskRecord[]>([]);
   const [selectedInputs, setSelectedInputs] = useState<string[]>([]);
   const [profiles, setProfiles] = useState<ExecutionProfile[]>([]);
@@ -37,14 +41,22 @@ export default function Plans({
       ...(await deskClient.records(workspaceId, "sample")),
     ]);
   }, [workspaceId]);
+  const reopened = useReopenCount(active);
+  const planReview = useReveal<HTMLElement>();
+  const missing = [
+    !profileId && "choose a configured profile",
+    !version.trim() && "enter the toolchain version",
+  ].filter(Boolean);
   useEffect(() => {
     void refresh().catch((e) => onError(workbenchErrorMessage(e)));
-  }, [refresh, onError]);
+  }, [refresh, onError, reopened]);
   const run = async (fn: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(true);
+    onActionStart?.();
     try {
       await fn();
+      onChanged?.();
       await refresh();
     } catch (e) {
       onError(workbenchErrorMessage(e));
@@ -147,20 +159,25 @@ export default function Plans({
                   .map(reference),
               );
               setPreview(await deskClient.planStatus(workspaceId, r.id));
+              planReview.reveal();
             })
           }
         >
           Capture inputs and review plan
         </button>
+        {missing.length > 0 && (
+          <p className={muted}>To capture a plan, {missing.join(" and ")}.</p>
+        )}
       </section>
       {plans.map((p) => (
         <button
           key={p.id}
           className={`${card} block w-full text-left`}
           onClick={() =>
-            void run(async () =>
-              setPreview(await deskClient.planStatus(workspaceId, p.id)),
-            )
+            void run(async () => {
+              setPreview(await deskClient.planStatus(workspaceId, p.id));
+              planReview.reveal();
+            })
           }
         >
           <span className="font-semibold">{p.title}</span>
@@ -171,7 +188,7 @@ export default function Plans({
         </button>
       ))}
       {preview && (
-        <section className={card}>
+        <section ref={planReview.ref} tabIndex={-1} className={card}>
           <h2 className="font-semibold">Review exact plan</h2>
           <p className="text-sm">
             This command runs with your computer’s permissions. It can access
@@ -226,6 +243,7 @@ export default function Plans({
         workspaceId={workspaceId}
         visible={active}
         onCompleted={() => {
+          onChanged?.();
           void refresh();
           if (preview)
             void deskClient

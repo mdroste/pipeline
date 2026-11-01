@@ -177,6 +177,27 @@ pub(super) fn migrate(
     Ok(candidates.into_iter().map(|(account, _)| account).collect())
 }
 
+/// After a confirmed sign-out, removes the older sign-ins migration copied
+/// from, so their refresh tokens don't outlast it. Before migration has settled
+/// they are still a choice the researcher can make, and they stay. Only a file
+/// migration could have read is removed: a symlink or another kind of auth file
+/// was never Pipeline's to import.
+pub(super) fn remove_legacy(root: &Path, user_home: &Path) -> Result<(), String> {
+    if !root.join("account-migration-v1").exists() {
+        return Ok(());
+    }
+    let mut failed = false;
+    for (_, _, path) in legacy_paths(user_home) {
+        if matches!(read(&path), Ok(Some(_))) {
+            failed |= std::fs::remove_file(&path).is_err();
+        }
+    }
+    if failed {
+        return Err("Signed out, but an older saved sign-in could not be removed".into());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,6 +243,24 @@ mod tests {
             std::fs::read(source).unwrap(),
             std::fs::read(root.join("codex/auth.json")).unwrap()
         );
+    }
+    #[test]
+    fn removal_waits_for_a_settled_migration_and_spares_other_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("shared");
+        std::fs::create_dir_all(root.join("codex")).unwrap();
+        let [conversations, reviews] = legacy_paths(temp.path()).map(|(_, _, path)| path);
+        for path in [&conversations, &reviews] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        }
+        std::fs::write(&conversations, fixture("alice")).unwrap();
+        std::fs::write(&reviews, br#"{"OPENAI_API_KEY":"not-a-chatgpt-sign-in"}"#).unwrap();
+        remove_legacy(&root, temp.path()).unwrap();
+        assert!(conversations.exists(), "unsettled choices stay available");
+        private_write(&root.join("account-migration-v1"), b"complete").unwrap();
+        remove_legacy(&root, temp.path()).unwrap();
+        assert!(!conversations.exists());
+        assert!(reviews.exists(), "only ChatGPT sign-ins belong to sign-out");
     }
     #[test]
     fn malformed_credentials_fail_without_including_secrets() {

@@ -116,7 +116,7 @@ pub async fn extract(
                 let root_dir = path.canonicalize().map_err(|e| {
                     format!("Failed to canonicalize project dir {}: {e}", path.display())
                 })?;
-                let mut warnings = Vec::new();
+                let mut warnings = staged::notes(&root_dir);
                 let text = extract_latex(&tex_path, &root_dir, &mut warnings)?;
                 if text.trim().is_empty() {
                     return Err("LaTeX extraction produced empty output".to_string());

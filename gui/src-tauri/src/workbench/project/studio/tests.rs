@@ -1,5 +1,10 @@
 use super::*;
+mod file_operations;
 mod ignored_paths;
+#[cfg(unix)]
+mod job_queue;
+#[cfg(unix)]
+mod no_hard_links;
 mod scoped_ids;
 static JOB_TEST_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[test]
@@ -632,7 +637,7 @@ fn failed_build_cannot_adopt_an_older_pdf_as_success() {
 }
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn changed_queued_inputs_do_not_launch_and_conflicting_jobs_are_rejected() {
+async fn changed_queued_inputs_do_not_launch_and_a_second_job_waits_its_turn() {
     let _gate = JOB_TEST_GATE.lock().await;
     let f = fixture();
     fs::write(f.root.join("script.sh"), "printf 'launched' > marker").unwrap();
@@ -650,31 +655,33 @@ async fn changed_queued_inputs_do_not_launch_and_conflicting_jobs_are_rejected()
         None,
     )
     .unwrap();
-    assert!(research::jobs::queue(
+    let waiting = research::jobs::queue(
         &f.store,
         research::RunExecutionRequest {
             plan_id: None,
             profile_id: p.id,
             session_id: None,
             test_only: true,
-            operation_id: id("other").unwrap()
+            operation_id: id("other").unwrap(),
         },
         "detached",
-        None
+        None,
     )
-    .is_err());
+    .unwrap();
     fs::write(f.root.join("script.sh"), "printf 'CHANGED' > marker").unwrap();
     research::jobs::launch_pending();
     for _ in 0..100 {
-        if !research::jobs::execution_active(&q.id) {
+        if !research::jobs::workspace_active(&f.ws) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     assert!(!f.root.join("marker").exists());
-    let finished = execution(&f.store, &f.ws, &q.id).unwrap();
-    assert_eq!(finished.outcome, "failed");
-    assert_eq!(finished.validation["processStarted"], false);
+    for id in [&q.id, &waiting.id] {
+        let finished = execution(&f.store, &f.ws, id).unwrap();
+        assert_eq!(finished.outcome, "failed");
+        assert_eq!(finished.validation["processStarted"], false);
+    }
 }
 #[cfg(target_os = "macos")]
 #[test]

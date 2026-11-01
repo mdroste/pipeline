@@ -427,4 +427,27 @@ describe("DepsCheck", () => {
     await user.keyboard("{Escape}");
     expect(onDismiss).toHaveBeenCalledOnce();
   });
+
+  it("speaks of reviews in general when opened with no review in sight", () => {
+    render(
+      <DepsCheck
+        report={{
+          ready: false,
+          deps: [dep({ name: "ChatGPT (reviews)", found: false })],
+        }}
+        onDismiss={() => {}}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Complete the highlighted setup before running a review.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "Each provider a review uses needs a subscription or API key.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/workflow/i)).not.toBeInTheDocument();
+  });
 });

@@ -5,8 +5,11 @@ import {
   getDocument,
   type PDFDocumentProxy,
 } from "pdfjs-dist/legacy/build/pdf.mjs";
-import PdfReader, { decodePdf, type PdfPosition } from "./PdfReader";
-import { workspaceFileAdapter } from "../../lib/fileWorkspaceClient";
+import PdfReader, { pdfBytes, type PdfPosition } from "./PdfReader";
+import {
+  readCapturedPdf,
+  workspaceFileAdapter,
+} from "../../lib/fileWorkspaceClient";
 interface Document {
   id: string;
   title: string;
@@ -42,19 +45,19 @@ export default function PdfComparison({
     if (page) setPosition((old) => ({ ...old, page }));
   }, [page]);
   const loaders = useMemo(() => {
-    const cache = new Map<string, Promise<string>>();
+    const cache = new Map<string, Promise<string | Uint8Array>>();
     return (id: string) => {
       if (!cache.has(id))
         cache.set(
           id,
-          workspaceFileAdapter({ workspaceId, revisionId: id })
-            .read("")
-            .then((f) => {
-              if (!f.base64) throw new Error("PDF unavailable");
-              return f.base64;
-            }),
+          readCapturedPdf(
+            workspaceFileAdapter({ workspaceId, revisionId: id }),
+          ),
         );
-      return cache.get(id)!;
+      // PDF.js takes over the bytes it is given, so each reader gets a copy.
+      return cache
+        .get(id)!
+        .then((pdf) => (typeof pdf === "string" ? pdf : pdf.slice()));
     };
   }, [workspaceId, primary.id, secondary?.id]);
   useEffect(() => {
@@ -105,7 +108,7 @@ export default function PdfComparison({
         tasks.push(
           getDocument({
             ...pdfAssetOptions,
-            data: decodePdf(data),
+            data: pdfBytes(data),
             useSystemFonts: true,
           }),
         );

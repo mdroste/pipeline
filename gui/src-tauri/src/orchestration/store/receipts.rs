@@ -17,7 +17,8 @@ impl Store {
             .filter(|r| matches!(r.state.as_str(), "unknown" | "failed"))
             .cloned()
             .collect();
-        if attempts.is_empty() {
+        let expired = run.deadline_at <= now();
+        if attempts.is_empty() && !expired {
             return Err("No failed action to retry; inspect the condition inputs".into());
         }
         let event = serde_json::to_string(&RetryEvent {
@@ -29,6 +30,11 @@ impl Store {
         next.progress
             .receipts
             .retain(|_, r| !matches!(r.state.as_str(), "unknown" | "failed"));
+        if expired {
+            // Choosing Retry is the decision to continue past the deadline. The
+            // same deadline would only send the run straight back here.
+            next.deadline_at = now() + next.chain.limits.deadline_hours as i64 * 3600;
+        }
         next.state = "queued".into();
         next.due_at = Some(now());
         next.reason = None;
@@ -88,9 +94,21 @@ impl Store {
         operations
     }
 
+    /// Operations whose result a run has durably taken.
+    pub fn adopted_operations(&self) -> Result<Vec<String>> {
+        let c = self.connection()?;
+        let mut q = c.prepare("SELECT DISTINCT json_extract(j.value,'$.operation') FROM runs r, json_each(r.body,'$.progress.receipts') j WHERE json_extract(j.value,'$.state')='completed' AND json_extract(j.value,'$.operation') IS NOT NULL").map_err(err)?;
+        let operations = q
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(err)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(err);
+        operations
+    }
+
     pub fn events(&self, id: &str, after: i64) -> Result<Vec<Event>> {
         let c = self.connection()?;
-        let mut s=c.prepare("SELECT sequence,at,kind,detail FROM events WHERE run_id=?1 AND sequence>?2 ORDER BY sequence LIMIT 100").map_err(err)?;
+        let mut s=c.prepare("SELECT sequence,at,kind,detail FROM events WHERE run_id=?1 AND sequence>?2 AND kind<>'seen' ORDER BY sequence LIMIT 100").map_err(err)?;
         let result = s
             .query_map(params![id, after], |r| {
                 Ok(Event {
@@ -116,6 +134,30 @@ impl Store {
                 Ok(event)
             })
             .collect()
+    }
+}
+
+impl TaskRun {
+    /// Past its deadline a requeued run would only come straight back to
+    /// attention, so continuing is left to Retry, which starts a new deadline.
+    pub fn requeue_after_reconcile(&mut self) {
+        if self
+            .progress
+            .receipts
+            .values()
+            .any(|r| r.state == "unknown")
+        {
+            return;
+        }
+        if self.deadline_at <= now() {
+            self.reason = Some(
+                "Saved results are recorded and the deadline has passed. Choose Retry unfinished actions to continue with a new deadline.".into(),
+            );
+        } else {
+            self.state = "queued".into();
+            self.due_at = Some(now());
+            self.reason = None;
+        }
     }
 }
 

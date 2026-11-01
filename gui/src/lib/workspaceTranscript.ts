@@ -1,6 +1,12 @@
 import { providerName } from "./workspaceProviders";
 import type { TranscriptItem } from "./workbenchTypes";
 
+/**
+ * Messages on screen at once. Opening a conversation costs time in proportion
+ * to this, mostly rendering math, so older messages wait for "Show earlier".
+ */
+export const TRANSCRIPT_WINDOW = 50;
+
 export function payloadText(item: TranscriptItem): string {
   const payload = item.payload;
   if (!payload) return "";

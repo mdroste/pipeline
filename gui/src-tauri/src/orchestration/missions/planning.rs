@@ -17,7 +17,7 @@ pub(super) fn merge_questions(m: &mut Mission, questions: Vec<QuestionSpec>) -> 
         }
     }
     if m.questions.len() > 64 {
-        return Err("Mission question limit reached".into());
+        return Err("Research automation question limit reached".into());
     }
     Ok(())
 }
@@ -56,7 +56,7 @@ pub(crate) fn apply_plan(m: &mut Mission, p: Plan, child: &str) -> Result<()> {
     match disposition {
         Disposition::Investigate => {
             m.phase = Phase::Investigate;
-            m.reason = "Investigation selected within the mission's scope".into();
+            m.reason = "Investigation selected within the automation's scope".into();
         }
         Disposition::AssessCompletion => {
             m.phase = Phase::Challenge;

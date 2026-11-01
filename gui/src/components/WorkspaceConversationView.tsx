@@ -1,7 +1,18 @@
 import { useAppPreferences, shouldSendMessage } from "../lib/appPreferences";
 import { isMac } from "../lib/platform";
-import { payloadText, roleFor } from "../lib/workspaceTranscript";
-import { useDeferredValue, useLayoutEffect, useMemo, useRef } from "react";
+import {
+  payloadText,
+  roleFor,
+  TRANSCRIPT_WINDOW,
+} from "../lib/workspaceTranscript";
+import {
+  useCallback,
+  useDeferredValue,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import { FileNavigationContext } from "./file-workspace/FileNavigation";
 import { workspaceFileAdapter } from "../lib/fileWorkspaceClient";
 import { appEvents } from "../lib/appEvents";
@@ -11,12 +22,14 @@ import TranscriptMessage, {
   TranscriptMarkdown,
 } from "./WorkspaceTranscriptMessage";
 import useTranscriptFollow from "../hooks/workspace/useTranscriptFollow";
+import type { StreamStore } from "../hooks/workspace/streamStore";
 import WorkspaceIcon from "./WorkspaceIcon";
 import Tooltip from "../ui/Tooltip";
 import { Icon } from "../ui/icons";
 import type { FileDropState } from "../hooks/useComposerFileDrop";
 import "./WorkspaceTranscript.css";
 import "./WorkspaceComposer.css";
+import "../ui/page.css";
 import type {
   ConversationSnapshot,
   TranscriptItem,
@@ -40,7 +53,7 @@ interface Props {
   hasEarlier?: boolean;
   loadingEarlier?: boolean;
   pendingUser: string | null;
-  stream: string;
+  streamStore: StreamStore;
   selectedMessage: string | null;
   transcriptStart: number;
   transcriptEnd: number;
@@ -58,11 +71,45 @@ interface Props {
   onSend: () => void;
   onStop: () => void;
   stopping?: boolean;
+  /** Set only while no conversation is selected, when the composer cannot open. */
+  onNewConversation?: () => void;
   onLatest: () => void;
   onEarlier: () => void;
   onNewer: () => void;
   /** Shared with the controller: whether the latest message stays in view. */
   followLatestRef: MutableRefObject<boolean>;
+}
+/** The answer as it arrives. Flushes re-render this message and nothing else. */
+function LiveMessage({
+  store,
+  assistantName,
+  active,
+}: {
+  store: StreamStore;
+  assistantName: string;
+  active: boolean;
+}) {
+  const stream = useSyncExternalStore(store.subscribe, store.get);
+  // Streamed Markdown may lag a frame behind so typing stays responsive.
+  const deferredStream = useDeferredValue(stream);
+  if (!stream) return null;
+  return (
+    <article className="workspace-message workspace-message--assistant">
+      <div className="workspace-message-author">
+        <span className="workspace-assistant-mark">
+          <WorkspaceIcon name="message" size={14} />
+        </span>
+        {assistantName}
+        {/* A finished answer stays here until the transcript reloads. */}
+        {active && (
+          <span className="ml-1 h-1.5 w-1.5 rounded-full bg-current motion-safe:animate-pulse" />
+        )}
+      </div>
+      <div className="workspace-message-body">
+        <TranscriptMarkdown text={deferredStream} />
+      </div>
+    </article>
+  );
 }
 export default function WorkspaceConversationView({
   assistantName = "ChatGPT",
@@ -82,7 +129,7 @@ export default function WorkspaceConversationView({
   hasEarlier = false,
   loadingEarlier = false,
   pendingUser,
-  stream,
+  streamStore,
   selectedMessage,
   transcriptStart,
   transcriptEnd,
@@ -99,17 +146,21 @@ export default function WorkspaceConversationView({
   onSend,
   onStop,
   stopping = false,
+  onNewConversation,
   onLatest,
   onEarlier,
   onNewer,
   followLatestRef,
 }: Props) {
+  const streaming = useSyncExternalStore(streamStore.subscribe, () =>
+    Boolean(streamStore.get()),
+  );
   const { following, follow, beforePaging, scrollHandlers } =
     useTranscriptFollow({
       transcriptRef,
       followLatestRef,
       sessionId: snapshot?.session.id,
-      stream,
+      streaming,
       pendingUser,
       items: renderedItems,
       start: transcriptStart,
@@ -117,8 +168,6 @@ export default function WorkspaceConversationView({
       total: totalItems,
       loadingEarlier,
     });
-  // Streamed Markdown may lag a frame behind so typing stays responsive.
-  const deferredStream = useDeferredValue(stream);
   // WebKit ends an input-method composition before the Enter keydown that
   // confirms it, so that keydown alone does not report isComposing.
   const composing = useRef(false);
@@ -169,31 +218,32 @@ export default function WorkspaceConversationView({
   const shortcut =
     sendShortcut === "enter" ? "Enter" : `${isMac ? "⌘" : "Ctrl+"}Enter`;
   // The field grows with its content; CSS caps the height and scrolls past it.
-  useLayoutEffect(() => {
+  const fitComposer = useCallback(() => {
     const field = messageRef.current;
     if (!field) return;
-    const fit = () => {
-      // Collapsing the field to measure it lets the transcript grow for a
-      // moment, which can clamp its scroll position; put the position back so
-      // the change does not read as the researcher scrolling up.
-      const transcript = transcriptRef.current;
-      const top = transcript?.scrollTop;
-      field.style.height = "auto";
-      // A hidden pane measures zero; leave the stylesheet's minimum in charge.
-      field.style.height = field.scrollHeight ? `${field.scrollHeight}px` : "";
-      if (transcript && top !== undefined) transcript.scrollTop = top;
-    };
-    fit();
-    if (typeof ResizeObserver === "undefined") return;
+    // Collapsing the field to measure it lets the transcript grow for a
+    // moment, which can clamp its scroll position; put the position back so
+    // the change does not read as the researcher scrolling up.
+    const transcript = transcriptRef.current;
+    const top = transcript?.scrollTop;
+    field.style.height = "auto";
+    // A hidden pane measures zero; leave the stylesheet's minimum in charge.
+    field.style.height = field.scrollHeight ? `${field.scrollHeight}px` : "";
+    if (transcript && top !== undefined) transcript.scrollTop = top;
+  }, [messageRef, transcriptRef]);
+  useLayoutEffect(fitComposer, [draft, fitComposer]);
+  useLayoutEffect(() => {
+    const field = messageRef.current;
+    if (!field || typeof ResizeObserver === "undefined") return;
     let width = field.clientWidth;
     const observer = new ResizeObserver(() => {
       if (field.clientWidth === width) return;
       width = field.clientWidth;
-      fit();
+      fitComposer();
     });
     observer.observe(field);
     return () => observer.disconnect();
-  }, [draft, messageRef, transcriptRef]);
+  }, [fitComposer, messageRef]);
   return (
     <FileNavigationContext.Provider value={fileNavigation}>
       {header}
@@ -226,7 +276,8 @@ export default function WorkspaceConversationView({
         className="workspace-transcript min-h-0 flex-1 overflow-auto"
       >
         <div className="workspace-transcript-content">
-          {(!snapshot || (!totalItems && !pendingUser && !stream)) && (
+          {(!snapshot ||
+            (!totalItems && !hasEarlier && !pendingUser && !streaming)) && (
             <div className="workspace-chat-empty">
               <WorkspaceIcon
                 name="message"
@@ -243,6 +294,15 @@ export default function WorkspaceConversationView({
                   ? "Ask a question, explore an idea, or add files to work from."
                   : "Start a conversation to explore an idea or work through your research."}
               </p>
+              {onNewConversation && (
+                <button
+                  type="button"
+                  className="ui-page-button primary"
+                  onClick={onNewConversation}
+                >
+                  New conversation
+                </button>
+              )}
             </div>
           )}
           {(transcriptStart > 0 || hasEarlier) && (
@@ -253,7 +313,7 @@ export default function WorkspaceConversationView({
                 onEarlier();
               }}
               disabled={loadingEarlier}
-              className="mx-auto block rounded border px-3 py-2 text-xs text-gray-600"
+              className="mx-auto block rounded border px-3 py-2 text-xs text-ink-muted"
             >
               {loadingEarlier
                 ? "Loading earlier messages…"
@@ -280,23 +340,11 @@ export default function WorkspaceConversationView({
               </div>
             </article>
           )}
-          {stream && (
-            <article className="workspace-message workspace-message--assistant">
-              <div className="workspace-message-author">
-                <span className="workspace-assistant-mark">
-                  <WorkspaceIcon name="message" size={14} />
-                </span>
-                {assistantName}
-                {/* A finished answer stays here until the transcript reloads. */}
-                {active && (
-                  <span className="ml-1 h-1.5 w-1.5 rounded-full bg-current motion-safe:animate-pulse" />
-                )}
-              </div>
-              <div className="workspace-message-body">
-                <TranscriptMarkdown text={deferredStream} />
-              </div>
-            </article>
-          )}
+          <LiveMessage
+            store={streamStore}
+            assistantName={assistantName}
+            active={active}
+          />
           {taskCards}
           {transcriptEnd < totalItems && (
             <button
@@ -305,9 +353,9 @@ export default function WorkspaceConversationView({
                 beforePaging("newer");
                 onNewer();
               }}
-              className="mx-auto block rounded border px-3 py-2 text-xs text-gray-600"
+              className="mx-auto block rounded border px-3 py-2 text-xs text-ink-muted"
             >
-              Show 200 newer messages
+              Show {TRANSCRIPT_WINDOW} newer messages
             </button>
           )}
         </div>
@@ -365,7 +413,10 @@ export default function WorkspaceConversationView({
               ref={messageRef}
               aria-label="Message"
               value={draft}
-              disabled={disabled}
+              // Read-only during a response keeps keyboard focus here, where a
+              // disabled field would drop it.
+              disabled={Boolean(onNewConversation)}
+              readOnly={disabled}
               onChange={(event) => onDraft(event.target.value)}
               onCompositionStart={() => {
                 composing.current = true;

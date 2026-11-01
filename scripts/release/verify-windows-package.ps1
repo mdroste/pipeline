@@ -51,3 +51,5 @@ Get-ChildItem -LiteralPath $poppler -Recurse -File |
     }
 node --input-type=module -e 'import { pathToFileURL } from "node:url"; const { verifyInventory } = await import(pathToFileURL(process.argv[1])); verifyInventory(process.argv[2]);' (Join-Path $PSScriptRoot 'poppler-inventory.mjs') $poppler
 if ($LASTEXITCODE -ne 0) { throw 'Installed Poppler inventory verification failed' }
+node (Join-Path $PSScriptRoot 'smoke-poppler.mjs') $poppler
+if ($LASTEXITCODE -ne 0) { throw 'Installed Poppler tools failed to read a PDF' }

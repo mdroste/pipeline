@@ -48,6 +48,7 @@ class MirrorHandler(http.server.BaseHTTPRequestHandler):
         "inference.pdiparams": b"locked parameters",
     }
     primary_requests = 0
+    mirror_available = True
 
     def do_GET(self) -> None:  # noqa: N802 - inherited HTTP handler API
         if self.path == "/primary.tar":
@@ -55,7 +56,7 @@ class MirrorHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(403)
             return
         payload = self.files.get(Path(self.path).name)
-        if payload is None:
+        if payload is None or not type(self).mirror_available:
             self.send_error(404)
             return
         self.send_response(200)
@@ -94,13 +95,8 @@ class DownloadVerifiedTests(unittest.TestCase):
         self.assertIn("Pipeline/0.9", RetryHandler.headers_seen[0]["User-Agent"])
         self.assertEqual(RetryHandler.headers_seen[0]["Referer"], "https://www.paddleocr.ai/")
 
-    def test_provisions_byte_locked_official_mirror_after_primary_403(self) -> None:
-        MirrorHandler.primary_requests = 0
-        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MirrorHandler)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        base_url = f"http://127.0.0.1:{server.server_port}"
-        model_lock = {
+    def model_lock(self, base_url: str) -> dict[str, object]:
+        return {
             "url": f"{base_url}/primary.tar",
             "sha256": "0" * 64,
             "qualificationFallback": {
@@ -112,14 +108,43 @@ class DownloadVerifiedTests(unittest.TestCase):
                 },
             },
         }
+
+    def test_fetches_pinned_files_first_as_the_app_does(self) -> None:
+        MirrorHandler.primary_requests = 0
+        MirrorHandler.mirror_available = True
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MirrorHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
         try:
             with tempfile.TemporaryDirectory(prefix="pipeline-mirror-test-") as temp:
-                with unittest.mock.patch.object(MODULE.time, "sleep", return_value=None):
-                    model = MODULE.provision_layout_model(model_lock, Path(temp))
+                model = MODULE.provision_layout_model(
+                    self.model_lock(f"http://127.0.0.1:{server.server_port}"), Path(temp)
+                )
                 self.assertEqual(
                     {path.name: path.read_bytes() for path in model.iterdir()},
                     MirrorHandler.files,
                 )
+        finally:
+            server.shutdown()
+            thread.join()
+            server.server_close()
+
+        self.assertEqual(MirrorHandler.primary_requests, 0)
+
+    def test_falls_back_to_the_archive_when_pinned_files_are_refused(self) -> None:
+        MirrorHandler.primary_requests = 0
+        MirrorHandler.mirror_available = False
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), MirrorHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory(prefix="pipeline-mirror-test-") as temp:
+                with unittest.mock.patch.object(MODULE.time, "sleep", return_value=None):
+                    with self.assertRaises(MODULE.urllib.error.HTTPError):
+                        MODULE.provision_layout_model(
+                            self.model_lock(f"http://127.0.0.1:{server.server_port}"),
+                            Path(temp),
+                        )
         finally:
             server.shutdown()
             thread.join()

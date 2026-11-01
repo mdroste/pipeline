@@ -4,6 +4,9 @@
 //! template). It reads files only; it never runs code. Each check reports
 //! `pass`, `warn`, `fail`, or `info` with file and line locations.
 
+mod referenced_files;
+
+use referenced_files::referenced_file_checks;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -52,6 +55,9 @@ struct Inventory {
     root: PathBuf,
     /// Root-relative, forward-slash paths with sizes.
     files: Vec<(String, u64)>,
+    /// Generated folders a Review's copy left out, in lowercase. Their files
+    /// are unknown here, which is not the same as missing.
+    left_out_folders: Vec<String>,
     truncated: bool,
 }
 
@@ -88,6 +94,9 @@ fn inventory(root: &Path, max_files: usize) -> Inventory {
                     stack.push(path);
                 }
             } else if kind.is_file() {
+                if relative == crate::pipeline::extract::FOLDER_OMISSIONS_FILE {
+                    continue;
+                }
                 if files.len() >= max_files {
                     truncated = true;
                     break;
@@ -97,10 +106,24 @@ fn inventory(root: &Path, max_files: usize) -> Inventory {
             }
         }
     }
+    // Large files stay out of a Review's copy but are part of the package.
+    let omissions = crate::pipeline::extract::folder_omissions(root);
+    let left_out_folders = omissions
+        .folders
+        .iter()
+        .map(|folder| format!("{}/", folder.to_ascii_lowercase()))
+        .collect();
+    files.extend(
+        omissions
+            .too_large
+            .into_iter()
+            .map(|file| (file.path, file.bytes)),
+    );
     files.sort();
     Inventory {
         root: root.to_path_buf(),
         files,
+        left_out_folders,
         truncated,
     }
 }
@@ -146,11 +169,21 @@ fn scan(
     filter: impl Fn(&str) -> bool,
     pattern: &Regex,
 ) -> Vec<Location> {
+    scan_code(files, filter, |code| pattern.is_match(code))
+}
+
+/// Lines whose code, without comments, passes `matches`.
+fn scan_code(
+    files: &[(String, String)],
+    filter: impl Fn(&str) -> bool,
+    matches: impl Fn(&str) -> bool,
+) -> Vec<Location> {
     let mut found = Vec::new();
     for (path, text) in files.iter().filter(|(path, _)| filter(path)) {
+        let mut comments = StataBlockComments::default();
         for (index, line) in text.lines().enumerate() {
-            let code = strip_comment(path, line);
-            if pattern.is_match(code) {
+            let code = code_of_line(path, line, &mut comments);
+            if matches(&code) {
                 found.push(Location {
                     path: path.clone(),
                     line: Some(index + 1),
@@ -163,6 +196,59 @@ fn scan(
         }
     }
     found
+}
+
+/// How many `/* */` comments are open at the start of a Stata line. Stata
+/// nests them, and `*` and `//` lines inside one are comment text either way.
+#[derive(Default)]
+struct StataBlockComments {
+    depth: usize,
+}
+
+impl StataBlockComments {
+    /// A line with its block comments removed. Delimiters inside a string are
+    /// text, as in `use "data/*.dta"`.
+    fn strip(&mut self, line: &str) -> String {
+        let mut code = String::with_capacity(line.len());
+        let mut in_string = false;
+        let mut rest = line;
+        while let Some(character) = rest.chars().next() {
+            if self.depth == 0 && character == '"' {
+                in_string = !in_string;
+            }
+            // A line comment hides any `/*` after it.
+            let line_comment =
+                rest.starts_with("//") && code.chars().next_back().is_none_or(char::is_whitespace);
+            if self.depth == 0
+                && !in_string
+                && (line_comment || (rest.starts_with('*') && code.trim().is_empty()))
+            {
+                break;
+            }
+            if !in_string && rest.starts_with("/*") {
+                self.depth += 1;
+                rest = &rest[2..];
+            } else if self.depth > 0 && rest.starts_with("*/") {
+                self.depth -= 1;
+                rest = &rest[2..];
+            } else {
+                if self.depth == 0 {
+                    code.push(character);
+                }
+                rest = &rest[character.len_utf8()..];
+            }
+        }
+        code
+    }
+}
+
+/// A line's code: Stata block comments first, then its line comment.
+fn code_of_line(path: &str, line: &str, comments: &mut StataBlockComments) -> String {
+    if matches!(extension(path).as_str(), "do" | "ado") {
+        strip_comment(path, &comments.strip(line)).to_string()
+    } else {
+        strip_comment(path, line).to_string()
+    }
 }
 
 /// The part of a line before a line comment, by language.
@@ -208,7 +294,14 @@ const README_SECTIONS: &[ReadmeSection] = &[
     },
     ReadmeSection {
         label: "Rights and licenses for data",
-        keywords: &["rights", "license", "licence", "permission", "terms of use"],
+        keywords: &[
+            "rights",
+            "license",
+            "licensed",
+            "licence",
+            "permission",
+            "terms of use",
+        ],
     },
     ReadmeSection {
         label: "Computational requirements (software and versions)",
@@ -236,7 +329,7 @@ const README_SECTIONS: &[ReadmeSection] = &[
     },
     ReadmeSection {
         label: "Controlled randomness (seeds)",
-        keywords: &["seed", "random"],
+        keywords: &["seed", "random", "randomness"],
     },
     ReadmeSection {
         label: "Description of programs",
@@ -273,6 +366,21 @@ const README_SECTIONS: &[ReadmeSection] = &[
         keywords: &["references", "citation", "cite"],
     },
 ];
+
+/// Whether lower-case text holds a phrase as whole words, so that `ram` is not
+/// found in "program". A final `s` is optional.
+fn mentions(text: &str, phrase: &str) -> bool {
+    let is_word = |character: char| character.is_alphanumeric();
+    text.match_indices(phrase).any(|(start, _)| {
+        let end = start + phrase.len();
+        let after = text[end..]
+            .strip_prefix('s')
+            .filter(|_| !phrase.ends_with('s'))
+            .unwrap_or(&text[end..]);
+        !text[..start].chars().next_back().is_some_and(is_word)
+            && !after.chars().next().is_some_and(is_word)
+    })
+}
 
 fn readme_checks(inventory: &Inventory, checks: &mut Vec<Check>) {
     let readmes: Vec<&String> = inventory
@@ -327,7 +435,7 @@ fn readme_checks(inventory: &Inventory, checks: &mut Vec<Check>) {
             !section
                 .keywords
                 .iter()
-                .any(|keyword| text.contains(keyword))
+                .any(|keyword| mentions(&text, keyword))
         })
         .map(|section| section.label)
         .collect();
@@ -397,6 +505,34 @@ fn main_script_check(inventory: &Inventory, code_count: usize, checks: &mut Vec<
     });
 }
 
+/// Whether a Stata line holds a quoted Windows path, as opposed to a string
+/// with a backslash in it, such as LaTeX for `esttab`. A string counts when it
+/// follows a file command or `using`, or ends in a file extension, unless it
+/// holds LaTeX commands.
+fn has_backslash_path(code: &str) -> bool {
+    static STRING: OnceLock<Regex> = OnceLock::new();
+    static FILE_COMMAND: OnceLock<Regex> = OnceLock::new();
+    static FILE_NAME: OnceLock<Regex> = OnceLock::new();
+    static LATEX: OnceLock<Regex> = OnceLock::new();
+    let strings = regex(&STRING, r#""([^"\n]*)""#);
+    let file_command = regex(
+        &FILE_COMMAND,
+        r"(?i)(?:^|\s)(?:use|using|cd|save|saveold|do|run|include|import\s+\w+|(?:global|local)\s+\w+\s*=?)\s*$",
+    );
+    let file_name = regex(&FILE_NAME, r"\.[A-Za-z][A-Za-z0-9]{0,5}$");
+    let latex = regex(
+        &LATEX,
+        r"\\(?:begin|end|hline|toprule|midrule|bottomrule|cmidrule|multicolumn|multirow|textbf|textit|emph|caption|label|footnotesize|small|tiny|item|cline|addlinespace|centering|sym|input|ref|cite|tabularnewline|hspace|vspace|rule|sc|it|bf)\b|\\\\|\\[%&$#_{}]",
+    );
+    strings.captures_iter(code).any(|capture| {
+        let text = &capture[1];
+        let before = capture.get(0).map_or(0, |whole| whole.start());
+        text.contains('\\')
+            && !latex.is_match(text)
+            && (file_command.is_match(&code[..before]) || file_name.is_match(text))
+    })
+}
+
 fn path_checks(files: &[(String, String)], checks: &mut Vec<Check>) {
     static ABSOLUTE: OnceLock<Regex> = OnceLock::new();
     static BACKSLASH: OnceLock<Regex> = OnceLock::new();
@@ -420,10 +556,10 @@ fn path_checks(files: &[(String, String)], checks: &mut Vec<Check>) {
         &BACKSLASH,
         r#""[^"\n]*[A-Za-z0-9_.)]\\[A-Za-z0-9_.$]+[^"\n]*""#,
     );
-    let found = scan(
+    let found = scan_code(
         files,
         |path| matches!(extension(path).as_str(), "do" | "ado"),
-        backslash,
+        |code| backslash.is_match(code) && has_backslash_path(code),
     );
     checks.push(Check {
         id: "backslash_paths",
@@ -525,8 +661,10 @@ fn seed_checks(files: &[(String, String)], checks: &mut Vec<Check>) {
     let rules: &[(&[&str], &str, &str)] = &[
         (
             &["do", "ado"],
-            r"(?i)\b(runiform|rnormal|rbinomial|rpoisson|bootstrap|bsample|simulate|permute|sample)\b",
-            r"(?i)set\s+seed",
+            // `sample` is a command only at the start of a statement; elsewhere
+            // it is a variable, as is the `sample` in `e(sample)`.
+            r"(?i)\b(?:runiform|rnormal|rbinomial|rpoisson)\s*\(|^\s*(?:(?:quietly|qui|noisily|noi|capture|cap)\s+|by(?:sort)?\s[^:]*:\s*)*(?:sample|bsample|bootstrap|simulate|permute)\b|\bvce\s*\(\s*bootstrap\b",
+            r"(?i)set\s+seed|\bseed\s*\(",
         ),
         (
             &["r", "rmd", "qmd"],
@@ -536,9 +674,9 @@ fn seed_checks(files: &[(String, String)], checks: &mut Vec<Check>) {
         (
             &["py", "ipynb"],
             r"\b(np\.random\.|random\.(random|randint|choice|shuffle|sample)|default_rng)",
-            r"(seed\s*\(|default_rng\s*\(\s*\d|random_state\s*=)",
+            r"(\bseed\s*\(|default_rng\s*\(\s*[^)\s]|random_state\s*=)",
         ),
-        (&["jl"], r"\b(rand|randn|shuffle)\s*\(", r"Random\.seed!"),
+        (&["jl"], r"\b(rand|randn|shuffle)\s*\(", r"\bseed!\s*\("),
     ];
     let mut locations = Vec::new();
     for (exts, uses, seeds) in rules {
@@ -568,72 +706,6 @@ fn seed_checks(files: &[(String, String)], checks: &mut Vec<Check>) {
             "Code draws random numbers but no seed is set in that language's files, so results may differ between runs.".into()
         },
         locations,
-    });
-}
-
-fn referenced_file_checks(
-    inventory: &Inventory,
-    files: &[(String, String)],
-    checks: &mut Vec<Check>,
-) {
-    static READS: OnceLock<Regex> = OnceLock::new();
-    let reads = regex(
-        &READS,
-        r#"(?i)(?:\buse\s+|\busing\s+|\bdo\s+|\binclude\s+|\binsheet\s+using\s+|import\s+delimited\s+(?:using\s+)?|import\s+excel\s+(?:using\s+)?|read[._](?:csv|dta|table|delim|excel|rds|parquet)\w*\s*\(\s*|read_(?:csv|stata|excel|parquet)\s*\(\s*|source\s*\(\s*|load\s*\(\s*|open\s*\(\s*)["']([^"'$`{}]+\.[A-Za-z0-9]{1,6})["']"#,
-    );
-    let known: std::collections::HashSet<String> = inventory
-        .files
-        .iter()
-        .map(|(path, _)| path.to_ascii_lowercase())
-        .collect();
-    let mut missing = Vec::new();
-    for (path, text) in files {
-        let dir = path.rsplit_once('/').map(|(dir, _)| dir).unwrap_or("");
-        for (index, line) in text.lines().enumerate() {
-            let code = strip_comment(path, line);
-            // Lines that write outputs name files that need not exist yet.
-            if exports().is_match(code) || code.trim_start().starts_with("save") {
-                continue;
-            }
-            for captures in reads.captures_iter(code) {
-                let target = captures[1].replace('\\', "/");
-                if target.starts_with('/') || target.contains(':') || target.starts_with("~") {
-                    continue;
-                }
-                let target = target.trim_start_matches("./").to_ascii_lowercase();
-                let beside = if dir.is_empty() {
-                    target.clone()
-                } else {
-                    format!("{}/{target}", dir.to_ascii_lowercase())
-                };
-                let exists = known.contains(&target)
-                    || known.contains(&beside)
-                    || known
-                        .iter()
-                        .any(|known| known.ends_with(&format!("/{target}")));
-                if !exists {
-                    missing.push(Location {
-                        path: path.clone(),
-                        line: Some(index + 1),
-                        snippet: snippet(line),
-                    });
-                }
-            }
-            if missing.len() >= MAX_LOCATIONS {
-                break;
-            }
-        }
-    }
-    checks.push(Check {
-        id: "referenced_files",
-        label: "Files read by code are in the package",
-        status: if missing.is_empty() { "pass" } else { "warn" },
-        detail: if missing.is_empty() {
-            "Every literal file path read by code was found. Paths built from macros or variables are not checked.".into()
-        } else {
-            "Code reads files that are not in the package. If they are restricted or too large to deposit, the README must say how to obtain them.".into()
-        },
-        locations: missing,
     });
 }
 

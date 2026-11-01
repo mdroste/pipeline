@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  MissingBackupFile,
   PerformanceBudget,
   ReviewHandoff,
   ResearchArchiveReport,
@@ -68,9 +69,14 @@ export const releaseClient = {
       request: { handoffId, externalReference },
     });
   },
-  exportResearchArchive(path: string) {
+  missingBackupFiles() {
+    return invoke<MissingBackupFile[]>("workbench_missing_backup_files");
+  },
+  /** `omittedReferences` are files the researcher agreed to leave out. */
+  exportResearchArchive(path: string, omittedReferences: string[] = []) {
     return invoke<ResearchArchiveReport>("workbench_export_research_archive", {
       request: { path },
+      omittedReferences,
     });
   },
   inspectResearchArchive(path: string) {

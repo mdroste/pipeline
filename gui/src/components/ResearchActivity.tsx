@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { taskClient } from "../lib/taskClient";
 import { type TaskSummary } from "../lib/taskTypes";
 import { runtimeClient } from "../lib/workbench/runtimeClient";
@@ -48,18 +49,17 @@ export default function ResearchActivity({
   const [activity, setActivity] = useState<Activity | null>(null),
     [tasks, setTasks] = useState<TaskSummary[]>([]),
     [reviews, setReviews] = useState<RunSummary[]>([]),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [reviewError, setReviewError] = useState("");
   const refresh = async () => {
-    const [a, t, r] = await Promise.allSettled([
+    const [a, t] = await Promise.allSettled([
       invoke<Activity>("workbench_research_activity"),
       taskClient.list(),
-      invoke<RunSummary[]>("list_runs"),
     ]);
     if (a.status === "fulfilled") setActivity(a.value);
     if (t.status === "fulfilled") setTasks(t.value);
-    if (r.status === "fulfilled") setReviews(r.value);
     setError(
-      [a, t, r]
+      [a, t]
         .flatMap((result) =>
           result.status === "rejected"
             ? [workbenchErrorMessage(result.reason)]
@@ -68,11 +68,33 @@ export default function ResearchActivity({
         .join(" · "),
     );
   };
+  const refreshReviews = () =>
+    invoke<RunSummary[]>("list_runs")
+      .then((next) => {
+        setReviews(next);
+        setReviewError("");
+      })
+      .catch((e) => setReviewError(workbenchErrorMessage(e)));
   useEffect(() => {
     void refresh().catch((e) => setError(workbenchErrorMessage(e)));
-    const timer = setInterval(
-      () => void refresh().catch(() => undefined),
-      4000,
+    void refreshReviews();
+    let pending = false;
+    const timer = setInterval(() => {
+      if (pending || document.visibilityState === "hidden") return;
+      pending = true;
+      void refresh()
+        .catch(() => undefined)
+        .finally(() => {
+          pending = false;
+        });
+    }, 4000);
+    // Listing reviews reads every run, so it follows the queue. The slow timer
+    // catches states the queue does not report, such as a paused review.
+    const reviewTimer = setInterval(() => {
+      if (document.visibilityState !== "hidden") void refreshReviews();
+    }, 30_000);
+    const queue = listen("runs:queue", () => void refreshReviews()).catch(
+      () => undefined,
     );
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !asPage) onClose();
@@ -80,6 +102,8 @@ export default function ResearchActivity({
     window.addEventListener("keydown", key);
     return () => {
       clearInterval(timer);
+      clearInterval(reviewTimer);
+      void queue.then((off) => off?.());
       window.removeEventListener("keydown", key);
     };
   }, []);
@@ -115,7 +139,9 @@ export default function ResearchActivity({
           </button>
         </div>
       )}
-      {error && <p role="alert">{error}</p>}
+      {(error || reviewError) && (
+        <p role="alert">{[error, reviewError].filter(Boolean).join(" · ")}</p>
+      )}
       <p className={`${muted} ${asPage ? "ui-page-toolbar" : "my-3"}`}>
         {activity?.pendingRequests.length ?? 0} unresolved conversation requests
         · {activity?.researchAttention ?? 0} research attention items

@@ -43,7 +43,8 @@ export interface RunProvenance {
   subject: string;
   authors: string[];
   workflow: string;
-  completed: string;
+  /** When the run began. Manifests record no finish time. */
+  started: string;
   duration_secs: number | null;
   run_id: string;
   status: string;
@@ -301,9 +302,8 @@ export function buildRunProvenance({
       manifest?.profile_name ||
       summary?.profile_id ||
       manifest?.profile_id ||
-      "Current workflow",
-    completed:
-      summary?.created || manifest?.created || report.report_date || "",
+      "Current review",
+    started: summary?.created || manifest?.created || report.report_date || "",
     duration_secs:
       resolvedDuration &&
       Number.isFinite(resolvedDuration) &&
@@ -410,7 +410,7 @@ export function provenanceMarkdown(provenance: RunProvenance): string {
     "",
     `**Document:** ${escapeMarkdown(provenance.subject)}`,
     "",
-    `**Workflow:** ${escapeMarkdown(provenance.workflow)}`,
+    `**Review:** ${escapeMarkdown(provenance.workflow)}`,
     "",
     `**Token usage:** ${escapeMarkdown(tokenSummary(provenance))}`,
     "",

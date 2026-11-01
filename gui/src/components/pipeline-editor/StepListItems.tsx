@@ -83,11 +83,13 @@ function StepRow({
           aria-checked={step.enabled}
           onClick={onToggle}
           className={`relative h-4 w-7 shrink-0 rounded-full transition-colors ${
-            step.enabled ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
+            step.enabled
+              ? "bg-green-600 dark:bg-neutral-200"
+              : "bg-gray-300 dark:bg-gray-600"
           }`}
         >
           <div
-            className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform ${
+            className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform dark:bg-neutral-900 ${
               step.enabled ? "translate-x-3.5" : "translate-x-0.5"
             }`}
           />

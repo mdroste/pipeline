@@ -437,3 +437,85 @@ fn run_summary_distinguishes_cached_and_warmed_input() {
     assert!(summary.contains("Cache reads are discounted, not free"));
     assert!(summary.contains("$0.0780"));
 }
+
+fn config_without_declared_products() -> crate::pipeline_config::PipelineConfig {
+    crate::pipeline_config::PipelineConfig {
+        steps: Vec::new(),
+        merge: Default::default(),
+        outputs: Default::default(),
+        context_cache: Default::default(),
+        use_orientation: true,
+        orientation_prompt: String::new(),
+        orientation_schema: None,
+        extraction: Default::default(),
+        parallel_context_template: String::new(),
+        variables: Vec::new(),
+    }
+}
+
+#[test]
+fn undeclared_primary_never_promotes_a_parallel_reviewer_over_a_failed_final_step() {
+    let mut parallel = metric_output("Technical", "opus", "claude", 0, 0, 0);
+    parallel.step_id = "technical".to_string();
+    parallel.phase = "parallel".to_string();
+    parallel.raw_text = r#"{"findings": [], "summary": "One reviewer's analysis."}"#.to_string();
+    let config = config_without_declared_products();
+
+    let products = crate::findings::build_run_products(&config, std::slice::from_ref(&parallel));
+    assert!(products.primary_step_id.is_empty());
+    assert!(products.findings.is_none());
+
+    let mut report = report_with(vec![parallel.clone()]);
+    report.products = products;
+    report.failed_steps.push(crate::models::StepFailure {
+        step_id: "synthesis".to_string(),
+        step_label: "Consolidate issues".to_string(),
+        phase: "sequential".to_string(),
+        error: "failed".to_string(),
+    });
+    let markdown = render_markdown(&report, None, Duration::from_secs(1), &Settings::default());
+    assert!(markdown.contains("Final report unavailable"), "{markdown}");
+    assert!(!markdown.contains("One reviewer's analysis."));
+}
+
+#[test]
+fn a_workflow_with_only_parallel_steps_still_reports_its_last_output() {
+    let mut parallel = metric_output("Technical", "opus", "claude", 0, 0, 0);
+    parallel.phase = "parallel".to_string();
+    parallel.raw_text = "The only analysis.".to_string();
+    let config = config_without_declared_products();
+    let products = crate::findings::build_run_products(&config, std::slice::from_ref(&parallel));
+
+    let mut report = report_with(vec![parallel]);
+    report.products = products;
+    let markdown = render_markdown(&report, None, Duration::from_secs(1), &Settings::default());
+    assert!(markdown.contains("The only analysis."), "{markdown}");
+}
+
+fn report_opening_with(opening: &str, schema_version: u32) -> String {
+    let mut output = metric_output("Final", "opus", "claude", 0, 0, 0);
+    output.phase = "sequential".to_string();
+    output.raw_text = format!("{opening}\n\n## Details\n\nMore.");
+    let mut report = report_with(vec![output]);
+    report.quality.schema_version = schema_version;
+    render_markdown(&report, None, Duration::from_secs(1), &Settings::default())
+}
+
+#[test]
+fn a_current_report_keeps_an_opening_paragraph_that_sounds_like_narration() {
+    for opening in [
+        "Looking at the proof, the bound fails.",
+        "Here are the three main concerns.",
+        "After reading the appendix, the sample differs.",
+    ] {
+        let markdown = report_opening_with(opening, 1);
+        assert!(markdown.contains(opening), "{markdown}");
+    }
+}
+
+#[test]
+fn a_legacy_report_still_loses_its_narrated_preamble() {
+    let markdown = report_opening_with("Let me compile the report.", 0);
+    assert!(!markdown.contains("Let me compile"), "{markdown}");
+    assert!(markdown.contains("## Details"));
+}

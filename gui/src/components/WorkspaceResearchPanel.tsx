@@ -11,6 +11,7 @@ import SidebarPanel, { SidebarHeader } from "./SidebarPanel";
 import WorkspaceIcon from "./WorkspaceIcon";
 import type {
   ConversationSnapshot,
+  SessionSnapshot,
   ReviewHandoff,
   Workspace,
 } from "../lib/workbenchTypes";
@@ -25,6 +26,7 @@ export default function WorkspaceResearchPanel({
   onMove,
   workspace: projectWorkspace,
   embedded = false,
+  hint,
   initialTab = "setup",
   allowedTabs,
   title = "Research",
@@ -34,10 +36,14 @@ export default function WorkspaceResearchPanel({
   active = true,
   onBusy,
   beforeChange,
+  onChanged,
+  onActionStart,
 }: {
   snapshot: ConversationSnapshot | null;
   workspace?: Workspace | null;
   embedded?: boolean;
+  /** One line under the project subnav, in place of the sidebar header. */
+  hint?: string;
   initialTab?: ResearchTab;
   allowedTabs?: ResearchTab[];
   title?: string;
@@ -45,9 +51,13 @@ export default function WorkspaceResearchPanel({
   active?: boolean;
   onBusy?: (busy: boolean) => void;
   beforeChange?: () => Promise<void>;
+  /** A write here succeeded, so the surrounding project view may need to reload. */
+  onChanged?: () => void;
+  /** An action started, so an earlier failure no longer applies. */
+  onActionStart?: () => void;
   resultsView?: "all" | "runs" | "profiles";
   releaseView?: "all" | "share" | "review";
-  onSnapshot: (snapshot: ConversationSnapshot) => void;
+  onSnapshot: (snapshot: SessionSnapshot) => void;
   onClose: () => void;
   onError: (message: string) => void;
   onReviewHandoff?: (handoff: ReviewHandoff) => void;
@@ -109,17 +119,24 @@ export default function WorkspaceResearchPanel({
     active,
     onBusy,
     beforeChange,
+    onChanged,
+    onActionStart,
   });
 
   return (
     <SidebarPanel
       fill={embedded}
-      onKeyDown={(event) => {
-        if (event.key === "Escape" && !busy) {
-          event.stopPropagation();
-          onClose();
-        }
-      }}
+      // A project page has nothing to close; Escape belongs to its fields.
+      onKeyDown={
+        embedded
+          ? undefined
+          : (event) => {
+              if (event.key === "Escape" && !busy) {
+                event.stopPropagation();
+                onClose();
+              }
+            }
+      }
       aria-label={embedded ? title : "Research workspace"}
       side="right"
       width={width}
@@ -129,26 +146,30 @@ export default function WorkspaceResearchPanel({
       onResize={setWidth}
       resizeLabel="Resize research workspace"
     >
-      <SidebarHeader
-        title={title}
-        actions={
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={busy}
-            className="workspace-sidebar-icon-button"
-            aria-label="Close research workspace"
-          >
-            <WorkspaceIcon name="close" />
-          </button>
-        }
-      >
-        <p className="mt-2 truncate text-xs text-gray-500 dark:text-gray-400">
-          {tab === "setup"
-            ? (effective?.preset.name ?? "Loading assistant settings…")
-            : workspace?.name}
-        </p>
-      </SidebarHeader>
+      {embedded ? (
+        hint && <p className="project-page-hint">{hint}</p>
+      ) : (
+        <SidebarHeader
+          title={title}
+          actions={
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={busy}
+              className="workspace-sidebar-icon-button"
+              aria-label="Close research workspace"
+            >
+              <WorkspaceIcon name="close" />
+            </button>
+          }
+        >
+          <p className="mt-2 truncate text-xs text-gray-500 dark:text-gray-400">
+            {tab === "setup"
+              ? (effective?.preset.name ?? "Loading assistant settings…")
+              : workspace?.name}
+          </p>
+        </SidebarHeader>
+      )}
       {(!allowedTabs || allowedTabs.length > 1) && (
         <div className="workspace-research-tabs flex shrink-0 flex-wrap gap-1 border-b border-gray-200 px-5 pb-4 dark:border-gray-800">
           {tabs
@@ -217,7 +238,6 @@ export default function WorkspaceResearchPanel({
             setHits={setHits}
             workspaceId={workspaceId}
             projectWorkspace={projectWorkspace}
-            onError={onError}
           />
         )}
 

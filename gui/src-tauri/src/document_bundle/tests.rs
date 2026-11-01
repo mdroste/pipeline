@@ -849,3 +849,18 @@ fn asset_links_require_label_or_page_evidence() {
     }
     assert!(closest_assets(&bundle, "figure", None, "4").is_empty());
 }
+
+#[test]
+fn every_form_of_includegraphics_names_its_figure() {
+    let project = tempfile::tempdir().unwrap();
+    for name in ["a.png", "b.png", "c.png", "d.png"] {
+        fs::write(project.path().join(name), b"image").unwrap();
+    }
+    let mut source = extraction(
+        r"\includegraphics{a.png} \includegraphics*{b.png} \includegraphics [width=2in] {c.png} \includegraphics*[scale=1]{d.png}",
+    );
+    source.source_path = project.path().join("main.tex").display().to_string();
+    let run = tempfile::tempdir().unwrap();
+    let copied = copy_tex_assets(&source, run.path()).unwrap();
+    assert_eq!(copied.len(), 4, "{copied:?}");
+}

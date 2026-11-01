@@ -11,12 +11,15 @@ other release jobs use `release`. Build jobs don't create deployment records.
 
 ## Repository setup
 
-- Create a `release` GitHub environment with a required reviewer, limited to
-  protected `v*` tags. Protect those tags from being replaced.
-- Add these secrets to the environment for macOS signing:
-  `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`,
-  `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, and
-  `APPLE_TEAM_ID`.
+- The `release` GitHub environment has no required reviewer and no tag limit.
+  Its jobs start without approval.
+- These macOS signing secrets are repository secrets: `APPLE_CERTIFICATE`,
+  `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`,
+  `APPLE_PASSWORD`, and `APPLE_TEAM_ID`. A workflow on any branch can read them,
+  so review every workflow change before it runs here.
+- No ruleset protects tags or `main`. GitHub would let a tag move or be deleted.
+  The workflow checks the signed tag when it starts and again in its final job,
+  but keeping published tags in place is up to you.
 - Register your tag signing key with GitHub.
 - Add repository secrets `TAURI_SIGNING_PRIVATE_KEY` and
   `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Every platform build signs its update
@@ -52,8 +55,9 @@ produce an AppImage.
    compatibility statements, dependency versions, and deliberately different
    versions in update tests.
 2. Update the [changelog](../CHANGELOG.md), the guides, and the notices. Run
-   every check in [Contributing](../.github/CONTRIBUTING.md), and review dependency
-   advisories.
+   every check in [Contributing](../.github/CONTRIBUTING.md). Run **Dependency
+   advisories** on the release commit and review what it reports. A new advisory
+   fails that workflow, but it doesn't stop a release.
 3. Create and push a signed, annotated tag for that commit:
 
    ```bash
@@ -81,12 +85,20 @@ build, and the job fails if the layout wasn't saved. If Finder times out, run
 the job again. Windows builds sign the bundled tools, application,
 CLI, uninstaller, and installer. Before upload, the Windows job installs the
 package and verifies its signatures, timestamps, publisher, and Poppler
-inventory. Each installer is uploaded with a SHA-256 checksum file. An asset that's
+inventory, then reads a test PDF with the installed Poppler. Before upload, the
+macOS jobs check the architecture, minimum macOS version, Developer ID signature,
+and library paths of every binary in the app. They read a test PDF with its
+Poppler and open the app until its window finishes loading. The Linux job reads a test
+PDF and checks that the AppImage stays running. Nothing reaches the draft if one
+of these fails, so you can run the job again.
+
+Each installer is uploaded with a SHA-256 checksum file. An asset that's
 already uploaded is never replaced. A retry with identical bytes passes, and
 different bytes need a new version. Once the quality checks and platform jobs
 pass, a final job downloads all four installers and checks their checksums and
 [update signatures](#in-app-updates), so a single-platform run fails this step
-until every platform is built.
+until every platform is built. It then checks that the draft holds exactly the
+expected files, and that the signed tag still points at this build.
 
 Platform jobs reuse Rust dependencies compiled by
 [release-cache.yml](../.github/workflows/release-cache.yml), because a new tag
@@ -97,30 +109,39 @@ release still works but compiles every dependency.
 
 ## Packaged resources
 
-`npm run prepare:release-resources` fills two ignored folders before Tauri
-builds:
+`npm run prepare:release-resources` fills `gui/src-tauri/resources/notices/`
+before Tauri builds or starts a development build. That ignored folder gets
+Pipeline's license, the [third-party notice](../THIRD_PARTY_LICENSES.md), a short
+versioned notice, and `THIRD_PARTY_LIBRARIES.txt`. Tauri bundles only these four
+files.
 
-- `gui/src-tauri/resources/notices/` gets Pipeline's license, the
-  [third-party notice](../THIRD_PARTY_LICENSES.md), and a short versioned
-  notice. Tauri bundles only these three files.
-- `gui/src-tauri/resources/poppler/` gets `pdftoppm`, `pdftotext`, the
-  libraries they load, Poppler's data, and its license files.
-  - macOS uses Homebrew's Poppler, moves its library paths into the app
-    bundle, and signs the binaries before Tauri builds and notarizes the DMG.
-  - Linux uses the runner's Ubuntu packages and the shared libraries the
-    AppImage needs.
-  - Windows downloads the archive pinned in
-    `scripts/release/poppler-lock.json`, checks its hash, and signs the
-    executables and libraries before recording their bundled hashes.
+`THIRD_PARTY_LIBRARIES.txt` lists every Rust crate and JavaScript package the app
+can include, for all platforms, with the license text each one publishes. It's
+built from `cargo metadata`, the Cargo registry, `package-lock.json`, and
+`node_modules`, so the same lockfiles produce the same file. An official build
+fails if a library can't be read or states no license. A development build warns
+instead.
+
+`gui/src-tauri/resources/poppler/` is filled by
+[bundle-poppler.sh](../scripts/release/bundle-poppler.sh) in the platform job:
+- It gets `pdftoppm`, `pdftotext`, the libraries they load, Poppler's data, and
+  its license files.
+- macOS uses Homebrew's Poppler, moves its library paths into the app bundle,
+  and signs the binaries before Tauri builds and notarizes the DMG.
+- Linux uses the runner's Ubuntu packages and the shared libraries the AppImage
+  needs.
+- Windows downloads the archive pinned in `scripts/release/poppler-lock.json`,
+  checks its hash, and signs the executables and libraries before recording
+  their bundled hashes.
 
 `resources/poppler/BUNDLE_INVENTORY.json` records the Poppler version and the
 hash of every bundled file. The release cache reuses a bundled Poppler folder
-only when every hash matches. See
-[bundle-poppler.sh](../scripts/release/bundle-poppler.sh) and the
+only when every hash matches. See the
 [Tauri configuration](../gui/src-tauri/tauri.conf.json) for the exact inputs.
 
-The release produces four installers and four checksum files. It doesn't
-produce a software bill of materials or build attestations.
+The release produces four installers, two macOS update archives, a checksum file
+for each, update signatures, and `latest.json`. It doesn't produce a software bill
+of materials or build attestations.
 Runner images and signing services change over time, so
 rebuilding the same source can produce different bytes.
 
@@ -171,6 +192,10 @@ Before you publish, test the candidate by hand:
   restriction. Enable **Browser interaction** and let setup finish. Sign in
   directly, and confirm that stopping the turn closes it. Check private-address
   and redirect denial.
+- On Windows, open a project on a mapped network drive. **Move to Trash** and
+  **Discard changes** should refuse and leave the file in place. On a local
+  project, check **Open externally** and **Reveal in folder** on a file in a
+  subfolder.
 - On Windows, test Claude inside WSL2 with paths containing spaces and Unicode,
   a separate Linux sign-in, and cancellation that stops Linux child processes.
   Check native ChatGPT commands and native research jobs separately.
@@ -187,27 +212,43 @@ Before you publish, test the candidate by hand:
 - Quit the packaged app at each point in the crash and recovery table in
   [Architecture](architecture.md#crash-and-recovery), and confirm it
   recovers.
+- Install the PaddleOCR-VL Full Parser on each platform, on a machine with no
+  earlier parser, and extract a PDF with a table and an equation. Windows matters
+  most, because no automated run covers its recognition path.
+- If `gui/src-tauri/resources/paddle-parser/` or `gui/src-tauri/src/engines/`
+  changed since the last release, run **Paddle parser qualification** on the
+  release tag. It covers Linux x64 only. It stays out of the **Release** workflow
+  because it depends on third-party model and package hosts, and an outage there
+  shouldn't fail a release.
 - Check that the third-party notices cover what's actually bundled, and that
-  GPL source obligations for Poppler are met. The Windows Poppler archive
-  doesn't include a license file for every library, so add any missing
+  GPL source obligations for Poppler are met. In `THIRD_PARTY_LIBRARIES.txt`,
+  read **Published without a license file**. Those libraries state a license but
+  ship no text, so add any notice their licenses require. The Windows Poppler
+  archive doesn't include a license file for every library, so add any missing
   notices.
 
 Record the results in an evidence file based on
 [`docs/releases/1.1.0-qualification.json`](releases/1.1.0-qualification.json),
 with the final commit, tool and provider versions, platforms, outcomes, and
-the hashes of the evidence and installers. First capture the candidate identity
-from the complete, verified draft's downloaded installers and checksum files.
-Use the commit and version of its signed tag, and keep this manifest separate
-from the observations:
+the hashes of the evidence and installers. First download the complete, verified
+draft's installers and checksum files into one folder. Fetch the signed tag, then
+capture the candidate identity from that folder. Use the commit and version of the
+tag, and keep this manifest separate from the observations:
 
 ```bash
+git fetch origin tag vX.Y.Z
 node scripts/release/qualify-release.mjs --candidate <candidate-commit> <candidate-version> /absolute/path/draft-installers > /absolute/path/candidate.json
-node scripts/release/qualify-release.mjs /absolute/path/evidence.json /absolute/path/candidate.json
+node scripts/release/qualify-release.mjs /absolute/path/evidence.json /absolute/path/candidate.json --installers /absolute/path/draft-installers
 ```
 
-It fails if a scenario is missing or pending, the commit or version differs,
-an installer belongs to another platform, or a file changed. Installer names
-and hashes must match the candidate manifest. The evidence must cover all four platforms. Dropping a platform also
+Run both from a clone of this repository. Paths under `evidence` in the evidence
+file are relative to the folder holding that file. `installer` is a bare file name
+in the installers folder.
+
+It fails if the tag doesn't point at the candidate commit, a scenario is missing
+or pending, the commit or version differs, an installer belongs to another
+platform, or a file changed. Installer names and hashes must match the candidate
+manifest. The evidence must cover all four platforms. Dropping a platform also
 means updating [Support](../.github/SUPPORT.md) and the release checks.
 
 ## In-app updates
@@ -230,13 +271,14 @@ Local builds don't create these packages, so they need no key.
 
 Before you publish the draft, confirm its tag and commit, the quality and
 completeness results, the checksums, the release notes, and the platforms.
+Publish only after the second command above passes on the final evidence file.
 If a candidate fails, leave it unpublished, bump the version, and tag again.
-Published tags and assets never change.
+Don't change a published tag or asset. GitHub doesn't enforce this.
 
 ## Updating tools
 
 Keep `gui/.nvmrc`, `rust-toolchain.toml`, and the toolchain versions in the
-Tests, Release, and Release cache workflows in step. Third-party Actions are
+Tests, Release, Release cache, and Dependency advisories workflows in step. Third-party Actions are
 pinned to commit SHAs. Update a pin
 only after reviewing the upstream change, then rerun the release tests.
 Changes to Poppler packaging need a careful review of the bundling script and

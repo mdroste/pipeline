@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { Fold } from "../../ui";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   deskClient,
@@ -7,16 +8,31 @@ import {
 } from "../../lib/deskClient";
 import { researchClient } from "../../lib/workbench/researchClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
+import useReopenCount from "../../hooks/useReopenCount";
+import { folderName } from "../project-surface/shared";
+import { plainLabel } from "../research-panel/format";
 import { button, input, card, muted, type DeskProps } from "./shared";
-export default function Discovery({ workspaceId, onOpen, onError }: DeskProps) {
+
+const INBOX_PAGE = 60;
+
+export default function Discovery({
+  workspaceId,
+  onOpen,
+  onError,
+  onChanged,
+  onActionStart,
+  active,
+}: DeskProps) {
   const [enabled, setEnabled] = useState(false);
   const [receipts, setReceipts] = useState<DeskRecord<Acquisition>[]>([]);
+  const [shown, setShown] = useState(INBOX_PAGE);
   const [query, setQuery] = useState("");
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [citation, setCitation] = useState("");
   const [contact, setContact] = useState("");
   const [savedContact, setSavedContact] = useState<string | null>(null);
+  const loadedContact = useRef("");
   const [busy, setBusy] = useState(false);
   const refresh = useCallback(async () => {
     const [network, items, email] = await Promise.all([
@@ -26,21 +42,30 @@ export default function Discovery({ workspaceId, onOpen, onError }: DeskProps) {
     ]);
     setEnabled(network);
     setSavedContact(email);
-    setContact(email ?? "");
+    // A reload must not replace an address the researcher is still typing.
+    const previous = loadedContact.current;
+    const next = email ?? "";
+    loadedContact.current = next;
+    setContact((current) =>
+      current === previous || current.trim() === next ? next : current,
+    );
     setReceipts(
       items.filter(
         (item) => !items.some((next) => next.supersedes === item.id),
       ),
     );
   }, [workspaceId]);
+  const reopened = useReopenCount(active);
   useEffect(() => {
     void refresh().catch((e) => onError(workbenchErrorMessage(e)));
-  }, [refresh, onError]);
+  }, [refresh, onError, reopened]);
   const run = async (fn: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(true);
+    onActionStart?.();
     try {
       await fn();
+      onChanged?.();
       await refresh();
     } catch (e) {
       onError(workbenchErrorMessage(e));
@@ -57,7 +82,7 @@ export default function Discovery({ workspaceId, onOpen, onError }: DeskProps) {
       if (typeof path !== "string") return;
       await researchClient.importSource({
         workspaceId,
-        title: title || path.split("/").pop() || "Source PDF",
+        title: title || folderName(path) || "Source PDF",
         citationKey: citation || null,
         identifiers: {},
         versionLabel: null,
@@ -80,133 +105,17 @@ export default function Discovery({ workspaceId, onOpen, onError }: DeskProps) {
   };
   return (
     <div className="space-y-5">
-      <section className={card}>
-        <h2 className="font-semibold">Find literature</h2>
-        <label className="flex gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={enabled}
-            disabled={busy}
-            onChange={(e) =>
-              void run(() => deskClient.network(workspaceId, e.target.checked))
-            }
-          />
-          Allow Pipeline to search for literature and download data for this
-          project
-        </label>
-        <p className={muted}>
-          Queries go to the selected provider. This setting is separate from
-          conversation web search.
-        </p>
-        <form
-          className="flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void run(() =>
-              deskClient.crossrefContact(contact.trim() || null, true),
-            );
-          }}
-        >
-          <input
-            aria-label="Crossref contact email"
-            type="email"
-            autoComplete="email"
-            className={input}
-            value={contact}
-            onChange={(e) => setContact(e.target.value)}
-            placeholder="Your email for Crossref (optional)"
-          />
-          <button
-            className={button}
-            disabled={busy || contact.trim() === (savedContact ?? "")}
-          >
-            {contact.trim() ? "Save contact" : "Remove contact"}
-          </button>
-        </form>
-        <p className={muted}>
-          Optional. Crossref asks API users for a contact address and may limit
-          requests per address. When set, Pipeline sends your own email to
-          Crossref with each literature lookup from this computer; it never uses
-          a shared address. Leave it empty to search without a contact.
-        </p>
-        <form
-          className="flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void run(() => deskClient.lookup(workspaceId, query));
-          }}
-        >
-          <input
-            aria-label="Literature query"
-            className={input}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="DOI, title, author, or research question"
-          />
-          <button
-            className={button}
-            disabled={!enabled || busy || !query.trim()}
-          >
-            Find with Crossref
-          </button>
-        </form>
-        <input
-          aria-label="Citation key"
-          className={input}
-          value={citation}
-          onChange={(e) => setCitation(e.target.value)}
-          placeholder="Optional citation key for selected import"
-        />
-      </section>
-      <section className={card}>
-        <h2 className="font-semibold">Attach a source</h2>
-        <input
-          aria-label="Source title"
-          className={input}
-          placeholder="Source title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-        />
-        <form
-          className="flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void run(() => deskClient.pdf(workspaceId, title, url));
-          }}
-        >
-          <input
-            aria-label="Direct PDF URL"
-            className={input}
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://…/paper.pdf"
-          />
-          <button
-            className={button}
-            disabled={!enabled || busy || !title.trim() || !url.trim()}
-          >
-            Download PDF
-          </button>
-        </form>
-        <button className={button} disabled={busy} onClick={() => void local()}>
-          Import local PDF
-        </button>
-        <p className={muted}>
-          Use Literature to import Zotero collections, add citation notes, and
-          compare paper versions. Check the full text before treating a source
-          as evidence.
-        </p>
-      </section>
-      <h2 className="font-semibold">Reading inbox</h2>
-      {receipts.slice(0, 60).map((r) => (
+      {receipts.length > 0 && <h2 className="font-semibold">Reading inbox</h2>}
+      {receipts.slice(0, shown).map((r) => (
         <article className={card} key={r.id}>
           <h3 className="font-semibold">{r.title}</h3>
           <p className={muted}>
-            {r.body.provider} · {r.body.state} · {r.body.access} ·{" "}
+            {r.body.provider} · {plainLabel(r.body.state)}
+            {r.body.access ? ` · ${plainLabel(r.body.access)}` : ""} ·{" "}
             {new Date(r.createdAt).toLocaleString()}
           </p>
           {r.body.error && (
-            <p role="alert" className="text-sm text-red-700">
+            <p role="alert" className="text-sm text-danger">
               {r.body.error}
             </p>
           )}
@@ -285,6 +194,134 @@ export default function Discovery({ workspaceId, onOpen, onError }: DeskProps) {
           ))}
         </article>
       ))}
+      {receipts.length > shown && (
+        <div className="flex items-center gap-2">
+          <p className={muted}>
+            Showing the {shown} newest of {receipts.length} items.
+          </p>
+          <button
+            className={button}
+            onClick={() => setShown((count) => count + INBOX_PAGE)}
+          >
+            Show older
+          </button>
+        </div>
+      )}
+      <Fold title="Find literature" open={!receipts.length}>
+        <label className="flex gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={enabled}
+            disabled={busy}
+            onChange={(e) =>
+              void run(() => deskClient.network(workspaceId, e.target.checked))
+            }
+          />
+          Allow Pipeline to search for literature and download data for this
+          project
+        </label>
+        <p className={muted}>
+          Queries go to the selected provider. This setting is separate from
+          conversation web search.
+        </p>
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(() =>
+              deskClient.crossrefContact(contact.trim() || null, true),
+            );
+          }}
+        >
+          <input
+            aria-label="Crossref contact email"
+            type="email"
+            autoComplete="email"
+            className={input}
+            value={contact}
+            onChange={(e) => setContact(e.target.value)}
+            placeholder="Your email for Crossref (optional)"
+          />
+          <button
+            className={button}
+            disabled={busy || contact.trim() === (savedContact ?? "")}
+          >
+            {contact.trim() ? "Save contact" : "Remove contact"}
+          </button>
+        </form>
+        <p className={muted}>
+          Optional. Crossref asks API users for a contact address and may limit
+          requests per address. When set, Pipeline sends your own email to
+          Crossref with each literature lookup from this computer; it never uses
+          a shared address. Leave it empty to search without a contact.
+        </p>
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(() => deskClient.lookup(workspaceId, query));
+          }}
+        >
+          <input
+            aria-label="Literature query"
+            className={input}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="DOI, title, author, or research question"
+          />
+          <button
+            className={button}
+            disabled={!enabled || busy || !query.trim()}
+          >
+            Find with Crossref
+          </button>
+        </form>
+        <input
+          aria-label="Citation key"
+          className={input}
+          value={citation}
+          onChange={(e) => setCitation(e.target.value)}
+          placeholder="Optional citation key for selected import"
+        />
+      </Fold>
+      <Fold title="Attach a source">
+        <input
+          aria-label="Source title"
+          className={input}
+          placeholder="Source title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+        />
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run(() => deskClient.pdf(workspaceId, title, url));
+          }}
+        >
+          <input
+            aria-label="Direct PDF URL"
+            className={input}
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://…/paper.pdf"
+          />
+          <button
+            className={button}
+            disabled={!enabled || busy || !title.trim() || !url.trim()}
+          >
+            Download PDF
+          </button>
+        </form>
+        <button className={button} disabled={busy} onClick={() => void local()}>
+          Import local PDF
+        </button>
+        <p className={muted}>
+          Use Literature to import Zotero collections, add citation notes, and
+          compare paper versions. Check the full text before treating a source
+          as evidence.
+        </p>
+      </Fold>
     </div>
   );
 }

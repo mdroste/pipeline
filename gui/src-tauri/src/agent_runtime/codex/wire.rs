@@ -37,7 +37,7 @@ pub(crate) enum IncomingFrame {
 
 pub use crate::agent_runtime::events::NormalizedEvent;
 
-pub(crate) fn parse_frame(value: Value) -> Result<IncomingFrame, String> {
+pub(crate) fn parse_frame(mut value: Value) -> Result<IncomingFrame, String> {
     let id = value.get("id").cloned();
     let method = value
         .get("method")
@@ -47,18 +47,18 @@ pub(crate) fn parse_frame(value: Value) -> Result<IncomingFrame, String> {
         (Some(id), Some(method)) => Ok(IncomingFrame::ServerRequest {
             id,
             method,
-            params: value.get("params").cloned().unwrap_or(Value::Null),
+            params: value["params"].take(),
         }),
         (None, Some(method)) => Ok(IncomingFrame::Notification {
             method,
-            params: value.get("params").cloned().unwrap_or(Value::Null),
+            params: value["params"].take(),
         }),
         (Some(id), None) => {
             let id = id
                 .as_u64()
                 .ok_or("App Server response id was not an unsigned integer")?;
-            let result = value.get("result").cloned();
-            let error = value.get("error").cloned();
+            let result = value.get_mut("result").map(Value::take);
+            let error = value.get_mut("error").map(Value::take);
             if result.is_some() == error.is_some() {
                 return Err(
                     "App Server response must contain exactly one of result or error".into(),
@@ -195,7 +195,11 @@ pub(crate) fn normalize_notification(
     }
 }
 
-fn normalize_turn(epoch: u64, params: Value, completed: bool) -> Result<NormalizedEvent, String> {
+fn normalize_turn(
+    epoch: u64,
+    mut params: Value,
+    completed: bool,
+) -> Result<NormalizedEvent, String> {
     let context = if completed {
         "turn/completed"
     } else {
@@ -203,7 +207,8 @@ fn normalize_turn(epoch: u64, params: Value, completed: bool) -> Result<Normaliz
     };
     let params_object = object(&params, context)?;
     let thread_id = string(params_object, "threadId", context)?;
-    let turn = child(params_object, "turn", context)?.clone();
+    child(params_object, "turn", context)?;
+    let turn = params["turn"].take();
     let turn_object = object(&turn, context)?;
     let turn_id = string(turn_object, "id", context)?;
     if completed {
@@ -225,7 +230,11 @@ fn normalize_turn(epoch: u64, params: Value, completed: bool) -> Result<Normaliz
     }
 }
 
-fn normalize_item(epoch: u64, params: Value, completed: bool) -> Result<NormalizedEvent, String> {
+fn normalize_item(
+    epoch: u64,
+    mut params: Value,
+    completed: bool,
+) -> Result<NormalizedEvent, String> {
     let context = if completed {
         "item/completed"
     } else {
@@ -234,7 +243,8 @@ fn normalize_item(epoch: u64, params: Value, completed: bool) -> Result<Normaliz
     let params_object = object(&params, context)?;
     let thread_id = string(params_object, "threadId", context)?;
     let turn_id = string(params_object, "turnId", context)?;
-    let item = child(params_object, "item", context)?.clone();
+    child(params_object, "item", context)?;
+    let item = params["item"].take();
     let item_object = object(&item, context)?;
     let item_id = string(item_object, "id", context)?;
     let item_kind = string(item_object, "type", context)?;

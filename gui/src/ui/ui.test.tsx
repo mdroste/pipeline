@@ -240,6 +240,32 @@ describe("Select", () => {
     { value: "b", label: "Beta", disabled: true },
     { value: "c", label: "Gamma" },
   ];
+  it("scrolls the chosen option into view once the list is placed", () => {
+    const placedWhenScrolled: boolean[] = [];
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+      placedWhenScrolled.push(
+        (this.closest("[role=listbox]") as HTMLElement).style.opacity === "",
+      );
+    };
+    try {
+      render(
+        <Select
+          label="Project"
+          value="c"
+          options={options}
+          onChange={vi.fn()}
+        />,
+      );
+      fireEvent.click(screen.getByRole("combobox", { name: "Project" }));
+      expect(scrolled).toEqual([screen.getByRole("option", { name: "Gamma" })]);
+      expect(placedWhenScrolled).toEqual([true]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
   it("shows the current choice and changes it from the list", () => {
     const change = vi.fn();
     render(

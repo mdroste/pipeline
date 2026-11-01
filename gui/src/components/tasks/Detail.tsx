@@ -70,6 +70,23 @@ function Output({
     </>
   );
 }
+const UNRESOLVED = ["unknown", "failed"];
+/** Past its deadline a wait still takes input, and that starts a new deadline. */
+function lateInput(run: TaskRun) {
+  return (
+    run.state === "attention" &&
+    run.deadlineAt <= Date.now() / 1000 &&
+    !Object.values(run.progress.receipts).some((r) =>
+      UNRESOLVED.includes(r.state),
+    )
+  );
+}
+function acceptsInput(run: TaskRun) {
+  return (
+    ["waiting", "paused", "running", "queued"].includes(run.state) ||
+    lateInput(run)
+  );
+}
 function InputForm({
   run,
   receipt,
@@ -110,6 +127,12 @@ function InputForm({
       {receipt.wakeAt && (
         <p className="task-muted">Timeout: {taskTime(receipt.wakeAt)}</p>
       )}
+      {lateInput(run) && (
+        <p className="task-muted">
+          The deadline has passed. Providing input continues this automation
+          with a new {run.chain.limits.deadlineHours}-hour deadline.
+        </p>
+      )}
     </form>
   );
 }
@@ -128,6 +151,11 @@ export default function Detail({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const terminal = ["finished", "cancelled", "failed"].includes(run.state);
+  useEffect(() => {
+    // History cleanup never removes a result nobody has opened.
+    if (terminal) void taskClient.markSeen(run.id).catch(() => undefined);
+  }, [run.id, terminal]);
   useEffect(() => {
     let alive = true;
     void taskClient
@@ -153,7 +181,6 @@ export default function Detail({
       setBusy(false);
     }
   }
-  const terminal = ["finished", "cancelled", "failed"].includes(run.state);
   const receipts = Object.values(run.progress.receipts).sort(
     (a, b) =>
       (a.sequence ?? 0) - (b.sequence ?? 0) ||
@@ -307,12 +334,18 @@ export default function Detail({
               </div>
               {r.error && <p className="task-error">{r.error}</p>}
               {r.state === "input" ? (
-                <InputForm
-                  run={run}
-                  receipt={r}
-                  onUpdated={onUpdated}
-                  onError={setError}
-                />
+                acceptsInput(run) ? (
+                  <InputForm
+                    run={run}
+                    receipt={r}
+                    onUpdated={onUpdated}
+                    onError={setError}
+                  />
+                ) : (
+                  <p className="task-muted">
+                    This automation can&rsquo;t take input right now.
+                  </p>
+                )
               ) : r.state === "timer" ? (
                 <p className="task-muted">Resumes {taskTime(r.wakeAt)}</p>
               ) : (

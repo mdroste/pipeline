@@ -102,7 +102,19 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         .tempdir()
         .map_err(|e| format!("Failed to create run input directory: {e}"))?;
     let staged = extract::stage_selected_source(paper, input_mode, run_input_dir.path())?;
-    let scoped_source = super::reuse_artifacts::snapshot_source(&staged, run_input_dir.path())?;
+    let folder_files = super::reuse_artifacts::folder_file_limit(
+        &config,
+        &settings,
+        input_mode == "folder",
+        &provided_inputs,
+    );
+    let scoped_source = super::reuse_artifacts::capture_source(
+        staged,
+        input_mode,
+        run_input_dir.path(),
+        folder_files,
+    )
+    .await?;
     let captured_path = scoped_source.source_path.as_deref().unwrap_or(paper);
     let captured_path_text = captured_path.to_string_lossy();
     let captured_visual_pdf = if captured_path
@@ -360,6 +372,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         app,
         &config,
         &provided_inputs,
+        folder_files,
         &run_input_dir,
         &mut run_writer,
     )

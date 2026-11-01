@@ -1,7 +1,8 @@
 # Pipeline ships Tauri's current Linux WebKitGTK backend. Tauri 2.11 still
 # depends on the gtk-rs GTK3 generation, whose crates are marked unmaintained.
 # There is no drop-in GTK4/WebKit replacement in Tauri today. Keep these
-# explicit so every other new informational advisory fails CI.
+# explicit so every other new informational advisory fails the Dependency
+# advisories workflow (.github/workflows/advisories.yml).
 [advisories]
 ignore = [
   "RUSTSEC-2024-0411", # gdkwayland-sys (Tauri Linux only)

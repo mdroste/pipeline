@@ -113,11 +113,12 @@ describe("Get started sheet", () => {
     const { unmount } = renderHost();
     const dialog = await sheet();
     expect(
-      within(dialog).getByRole("heading", { name: "What do you work with?" }),
+      within(dialog).getByRole("heading", { name: "Connections" }),
     ).toBeVisible();
+    expect(within(dialog).queryByRole("radio")).not.toBeInTheDocument();
     await waitFor(() =>
       expect(
-        within(dialog).getByRole("radio", { name: /Stata and LaTeX/ }),
+        within(dialog).getByRole("button", { name: "Next" }),
       ).toHaveFocus(),
     );
     await user.keyboard("{Escape}");
@@ -146,9 +147,6 @@ describe("Get started sheet", () => {
     const navigate = vi.spyOn(router, "navigate").mockResolvedValue(true);
     renderHost();
     const dialog = await sheet();
-    await user.click(
-      within(dialog).getByRole("button", { name: "2. Connections" }),
-    );
     const list = within(dialog).getByRole("list", {
       name: "Model connections",
     });
@@ -185,10 +183,6 @@ describe("Get started sheet", () => {
     const user = userEvent.setup();
     renderHost();
     const dialog = await sheet();
-    await user.click(
-      within(dialog).getByRole("radio", { name: /Python and notebooks/ }),
-    );
-    await user.click(within(dialog).getByRole("button", { name: "Next" }));
     await user.click(within(dialog).getByRole("button", { name: "Next" }));
     expect(
       within(dialog).getByRole("heading", { name: "Tools on this computer" }),
@@ -208,61 +202,36 @@ describe("Get started sheet", () => {
       workspaceId: null,
     });
     const tools = await within(dialog).findByRole("list", {
-      name: "Tools you work with",
+      name: "Tools found",
     });
     expect(within(tools).getByText("Python 3.12")).toBeVisible();
     expect(within(tools).getByText("/usr/bin/python3")).toBeVisible();
     expect(
       within(tools).getByText(/records the version and lockfile hashes/),
     ).toBeVisible();
-    // The notebook persona also names Jupyter when it is missing.
-    expect(within(tools).getByText("Jupyter")).toBeVisible();
-    expect(within(tools).getByText(/Not found/)).toBeVisible();
+    expect(within(dialog).getByText(/If a program is missing/)).toBeVisible();
     expect(within(dialog).getByText(/Detection looked only/)).toBeVisible();
   });
 
-  it("tailors next steps to the chosen kind of work and remembers the choice", async () => {
+  it("suggests next steps and opens each destination", async () => {
     const user = userEvent.setup();
     const navigate = vi.spyOn(router, "navigate").mockResolvedValue(true);
     const { props } = renderHost();
     let dialog = await sheet();
     await user.click(
-      within(dialog).getByRole("radio", { name: /Word and Zotero/ }),
+      within(dialog).getByRole("button", { name: "3. Next steps" }),
     );
-    expect(readGetStarted()?.persona).toBe("word-zotero");
-    await user.click(
-      within(dialog).getByRole("button", { name: "4. Next steps" }),
-    );
-    let steps = within(dialog).getByRole("list", {
+    const steps = within(dialog).getByRole("list", {
       name: "Suggested next steps",
     });
-    expect(within(steps).getByText("Template: Reference Check")).toBeVisible();
-    expect(
-      within(steps).queryByText("Template: Replication Package Readiness"),
-    ).not.toBeInTheDocument();
-    expect(within(dialog).getByText("Tips for Word and Zotero")).toBeVisible();
-    expect(
-      within(dialog).getByText(/Pipeline only reads from Zotero/),
-    ).toBeVisible();
-
-    await user.click(
-      within(dialog).getByRole("button", { name: "1. Your work" }),
-    );
-    await user.click(
-      within(dialog).getByRole("radio", { name: /Stata and LaTeX/ }),
-    );
-    await user.click(
-      within(dialog).getByRole("button", { name: "4. Next steps" }),
-    );
-    steps = within(dialog).getByRole("list", { name: "Suggested next steps" });
     const templates = within(steps)
       .getAllByText(/^Template:/)
       .map((node) => node.textContent);
     expect(templates).toEqual([
-      "Template: Replication Package Readiness",
       "Template: Reference Check",
+      "Template: Replication Package Readiness",
     ]);
-    expect(within(steps).getByText(/LaTeX project folder/)).toBeVisible();
+    expect(within(steps).getByText(/\.tex file, or folder/)).toBeVisible();
 
     // The mocked navigation must provide the destination that receives focus.
     render(
@@ -283,11 +252,8 @@ describe("Get started sheet", () => {
 
     act(() => openGetStarted());
     dialog = await sheet();
-    expect(
-      within(dialog).getByRole("radio", { name: /Stata and LaTeX/ }),
-    ).toBeChecked();
     await user.click(
-      within(dialog).getByRole("button", { name: "4. Next steps" }),
+      within(dialog).getByRole("button", { name: "3. Next steps" }),
     );
     await user.click(
       within(dialog).getByRole("button", { name: "New review" }),
@@ -296,7 +262,7 @@ describe("Get started sheet", () => {
     act(() => openGetStarted());
     dialog = await sheet();
     await user.click(
-      within(dialog).getByRole("button", { name: "4. Next steps" }),
+      within(dialog).getByRole("button", { name: "3. Next steps" }),
     );
     await user.click(
       within(dialog).getByRole("button", { name: "New project" }),
@@ -311,7 +277,7 @@ describe("Get started sheet", () => {
     renderHost();
     const dialog = await sheet();
     await user.click(
-      within(dialog).getByRole("button", { name: "4. Next steps" }),
+      within(dialog).getByRole("button", { name: "3. Next steps" }),
     );
     await user.click(
       within(dialog).getByRole("button", { name: "Open the example" }),

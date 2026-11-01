@@ -165,6 +165,24 @@ export default function Detail({
           {error}
         </p>
       )}
+      {run.state === "attention" && (
+        <div className="discovery-attention" role="group" aria-label="Retry">
+          <p>
+            <strong>Retry</strong> repeats this step with the conversation as it
+            is now, within the remaining limits. <strong>Stop</strong> ends the
+            run. Recorded work stays available either way.
+          </p>
+          <button
+            className="task-primary"
+            disabled={busy}
+            onClick={() =>
+              void act(() => discoveryClient.control(run, "retry"))
+            }
+          >
+            Retry
+          </button>
+        </div>
+      )}
       {run.orientation && (
         <details>
           <summary>

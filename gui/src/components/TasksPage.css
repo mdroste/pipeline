@@ -423,6 +423,9 @@
   padding: 10px 14px;
   font-size: 12px;
 }
+.dark .workspace-task-card {
+  border-color: var(--ui-page-line);
+}
 .workspace-task-card span {
   font-size: 11px;
   opacity: 0.65;

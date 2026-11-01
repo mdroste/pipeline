@@ -445,4 +445,20 @@ describe("UpdateBanner", () => {
       expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     });
   });
+
+  it("uses the inverse tokens that stay readable in dark mode for its main action", async () => {
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(
+        command === "update_status"
+          ? { info: info({ can_install: true }), automatic_available: false }
+          : undefined,
+      ),
+    );
+    render(<UpdateBanner confirmRestart={confirmRestart} />);
+    const install = await screen.findByRole("button", {
+      name: "Install update",
+    });
+    expect(install).toHaveClass("bg-inverse", "text-on-inverse");
+    expect(install.className).not.toMatch(/bg-blue|text-white/);
+  });
 });

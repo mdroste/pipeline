@@ -4,7 +4,9 @@
 //! with a journal, and only an explicit second action deletes them.
 mod paths;
 use super::now;
-use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
+use crate::workbench::store::{
+    is_local_reference, left_out_file, Store, WorkbenchError, WorkbenchResult, REFERENCE_COLUMNS,
+};
 use rusqlite::{params, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -31,8 +33,30 @@ fn random_id(prefix: &str) -> WorkbenchResult<String> {
         bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
     ))
 }
+/// One walk's entry budget. Running out stops the count, not the report: what
+/// was found so far is a lower bound.
+struct Walk {
+    left: usize,
+    partial: bool,
+}
+impl Walk {
+    fn new() -> Self {
+        Self {
+            left: MAX_WALK_ENTRIES,
+            partial: false,
+        }
+    }
+    fn step(&mut self) -> bool {
+        if self.left == 0 {
+            self.partial = true;
+            return false;
+        }
+        self.left -= 1;
+        true
+    }
+}
 /// Size of a file or directory tree, without following symlinks.
-fn tree_size(path: &Path, budget: &mut usize) -> WorkbenchResult<u64> {
+fn tree_size(path: &Path, walk: &mut Walk) -> WorkbenchResult<u64> {
     let meta = fs::symlink_metadata(path).map_err(err)?;
     if meta.file_type().is_symlink() {
         return Ok(0);
@@ -42,56 +66,97 @@ fn tree_size(path: &Path, budget: &mut usize) -> WorkbenchResult<u64> {
     }
     let mut total = 0;
     for entry in fs::read_dir(path).map_err(err)? {
-        *budget = budget.saturating_sub(1);
-        if *budget == 0 {
-            return Err(WorkbenchError::invalid(
-                "Storage inspection exceeded 200,000 entries",
-            ));
+        if !walk.step() {
+            break;
         }
-        total += tree_size(&entry.map_err(err)?.path(), budget)?;
+        total += tree_size(&entry.map_err(err)?.path(), walk)?;
     }
     Ok(total)
 }
-/// Immediate children of a store directory as (path, bytes).
-fn children(dir: &Path, budget: &mut usize) -> WorkbenchResult<Vec<(PathBuf, u64)>> {
+/// Immediate children of a store directory as (path, bytes). `conversations`
+/// is measured against its own walk, so a model's working folders can neither
+/// use up the budget of what cleanup removes nor be stopped by it.
+fn children(
+    dir: &Path,
+    walk: &mut Walk,
+    mut conversations: Option<(&Path, &mut Walk)>,
+) -> WorkbenchResult<Vec<(PathBuf, u64)>> {
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
     for entry in fs::read_dir(dir).map_err(err)? {
         let path = entry.map_err(err)?.path();
-        *budget = budget.saturating_sub(1);
-        if *budget == 0 {
-            return Err(WorkbenchError::invalid(
-                "Storage inspection exceeded 200,000 entries",
-            ));
-        }
-        let size = tree_size(&path, budget)?;
+        let own = conversations
+            .as_mut()
+            .filter(|(owned, _)| *owned == path.as_path());
+        let size = match own {
+            Some((_, conversation_walk)) => tree_size(&path, conversation_walk)?,
+            None => {
+                if !walk.step() {
+                    break;
+                }
+                tree_size(&path, walk)?
+            }
+        };
         out.push((path, size));
     }
     out.sort();
     Ok(out)
 }
-fn references(store: &Store) -> WorkbenchResult<HashSet<String>> {
+/// Every stored reference, and how many could not be matched to this folder.
+/// A file can only be called unused when that count is zero: a reference to the
+/// old location of a moved folder says nothing about the file now sitting here.
+struct References {
+    paths: HashSet<PathBuf>,
+    outside: usize,
+}
+fn references(store: &Store) -> WorkbenchResult<References> {
     let conn = store.connection()?;
-    let mut refs = HashSet::new();
-    for sql in [
-        "SELECT storage_reference FROM artifacts",
-        "SELECT text_reference FROM paper_revisions WHERE text_reference IS NOT NULL",
-        "SELECT text_reference FROM source_versions WHERE text_reference IS NOT NULL",
-        "SELECT storage_reference FROM retained_blobs",
-        "SELECT body_reference FROM context_snapshots WHERE body_reference IS NOT NULL",
-    ] {
-        let mut stmt = conn.prepare(sql).map_err(err)?;
+    let mut refs = References {
+        paths: HashSet::new(),
+        outside: 0,
+    };
+    for (table, column) in REFERENCE_COLUMNS {
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT {column} FROM {table} WHERE {column} IS NOT NULL"
+            ))
+            .map_err(err)?;
         for row in stmt.query_map([], |r| r.get::<_, String>(0)).map_err(err)? {
-            refs.insert(row.map_err(err)?);
+            let reference = row.map_err(err)?;
+            // A placeholder names no location, but the file may yet return.
+            if let Some(path) = left_out_file(&reference, store.root_path()) {
+                refs.paths.insert(path);
+                continue;
+            }
+            if !is_local_reference(&reference, store.root_path()) {
+                refs.outside += 1;
+            }
+            refs.paths.insert(PathBuf::from(reference));
         }
     }
     Ok(refs)
 }
-fn referenced(path: &Path, refs: &HashSet<String>) -> bool {
-    let text = path.to_string_lossy();
-    refs.contains(text.as_ref()) || refs.iter().any(|r| r.starts_with(&format!("{text}/")))
+fn referenced(path: &Path, refs: &References) -> bool {
+    refs.paths.contains(path) || refs.paths.iter().any(|r| r.starts_with(path))
+}
+/// Whether a reference could need this category's files. Temporary command
+/// files and database backups are never referenced, so they stay cleanable.
+fn holds_referenced_files(category: &str) -> bool {
+    category.starts_with("blobs_") || category.starts_with("context_")
+}
+/// Why cleanup of research files is off, in the words Disk use shows and
+/// refusals repeat.
+fn cleanup_blocked(outside: usize) -> String {
+    let locations = if outside == 1 {
+        "1 saved file location points".to_string()
+    } else {
+        format!("{outside} saved file locations point")
+    };
+    format!(
+        "Cleanup of research files is off. {locations} outside this research data folder, so Pipeline can't tell which files are unused. The folder may have moved or been copied without all of its files. If you still have them, restore anything in Trash, copy them here, and restart Pipeline. Temporary command files and database backups can still be removed."
+    )
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -103,6 +168,8 @@ pub struct StorageCategory {
     pub entries: usize,
     pub disposable: bool,
     pub note: String,
+    /// The count stopped early, so `bytes` and `entries` are lower bounds.
+    pub partial: bool,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,13 +193,18 @@ pub struct StorageReport {
 }
 struct Scan {
     items: BTreeMap<String, Vec<(PathBuf, u64)>>,
+    outside: usize,
+    /// The shared walk stopped early, so cleanup can't trust this listing.
+    partial: bool,
+    conversations_partial: bool,
 }
 fn scan(store: &Store) -> WorkbenchResult<Scan> {
     let refs = references(store)?;
     let root = store.root_path();
-    let mut budget = MAX_WALK_ENTRIES;
+    let mut budget = Walk::new();
+    let mut conversation_walk = Walk::new();
     let mut items: BTreeMap<String, Vec<(PathBuf, u64)>> = BTreeMap::new();
-    for (path, size) in children(&root.join("blobs"), &mut budget)? {
+    for (path, size) in children(&root.join("blobs"), &mut budget, None)? {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
         if name.as_deref().is_some_and(|n| n.ends_with(".pending")) {
             items
@@ -144,6 +216,11 @@ fn scan(store: &Store) -> WorkbenchResult<Scan> {
                 .entry("blobs_referenced".into())
                 .or_default()
                 .push((path, size));
+        } else if refs.outside > 0 {
+            items
+                .entry("blobs_unchecked".into())
+                .or_default()
+                .push((path, size));
         } else {
             items
                 .entry("blobs_unreferenced".into())
@@ -151,7 +228,13 @@ fn scan(store: &Store) -> WorkbenchResult<Scan> {
                 .push((path, size));
         }
     }
-    for (path, size) in children(&root.join("jobs"), &mut budget)? {
+    let jobs = root.join("jobs");
+    let conversations = jobs.join("conversations");
+    for (path, size) in children(
+        &jobs,
+        &mut budget,
+        Some((&conversations, &mut conversation_walk)),
+    )? {
         let category = if path.file_name().is_some_and(|name| name == "conversations") {
             "conversation_files"
         } else {
@@ -159,10 +242,15 @@ fn scan(store: &Store) -> WorkbenchResult<Scan> {
         };
         items.entry(category.into()).or_default().push((path, size));
     }
-    for (path, size) in children(&root.join("context"), &mut budget)? {
+    for (path, size) in children(&root.join("context"), &mut budget, None)? {
         if referenced(&path, &refs) {
             items
                 .entry("context_referenced".into())
+                .or_default()
+                .push((path, size));
+        } else if refs.outside > 0 {
+            items
+                .entry("context_unchecked".into())
                 .or_default()
                 .push((path, size));
         } else {
@@ -172,16 +260,21 @@ fn scan(store: &Store) -> WorkbenchResult<Scan> {
                 .push((path, size));
         }
     }
-    for (path, size) in children(&root.join("backups"), &mut budget)? {
+    for (path, size) in children(&root.join("backups"), &mut budget, None)? {
         items
             .entry("migration_backups".into())
             .or_default()
             .push((path, size));
     }
-    for (path, size) in children(&root.join("trash"), &mut budget)? {
+    for (path, size) in children(&root.join("trash"), &mut budget, None)? {
         items.entry("trash".into()).or_default().push((path, size));
     }
-    Ok(Scan { items })
+    Ok(Scan {
+        items,
+        outside: refs.outside,
+        partial: budget.partial,
+        conversations_partial: conversation_walk.partial,
+    })
 }
 fn active_jobs(store: &Store) -> WorkbenchResult<usize> {
     store
@@ -216,7 +309,14 @@ pub fn list_trash(store: &Store) -> WorkbenchResult<Vec<TrashEntry>> {
             .map_err(err)?;
         rows
     };
+    let mut foreign = HashSet::new();
     for (id, original, trash) in pending {
+        // A row from another data folder can't be acted on here, and must not
+        // take the report and every other cleanup action down with it.
+        if !paths::is_local(store, Path::new(&original), Path::new(&trash)) {
+            foreign.insert(id);
+            continue;
+        }
         paths::checked_paths(store, &id, Path::new(&original), Path::new(&trash))?;
         if !Path::new(&trash).try_exists().map_err(err)?
             && Path::new(&original).try_exists().map_err(err)?
@@ -240,7 +340,10 @@ pub fn list_trash(store: &Store) -> WorkbenchResult<Vec<TrashEntry>> {
         .map_err(err)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;
-    Ok(rows)
+    Ok(rows
+        .into_iter()
+        .filter(|entry: &TrashEntry| !foreign.contains(&entry.id))
+        .collect())
 }
 pub fn storage_report(store: &Store) -> WorkbenchResult<StorageReport> {
     let scan = scan(store)?;
@@ -253,6 +356,11 @@ pub fn storage_report(store: &Store) -> WorkbenchResult<StorageReport> {
                 "Used by your papers, sources, evidence, or conversations. Always kept.",
             ),
             "blobs_unreferenced" => ("Unused research files", true, "Nothing uses these files."),
+            "blobs_unchecked" => (
+                "Research files not checked",
+                false,
+                "Kept until Pipeline can tell whether these files are in use.",
+            ),
             "blobs_staging" => ("Files being saved", false, "Incomplete saves. Always kept."),
             "job_scratch" => (
                 "Temporary command files",
@@ -274,6 +382,11 @@ pub fn storage_report(store: &Store) -> WorkbenchResult<StorageReport> {
                 true,
                 "Nothing uses these files.",
             ),
+            "context_unchecked" => (
+                "Conversation context not checked",
+                false,
+                "Kept until Pipeline can tell whether these files are in use.",
+            ),
             "migration_backups" => (
                 "Database backups from updates",
                 true,
@@ -287,17 +400,24 @@ pub fn storage_report(store: &Store) -> WorkbenchResult<StorageReport> {
     for key in [
         "blobs_referenced",
         "blobs_unreferenced",
+        "blobs_unchecked",
         "blobs_staging",
         "job_scratch",
         "conversation_files",
         "context_referenced",
         "context_unreferenced",
+        "context_unchecked",
         "migration_backups",
         "trash",
     ] {
         let items = scan.items.get(key).cloned().unwrap_or_default();
+        if key.ends_with("_unchecked") && items.is_empty() {
+            continue;
+        }
         let (label, disposable, note) = describe(key);
-        let disposable = disposable && !(key == "job_scratch" && active > 0);
+        let disposable = disposable
+            && !(scan.outside > 0 && holds_referenced_files(key))
+            && !(key == "job_scratch" && active > 0);
         categories.push(StorageCategory {
             key: key.into(),
             label: label.into(),
@@ -311,14 +431,28 @@ pub fn storage_report(store: &Store) -> WorkbenchResult<StorageReport> {
             } else {
                 note.into()
             },
+            partial: if key == "conversation_files" {
+                scan.conversations_partial
+            } else {
+                scan.partial
+            },
         });
     }
+    let note = if scan.outside > 0 {
+        cleanup_blocked(scan.outside)
+    } else {
+        "Cleanup removes only files nothing is using. Removed files go to Trash, where you can restore them until you empty it.".to_string()
+    };
     Ok(StorageReport {
         root: store.root_path().to_string_lossy().into_owned(),
         categories,
         trash: list_trash(store)?,
         active_jobs: active,
-        note: "Cleanup removes only files nothing is using. Removed files go to Trash, where you can restore them until you empty it.".into(),
+        note: if scan.partial || scan.conversations_partial {
+            format!("{note} Some folders hold too many items to count, so sizes marked \"at least\" may be larger.")
+        } else {
+            note
+        },
     })
 }
 
@@ -407,7 +541,20 @@ pub fn prune_storage(store: &Store, mut request: PruneRequest) -> WorkbenchResul
             "Stop or finish local jobs and Workspace turns before pruning execution scratch",
         ));
     }
+    let guarded = request
+        .categories
+        .iter()
+        .any(|category| holds_referenced_files(category));
     let scan = scan(store)?;
+    if guarded && scan.outside > 0 {
+        return Err(WorkbenchError::invalid(cleanup_blocked(scan.outside)));
+    }
+    // A preview that stopped early would not show everything cleanup could move.
+    if scan.partial {
+        return Err(WorkbenchError::invalid(
+            "Storage inspection exceeded 200,000 entries",
+        ));
+    }
     let mut entries = Vec::new();
     for category in &request.categories {
         for (path, bytes) in scan.items.get(category).cloned().unwrap_or_default() {
@@ -444,6 +591,9 @@ pub fn prune_storage(store: &Store, mut request: PruneRequest) -> WorkbenchResul
     // Resolve an earlier interrupted intent before retrying a move of that path.
     list_trash(store)?;
     let refs = references(store)?;
+    if guarded && refs.outside > 0 {
+        return Err(WorkbenchError::invalid(cleanup_blocked(refs.outside)));
+    }
     let trash_root = store.root_path().join("trash");
     fs::create_dir_all(&trash_root).map_err(err)?;
     let mut ids = Vec::new();
@@ -526,7 +676,16 @@ pub fn restore_trash(store: &Store, trash_id: &str) -> WorkbenchResult<TrashEntr
     })
 }
 pub fn empty_trash(store: &Store) -> WorkbenchResult<usize> {
+    let outside = references(store)?.outside;
     let entries = list_trash(store)?;
+    // Trash may hold the very files an unresolved reference needs, so those
+    // stay put. Nothing can need a command file or a database backup.
+    let (held, entries): (Vec<_>, Vec<_>) = entries
+        .into_iter()
+        .partition(|entry| outside > 0 && holds_referenced_files(&entry.category));
+    if entries.is_empty() && !held.is_empty() {
+        return Err(WorkbenchError::invalid(cleanup_blocked(outside)));
+    }
     let mut removed = 0;
     for entry in entries {
         let recorded: String = store
@@ -677,6 +836,30 @@ mod tests {
     }
 
     #[test]
+    fn deleting_a_conversation_removes_its_working_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open_at(temp.path()).unwrap();
+        let session = store
+            .create_session(crate::workbench::store::CreateSessionRequest {
+                workspace_id: None,
+                title: "Unfiled".into(),
+                operation_id: "session".into(),
+            })
+            .unwrap()
+            .record
+            .id;
+        let root = store.runtime_root(&session).unwrap();
+        fs::write(root.join("work.md"), "conversation work").unwrap();
+        store
+            .delete_session(crate::workbench::store::DeleteSessionRequest {
+                session_id: session,
+                operation_id: "delete".into(),
+            })
+            .unwrap();
+        assert!(!root.exists());
+    }
+
+    #[test]
     fn scratch_pruning_preserves_conversation_files_and_rejects_active_turns() {
         let temp = tempfile::tempdir().unwrap();
         let store = Store::open_at(temp.path()).unwrap();
@@ -714,6 +897,44 @@ mod tests {
                 .unwrap()
                 .disposable
         );
+    }
+
+    #[test]
+    fn a_folder_too_large_to_count_is_reported_as_a_lower_bound() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open_at(temp.path()).unwrap();
+        let session = store.root_path().join("jobs/conversations/session");
+        fs::create_dir_all(&session).unwrap();
+        for index in 0..=MAX_WALK_ENTRIES {
+            fs::File::create(session.join(index.to_string())).unwrap();
+        }
+        let scratch = store.root_path().join("jobs/finished-run");
+        fs::create_dir_all(&scratch).unwrap();
+        fs::write(scratch.join("log.txt"), "scratch").unwrap();
+        let category = |report: &StorageReport, key: &str| {
+            report
+                .categories
+                .iter()
+                .find(|c| c.key == key)
+                .cloned()
+                .unwrap()
+        };
+
+        // A model's working folder neither hides disk use nor blocks cleanup.
+        let report = storage_report(&store).unwrap();
+        assert!(category(&report, "conversation_files").partial);
+        assert!(!category(&report, "job_scratch").partial);
+        assert!(report.note.contains("at least"));
+        let plan = prune(&store, &["job_scratch"], true).unwrap();
+        assert_eq!(plan.entries.len(), 1);
+        assert!(!scratch.exists());
+
+        // Cleanup keeps its limit: it must not act on a listing it couldn't finish.
+        fs::rename(&session, store.root_path().join("jobs/huge-run")).unwrap();
+        let report = storage_report(&store).unwrap();
+        assert!(category(&report, "job_scratch").partial);
+        assert!(!category(&report, "conversation_files").partial);
+        assert!(prune(&store, &["job_scratch"], false).is_err());
     }
 
     #[test]

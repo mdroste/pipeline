@@ -3,6 +3,8 @@ use super::*;
 /// Maximum total output size for extracted LaTeX (10 MB).
 pub(super) const MAX_LATEX_SIZE: usize = 10_000_000;
 pub(super) const MAX_SCOPED_SOURCE_FILES: usize = 512;
+/// Per-file and total bounds on the source a run copies: a LaTeX project's
+/// closure, or the private copy of a selected folder.
 pub(super) const MAX_SCOPED_SOURCE_FILE_BYTES: u64 = 32 * 1024 * 1024;
 pub(super) const MAX_SCOPED_SOURCE_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 /// Folder inventories are context, not an archival crawler. Bound every
@@ -71,7 +73,7 @@ pub(super) fn open_regular_file(path: &Path) -> Result<fs::File, String> {
     crate::safety::open_regular_file(path)
 }
 
-pub(super) fn read_utf8_capped(path: &Path, limit: usize) -> Result<String, String> {
+fn read_capped(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
     use std::io::Read as _;
     let file = open_regular_file(path)?;
     let mut bytes = Vec::with_capacity(64 * 1024);
@@ -85,7 +87,103 @@ pub(super) fn read_utf8_capped(path: &Path, limit: usize) -> Result<String, Stri
             limit / 1_000_000
         ));
     }
-    String::from_utf8(bytes).map_err(|e| format!("{} is not valid UTF-8: {e}", path.display()))
+    Ok(bytes)
+}
+
+pub(super) fn read_utf8_capped(path: &Path, limit: usize) -> Result<String, String> {
+    String::from_utf8(read_capped(path, limit)?)
+        .map_err(|e| format!("{} is not valid UTF-8: {e}", path.display()))
+}
+
+/// The bytes 0x80 to 0x9F of Windows-1252. Latin-1 differs only here, so
+/// decoding as Windows-1252 also covers it. Five bytes have no character.
+const WINDOWS_1252_HIGH: [char; 32] = [
+    '€', '\u{FFFD}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{FFFD}', 'Ž',
+    '\u{FFFD}', '\u{FFFD}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{FFFD}',
+    'ž', 'Ÿ',
+];
+
+fn decode_windows_1252(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|&byte| match byte {
+            0x80..=0x9F => WINDOWS_1252_HIGH[usize::from(byte - 0x80)],
+            _ => char::from(byte),
+        })
+        .collect()
+}
+
+/// The encoding named by `\usepackage[...]{inputenc}` or `\inputencoding{...}`.
+fn declared_input_encoding(source: &str) -> Option<String> {
+    let declaration =
+        Regex::new(r"\\usepackage\s*\[([^\]]*)\]\s*\{inputenc\}|\\inputencoding\s*\{([^}]*)\}")
+            .expect("LaTeX input encoding regex is invalid");
+    let visible = super::latex::latex_without_comments(source);
+    let declared = declaration
+        .captures_iter(&visible)
+        .filter_map(|capture| capture.get(1).or(capture.get(2)))
+        .filter_map(|options| options.as_str().rsplit(',').next())
+        .map(|encoding| encoding.trim().to_ascii_lowercase())
+        .find(|encoding| !encoding.is_empty());
+    declared
+}
+
+/// Text for a LaTeX file that is not valid UTF-8, with the quality note that
+/// says how it was read. A file that declares UTF-8 keeps its intact
+/// characters; anything else is read as Windows-1252, the usual legacy default.
+fn decode_legacy_latex(bytes: &[u8], path: &Path) -> (String, String) {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let windows_1252 = decode_windows_1252(bytes);
+    match declared_input_encoding(&windows_1252).as_deref() {
+        Some("utf8" | "utf8x" | "utf-8") => (
+            String::from_utf8_lossy(bytes).into_owned(),
+            format!(
+                "{name} declares UTF-8 but contains invalid bytes; the characters they stood for were replaced."
+            ),
+        ),
+        Some("latin1" | "latin9" | "ansinew" | "cp1252" | "ascii") | None => (
+            windows_1252,
+            format!(
+                "{name} is not UTF-8, so it was read as Windows-1252. Check accented characters and symbols against the source."
+            ),
+        ),
+        Some(declared) => {
+            let note = format!(
+                "{name} declares the {declared} encoding, which Pipeline cannot read, so it was read as Windows-1252. Accented characters and symbols may be wrong."
+            );
+            (windows_1252, note)
+        }
+    }
+}
+
+/// Read LaTeX source in whatever encoding it was saved. The second value is a
+/// quality note, present when the file was not valid UTF-8.
+pub(super) fn read_latex_capped(
+    path: &Path,
+    limit: usize,
+) -> Result<(String, Option<String>), String> {
+    let bytes = read_capped(path, limit)?;
+    let bytes = match String::from_utf8(bytes) {
+        Ok(text) => return Ok((text, None)),
+        Err(error) => error.into_bytes(),
+    };
+    // NUL never occurs in an 8-bit text file: this is UTF-16 or binary data,
+    // and decoding it as text would hand reviewers noise.
+    if bytes.contains(&0) {
+        return Err(format!("{} is not a text file", path.display()));
+    }
+    let (text, note) = decode_legacy_latex(&bytes, path);
+    if text.len() > limit {
+        return Err(format!(
+            "{} exceeds the {} MB safety limit",
+            path.display(),
+            limit / 1_000_000
+        ));
+    }
+    Ok((text, Some(note)))
 }
 
 #[derive(Debug)]
@@ -395,7 +493,7 @@ pub(crate) fn find_main_tex(dir: &Path) -> Option<PathBuf> {
 
     let mut candidates: Vec<PathBuf> = Vec::new();
     for path in &tex_files {
-        if let Ok(content) = read_utf8_capped(path, MAX_LATEX_SIZE) {
+        if let Ok((content, _)) = read_latex_capped(path, MAX_LATEX_SIZE) {
             if latex_without_comments(&content).contains("\\documentclass") {
                 candidates.push(path.clone());
             }

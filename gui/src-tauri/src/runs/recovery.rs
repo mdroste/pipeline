@@ -73,31 +73,39 @@ pub(super) fn recover_resumable_run_dir(
     let artifact_count_before = manifest.artifacts.len();
     register_recovered_directory(manifest, dir, "artifacts/agent-responses", "agent_response");
     let recovered_response_index = manifest.artifacts.len() > artifact_count_before;
-    let report_is_valid =
-        read_utf8_at_most(&dir.join("report.json"), MAX_REPORT_BYTES, "Run report")
-            .ok()
-            .and_then(|json| serde_json::from_str::<crate::models::PipelineReport>(&json).ok())
-            .is_some();
-    if report_is_valid {
-        if recovered_response_index {
-            write_manifest(dir, manifest)?;
-        }
-        return Ok(recovered_response_index);
-    }
     // A completed run deleted its step checkpoints at finalization, so the
     // rebuild below could only produce an empty report — and would replace a
     // possibly-good report.md along with the unreadable report.json (for
     // example one over the read cap, or damaged by an external tool). Leave
-    // completed runs untouched rather than destroying delivered output.
-    if matches!(manifest.status.as_str(), "done" | "degraded") {
-        if recovered_response_index {
+    // completed runs untouched rather than destroying delivered output, which
+    // also means their reports need no reading here.
+    let completed = matches!(manifest.status.as_str(), "done" | "degraded");
+    if completed
+        || read_utf8_at_most(&dir.join("report.json"), MAX_REPORT_BYTES, "Run report")
+            .ok()
+            .and_then(|json| serde_json::from_str::<crate::models::PipelineReport>(&json).ok())
+            .is_some()
+    {
+        // The report can be durable while the final manifest never was.
+        let interrupted = manifest.status == "running";
+        if interrupted {
+            manifest.status = "interrupted".to_string();
+        }
+        if recovered_response_index || interrupted {
             write_manifest(dir, manifest)?;
         }
         return Ok(recovered_response_index);
     }
     // A re-run always starts from the captured document. If it was never
-    // written, this job stopped before there was a safe restart point.
-    captured_document_rel_path(dir, manifest)?;
+    // written, this job stopped before there was a safe restart point. It
+    // still stopped: History must not keep showing it as running.
+    if let Err(error) = captured_document_rel_path(dir, manifest) {
+        if manifest.status == "running" {
+            manifest.status = "interrupted".to_string();
+            write_manifest(dir, manifest)?;
+        }
+        return Err(error);
+    }
 
     let checkpoint_dir = dir.join("artifacts").join("checkpoints");
     let mut checkpoints = Vec::new();
@@ -326,6 +334,30 @@ pub(super) fn recover_resumable_run_dir(
     Ok(true)
 }
 
+/// Recover one run that has already stopped, so it can be re-run while other
+/// reviews are running. The store-wide pass below must wait for them, because
+/// it cannot tell their runs from a dead one; here the manifest can. Only a
+/// `running` run can still have a writer, and that status is left alone. The
+/// caller holds a run slot, which keeps other Pipeline processes out.
+pub fn recover_stopped_run(run_id: &str) -> Result<bool, String> {
+    validate_run_id(run_id)?;
+    recover_stopped_run_dir(&runs_dir()?.join(run_id))
+}
+
+pub(super) fn recover_stopped_run_dir(dir: &Path) -> Result<bool, String> {
+    let json = read_utf8_at_most(
+        &dir.join("manifest.json"),
+        MAX_MANIFEST_BYTES,
+        "Run manifest",
+    )?;
+    let mut manifest = serde_json::from_str::<RunManifest>(&json)
+        .map_err(|error| format!("Invalid run manifest: {error}"))?;
+    if !resumable_status(&manifest.status) {
+        return Ok(false);
+    }
+    recover_resumable_run_dir(dir, &mut manifest)
+}
+
 /// Recover runs stopped by an abort, cancellation, provider failure, or a
 /// report-persistence failure. The global run lock is acquired first, so a
 /// second Pipeline process can never rewrite a genuinely active run.
@@ -349,8 +381,23 @@ pub(super) fn recover_resumable_runs_at(root: &Path, lock_path: &Path) -> Result
         return Ok(0);
     }
 
+    let recovered = recover_runs_in(root, store_walk());
+    let _ = fs2::FileExt::unlock(&lock);
+    recovered
+}
+
+/// The walk over the run store. Its entries are app-owned and it must reach
+/// every run however long the store has grown, so only the entry limits apply;
+/// the work done for one run is bounded separately.
+pub(super) fn store_walk() -> crate::safety::WalkBudget {
+    crate::safety::WalkBudget::new("Incomplete-run recovery").without_time_limit()
+}
+
+pub(super) fn recover_runs_in(
+    root: &Path,
+    mut walk: crate::safety::WalkBudget,
+) -> Result<usize, String> {
     let mut recovered = 0usize;
-    let mut walk = crate::safety::WalkBudget::new("Incomplete-run recovery");
     for entry in fs::read_dir(root)
         .map_err(|error| format!("Failed to list runs for recovery: {error}"))?
         .flatten()
@@ -383,7 +430,6 @@ pub(super) fn recover_resumable_runs_at(root: &Path, lock_path: &Path) -> Result
             recovered += 1;
         }
     }
-    let _ = fs2::FileExt::unlock(&lock);
     Ok(recovered)
 }
 

@@ -245,23 +245,32 @@ fn apparent_refusal(report: &str) -> bool {
 /// Falls back to the full text (with preamble stripping) if markers aren't present.
 pub fn strip_to_report(text: &str) -> String {
     let trimmed = text.trim();
+    between_report_markers(trimmed).unwrap_or_else(|| strip_preamble(trimmed))
+}
 
+/// The report text of a current run. Its final step's content is a schema-backed
+/// artifact rather than a narrated transcript, so an opening sentence is part of
+/// the report; only explicit markers delimit it.
+pub(crate) fn report_body(text: &str) -> String {
+    let trimmed = text.trim();
+    between_report_markers(trimmed).unwrap_or_else(|| trimmed.to_string())
+}
+
+fn between_report_markers(trimmed: &str) -> Option<String> {
     const START: &str = "<!-- REPORT START -->";
     const END: &str = "<!-- REPORT END -->";
 
-    if let Some(start_pos) = trimmed.find(START) {
-        let content_start = start_pos + START.len();
-        if let Some(end_pos) = trimmed[content_start..].find(END) {
-            return trimmed[content_start..content_start + end_pos]
+    let start_pos = trimmed.find(START)?;
+    let content_start = start_pos + START.len();
+    if let Some(end_pos) = trimmed[content_start..].find(END) {
+        return Some(
+            trimmed[content_start..content_start + end_pos]
                 .trim()
-                .to_string();
-        }
-        // START found but no END — take everything after START
-        return trimmed[content_start..].trim().to_string();
+                .to_string(),
+        );
     }
-
-    // No markers — fall back to preamble stripping
-    strip_preamble(trimmed)
+    // START found but no END — take everything after START
+    Some(trimmed[content_start..].trim().to_string())
 }
 
 pub(crate) fn fence_marker(line: &str) -> Option<(u8, usize)> {

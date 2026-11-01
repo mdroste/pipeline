@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::LazyLock;
 
 pub(super) fn is_markdown_separator(line: &str) -> bool {
     let trimmed = line.trim().trim_matches('|');
@@ -122,7 +123,7 @@ pub(super) fn add_tex_nodes(bundle: &mut DocumentBundle, source: &str, method: &
         let regex = Regex::new(&pattern).unwrap();
         for capture in regex.captures_iter(source) {
             let body = capture.get(1).unwrap().as_str();
-            let caption = extract_tex_command(body, "caption").unwrap_or_default();
+            let caption = extract_tex_command(body, &TEX_CAPTION).unwrap_or_default();
             let number = extract_tex_label(body);
             let asset_ids = if kind == "figure" {
                 tex_graphic_names(body)
@@ -161,20 +162,24 @@ pub(super) fn add_tex_nodes(bundle: &mut DocumentBundle, source: &str, method: &
     }
 }
 
-fn extract_tex_command(source: &str, command: &str) -> Option<String> {
-    let regex = Regex::new(&format!(r"(?s)\\{}\s*\{{([^{{}}]{{0,4000}})\}}", command)).ok()?;
-    regex
+static TEX_CAPTION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)\\caption\s*\{([^{}]{0,4000})\}").unwrap());
+static TEX_LABEL: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?s)\\label\s*\{([^{}]{0,4000})\}").unwrap());
+
+fn extract_tex_command(source: &str, command: &Regex) -> Option<String> {
+    command
         .captures(source)
         .and_then(|capture| capture.get(1))
         .map(|value| value.as_str().trim().to_string())
 }
 
 fn extract_tex_label(source: &str) -> Option<String> {
-    extract_tex_command(source, "label")
+    extract_tex_command(source, &TEX_LABEL)
 }
 
 fn tex_graphic_names(source: &str) -> Vec<String> {
-    let regex = Regex::new(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}").unwrap();
+    let regex = Regex::new(crate::pipeline::extract::TEX_GRAPHICS_PATTERN).unwrap();
     regex
         .captures_iter(source)
         .filter_map(|capture| capture.get(1))
@@ -302,80 +307,24 @@ fn read_docx_optional_xml(path: &Path, name: &str) -> Result<Option<String>, Str
         .map_err(|error| format!("{name} is not valid UTF-8: {error}"))
 }
 
-/// Collect the substantive note bodies from a footnotes/endnotes part.
-/// Separator and continuation stubs (`w:type` other than `normal`) are layout
-/// scaffolding, not notes.
-fn docx_note_items(xml: &str, tag: &str) -> Vec<String> {
-    let note_re = Regex::new(&format!(r"(?s)<w:{tag}(\s[^>]*)?>(.*?)</w:{tag}>")).unwrap();
-    let type_re = Regex::new(r#"w:type="([^"]*)""#).unwrap();
-    let paragraph_re = Regex::new(r"(?s)<w:p(?:\s[^>]*)?>(.*?)</w:p>").unwrap();
-    let mut items = Vec::new();
-    for capture in note_re.captures_iter(xml).take(1_000) {
-        let attributes = capture.get(1).map(|value| value.as_str()).unwrap_or("");
-        if type_re
-            .captures(attributes)
-            .is_some_and(|kind| &kind[1] != "normal")
-        {
-            continue;
-        }
-        let body = capture.get(2).map(|value| value.as_str()).unwrap_or("");
-        let paragraphs: Vec<String> = paragraph_re
-            .captures_iter(body)
-            .map(|paragraph| xml_text(&paragraph[1]).trim().to_string())
-            .filter(|text| !text.is_empty())
-            .collect();
-        let text = if paragraphs.is_empty() {
-            xml_text(body).trim().to_string()
-        } else {
-            paragraphs.join(" ")
-        };
-        if !text.is_empty() {
-            items.push(text);
-        }
-    }
-    items
-}
-
 pub(super) fn parse_docx(path: &Path) -> Result<ParsedDocx, String> {
     let xml = read_docx_xml(path)?;
-    let paragraph_re = Regex::new(r"(?s)<w:p(?:\s[^>]*)?>(.*?)</w:p>").unwrap();
-    let heading_re =
-        Regex::new(r#"<w:pStyle[^>]*w:val="(?:Heading|heading)(\d+)"[^>]*/?>"#).unwrap();
+    let body = super::docx_xml::body(&xml)?;
     let mut markdown = String::new();
-    for capture in paragraph_re.captures_iter(&xml) {
-        let body = capture.get(1).unwrap().as_str();
-        let text = xml_text(body);
-        if text.trim().is_empty() {
+    for paragraph in &body.paragraphs {
+        let text = paragraph.text.trim();
+        if text.is_empty() {
             continue;
         }
-        if let Some(heading) = heading_re.captures(body) {
-            let level: usize = heading[1].parse().unwrap_or(1).clamp(1, 6);
+        if let Some(level) = paragraph.heading {
             markdown.push_str(&"#".repeat(level));
             markdown.push(' ');
         }
-        markdown.push_str(text.trim());
+        markdown.push_str(text);
         markdown.push_str("\n\n");
     }
 
-    let table_re = Regex::new(r"(?s)<w:tbl(?:\s[^>]*)?>(.*?)</w:tbl>").unwrap();
-    let row_re = Regex::new(r"(?s)<w:tr(?:\s[^>]*)?>(.*?)</w:tr>").unwrap();
-    let cell_re = Regex::new(r"(?s)<w:tc(?:\s[^>]*)?>(.*?)</w:tc>").unwrap();
-    let mut tables = Vec::new();
-    for table_capture in table_re.captures_iter(&xml) {
-        let mut grid = Vec::new();
-        for row_capture in row_re.captures_iter(&table_capture[1]) {
-            let row: Vec<String> = cell_re
-                .captures_iter(&row_capture[1])
-                .map(|cell| xml_text(&cell[1]).trim().to_string())
-                .collect();
-            if !row.is_empty() {
-                grid.push(row);
-            }
-        }
-        if !grid.is_empty() {
-            tables.push(grid);
-        }
-    }
+    let tables = body.tables;
     if !tables.is_empty() {
         markdown.push_str("## Extracted tables\n\n");
         for (index, grid) in tables.iter().enumerate() {
@@ -415,13 +364,16 @@ pub(super) fn parse_docx(path: &Path) -> Result<ParsedDocx, String> {
     // extraction entirely. A part that exists but cannot be read within
     // bounds costs its section, not the document — with an inline note, since
     // this stage has no other quality-note channel.
-    for (name, heading, tag) in [
-        ("word/footnotes.xml", "Footnotes", "footnote"),
-        ("word/endnotes.xml", "Endnotes", "endnote"),
+    for (name, heading, element) in [
+        ("word/footnotes.xml", "Footnotes", b"w:footnote".as_slice()),
+        ("word/endnotes.xml", "Endnotes", b"w:endnote".as_slice()),
     ] {
-        match read_docx_optional_xml(path, name) {
-            Ok(Some(notes_xml)) => {
-                let items = docx_note_items(&notes_xml, tag);
+        let notes = read_docx_optional_xml(path, name).and_then(|part| {
+            part.map(|xml| super::docx_xml::notes(&xml, element))
+                .transpose()
+        });
+        match notes {
+            Ok(Some(items)) => {
                 if items.is_empty() {
                     continue;
                 }

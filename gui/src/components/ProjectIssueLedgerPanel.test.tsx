@@ -4,7 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import ProjectIssueLedgerPanel from "./ProjectIssueLedgerPanel";
 
 const invoke = vi.hoisted(() => vi.fn());
+const confirm = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("./DialogService", async (original) => ({
+  ...(await original<typeof import("./DialogService")>()),
+  confirmDialog: confirm,
+}));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn() }));
 
 const project = {
@@ -188,7 +193,7 @@ describe("ProjectIssueLedgerPanel", () => {
     await screen.findByText("Identification assumption is unstated");
 
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "Issue workflow filter" }),
+      screen.getByRole("combobox", { name: "Issue review type filter" }),
       "code-review",
     );
     expect(screen.getByText("Retry loop has no bound")).toBeVisible();
@@ -254,6 +259,16 @@ describe("ProjectIssueLedgerPanel", () => {
       screen.getByRole("combobox", { name: "Combine duplicate into" }),
       "issue-paper",
     );
+    confirm.mockResolvedValueOnce(false);
+    await user.click(screen.getByRole("button", { name: "Combine" }));
+    await waitFor(() => expect(confirm).toHaveBeenCalledOnce());
+    expect(confirm.mock.calls[0][0]).toContain("can't be undone");
+    expect(invoke).not.toHaveBeenCalledWith(
+      "merge_project_issues",
+      expect.anything(),
+    );
+
+    confirm.mockResolvedValueOnce(true);
     await user.click(screen.getByRole("button", { name: "Combine" }));
 
     const note = await screen.findByRole("textbox", {
@@ -358,5 +373,40 @@ describe("ProjectIssueLedgerPanel", () => {
     expect(
       screen.queryByText("Identification assumption is unstated"),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows a failed sync without claiming there is nothing to show", async () => {
+    invoke.mockImplementation(() => Promise.reject(new Error("Sync failed")));
+    render(
+      <ProjectIssueLedgerPanel
+        project={project}
+        runs={runs}
+        onOpenRun={() => {}}
+      />,
+    );
+    await screen.findByText("Sync failed");
+    expect(screen.queryByText(/No structured issues/)).toBeNull();
+  });
+
+  it("starts each collection with every filter cleared", async () => {
+    const user = userEvent.setup();
+    const view = (id: string) => (
+      <ProjectIssueLedgerPanel
+        project={{ ...project, id }}
+        runs={runs}
+        onOpenRun={() => {}}
+      />
+    );
+    const page = render(view(project.id));
+    await screen.findByText("Identification assumption is unstated");
+    const severity = () =>
+      screen.getByRole("combobox", { name: "Issue severity filter" });
+    const search = () => screen.getByLabelText("Search collection issues");
+    await user.selectOptions(severity(), "high");
+    await user.type(search(), "retry");
+
+    page.rerender(view("another-collection"));
+    await waitFor(() => expect(severity()).toHaveValue("all"));
+    expect(search()).toHaveValue("");
   });
 });

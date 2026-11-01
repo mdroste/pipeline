@@ -120,6 +120,7 @@ impl Connection {
             EPOCH.fetch_add(1, Ordering::Relaxed),
             "pipeline_workflows",
             "Pipeline",
+            &[],
         )
         .await?;
         Ok(Arc::new(Self {

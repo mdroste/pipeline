@@ -3,9 +3,9 @@
 use super::store::{
     ClearWorkspaceRootRequest, ConversationSnapshot, CreateSessionRequest, CreateWorkspaceRequest,
     DeleteSessionRequest, MoveSessionRequest, Mutation, ReconcileResult,
-    RegisterWorkspaceRootRequest, SessionList, SessionSnapshot, Store, UpdateSessionRequest,
-    UpdateWorkspaceRequest, WorkbenchError, WorkbenchResult, WorkbenchSession, Workspace,
-    WorkspaceList,
+    RegisterWorkspaceRootRequest, SessionCursor, SessionList, SessionSnapshot, Store,
+    UpdateSessionRequest, UpdateWorkspaceRequest, WorkbenchError, WorkbenchResult,
+    WorkbenchSession, Workspace, WorkspaceList,
 };
 use super::titles::{self, TitlePreferences};
 use serde::{Deserialize, Serialize};
@@ -46,6 +46,7 @@ struct ActiveTurnState {
     connection_closed_during_setup: bool,
     permit: Option<OwnedSemaphorePermit>,
     account_lease: Option<tokio::sync::OwnedRwLockReadGuard<()>>,
+    owner: Option<TurnOwner>,
 }
 
 impl ActiveTurnState {
@@ -112,6 +113,15 @@ pub(crate) fn turn_setup_in_progress() -> bool {
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .setup_in_progress
+}
+
+/// Whether this native turn still holds the app-wide turn permit. Nothing does
+/// after a restart, so a turn a crash left open has no live owner.
+pub(crate) fn turn_has_live_owner(thread: &str, turn: &str) -> bool {
+    let state = active_turn_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    state.thread_id.as_deref() == Some(thread) && state.turn_id.as_deref() == Some(turn)
 }
 
 fn close_active_connection(epoch: u64) {
@@ -284,6 +294,16 @@ fn storage_turn_permit(queue: Arc<Semaphore>) -> WorkbenchResult<OwnedSemaphoreP
     })
 }
 
+/// Moving or deleting a conversation waits for the app's one running response,
+/// wherever it is, so nothing here can race that turn.
+fn conversation_turn_permit(queue: Arc<Semaphore>) -> WorkbenchResult<OwnedSemaphorePermit> {
+    queue.try_acquire_owned().map_err(|_| {
+        WorkbenchError::conflict(
+            "A response is still running. Wait for it to finish or stop it, then try again.",
+        )
+    })
+}
+
 async fn run_storage_maintenance<T, F>(operation: F) -> WorkbenchResult<T>
 where
     T: Send + 'static,
@@ -382,6 +402,53 @@ pub async fn workbench_update_session(
     run_store(move |store| store.update_session(request)).await
 }
 
+/// Clears a sent message from the saved draft once its turn is accepted. A draft
+/// that has moved on is the researcher's newer text and stays. A title or
+/// settings write can win the revision, so a conflict gets one more attempt:
+/// a sent message left as the draft could come back and be sent twice.
+pub(crate) fn clear_sent_draft(
+    store: &Store,
+    session_id: &str,
+    sent: &str,
+    submission_id: &str,
+) -> WorkbenchResult<bool> {
+    clear_sent_draft_with(store, session_id, sent, submission_id, |request| {
+        store.update_session(request).map(|_| ())
+    })
+}
+
+fn clear_sent_draft_with(
+    store: &Store,
+    session_id: &str,
+    sent: &str,
+    submission_id: &str,
+    mut write: impl FnMut(UpdateSessionRequest) -> WorkbenchResult<()>,
+) -> WorkbenchResult<bool> {
+    for attempt in 0..2 {
+        let snapshot = store.session_snapshot(session_id)?;
+        if snapshot.session.draft.trim() != sent.trim() {
+            return Ok(false);
+        }
+        match write(UpdateSessionRequest {
+            session_id: session_id.to_string(),
+            expected_revision: snapshot.session.revision,
+            operation_id: format!("send-ack-{submission_id}"),
+            title: None,
+            draft: Some(String::new()),
+            overrides: None,
+            archived: None,
+            preset_id: None,
+            paper_id: None,
+            clear_paper: None,
+        }) {
+            Ok(()) => return Ok(true),
+            Err(error) if error.code == "storage_conflict" && attempt == 0 => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(false)
+}
+
 /// Refuses while the conversation's native thread is mid-turn or a turn is
 /// being set up, so lifecycle edits never race the single active turn.
 async fn ensure_session_idle(session_id: String) -> WorkbenchResult<()> {
@@ -409,14 +476,14 @@ async fn ensure_session_idle(session_id: String) -> WorkbenchResult<()> {
 pub async fn workbench_move_session(
     request: MoveSessionRequest,
 ) -> WorkbenchResult<Mutation<WorkbenchSession>> {
-    let _permit = storage_turn_permit(turn_queue().clone())?;
+    let _permit = conversation_turn_permit(turn_queue().clone())?;
     ensure_session_idle(request.session_id.clone()).await?;
     run_store(move |store| store.move_session(request)).await
 }
 
 #[tauri::command]
 pub async fn workbench_delete_session(request: DeleteSessionRequest) -> WorkbenchResult<i64> {
-    let _permit = storage_turn_permit(turn_queue().clone())?;
+    let _permit = conversation_turn_permit(turn_queue().clone())?;
     ensure_session_idle(request.session_id.clone()).await?;
     run_store(move |store| store.delete_session(request)).await
 }
@@ -514,6 +581,13 @@ async fn generate_session_title(
     let preferences = run_store(|store| titles::load_preferences(&store)).await?;
     if !force && !preferences.enabled {
         return Ok(None);
+    }
+    if !force {
+        let lookup = session_id.clone();
+        let session = run_store(move |store| store.session_snapshot(&lookup)).await?;
+        if !titles::is_default_title(&session.session.title) {
+            return Ok(None);
+        }
     }
     let mut exchange = None;
     for attempt in 0..TITLE_PROJECTION_ATTEMPTS {
@@ -687,8 +761,12 @@ pub(crate) fn spawn_title_generation(
 pub async fn workbench_list_sessions(
     workspace_id: Option<String>,
     include_archived: bool,
+    cursor: Option<SessionCursor>,
 ) -> WorkbenchResult<SessionList> {
-    run_store(move |store| store.list_sessions(workspace_id.as_deref(), include_archived)).await
+    run_store(move |store| {
+        store.list_sessions_page(workspace_id.as_deref(), include_archived, cursor.as_ref())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -711,10 +789,12 @@ pub async fn workbench_transcript_page(
     run_store(move |store| store.transcript_page(&session_id, before.as_ref())).await
 }
 
+mod active_turn;
 mod codex;
 mod desk;
 mod project;
 mod research;
+mod version_control;
 
 #[cfg(test)]
 #[path = "commands/tests.rs"]
@@ -725,8 +805,11 @@ use crate::agent_runtime::codex::is_safe_auth_url;
 #[cfg(test)]
 use codex::{validate_pending_request, validate_server_response};
 
+pub use active_turn::*;
+use active_turn::{TurnOrigin, TurnOwner};
 pub use codex::*;
 use codex::{ensure_event_bridge, transcript_text};
 pub use desk::*;
 pub use project::*;
 pub use research::*;
+pub use version_control::*;

@@ -1,7 +1,8 @@
 //! Selective project exchange: a `.pwex` package of one Workspace's selected
 //! research objects with a previewed dependency closure, importable into a
 //! nonempty store under a source namespace with ID remapping, duplicate
-//! detection, and reviewable conflicts.
+//! detection, and reviewable conflicts. Imports never carry the sender's
+//! acceptance; see `authority`.
 //!
 //! The package never contains conversations, credentials, native runtime state,
 //! execution profiles or authorizations, or declared raw execution inputs. It
@@ -18,6 +19,7 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+mod authority;
 mod conflicts;
 mod export;
 mod import_apply;

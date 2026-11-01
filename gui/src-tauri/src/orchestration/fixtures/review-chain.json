@@ -21,7 +21,7 @@
       "input": {
         "kind": "output",
         "step": "draft",
-        "pointer": "/text"
+        "pointer": "/answer"
       },
       "filename": "paper.md"
     },
@@ -89,7 +89,7 @@
               "input": {
                 "kind": "output",
                 "step": "revise",
-                "pointer": "/text"
+                "pointer": "/answer"
               },
               "filename": "paper.md",
               "requireChange": true

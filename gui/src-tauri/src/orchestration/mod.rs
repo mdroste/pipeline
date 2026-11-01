@@ -18,6 +18,8 @@ mod durable;
 pub mod missions;
 #[path = "coordinator/recovery.rs"]
 mod recovery;
+#[path = "coordinator/retention.rs"]
+mod retention;
 #[path = "coordinator/scheduler.rs"]
 mod scheduler;
 pub mod state;
@@ -77,6 +79,9 @@ pub(crate) async fn manager(app: tauri::AppHandle) -> Result<Arc<Coordinator>> {
         store.recover()?;
         if let Err(error) = adapters::reconcile_abandoned_reviews(&store) {
             eprintln!("Abandoned Review retention needs attention: {error}");
+        }
+        if let Err(error) = adapters::reconcile_adopted_reviews(&store) {
+            eprintln!("Completed Review retention needs attention: {error}");
         }
         if let Err(error) = crate::commands::orchestration::reconcile_failed_pins() {
             eprintln!("Review retention reconciliation needs attention: {error}");
@@ -175,4 +180,4 @@ impl Coordinator {
     }
 }
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

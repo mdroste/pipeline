@@ -26,6 +26,7 @@ impl NativeSession {
         epoch: u64,
         name: &str,
         title: &str,
+        quiet: &[&str],
     ) -> Result<Self, String> {
         let mut version_command = resolved.command(["--version"]);
         version_command.current_dir(std::env::temp_dir());
@@ -52,7 +53,7 @@ impl NativeSession {
         let (process, pipes) = OwnedProcess::spawn(command)?;
         let client = AppServerClient::from_io(epoch, pipes.stdout, pipes.stdin);
         let stderr = tokio::spawn(capture_stderr(pipes.stderr));
-        let initialize = match client.initialize_as(name, title).await {
+        let initialize = match client.initialize_as(name, title, quiet).await {
             Ok(value) => value,
             Err(error) => {
                 process.terminate().await;

@@ -12,6 +12,7 @@ import type {
 import { researchClient } from "../../lib/workbench/researchClient";
 import { projectDate } from "../../lib/projectIndex";
 import { router } from "../../lib/router";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import type { ContextItem } from "../../lib/deskClient";
 import {
@@ -197,8 +198,8 @@ export default function ProjectOverview(props: Props) {
         .then(() => openExternal(action.url))
         .catch(() => props.reportError("The link could not be opened."));
     else
-      void checkRemote().catch((cause: Error) =>
-        props.reportError(cause.message),
+      void checkRemote().catch((cause: unknown) =>
+        props.reportError(workbenchErrorMessage(cause)),
       );
   };
   const saveQuestion = async () => {

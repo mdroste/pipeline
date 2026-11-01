@@ -466,6 +466,83 @@ describe("ArtifactExplorer", () => {
     expect(openFiles()).toBeNull();
   });
 
+  it("says so when a cited page has no saved image", async () => {
+    mockBackend({});
+    render(
+      <ArtifactExplorer
+        runId={manifest.run_id}
+        fallbackMarkdown=""
+        deferInitialArtifact
+        selectionRequest={{ key: 1, page: 412 }}
+      />,
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Page 412 has no saved image.",
+    );
+    expect(invoke).not.toHaveBeenCalledWith(
+      "read_page_artifact",
+      expect.anything(),
+    );
+  });
+
+  it("clears the missing-page notice once a file is chosen", async () => {
+    const user = userEvent.setup();
+    mockBackend({
+      "artifacts/01_technical.md": textContent("markdown", "# Technical"),
+    });
+    render(
+      <ArtifactExplorer
+        runId={manifest.run_id}
+        fallbackMarkdown=""
+        deferInitialArtifact
+        selectionRequest={{ key: 1, page: 412 }}
+      />,
+    );
+    await screen.findByRole("status");
+    await user.click(screen.getByRole("button", { name: "Technical" }));
+    expect(
+      await screen.findByRole("heading", { name: "Technical" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("leaves file tabs when an evidence link selects a page", async () => {
+    localStorage.clear();
+    const user = userEvent.setup();
+    mockBackend({
+      "report.md": textContent("markdown", "# R"),
+      "page:1": {
+        kind: "image",
+        bytes: 500,
+        text: null,
+        base64: "aGVsbG8=",
+        truncated: false,
+        abs_path: "/runs/x/page-1.jpg",
+      },
+    });
+    const view = render(
+      <ArtifactExplorer runId={manifest.run_id} fallbackMarkdown="" />,
+    );
+    await screen.findByRole("heading", { name: "R" });
+    await user.click(screen.getByRole("button", { name: "Open in file tabs" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("tablist", { name: "Open files" }),
+      ).not.toBeNull(),
+    );
+    view.rerender(
+      <ArtifactExplorer
+        runId={manifest.run_id}
+        fallbackMarkdown=""
+        selectionRequest={{ key: 2, page: 1 }}
+      />,
+    );
+    expect(await screen.findByRole("img", { name: "Page 1" })).toBeVisible();
+    expect(
+      screen.queryByRole("tablist", { name: "Open files" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps the next compact page after an evidence request opened an earlier one", async () => {
     const user = userEvent.setup();
     const pagedManifest = {
@@ -961,7 +1038,6 @@ describe("ArtifactExplorer", () => {
 
   it("surfaces system-viewer plugin failures for other binary artifacts", async () => {
     const user = userEvent.setup();
-    openExternal.mockRejectedValueOnce(new Error("shell plugin unavailable"));
     const binaryManifest = {
       ...manifest,
       artifacts: [
@@ -990,6 +1066,10 @@ describe("ArtifactExplorer", () => {
           truncated: false,
           abs_path: "/runs/x/artifacts/data.zip",
         });
+      }
+      if (cmd === "open_run_artifact") {
+        expect(args?.relPath).toBe("artifacts/data.zip");
+        return Promise.reject(new Error("shell plugin unavailable"));
       }
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });

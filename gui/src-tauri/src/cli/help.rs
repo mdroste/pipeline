@@ -24,7 +24,8 @@ COMMANDS:
   help      Show help for Pipeline or one command
 
 Run `pipeline-cli help <COMMAND>` for command-specific help.
-The CLI uses settings and profiles from ~/.pipeline/ and saves every run there.
+The CLI shares settings, profiles, and run history with the app. Every run is
+saved in your research data folder, ~/.pipeline/ by default.
 ";
 
 pub(super) const RUN_HELP: &str = "\
@@ -86,8 +87,8 @@ OPTIONS:
   -h, --help                  Show this help.
 
 Folder discovery is non-recursive and skips hidden files. Every run is also
-saved in Pipeline's normal run store under ~/.pipeline/runs/. Limits apply to
-each document's run and override Settings for this batch only.
+saved in your research data folder, under ~/.pipeline/runs/ by default. Limits
+apply to each document's run and override Settings for this batch only.
 ";
 
 pub(super) const CHECK_HELP: &str = "\

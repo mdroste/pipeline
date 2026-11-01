@@ -14,6 +14,33 @@ const FILE_LIST_LIMIT = 50;
 const text = (value: unknown) =>
   typeof value === "string" && value.trim() ? value : null;
 
+/** The select's value for the free-text choice. Options use their position. */
+const OTHER_CHOICE = "other";
+
+/** How a question was answered: a listed option, or the researcher's own words. */
+interface Answer {
+  choice: string;
+  written: string;
+}
+
+function questionOptions(question: Record<string, unknown>) {
+  return Array.isArray(question.options)
+    ? (question.options as Array<Record<string, unknown>>)
+    : [];
+}
+
+/** What a question's answer says, or null while it has none. */
+function answerText(
+  question: Record<string, unknown>,
+  answer: Answer | undefined,
+) {
+  const options = questionOptions(question);
+  if (!options.length || answer?.choice === OTHER_CHOICE)
+    return text(answer?.written);
+  const chosen = options[Number(answer?.choice || NaN)];
+  return chosen ? String(chosen.label) : null;
+}
+
 function networkAccess(value: unknown) {
   if (!value || typeof value !== "object") return null;
   const { host, protocol } = value as Record<string, unknown>;
@@ -23,6 +50,47 @@ function networkAccess(value: unknown) {
       ? (NETWORK_PROTOCOLS[protocol] ?? protocol)
       : null;
   return label ? `${host} over ${label}` : host;
+}
+
+/** The grants a command approval may carry, by the pinned protocol. */
+const PERMISSION_FIELDS = new Map([
+  ["fileSystem", ["entries", "globScanMaxDepth", "read", "write"]],
+  ["network", ["enabled"]],
+]);
+
+/** Whether a command approval would grant something Pipeline can't describe. */
+function hasUnknownPermission(permissions: unknown) {
+  if (permissions === null || permissions === undefined) return false;
+  const isRecord = (value: unknown): value is Record<string, unknown> =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+  if (!isRecord(permissions)) return true;
+  return Object.entries(permissions).some(([field, value]) => {
+    const known = PERMISSION_FIELDS.get(field);
+    if (!known) return true;
+    if (value === null) return false;
+    return (
+      !isRecord(value) ||
+      Object.keys(value).some((name) => !known.includes(name))
+    );
+  });
+}
+
+function networkRules(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((rule) => {
+    const { action, host } = (rule ?? {}) as Record<string, unknown>;
+    return typeof action === "string" && typeof host === "string"
+      ? [`${action} ${host}`]
+      : [];
+  });
+}
+
+/** Whether the request lets Pipeline answer with `decision`; older requests don't list any. */
+function offers(params: Record<string, unknown>, decision: string) {
+  const { availableDecisions } = params;
+  return !Array.isArray(availableDecisions)
+    ? true
+    : availableDecisions.includes(decision);
 }
 
 interface FileChange {
@@ -80,6 +148,8 @@ function ApprovalDetails({
       )
     : [];
   const grantRoot = text(params.grantRoot);
+  const permissions = params.additionalPermissions ?? null;
+  const rules = networkRules(params.proposedNetworkPolicyAmendments);
   const isFileChange = method === "item/fileChange/requestApproval";
   const changes = isFileChange ? fileChanges(item) : null;
   const pre =
@@ -91,6 +161,8 @@ function ApprovalDetails({
     !network &&
     !amendment.length &&
     !grantRoot &&
+    permissions === null &&
+    !rules.length &&
     !isFileChange
   )
     return (
@@ -121,6 +193,14 @@ function ApprovalDetails({
           <span className="font-medium">Network access:</span> {network}
         </p>
       )}
+      {permissions !== null && (
+        <div>
+          <span className="font-medium">
+            Allow once also grants this command these permissions
+          </span>
+          <pre className={pre}>{JSON.stringify(permissions, null, 2)}</pre>
+        </div>
+      )}
       {amendment.length > 0 && (
         <div>
           <span className="font-medium">
@@ -128,6 +208,14 @@ function ApprovalDetails({
             does not apply it)
           </span>
           <pre className={pre}>{amendment.join(" ")}</pre>
+        </div>
+      )}
+      {rules.length > 0 && (
+        <div>
+          <span className="font-medium">
+            Suggested network rules (Allow once does not apply them)
+          </span>
+          <pre className={pre}>{rules.join("\n")}</pre>
         </div>
       )}
       {isFileChange &&
@@ -204,9 +292,30 @@ export default function RequestCard({
   const questions = Array.isArray(params.questions)
     ? (params.questions as Array<Record<string, unknown>>)
     : [];
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<Record<string, Answer>>({});
+  const questionId = (question: Record<string, unknown>) =>
+    String(question.id ?? "question");
+  const updateAnswer = (id: string, change: Partial<Answer>) =>
+    setAnswers((old) => ({
+      ...old,
+      [id]: { ...(old[id] ?? { choice: "", written: "" }), ...change },
+    }));
+  const allAnswered =
+    questions.length > 0 &&
+    questions.every(
+      (question) =>
+        answerText(question, answers[questionId(question)]) !== null,
+    );
   const isQuestion = event.method === "item/tool/requestUserInput";
   const isPermission = event.method === "item/permissions/requestApproval";
+  const isApproval = !isQuestion && !isPermission;
+  const unknownGrant =
+    isApproval && hasUnknownPermission(params.additionalPermissions);
+  const withheld = isApproval && (unknownGrant || !offers(params, "accept"));
+  const declining =
+    !offers(params, "decline") && offers(params, "cancel")
+      ? "cancel"
+      : "decline";
   return (
     <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">
       <div className="font-semibold text-amber-950 dark:text-amber-100">
@@ -236,77 +345,94 @@ export default function RequestCard({
         </div>
       )}
       {questions.map((question) => {
-        const id = String(question.id ?? "question");
-        const options = Array.isArray(question.options)
-          ? (question.options as Array<Record<string, unknown>>)
-          : [];
+        const id = questionId(question);
+        const prompt = String(question.question ?? "Response");
+        const options = questionOptions(question);
+        const answer = answers[id];
+        const field =
+          "mt-1 w-full rounded border bg-white p-2 dark:bg-neutral-900";
+        const written = (label?: string) => (
+          <input
+            type={question.isSecret ? "password" : "text"}
+            aria-label={label}
+            value={answer?.written ?? ""}
+            onChange={(e) => updateAnswer(id, { written: e.target.value })}
+            className={field}
+          />
+        );
         return (
-          <label key={id} className="mt-3 block">
-            <span className="block font-medium">
-              {String(question.question ?? "Response")}
-            </span>
-            {options.length ? (
-              <select
-                value={answers[id] ?? ""}
-                onChange={(e) =>
-                  setAnswers((old) => ({ ...old, [id]: e.target.value }))
-                }
-                className="mt-1 w-full rounded border bg-white p-2 dark:bg-neutral-900"
-              >
-                <option value="">Choose…</option>
-                {options.map((option) => (
-                  <option
-                    key={String(option.label)}
-                    value={String(option.label)}
-                  >
-                    {String(option.label)}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <input
-                type={question.isSecret ? "password" : "text"}
-                value={answers[id] ?? ""}
-                onChange={(e) =>
-                  setAnswers((old) => ({ ...old, [id]: e.target.value }))
-                }
-                className="mt-1 w-full rounded border bg-white p-2 dark:bg-neutral-900"
-              />
-            )}
-          </label>
+          <div key={id} className="mt-3">
+            <label className="block">
+              <span className="block font-medium">{prompt}</span>
+              {options.length ? (
+                <select
+                  value={answer?.choice ?? ""}
+                  onChange={(e) => updateAnswer(id, { choice: e.target.value })}
+                  className={field}
+                >
+                  <option value="">Choose…</option>
+                  {options.map((option, index) => (
+                    <option key={index} value={String(index)}>
+                      {String(option.label)}
+                    </option>
+                  ))}
+                  {question.isOther === true && (
+                    <option value={OTHER_CHOICE}>Other…</option>
+                  )}
+                </select>
+              ) : (
+                written()
+              )}
+            </label>
+            {options.length > 0 &&
+              answer?.choice === OTHER_CHOICE &&
+              written(`Your answer to: ${prompt}`)}
+          </div>
         );
       })}
+      {withheld && (
+        <p className="mt-2 text-amber-900 dark:text-amber-200">
+          {unknownGrant
+            ? "Allow once is not available because Pipeline cannot describe everything this request would grant."
+            : "Allow once is not available for this request."}
+        </p>
+      )}
       <div className="mt-3 flex gap-2">
-        <button
-          type="button"
-          disabled={resolving}
-          onClick={() => {
-            if (isQuestion) {
-              void resolve({
-                answers: Object.fromEntries(
-                  Object.entries(answers).map(([id, answer]) => [
-                    id,
-                    { answers: [answer] },
-                  ]),
-                ),
-              });
-            } else if (isPermission) {
-              void resolve({
-                permissions: params.permissions as Record<string, unknown>,
-                scope: "turn",
-              });
-            } else {
-              void resolve({ decision: "accept" });
-            }
-          }}
-          className="rounded bg-amber-900 px-3 py-1.5 font-medium text-white dark:bg-amber-100 dark:text-amber-950"
-        >
-          {isQuestion
-            ? "Submit"
-            : isPermission
-              ? "Allow for this turn"
-              : "Allow once"}
-        </button>
+        {!withheld && (
+          <button
+            type="button"
+            disabled={resolving || (isQuestion && !allAnswered)}
+            onClick={() => {
+              if (isQuestion) {
+                void resolve({
+                  answers: Object.fromEntries(
+                    questions.map((question) => {
+                      const id = questionId(question);
+                      return [
+                        id,
+                        { answers: [answerText(question, answers[id])] },
+                      ];
+                    }),
+                  ),
+                });
+              } else if (isPermission) {
+                void resolve({
+                  permissions: params.permissions as Record<string, unknown>,
+                  scope: "turn",
+                });
+              } else {
+                void resolve({ decision: "accept" });
+              }
+            }}
+            className="rounded bg-amber-900 px-3 py-1.5 font-medium text-white dark:bg-amber-100 dark:text-amber-950"
+          >
+            {isQuestion
+              ? "Submit"
+              : isPermission
+                ? "Allow for this turn"
+                : "Allow once"}
+          </button>
+        )}
         <button
           type="button"
           disabled={resolving}
@@ -314,7 +440,7 @@ export default function RequestCard({
             if (isQuestion) void resolve();
             else if (isPermission)
               void resolve({ permissions: {}, scope: "turn" });
-            else void resolve({ decision: "decline" });
+            else void resolve({ decision: declining });
           }}
           className="rounded border border-amber-400 px-3 py-1.5"
         >

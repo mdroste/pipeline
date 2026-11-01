@@ -27,6 +27,7 @@ fn identity() -> WorkbenchResult<String> {
 use super::commands::{run_store, RuntimeCommandError, SendTurnRequest, SendTurnResult};
 use super::research::PreparedHarness;
 use super::store::{SessionBinding, Store, WorkbenchError, WorkbenchResult};
+use super::turn_loop::TurnEvents;
 use crate::agent_runtime::events::NormalizedEvent;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -60,19 +61,18 @@ pub(super) struct Turn {
 }
 
 impl Turn {
-    pub async fn emit(&self, app: &tauri::AppHandle, event: NormalizedEvent) -> Result<(), String> {
+    pub async fn emit(&self, app: &impl TurnEvents, event: NormalizedEvent) -> Result<(), String> {
         let binding = self.binding.clone();
         let persisted = event.clone();
         run_store(move |store| store.project_codex_event(&binding, &persisted))
             .await
             .map_err(|e| e.message)?;
-        app.emit("workbench:event", event)
-            .map_err(|e| e.to_string())
+        app.publish(&event)
     }
 
     pub async fn item(
         &self,
-        app: &tauri::AppHandle,
+        app: &impl TurnEvents,
         suffix: &str,
         kind: &str,
         text: &str,
@@ -104,7 +104,9 @@ impl Turn {
             &format!("assistant-{round}"),
             "agentMessage",
             &reply.text,
-            Some(if reply.calls.is_empty() {
+            Some(if reply.truncated {
+                "incomplete"
+            } else if reply.calls.is_empty() {
                 "final_answer"
             } else {
                 "commentary"
@@ -213,6 +215,7 @@ pub(crate) async fn submit(
                 &instructions,
                 &prompt,
                 &tool_specs,
+                drive::turn_clock(),
                 receiver,
             ))
             .await;
@@ -255,6 +258,8 @@ pub(crate) async fn submit(
         }
         *running().lock().unwrap_or_else(|e| e.into_inner()) = None;
         super::commands::finish_local_turn(epoch, &thread, &id);
+        // The terminal event above went out while this turn still held the permit.
+        super::commands::announce_active_turn(&app, None);
         if status == "completed" {
             super::commands::spawn_title_generation(
                 app,
@@ -268,24 +273,9 @@ pub(crate) async fn submit(
         false
     } else {
         let session = request.session_id;
+        let submission = request.client_submission_id;
         run_store(move |store| {
-            let snapshot = store.session_snapshot(&session)?;
-            if snapshot.session.draft.trim() != original.trim() {
-                return Ok(false);
-            }
-            store.update_session(super::store::UpdateSessionRequest {
-                session_id: session,
-                expected_revision: snapshot.session.revision,
-                operation_id: format!("send-ack-{}", request.client_submission_id),
-                title: None,
-                draft: Some(String::new()),
-                overrides: None,
-                archived: None,
-                preset_id: None,
-                paper_id: None,
-                clear_paper: None,
-            })?;
-            Ok(true)
+            super::commands::clear_sent_draft(&store, &session, &original, &submission)
         })
         .await
         .unwrap_or(false)

@@ -130,6 +130,7 @@ export interface ProjectHome {
 export type ProjectAction =
   | { action: "saveHome"; expectedRevision: number; settings: HomeSettings }
   | { action: "refresh" }
+  | { action: "checkForChanges" }
   | { action: "annotate"; selection: DocumentSelection; body: string }
   | {
       action: "createTask";
@@ -150,6 +151,13 @@ export type ProjectAction =
       action: "apply";
       checkpointId: string;
       paths: string[];
+      expectedRevision: number;
+    }
+  | {
+      action: "acceptChanges";
+      checkpointId: string;
+      path: string;
+      content: string;
       expectedRevision: number;
     }
   | { action: "undo" | "recover"; applicationId: string }

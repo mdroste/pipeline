@@ -26,6 +26,7 @@ import {
   muted,
   notice,
 } from "../../ui/classes";
+import "./ProjectPage.css";
 export { button, primaryButton, linkButton, input, card, muted, notice };
 
 export const op = () => `project-${crypto.randomUUID()}`;
@@ -96,7 +97,8 @@ export interface SurfaceApi {
   act: (action: ProjectAction) => Promise<void>;
   run: (operation: () => Promise<unknown>) => Promise<void>;
   saveSettings: (patch: Partial<HomeSettings>) => Promise<void>;
-  reportError: (message: string) => void;
+  /** Shows a failure in the project banner; any caught error is safe to pass. */
+  reportError: (cause: unknown) => void;
   openAnnotation: (annotation: ProjectRecord<Annotation>) => void;
   setTab: (tab: ProjectTab) => void;
   taskId: string;
@@ -115,7 +117,7 @@ export function Card({
   className?: string;
 }) {
   return (
-    <section className={`${card} space-y-3 ${className}`}>
+    <section className={`project-section ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-semibold">{title}</h2>
         {action}

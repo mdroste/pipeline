@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { inputSlotExtensions } from "../lib/pipelineHelpers";
 import type { VarSpec, InputSlot } from "../lib/types";
 import useModalDialog from "../hooks/useModalDialog";
 
@@ -40,7 +41,7 @@ function variableError(variable: VarSpec, value: string): string | null {
       expression = null;
     }
     if (expression && !expression.test(value))
-      return "This value does not match the format the workflow requires.";
+      return "This value does not match the format the review requires.";
   }
   return null;
 }
@@ -111,7 +112,7 @@ export default function VariablePrompt({
               filters: [
                 {
                   name: slot.label || "Input",
-                  extensions: ["pdf", "tex", "docx"],
+                  extensions: inputSlotExtensions(slot),
                 },
               ],
             }),
@@ -146,19 +147,19 @@ export default function VariablePrompt({
         aria-labelledby={titleId}
         aria-describedby={descriptionId}
         tabIndex={-1}
-        className="w-full max-w-md rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-xl p-5"
+        className="flex max-h-[90vh] w-full max-w-md flex-col rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 shadow-xl p-5"
       >
         <h3
           id={titleId}
-          className="text-base font-semibold text-gray-900 dark:text-gray-100 mb-1"
+          className="shrink-0 text-base font-semibold text-gray-900 dark:text-gray-100 mb-1"
         >
           Report options
         </h3>
         <p
           id={descriptionId}
-          className="text-xs text-gray-500 dark:text-gray-400 mb-4"
+          className="shrink-0 text-xs text-gray-500 dark:text-gray-400 mb-4"
         >
-          This workflow asks for a few values before generating the report.
+          This review asks for a few values before it starts.
         </p>
         {launchError && (
           <p
@@ -176,7 +177,7 @@ export default function VariablePrompt({
             {pickerError}
           </p>
         )}
-        <div className="space-y-3">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
           {variables.map((v) => {
             const error = errors[v.key];
             const errorId = `${idPrefix}-variable-${v.key}-error`;
@@ -294,7 +295,7 @@ export default function VariablePrompt({
             </div>
           ))}
         </div>
-        <div className="flex justify-end gap-2 mt-5">
+        <div className="flex shrink-0 justify-end gap-2 mt-5">
           <button
             type="button"
             onClick={onCancel}

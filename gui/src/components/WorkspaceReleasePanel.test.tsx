@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   inspectResearchArchive: vi.fn(),
   importResearchArchive: vi.fn(),
   exportResearchArchive: vi.fn(),
+  missingBackupFiles: vi.fn(),
   performanceBudgets: vi.fn(),
   open: vi.fn(),
   save: vi.fn(),
@@ -56,6 +57,7 @@ const panel = () => (
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.performanceBudgets.mockResolvedValue([]);
+  mocks.missingBackupFiles.mockResolvedValue([]);
   mocks.open.mockResolvedValue("/backups/research.pwrx");
   mocks.inspectResearchArchive.mockResolvedValue({
     workspaceRoots: ["/old/paper-a", "/old/paper-b"],
@@ -142,6 +144,7 @@ it("reports a finished export without a native alert", async () => {
     sessionCount: 3,
     blobCount: 4,
     portabilityNote: "Folders are not included.",
+    omittedFiles: [],
   });
   render(panel());
   fireEvent.click(
@@ -153,4 +156,96 @@ it("reports a finished export without a native alert", async () => {
       "success",
     ),
   );
+  expect(mocks.confirmDialog).not.toHaveBeenCalled();
+  expect(mocks.exportResearchArchive).toHaveBeenCalledWith(
+    "/backups/out.pwrx",
+    [],
+  );
+});
+
+const lost = [
+  { description: "Paper “Wages”", reference: "workspace://blobs/a.pdf" },
+  { description: "Dataset “Survey”", reference: "workspace://blobs/b.csv" },
+];
+
+it("asks before leaving out missing files and reports what it left out", async () => {
+  mocks.missingBackupFiles.mockResolvedValue(lost);
+  mocks.confirmDialog.mockResolvedValue(true);
+  mocks.save.mockResolvedValue("/backups/out.pwrx");
+  mocks.exportResearchArchive.mockResolvedValue({
+    workspaceCount: 1,
+    sessionCount: 1,
+    blobCount: 3,
+    portabilityNote: "Folders are not included.",
+    omittedFiles: ["Dataset “Survey”", "Paper “Wages”"],
+  });
+  render(panel());
+  fireEvent.click(
+    screen.getByRole("button", { name: "Export research backup" }),
+  );
+  await waitFor(() =>
+    expect(mocks.exportResearchArchive).toHaveBeenCalledWith(
+      "/backups/out.pwrx",
+      ["workspace://blobs/a.pdf", "workspace://blobs/b.csv"],
+    ),
+  );
+  const [question, options] = mocks.confirmDialog.mock.calls[0];
+  expect(question).toContain("Paper “Wages”");
+  expect(question).toContain("Dataset “Survey”");
+  expect(options.confirmLabel).toBe("Back up without them");
+  await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledTimes(2));
+  const [report, reportOptions] = mocks.confirmDialog.mock.calls[1];
+  expect(report).toContain("Left out because their files were missing");
+  expect(report).toContain("Paper “Wages”");
+  expect(reportOptions.acknowledgeOnly).toBe(true);
+  expect(mocks.notify).not.toHaveBeenCalled();
+});
+
+it("saves nothing when leaving out missing files is declined", async () => {
+  mocks.missingBackupFiles.mockResolvedValue(lost);
+  mocks.confirmDialog.mockResolvedValue(false);
+  render(panel());
+  fireEvent.click(
+    screen.getByRole("button", { name: "Export research backup" }),
+  );
+  await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalled());
+  expect(mocks.save).not.toHaveBeenCalled();
+  expect(mocks.exportResearchArchive).not.toHaveBeenCalled();
+});
+
+it("warns before restoring a backup with left-out files and lists them after", async () => {
+  mocks.inspectResearchArchive.mockResolvedValue({
+    workspaceRoots: [],
+    portabilityNote: "Command profiles must be tested again.",
+    omittedFileCount: 2,
+  });
+  mocks.confirmDialog.mockResolvedValue(true);
+  mocks.importResearchArchive.mockResolvedValue({
+    workspaceCount: 1,
+    sessionCount: 1,
+    blobCount: 3,
+    portabilityNote: "Command profiles must be tested again.",
+    omittedFiles: ["Paper “Wages”"],
+  });
+  const reload = vi.fn();
+  const location = window.location;
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: { ...location, reload },
+  });
+  render(panel());
+  fireEvent.click(
+    screen.getByRole("button", { name: "Restore research backup" }),
+  );
+  await waitFor(() => expect(reload).toHaveBeenCalled());
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: location,
+  });
+  expect(mocks.confirmDialog.mock.calls[0][0]).toContain(
+    "made without 2 files",
+  );
+  const [report, options] = mocks.confirmDialog.mock.calls[1];
+  expect(report).toContain("Paper “Wages”");
+  expect(options.acknowledgeOnly).toBe(true);
 });

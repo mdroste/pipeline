@@ -365,8 +365,15 @@ pub async fn workbench_link_review_handoff(
 }
 
 #[tauri::command]
+pub async fn workbench_missing_backup_files(
+) -> WorkbenchResult<Vec<crate::workbench::release::MissingBackupFile>> {
+    run_store(move |store| crate::workbench::release::missing_backup_files(&store)).await
+}
+
+#[tauri::command]
 pub async fn workbench_export_research_archive(
     request: crate::workbench::release::ExportArchiveRequest,
+    omitted_references: Option<Vec<String>>,
 ) -> WorkbenchResult<crate::workbench::release::ArchiveReport> {
     run_storage_maintenance(move |store| {
         if crate::workbench::research::jobs::has_active() {
@@ -375,7 +382,11 @@ pub async fn workbench_export_research_archive(
             ));
         }
         crate::workbench::release::refresh_retained_blobs(&store)?;
-        crate::workbench::release::export_archive(&store, request)
+        crate::workbench::release::export_archive_without(
+            &store,
+            request,
+            &omitted_references.unwrap_or_default(),
+        )
     })
     .await
 }
@@ -525,11 +536,7 @@ pub async fn workbench_export_conversation(
             let Some(text) = transcript_text(&item.payload) else {
                 return Ok(());
             };
-            let role = if item.item_kind.to_ascii_lowercase().contains("user") {
-                "You"
-            } else {
-                "ChatGPT"
-            };
+            let role = crate::workbench::release::transcript_role(&item.item_kind);
             if markdown.len() + text.len() + 32 > 64 * 1024 * 1024 {
                 return Err(WorkbenchError::invalid(
                     "Conversation export exceeds 64 MiB",

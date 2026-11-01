@@ -1,6 +1,8 @@
 //! Interactive Edit turns acquire a review copy without creating another chat.
 //! The turn permit and project lock cover preparation. Existing manual copies
 //! and automation scopes are never redirected. Acceptance/undo remain in tasks.
+//! A settled copy is reclaimed here, when the next turn moves off it, rather
+//! than at acceptance: until then the conversation can undo back onto it.
 use super::*;
 
 pub(crate) fn prepare(store: &Store, session_id: &str) -> WorkbenchResult<()> {
@@ -34,6 +36,7 @@ pub(crate) fn prepare(store: &Store, session_id: &str) -> WorkbenchResult<()> {
         return Ok(());
     }
     let _guard = lock(store, &workspace.id)?;
+    let mut replaced = None;
     if let Some(cp) = existing {
         let checkpoint: Checkpoint = decode(&record(store, &workspace.id, &cp, "checkpoint")?)?;
         if ["isolated", "review"].contains(&checkpoint.state.as_str()) {
@@ -53,6 +56,7 @@ pub(crate) fn prepare(store: &Store, session_id: &str) -> WorkbenchResult<()> {
             .as_object_mut()
             .unwrap()
             .remove("automaticWorkingCopy");
+        replaced = Some(cp);
     }
     if mode == "edit" && file_mode == "review" {
         let source = store.registered_root(&workspace)?;
@@ -92,6 +96,11 @@ pub(crate) fn prepare(store: &Store, session_id: &str) -> WorkbenchResult<()> {
             paper_id: None,
             clear_paper: None,
         })?;
+    }
+    if let Some(cp) = replaced {
+        // Only disk space is at stake, so a copy that can't go yet never stops
+        // the turn. It stays where the researcher can still find it.
+        let _ = tasks::reclaim_replaced_copy(store, &workspace.id, &cp);
     }
     Ok(())
 }
@@ -188,6 +197,189 @@ mod tests {
         tasks::reject(&f.store, &f.ws, &cp).unwrap();
         prepare(&f.store, &edit).unwrap();
         assert_ne!(f.store.runtime_root(&edit).unwrap(), root);
+    }
+    fn working_copy(f: &Fixture, session: &str) -> (String, PathBuf) {
+        prepare(&f.store, session).unwrap();
+        let cp = f.store.session_snapshot(session).unwrap().session.overrides
+            ["projectCheckpointId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        (cp, f.store.runtime_root(session).unwrap())
+    }
+    #[test]
+    fn the_next_turn_removes_a_settled_copy_and_undo_still_works() {
+        let f = fixture();
+        fs::write(f.root.join("paper.md"), "original").unwrap();
+        let session = session(&f, "edit");
+        let (cp, root) = working_copy(&f, &session);
+        fs::write(root.join("paper.md"), "revised").unwrap();
+        assistant_files::capture_session(&f.store, &session).unwrap();
+        let captured = record(&f.store, &f.ws, &cp, "checkpoint").unwrap();
+        let app = tasks::apply(
+            &f.store,
+            &f.ws,
+            &cp,
+            vec!["paper.md".into()],
+            captured.revision,
+        )
+        .unwrap();
+        assert!(root.exists(), "kept until the conversation moves on");
+        let (next, next_root) = working_copy(&f, &session);
+        assert_ne!(next, cp);
+        assert!(!root.exists());
+        assert!(next_root.exists());
+        tasks::undo(&f.store, &f.ws, &app.id).unwrap();
+        assert_eq!(
+            fs::read_to_string(f.root.join("paper.md")).unwrap(),
+            "original"
+        );
+        // With no folder left, Undo finishes the edit instead of reopening it.
+        let undone = record(&f.store, &f.ws, &cp, "checkpoint").unwrap();
+        assert_eq!(undone.body["state"], "undone");
+        assert!(session_task_root(&f.store, &f.ws, &cp).is_err());
+        assert!(tasks::apply(
+            &f.store,
+            &f.ws,
+            &cp,
+            vec!["paper.md".into()],
+            undone.revision
+        )
+        .is_err());
+        assert_eq!(
+            fs::read_to_string(f.root.join("paper.md")).unwrap(),
+            "original"
+        );
+    }
+    #[test]
+    fn a_reviewable_edit_whose_copy_vanished_says_so_plainly() {
+        let f = fixture();
+        fs::write(f.root.join("paper.md"), "original").unwrap();
+        let session = session(&f, "edit");
+        let (cp, root) = working_copy(&f, &session);
+        fs::remove_dir_all(&root).unwrap();
+        let error = session_task_root(&f.store, &f.ws, &cp).unwrap_err();
+        assert!(error.message.contains("Task copy is missing"), "{error:?}");
+    }
+    #[test]
+    fn files_in_build_and_cache_folders_keep_their_copy() {
+        for unseen in [
+            "output/target/estimates.csv",
+            "table1.out",
+            ".cache/results.bin",
+            "node_modules/x/y.js",
+        ] {
+            let f = fixture();
+            fs::write(f.root.join("paper.md"), "original").unwrap();
+            let session = session(&f, "edit");
+            let (cp, root) = working_copy(&f, &session);
+            let file = root.join(unseen);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(&file, "work the review never showed").unwrap();
+            fs::write(root.join("paper.md"), "revised").unwrap();
+            assistant_files::capture_session(&f.store, &session).unwrap();
+            let captured = record(&f.store, &f.ws, &cp, "checkpoint").unwrap();
+            let body: Checkpoint = decode(&captured).unwrap();
+            assert!(!body.proposed.contains_key(unseen), "the review skips it");
+            tasks::apply(
+                &f.store,
+                &f.ws,
+                &cp,
+                vec!["paper.md".into()],
+                captured.revision,
+            )
+            .unwrap();
+            let (next, _) = working_copy(&f, &session);
+            assert_ne!(next, cp);
+            assert_eq!(
+                fs::read_to_string(&file).unwrap(),
+                "work the review never showed",
+                "{unseen}"
+            );
+        }
+    }
+    #[test]
+    fn a_discarded_copy_goes_but_undo_can_return_before_the_next_turn() {
+        let f = fixture();
+        fs::write(f.root.join("paper.md"), "original").unwrap();
+        let session = session(&f, "edit");
+        let (cp, root) = working_copy(&f, &session);
+        fs::write(root.join("paper.md"), "revised").unwrap();
+        assistant_files::capture_session(&f.store, &session).unwrap();
+        let captured = record(&f.store, &f.ws, &cp, "checkpoint").unwrap();
+        let app = tasks::apply(
+            &f.store,
+            &f.ws,
+            &cp,
+            vec!["paper.md".into()],
+            captured.revision,
+        )
+        .unwrap();
+        tasks::undo(&f.store, &f.ws, &app.id).unwrap();
+        // Undo reopened the edit, so its copy is still the conversation's.
+        assert_eq!(working_copy(&f, &session), (cp.clone(), root.clone()));
+        tasks::reject(&f.store, &f.ws, &cp).unwrap();
+        working_copy(&f, &session);
+        assert!(!root.exists());
+    }
+    #[test]
+    fn unaccepted_edits_keep_their_copy() {
+        let f = fixture();
+        fs::write(f.root.join("a.md"), "a").unwrap();
+        fs::write(f.root.join("b.md"), "b").unwrap();
+        // Part of the edit was never accepted.
+        let partial = session(&f, "edit");
+        let (cp, root) = working_copy(&f, &partial);
+        fs::write(root.join("a.md"), "a2").unwrap();
+        fs::write(root.join("b.md"), "b2").unwrap();
+        assistant_files::capture_session(&f.store, &partial).unwrap();
+        let captured = record(&f.store, &f.ws, &cp, "checkpoint").unwrap();
+        tasks::apply(&f.store, &f.ws, &cp, vec!["a.md".into()], captured.revision).unwrap();
+        working_copy(&f, &partial);
+        assert_eq!(fs::read_to_string(root.join("b.md")).unwrap(), "b2");
+        // Nobody has reviewed what changed after the last capture.
+        let unreviewed = session(&f, "edit");
+        let (cp, root) = working_copy(&f, &unreviewed);
+        assistant_files::capture_session(&f.store, &unreviewed).unwrap();
+        fs::write(root.join("b.md"), "written after review").unwrap();
+        tasks::reject(&f.store, &f.ws, &cp).unwrap();
+        working_copy(&f, &unreviewed);
+        assert_eq!(
+            fs::read_to_string(root.join("b.md")).unwrap(),
+            "written after review"
+        );
+        let never_captured = session(&f, "edit");
+        let (cp, root) = working_copy(&f, &never_captured);
+        fs::write(root.join("new.md"), "never reviewed").unwrap();
+        tasks::reject(&f.store, &f.ws, &cp).unwrap();
+        working_copy(&f, &never_captured);
+        assert!(root.join("new.md").exists());
+    }
+    #[test]
+    fn a_copy_another_conversation_is_bound_to_stays() {
+        let f = fixture();
+        fs::write(f.root.join("paper.md"), "original").unwrap();
+        let first = session(&f, "edit");
+        let (cp, root) = working_copy(&f, &first);
+        let other = session(&f, "edit");
+        let current = f.store.session_snapshot(&other).unwrap().session;
+        f.store
+            .update_session(crate::workbench::store::UpdateSessionRequest {
+                session_id: other,
+                expected_revision: current.revision,
+                operation_id: id("bind").unwrap(),
+                overrides: Some(json!({"mode":"edit","projectCheckpointId":cp})),
+                title: None,
+                draft: None,
+                archived: None,
+                preset_id: None,
+                paper_id: None,
+                clear_paper: None,
+            })
+            .unwrap();
+        tasks::reject(&f.store, &f.ws, &cp).unwrap();
+        working_copy(&f, &first);
+        assert!(root.exists());
     }
     #[test]
     fn oversized_input_fails_without_binding_a_partial_copy() {

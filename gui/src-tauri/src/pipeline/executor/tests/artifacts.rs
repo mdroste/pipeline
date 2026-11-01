@@ -44,6 +44,7 @@ fn selected_artifacts_are_staged_without_exposing_unselected_inputs() {
             extra_input_sources: &named_sources,
             outputs: &[],
             run_artifact_dir: None,
+            context_pool: &Default::default(),
         },
     )
     .unwrap();
@@ -87,6 +88,7 @@ fn selected_source_folder_grants_only_that_folder() {
             extra_input_sources: &Default::default(),
             outputs: &[],
             run_artifact_dir: None,
+            context_pool: &Default::default(),
         },
     )
     .unwrap();
@@ -125,6 +127,7 @@ fn supporting_file_glob_stages_only_matching_producer_files() {
             extra_input_sources: &Default::default(),
             outputs: &[],
             run_artifact_dir: Some(artifacts.to_str().unwrap()),
+            context_pool: &Default::default(),
         },
     )
     .unwrap();
@@ -179,6 +182,7 @@ fn multi_unit_supporting_files_stage_into_per_unit_namespaces() {
             extra_input_sources: &Default::default(),
             outputs: &[],
             run_artifact_dir: Some(artifacts.to_str().unwrap()),
+            context_pool: &Default::default(),
         },
     )
     .unwrap();
@@ -209,6 +213,58 @@ fn multi_unit_supporting_files_stage_into_per_unit_namespaces() {
     );
 }
 
+fn select_csv_files(count: usize) -> (String, Vec<String>) {
+    let run = tempfile::tempdir().unwrap();
+    let artifacts = run.path().join("artifacts");
+    let files = artifacts
+        .join("by-step")
+        .join(step_slug("producer"))
+        .join(step_slug("producer"))
+        .join("files");
+    std::fs::create_dir_all(&files).unwrap();
+    for index in 0..count {
+        std::fs::write(files.join(format!("{index:04}.csv")), "x").unwrap();
+    }
+    let mut step = make_step("consumer", Phase::Sequential);
+    step.context.include = vec![ArtifactSelector::Step {
+        step: "producer".into(),
+        parts: vec![StepArtifactPart::Files],
+        glob: "*.csv".into(),
+    }];
+    let resolved = resolve_artifact_context(
+        &step,
+        ArtifactRuntime {
+            orientation_path: "",
+            paper_text_path: "",
+            document_bundle_path: "",
+            source_path: "",
+            extra_inputs: &Default::default(),
+            extra_input_sources: &Default::default(),
+            outputs: &[],
+            run_artifact_dir: Some(artifacts.to_str().unwrap()),
+            context_pool: &Default::default(),
+        },
+    )
+    .unwrap();
+    (resolved.manifest.clone(), resolved.warnings.clone())
+}
+
+#[test]
+fn a_truncated_file_selection_says_so_in_the_manifest_and_the_log() {
+    let (manifest, warnings) = select_csv_files(501);
+    assert_eq!(manifest.matches("Supporting file from").count(), 500);
+    assert!(
+        manifest.contains("matched more than 500 files"),
+        "{manifest}"
+    );
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].contains("'*.csv' matched more than 500 files"));
+
+    let (manifest, warnings) = select_csv_files(500);
+    assert!(!manifest.contains("matched more than"), "{manifest}");
+    assert!(warnings.is_empty());
+}
+
 #[test]
 fn parallel_artifact_resolution_rejects_step_outputs() {
     let mut step = make_step("parallel-consumer", Phase::Parallel);
@@ -228,6 +284,7 @@ fn parallel_artifact_resolution_rejects_step_outputs() {
             extra_input_sources: &Default::default(),
             outputs: &[],
             run_artifact_dir: None,
+            context_pool: &Default::default(),
         },
     )
     .err()
@@ -257,4 +314,81 @@ fn ingest_report_file_reads_and_removes() {
     // Empty file → None (falls back to stdout).
     std::fs::write(dir.path().join("steps/b.md"), "  \n").unwrap();
     assert!(ingest_report_file_blocking(Some(&wd), "steps/b.md").is_none());
+}
+
+#[test]
+fn every_unit_shares_one_document_index() {
+    use crate::document_bundle::{DocumentBundle, DocumentExtraction};
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("bundle.json");
+    let bundle = DocumentBundle {
+        schema_version: crate::document_bundle::DOCUMENT_BUNDLE_SCHEMA_VERSION.into(),
+        bundle_id: "bundle".into(),
+        source_kind: "pdf".into(),
+        origins: vec![],
+        pages: vec![],
+        nodes: vec![],
+        assets: vec![],
+        links: vec![],
+        extraction: DocumentExtraction {
+            method: "fixture".into(),
+            source_path: "paper.pdf".into(),
+            paper_hash: "hash".into(),
+        },
+        quality: vec![],
+    };
+    std::fs::write(&path, serde_json::to_string(&bundle).unwrap()).unwrap();
+    let mut step = make_step("reader", Phase::Parallel);
+    step.context.include = vec![ArtifactSelector::Primary {
+        parts: vec![PrimaryArtifactPart::Structure],
+    }];
+    let pool = crate::pipeline::context_cache::PreparedContextPool::default();
+    let runtime = |bundle: &'_ str| -> Result<_, String> {
+        resolve_artifact_context(
+            &step,
+            ArtifactRuntime {
+                orientation_path: "",
+                paper_text_path: "",
+                document_bundle_path: bundle,
+                source_path: "",
+                extra_inputs: &Default::default(),
+                extra_input_sources: &Default::default(),
+                outputs: &[],
+                run_artifact_dir: None,
+                context_pool: &pool,
+            },
+        )
+    };
+    let first = runtime(path.to_str().unwrap()).unwrap();
+    // Later units never read the bundle again, so its absence cannot matter.
+    std::fs::remove_file(&path).unwrap();
+    let second = runtime(path.to_str().unwrap()).unwrap();
+    assert_ne!(first.document_bundle_path, second.document_bundle_path);
+    assert_eq!(
+        std::fs::read(&first.document_bundle_path).unwrap(),
+        std::fs::read(&second.document_bundle_path).unwrap()
+    );
+    assert!(second.manifest.contains("document structure index"));
+
+    // A bundle that cannot be read fails each unit in the same words.
+    let broken = crate::pipeline::context_cache::PreparedContextPool::default();
+    let failed = |pool| {
+        resolve_artifact_context(
+            &step,
+            ArtifactRuntime {
+                orientation_path: "",
+                paper_text_path: "",
+                document_bundle_path: "/missing/bundle.json",
+                source_path: "",
+                extra_inputs: &Default::default(),
+                extra_input_sources: &Default::default(),
+                outputs: &[],
+                run_artifact_dir: None,
+                context_pool: pool,
+            },
+        )
+        .err()
+        .unwrap()
+    };
+    assert_eq!(failed(&broken), failed(&broken));
 }

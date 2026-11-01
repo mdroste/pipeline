@@ -208,6 +208,120 @@ fn failed_run_without_a_captured_document_is_not_resumable() {
 }
 
 #[test]
+fn a_run_that_died_before_its_document_stops_showing_as_running() {
+    let temp = tempfile::tempdir().unwrap();
+    let writer = RunWriter::create_in(temp.path(), "no_document_run").unwrap();
+    let run_dir = writer.dir().to_path_buf();
+    let mut manifest = writer.current_manifest();
+    std::mem::forget(writer);
+    assert_eq!(manifest.status, "running");
+
+    assert!(recover_resumable_run_dir(&run_dir, &mut manifest).is_err());
+
+    let saved: RunManifest =
+        serde_json::from_str(&fs::read_to_string(run_dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(saved.status, "interrupted");
+    assert!(!run_has_resume_files(&run_dir, &saved));
+}
+
+#[test]
+fn a_run_that_died_after_its_report_stops_showing_as_running() {
+    let temp = tempfile::tempdir().unwrap();
+    let writer = RunWriter::create_in(temp.path(), "reported_run").unwrap();
+    let run_dir = writer.dir().to_path_buf();
+    let mut manifest = writer.current_manifest();
+    std::mem::forget(writer);
+    fs::write(
+        run_dir.join("report.json"),
+        serde_json::to_vec(&empty_report()).unwrap(),
+    )
+    .unwrap();
+
+    assert!(!recover_resumable_run_dir(&run_dir, &mut manifest).unwrap());
+
+    let saved: RunManifest =
+        serde_json::from_str(&fs::read_to_string(run_dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(saved.status, "interrupted");
+}
+
+fn empty_report() -> crate::models::PipelineReport {
+    crate::models::PipelineReport {
+        orientation: serde_json::Value::Null,
+        step_outputs: Vec::new(),
+        failed_steps: Vec::new(),
+        products: Default::default(),
+        quality: Default::default(),
+        referee_reports: Vec::new(),
+        editor: None,
+        report_date: chrono::Local::now().date_naive(),
+        paper_hash: "hash".to_string(),
+    }
+}
+
+fn stopped_run_with_a_checkpoint(root: &Path, status: &str) -> PathBuf {
+    let mut writer = RunWriter::create_in(root, "stopped_run").unwrap();
+    writer
+        .add_text(DOCUMENT_TEXT_PATH, "Readable document", "document", "paper")
+        .unwrap();
+    let run_dir = writer.dir().to_path_buf();
+    let checkpoint_dir = run_dir.join("artifacts/checkpoints");
+    fs::create_dir_all(&checkpoint_dir).unwrap();
+    let output = crate::models::StepOutput {
+        step_id: "technical".to_string(),
+        raw_text: "Durable work".to_string(),
+        ..Default::default()
+    };
+    fs::write(
+        checkpoint_dir.join("wave_0000_technical.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "checkpointVersion": 1, "steps": ["technical"], "outputs": [output]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let mut manifest = writer.current_manifest();
+    manifest.status = status.to_string();
+    write_manifest(&run_dir, &manifest).unwrap();
+    std::mem::forget(writer);
+    run_dir
+}
+
+#[test]
+fn a_stopped_run_recovers_on_its_own_while_another_review_holds_the_lock() {
+    use fs2::FileExt as _;
+    let temp = tempfile::tempdir().unwrap();
+    let run_dir = stopped_run_with_a_checkpoint(temp.path(), "cancelled");
+    // The store-wide pass stands aside for the active review.
+    let lock_path = temp.path().join("run.lock");
+    let active_review = open_run_lock(&lock_path).unwrap();
+    active_review.try_lock_exclusive().unwrap();
+    assert_eq!(
+        recover_resumable_runs_at(temp.path(), &lock_path).unwrap(),
+        0
+    );
+    assert!(!run_dir.join("report.json").exists());
+
+    assert!(recover_stopped_run_dir(&run_dir).unwrap());
+
+    let report: crate::models::PipelineReport =
+        serde_json::from_str(&fs::read_to_string(run_dir.join("report.json")).unwrap()).unwrap();
+    assert_eq!(report.step_outputs[0].raw_text, "Durable work");
+}
+
+#[test]
+fn single_run_recovery_leaves_a_running_run_alone() {
+    let temp = tempfile::tempdir().unwrap();
+    let run_dir = stopped_run_with_a_checkpoint(temp.path(), "running");
+
+    assert!(!recover_stopped_run_dir(&run_dir).unwrap());
+
+    assert!(!run_dir.join("report.json").exists());
+    let saved: RunManifest =
+        serde_json::from_str(&fs::read_to_string(run_dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(saved.status, "running");
+}
+
+#[test]
 fn recovery_preserves_checkpointed_failure_identity() {
     let temp = tempfile::tempdir().unwrap();
     let mut writer = RunWriter::create_in(temp.path(), "failed_step_run").unwrap();
@@ -387,6 +501,39 @@ fn recovery_yields_to_the_run_lock_held_by_the_pipeline_guard() {
 
     fs2::FileExt::unlock(&guard).unwrap();
     assert_eq!(recover_resumable_runs_at(&runs, &lock_path).unwrap(), 1);
+    let manifest: RunManifest =
+        serde_json::from_str(&fs::read_to_string(run_dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest.status, "interrupted");
+}
+
+#[test]
+fn a_running_run_is_recovered_however_long_the_walk_over_the_store_takes() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path().join("runs");
+    fs::create_dir_all(&runs).unwrap();
+    for index in 0..40 {
+        let mut writer = RunWriter::create_in(&runs, &format!("abc123_finished_{index}")).unwrap();
+        writer
+            .add_text(DOCUMENT_TEXT_PATH, "Readable document", "document", "paper")
+            .unwrap();
+        let dir = writer.dir().to_path_buf();
+        let mut manifest = writer.current_manifest();
+        std::mem::forget(writer);
+        manifest.status = "done".to_string();
+        write_manifest(&dir, &manifest).unwrap();
+    }
+    let mut writer = RunWriter::create_in(&runs, "abc123_interrupted").unwrap();
+    writer
+        .add_text(DOCUMENT_TEXT_PATH, "Readable document", "document", "paper")
+        .unwrap();
+    let run_dir = writer.dir().to_path_buf();
+    std::mem::forget(writer);
+
+    assert_eq!(
+        recover_runs_in(&runs, store_walk().overdue()).unwrap(),
+        1,
+        "an overdue store walk must still reach every run"
+    );
     let manifest: RunManifest =
         serde_json::from_str(&fs::read_to_string(run_dir.join("manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest.status, "interrupted");

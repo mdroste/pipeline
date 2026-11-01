@@ -47,8 +47,8 @@ function CalibrateSection({
       </label>
       <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-2 leading-relaxed">
         Draft an instruction from the issues you've rejected (in the Issues
-        view) so this profile stops flagging them, and append it to the
-        synthesis step.
+        view) so this review stops flagging them, and append it to the synthesis
+        step.
       </p>
       <button
         type="button"
@@ -200,10 +200,10 @@ function ExtraInputsEditor({
         Extra inputs
       </label>
       <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-2 leading-relaxed">
-        Additional files/folders the Generate report action asks for. A step can
-        select the extracted text, original source, or both; selected text is
-        available as <code className="font-mono">{"{input:key}"}</code>. Useful
-        for a response letter, rubric, or prior report alongside the main input.
+        Additional files/folders Start review asks for. A step can select the
+        extracted text, original source, or both; selected text is available as{" "}
+        <code className="font-mono">{"{input:key}"}</code>. Useful for a
+        response letter, rubric, or prior report alongside the main input.
       </p>
       <div className="space-y-2">
         {slots.map((s, i) => (
@@ -336,7 +336,7 @@ function VariablesEditor({
         Variables
       </label>
       <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-2">
-        Values the Generate report action asks for, substituted into prompts as{" "}
+        Values Start review asks for, substituted into prompts as{" "}
         <code className="font-mono">{"{var:key}"}</code>.
       </p>
       <div className="space-y-2">

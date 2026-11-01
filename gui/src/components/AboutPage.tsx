@@ -1,12 +1,14 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
-import FlappyBirdGame from "./FlappyBirdGame";
 import type { AppPage } from "./NavRail";
 import type { ProfileSummary } from "../lib/types";
 import { REPORT_WORKSPACE_TABS } from "../lib/productMetadata";
 import { workspaceSections } from "../lib/workspaceNavigation";
+import PageHeader from "../ui/PageHeader";
+
+const FlappyBirdGame = lazy(() => import("./FlappyBirdGame"));
 
 interface Props {
   onClose: () => void;
@@ -86,30 +88,38 @@ export default function AboutPage({
 
   return (
     <>
-      <div className="p-8 max-w-3xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">
-            Help
-          </h2>
-          {showBack && (
-            <button
-              onClick={onClose}
-              className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-            >
-              Back
-            </button>
-          )}
-        </div>
-
-        <HelpContent
-          onNavigate={onNavigate}
-          onOpenPdfSettings={onOpenPdfSettings}
-          initialSection={initialSection}
-          builtinProfiles={builtinProfiles}
+      <div className="ui-page">
+        <PageHeader
+          title="Help"
+          description="How to get set up, what each part of the app does, and where your data goes."
+          action={
+            showBack ? (
+              <button
+                type="button"
+                className="ui-page-button"
+                onClick={onClose}
+              >
+                Back
+              </button>
+            ) : undefined
+          }
         />
-        <AboutFooter />
+        {/* Long passages stay at a readable width on a wide page. */}
+        <div className="max-w-3xl">
+          <HelpContent
+            onNavigate={onNavigate}
+            onOpenPdfSettings={onOpenPdfSettings}
+            initialSection={initialSection}
+            builtinProfiles={builtinProfiles}
+          />
+          <AboutFooter />
+        </div>
       </div>
-      {gameOpen && <FlappyBirdGame onClose={() => setGameOpen(false)} />}
+      {gameOpen && (
+        <Suspense fallback={null}>
+          <FlappyBirdGame onClose={() => setGameOpen(false)} />
+        </Suspense>
+      )}
     </>
   );
 }
@@ -282,9 +292,10 @@ function HelpContent({
             title="Check the preview"
             description={
               <>
-                The preview shows each step, its provider, the files it can
-                read, and the expected usage. Choose <Label>Start review</Label>{" "}
-                when it looks right.
+                Choose <Label>Start review</Label> to open the preview. It shows
+                each step, its provider, the files it can read, and the expected
+                usage. Choose <Label>Start review</Label> again when it looks
+                right.
               </>
             }
           />
@@ -303,9 +314,9 @@ function HelpContent({
       <Section title="Projects and conversations">
         <p>
           A conversation is a chat with the AI assistant. Start one with{" "}
-          <Label>New chat</Label> on Home, or inside a project to keep it with
-          that paper. The <Label>Model and thinking</Label> chip below the
-          message box sets the provider and model.{" "}
+          <Label>New conversation</Label> on Home, or inside a project to keep
+          it with that paper. The <Label>Model and thinking</Label> chip below
+          the message box sets the provider and model.{" "}
           <Label>Assistant settings</Label> sets which files and tools the
           assistant can use.
         </p>
@@ -414,9 +425,9 @@ function HelpContent({
           </p>
           <p>
             <Label>Shareable report</Label> removes private information and
-            leaves out your source documents and raw model responses.{" "}
-            <Label>Complete review archive</Label> includes all of them, plus
-            the logs. <Label>Save Markdown…</Label> and{" "}
+            leaves out unverified findings, your source documents, and raw model
+            responses. <Label>Complete review archive</Label> includes all of
+            them, plus the logs. <Label>Save Markdown…</Label> and{" "}
             <Label>Print / save as PDF…</Label> are in the same menu.
           </p>
         </Collapsible>
@@ -591,9 +602,9 @@ function Section({
 }) {
   return (
     <div>
-      <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">
+      <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">
         {title}
-      </h3>
+      </h2>
       <div className="space-y-3">{children}</div>
     </div>
   );

@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { studioClient, type JobStatus } from "../../lib/studioClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { button } from "./shared";
 
 export const ACTIVE_JOB_STATES = ["queued", "running", "cancelling"];
@@ -79,6 +80,10 @@ export default function JobLog({
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
     const read = async () => {
+      if (document.visibilityState === "hidden") {
+        timer = setTimeout(() => void read(), POLL_MS);
+        return;
+      }
       // Only an empty read that began after the job ended proves the end.
       const endedBefore = endedRef.current;
       const current = logRef.current;
@@ -108,7 +113,7 @@ export default function JobLog({
         if (next.complete) return;
       } catch (e) {
         if (disposed) return;
-        errorRef.current(String(e));
+        errorRef.current(workbenchErrorMessage(e));
       }
       timer = setTimeout(() => void read(), POLL_MS);
     };

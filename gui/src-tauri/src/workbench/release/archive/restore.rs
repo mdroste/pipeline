@@ -4,17 +4,106 @@ use super::format::{
     ArchiveManifest, ArchiveReport, ImportArchiveRequest, MAX_ARCHIVE_BYTES, MAX_ARCHIVE_ENTRIES,
     MAX_ENTRY_BYTES, MAX_MANIFEST_BYTES,
 };
-use super::inspection::{validate_database, validate_manifest};
+use super::inspection::{
+    open_archived_database, validate_database, validate_manifest, verify_retired, verify_schema,
+};
+use super::omissions::clear_omitted_references;
 use super::{
     conversation_files, copy_entry, hash_reader, now, safe_archive_name, validate_absolute_file,
 };
-use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult, CURRENT_SCHEMA_VERSION};
+use crate::workbench::store::{
+    is_left_out_reference, record_location, resolve_reference, Store, WorkbenchError,
+    WorkbenchResult, CURRENT_SCHEMA_VERSION,
+};
 use rusqlite::{backup::Backup, params, Connection};
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
+
+/// Points retention rows at the restored blobs. Older archives kept the source
+/// computer's paths here, and a row with no restored file retains nothing.
+fn adopt_retained_references(imported: &Connection, root: &Path) -> WorkbenchResult<()> {
+    let mut statement = imported
+        .prepare("SELECT rowid,storage_reference FROM retained_blobs")
+        .map_err(|error| WorkbenchError::storage("Failed to read imported retention", error))?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| WorkbenchError::storage("Failed to read imported retention", error))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| WorkbenchError::storage("Failed to decode imported retention", error))?;
+    drop(statement);
+    for (rowid, reference) in rows {
+        match resolve_reference(&reference, None, root) {
+            Some(path) => imported.execute(
+                "UPDATE OR REPLACE retained_blobs SET storage_reference=?2 WHERE rowid=?1",
+                params![rowid, path.to_string_lossy()],
+            ),
+            None => imported.execute("DELETE FROM retained_blobs WHERE rowid=?1", [rowid]),
+        }
+        .map_err(|error| WorkbenchError::storage("Failed to rebase imported retention", error))?;
+    }
+    Ok(())
+}
+
+/// Where a stored path inside `old` lands under `new`, keeping its relative
+/// suffix. A path outside `old`, or one that climbs back out of it, has no new
+/// location and keeps failing the checks that compare it to the project folder.
+pub(super) fn moved_path(path: &str, old: &str, new: &str) -> Option<String> {
+    let suffix = path.strip_prefix(old.trim_end_matches(['/', '\\']))?;
+    if !suffix.is_empty() && !suffix.starts_with(['/', '\\']) {
+        return None;
+    }
+    let mut moved = PathBuf::from(new);
+    for component in suffix.split(['/', '\\']).filter(|part| !part.is_empty()) {
+        if component == "." || component == ".." {
+            return None;
+        }
+        moved.push(component);
+    }
+    Some(moved.to_string_lossy().into_owned())
+}
+
+/// Command profiles, run receipts, and captured plans name absolute folders, so
+/// they move with the project. Call before the Workspace row takes its new root.
+fn remap_execution_paths(imported: &Connection, old: &str, new: &str) -> WorkbenchResult<()> {
+    let failed = |error| WorkbenchError::storage("Failed to remap imported command folders", error);
+    for (select, update) in [
+        (
+            "SELECT id,cwd FROM execution_profiles WHERE workspace_id IN (SELECT id FROM workspaces WHERE root=?1)",
+            "UPDATE execution_profiles SET cwd=?2 WHERE id=?1",
+        ),
+        (
+            "SELECT id,cwd FROM research_executions WHERE workspace_id IN (SELECT id FROM workspaces WHERE root=?1)",
+            "UPDATE research_executions SET cwd=?2 WHERE id=?1",
+        ),
+        (
+            "SELECT id,json_extract(body_json,'$.profile.cwd') FROM desk_records WHERE kind='execution_plan' AND json_valid(body_json) AND json_type(body_json,'$.profile.cwd')='text' AND workspace_id IN (SELECT id FROM workspaces WHERE root=?1)",
+            // The record's identity stays its captured hash; only where its
+            // folder now lives changes.
+            "UPDATE desk_records SET body_json=json_set(body_json,'$.profile.cwd',?2) WHERE id=?1",
+        ),
+    ] {
+        let rows = imported
+            .prepare(select)
+            .map_err(failed)?
+            .query_map([old], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(failed)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(failed)?;
+        for (id, path) in rows {
+            if let Some(moved) = moved_path(&path, old, new) {
+                imported.execute(update, params![id, moved]).map_err(failed)?;
+            }
+        }
+    }
+    Ok(())
+}
 
 pub fn import_archive(
     store: &Store,
@@ -107,8 +196,7 @@ pub fn import_archive(
     .map_err(|error| WorkbenchError::invalid(format!("Invalid archive manifest: {error}")))?;
     validate_manifest(&manifest)?;
     let database_path = temporary.path().join("database/research.sqlite3");
-    let mut imported = Connection::open(&database_path)
-        .map_err(|error| WorkbenchError::invalid(format!("Invalid archive database: {error}")))?;
+    let mut imported = open_archived_database(&database_path)?;
     let schema: u32 = imported
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .map_err(|error| WorkbenchError::storage("Failed to read imported schema", error))?;
@@ -117,10 +205,14 @@ pub fn import_archive(
             "Archive database schema is unsupported or does not match its manifest",
         ));
     }
+    // Before anything writes to it: every statement below would fire whatever
+    // triggers the archive shipped.
+    verify_schema(&imported, schema)?;
     validate_database(&imported)?;
     if schema < CURRENT_SCHEMA_VERSION {
         // Migrate only the extracted copy.
         crate::workbench::store::migrate(&mut imported, schema)?;
+        verify_schema(&imported, CURRENT_SCHEMA_VERSION)?;
         validate_database(&imported)?;
     }
     let session_ids = {
@@ -202,6 +294,7 @@ pub fn import_archive(
             "Archive entries do not exactly match its database and manifest",
         ));
     }
+    let omitted_files = clear_omitted_references(&imported, &manifest.omitted_references)?;
     let archived_references = manifest
         .blobs
         .iter()
@@ -229,6 +322,9 @@ pub fn import_archive(
                 WorkbenchError::storage("Failed to decode archived blob references", error)
             })?;
         for reference in references {
+            if is_left_out_reference(&reference) {
+                continue;
+            }
             let slash_prefix = format!("{reference}/");
             let backslash_prefix = format!("{reference}\\");
             if !archived_references.iter().any(|candidate| {
@@ -295,6 +391,9 @@ pub fn import_archive(
             }
             None => (None, None),
         };
+        if let Some(new_root) = &new_root {
+            remap_execution_paths(&imported, old, new_root)?;
+        }
         imported
             .execute(
                 "UPDATE workspaces SET root=?2,root_identity=?3,missing_root_at=NULL WHERE root=?1",
@@ -372,6 +471,9 @@ pub fn import_archive(
             .map_err(|error| WorkbenchError::storage("Failed to decode imported paths", error))?;
         drop(statement);
         for reference in references {
+            if is_left_out_reference(&reference) {
+                continue;
+            }
             if let Ok(rest) = Path::new(&reference).strip_prefix(&blob_root) {
                 // Lexical prefix checks accept `<blobs>/../x`; only plain
                 // components may stay untouched.
@@ -451,10 +553,11 @@ pub fn import_archive(
         .map_err(|error| {
             WorkbenchError::storage("Failed to clear imported handoff staging paths", error)
         })?;
+    verify_retired(&imported)?;
+    adopt_retained_references(&imported, store.root_path())?;
+    record_location(&imported, store.root_path())?;
     drop(imported);
-    let imported = Connection::open(&database_path).map_err(|error| {
-        WorkbenchError::storage("Failed to reopen validated archive database", error)
-    })?;
+    let imported = open_archived_database(&database_path)?;
     let mut installed =
         conversation_files::install(store, &manifest.conversation_files, temporary.path())?;
     let mut destination = store.connection()?;
@@ -485,5 +588,6 @@ pub fn import_archive(
         bytes: archive_size,
         native_bindings_retired: retired,
         portability_note: manifest.portability_note,
+        omitted_files,
     })
 }

@@ -37,7 +37,12 @@ fn mutations_have_scoped_identity_and_replay_protection() {
     assert_eq!(mutate(&f.store, request.clone()).unwrap(), first);
     assert_eq!(records(&f.store, &f.ws, "task").unwrap().len(), 1);
     let mut changed = request;
-    changed.action = ProjectAction::Refresh;
+    changed.action = ProjectAction::CreateTask {
+        objective: "Changed objective".into(),
+        anchor_id: None,
+        expected_outputs: vec![],
+        expected_checks: vec![],
+    };
     assert!(mutate(&f.store, changed).is_err());
     let other = f
         .store
@@ -178,6 +183,70 @@ fn inventory_bounds_scope_and_detects_external_changes() {
         .files
         .iter()
         .any(|e| e.path == "a.md" && e.status == "missing"));
+}
+#[test]
+#[cfg(unix)]
+fn background_checks_trust_size_and_time_and_refresh_reads_everything() {
+    use std::time::{Duration, UNIX_EPOCH};
+    let f = fixture();
+    let path = f.root.join("a.md");
+    let moment = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let write = |text: &str| {
+        fs::write(&path, text).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(moment)
+            .unwrap();
+    };
+    let status = |action| {
+        let inventory: Inventory = decode(&mutation(&f, action)).unwrap();
+        inventory.files[0].status.clone()
+    };
+    write("first");
+    mutation(&f, ProjectAction::Refresh);
+    // The same size and time: a background check takes this for unchanged.
+    write("other");
+    assert_eq!(status(ProjectAction::CheckForChanges), "current");
+    assert_eq!(status(ProjectAction::Refresh), "changed");
+    // A new size is noticed without reading anything else.
+    write("much longer");
+    assert_eq!(status(ProjectAction::CheckForChanges), "changed");
+}
+#[test]
+fn checks_for_changes_keep_no_operation_rows_and_task_inventories_keep_no_times() {
+    let f = fixture();
+    fs::write(f.root.join("a.md"), "A").unwrap();
+    mutation(&f, ProjectAction::CheckForChanges);
+    let rows: i64 = f
+        .store
+        .connection()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM project_operations", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows, 0);
+    assert!(inventory_at(&f.root, &[]).unwrap().modified_ms.is_empty());
+}
+#[test]
+fn refreshes_leave_no_operation_rows() {
+    let f = fixture();
+    fs::write(f.root.join("a.md"), "A").unwrap();
+    let before: i64 = f
+        .store
+        .connection()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM project_operations", [], |r| r.get(0))
+        .unwrap();
+    mutation(&f, ProjectAction::Refresh);
+    mutation(&f, ProjectAction::Refresh);
+    let after: i64 = f
+        .store
+        .connection()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM project_operations", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(after, before);
 }
 #[test]
 #[cfg(unix)]
@@ -374,6 +443,55 @@ fn live_git_worktree_preserves_index_dirty_and_untracked_files() {
         fs::read_to_string(f.root.join("new.md")).unwrap(),
         "untracked"
     );
+}
+
+#[test]
+#[cfg(unix)]
+fn a_git_task_copy_starts_no_hook_the_folder_names() {
+    let f = fixture();
+    tasks::git(&f.root, &["init"]).unwrap();
+    tasks::git(
+        &f.root,
+        &["config", "user.email", "fixture@example.invalid"],
+    )
+    .unwrap();
+    tasks::git(&f.root, &["config", "user.name", "Pipeline fixture"]).unwrap();
+    tasks::git(&f.root, &["config", "commit.gpgsign", "false"]).unwrap();
+    fs::write(f.root.join("a.md"), "committed").unwrap();
+    tasks::git(&f.root, &["add", "a.md"]).unwrap();
+    tasks::git(&f.root, &["commit", "-m", "fixture"]).unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let marker = scratch.path().join("hook-ran");
+    let command = format!("touch '{}'", marker.display());
+    tasks::git(
+        &f.root,
+        &["config", "hook.evil.event", "reference-transaction"],
+    )
+    .unwrap();
+    tasks::git(&f.root, &["config", "hook.evil.command", &command]).unwrap();
+    // Git alone starts it for the kind of branch a task copy creates.
+    std::process::Command::new("git")
+        .args(["branch", "git-alone"])
+        .current_dir(&f.root)
+        .output()
+        .unwrap();
+    assert!(marker.exists(), "Git alone did not start the hook");
+    fs::remove_file(&marker).unwrap();
+    let task = task(&f);
+    let c = mutation(
+        &f,
+        ProjectAction::Checkpoint {
+            task_id: task.id,
+            paths: vec!["a.md".into()],
+            backend: "git".into(),
+        },
+    );
+    let body: Checkpoint = decode(&c).unwrap();
+    assert_eq!(
+        fs::read_to_string(Path::new(&body.task_root).join("a.md")).unwrap(),
+        "committed"
+    );
+    assert!(!marker.exists(), "the task copy started the folder's hook");
 }
 
 fn live_profile(
@@ -599,6 +717,70 @@ fn mode_only_changes_are_reviewed_and_undone() {
         .unwrap()
         .executable("a.py")
         .unwrap());
+}
+#[test]
+fn unchanged_outputs_pass_only_when_nothing_a_real_change_could_rewrite_changed() {
+    let f = fixture();
+    fs::write(f.root.join("input.md"), "one").unwrap();
+    // Like latexmk, this rewrites its output only when it decides it must.
+    let profile = live_profile(
+        &f,
+        "command",
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "[ -e frozen ] || cp input.md output.txt".into(),
+        ],
+        vec!["input.md".into()],
+        vec!["output.txt".into()],
+        5,
+    );
+    let built = qualify_run(&f, &profile);
+    assert_eq!(built.outcome, "completed");
+    assert_eq!(built.validation["upToDateOutputs"], json!([]));
+
+    fs::write(f.root.join("frozen"), "").unwrap();
+    let rebuilt = qualify_run(&f, &profile);
+    assert_eq!(rebuilt.outcome, "completed", "{:?}", rebuilt.validation);
+    assert_eq!(rebuilt.validation["unchangedPreexistingOutputs"], json!([]));
+    assert_eq!(rebuilt.validation["upToDateOutputs"], json!(["output.txt"]));
+    assert_eq!(
+        rebuilt.output_manifest["artifacts"][0]["path"], "output.txt",
+        "the output stays attached to the run"
+    );
+    assert_eq!(qualify_run(&f, &profile).outcome, "completed");
+
+    // A real change that leaves the output alone is still caught.
+    fs::write(f.root.join("input.md"), "two").unwrap();
+    let stale = qualify_run(&f, &profile);
+    assert_eq!(stale.outcome, "failed");
+    assert_eq!(
+        stale.validation["unchangedPreexistingOutputs"],
+        json!(["output.txt"])
+    );
+    assert_eq!(stale.validation["upToDateOutputs"], json!([]));
+    assert_eq!(
+        fs::read_to_string(f.root.join("output.txt")).unwrap(),
+        "one"
+    );
+
+    // Going back to the earlier input works: the output is what it produced.
+    fs::write(f.root.join("input.md"), "one").unwrap();
+    assert_eq!(qualify_run(&f, &profile).outcome, "completed");
+
+    // Different bytes with the same modified time are not the same output.
+    let times = fs::metadata(f.root.join("output.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    fs::write(f.root.join("output.txt"), "tampered").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(f.root.join("output.txt"))
+        .unwrap()
+        .set_modified(times)
+        .unwrap();
+    assert_eq!(qualify_run(&f, &profile).outcome, "failed");
 }
 #[test]
 fn unproduced_outputs_cannot_pass_and_latest_runs_do_not_move_the_baseline() {
@@ -844,4 +1026,5 @@ fn source_tree_capture_excludes_git_and_task_metadata() {
     assert_eq!(manifest["files"][0]["path"], "paper.tex");
 }
 
+mod capture_tests;
 mod file_workspace_tests;

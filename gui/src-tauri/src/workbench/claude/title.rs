@@ -39,7 +39,7 @@ pub(crate) async fn generate(prompt: String, limit: Duration) -> Result<String, 
     // Dropping a timed-out process kills it.
     tokio::time::timeout(limit, async {
         for model in TITLE_MODELS {
-            let mut process = transport::Process::start(&arguments(model), None).await?;
+            let mut process = transport::Process::start(&arguments(model), None, None).await?;
             let result = reply(&mut process, model, &prompt).await;
             process.stop().await;
             if let Some(text) = result? {

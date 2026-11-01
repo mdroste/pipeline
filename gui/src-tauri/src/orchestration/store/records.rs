@@ -20,6 +20,12 @@ pub struct Scope {
     pub runtime_root: Option<String>,
     #[serde(default)]
     pub root_identity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access: Option<String>,
     #[serde(default)]
     pub profiles: BTreeMap<String, crate::commands::orchestration::PinnedReview>,
     #[serde(default)]
@@ -76,6 +82,19 @@ pub struct Schedule {
     pub next_due_at: Option<i64>,
     pub created_at: i64,
     pub tzdb_version: String,
+}
+/// The unfinished run a schedule waits for, shown beside it on the Scheduled tab.
+#[derive(Debug, Clone, Serialize)]
+pub struct BlockingRun {
+    pub id: String,
+    pub state: String,
+}
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScheduleView {
+    #[serde(flatten)]
+    pub schedule: Schedule,
+    pub blocking_run: Option<BlockingRun>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

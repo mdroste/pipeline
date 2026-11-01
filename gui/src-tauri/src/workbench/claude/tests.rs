@@ -255,7 +255,7 @@ async fn claude_subscription_handshake_probe() {
     let effective = super::super::research::resolve_harness(&f.store, &f.session).unwrap();
     let specs = tools::catalog(&effective);
     let args = protocol::arguments(&effective, None, None, None);
-    let mut process = transport::Process::start(&args, None).await.unwrap();
+    let mut process = transport::Process::start(&args, None, None).await.unwrap();
     let result = process.initialize(&specs).await;
     process.stop().await;
     let initialization = result.unwrap();
@@ -289,6 +289,7 @@ async fn claude_subscription_model_probe() {
     ];
     let mut process = transport::Process::start(
         &protocol::arguments(&effective, Some("haiku"), None, None),
+        None,
         None,
     )
     .await
@@ -341,7 +342,10 @@ fn host_work_does_not_use_the_turn_model_time() {
         .build()
         .unwrap();
     runtime.block_on(async {
-        let mut clock = transport::ModelClock::new(Duration::from_secs(1), Duration::from_secs(2));
+        let mut clock = super::super::turn_loop::ModelClock::new(
+            Duration::from_secs(1),
+            Duration::from_secs(2),
+        );
         // A research run waiting on a local job outlasts the whole model limit.
         assert_eq!(
             clock
@@ -375,6 +379,200 @@ fn host_work_does_not_use_the_turn_model_time() {
         );
         assert!(started.elapsed() < Duration::from_secs(2));
     });
+}
+
+/// A stand-in CLI that reads the prompt and then runs `script`.
+#[cfg(unix)]
+fn fake_cli(script: &str) -> transport::Process {
+    let mut command = tokio::process::Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg(format!("read prompt\n{script}"))
+        .kill_on_drop(true);
+    transport::Process::attach(command, tempfile::tempdir().unwrap(), None, None).unwrap()
+}
+
+#[cfg(unix)]
+fn recorded_turn(label: &str) -> Turn {
+    let store = crate::orchestration::tests::disposable_workspace();
+    let session = store
+        .create_session(CreateSessionRequest {
+            workspace_id: None,
+            title: "Fake CLI".into(),
+            operation_id: format!("fake-cli-{label}"),
+        })
+        .unwrap()
+        .record
+        .id;
+    let thread = format!("claude-thread-{label}");
+    let id = format!("claude-turn-{label}");
+    let bound = store.bind_session(&session, NAMESPACE, &thread).unwrap();
+    store
+        .record_turn_submission(&bound.id, &format!("submission-{label}"), &id)
+        .unwrap();
+    Turn {
+        epoch: fresh_epoch(),
+        thread,
+        id,
+        binding: bound.id,
+        model: None,
+    }
+}
+
+#[cfg(unix)]
+async fn drive_fake_cli(label: &str, script: &str, model_limit: u64) -> Result<(), String> {
+    use std::time::Duration;
+    let mut process = fake_cli(script);
+    let (_cancel, receiver) = watch::channel(false);
+    let result = transport::drive(
+        &mut process,
+        &super::super::turn_loop::RecordedEvents::default(),
+        &recorded_turn(label),
+        &protocol::Prompt {
+            text: "Run the regressions".into(),
+            user_text: "Run the regressions".into(),
+        },
+        Vec::new(),
+        super::super::turn_loop::ModelClock::new(
+            Duration::from_millis(model_limit),
+            Duration::from_secs(30),
+        ),
+        receiver,
+    )
+    .await;
+    process.stop().await;
+    result
+}
+
+#[test]
+fn a_sent_message_is_saved_before_anything_can_end_its_turn() {
+    let source = include_str!("mod.rs");
+    let submit = &source[source.find("pub(crate) async fn submit").unwrap()..];
+    let saved = submit.find("\"userMessage\"").unwrap();
+    for later in ["tokio::spawn", "clear_sent_draft"] {
+        assert!(saved < submit.find(later).unwrap(), "{later}");
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn stop_before_the_worker_writes_keeps_the_saved_message() {
+    let turn = recorded_turn("stopped-first");
+    let events = super::super::turn_loop::RecordedEvents::default();
+    turn.item(&events, "user", "userMessage", "Keep this message")
+        .await
+        .unwrap();
+    let mut process = fake_cli("sleep 30");
+    let (cancel, receiver) = watch::channel(false);
+    cancel.send(true).unwrap();
+    let result = transport::drive(
+        &mut process,
+        &events,
+        &turn,
+        &protocol::Prompt {
+            text: "Keep this message".into(),
+            user_text: "Keep this message".into(),
+        },
+        Vec::new(),
+        transport::turn_clock(),
+        receiver,
+    )
+    .await;
+    process.stop().await;
+    assert_eq!(result, Err("interrupted".to_string()));
+    let thread = turn.thread.clone();
+    let snapshot = run_store(move |store| {
+        let session = store.session_for_thread(NAMESPACE, &thread)?.unwrap();
+        store.conversation_snapshot(&session)
+    })
+    .await
+    .unwrap();
+    let saved = snapshot
+        .items
+        .iter()
+        .filter(|item| item.item_kind == "userMessage")
+        .count();
+    assert_eq!(saved, 1);
+}
+
+#[cfg(unix)]
+const NATIVE_COMMAND: &str = r#"
+printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"bash-1","name":"Bash","input":{"command":"stata -b do models.do"}}]}}'
+sleep 2
+printf '%s\n' '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"bash-1","content":"done"}]}}'
+"#;
+#[cfg(unix)]
+const FINISH: &str = r#"
+printf '%s\n' '{"type":"result","is_error":false,"subtype":"success","result":"The models ran."}'
+"#;
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_native_command_outlasting_the_model_limit_does_not_end_the_turn() {
+    let script = format!("{NATIVE_COMMAND}{FINISH}");
+    assert_eq!(drive_fake_cli("native-long", &script, 1000).await, Ok(()));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn silence_with_no_command_running_is_still_model_time() {
+    let script = format!("sleep 5\n{FINISH}");
+    let error = drive_fake_cli("model-silent", &script, 200)
+        .await
+        .unwrap_err();
+    assert!(error.contains("15 minutes of model time"), "{error}");
+    assert!(error.contains("commands"), "{error}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn model_time_resumes_after_a_native_command_returns() {
+    let script = format!("{NATIVE_COMMAND}sleep 5\n{FINISH}");
+    let error = drive_fake_cli("model-after-command", &script, 1000)
+        .await
+        .unwrap_err();
+    assert!(error.contains("model time"), "{error}");
+}
+
+#[tokio::test]
+async fn a_tool_mistake_goes_back_to_claude_as_a_failed_result() {
+    let specs = vec![json!({"name":"project_create","inputSchema":{"type":"object"}})];
+    let f = fixture();
+    let turn = Turn {
+        epoch: fresh_epoch(),
+        thread: "claude-thread".into(),
+        id: "claude-turn".into(),
+        binding: f
+            .store
+            .bind_session(&f.session, NAMESPACE, "claude-thread")
+            .unwrap()
+            .id,
+        model: None,
+    };
+    let call = |id: u64, name: &str, arguments: Value| json!({"server_name":"pipeline","message":{"id":id,"method":"tools/call","params":{"name":name,"arguments":arguments}}});
+    for (request, expected) in [
+        (
+            call(
+                1,
+                "project_create",
+                json!({"content":"x".repeat(256 * 1024)}),
+            ),
+            "256 KiB",
+        ),
+        (call(2, "project_create", json!("not an object")), "256 KiB"),
+        (call(3, "project_delete", json!({})), "not enabled"),
+    ] {
+        let answer = tools::message(&request, &specs, Some(&turn)).await.unwrap();
+        let result = &answer["mcp_response"]["result"];
+        assert_eq!(result["isError"], true);
+        assert!(
+            result["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains(expected),
+            "{answer}"
+        );
+    }
 }
 
 #[test]
@@ -484,7 +682,7 @@ fn shell_sandbox_is_read_only_offline_and_fails_closed() {
 #[ignore = "Uses subscription quota for one small model turn with sandboxed Bash"]
 async fn claude_sandboxed_shell_probe() {
     assert!(
-        shell::available(),
+        shell::available(wsl::detect_async().await.environment().unwrap().as_ref()),
         "Claude Code's sandbox is unavailable here"
     );
     let f = fixture();
@@ -502,6 +700,7 @@ async fn claude_sandboxed_shell_probe() {
     let mut process = transport::Process::start(
         &args,
         Some(&shell::sandbox(&root, &Default::default(), false)),
+        None,
     )
     .await
     .unwrap();
@@ -559,7 +758,9 @@ async fn claude_sandboxed_shell_probe() {
 #[tokio::test]
 #[ignore = "Uses subscription quota for one small model turn with writable sandbox and domain checks"]
 async fn claude_working_copy_network_probe() {
-    assert!(shell::available());
+    assert!(shell::available(
+        wsl::detect_async().await.environment().unwrap().as_ref()
+    ));
     let f = fixture();
     select(&f, "edit");
     let mut effective = super::super::research::resolve_harness(&f.store, &f.session).unwrap();
@@ -571,6 +772,7 @@ async fn claude_working_copy_network_probe() {
     let mut process = transport::Process::start(
         &args,
         Some(&shell::sandbox(&root, &effective.capabilities, true)),
+        None,
     )
     .await
     .unwrap();
@@ -607,6 +809,87 @@ async fn claude_working_copy_network_probe() {
     assert!(
         !outputs.contains("PIPELINE_BYPASSED_PROXY"),
         "Direct network escaped the proxy: {outputs}"
+    );
+}
+
+#[test]
+fn private_folder_turns_are_told_to_work_there() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::open_at(temp.path()).unwrap();
+    let session = store
+        .create_session(CreateSessionRequest {
+            workspace_id: None,
+            title: "Unfiled".into(),
+            operation_id: "session".into(),
+        })
+        .unwrap()
+        .record
+        .id;
+    let effective = super::super::research::resolve_harness(&store, &session).unwrap();
+    let root = store.runtime_root(&session).unwrap();
+    let args = protocol::arguments(&effective, None, None, Some(&root));
+    let prompt = &args[args
+        .iter()
+        .position(|a| a == "--append-system-prompt")
+        .unwrap()
+        + 1];
+    assert!(prompt.contains("starts in this conversation's private working folder"));
+    assert!(prompt.contains(&root.display().to_string()));
+    assert!(!prompt.contains("File edits require Edit access"));
+    let sandbox = shell::sandbox(&root, &effective.capabilities, false);
+    assert_eq!(
+        sandbox["filesystem"]["allowWrite"][0],
+        root.to_string_lossy().as_ref()
+    );
+    assert_eq!(sandbox["filesystem"]["denyWrite"], json!([]));
+}
+
+#[tokio::test]
+#[ignore = "Uses subscription quota for one small model turn in a private working folder"]
+async fn claude_private_folder_probe() {
+    assert!(shell::available(
+        wsl::detect_async().await.environment().unwrap().as_ref()
+    ));
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::open_at(temp.path()).unwrap();
+    let session = store
+        .create_session(CreateSessionRequest {
+            workspace_id: None,
+            title: "Unfiled".into(),
+            operation_id: "session".into(),
+        })
+        .unwrap()
+        .record
+        .id;
+    let effective = super::super::research::resolve_harness(&store, &session).unwrap();
+    let root = store.runtime_root(&session).unwrap();
+    let args = protocol::arguments(&effective, Some("haiku"), None, Some(&root));
+    let mut process = transport::Process::start(
+        &args,
+        Some(&shell::sandbox(&root, &effective.capabilities, false)),
+        Some(&root),
+    )
+    .await
+    .unwrap();
+    process.initialize(&[]).await.unwrap();
+    let prompt = "Use Bash once to run exactly this command, then reply DONE.\nprintf PIPELINE_RELATIVE_WRITE > relative.txt";
+    let result = tokio::time::timeout(std::time::Duration::from_secs(180), async {
+        process.write(&json!({"type":"user","message":{"role":"user","content":prompt},"parent_tool_use_id":null,"session_id":""})).await?;
+        loop {
+            let frame = process.read().await?;
+            match frame["type"].as_str() {
+                Some("control_request") => process.control(&frame, &[], None).await?,
+                Some("result") => return Ok::<_, String>(()),
+                _ => {}
+            }
+        }
+    })
+    .await;
+    process.stop().await;
+    result.unwrap().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join("relative.txt")).unwrap(),
+        "PIPELINE_RELATIVE_WRITE"
     );
 }
 

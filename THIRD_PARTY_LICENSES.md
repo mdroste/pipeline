@@ -4,8 +4,9 @@ Pipeline is released under the [MIT License](LICENSE). Its installers also
 contain Rust and JavaScript libraries and the Poppler PDF tools, which keep
 their own licenses as described below.
 
-Every installer includes this notice, Pipeline's MIT license, and the Poppler
-license text that came with that platform's Poppler build.
+Every installer includes this notice, Pipeline's MIT license,
+`THIRD_PARTY_LIBRARIES.txt`, and the Poppler license text that came with that
+platform's Poppler build.
 
 ## Bundled Poppler
 
@@ -35,10 +36,25 @@ The installed app doesn't include these source archives.
 ## Rust and JavaScript libraries
 
 The app includes compiled Rust crates and a compiled JavaScript interface.
-`Cargo.lock` and `package-lock.json` record their exact versions and
-checksums. Each library's own license applies. PDF highlight export uses the
-`lopdf` crate (MIT). Its dependencies use the MIT or Apache-2.0 licenses, and
-`unicode-normalization` also carries the Unicode-3.0 data license.
+`THIRD_PARTY_LIBRARIES.txt` lists each one with its stated license and the
+license text it publishes. `Cargo.lock` and `package-lock.json` record their
+exact versions and checksums. Each library's own license applies. PDF highlight
+export uses the `lopdf` crate (MIT). Its dependencies use the MIT or Apache-2.0
+licenses, and `unicode-normalization` also carries the Unicode-3.0 data license.
+
+The interface also includes these fonts and components. Their license texts are
+in `THIRD_PARTY_LIBRARIES.txt`, under `katex` and `pdfjs-dist`.
+
+| Component | Used for | License |
+| --- | --- | --- |
+| KaTeX and its math fonts | Math in reports and print export | MIT |
+| pdf.js | The PDF reader | Apache-2.0 |
+| Foxit fonts, in pdf.js | Standard PDF fonts | BSD-style |
+| Liberation fonts, in pdf.js | Standard PDF fonts | GPL-2.0 with a font exception |
+| JBIG2 decoder, in pdf.js | Scanned PDF images | BSD-style |
+| OpenJPEG decoder, in pdf.js | JPEG 2000 images in PDFs | BSD-2-Clause |
+| qcms, in pdf.js | PDF color management | MIT |
+| QuickJS, in pdf.js | Scripts in PDF forms | Distributed with pdf.js |
 
 ## Optional PDF parser
 

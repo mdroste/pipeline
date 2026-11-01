@@ -1,7 +1,8 @@
 //! Declared-output checks, immutable adoption, and observed dependency evidence.
 
+use super::file_identity::{hash_regular_file, SNAPSHOT_BUDGET};
 use super::types::ExecutionProfile;
-use crate::workbench::research::papers::{copy_immutable, hash_file};
+use crate::workbench::research::papers::copy_immutable_within;
 use crate::workbench::research::{new_id, now, open_connection};
 use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
 use rusqlite::params;
@@ -103,33 +104,105 @@ pub(super) fn stata_log_errors(log: &str) -> Vec<Value> {
     errors
 }
 
-pub(super) fn adopt_execution_outputs(
+/// Largest single output copied into private storage.
+const OUTPUT_RETENTION_LIMIT: u64 = 200 * 1024 * 1024;
+
+fn adopt_file(
     store: &Store,
     profile: &ExecutionProfile,
+    source: &Path,
+    hash: &str,
+    size: u64,
+    limit: u64,
+) -> WorkbenchResult<String> {
+    let suffix = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("bin");
+    let destination = store
+        .root_path()
+        .join("blobs")
+        .join(format!("{hash}.{suffix}"));
+    copy_immutable_within(source, &destination, hash, limit)?;
+    let artifact_id = new_id("artifact")?;
+    open_connection(store)?.execute("INSERT OR IGNORE INTO artifacts (id, workspace_id, content_hash, media_kind, size_bytes, origin, storage_reference, original_path, created_at) VALUES (?1, ?2, ?3, ?4, ?5, 'research_execution', ?6, ?7, ?8)", params![artifact_id, profile.workspace_id, hash, suffix, size as i64, destination.to_string_lossy(), source.to_string_lossy(), now()]).map_err(|error| WorkbenchError::storage("Failed to adopt execution artifact", error))?;
+    open_connection(store)?
+        .query_row(
+            "SELECT id FROM artifacts WHERE workspace_id=?1 AND content_hash=?2 AND media_kind=?3",
+            params![profile.workspace_id, hash, suffix],
+            |row| row.get(0),
+        )
+        .map_err(|e| WorkbenchError::storage("Failed to resolve adopted artifact", e))
+}
+
+/// Keeps what it can and reports the rest, so that nothing about one file can
+/// cost a finished run its logs and outcome. Each entry in `notRetained` says
+/// why; it carries the hash whenever the file could be read as itself.
+fn adopt_files(
+    store: &Store,
+    profile: &ExecutionProfile,
+    files: &[String],
     execution_id: &str,
-) -> WorkbenchResult<Value> {
+    limit: u64,
+) -> Value {
     let mut adopted = Vec::new();
-    for relative in &profile.outputs {
+    let mut not_retained = Vec::new();
+    for relative in files {
         let source = Path::new(&profile.cwd).join(relative);
         if !source.is_file() {
             continue;
         }
-        let (hash, size) = hash_file(&source)?;
-        let suffix = source
-            .extension()
-            .and_then(|value| value.to_str())
-            .unwrap_or("bin");
-        let destination = store
-            .root_path()
-            .join("blobs")
-            .join(format!("{hash}.{suffix}"));
-        copy_immutable(&source, &destination, &hash)?;
-        let artifact_id = new_id("artifact")?;
-        open_connection(store)?.execute("INSERT OR IGNORE INTO artifacts (id, workspace_id, content_hash, media_kind, size_bytes, origin, storage_reference, original_path, created_at) VALUES (?1, ?2, ?3, ?4, ?5, 'research_execution', ?6, ?7, ?8)", params![artifact_id, profile.workspace_id, hash, suffix, size as i64, destination.to_string_lossy(), source.to_string_lossy(), now()]).map_err(|error| WorkbenchError::storage("Failed to adopt execution artifact", error))?;
-        let artifact_id: String = open_connection(store)?.query_row("SELECT id FROM artifacts WHERE workspace_id=?1 AND content_hash=?2 AND media_kind=?3", params![profile.workspace_id,hash,suffix], |row|row.get(0)).map_err(|e|WorkbenchError::storage("Failed to resolve adopted artifact",e))?;
-        adopted.push(json!({"path":relative,"contentHash":hash,"sizeBytes":size,"artifactId":artifact_id,"sourceExecutionId":execution_id}));
+        let (hash, size) = match hash_regular_file(&source) {
+            Ok(identity) => identity,
+            Err(problem) => {
+                not_retained.push(
+                    json!({"path":relative,"reason":format!("This file {}", problem.reason())}),
+                );
+                continue;
+            }
+        };
+        if size > limit {
+            not_retained.push(json!({"path":relative,"contentHash":hash,"sizeBytes":size,"reason":format!("Larger than the {} MiB limit for kept files", limit / (1024 * 1024))}));
+            continue;
+        }
+        match adopt_file(store, profile, &source, &hash, size, limit) {
+            Ok(artifact_id) => adopted.push(json!({"path":relative,"contentHash":hash,"sizeBytes":size,"artifactId":artifact_id,"sourceExecutionId":execution_id})),
+            Err(error) => not_retained.push(json!({"path":relative,"contentHash":hash,"sizeBytes":size,"reason":error.message})),
+        }
     }
-    Ok(json!({"artifacts":adopted}))
+    let mut manifest = json!({"artifacts":adopted});
+    if !not_retained.is_empty() {
+        manifest["notRetained"] = json!(not_retained);
+    }
+    manifest
+}
+
+pub(super) fn adopt_execution_outputs(
+    store: &Store,
+    profile: &ExecutionProfile,
+    execution_id: &str,
+) -> Value {
+    adopt_files(
+        store,
+        profile,
+        &profile.outputs,
+        execution_id,
+        OUTPUT_RETENTION_LIMIT,
+    )
+}
+
+pub(super) fn snapshot_execution_inputs(
+    store: &Store,
+    profile: &ExecutionProfile,
+    execution_id: &str,
+) -> Value {
+    adopt_files(
+        store,
+        profile,
+        &profile.inputs,
+        execution_id,
+        SNAPSHOT_BUDGET,
+    )
 }
 
 /// TeX recorder observations are evidence of files opened on this run, not a closure.

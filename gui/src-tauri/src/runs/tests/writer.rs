@@ -261,6 +261,62 @@ fn unlisted_artifact_scan_removes_fifo_without_opening_it() {
 }
 
 #[test]
+fn unlisted_scan_keeps_a_listed_file_over_the_size_limit() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut writer = RunWriter::create_in(temp.path(), "listed-large-run").unwrap();
+    let report = "x".repeat(60_000_000);
+    writer
+        .add_text("artifacts/step/report.md", "Report", "report", &report)
+        .unwrap();
+    let path = writer.dir().join("artifacts/step/report.md");
+    // An unlisted file of the same size is still removed.
+    let unlisted = writer.dir().join("artifacts/step/runaway.bin");
+    fs::write(&unlisted, &report).unwrap();
+
+    assert_eq!(writer.register_unlisted("artifacts", "files"), 0);
+    assert_eq!(fs::metadata(&path).unwrap().len(), 60_000_000);
+    assert!(!unlisted.exists());
+}
+
+#[test]
+#[cfg(unix)]
+fn unlisted_scan_keeps_a_listed_file_with_a_second_link() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut writer = RunWriter::create_in(temp.path(), "listed-link-run").unwrap();
+    writer
+        .add_text("artifacts/step/report.md", "Report", "report", "findings")
+        .unwrap();
+    let path = writer.dir().join("artifacts/step/report.md");
+    let view = temp.path().join("step-view.md");
+    fs::hard_link(&path, &view).unwrap();
+    let unlisted = writer.dir().join("artifacts/step/linked.md");
+    fs::hard_link(&view, &unlisted).unwrap();
+
+    assert_eq!(writer.register_unlisted("artifacts", "files"), 0);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "findings");
+    assert!(!unlisted.exists());
+}
+
+#[test]
+fn unlisted_scan_keeps_page_images_after_they_are_compacted() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut writer = RunWriter::create_in(temp.path(), "compacted-pages-run").unwrap();
+    fs::create_dir_all(writer.dir().join("artifacts/pages")).unwrap();
+    let page = writer.dir().join("artifacts/pages/page-01.jpg");
+    fs::File::create(&page)
+        .unwrap()
+        .set_len(60_000_000)
+        .unwrap();
+    writer
+        .register_existing("artifacts/pages/page-01.jpg", "Page 1", "pages")
+        .unwrap();
+    assert_eq!(writer.compact_page_artifacts().unwrap(), 1);
+
+    assert_eq!(writer.register_unlisted("artifacts", "files"), 0);
+    assert_eq!(fs::metadata(&page).unwrap().len(), 60_000_000);
+}
+
+#[test]
 fn captured_tree_registration_keeps_every_file_past_the_model_output_cap() {
     let temp = tempfile::tempdir().unwrap();
     let mut writer = RunWriter::create_in(temp.path(), "captured-run").unwrap();

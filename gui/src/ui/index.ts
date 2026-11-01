@@ -9,5 +9,6 @@ export { default as SegmentedControl } from "./SegmentedControl";
 export { default as Tooltip } from "./Tooltip";
 export { default as IconButton } from "./IconButton";
 export { default as Sheet } from "./Sheet";
+export { default as Fold } from "./Fold";
 export { default as Skeleton } from "./Skeleton";
 export * from "./classes";

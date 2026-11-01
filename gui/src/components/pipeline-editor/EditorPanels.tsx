@@ -14,6 +14,7 @@ import PromptEditor from "../PromptEditor";
 import AdvancedStepOptions from "./AdvancedStepOptions";
 import AnalyzerStepPanel from "./AnalyzerStepPanel";
 import AgentChips from "./AgentChips";
+import { MAX_STEP_LABEL_CHARS } from "./editorState";
 import ModelOverrides from "./ModelOverrides";
 import { describeStep } from "./stepSummary";
 import {
@@ -39,11 +40,13 @@ export const MergeEditorPanel = memo(function MergeEditorPanel({
             aria-checked={merge.enabled}
             onClick={() => onChange({ enabled: !merge.enabled })}
             className={`w-8 h-5 rounded-full relative transition-colors shrink-0 ${
-              merge.enabled ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
+              merge.enabled
+                ? "bg-green-600 dark:bg-neutral-200"
+                : "bg-gray-300 dark:bg-gray-600"
             }`}
           >
             <div
-              className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
+              className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform dark:bg-neutral-900 ${
                 merge.enabled ? "translate-x-3.5" : "translate-x-0.5"
               }`}
             />
@@ -73,133 +76,131 @@ export const MergeEditorPanel = memo(function MergeEditorPanel({
   );
 });
 
-export const PipelineSettingsEditorPanel = memo(
-  function PipelineSettingsEditorPanel({
-    config,
-    activeProfile,
-    onContextCacheChange,
-    onVariablesChange,
-    onCalibrationAppend,
-    onResetParallelTemplate,
-    onParallelTemplateChange,
-  }: {
-    config: PipelineConfig;
-    activeProfile: string;
-    onContextCacheChange: (enabled: boolean) => void;
-    onVariablesChange: (variables: VarSpec[]) => void;
-    onCalibrationAppend: (stepId: string, text: string) => void;
-    onResetParallelTemplate: (source: "generic" | "paper") => void;
-    onParallelTemplateChange: (template: string) => void;
-  }) {
-    return (
-      <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
-        <div className="p-4 space-y-5">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">
-              Pipeline Settings
-            </h3>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Settings that apply to all steps in this profile.
-            </p>
-          </div>
+export function PipelineSettingsEditorPanel({
+  config,
+  activeProfile,
+  onContextCacheChange,
+  onVariablesChange,
+  onCalibrationAppend,
+  onResetParallelTemplate,
+  onParallelTemplateChange,
+}: {
+  config: PipelineConfig;
+  activeProfile: string;
+  onContextCacheChange: (enabled: boolean) => void;
+  onVariablesChange: (variables: VarSpec[]) => void;
+  onCalibrationAppend: (stepId: string, text: string) => void;
+  onResetParallelTemplate: (source: "generic" | "paper") => void;
+  onParallelTemplateChange: (template: string) => void;
+}) {
+  return (
+    <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+      <div className="p-4 space-y-5">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-1">
+            Review settings
+          </h3>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Settings that apply to all steps in this review.
+          </p>
+        </div>
 
-          <div className="flex items-start gap-3">
-            <button
-              type="button"
-              role="switch"
-              aria-label="Reuse shared input context"
-              aria-checked={config.context_cache?.enabled ?? false}
-              onClick={() =>
-                onContextCacheChange(!(config.context_cache?.enabled ?? false))
-              }
-              className={`w-8 h-5 rounded-full relative transition-colors shrink-0 mt-0.5 ${
+        <div className="flex items-start gap-3">
+          <button
+            type="button"
+            role="switch"
+            aria-label="Reuse shared input context"
+            aria-checked={config.context_cache?.enabled ?? false}
+            onClick={() =>
+              onContextCacheChange(!(config.context_cache?.enabled ?? false))
+            }
+            className={`w-8 h-5 rounded-full relative transition-colors shrink-0 mt-0.5 ${
+              config.context_cache?.enabled
+                ? "bg-green-600 dark:bg-neutral-200"
+                : "bg-gray-300 dark:bg-gray-600"
+            }`}
+          >
+            <div
+              className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform dark:bg-neutral-900 ${
                 config.context_cache?.enabled
-                  ? "bg-green-600"
-                  : "bg-gray-300 dark:bg-gray-600"
+                  ? "translate-x-3.5"
+                  : "translate-x-0.5"
               }`}
-            >
-              <div
-                className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${
-                  config.context_cache?.enabled
-                    ? "translate-x-3.5"
-                    : "translate-x-0.5"
-                }`}
-              />
-            </button>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-                  Reuse shared input context
-                </span>
-                <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/50 dark:text-blue-300">
-                  {ADAPTIVE_REVIEW_PROFILE_IDS.includes(activeProfile)
-                    ? "Built-in default"
-                    : "Optional"}
-                </span>
-              </div>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                Prepare the document text and input assessment once for all
-                review steps. Supported providers reuse this material to reduce
-                repeated processing. Paper Review and Slide Review enable this
-                by default; other providers process each call normally.
-              </p>
-              {config.context_cache?.enabled && (
-                <p className="text-[11px] text-green-700 dark:text-green-400 mt-1">
-                  Enabled for this profile. Cache reads and writes will appear
-                  in token usage.
-                </p>
-              )}
-            </div>
-          </div>
-
-          <VariablesEditor
-            variables={config.variables ?? []}
-            onChange={onVariablesChange}
-          />
-          <CalibrateSection onAppend={onCalibrationAppend} />
-
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                Parallel step context template
-              </label>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => onResetParallelTemplate("generic")}
-                  className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
-                  title="Include the input assessment, step instructions, and file path."
-                >
-                  Reset to generic
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onResetParallelTemplate("paper")}
-                  className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
-                  title="Give reviewers the paper type, guidance on figures, and instructions for identifying problems."
-                >
-                  Reset to paper review
-                </button>
-              </div>
-            </div>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
-              Wraps each parallel step's prompt. Controls what context the LLM
-              receives.
-            </p>
-            <PromptEditor
-              value={config.parallel_context_template}
-              onChange={onParallelTemplateChange}
-              context={{ kind: "parallel_template" }}
-              ariaLabel="Parallel step context template"
-              rows={16}
-              fillHeight={false}
             />
+          </button>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                Reuse shared input context
+              </span>
+              <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/50 dark:text-blue-300">
+                {ADAPTIVE_REVIEW_PROFILE_IDS.includes(activeProfile)
+                  ? "Built-in default"
+                  : "Optional"}
+              </span>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+              Prepare the document text and input assessment once for all review
+              steps. Supported providers reuse this material to reduce repeated
+              processing. Paper Review and Slide Review enable this by default;
+              other providers process each call normally.
+            </p>
+            {config.context_cache?.enabled && (
+              <p className="text-[11px] text-green-700 dark:text-green-400 mt-1">
+                Enabled for this review. Cache reads and writes will appear in
+                token usage.
+              </p>
+            )}
           </div>
         </div>
+
+        <VariablesEditor
+          variables={config.variables ?? []}
+          onChange={onVariablesChange}
+        />
+        <CalibrateSection onAppend={onCalibrationAppend} />
+
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Parallel step context template
+            </label>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => onResetParallelTemplate("generic")}
+                className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                title="Include the input assessment, step instructions, and file path."
+              >
+                Reset to generic
+              </button>
+              <button
+                type="button"
+                onClick={() => onResetParallelTemplate("paper")}
+                className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                title="Give reviewers the paper type, guidance on figures, and instructions for identifying problems."
+              >
+                Reset to paper review
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+            Wraps each parallel step's prompt. Controls what context the LLM
+            receives.
+          </p>
+          <PromptEditor
+            value={config.parallel_context_template}
+            onChange={onParallelTemplateChange}
+            context={{ kind: "parallel_template" }}
+            ariaLabel="Parallel step context template"
+            rows={16}
+            fillHeight={false}
+          />
+        </div>
       </div>
-    );
-  },
-);
+    </div>
+  );
+}
 
 export const StepEditorPanel = memo(function StepEditorPanel({
   step,
@@ -303,6 +304,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
             <input
               type="text"
               aria-label="Step label"
+              maxLength={MAX_STEP_LABEL_CHARS}
               value={step.label}
               onChange={(event) =>
                 onUpdate(step.id, { label: event.target.value })
@@ -542,7 +544,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
             Model &amp; agents
           </h3>
           <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Choose providers and tools, or inherit the profile-wide defaults.
+            Choose providers and tools, or inherit the review-wide defaults.
           </p>
         </div>
         <div>

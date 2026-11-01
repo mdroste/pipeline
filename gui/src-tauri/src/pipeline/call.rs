@@ -6,10 +6,12 @@
 //! deeper Tauri/orchestration stack, while boxed futures keep task-local
 //! logging scopes from embedding (and duplicating) the full dispatcher state.
 
+use super::cli_process::{mark_call_deadline, with_call_deadline};
 use super::providers::call_llm;
 use super::providers::LlmOverrides;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -273,22 +275,26 @@ async fn execute_provider_once(
     let tool_refs: Vec<&str> = request.tools.iter().map(String::as_str).collect();
     let read_dirs: Vec<&str> = request.read_dirs.iter().map(String::as_str).collect();
     let started = Instant::now();
+    let deadline = Arc::new(AtomicU64::new(0));
     let bounded: BoxCallFuture<'_> = Box::pin(async {
         // Heap-pin the cross-provider state machine. In debug builds, placing
         // it beneath generic task-local wrappers caused large nested poll
         // frames on the orchestration worker stack.
-        let mut call = Box::pin(call_llm(
-            &request.app,
-            &request.prompt,
-            &tool_refs,
-            request.system_prompt.as_deref(),
-            &request.output_format,
-            timeout_secs,
-            label,
-            provider,
-            request.cwd.as_deref(),
-            &read_dirs,
-            overrides,
+        let mut call = Box::pin(with_call_deadline(
+            deadline.clone(),
+            call_llm(
+                &request.app,
+                &request.prompt,
+                &tool_refs,
+                request.system_prompt.as_deref(),
+                &request.output_format,
+                timeout_secs,
+                label,
+                provider,
+                request.cwd.as_deref(),
+                &read_dirs,
+                overrides,
+            ),
         ));
         match tokio::time::timeout(
             Duration::from_secs(timeout_secs),
@@ -304,6 +310,7 @@ async fn execute_provider_once(
                 Err(error)
             }
             Err(_) => {
+                mark_call_deadline(&deadline, timeout_secs);
                 crate::commands::kill_pass_children(&request.pass_key);
                 // Keep polling briefly after termination so CLI providers can
                 // reap their child and drain/close reader tasks.
@@ -345,11 +352,16 @@ fn timeout_outcome(
     if native_submission {
         Err(format!("[codex-outcome-unknown] {label} exceeded its {seconds}s deadline; review the native attempt before retrying. {}", cleanup.and_then(|r| r.err()).unwrap_or_default()))
     } else {
-        cleanup.unwrap_or_else(|| {
-            Err(format!(
+        // The deadline killed the call, so whatever the dying provider reported
+        // is a symptom. Only a cancellation that raced the deadline outranks it.
+        match cleanup {
+            Some(Err(error)) if crate::commands::is_pipeline_cancellation_error(&error) => {
+                Err(error)
+            }
+            _ => Err(format!(
                 "{label} timed out after {seconds}s (including context preparation and fallbacks)"
-            ))
-        })
+            )),
+        }
     }
 }
 
@@ -626,6 +638,36 @@ mod tests {
             )
             .unwrap(),
             "complete"
+        );
+    }
+
+    #[test]
+    fn cli_deadline_reports_its_own_timeout_over_the_killed_child() {
+        let app: crate::emit::EventBus = Arc::new(crate::emit::NullEvents);
+        let request = OwnedRequest::new(&app, "timeout", "Timeout", "prompt", 1);
+        let error = timeout_outcome(
+            &request,
+            Some("claude"),
+            "Step",
+            7,
+            Some(Err("Claude CLI terminated by a signal".into())),
+        )
+        .unwrap_err();
+        assert!(error.starts_with("Step timed out after 7s"), "{error}");
+        assert_eq!(
+            timeout_outcome(
+                &request,
+                Some("claude"),
+                "Step",
+                7,
+                Some(Err("Pipeline cancelled".into()))
+            )
+            .unwrap_err(),
+            "Pipeline cancelled"
+        );
+        assert_eq!(
+            timeout_outcome(&request, Some("claude"), "Step", 7, Some(Ok("late".into()))).unwrap(),
+            "late"
         );
     }
 

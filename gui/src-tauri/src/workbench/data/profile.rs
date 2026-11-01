@@ -28,23 +28,33 @@ pub struct MissingCell {
     pub code: String,
 }
 
-/// At most 25 rows and 100 columns of display text; `None` is a missing cell.
+/// A bounded page of display text, 25 rows unless a caller asks for its own
+/// limit, and 100 columns; `None` is a missing cell.
 #[derive(Debug, Default)]
 pub(crate) struct Window {
     pub start: usize,
     pub columns: Vec<String>,
     pub rows: Vec<Vec<Option<String>>>,
     pub missing_codes: Vec<MissingCell>,
+    limit: usize,
 }
 impl Window {
     pub fn new(start: usize) -> Self {
+        Self::with_limit(start, PREVIEW_ROWS)
+    }
+    pub fn with_limit(start: usize, limit: usize) -> Self {
         Self {
             start,
+            limit,
             ..Self::default()
         }
     }
+    /// First row past this page.
+    pub fn end(&self) -> usize {
+        self.start.saturating_add(self.limit)
+    }
     pub fn wants(&self, row: usize) -> bool {
-        row >= self.start && row < self.start.saturating_add(PREVIEW_ROWS)
+        row >= self.start && row < self.end()
     }
 }
 

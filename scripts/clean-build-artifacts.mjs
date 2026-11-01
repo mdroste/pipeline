@@ -8,6 +8,8 @@ const OUTPUTS = [
   "gui/src-tauri/gen/schemas",
   "gui/dist",
   "gui/.vite",
+  "gui/tsconfig.tsbuildinfo",
+  "gui/tsconfig.node.tsbuildinfo",
   "gui/node_modules/.vite",
   "gui/node_modules/.vite-temp",
 ];

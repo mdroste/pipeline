@@ -236,7 +236,11 @@ export default function WorkspaceDesk({
               className="workspace-desk-button"
               aria-controls={`${id}-assistant`}
               aria-pressed={effective !== "project"}
-              aria-label={effective === "project" ? "Show chat" : "Hide chat"}
+              aria-label={
+                effective === "project"
+                  ? "Show conversation"
+                  : "Hide conversation"
+              }
               onClick={() => {
                 if (effective === "project") {
                   setLastPane("assistant");
@@ -245,7 +249,7 @@ export default function WorkspaceDesk({
               }}
             >
               <WorkspaceIcon name="message" />
-              Chat
+              Conversation
               {attentionCount > 0
                 ? ` · ${attentionCount}`
                 : active
@@ -263,11 +267,11 @@ export default function WorkspaceDesk({
                 checked={effective === "assistant"}
                 onSelect={() => choose("assistant")}
               >
-                Chat only
+                Conversation only
               </MenuItem>
               {fits && (
                 <MenuItem checked={effective === "split"} onSelect={split}>
-                  Project + chat
+                  Project + conversation
                 </MenuItem>
               )}
               <MenuItem onSelect={reset}>Reset layout</MenuItem>
@@ -286,8 +290,9 @@ export default function WorkspaceDesk({
         )}
         {attentionCount > 0 && (
           <span role="status">
-            {attentionCount} request{attentionCount === 1 ? "" : "s"} need
-            attention
+            {attentionCount === 1
+              ? "1 request needs attention"
+              : `${attentionCount} requests need attention`}
           </span>
         )}
       </div>

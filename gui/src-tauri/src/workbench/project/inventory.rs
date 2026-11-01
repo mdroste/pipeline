@@ -5,6 +5,7 @@ use super::records::{decode, put, records, ProjectRecord};
 use super::{err, files, hash, id, now, root, MAX_CAPTURE, MAX_FILE, MAX_FILES};
 use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -26,6 +27,10 @@ pub struct Inventory {
     pub warnings: Vec<String>,
     pub captured_at: String,
     pub complete: bool,
+    /// Modified times of hashed files, which let a background check keep their
+    /// hashes. Only project inventories record these.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub modified_ms: HashMap<String, u64>,
 }
 
 /// Bounded, descriptor-relative reads for the explicit task snapshot bridge.
@@ -123,25 +128,73 @@ pub(super) fn ignored(path: &str, custom: &[String]) -> bool {
             || ["node_modules", "target", ".venv", "__pycache__", ".cache"]
                 .iter()
                 .any(|name| p.trim_end_matches(['.', ' ']).eq_ignore_ascii_case(name))
-    }) || custom
-        .iter()
-        .any(|p| path == p || path.starts_with(&format!("{p}/")))
-        || ["aux", "toc", "out", "synctex.gz", "fls", "fdb_latexmk"]
-            .iter()
-            .any(|e| path.ends_with(&format!(".{e}")))
+    }) || custom.iter().any(|p| {
+        path.strip_prefix(p.as_str())
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+    }) || [
+        ".aux",
+        ".toc",
+        ".out",
+        ".synctex.gz",
+        ".fls",
+        ".fdb_latexmk",
+    ]
+    .iter()
+    .any(|suffix| path.ends_with(suffix))
 }
 pub(super) fn inventory_at(root: &Path, custom: &[String]) -> WorkbenchResult<Inventory> {
+    scan(root, custom, false, None)
+}
+fn modified_ms(meta: &fs::Metadata) -> Option<u64> {
+    let since = meta.modified().ok()?.duration_since(std::time::UNIX_EPOCH);
+    u64::try_from(since.ok()?.as_millis()).ok()
+}
+#[cfg(test)]
+thread_local! {
+    /// Runs between listing a folder and reading its entries, where a file can
+    /// vanish.
+    pub(super) static AFTER_LISTING: std::cell::RefCell<Option<Box<dyn Fn()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+/// `record_times` keeps each file's modified time. A file in `known` with the
+/// same size and time keeps its hash without being read.
+fn scan(
+    root: &Path,
+    custom: &[String],
+    record_times: bool,
+    known: Option<&Inventory>,
+) -> WorkbenchResult<Inventory> {
+    let known_files: HashMap<&str, &FileEntry> = known
+        .into_iter()
+        .flat_map(|inventory| &inventory.files)
+        .map(|file| (file.path.as_str(), file))
+        .collect();
     let mut result = Inventory {
         root_identity: crate::workbench::store::root_identity(root)?,
         files: Vec::new(),
         warnings: Vec::new(),
         captured_at: now(),
         complete: true,
+        modified_ms: HashMap::new(),
     };
     let started = Instant::now();
     let mut pending = vec![String::new()];
     let mut total = 0;
     let mut visited = 0;
+    let mut unreadable = 0;
+    // One entry that can't be read leaves the rest of the scan good: files come
+    // and go during a build, and a project can hold a folder nobody may open.
+    let mut skip = |result: &mut Inventory, path: String| {
+        unreadable += 1;
+        result.complete = false;
+        result.files.push(FileEntry {
+            path,
+            hash: None,
+            size: 0,
+            status: "unavailable".into(),
+            executable: false,
+        });
+    };
     let safe = files::SafeRoot::open(root)?;
     while let Some(relative) = pending.pop() {
         if started.elapsed() > Duration::from_secs(5)
@@ -152,11 +205,28 @@ pub(super) fn inventory_at(root: &Path, custom: &[String]) -> WorkbenchResult<In
             result.warnings.push("Inventory limit reached; select a smaller folder or exclude directories and refresh".into());
             break;
         }
-        let mut entries = fs::read_dir(root.join(&relative))
-            .map_err(err)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(err)?;
+        let listing = match fs::read_dir(root.join(&relative)) {
+            Ok(listing) => listing,
+            Err(error) if relative.is_empty() => return Err(err(error)),
+            Err(_) => {
+                skip(&mut result, relative);
+                continue;
+            }
+        };
+        let mut entries = Vec::new();
+        for entry in listing {
+            match entry {
+                Ok(entry) => entries.push(entry),
+                Err(_) => skip(&mut result, relative.clone()),
+            }
+        }
         entries.sort_by_key(|e| e.file_name());
+        #[cfg(test)]
+        AFTER_LISTING.with(|hook| {
+            if let Some(hook) = hook.borrow().as_ref() {
+                hook();
+            }
+        });
         for entry in entries {
             visited += 1;
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -168,7 +238,10 @@ pub(super) fn inventory_at(root: &Path, custom: &[String]) -> WorkbenchResult<In
             if ignored(&path, custom) {
                 continue;
             }
-            let meta = fs::symlink_metadata(entry.path()).map_err(err)?;
+            let Ok(meta) = fs::symlink_metadata(entry.path()) else {
+                skip(&mut result, path);
+                continue;
+            };
             if meta.is_dir() {
                 if pending.len() < MAX_FILES {
                     pending.push(path);
@@ -180,12 +253,20 @@ pub(super) fn inventory_at(root: &Path, custom: &[String]) -> WorkbenchResult<In
             let executable = files::executable(&meta);
             let mut status = "current".to_string();
             let mut digest = None;
+            let modified = modified_ms(&meta).filter(|_| record_times);
+            let unchanged = known_files.get(path.as_str()).filter(|file| {
+                let recorded = known.and_then(|inventory| inventory.modified_ms.get(&file.path));
+                file.hash.is_some() && file.size == meta.len() && recorded == modified.as_ref()
+            });
             if !meta.is_file() || meta.file_type().is_symlink() {
                 status = "unsupported".into();
                 result.complete = false;
             } else if meta.len() > MAX_FILE || total + meta.len() > MAX_CAPTURE {
                 status = "unhashed_large_file".into();
                 result.complete = false;
+            } else if let Some(file) = unchanged.filter(|_| modified.is_some()) {
+                total += meta.len();
+                digest = file.hash.clone();
             } else {
                 match safe.read(&path) {
                     Ok(bytes) => {
@@ -198,6 +279,9 @@ pub(super) fn inventory_at(root: &Path, custom: &[String]) -> WorkbenchResult<In
                     }
                 }
             }
+            if let Some(modified) = modified.filter(|_| digest.is_some()) {
+                result.modified_ms.insert(path.clone(), modified);
+            }
             result.files.push(FileEntry {
                 path,
                 hash: digest,
@@ -207,36 +291,93 @@ pub(super) fn inventory_at(root: &Path, custom: &[String]) -> WorkbenchResult<In
             });
         }
     }
+    if unreadable > 0 {
+        result.warnings.push(format!(
+            "{unreadable} item(s) could not be read; refresh to try again"
+        ));
+    }
     result.files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(result)
 }
+/// Reads every file, as an explicit Refresh should.
 pub(super) fn refresh(store: &Store, workspace_id: &str) -> WorkbenchResult<ProjectRecord> {
+    update_inventory(store, workspace_id, false)
+}
+/// The check on window focus and on the timer. It trusts a file's size and
+/// modified time, so returning to the app does not read the whole project.
+pub(super) fn check_for_changes(
+    store: &Store,
+    workspace_id: &str,
+) -> WorkbenchResult<ProjectRecord> {
+    update_inventory(store, workspace_id, true)
+}
+/// Whether a path sits under one of these folders.
+fn inside_any(path: &str, folders: &HashSet<String>) -> bool {
+    path.rmatch_indices('/')
+        .any(|(end, _)| folders.contains(&path[..end]))
+}
+fn update_inventory(
+    store: &Store,
+    workspace_id: &str,
+    trust_times: bool,
+) -> WorkbenchResult<ProjectRecord> {
     let settings: ProjectHomeSettings = decode(&home_record(store, workspace_id)?)?;
     let root = root(store, workspace_id)?;
-    let mut inventory = inventory_at(&root, &settings.ignored_paths)?;
     let old = records(store, workspace_id, "inventory")?
         .into_iter()
         .next();
-    if let Some(old) = &old {
-        let previous: Inventory = decode(old)?;
+    let previous: Option<Inventory> = old.as_ref().map(decode).transpose()?;
+    let known = previous.as_ref().filter(|_| trust_times);
+    let mut inventory = scan(&root, &settings.ignored_paths, true, known)?;
+    if let Some(previous) = &previous {
+        let previous_hashes: HashMap<&str, &Option<String>> = previous
+            .files
+            .iter()
+            .map(|f| (f.path.as_str(), &f.hash))
+            .collect();
         for file in &mut inventory.files {
             if file.hash.is_some() {
-                file.status = match previous.files.iter().find(|f| f.path == file.path) {
+                file.status = match previous_hashes.get(file.path.as_str()) {
                     None => "added",
-                    Some(f) if f.hash != file.hash => "changed",
+                    Some(hash) if **hash != file.hash => "changed",
                     _ => "current",
                 }
                 .into();
             }
         }
-        for file in previous.files {
-            if !inventory.files.iter().any(|f| f.path == file.path)
-                && !ignored(&file.path, &settings.ignored_paths)
+        let present: HashSet<String> = inventory.files.iter().map(|f| f.path.clone()).collect();
+        let unread: HashSet<String> = inventory
+            .files
+            .iter()
+            .filter(|f| f.status == "unavailable")
+            .map(|f| f.path.clone())
+            .collect();
+        for file in previous.files.iter() {
+            // A file that was already missing was reported once; keeping it for
+            // good would grow this record to its size limit.
+            if file.status == "missing"
+                || present.contains(&file.path)
+                || ignored(&file.path, &settings.ignored_paths)
             {
+                continue;
+            }
+            // Nothing is known about a file in a folder that couldn't be read,
+            // so it keeps what it had until the folder can be read again.
+            if inside_any(&file.path, &unread) {
+                inventory.files.push(file.clone());
+                if let Some(modified) = previous.modified_ms.get(&file.path) {
+                    inventory.modified_ms.insert(file.path.clone(), *modified);
+                }
+                continue;
+            }
+            // A folder listed as unread is not a file that went away.
+            let folder = file.status == "unavailable"
+                && fs::symlink_metadata(root.join(&file.path)).is_ok_and(|meta| meta.is_dir());
+            if !folder {
                 inventory.files.push(FileEntry {
                     status: "missing".into(),
                     hash: None,
-                    ..file
+                    ..file.clone()
                 });
             }
         }

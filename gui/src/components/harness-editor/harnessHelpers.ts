@@ -255,7 +255,7 @@ export type AccessKey =
 export const ACCESS_SCOPES: Array<{ id: AccessScope; label: string }> = [
   { id: "builtIn", label: "Built-in" },
   { id: "global", label: "Global" },
-  { id: "workspace", label: "Workspace" },
+  { id: "workspace", label: "Project" },
   { id: "conversation", label: "This conversation" },
 ];
 
@@ -306,7 +306,7 @@ export const ACCESS_ROWS: AccessRow[] = [
     key: "commandDomains",
     label: "Allowed command sites",
     description:
-      "With command internet access on: leave blank for public internet, or list domains separated by commas (for example, pypi.org, *.pythonhosted.org).",
+      "With command internet access on: list domains separated by commas (for example, pypi.org, *.pythonhosted.org). ChatGPT and Claude Code treat blank as public internet. API and local server conversations need at least one site, or commands won't run.",
     builtIn: "",
     kind: "text",
   },
@@ -407,7 +407,11 @@ export function effectiveAccessValue(
 export function compactAccessSummary(effective: EffectiveHarness): string {
   const budget = ACCESS_ROWS.find((row) => row.key === "contextBudgetBytes")!;
   return [
-    effective.mode === "edit" ? "Edit" : "Inspect",
+    effective.capabilities?.privateFolder
+      ? "Private working folder"
+      : effective.mode === "edit"
+        ? "Edit"
+        : "Inspect",
     effective.commandNetwork ? "command network" : "no command network",
     formatAccessValue(budget, effective.contextBudgetBytes),
   ].join(" · ");

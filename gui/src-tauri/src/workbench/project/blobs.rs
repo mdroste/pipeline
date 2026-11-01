@@ -1,7 +1,7 @@
 //! Immutable project snapshot storage and verified reads.
 
 use super::{err, hash, id, now, MAX_FILE};
-use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
+use crate::workbench::store::{outside_folder_error, Store, WorkbenchError, WorkbenchResult};
 use rusqlite::params;
 use std::fs;
 use std::io::{Read, Write};
@@ -49,7 +49,9 @@ pub(super) fn blob_read(
     let reference:String=store.connection()?.query_row("SELECT storage_reference FROM artifacts WHERE workspace_id=?1 AND content_hash=?2 AND media_kind='project_snapshot'",params![workspace_id,digest],|r|r.get(0)).map_err(err)?;
     let path = Path::new(&reference);
     if path.parent() != Some(store.root_path().join("blobs").as_path()) {
-        return Err(WorkbenchError::invalid(
+        return Err(outside_folder_error(
+            "This snapshot",
+            path,
             "Snapshot is outside immutable storage",
         ));
     }
@@ -63,4 +65,41 @@ pub(super) fn blob_read(
         return Err(WorkbenchError::invalid("Snapshot is missing or corrupted"));
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::test_support::*;
+    use super::super::*;
+
+    #[test]
+    fn undo_reads_its_snapshots_after_the_data_folder_moves() {
+        let mut f = fixture();
+        fs::write(f.root.join("main.tex"), "before").unwrap();
+        let c = copy(&f, &["main.tex"]);
+        let body: Checkpoint = decode(&c).unwrap();
+        fs::write(Path::new(&body.task_root).join("main.tex"), "after").unwrap();
+        let c = capture(&f, &c);
+        let applied = mutation(
+            &f,
+            ProjectAction::Apply {
+                checkpoint_id: c.id.clone(),
+                paths: vec!["main.tex".into()],
+                expected_revision: c.revision,
+            },
+        );
+        let moved = f._temp.path().join("moved");
+        fs::rename(f.store.root_path(), &moved).unwrap();
+        f.store = Store::open_at(&moved).unwrap();
+        mutation(
+            &f,
+            ProjectAction::Undo {
+                application_id: applied.id,
+            },
+        );
+        assert_eq!(
+            fs::read_to_string(f.root.join("main.tex")).unwrap(),
+            "before"
+        );
+    }
 }

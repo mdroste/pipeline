@@ -7,14 +7,28 @@ import {
   type SearchPage,
 } from "../../lib/deskClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
+import useReopenCount from "../../hooks/useReopenCount";
 import { addContextObject } from "../WorkspaceContextTray";
 import { button, input, card, muted, type DeskProps } from "./shared";
+
+const MAX_INDEX_RETRY_MS = 60_000;
+
 export default function Search(props: DeskProps) {
-  const { workspaceId, onOpen, onError } = props;
+  const {
+    workspaceId,
+    onOpen,
+    onError,
+    onChanged,
+    onActionStart,
+    active = true,
+  } = props;
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState("");
   const [page, setPage] = useState<SearchPage | null>(null);
+  // What produced `page`. Its cursor only works with the same query and kind.
+  const [searched, setSearched] = useState({ query: "", kind: "" });
   const [index, setIndex] = useState<IndexStatus | null>(null);
+  const [indexFailed, setIndexFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<OpenResearchObject[]>([]);
   const [title, setTitle] = useState("");
@@ -22,45 +36,71 @@ export default function Search(props: DeskProps) {
     DeskRecord<{ objects: OpenResearchObject[] }>[]
   >([]);
   const [rebuild, setRebuild] = useState(0);
+  const reopened = useReopenCount(active);
   useEffect(() => {
+    // This page drives indexing, so a hidden view leaves it until the next visit.
+    if (!active) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout>;
+    let failures = 0;
     const step = async () => {
       try {
         const next = await deskClient.index(workspaceId);
         if (!alive) return;
+        failures = 0;
+        setIndexFailed(false);
         setIndex(next);
-        timer = setTimeout(() => void step(), next.complete ? 5000 : 100);
+        if (!next.complete) timer = setTimeout(() => void step(), 100);
+        else wait();
       } catch (e) {
-        if (alive) onError(workbenchErrorMessage(e));
+        if (!alive) return;
+        // One banner for a run of failures, and keep trying at a slower pace.
+        if (!failures) onError(workbenchErrorMessage(e));
+        failures += 1;
+        setIndexFailed(true);
+        timer = setTimeout(
+          () => void step(),
+          Math.min(1000 * 2 ** failures, MAX_INDEX_RETRY_MS),
+        );
       }
     };
+    const wait = () => {
+      timer = setTimeout(() => {
+        if (document.visibilityState === "hidden") wait();
+        else void step();
+      }, 5000);
+    };
     void step();
-    void deskClient
-      .records<{ objects: OpenResearchObject[] }>(workspaceId, "collection")
-      .then(setCollections)
-      .catch((e) => onError(workbenchErrorMessage(e)));
     return () => {
       alive = false;
       clearTimeout(timer);
     };
-  }, [workspaceId, onError, rebuild]);
+  }, [workspaceId, onError, rebuild, active]);
   useEffect(() => {
-    if (index && page && index.generation !== page.index.generation)
-      setPage(null);
-  }, [index, page]);
+    void deskClient
+      .records<{ objects: OpenResearchObject[] }>(workspaceId, "collection")
+      .then(setCollections)
+      .catch((e) => onError(workbenchErrorMessage(e)));
+  }, [workspaceId, onError, rebuild, reopened]);
+  // Results stay readable after the index moves on; only their cursor is spent.
+  const stale = Boolean(
+    index && page && index.generation !== page.index.generation,
+  );
   const search = async (more = false) => {
+    onActionStart?.();
     setBusy(true);
+    const request = more ? searched : { query, kind };
     try {
       const next = await deskClient.search(
         workspaceId,
-        query,
-        kind || null,
+        request.query,
+        request.kind || null,
         more ? page?.nextCursor : null,
       );
       setPage((old) =>
         more && old ? { ...next, hits: [...old.hits, ...next.hits] } : next,
       );
+      setSearched(request);
     } catch (e) {
       onError(workbenchErrorMessage(e));
     } finally {
@@ -110,9 +150,11 @@ export default function Search(props: DeskProps) {
         </button>
       </form>
       <p role="status" className={muted}>
-        {index?.complete
-          ? "Local index complete"
-          : "Building local index; results may be incomplete"}{" "}
+        {indexFailed
+          ? "The local index could not be checked. Trying again…"
+          : index?.complete
+            ? "Local index complete"
+            : "Building local index; results may be incomplete"}{" "}
         · keyword search · saved versions{" "}
         <button
           className="ml-2 underline"
@@ -129,6 +171,11 @@ export default function Search(props: DeskProps) {
           Rebuild index
         </button>
       </p>
+      {stale && (
+        <p role="status" className={muted}>
+          The index changed. Search again for current results.
+        </p>
+      )}
       {page?.hits.map((hit, i) => (
         <article
           key={`${hit.object.id}:${hit.object.start}:${i}`}
@@ -177,7 +224,7 @@ export default function Search(props: DeskProps) {
           finish.
         </p>
       )}
-      {page?.nextCursor && (
+      {page?.nextCursor && !stale && (
         <button
           className={button}
           disabled={busy}
@@ -192,12 +239,14 @@ export default function Search(props: DeskProps) {
           className="flex gap-2"
           onSubmit={(e) => {
             e.preventDefault();
+            onActionStart?.();
             void deskClient
               .collection(workspaceId, title, selected)
               .then(() => {
                 setSelected([]);
                 setTitle("");
                 setRebuild((v) => v + 1);
+                onChanged?.();
               })
               .catch((e) => onError(workbenchErrorMessage(e)));
           }}

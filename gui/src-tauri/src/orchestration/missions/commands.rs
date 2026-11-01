@@ -90,7 +90,10 @@ pub async fn mission_prepare(app: tauri::AppHandle, request: Prepare) -> Result<
                 |r| r.get(0),
             )
             .map_err(|e| {
-                crate::workbench::store::WorkbenchError::storage("Mission watch baseline", e)
+                crate::workbench::store::WorkbenchError::storage(
+                    "Research automation watch baseline",
+                    e,
+                )
             })
     })
     .await
@@ -108,7 +111,7 @@ pub async fn mission_prepare(app: tauri::AppHandle, request: Prepare) -> Result<
         definition: request.definition,
         state: "draft".into(),
         reason:
-            "Review this mission's remit, role conversations, access and limits before starting"
+            "Review this automation's remit, role conversations, access and limits before starting"
                 .into(),
         source_session_id: request.session_id,
         workspace_id: ws,
@@ -203,7 +206,7 @@ pub async fn mission_control(
     let _gate = coordinator.gate.lock().await;
     let mut m = coordinator.db(move |s| storage::get(&s, &id)).await?;
     if m.revision != revision {
-        return Err("Mission changed; reload before continuing".into());
+        return Err("This research automation changed; reload before continuing".into());
     }
     let previous = m.state.clone();
     match action.as_str() {
@@ -223,7 +226,7 @@ pub async fn mission_control(
                 .await
                 .map_err(|e| e.message)?;
             m.state = "queued".into();
-            m.reason = "Research mission authorized; preparing the agenda".into();
+            m.reason = "Research automation authorized; preparing the agenda".into();
             m.deadline_at = Some(now() + m.definition.budget.deadline_hours as i64 * 3600);
             m.due_at = Some(now());
         }
@@ -243,7 +246,7 @@ pub async fn mission_control(
                             s.save(
                                 &mut child,
                                 "missionPause",
-                                "Owning mission paused queued work",
+                                "Owning automation paused queued work",
                             )?;
                         }
                         Ok(())
@@ -263,7 +266,7 @@ pub async fn mission_control(
                         if child.state == "paused" {
                             child.state = "queued".into();
                             child.due_at = Some(now());
-                            s.save(&mut child, "missionResume", "Owning mission resumed")?;
+                            s.save(&mut child, "missionResume", "Owning automation resumed")?;
                         }
                         Ok(())
                     })
@@ -272,7 +275,7 @@ pub async fn mission_control(
             } else {
                 m.state = "queued".into();
             }
-            m.reason = "Resuming within the remaining mission budget".into();
+            m.reason = "Resuming within the remaining budget".into();
             m.due_at = Some(now());
         }
         "stop" if !m.terminal() && m.state != "stopping" => {
@@ -289,110 +292,131 @@ pub async fn mission_control(
             }
         }
         "reconcile" if m.state == "attention" && m.active_child.is_some() => {
-            let id = m.active_child.clone().unwrap();
-            let mut child = coordinator.db(move |s| s.get(&id)).await?;
-            coordinator.recover_results(&mut child).await?;
-            if child
-                .progress
-                .receipts
-                .values()
-                .any(|r| r.state == "unknown" || r.state == "failed")
-            {
-                return Err(
-                    "The child outcome is still unresolved. Inspect it before choosing Retry."
-                        .into(),
-                );
-            }
-            child.state = "queued".into();
-            child.due_at = Some(now());
-            coordinator
-                .save(
-                    &mut child,
-                    "missionReconcile",
-                    "Adopted recorded mission action results",
-                )
-                .await?;
-            let id = m.id.clone();
-            m = coordinator.db(move |s| storage::get(&s, &id)).await?;
-            m.state = "running".into();
-            m.reason = "Recorded results reconciled; validating the research response".into();
-            m.due_at = Some(now());
+            reconcile(&coordinator, &mut m).await?;
         }
-        "retry" if m.state == "attention" => {
-            if exhausted(&m) {
-                return Err("The mission budget is exhausted. Prepare a new mission to authorize more work.".into());
-            }
-            if let Some(id) = m.active_child.clone() {
-                let child = coordinator.db(move |s| s.get(&id)).await?;
-                if child
-                    .progress
-                    .receipts
-                    .values()
-                    .any(|r| r.state == "running")
-                {
-                    return Err("The prior action has not stopped".into());
-                }
-                account(&mut m, &child);
-                // Explicit retry may adopt the researcher's intervening reply, but never
-                // altered permissions, roots, selected context or execution grants.
-                let target = match m.phase {
-                    Phase::Plan => &mut m.planner_scope,
-                    Phase::Challenge => &mut m.challenger_scope,
-                    _ => &mut m.scope,
-                };
-                let session = target
-                    .session_id
-                    .clone()
-                    .ok_or("Mission conversation missing")?;
-                let expected = m.authority_fingerprints[&session].clone();
-                let old = target.clone();
-                *target = run_store(move |s| workspace::readopt_scope(&s, &old, &expected, true))
-                    .await
-                    .map_err(|e| e.message)?;
-                m.active_child = None;
-                m.state = "queued".into();
-                m.due_at = Some(now());
-                m.reason="Retry authorized with current conversation input and the original resource limits".into();
-                let mut copy = m.clone();
-                let child_id = child.id.clone();
-                m = coordinator
-                    .db(move |s| {
-                        storage::adopted(&s, &mut copy, &child_id)?;
-                        Ok(copy)
-                    })
-                    .await?;
-            } else {
-                // Attention without a child (stagnation, a scope failure during
-                // dispatch): the planner conversation may have received a
-                // steering message meanwhile, so re-adopt its cursor exactly as
-                // the active-child branch does, or every Retry fails again.
-                m.phase = Phase::Plan;
-                let session = m
-                    .planner_scope
-                    .session_id
-                    .clone()
-                    .ok_or("Mission conversation missing")?;
-                let expected = m
-                    .authority_fingerprints
-                    .get(&session)
-                    .cloned()
-                    .ok_or("Mission authority is missing")?;
-                let old = m.planner_scope.clone();
-                m.planner_scope =
-                    run_store(move |s| workspace::readopt_scope(&s, &old, &expected, true))
-                        .await
-                        .map_err(|e| e.message)?;
-                m.state = "queued".into();
-                m.due_at = Some(now());
-                m.reason = "Reconsidering the agenda within the remaining budget".into();
-                m.stagnant_rounds = 0;
-            }
-        }
-        _ => return Err("This mission action is unavailable in the current state".into()),
+        "retry" if m.state == "attention" => retry(&coordinator, &mut m).await?,
+        _ => return Err("This action is unavailable in the automation's current state".into()),
     }
     save(&coordinator, &mut m, &action).await?;
     notify(&coordinator, &m, &previous);
     Ok(m)
+}
+
+/// Settles and reads the interrupted action, replaying nothing. A result on
+/// record is adopted through the action, as if it had just finished.
+pub(super) async fn reconcile(coordinator: &Coordinator, m: &mut Mission) -> Result<()> {
+    let id = m.active_child.clone().ok_or("No action to check")?;
+    let child = coordinator.db(move |s| s.get(&id)).await?;
+    let mut child = coordinator.recover_child(&child).await?;
+    if child
+        .progress
+        .receipts
+        .values()
+        .any(|r| r.state == "failed")
+    {
+        return Err(
+            "This step did not finish. Choose Retry interrupted action to run it again.".into(),
+        );
+    }
+    if child
+        .progress
+        .receipts
+        .values()
+        .any(|r| r.state == "unknown")
+    {
+        return Err("No saved result was found for this step. Inspect the action, then choose Retry interrupted action.".into());
+    }
+    child.state = "queued".into();
+    child.due_at = Some(now());
+    coordinator
+        .save(
+            &mut child,
+            "missionReconcile",
+            "Adopted recorded action results",
+        )
+        .await?;
+    let id = m.id.clone();
+    *m = coordinator.db(move |s| storage::get(&s, &id)).await?;
+    m.state = "running".into();
+    m.reason = "Recorded results reconciled; validating the research response".into();
+    m.due_at = Some(now());
+    Ok(())
+}
+
+pub(super) async fn retry(coordinator: &Coordinator, m: &mut Mission) -> Result<()> {
+    if exhausted(m) {
+        return Err(
+            "This automation has used its budget. Start a new research automation to do more work."
+                .into(),
+        );
+    }
+    if let Some(id) = m.active_child.clone() {
+        let child = coordinator.db(move |s| s.get(&id)).await?;
+        if child
+            .progress
+            .receipts
+            .values()
+            .any(|r| r.state == "running")
+        {
+            return Err("The previous step is still stopping. Try again in a moment.".into());
+        }
+        account(m, &child);
+        // Explicit retry may adopt the researcher's intervening reply, but never
+        // altered permissions, roots, selected context or execution grants.
+        let target = match m.phase {
+            Phase::Plan => &mut m.planner_scope,
+            Phase::Challenge => &mut m.challenger_scope,
+            _ => &mut m.scope,
+        };
+        let session = target
+            .session_id
+            .clone()
+            .ok_or("This automation's conversation is missing")?;
+        let expected = m.authority_fingerprints.get(&session).cloned().ok_or(
+            "This automation's permission record is unavailable. Start a new research automation.",
+        )?;
+        let old = target.clone();
+        *target = run_store(move |s| workspace::readopt_scope(&s, &old, &expected, true))
+            .await
+            .map_err(|e| e.message)?;
+        m.active_child = None;
+        m.state = "queued".into();
+        m.due_at = Some(now());
+        m.reason =
+            "Retry authorized with current conversation input and the original resource limits"
+                .into();
+        let mut copy = m.clone();
+        let child_id = child.id.clone();
+        *m = coordinator
+            .db(move |s| {
+                storage::adopted(&s, &mut copy, &child_id)?;
+                Ok(copy)
+            })
+            .await?;
+    } else {
+        // Attention without a child (stagnation, a scope failure during
+        // dispatch): the planner conversation may have received a
+        // steering message meanwhile, so re-adopt its cursor exactly as
+        // the active-child branch does, or every Retry fails again.
+        m.phase = Phase::Plan;
+        let session = m
+            .planner_scope
+            .session_id
+            .clone()
+            .ok_or("This automation's conversation is missing")?;
+        let expected = m.authority_fingerprints.get(&session).cloned().ok_or(
+            "This automation's permission record is unavailable. Start a new research automation.",
+        )?;
+        let old = m.planner_scope.clone();
+        m.planner_scope = run_store(move |s| workspace::readopt_scope(&s, &old, &expected, true))
+            .await
+            .map_err(|e| e.message)?;
+        m.state = "queued".into();
+        m.due_at = Some(now());
+        m.reason = "Reconsidering the agenda within the remaining budget".into();
+        m.stagnant_rounds = 0;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -428,7 +452,7 @@ pub async fn mission_retain_method(
     let _gate = coordinator.gate.lock().await;
     let mut m = coordinator.db(move |s| storage::get(&s, &id)).await?;
     if m.revision != revision {
-        return Err("Mission changed; reload before retaining a method".into());
+        return Err("This research automation changed; reload before retaining a method".into());
     }
     m.methods
         .iter_mut()
@@ -453,8 +477,8 @@ pub async fn mission_export(
     };
     crate::commands::save_via_dialog(
         &app,
-        &format!("research-mission.{extension}"),
-        "Research mission",
+        &format!("research-automation.{extension}"),
+        "Research automation",
         extension,
         bytes,
     )
@@ -466,13 +490,44 @@ pub async fn mission_evidence(
     id: String,
     evidence_id: String,
 ) -> Result<Value> {
-    super::super::manager(app).await?.db(move|s|{
-        let m=storage::get(&s,&id)?;
-        let value=m.rounds.iter().find_map(|r|r.evidence.get(&evidence_id)).cloned().ok_or("Evidence identity is not part of this mission")?;
-        if value["kind"]=="artifact" {
-            let path=adapters::artifact_path(&s,&value)?;
-            use std::io::Read;let mut bytes=Vec::new();crate::safety::open_regular_file(std::path::Path::new(&path))?.take(128*1024+1).read_to_end(&mut bytes).map_err(store::err)?;
-            return Ok(json!({"record":value,"text":String::from_utf8(bytes[..bytes.len().min(128*1024)].to_vec()).ok(),"truncated":bytes.len()>128*1024}));
-        }Ok(value)
-    }).await
+    super::super::manager(app)
+        .await?
+        .db(move |s| evidence(&s, &id, &evidence_id))
+        .await
+}
+pub(super) fn evidence(s: &store::Store, id: &str, evidence_id: &str) -> Result<Value> {
+    let m = storage::get(s, id)?;
+    let value = m
+        .rounds
+        .iter()
+        .find_map(|r| r.evidence.get(evidence_id))
+        .cloned()
+        .ok_or("Evidence identity is not part of this research automation")?;
+    if value["kind"] == "artifact" {
+        let path = adapters::artifact_path(s, &value)?;
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        crate::safety::open_regular_file(std::path::Path::new(&path))?
+            .take(EVIDENCE_PREVIEW as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(store::err)?;
+        return Ok(
+            json!({"record":value,"text":preview_text(&bytes),"truncated":bytes.len()>EVIDENCE_PREVIEW}),
+        );
+    }
+    Ok(value)
+}
+const EVIDENCE_PREVIEW: usize = 128 * 1024;
+/// The readable start of a file. The cut may fall inside a character, which
+/// is no reason to withhold the text; a binary file has none to show.
+fn preview_text(bytes: &[u8]) -> Option<String> {
+    let cut = bytes.len() > EVIDENCE_PREVIEW;
+    let shown = &bytes[..bytes.len().min(EVIDENCE_PREVIEW)];
+    match std::str::from_utf8(shown) {
+        Ok(text) => Some(text.into()),
+        Err(error) if cut && error.error_len().is_none() => {
+            String::from_utf8(shown[..error.valid_up_to()].to_vec()).ok()
+        }
+        Err(_) => None,
+    }
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// Inventory mode is read-only; --check enforces only regressions beyond the baseline.
+// Inventory mode is read-only; --check enforces regressions beyond the baseline and stale baseline entries.
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, lstatSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, lstatSync } from "node:fs";
 import { dirname, extname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,7 +19,7 @@ for (let i = 0; i < args.length; i++) {
 if (options.help) {
   console.log("Usage: node scripts/source-size-report.mjs [--json] [--check] [--baseline FILE] [--write-baseline FILE] [--manifest FILE] [--root DIR]");
   console.log("A manifest contains one repository-relative path per line. Default discovery uses rg; Git is never invoked.");
-  console.log("--check fails only for newly oversized files or growth beyond the recorded baseline.");
+  console.log("--check fails for newly oversized files, growth beyond the recorded baseline, and baseline entries for files now within budget or deleted.");
   process.exit(0);
 }
 
@@ -84,6 +84,12 @@ ${body}
 }
 
 const warnings = files.filter((file) => file.overBudget);
+// An entry excuses only debt that still exists. Left behind, it would let the
+// file grow back past the budget up to the old recorded size.
+const measured = new Map(files.map((file) => [file.path, file]));
+const staleEntries = Object.keys(baseline.files)
+  .filter((path) => measured.has(path) ? !measured.get(path).overBudget : !existsSync(resolve(root, path)))
+  .sort();
 const report = {
   policy: {
     maxLines: policy.maxLines,
@@ -94,7 +100,9 @@ const report = {
     files: files.length,
     overBudget: warnings.length,
     newOrGrowing: warnings.filter((file) => file.change === "new" || file.change === "grew").length,
+    staleBaselineEntries: staleEntries.length,
   },
+  staleEntries,
   files,
 };
 if (options.json) console.log(JSON.stringify(report, null, 2));
@@ -102,10 +110,11 @@ else {
   console.log(`Source size report: ${files.length} files; ${warnings.length} source/test files over ${policy.maxLines} lines or ${policy.maxBytes} bytes.`);
   console.log(
     options.check
-      ? "Enforcing newly oversized files and growth beyond the baseline."
+      ? "Enforcing newly oversized files, growth beyond the baseline, and stale baseline entries."
       : "Reporting only. Generated data and documents do not fail the source budget.",
   );
   for (const file of warnings) console.log(`${String(file.lines).padStart(5)} lines ${String(file.bytes).padStart(7)} bytes ${file.change.padEnd(8)} ${file.path}`);
+  for (const path of staleEntries) console.log(`Stale baseline entry, remove it from the baseline: ${path}`);
   const excluded = files.filter((file) => !["source", "test"].includes(file.kind) && file.lines > policy.maxLines);
   if (excluded.length) console.log(`Excluded oversized documents/data: ${excluded.map((file) => `${file.path} (${file.kind})`).join(", ")}`);
 }
@@ -114,10 +123,10 @@ if (options.check) {
   const regressions = warnings.filter(
     (file) => file.change === "new" || file.change === "grew",
   );
-  if (regressions.length) {
+  if (regressions.length || staleEntries.length) {
     if (options.json) {
       console.error(
-        `Source-size check failed: ${regressions.length} newly oversized or growing file(s).`,
+        `Source-size check failed: ${regressions.length} newly oversized or growing file(s), ${staleEntries.length} stale baseline entries.`,
       );
     }
     process.exitCode = 1;

@@ -12,8 +12,8 @@ mod project;
 mod tests;
 
 use super::adapters::{stata_mode, StataMode};
+use super::file_identity::hash_resolved_file;
 use super::types::ExecutionProfile;
-use crate::workbench::research::papers::hash_resolved_file;
 use crate::workbench::store::WorkbenchResult;
 use serde::Serialize;
 use serde_json::{json, Value};

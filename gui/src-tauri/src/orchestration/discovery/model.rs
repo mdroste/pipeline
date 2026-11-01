@@ -15,8 +15,8 @@ pub enum Mode {
 impl Mode {
     pub fn label(self) -> &'static str {
         match self {
-            Self::Supervised => "Full self-discovery (supervised)",
-            Self::Unsupervised => "Full self-discovery (unsupervised)",
+            Self::Supervised => "Research discovery — choose projects yourself",
+            Self::Unsupervised => "Research discovery — let Pipeline choose projects",
         }
     }
 }
@@ -346,8 +346,15 @@ pub struct Run {
     pub deadline_at: i64,
     pub due_at: Option<i64>,
     pub stop_outcome: Option<String>,
+    /// When the shortlist began waiting. The elapsed clock stops until the
+    /// researcher chooses, however long that takes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selection_since: Option<i64>,
 }
 impl Run {
+    pub fn deadline_passed(&self) -> bool {
+        self.selection_since.is_none() && self.deadline_at <= crate::orchestration::store::now()
+    }
     pub fn terminal(&self) -> bool {
         matches!(
             self.state.as_str(),

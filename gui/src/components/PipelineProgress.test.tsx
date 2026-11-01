@@ -9,7 +9,7 @@ import {
   completeRun,
   emptyRunView,
 } from "../lib/runViews";
-import type { PipelineResult } from "../lib/types";
+import type { PipelineReport, PipelineResult } from "../lib/types";
 
 const autoReviewPlan: ExecutionPlanStage[] = [
   {
@@ -76,8 +76,8 @@ describe("PipelineProgress", () => {
     expect(screen.getByText("Processing inputs")).toBeInTheDocument();
     expect(screen.getByText("Creating document bundle")).toBeInTheDocument();
     expect(screen.getByText("Creating orientation map")).toBeInTheDocument();
-    expect(screen.getByText("Parallel agent wave")).toBeInTheDocument();
-    expect(screen.getByText("Sequential agent wave")).toBeInTheDocument();
+    expect(screen.getByText("Reviewers working together")).toBeInTheDocument();
+    expect(screen.getByText("Next step")).toBeInTheDocument();
     expect(
       screen.queryByText("Merge cross-agent reports"),
     ).not.toBeInTheDocument();
@@ -139,7 +139,7 @@ describe("PipelineProgress", () => {
     );
 
     let parallelWave = screen
-      .getByText("Parallel agent wave")
+      .getByText("Reviewers working together")
       .closest("[data-status]");
     expect(parallelWave).toHaveTextContent("Adaptive agents");
     expect(parallelWave).toHaveTextContent("pending");
@@ -152,7 +152,7 @@ describe("PipelineProgress", () => {
       />,
     );
     parallelWave = screen
-      .getByText("Parallel agent wave")
+      .getByText("Reviewers working together")
       .closest("[data-status]");
     expect(parallelWave).not.toHaveTextContent("Adaptive agents");
     expect(parallelWave).toHaveTextContent("Mathematics — Algebraic Geometry");
@@ -209,7 +209,7 @@ describe("PipelineProgress", () => {
       />,
     );
     parallelWave = screen
-      .getByText("Parallel agent wave")
+      .getByText("Reviewers working together")
       .closest("[data-status]");
     expect(parallelWave).toHaveTextContent(
       "Mathematics — Algebraic Geometry (Claude)",
@@ -352,6 +352,148 @@ describe("PipelineProgress", () => {
     expect(screen.getByText("Creating document bundle")).toBeInTheDocument();
   });
 
+  describe("a stage whose reviewer failed", () => {
+    const wave = (status: "active" | "done"): RuntimeStage => ({
+      id: "wave-1",
+      kind: "dispatching",
+      label: "Parallel agent wave",
+      stepIds: ["technical", "methods"],
+      stepLabels: ["Technical", "Methods"],
+      status,
+      passes: { technical: "error", methods: "done" },
+    });
+    const next: RuntimeStage = {
+      id: "wave-2",
+      kind: "synthesizing",
+      label: "Sequential agent wave",
+      stepIds: ["synthesis"],
+      stepLabels: ["Synthesis"],
+      status: "active",
+      passes: {},
+    };
+    const row = (label: string) =>
+      screen.getByText(label).closest("[data-status]");
+    const finished = {
+      kind: "done",
+      markdown: "",
+      report: {} as PipelineReport,
+      extractedText: "",
+      runId: null,
+    } as const;
+
+    it("shows as failed once the run moves on, and says so aloud", () => {
+      render(
+        <PipelineProgress
+          state={{ kind: "synthesizing", passes: {} }}
+          stageHistory={[wave("done"), next]}
+        />,
+      );
+      expect(row("Reviewers working together")).toHaveAttribute(
+        "data-status",
+        "failed",
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Reviewers working together failed. Next step in progress.",
+      );
+    });
+
+    it("stays failed when the researcher stops a later stage", () => {
+      render(
+        <PipelineProgress
+          state={{
+            kind: "error",
+            message: "Pipeline cancelled",
+            failedAt: "synthesizing",
+          }}
+          stageHistory={[wave("done"), { ...next, status: "failed" }]}
+        />,
+      );
+      expect(row("Reviewers working together")).toHaveTextContent("failed");
+      expect(row("Reviewers working together")).not.toHaveTextContent(
+        "cancelled",
+      );
+      expect(row("Next step")).toHaveTextContent("cancelled");
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Reviewers working together failed. Next step cancelled.",
+      );
+    });
+
+    it("stays failed when one row holds both the failure and the stop", () => {
+      const first: RuntimeStage = {
+        ...next,
+        id: "wave-3",
+        status: "done",
+        passes: { synthesis: "error" },
+      };
+      const second: RuntimeStage = {
+        ...next,
+        id: "wave-4",
+        stepIds: ["memo"],
+        stepLabels: ["Memo"],
+        status: "failed",
+      };
+      render(
+        <PipelineProgress
+          state={{
+            kind: "error",
+            message: "Pipeline cancelled",
+            failedAt: "synthesizing",
+          }}
+          stageHistory={[first, second]}
+        />,
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(/failed\.$/);
+      expect(screen.getByRole("status")).not.toHaveTextContent("cancelled");
+    });
+
+    it("stays failed after the run finishes", () => {
+      render(
+        <PipelineProgress state={finished} stageHistory={[wave("done")]} />,
+      );
+      expect(row("Reviewers working together")).toHaveAttribute(
+        "data-status",
+        "failed",
+      );
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Reviewers working together failed. Review complete.",
+      );
+    });
+
+    it("does not mark its other reviewers as failed", () => {
+      render(
+        <PipelineProgress
+          state={{ kind: "synthesizing", passes: {} }}
+          stageHistory={[
+            {
+              ...wave("done"),
+              stepIds: ["technical", "methods", "planned"],
+              stepLabels: ["Technical", "Methods", "Planned"],
+            },
+            next,
+          ]}
+        />,
+      );
+      expect(screen.getByText("Planned").parentElement).not.toHaveTextContent(
+        "failed",
+      );
+    });
+
+    it("leaves a clean stage done", () => {
+      render(
+        <PipelineProgress
+          state={finished}
+          stageHistory={[
+            { ...wave("done"), passes: { technical: "done", methods: "done" } },
+          ]}
+        />,
+      );
+      expect(row("Reviewers working together")).toHaveAttribute(
+        "data-status",
+        "done",
+      );
+    });
+  });
+
   it("labels a cancelled run as cancelled rather than failed", () => {
     render(
       <PipelineProgress
@@ -425,9 +567,9 @@ describe("PipelineProgress", () => {
       />,
     );
 
-    expect(screen.getAllByText("Sequential agent wave")).toHaveLength(1);
+    expect(screen.getAllByText("Next step")).toHaveLength(1);
     const sequentialStage = screen
-      .getByText("Sequential agent wave")
+      .getByText("Next step")
       .closest("[data-status]");
     expect(sequentialStage).toHaveAttribute("data-status", "active");
     expect(sequentialStage).toHaveTextContent("Consolidate Feedback");
@@ -516,8 +658,8 @@ describe("PipelineProgress", () => {
       />,
     );
 
-    expect(screen.getAllByText("Parallel agent wave")).toHaveLength(2);
-    expect(screen.getByText("Sequential agent wave")).toBeInTheDocument();
+    expect(screen.getAllByText("Reviewers working together")).toHaveLength(2);
+    expect(screen.getByText("Next step")).toBeInTheDocument();
     expect(screen.getByText("First review")).toBeInTheDocument();
     expect(screen.getByText("Editorial synthesis")).toBeInTheDocument();
     expect(screen.getByText("Final check")).toBeInTheDocument();

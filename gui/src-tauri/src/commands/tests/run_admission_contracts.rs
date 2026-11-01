@@ -123,7 +123,7 @@ fn rerun_reuse_requires_every_non_skipped_output_and_ignores_disabled_steps() {
     ];
     assert_eq!(
         incompatible_reuse_ids(&config, &outputs),
-        ["review", "missing", "skipped_only"]
+        ["review", "missing"]
             .into_iter()
             .map(str::to_string)
             .collect()

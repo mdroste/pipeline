@@ -32,6 +32,7 @@ pub fn is_usage_limit_error(error: &str) -> bool {
         "five hour limit",
         "quota exceeded",
         "quota_exceeded",
+        "exceeded your current quota",
         "insufficient_quota",
         "billing hard limit",
         "credit balance is too low",

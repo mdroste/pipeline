@@ -358,7 +358,7 @@ export default function DepsCheck({
           ? "Bundled PDF tools are unavailable. Reinstall Pipeline."
           : !pdfReady
             ? "Required PDF parsing tools are missing."
-            : "Workflow dependencies are not ready.";
+            : "Pipeline is not ready to run a review.";
 
   return (
     <div
@@ -385,7 +385,7 @@ export default function DepsCheck({
           className="mt-1 text-sm text-gray-600 dark:text-gray-300"
         >
           {hasBlockers
-            ? "Complete the highlighted setup before running this workflow."
+            ? "Complete the highlighted setup before running a review."
             : "Pipeline has the model access and parsing tools it needs."}
         </p>
 
@@ -403,8 +403,7 @@ export default function DepsCheck({
                   Model access
                 </h3>
                 <p className="mt-0.5 text-xs leading-5 text-gray-600 dark:text-gray-300">
-                  Each provider this workflow uses needs a subscription or API
-                  key.
+                  Each provider a review uses needs a subscription or API key.
                 </p>
               </div>
               <SectionStatus ready={modelAccessReady} />

@@ -122,6 +122,7 @@ export interface Schedule {
   scope: Scope;
   trigger: Trigger;
   nextDueAt: number | null;
+  blockingRun?: { id: string; state: string } | null;
 }
 export interface TaskEvent {
   sequence: number;

@@ -10,6 +10,8 @@ export interface AppNotice {
   title: string;
   body: string;
   discoveryId?: string;
+  /** False when the app already shows this notice itself. */
+  toast?: boolean;
 }
 export function notificationsAllowed(
   kind: NoticeKind,
@@ -139,7 +141,9 @@ export async function deliverNotice(
       : notice.kind === "completion"
         ? "success"
         : "info";
-  if (notice.discoveryId) {
+  if (notice.toast === false) {
+    /* Sound and desktop delivery below still apply. */
+  } else if (notice.discoveryId) {
     notify(message, kind, {
       label: "Open portfolio",
       run: () =>

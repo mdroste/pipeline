@@ -15,7 +15,8 @@ least one connection under **Settings → Connections**.
 | Local or custom server | The address of an OpenAI-compatible server | Yes | Yes | Yes |
 
 Every conversation connection can use web search with a model that supports
-tool calls. Turn on **Web search** in **Assistant settings**. The table’s last
+tool calls. Turn on **Web search** in
+**Assistant settings → Manage agent profiles… → Access & inheritance**. The table’s last
 column applies to reviews, where you enable search on individual steps.
 
 Each conversation remembers its provider. New conversations start on your
@@ -141,9 +142,14 @@ interrupted by quitting Pipeline stays in the history and isn't sent again.
 
 ## Conversation access
 
-These settings apply to every conversation provider. Open **Assistant
-settings** in the conversation. Project and global settings supply defaults;
-a conversation can override them.
+These settings apply to every conversation provider. In a conversation, open
+**Assistant settings**, choose **Manage agent profiles…**, and then choose
+**Access & inheritance**. Each setting has a column for **Built-in**, **Global**,
+**Project** (this project), and **This conversation**. A column overrides the
+ones to its left.
+
+The **Access mode** menu in **Assistant settings** sets the same choice for this
+conversation: **Read only** is **Inspect**, and **Allow edits** is **Edit**.
 
 | Setting | What it permits |
 | --- | --- |
@@ -152,7 +158,7 @@ a conversation can override them.
 | **File changes → Review copy** | Prepare a separate copy automatically when you send a message. Review changes before copying them into your project. |
 | **File changes → Direct edits** | Edit the project directly with changes you can undo, and use configured research commands. General commands can only read project files. |
 | **Internet access for commands** | Let commands reach the internet, for example to download data or install packages. |
-| **Allowed command sites** | Restrict command internet access to listed domains, separated by commas. For example, `pypi.org, *.pythonhosted.org`. Blank means public internet. |
+| **Allowed command sites** | Restrict command internet access to listed domains, separated by commas. For example, `pypi.org, *.pythonhosted.org`. In ChatGPT and Claude Code conversations, blank means public internet. API and local or custom server conversations need at least one site: while **Internet access for commands** is on and this is blank, commands don't run. |
 | **Web search** | Search the web and read public pages. With Edit access and a project, download files into new project paths. |
 | **Browser interaction** | Open and operate a separate, visible browser for this conversation. |
 
@@ -191,13 +197,15 @@ These web tools accept public HTTP and HTTPS addresses on standard ports.
 Enabling **Browser interaction** starts browser setup. Pipeline downloads and
 manages the required software; you do not need to install Node.js separately.
 Setup also runs automatically the first time a browser tool is used.
-**Assistant settings** shows progress, **Cancel setup**, and a retry button if
+**Access & inheritance** shows progress, **Cancel setup**, and a retry button if
 setup fails. Linux may also need
 [Playwright's browser system dependencies](https://playwright.dev/docs/browsers#install-system-dependencies).
 Each conversation has its own browser profile, which remembers its sign-ins.
 Enter passwords and complete CAPTCHA prompts directly in the visible window.
 The browser closes when the turn stops; its profile stays on this device.
 Browser downloads use the conversation's file download tool.
+Pages can redirect to other sites, but images, scripts, and other parts of a
+page that redirect to a different site don't load.
 
 The ChatGPT model picker shows both usage windows when available. If refresh
 fails, it shows a saved report for the signed-in account, with its time. Expired
@@ -229,8 +237,7 @@ Anthropic lets a product run the unmodified Claude Code tool when:
 
 Pipeline runs the published tool and uses Anthropic's own sign-in. Anthropic
 hasn't endorsed Pipeline. See
-[Anthropic's product-hosting and authentication guidance](https://code.claude.com/docs/en/legal-and-compliance#can-customers-offer-claude-code-in-their-products),
-checked October 28, 2026.
+[Anthropic's product-hosting and authentication guidance](https://code.claude.com/docs/en/legal-and-compliance#can-customers-offer-claude-code-in-their-products).
 
 ## Add an API key
 
@@ -269,12 +276,16 @@ for a remote server. Model requirements are described below.
 API conversations use your assistant instructions and recent history. They can
 use enabled project, research, web search, and browser tools when the model
 supports function calling. Browser screenshots and paper images require a
-model that accepts images. Models without function calling can chat in a
-conversation with no project or enabled tools.
+model that accepts images.
+
+In a conversation with no project, OpenAI, Anthropic, and Gemini models can run
+commands in the conversation's [private working folder](projects.md#work-with-files-outside-a-project).
+**Local / custom** models get commands there once you choose **Allow edits** or
+enable a tool. Until then they can chat without function calling.
 
 Pipeline prepares command software automatically when an API or local model
-first runs a command, or when you open its **Assistant settings**. The first
-setup needs internet access. Later use works offline once setup is complete.
+first runs a command, or when you open **Access & inheritance** for that
+conversation. The first setup needs internet access. Later use works offline once setup is complete.
 Pipeline supplies its own runtime and restricts which files and websites commands
 can access. General commands require macOS, or Linux with `bubblewrap` and `socat`.
 

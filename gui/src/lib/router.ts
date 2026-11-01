@@ -40,6 +40,9 @@ export type AppRoute =
       destination?: string;
       /** Open this conversation on entry. */
       sessionId?: string;
+      /** Open this project file on entry, at this PDF page. */
+      file?: string;
+      filePage?: number;
     }
   | {
       page: "tasks";
@@ -52,7 +55,11 @@ export type AppRoute =
   | { page: "pipeline" }
   | { page: "gallery" }
   | { page: "batch" }
-  | { page: "projects" }
+  | {
+      page: "projects";
+      /** Select this review collection on entry; omitted = the first one. */
+      collectionId?: string;
+    }
   | { page: "history"; runId?: string }
   | { page: "settings"; section?: string; targetId?: string }
   | { page: "help"; section?: "privacy" }
@@ -123,12 +130,18 @@ export function serializeRoute(route: AppRoute): string {
       if (route.destination) query.set("dest", route.destination);
       if (route.surface) query.set("surface", route.surface);
       if (route.sessionId) query.set("session", route.sessionId);
+      if (route.file) query.set("file", route.file);
+      if (route.file && route.filePage)
+        query.set("filePage", String(route.filePage));
       break;
     case "tasks":
       if (route.taskId) query.set("task", route.taskId);
       if (route.taskSessionId) query.set("session", route.taskSessionId);
       if (route.discoveryId) query.set("discovery", route.discoveryId);
       if (route.automatePath) query.set("automate", route.automatePath);
+      break;
+    case "projects":
+      if (route.collectionId) query.set("collection", route.collectionId);
       break;
     case "history":
       if (route.runId) query.set("run", route.runId);
@@ -179,6 +192,10 @@ export function parseRoute(
             ? { surface: query.get("surface") as WorkspaceSurface }
             : {}),
           ...(query.get("session") ? { sessionId: query.get("session")! } : {}),
+          ...(query.get("file") ? { file: query.get("file")! } : {}),
+          ...(query.get("file") && Number(query.get("filePage")) > 0
+            ? { filePage: Math.floor(Number(query.get("filePage"))) }
+            : {}),
         };
       case "tasks":
         return {
@@ -192,6 +209,13 @@ export function parseRoute(
             : {}),
           ...(query.get("automate")
             ? { automatePath: query.get("automate")! }
+            : {}),
+        };
+      case "projects":
+        return {
+          page,
+          ...(query.get("collection")
+            ? { collectionId: query.get("collection")! }
             : {}),
         };
       case "history":
@@ -277,6 +301,20 @@ class Router {
     for (const listener of [...this.listeners]) listener(this.snapshot);
   }
 
+  /**
+   * Record where a page has moved to on its own, for the next launch. Nothing is
+   * navigating, so subscribers hear nothing. A page that has been left no longer
+   * speaks for the saved route.
+   */
+  remember(next: AppRoute) {
+    if (next.page !== this.snapshot.route.page) return;
+    try {
+      localStorage.setItem(ROUTE_STORAGE_KEY, serializeRoute(next));
+    } catch {
+      /* Preference storage is optional. */
+    }
+  }
+
   /** Reflect committed routes into the window hash and honor back/forward. */
   installHashSync() {
     if (this.hashInstalled || typeof window === "undefined") return;
@@ -332,6 +370,9 @@ class Router {
 
 export const router = new Router();
 
+/** Places a researcher visits to change something, not work to continue. */
+const NOT_RESTORED: readonly AppPage[] = ["settings", "help"];
+
 /** The route a fresh launch should restore, from the persisted location. */
 export function restoreRoute(
   storage: Pick<Storage, "getItem">,
@@ -345,7 +386,8 @@ export function restoreRoute(
     }
   };
   const parsed = parseRoute(read(ROUTE_STORAGE_KEY));
-  if (parsed) return parsed;
+  if (parsed)
+    return NOT_RESTORED.includes(parsed.page) ? { page: "home" } : parsed;
   // Legacy key from builds that only remembered four pages.
   const legacy = read("pipeline.ui.page");
   if (legacy === "workspace" || legacy === "project-index" || legacy === "home")

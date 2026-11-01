@@ -5,7 +5,7 @@ use super::*;
 
 #[test]
 fn bibtex_reads_nested_braces_quotes_and_concatenation() {
-    let entries = bibtex::parse(
+    let parsed = bibtex::parse(
         r#"@comment{ignored}
 @string{aer = "American Economic Review"}
 @Article{card1994,
@@ -17,8 +17,12 @@ fn bibtex_reads_nested_braces_quotes_and_concatenation() {
 }
 @misc{broken, title = {unterminated"#,
     );
-    assert_eq!(entries.len(), 1);
-    let entry = &entries[0];
+    assert_eq!(parsed.entries.len(), 1);
+    assert_eq!(
+        parsed.stopped.as_deref(),
+        Some("reading stopped at an unfinished entry")
+    );
+    let entry = &parsed.entries[0];
     assert_eq!(entry.kind, "article");
     assert_eq!(entry.key, "card1994");
     assert_eq!(entry.fields["year"], "1994");
@@ -46,11 +50,53 @@ fn plain_text_drops_markup_and_accents_but_keeps_symbols() {
 }
 
 #[test]
+fn tex_letter_commands_become_letters_and_match_crossref_spellings() {
+    assert_eq!(bibtex::plain(r"S{\o}rensen"), "Sørensen");
+    assert_eq!(
+        bibtex::plain(r"Gro\ss e Stra{\ss}e \AE sop"),
+        "Große Straße Æsop"
+    );
+    assert_eq!(bibtex::plain(r"{\L}ukasz Garc{\'\i}a"), "Łukasz Garcia");
+    let named = |family: &str| Work {
+        families: vec![family.to_string()],
+        ..Default::default()
+    };
+    for (crossref_name, cited) in [
+        ("Müller", r#"M{\"u}ller"#),
+        ("Sørensen", r"S{\o}rensen"),
+        ("García", r"Garc{\'\i}a"),
+        ("Muller", r#"M{\"u}ller"#),
+        ("Sorensen", r"S{\o}rensen"),
+        ("Łukasz", r"{\L}ukasz"),
+        ("Nguyễn", "Nguyen"),
+    ] {
+        let text = format!("{}. 2001. A title.", bibtex::plain(cited));
+        assert!(
+            crossref::author_present(&named(crossref_name), &text),
+            "{crossref_name} against {text}"
+        );
+    }
+    assert!(!crossref::author_present(&named("Miller"), "Müller. 2001."));
+    assert_eq!(
+        crossref::title_coverage("Überblick über Märkte", "Uberblick uber Markte"),
+        1.0
+    );
+}
+
+#[test]
 fn cited_keys_cover_natbib_and_biblatex_forms() {
     let keys = bibtex::cited_keys(
         r"As \citet{card1994} and \citep[p.~3][]{neumark2000, card1994} note; \textcite{autor2013}; \nocite{*}",
     );
     assert_eq!(keys, vec!["card1994", "neumark2000", "autor2013"]);
+}
+
+#[test]
+fn cited_keys_ignore_style_commands_macro_parameters_and_comments() {
+    let keys = bibtex::cited_keys(
+        "\\setcitestyle{authoryear,round} \\citestyle{aer} % \\cite{oldkey}\n\\newcommand{\\mycite}[1]{\\citep{#1}}\n\\bibliographystyle{plain}\n\\citep{real}\n\\citeasnoun{also} 50\\% \\Citet*[p.~1]{third}\n\\cite{a=b}",
+    );
+    assert_eq!(keys, vec!["real", "also", "third"]);
 }
 
 #[test]
@@ -312,6 +358,12 @@ async fn offline_run_reports_references_without_network() {
     // The output parses as a Review findings product.
     assert!(crate::findings::parse_value(&output, "refs", "References").is_some());
 }
+
+#[path = "tests/sources.rs"]
+mod sources;
+
+#[path = "tests/lookups.rs"]
+mod lookups;
 
 #[tokio::test]
 #[ignore = "contacts Crossref"]

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { BatchJob, InputSlot, VarSpec, DepsReport } from "../lib/types";
+import { inputSlotExtensions } from "../lib/pipelineHelpers";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
 
 interface Props {
@@ -267,7 +268,7 @@ export default function BatchPanel({
               filters: [
                 {
                   name: slot.label || "Input",
-                  extensions: ["pdf", "tex", "docx"],
+                  extensions: inputSlotExtensions(slot),
                 },
               ],
             }),

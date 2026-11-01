@@ -1,17 +1,32 @@
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
+import { confirmDialog } from "../DialogService";
 import type { ProjectHome } from "../../lib/projectClient";
 import type { ReviewHandoff } from "../../lib/workbenchTypes";
-import { button, input, panel } from "../../ui/classes";
-export { button, input, panel };
+import { button, input } from "../../ui/classes";
+import "../project-surface/ProjectPage.css";
+export { button, input };
+export const panel = "project-section";
 export interface StudioProps {
   workspaceId: string;
   data: ProjectHome;
   onRefresh: () => Promise<void>;
-  onDocument: (revision: string) => void;
+  /** Open a document, at a byte range when the caller has one. */
+  onDocument: (
+    revision: string,
+    passage?: { start: number; end: number },
+  ) => void;
   onReviewHandoff?: (handoff: ReviewHandoff) => void;
+  /** False while this retained view is hidden. */
+  active?: boolean;
   /** Open one saved selection in the reader and optionally pin a second beside it. */
   onAnchors?: (
     primaryAnchorId: string,
@@ -112,9 +127,45 @@ export function useAction() {
   }, []);
   return { error, busy, run, setError };
 }
+/**
+ * Remembers what a form was loaded from, so choosing another record can ask
+ * before it replaces text the researcher has not saved.
+ */
+export function useDraftGuard(draft: unknown) {
+  const saved = useRef(JSON.stringify(draft));
+  const latest = useRef(draft);
+  latest.current = draft;
+  const markSaved = useCallback((value: unknown) => {
+    saved.current = JSON.stringify(value);
+  }, []);
+  const replace = useCallback((what: string, load: () => void) => {
+    if (JSON.stringify(latest.current) === saved.current) {
+      load();
+      return;
+    }
+    void confirmDialog(
+      `Your changes to this ${what} haven't been saved and will be lost.`,
+      {
+        title: "Discard unsaved changes?",
+        confirmLabel: "Discard changes",
+        cancelLabel: "Keep editing",
+        destructive: true,
+      },
+    ).then((confirmed) => {
+      if (confirmed) load();
+    });
+  }, []);
+  return { markSaved, replace };
+}
 export function ErrorNotice({ error }: { error: string | null }) {
+  const alert = useRef<HTMLParagraphElement>(null);
+  // These views scroll, and the button that failed can be far below this notice.
+  useEffect(() => {
+    if (error) alert.current?.scrollIntoView?.({ block: "nearest" });
+  }, [error]);
   return error ? (
     <p
+      ref={alert}
       role="alert"
       className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:bg-red-950/40 dark:text-red-200"
     >

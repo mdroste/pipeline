@@ -159,6 +159,9 @@
   border-left: 3px solid var(--accent-color, #547574);
   margin-top: 20px;
 }
+.dark .mission-next {
+  border-left-color: var(--ui-page-accent);
+}
 .mission-evidence-link {
   font-size: 11px !important;
   margin: 2px 4px 2px 0;

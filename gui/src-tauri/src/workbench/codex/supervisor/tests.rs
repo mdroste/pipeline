@@ -101,6 +101,7 @@ fn thread_lifecycle_uses_qualified_methods_and_exact_safe_defaults() {
                 if expected == "thread/resume" {
                     assert!(request["params"].get("baseInstructions").is_none(), "resume retains the persisted base prompt");
                     assert_eq!(request["params"]["excludeTurns"], true, "resume reads metadata, not history");
+                    assert_eq!(request["params"]["cwd"], json!(workspace_for_server));
                 }
                 let result = match expected {
                     "thread/start" => {
@@ -189,12 +190,182 @@ fn thread_lifecycle_uses_qualified_methods_and_exact_safe_defaults() {
                 "session-test",
                 &thread.thread_id,
                 "pipeline-workbench",
-                vec![root],
+                &root,
+                vec![root.clone()],
                 Some(json!({"web_search":"disabled"})),
             )
             .await
-            .unwrap();
+            .unwrap()
+            .expect("the thread opens at the requested folder");
         server.await.unwrap();
+    });
+}
+
+/// Answers one thread/resume from the request's own params, then hands those
+/// params back so a test can read exactly what was sent.
+async fn answer_resume(
+    reader: tokio::io::ReadHalf<tokio::io::DuplexStream>,
+    mut writer: tokio::io::WriteHalf<tokio::io::DuplexStream>,
+    answer: impl FnOnce(&Value) -> Value,
+) -> Value {
+    let mut reader = BufReader::new(reader);
+    let mut line = String::new();
+    reader.read_line(&mut line).await.unwrap();
+    let request: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(request["method"], "thread/resume");
+    let result = answer(&request["params"]);
+    writer
+        .write_all(format!("{}\n", json!({"id":request["id"],"result":result})).as_bytes())
+        .await
+        .unwrap();
+    request["params"].clone()
+}
+
+fn resumed_at(cwd: &Value, roots: &Value) -> Value {
+    json!({
+        "thread":{"id":"thread-1","sessionId":"provider-session-1"},
+        "model":"gpt-test","modelProvider":"openai",
+        "activePermissionProfile":{"id":"pipeline-workbench"},
+        "approvalPolicy":"untrusted","approvalsReviewer":"user",
+        "cwd":cwd,
+        "instructionSources":[],
+        "runtimeWorkspaceRoots":roots
+    })
+}
+
+/// Calls `resume_thread` for the folder `root` against a one-request server.
+async fn resume_against(
+    root: &str,
+    answer: impl FnOnce(&Value) -> Value + Send + 'static,
+) -> (Result<Option<ThreadConnection>, RequestError>, Value) {
+    let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+    let (client_reader, client_writer) = tokio::io::split(client_io);
+    let (server_reader, server_writer) = tokio::io::split(server_io);
+    let server = tokio::spawn(answer_resume(server_reader, server_writer, answer));
+    let initialize = InitializeResult {
+        user_agent: "codex_cli_rs/0.147.0".to_string(),
+        platform_family: "unix".to_string(),
+        platform_os: "macos".to_string(),
+        codex_home: root.to_string(),
+    };
+    let client = AppServerClient::from_io(8, client_reader, client_writer);
+    let supervisor = AppServerSupervisor::from_test_client(8, client, initialize);
+    let resumed = supervisor
+        .resume_thread(
+            "session-test",
+            "thread-1",
+            "pipeline-workbench",
+            root,
+            vec![root.to_string()],
+            None,
+        )
+        .await;
+    (resumed, server.await.unwrap())
+}
+
+#[test]
+fn a_renamed_project_folder_resumes_at_the_folder_it_moved_to() {
+    runtime().block_on(async {
+        let temporary = tempfile::tempdir().unwrap();
+        let parent = temporary.path().canonicalize().unwrap();
+        let (old, new) = (parent.join("before"), parent.join("after"));
+        std::fs::create_dir(&old).unwrap();
+        std::fs::rename(&old, &new).unwrap();
+        let root = new.display().to_string();
+        let (resumed, sent) = resume_against(&root, |params| {
+            resumed_at(&params["cwd"], &params["runtimeWorkspaceRoots"])
+        })
+        .await;
+        assert_eq!(sent["cwd"], root);
+        assert_eq!(sent["runtimeWorkspaceRoots"], json!([root]));
+        assert_eq!(resumed.unwrap().unwrap().cwd, root);
+    });
+}
+
+#[test]
+fn a_thread_codex_keeps_at_another_folder_is_handed_back_for_a_successor() {
+    runtime().block_on(async {
+        let temporary = tempfile::tempdir().unwrap();
+        let parent = temporary.path().canonicalize().unwrap();
+        let (old, new) = (parent.join("before"), parent.join("after"));
+        std::fs::create_dir(&old).unwrap();
+        std::fs::create_dir(&new).unwrap();
+        let root = new.display().to_string();
+        let old_root = old.display().to_string();
+        // A loaded thread ignores the override and reports its own folder,
+        // which may no longer exist by the time this answer is read.
+        for keep_folder in [true, false] {
+            if !keep_folder {
+                std::fs::remove_dir(&old).unwrap();
+            }
+            let (old_root, root_copy) = (old_root.clone(), root.clone());
+            let (resumed, _) = resume_against(&root, move |_| {
+                resumed_at(&json!(old_root), &json!([root_copy]))
+            })
+            .await;
+            assert!(resumed.unwrap().is_none());
+        }
+        // Reporting the right folder with the wrong filesystem roots is the same.
+        let stale = old_root.clone();
+        let (resumed, _) = resume_against(&root, {
+            let root = root.clone();
+            move |_| resumed_at(&json!(root), &json!([stale]))
+        })
+        .await;
+        assert!(resumed.unwrap().is_none());
+    });
+}
+
+#[test]
+fn only_the_folder_is_replaced_and_other_contract_failures_stay_errors() {
+    runtime().block_on(async {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary
+            .path()
+            .canonicalize()
+            .unwrap()
+            .display()
+            .to_string();
+        let (resumed, _) = resume_against(&root, |params| {
+            let mut answer = resumed_at(&params["cwd"], &params["runtimeWorkspaceRoots"]);
+            answer["activePermissionProfile"]["id"] = json!("something-wider");
+            answer
+        })
+        .await;
+        assert!(resumed.unwrap_err().message.contains("permission profile"));
+    });
+}
+
+#[test]
+fn a_resume_folder_outside_its_roots_is_refused_before_anything_is_sent() {
+    runtime().block_on(async {
+        let temporary = tempfile::tempdir().unwrap();
+        let parent = temporary.path().canonicalize().unwrap();
+        let (root, other) = (parent.join("root"), parent.join("other"));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&other).unwrap();
+        let (client_io, _server_io) = tokio::io::duplex(64 * 1024);
+        let (client_reader, client_writer) = tokio::io::split(client_io);
+        let initialize = InitializeResult {
+            user_agent: "codex_cli_rs/0.147.0".to_string(),
+            platform_family: "unix".to_string(),
+            platform_os: "macos".to_string(),
+            codex_home: temporary.path().display().to_string(),
+        };
+        let client = AppServerClient::from_io(8, client_reader, client_writer);
+        let supervisor = AppServerSupervisor::from_test_client(8, client, initialize);
+        let error = supervisor
+            .resume_thread(
+                "session-test",
+                "thread-1",
+                "pipeline-workbench",
+                &other.display().to_string(),
+                vec![root.display().to_string()],
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.message.contains("runtime workspace roots"));
     });
 }
 
@@ -618,4 +789,19 @@ fn live_supervisor_starts_in_an_isolated_temporary_home_and_shuts_down_cleanly()
         supervisor.shutdown().await;
         assert!(!supervisor.status().connected);
     });
+}
+
+#[test]
+fn notifications_turned_off_are_ones_nothing_handles() {
+    for method in UNREAD_NOTIFICATIONS {
+        let event = crate::agent_runtime::codex::wire::normalize_notification(
+            1,
+            method.to_string(),
+            json!({}),
+        );
+        assert!(
+            matches!(event, Ok(NormalizedEvent::UnknownNotification { .. })),
+            "{method} has a handler, so it must not be turned off"
+        );
+    }
 }

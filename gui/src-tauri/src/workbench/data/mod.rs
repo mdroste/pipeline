@@ -1,11 +1,14 @@
 //! Immutable tabular vintages and declared sample definitions. No rows enter context implicitly.
 //!
 //! `catalog` owns capture, previews and samples; `csv`, `dta` and `xlsx` are
-//! the bounded format readers; `connectors` owns statistical-source requests.
+//! the bounded format readers; `connectors` owns statistical-source requests;
+//! `file_table` and `delimited_table` show live files in the viewer.
 mod catalog;
 pub mod connectors;
 mod csv;
+mod delimited_table;
 mod dta;
+mod file_table;
 mod profile;
 #[cfg(test)]
 mod tests;
@@ -17,6 +20,8 @@ pub(crate) use catalog::import_capture;
 pub use catalog::{
     commit, import, import_metadata, prepare_local, preview_rows, save_sample, PreparedDataset,
 };
+pub use delimited_table::{delimited_table, TableResume};
+pub use file_table::{file_table, FileTable};
 pub use profile::{MissingCell, RowPreview};
 
 use super::{

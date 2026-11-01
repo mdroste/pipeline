@@ -266,6 +266,7 @@ pub(super) fn profile_summary(id: String, profile: &ProfileData) -> ProfileSumma
         id,
         name: profile.name.clone(),
         step_count: profile.steps.len(),
+        invalid: None,
     }
 }
 

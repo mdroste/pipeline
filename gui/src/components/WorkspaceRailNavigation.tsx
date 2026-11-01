@@ -23,6 +23,8 @@ export default function WorkspaceRailNavigation({
   projects,
   destination,
   sessions,
+  hasOlderSessions = false,
+  onLoadOlderSessions,
   sessionId,
   chatOpen,
   background,
@@ -39,6 +41,9 @@ export default function WorkspaceRailNavigation({
   projects: Workspace[];
   destination: WorkspaceDestination;
   sessions: WorkbenchSession[];
+  /** Older conversations remain past the list's last page. */
+  hasOlderSessions?: boolean;
+  onLoadOlderSessions?: () => void;
   sessionId: string | null;
   /** The conversation fills the page, so its row is the current location. */
   chatOpen: boolean;
@@ -54,7 +59,12 @@ export default function WorkspaceRailNavigation({
     session: WorkbenchSession,
   ) => Pick<
     Parameters<typeof ConversationMenu>[0],
-    "onRename" | "onGenerateTitle" | "onMove" | "onArchive" | "onDelete"
+    | "onRename"
+    | "onGenerateTitle"
+    | "onMove"
+    | "onRevealFiles"
+    | "onArchive"
+    | "onDelete"
   >;
 }) {
   const [showAll, setShowAll] = useState(false);
@@ -70,21 +80,56 @@ export default function WorkspaceRailNavigation({
       {project && (
         <>
           <NavChild
+            ref={switcher}
             strong
             label={project.name}
+            ariaLabel={`Switch project: ${project.name}`}
             title={
               project.missingRootAt
                 ? `${project.name} · Folder not found`
                 : (project.root ?? project.name)
             }
             disabled={disabled}
-            onClick={() => onNavigate("overview")}
+            aria-haspopup="menu"
+            aria-expanded={switching}
+            onClick={() => setSwitching((value) => !value)}
             suffix={
               project.missingRootAt ? (
                 <Badge kind="attention" label="Folder not found" />
-              ) : undefined
+              ) : (
+                <Icon name="chevron-down" className="nav-switch-mark" />
+              )
             }
           />
+          <Menu
+            open={switching}
+            onClose={() => setSwitching(false)}
+            anchorRef={switcher}
+            label="Switch project"
+            side="right"
+            align="start"
+            width={256}
+          >
+            {projects
+              .filter((item) => !item.archivedAt)
+              .map((item) => (
+                <MenuItem
+                  key={item.id}
+                  checked={item.id === project.id}
+                  onSelect={() => {
+                    if (item.id !== project.id) onSelectProject(item.id);
+                  }}
+                >
+                  {item.name}
+                </MenuItem>
+              ))}
+            <MenuSeparator />
+            <MenuItem onSelect={() => onNavigate("project-settings")}>
+              Project settings
+            </MenuItem>
+            <MenuItem onSelect={() => onAllProjects?.()}>All projects</MenuItem>
+            <MenuItem onSelect={onNewProject}>New project</MenuItem>
+          </Menu>
           <WorkspaceProjectNavigation
             key={project.id}
             destination={destination}
@@ -145,50 +190,22 @@ export default function WorkspaceRailNavigation({
         {sessions.length > SHOWN_SESSIONS && (
           <NavChild
             quiet
-            label={showAll ? "Show fewer" : `Show all ${sessions.length}`}
+            label={
+              showAll
+                ? "Show fewer"
+                : `Show all ${sessions.length}${hasOlderSessions ? "+" : ""}`
+            }
             onClick={() => setShowAll((value) => !value)}
           />
         )}
-      </nav>
-      {project && (
-        <>
+        {showAll && hasOlderSessions && (
           <NavChild
-            ref={switcher}
             quiet
-            label="Switch project"
-            disabled={disabled}
-            aria-haspopup="menu"
-            aria-expanded={switching}
-            onClick={() => setSwitching((value) => !value)}
+            label="Show older conversations"
+            onClick={() => onLoadOlderSessions?.()}
           />
-          <Menu
-            open={switching}
-            onClose={() => setSwitching(false)}
-            anchorRef={switcher}
-            label="Switch project"
-            side="right"
-            align="start"
-            width={256}
-          >
-            {projects
-              .filter((item) => !item.archivedAt)
-              .map((item) => (
-                <MenuItem
-                  key={item.id}
-                  checked={item.id === project.id}
-                  onSelect={() => {
-                    if (item.id !== project.id) onSelectProject(item.id);
-                  }}
-                >
-                  {item.name}
-                </MenuItem>
-              ))}
-            <MenuSeparator />
-            <MenuItem onSelect={() => onAllProjects?.()}>All projects</MenuItem>
-            <MenuItem onSelect={onNewProject}>New project</MenuItem>
-          </Menu>
-        </>
-      )}
+        )}
+      </nav>
     </>
   );
 }

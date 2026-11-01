@@ -56,6 +56,10 @@ pub struct DocumentOrigin {
     pub kind: String,
     pub path: String,
     pub role: String,
+    /// First 16 hex chars of the SHA-256 of a Word file's bytes. A Word
+    /// `paper_hash` covers extracted text, which moves with the extractor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -618,5 +622,7 @@ pub use bundle::build;
 #[cfg(test)]
 use adapters::{copy_docx_media_with_limits, read_docx_entry_limited};
 
+#[cfg(test)]
+mod docx_tests;
 #[cfg(test)]
 mod tests;

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import useReveal from "../../hooks/useReveal";
 import type { DeskRecord, OpenResearchObject } from "../../lib/deskClient";
 import type { SymbolRecord } from "../../lib/programClient";
 import {
@@ -51,11 +52,12 @@ export default function Theory(props: DeskProps) {
     [tolerance, setTolerance] = useState("1e-8"),
     [summary, setSummary] = useState(""),
     [execution, setExecution] = useState("");
+  const symbolForm = useReveal<HTMLElement>();
   const selected = p.choices?.theory.find((n) => n.id === theoryId);
   const symbols = (p.records.symbol ?? []) as DeskRecord<SymbolRecord>[];
   return (
     <div className="space-y-5">
-      <section className={card}>
+      <section ref={symbolForm.ref} tabIndex={-1} className={card}>
         <h2 className="font-semibold">Symbols and assumptions</h2>
         <p className={muted}>
           Specify where each definition applies. Pipeline checks for conflicting
@@ -224,6 +226,7 @@ export default function Theory(props: DeskProps) {
             onClick={() => {
               setSymbol(s.body);
               setPrior(s.id);
+              symbolForm.reveal();
             }}
           >
             Revise definition

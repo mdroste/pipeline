@@ -16,19 +16,69 @@ pub(super) struct Environment {
     python: String,
 }
 
-pub(super) async fn detect_async() -> Option<Environment> {
-    tokio::task::spawn_blocking(detect).await.ok().flatten()
+/// The first `wsl.exe` call after boot has to start the VM.
+const DETECT_TIMEOUT: Duration = Duration::from_secs(45);
+const STARTING: &str =
+    "WSL is still starting, so this message was not sent. Try again in a moment.";
+
+/// One turn's answer about WSL, taken once so a turn can't mix two results.
+pub(super) enum Detection {
+    Ready(Environment),
+    /// Not installed or not set up for Claude: use native Windows.
+    Missing,
+    /// No answer yet. Native Windows would ask someone signed in inside WSL to
+    /// sign in again, so this never falls back.
+    Starting,
 }
 
-pub(super) fn detect() -> Option<Environment> {
-    if !cfg!(windows) {
-        return None;
+impl Detection {
+    /// The WSL environment to use, `None` for native Windows, or the message
+    /// to try again.
+    pub(super) fn environment(self) -> Result<Option<Environment>, String> {
+        match self {
+            Self::Ready(environment) => Ok(Some(environment)),
+            Self::Missing => Ok(None),
+            Self::Starting => Err(STARTING.into()),
+        }
     }
-    let wsl = crate::deps::resolve_command("wsl.exe")?;
+}
+
+pub(super) async fn detect_async() -> Detection {
+    tokio::task::spawn_blocking(detect)
+        .await
+        .unwrap_or(Detection::Missing)
+}
+
+fn detect() -> Detection {
+    if !cfg!(windows) {
+        return Detection::Missing;
+    }
+    let Some(wsl) = crate::deps::resolve_command("wsl.exe") else {
+        return Detection::Missing;
+    };
     let script="import os,shutil,json; p=os.path.expanduser('~/.local/bin')+':/usr/local/bin:/usr/bin:/bin'; names={n:shutil.which(n,path=p) for n in ['claude','python3','bwrap','socat','setsid']}; k=open('/proc/sys/kernel/osrelease').read().lower(); print(json.dumps(dict(home=os.path.expanduser('~'),kernel=k,**names)))";
     let mut command = wsl.command(["--exec", "python3", "-c", script]);
-    let output =
-        crate::process::run_bounded_independent(&mut command, Duration::from_secs(5), 8192).ok()?;
+    classify(
+        wsl,
+        crate::process::run_bounded_independent(&mut command, DETECT_TIMEOUT, 8192),
+    )
+}
+
+fn classify(
+    wsl: crate::deps::ResolvedCommand,
+    probe: Result<crate::process::BoundedOutput, String>,
+) -> Detection {
+    match probe {
+        Ok(output) => parse(wsl, &output).map_or(Detection::Missing, Detection::Ready),
+        Err(error) if error.starts_with("Subprocess timed out") => Detection::Starting,
+        Err(_) => Detection::Missing,
+    }
+}
+
+fn parse(
+    wsl: crate::deps::ResolvedCommand,
+    output: &crate::process::BoundedOutput,
+) -> Option<Environment> {
     if !output.status.success() || output.stdout_truncated {
         return None;
     }
@@ -125,9 +175,14 @@ impl Environment {
         sandbox: Option<&Value>,
         args: &[String],
         directory: &Path,
+        working: Option<&Path>,
     ) -> Result<(tokio::process::Command, Value, OwnedGroup), String> {
         let status = self.status()?;
-        let cwd = self.path(directory.to_str().ok_or("Scratch path is not UTF-8")?)?;
+        let scratch = self.path(directory.to_str().ok_or("Scratch path is not UTF-8")?)?;
+        let cwd = match working {
+            Some(path) => self.path(path.to_str().ok_or("Working path is not UTF-8")?)?,
+            None => scratch.clone(),
+        };
         let mut sandbox = sandbox.cloned();
         if let Some(value) = &mut sandbox {
             self.translated(value)?;
@@ -166,9 +221,9 @@ impl Environment {
         let mut command = self.wsl.command([
             "--exec",
             &self.python,
-            &format!("{cwd}/wsl-launch.py"),
-            &format!("{cwd}/wsl-launch.json"),
-            &format!("{cwd}/wsl-group.json"),
+            &format!("{scratch}/wsl-launch.py"),
+            &format!("{scratch}/wsl-launch.json"),
+            &format!("{scratch}/wsl-group.json"),
         ]);
         crate::agent_runtime::claude::configure_subscription(&mut command);
         let mut command = tokio::process::Command::from(command);
@@ -227,5 +282,30 @@ mod tests {
         assert!(!windows_path("/home/research/paper.tex"));
         assert!(!windows_path("~/.ssh"));
         assert!(!windows_path("example.org"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cold_wsl_asks_for_a_retry_and_never_falls_back_to_native_windows() {
+        let wsl = || crate::deps::resolve_command("sh").unwrap();
+        let waiting = classify(wsl(), Err("Subprocess timed out after 45s".into()));
+        let message = waiting.environment().err().unwrap();
+        assert!(message.contains("Try again"));
+
+        // Absence and failure are answers, so native Windows may take over.
+        let unavailable = classify(wsl(), Err("Failed to start subprocess: none".into()));
+        assert!(unavailable.environment().unwrap().is_none());
+        let failed = Command::new("false").status().unwrap();
+        let refused = classify(
+            wsl(),
+            Ok(crate::process::BoundedOutput {
+                status: failed,
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+                stdout_truncated: false,
+                stderr_truncated: false,
+            }),
+        );
+        assert!(refused.environment().unwrap().is_none());
     }
 }

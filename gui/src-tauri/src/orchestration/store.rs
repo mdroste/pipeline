@@ -2,6 +2,10 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 pub type Result<T> = std::result::Result<T, String>;
+/// Preference holding the last time the coordinator saw an action in progress.
+pub const HEARTBEAT: &str = "heartbeat";
+/// How long a record that failed its turn waits, so it can't crowd out the rest.
+pub const RECORD_RETRY_SECS: i64 = 60;
 pub fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
@@ -26,7 +30,7 @@ mod records;
 mod runs;
 mod schedules;
 mod signals;
-pub use records::{Event, Schedule, Scope, Summary, TaskRun};
+pub use records::{BlockingRun, Event, Schedule, ScheduleView, Scope, Summary, TaskRun};
 pub(crate) use runs::insert_run;
 
 #[derive(Debug, Clone)]

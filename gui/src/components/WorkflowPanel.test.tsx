@@ -174,6 +174,33 @@ describe("WorkflowPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps a saved design that needs repair in the list, with its reason", async () => {
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_pipeline_config") return Promise.resolve(makeConfig());
+      if (cmd === "list_profiles")
+        return Promise.resolve([
+          ...profiles,
+          {
+            id: "old-copy",
+            name: "Old copy",
+            step_count: 4,
+            builtin: false,
+            invalid: "Profile 'old-copy' is invalid: stale contract",
+          },
+        ]);
+      if (cmd === "get_active_profile") return Promise.resolve("old-copy");
+      if (cmd === "get_auto_review_catalog") return Promise.resolve(catalog);
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    renderPanel();
+    expect(
+      await screen.findByRole("option", { name: "Old copy (needs repair)" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "stale contract",
+    );
+  });
+
   it("summarizes the workflow without duplicating the plan", async () => {
     mockLoad(makeConfig());
     renderPanel();

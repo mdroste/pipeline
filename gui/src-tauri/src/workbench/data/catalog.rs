@@ -122,12 +122,7 @@ fn store_blob(
         .root_path()
         .join("blobs")
         .join(format!("{content_hash}.{ext}"));
-    if !destination.exists() {
-        fs::write(&destination, bytes).map_err(err)?;
-    }
-    if desk::hash(&fs::read(&destination).map_err(err)?) != content_hash {
-        return Err(WorkbenchError::invalid("Dataset blob integrity failure"));
-    }
+    desk::write_blob_atomic(&destination, bytes, content_hash).map_err(err)?;
     store.connection()?.execute("INSERT OR IGNORE INTO artifacts(id,workspace_id,content_hash,media_kind,size_bytes,origin,storage_reference,created_at) VALUES(?1,?2,?3,?4,?5,'dataset',?6,?7)",params![format!("{artifact}_{}",desk::hash(ws.as_bytes())),ws,content_hash,ext,bytes.len() as i64,destination.to_string_lossy(),desk::now()]).map_err(err)?;
     store
         .connection()?
@@ -351,6 +346,7 @@ pub fn preview_rows(
         .artifact_id
         .ok_or_else(|| WorkbenchError::invalid("External metadata has no captured local rows"))?;
     let path:String=store.connection()?.query_row("SELECT storage_reference FROM artifacts WHERE id=?1 AND workspace_id=?2 AND content_hash=?3",params![artifact,ws,v.content_hash],|r|r.get(0)).map_err(err)?;
+    crate::workbench::store::require_available("This dataset", &path)?;
     let canonical = Path::new(&path).canonicalize().map_err(err)?;
     if !canonical.starts_with(
         store

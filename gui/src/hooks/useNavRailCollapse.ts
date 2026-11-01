@@ -1,10 +1,14 @@
 import {
   useCallback,
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { appClient } from "../lib/appClient";
+import { isMac } from "../lib/platform";
 
 const MODE_KEY = "pipeline.ui.navRailMode";
 /** Older builds stored only whether the rail was hidden. */
@@ -43,7 +47,8 @@ function subscribeNarrow(notify: () => void) {
  * width until the researcher chooses otherwise; a choice that matches the
  * current width goes back to following it. Only one toggle exists at a time,
  * in the rail or in the bar above the icons, so `toggleRef` carries focus
- * across the swap instead of dropping it to the document body.
+ * across the swap instead of dropping it to the document body. The Mac View
+ * menu flips the same state and leaves focus where the researcher was working.
  */
 export default function useNavRailCollapse() {
   const [mode, setMode] = useState<NavRailMode>(readMode);
@@ -61,8 +66,7 @@ export default function useNavRailCollapse() {
     toggleRef.current?.focus({ preventScroll: true });
   }, [collapsed]);
 
-  const toggle = useCallback(() => {
-    toggled.current = true;
+  const flip = useCallback(() => {
     const next = !collapsed;
     const nextMode: NavRailMode =
       next === narrow ? "auto" : next ? "collapsed" : "expanded";
@@ -73,6 +77,34 @@ export default function useNavRailCollapse() {
       /* Optional view preference. */
     }
   }, [collapsed, narrow]);
+
+  const toggle = useCallback(() => {
+    toggled.current = true;
+    flip();
+  }, [flip]);
+
+  const flipFromMenu = useRef(flip);
+  useLayoutEffect(() => {
+    flipFromMenu.current = () => {
+      toggled.current = document.activeElement === toggleRef.current;
+      flip();
+    };
+  }, [flip]);
+
+  useEffect(() => {
+    if (!isMac) return;
+    const off = listen("menu:toggle-sidebar", () =>
+      flipFromMenu.current(),
+    ).catch(() => undefined);
+    return () => {
+      void off.then((unlisten) => unlisten?.());
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isMac) return;
+    appClient.setSidebarMenuCollapsed(collapsed).catch(() => undefined);
+  }, [collapsed]);
 
   return { collapsed, toggle, toggleRef };
 }

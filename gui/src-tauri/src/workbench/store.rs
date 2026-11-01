@@ -10,7 +10,7 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 17;
+pub const CURRENT_SCHEMA_VERSION: u32 = 19;
 const MAX_WORKSPACE_NAME_BYTES: usize = 300;
 const MAX_SESSION_TITLE_BYTES: usize = 300;
 const MAX_DRAFT_BYTES: usize = 1_000_000;
@@ -33,14 +33,15 @@ use records::{
 pub use records::{
     ClearWorkspaceRootRequest, ConversationSnapshot, ConversationTurn, CreateSessionRequest,
     CreateWorkspaceRequest, DeleteSessionRequest, MoveSessionRequest, Mutation, ReconcileResult,
-    RegisterWorkspaceRootRequest, SessionBinding, SessionList, SessionSnapshot, TranscriptItem,
-    UpdateSessionRequest, UpdateWorkspaceRequest, WorkbenchSession, Workspace, WorkspaceList,
+    RegisterWorkspaceRootRequest, SessionBinding, SessionCursor, SessionList, SessionSnapshot,
+    TranscriptItem, UpdateSessionRequest, UpdateWorkspaceRequest, WorkbenchSession, Workspace,
+    WorkspaceList,
 };
-pub(super) use schema::migrate;
 use schema::{
     configure_connection, configure_database, configure_timeout, database_has_objects,
     schema_version,
 };
+pub(super) use schema::{migrate, reference_schema};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -250,17 +251,48 @@ fn default_root() -> WorkbenchResult<PathBuf> {
         .map_err(|error| WorkbenchError::storage("Cannot locate Workspace data", error))
 }
 
+/// Held open between operations. When its last connection closes, SQLite folds
+/// the write-ahead log into the database and deletes it, which would otherwise
+/// happen after nearly every operation. Commits stay exactly as durable.
+static IDLE_CONNECTION: std::sync::Mutex<Option<Connection>> = std::sync::Mutex::new(None);
+
 impl Store {
+    /// The first open creates, secures, and migrates the store. Later opens only
+    /// confirm the data folder: its location is fixed for the process, and
+    /// `connection()` checks the schema version every time.
     pub fn open_default() -> WorkbenchResult<Self> {
+        static OPENED: std::sync::OnceLock<Store> = std::sync::OnceLock::new();
         let root = default_root()?;
+        if let Some(store) = OPENED.get().filter(|store| store.root == root) {
+            return Ok(store.clone());
+        }
+        let store = Self::open_default_at(&root)?;
+        if OPENED.set(store.clone()).is_ok() {
+            *IDLE_CONNECTION
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = store.connection().ok();
+        }
+        Ok(store)
+    }
+
+    /// Lets the last close fold the log into the database, so `research.sqlite3`
+    /// is complete on its own whenever the app is not running.
+    pub fn close_idle_connection() {
+        IDLE_CONNECTION
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+    }
+
+    fn open_default_at(root: &Path) -> WorkbenchResult<Self> {
         #[cfg(debug_assertions)]
         if std::env::var_os("PIPELINE_WORKBENCH_DEV_ROOT").is_some() {
-            return Self::open_at(&root);
+            return Self::open_at(root);
         }
         let codex_home = crate::storage::local_root()
             .map_err(|error| WorkbenchError::storage("Cannot locate Workspace sign-in", error))?
             .join("workbench/codex");
-        Self::open_with_codex_home(&root, &codex_home)
+        Self::open_with_codex_home(root, &codex_home)
     }
 
     pub fn open_at(root: &Path) -> WorkbenchResult<Self> {
@@ -328,7 +360,13 @@ impl Store {
     }
 
     fn initialize(&self) -> WorkbenchResult<()> {
-        self.initialize_with(migrate)
+        self.initialize_with(migrate)?;
+        // A store that can't be repaired must still open. Its references stay
+        // as they were, and Disk use refuses cleanup while any lies elsewhere.
+        if let Err(error) = self.rebase_references() {
+            eprintln!("Could not update stored file locations: {}", error.message);
+        }
+        Ok(())
     }
 
     fn initialize_with<F>(&self, migrator: F) -> WorkbenchResult<()>
@@ -432,6 +470,13 @@ mod workspaces;
 
 mod roots;
 pub(crate) use roots::{canonical_workspace_root, root_identity};
+
+mod relocation;
+pub(crate) use relocation::{
+    is_left_out_reference, is_local_reference, left_out_file, left_out_reference,
+    outside_folder_error, portable_reference, record_location, require_available,
+    resolve_reference, REFERENCE_COLUMNS,
+};
 
 mod history;
 pub use history::{TranscriptCursor, TranscriptPage};

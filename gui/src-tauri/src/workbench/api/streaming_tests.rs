@@ -68,6 +68,54 @@ fn anthropic_stream_retains_thinking_signatures_and_partial_tool_json() {
 }
 
 #[test]
+fn a_tool_without_arguments_keeps_its_empty_input_on_every_stream() {
+    let (reply, _) = assemble(
+        Provider::Anthropic,
+        &[
+            json!({"type":"message_start","message":{"usage":{}}}),
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call","name":"project_files","input":{}}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}}),
+            json!({"type":"content_block_stop","index":0}),
+            json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{}}),
+            json!({"type":"message_stop"}),
+        ],
+        false,
+    );
+    assert_eq!(reply.calls[0].name, "project_files");
+    assert_eq!(reply.calls[0].arguments, json!({}));
+    for arguments in ["", "  "] {
+        let (reply, _) = assemble(
+            Provider::Local,
+            &[
+                json!({"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call","type":"function","function":{"name":"project_files","arguments":arguments}}]},"finish_reason":"tool_calls"}]}),
+            ],
+            true,
+        );
+        assert_eq!(reply.calls[0].arguments, json!({}));
+    }
+}
+
+#[test]
+fn a_reply_cut_off_inside_tool_arguments_keeps_its_text_and_loses_its_call() {
+    let (reply, text) = assemble(
+        Provider::Anthropic,
+        &[
+            json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+            json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Partial"}}),
+            json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call","name":"project_read","input":{}}}),
+            json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"pa"}}),
+            json!({"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{}}),
+            json!({"type":"message_stop"}),
+        ],
+        false,
+    );
+    assert_eq!(text, "Partial");
+    assert_eq!(reply.text, "Partial");
+    assert!(reply.truncated);
+    assert!(reply.calls.is_empty());
+}
+
+#[test]
 fn gemini_stream_preserves_each_signed_part_without_showing_thoughts() {
     let (reply, text) = assemble(
         Provider::Google,

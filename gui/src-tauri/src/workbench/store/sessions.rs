@@ -150,39 +150,63 @@ impl Store {
     }
 
     /// Lists the most recently updated conversations, newest first.
-    ///
-    /// The list is capped at `MAX_SESSIONS_PER_LIST` rows. Older
-    /// conversations past the cap are omitted rather than failing the whole
-    /// list, so a project flooded by recurring automations still opens and
-    /// the user can archive or delete conversations from it.
     pub fn list_sessions(
         &self,
         workspace_id: Option<&str>,
         include_archived: bool,
+    ) -> WorkbenchResult<SessionList> {
+        self.list_sessions_page(workspace_id, include_archived, None)
+    }
+
+    /// One page of at most `MAX_SESSIONS_PER_LIST` conversations, so a project
+    /// flooded by recurring automations still opens quickly. `cursor` continues
+    /// from an earlier page's `next_cursor`, which is set while older
+    /// conversations remain.
+    pub fn list_sessions_page(
+        &self,
+        workspace_id: Option<&str>,
+        include_archived: bool,
+        cursor: Option<&SessionCursor>,
     ) -> WorkbenchResult<SessionList> {
         if let Some(workspace_id) = workspace_id {
             validate_id("workspace id", workspace_id)?;
         }
         let connection = self.connection()?;
         let sql = if include_archived {
-            "SELECT id, workspace_id, paper_id, title, preset_id, overrides_json, draft, revision, archived_at, created_at, updated_at FROM sessions WHERE id NOT IN (SELECT session_id FROM discovery_roles) AND ((?1 IS NULL AND workspace_id IS NULL) OR workspace_id = ?1) ORDER BY updated_at DESC, id LIMIT ?2"
+            "SELECT id, workspace_id, paper_id, title, preset_id, overrides_json, draft, revision, archived_at, created_at, updated_at FROM sessions WHERE id NOT IN (SELECT session_id FROM discovery_roles) AND ((?1 IS NULL AND workspace_id IS NULL) OR workspace_id = ?1) AND (?3 IS NULL OR updated_at < ?3 OR (updated_at = ?3 AND id > ?4)) ORDER BY updated_at DESC, id LIMIT ?2"
         } else {
-            "SELECT id, workspace_id, paper_id, title, preset_id, overrides_json, draft, revision, archived_at, created_at, updated_at FROM sessions WHERE id NOT IN (SELECT session_id FROM discovery_roles) AND ((?1 IS NULL AND workspace_id IS NULL) OR workspace_id = ?1) AND archived_at IS NULL ORDER BY updated_at DESC, id LIMIT ?2"
+            "SELECT id, workspace_id, paper_id, title, preset_id, overrides_json, draft, revision, archived_at, created_at, updated_at FROM sessions WHERE id NOT IN (SELECT session_id FROM discovery_roles) AND ((?1 IS NULL AND workspace_id IS NULL) OR workspace_id = ?1) AND archived_at IS NULL AND (?3 IS NULL OR updated_at < ?3 OR (updated_at = ?3 AND id > ?4)) ORDER BY updated_at DESC, id LIMIT ?2"
         };
         let mut statement = connection
             .prepare(sql)
             .map_err(|error| WorkbenchError::storage("Failed to prepare session list", error))?;
-        let sessions = statement
+        // One row past the page shows whether older conversations remain.
+        let mut sessions = statement
             .query_map(
-                params![workspace_id, MAX_SESSIONS_PER_LIST as i64],
+                params![
+                    workspace_id,
+                    MAX_SESSIONS_PER_LIST as i64 + 1,
+                    cursor.map(|cursor| &cursor.updated_at),
+                    cursor.map(|cursor| &cursor.id)
+                ],
                 read_session_row,
             )
             .map_err(|error| WorkbenchError::storage("Failed to list sessions", error))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| WorkbenchError::storage("Failed to decode sessions", error))?;
+        let more = sessions.len() > MAX_SESSIONS_PER_LIST;
+        sessions.truncate(MAX_SESSIONS_PER_LIST);
+        let next_cursor = sessions
+            .last()
+            .filter(|_| more)
+            .map(|session| SessionCursor {
+                updated_at: session.updated_at.clone(),
+                id: session.id.clone(),
+            });
         Ok(SessionList {
             sessions,
             sequence: current_sequence(&connection)?,
+            next_cursor,
         })
     }
 
@@ -323,6 +347,14 @@ impl Store {
         transaction
             .commit()
             .map_err(|error| WorkbenchError::storage("Failed to commit session deletion", error))?;
+        // The conversation is gone either way; a folder that could not be
+        // removed still appears under Data & Storage.
+        let _ = std::fs::remove_dir_all(
+            self.root
+                .join("jobs")
+                .join("conversations")
+                .join(&request.session_id),
+        );
         Ok(sequence)
     }
 
@@ -391,7 +423,8 @@ mod tests {
         }
         transaction.commit().unwrap();
 
-        let listed = store.list_sessions(None, false).unwrap().sessions;
+        let page = store.list_sessions(None, false).unwrap();
+        let listed = page.sessions;
         assert_eq!(listed.len(), MAX_SESSIONS_PER_LIST);
         assert_eq!(listed[0].id, format!("session_{:04}", total - 1));
         assert_eq!(listed.last().unwrap().id, "session_0003");
@@ -399,6 +432,62 @@ mod tests {
             store.list_sessions(None, true).unwrap().sessions.len(),
             MAX_SESSIONS_PER_LIST
         );
+
+        // The rest are one page away, and the last page says so.
+        let older = store
+            .list_sessions_page(None, false, page.next_cursor.as_ref())
+            .unwrap();
+        let ids: Vec<_> = older.sessions.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["session_0002", "session_0001", "session_0000"]);
+        assert_eq!(older.next_cursor, None);
+    }
+
+    #[test]
+    fn a_full_list_with_nothing_older_has_no_next_page() {
+        let temporary = tempfile::tempdir().unwrap();
+        let store = Store::open_at(&temporary.path().join("workbench-store")).unwrap();
+        let mut connection = store.connection().unwrap();
+        let transaction = connection.transaction().unwrap();
+        for index in 0..MAX_SESSIONS_PER_LIST {
+            transaction
+                .execute(
+                    "INSERT INTO sessions (id, workspace_id, title, overrides_json, draft, revision, created_at, updated_at) VALUES (?1, NULL, 'Recurring follow-up', '{}', '', 1, 'same', 'same')",
+                    params![format!("session_{index:04}")],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+        assert_eq!(store.list_sessions(None, false).unwrap().next_cursor, None);
+    }
+
+    #[test]
+    fn paging_loses_nothing_when_conversations_share_a_timestamp() {
+        let temporary = tempfile::tempdir().unwrap();
+        let store = Store::open_at(&temporary.path().join("workbench-store")).unwrap();
+        let mut connection = store.connection().unwrap();
+        let transaction = connection.transaction().unwrap();
+        let total = MAX_SESSIONS_PER_LIST + 2;
+        for index in 0..total {
+            transaction
+                .execute(
+                    "INSERT INTO sessions (id, workspace_id, title, overrides_json, draft, revision, created_at, updated_at) VALUES (?1, NULL, 'Recurring follow-up', '{}', '', 1, 'same', 'same')",
+                    params![format!("session_{index:04}")],
+                )
+                .unwrap();
+        }
+        transaction.commit().unwrap();
+        let first = store.list_sessions(None, false).unwrap();
+        let second = store
+            .list_sessions_page(None, false, first.next_cursor.as_ref())
+            .unwrap();
+        let mut ids: Vec<_> = first
+            .sessions
+            .iter()
+            .chain(&second.sessions)
+            .map(|session| session.id.clone())
+            .collect();
+        ids.dedup();
+        assert_eq!(ids.len(), total);
     }
 
     #[test]

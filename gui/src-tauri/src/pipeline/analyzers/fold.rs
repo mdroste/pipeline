@@ -198,6 +198,53 @@ pub fn fold(input: &str, mode: Fold) -> Folded {
     }
 }
 
+/// The plain letters of an already lower-cased Latin letter with a diacritic.
+fn base_letters(c: char) -> Option<&'static str> {
+    Some(match c {
+        'à'..='å' | 'ā' | 'ă' | 'ą' | 'ǎ' | '\u{1ea0}'..='\u{1eb7}' => "a",
+        'ç' | 'ć' | 'ĉ' | 'ċ' | 'č' => "c",
+        'ď' | 'đ' | 'ð' => "d",
+        'è'..='ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' | '\u{1eb8}'..='\u{1ec7}' => "e",
+        'ĝ' | 'ğ' | 'ġ' | 'ģ' => "g",
+        'ĥ' | 'ħ' => "h",
+        'ì'..='ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' | 'ǐ' | '\u{1ec8}'..='\u{1ecb}' => "i",
+        'ĵ' => "j",
+        'ķ' => "k",
+        'ĺ' | 'ļ' | 'ľ' | 'ŀ' | 'ł' => "l",
+        'ñ' | 'ń' | 'ņ' | 'ň' | 'ŉ' => "n",
+        'ò'..='ö' | 'ø' | 'ō' | 'ŏ' | 'ő' | 'ơ' | 'ǒ' | '\u{1ecc}'..='\u{1ee3}' => "o",
+        'ŕ' | 'ŗ' | 'ř' => "r",
+        'ś' | 'ŝ' | 'ş' | 'š' | 'ș' => "s",
+        'ţ' | 'ť' | 'ŧ' | 'ț' => "t",
+        'ù'..='ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' | 'ư' | 'ǔ' | '\u{1ee4}'..='\u{1ef1}' => {
+            "u"
+        }
+        'ŵ' => "w",
+        'ý' | 'ÿ' | 'ŷ' | '\u{1ef2}'..='\u{1ef9}' => "y",
+        'ź' | 'ż' | 'ž' => "z",
+        'æ' => "ae",
+        'œ' => "oe",
+        'ß' => "ss",
+        'þ' => "th",
+        'ŋ' => "ng",
+        _ => return None,
+    })
+}
+
+/// Folded text with diacritics removed, composed or combining, so that a name
+/// spelled with its accent matches the same name spelled without one.
+pub fn unaccented(folded: &str) -> String {
+    let mut plain = String::with_capacity(folded.len());
+    for c in folded.chars() {
+        match base_letters(c) {
+            Some(letters) => plain.push_str(letters),
+            None if ('\u{300}'..='\u{36f}').contains(&c) => {}
+            None => plain.push(c),
+        }
+    }
+    plain
+}
+
 /// Alphanumeric word tokens with their byte offsets.
 pub fn tokens(text: &str) -> Vec<(usize, &str)> {
     let mut result = Vec::new();
@@ -248,6 +295,18 @@ mod tests {
             Fold::Latex,
         );
         assert_eq!(folded.text, "we find large effects a \"here\" - x 50% next");
+    }
+
+    #[test]
+    fn unaccented_folds_composed_combining_and_stroked_letters() {
+        assert_eq!(unaccented("müller"), "muller");
+        assert_eq!(unaccented("mu\u{308}ller"), "muller");
+        assert_eq!(
+            unaccented("sørensen łukasz straße"),
+            "sorensen lukasz strasse"
+        );
+        assert_eq!(unaccented("nguyễn"), "nguyen");
+        assert_eq!(unaccented("garcía"), "garcia");
     }
 
     #[test]

@@ -15,6 +15,7 @@ import {
   isAutoReview,
 } from "../../lib/autoReview";
 
+import { forgetWorkflowDraft } from "../../lib/workflowDraftRecovery";
 import { describeStep } from "./stepSummary";
 
 import type { WorkflowEditor } from "./useWorkflowEditor";
@@ -83,6 +84,7 @@ export function WorkflowNavigator({
   if (!config) return null;
   const activeProfileName =
     profiles.find((p) => p.id === activeProfile)?.name ?? activeProfile;
+  const activeInvalid = profiles.find((p) => p.id === activeProfile)?.invalid;
 
   // Group steps for display: find boundaries between parallel and sequential
   const parallelSteps = config.steps.filter((s) => s.phase === "parallel");
@@ -95,13 +97,13 @@ export function WorkflowNavigator({
 
   return (
     <SidebarPanel
-      aria-label="Workflow editor navigation"
+      aria-label="Review designer navigation"
       width={panelWidth}
       defaultWidth={420}
       min={280}
       max={640}
       onResize={setPanelWidth}
-      resizeLabel="Resize workflow panel"
+      resizeLabel="Resize review panel"
     >
       {/* Header */}
       <div className="px-4 pt-4 pb-2 flex items-center justify-between">
@@ -142,6 +144,7 @@ export function WorkflowNavigator({
                   ))
                 )
                   return;
+                forgetWorkflowDraft(activeProfile);
                 onClose();
               })()
             }
@@ -156,7 +159,7 @@ export function WorkflowNavigator({
       <div className="px-4 pb-3 space-y-2">
         <div className="flex items-center gap-2">
           <select
-            aria-label="Active workflow profile"
+            aria-label="Active review"
             aria-busy={profileMutationPending}
             value={activeProfile}
             onChange={(e) => handleSwitchProfile(e.target.value)}
@@ -167,34 +170,43 @@ export function WorkflowNavigator({
           >
             {profiles.map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name}
+                {p.invalid ? `${p.name} (needs repair)` : p.name}
               </option>
             ))}
           </select>
           <button
             onClick={handleNewProfile}
-            aria-label="New profile"
+            aria-label="New review"
             disabled={profileMutationPending}
             className="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-40"
-            title="New profile"
+            title="New review"
           >
             <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
               <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
             </svg>
           </button>
         </div>
+        {activeInvalid && (
+          <p
+            role="alert"
+            className="rounded-lg bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+          >
+            This saved review design can't run until it is repaired. Fix it here
+            and save, or export it to keep a copy. Reason: {activeInvalid}
+          </p>
+        )}
         <div className="flex gap-1">
           <button
             onClick={handleDuplicateProfile}
             disabled={profileMutationPending}
-            className="flex-1 py-1 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded transition-colors disabled:opacity-40"
+            className="flex-1 py-1 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-800 rounded transition-colors disabled:opacity-40"
           >
             Duplicate
           </button>
           <button
             onClick={handleRenameProfile}
             disabled={profileMutationPending}
-            className="flex-1 py-1 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-50 rounded transition-colors disabled:opacity-40"
+            className="flex-1 py-1 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-800 rounded transition-colors disabled:opacity-40"
           >
             Rename
           </button>
@@ -205,6 +217,7 @@ export function WorkflowNavigator({
               profiles.find((profile) => profile.id === activeProfile)?.builtin
             }
             className="flex-1 py-1 text-[11px] text-gray-500 hover:text-red-600 hover:bg-red-50
+                         dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-red-950/40
                          rounded transition-colors disabled:opacity-30 disabled:hover:text-gray-500
                          disabled:hover:bg-transparent"
           >
@@ -245,7 +258,7 @@ export function WorkflowNavigator({
       <div className="px-4 pb-2">
         <div
           role="tablist"
-          aria-label="Workflow navigator view"
+          aria-label="Review navigator view"
           className="grid grid-cols-3 rounded-lg bg-gray-100 p-0.5 dark:bg-gray-800"
         >
           {(editorMode === "advanced"
@@ -341,7 +354,7 @@ export function WorkflowNavigator({
                   {config.orientation_schema
                     ? autoReview
                       ? "Catalog-backed"
-                      : "Workflow contract"
+                      : "Review contract"
                     : "Object only"}
                 </span>
               </span>
@@ -378,7 +391,11 @@ export function WorkflowNavigator({
                         : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
                     }`}
                   >
-                    {step.output_schema ? "Custom JSON" : "Markdown"}
+                    {step.kind === "analyzer"
+                      ? "Pipeline writes this result"
+                      : step.output_schema
+                        ? "Custom JSON"
+                        : "Markdown"}
                   </span>
                 </span>
               </button>
@@ -386,140 +403,149 @@ export function WorkflowNavigator({
           </div>
         ) : (
           <>
-            <div className="px-4 py-1.5 bg-gray-50 dark:bg-gray-800/50 sticky top-0 z-[1]">
-              <span className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium">
-                Workflow setup
-              </span>
-            </div>
-            <button
-              type="button"
-              aria-label="Input & extraction"
-              onClick={() =>
-                setEditing(editing === "extraction" ? null : "extraction")
-              }
-              className={`w-full border-b border-gray-100 px-4 py-2.5 text-left dark:border-gray-800 ${
-                editing === "extraction"
-                  ? "bg-gray-100 dark:bg-gray-800"
-                  : "hover:bg-gray-50 dark:hover:bg-gray-800/50"
-              }`}
-            >
-              <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">
-                Input &amp; extraction
-              </span>
-              <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
-                Input type and PDF extraction
-              </span>
-            </button>
-            <button
-              type="button"
-              aria-label={
-                autoReview ? "Orientation & classification" : "Orientation map"
-              }
-              onClick={() =>
-                setEditing(editing === "orientation" ? null : "orientation")
-              }
-              className={`w-full border-b border-gray-100 px-4 py-2.5 text-left dark:border-gray-800 ${
-                editing === "orientation"
-                  ? "bg-gray-100 dark:bg-gray-800"
-                  : "hover:bg-gray-50 dark:hover:bg-gray-800/50"
-              }`}
-            >
-              <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">
-                {autoReview
-                  ? "Orientation & classification"
-                  : "Orientation map"}
-              </span>
-              <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
-                {autoReview
-                  ? "Maps the paper and picks reviewers"
-                  : "Maps the input before review"}
-              </span>
-            </button>
-
-            {/* Parallel section */}
-            <div className="px-4 py-1.5 bg-blue-50 dark:bg-blue-950/30 sticky top-0 z-[1]">
-              <span className="text-[10px] uppercase tracking-wider text-blue-700 dark:text-blue-300 font-medium">
-                Parallel
-              </span>
-            </div>
-
-            {parallelSteps.map((step) => (
-              <div key={step.id}>
-                <StepRow
-                  step={step}
-                  summary={describeStep(step, config).compact}
-                  selected={editing === step.id}
-                  onToggle={() => updateStepEnabled(step.id, !step.enabled)}
-                  onSelect={() =>
-                    setEditing(editing === step.id ? null : step.id)
-                  }
-                  onDelete={() => removeStep(step.id)}
-                />
+            {/* Each section holds its header, which lets go at the section's end. */}
+            <div>
+              <div className="px-4 py-1.5 bg-gray-50 dark:bg-gray-800 sticky top-0 z-[1]">
+                <span className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium">
+                  Review setup
+                </span>
               </div>
-            ))}
-            {autoReview && (
-              <div className="border-t border-blue-100 dark:border-blue-950/60">
-                <div className="bg-blue-50/60 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-blue-700 dark:bg-blue-950/25 dark:text-blue-300">
-                  Auto-filled from orientation
-                </div>
-                <AdaptiveAgentsRow
-                  count={adaptiveAgentCount}
-                  range={adaptiveAgentRange}
-                  selected={editing === "auto_adaptive_agents"}
-                  onSelect={() =>
-                    setEditing(
-                      editing === "auto_adaptive_agents"
-                        ? null
-                        : "auto_adaptive_agents",
-                    )
-                  }
-                />
-              </div>
-            )}
-
-            {/* Merge indicator */}
-            {hasMultiAgent && config.merge?.enabled && (
               <button
-                onClick={() => setEditing("merge")}
-                className={`w-full px-4 py-1.5 text-left ${
-                  editing === "merge"
-                    ? "bg-amber-50 dark:bg-amber-950/30"
-                    : "bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800"
+                type="button"
+                aria-label="Input & extraction"
+                onClick={() =>
+                  setEditing(editing === "extraction" ? null : "extraction")
+                }
+                className={`w-full border-b border-gray-100 px-4 py-2.5 text-left dark:border-gray-800 ${
+                  editing === "extraction"
+                    ? "bg-gray-100 dark:bg-gray-800"
+                    : "hover:bg-gray-50 dark:hover:bg-gray-800/50"
                 }`}
               >
-                <span className="text-[10px] uppercase tracking-wider text-amber-700 dark:text-amber-300 font-medium">
-                  Merge (auto)
+                <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">
+                  Input &amp; extraction
+                </span>
+                <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
+                  Input type and PDF extraction
                 </span>
               </button>
-            )}
-
-            {/* Sequential section */}
-            <div className="px-4 py-1.5 bg-orange-50 dark:bg-orange-950/30 sticky top-0 z-[1]">
-              <span className="text-[10px] uppercase tracking-wider text-orange-700 dark:text-orange-300 font-medium">
-                Sequential
-              </span>
+              <button
+                type="button"
+                aria-label={
+                  autoReview
+                    ? "Orientation & classification"
+                    : "Orientation map"
+                }
+                onClick={() =>
+                  setEditing(editing === "orientation" ? null : "orientation")
+                }
+                className={`w-full border-b border-gray-100 px-4 py-2.5 text-left dark:border-gray-800 ${
+                  editing === "orientation"
+                    ? "bg-gray-100 dark:bg-gray-800"
+                    : "hover:bg-gray-50 dark:hover:bg-gray-800/50"
+                }`}
+              >
+                <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">
+                  {autoReview
+                    ? "Orientation & classification"
+                    : "Orientation map"}
+                </span>
+                <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
+                  {autoReview
+                    ? "Maps the paper and picks reviewers"
+                    : "Maps the input before review"}
+                </span>
+              </button>
             </div>
 
-            {sequentialSteps.map((step, posInSection) => (
-              <div key={step.id}>
-                <StepRow
-                  step={step}
-                  summary={describeStep(step, config).compact}
-                  selected={editing === step.id}
-                  onToggle={() => updateStepEnabled(step.id, !step.enabled)}
-                  onSelect={() =>
-                    setEditing(editing === step.id ? null : step.id)
-                  }
-                  onDelete={() => removeStep(step.id)}
-                  canMoveUp={posInSection > 0}
-                  canMoveDown={posInSection < sequentialSteps.length - 1}
-                  onMoveUp={() => moveSequentialStep(step.id, -1)}
-                  onMoveDown={() => moveSequentialStep(step.id, 1)}
-                />
+            {/* Parallel section */}
+            <div>
+              <div className="px-4 py-1.5 bg-blue-50 dark:bg-blue-950 sticky top-0 z-[1]">
+                <span className="text-[10px] uppercase tracking-wider text-blue-700 dark:text-blue-300 font-medium">
+                  Parallel
+                </span>
               </div>
-            ))}
 
-            {/* Pipeline settings */}
+              {parallelSteps.map((step) => (
+                <div key={step.id}>
+                  <StepRow
+                    step={step}
+                    summary={describeStep(step, config).compact}
+                    selected={editing === step.id}
+                    onToggle={() => updateStepEnabled(step.id, !step.enabled)}
+                    onSelect={() =>
+                      setEditing(editing === step.id ? null : step.id)
+                    }
+                    onDelete={() => removeStep(step.id)}
+                  />
+                </div>
+              ))}
+              {autoReview && (
+                <div className="border-t border-blue-100 dark:border-blue-950/60">
+                  <div className="bg-blue-50/60 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-blue-700 dark:bg-blue-950/25 dark:text-blue-300">
+                    Auto-filled from orientation
+                  </div>
+                  <AdaptiveAgentsRow
+                    count={adaptiveAgentCount}
+                    range={adaptiveAgentRange}
+                    selected={editing === "auto_adaptive_agents"}
+                    onSelect={() =>
+                      setEditing(
+                        editing === "auto_adaptive_agents"
+                          ? null
+                          : "auto_adaptive_agents",
+                      )
+                    }
+                  />
+                </div>
+              )}
+
+              {/* Merge indicator */}
+              {hasMultiAgent && config.merge?.enabled && (
+                <button
+                  onClick={() => setEditing("merge")}
+                  className={`w-full px-4 py-1.5 text-left ${
+                    editing === "merge"
+                      ? "bg-amber-50 dark:bg-amber-950/30"
+                      : "bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800"
+                  }`}
+                >
+                  <span className="text-[10px] uppercase tracking-wider text-amber-700 dark:text-amber-300 font-medium">
+                    Merge (auto)
+                  </span>
+                </button>
+              )}
+            </div>
+
+            {/* Sequential section */}
+            <div>
+              <div className="px-4 py-1.5 bg-orange-50 dark:bg-orange-950 sticky top-0 z-[1]">
+                <span className="text-[10px] uppercase tracking-wider text-orange-700 dark:text-orange-300 font-medium">
+                  Sequential
+                </span>
+              </div>
+
+              {sequentialSteps.map((step, posInSection) => (
+                <div key={step.id}>
+                  <StepRow
+                    step={step}
+                    summary={describeStep(step, config).compact}
+                    selected={editing === step.id}
+                    onToggle={() => updateStepEnabled(step.id, !step.enabled)}
+                    onSelect={() =>
+                      setEditing(editing === step.id ? null : step.id)
+                    }
+                    onDelete={() => removeStep(step.id)}
+                    canMoveUp={posInSection > 0}
+                    canMoveDown={posInSection < sequentialSteps.length - 1}
+                    onMoveUp={() => moveSequentialStep(step.id, -1)}
+                    onMoveDown={() => moveSequentialStep(step.id, 1)}
+                  />
+                </div>
+              ))}
+            </div>
+
+            {/* Review settings */}
             <button
               onClick={() =>
                 setEditing(
@@ -547,7 +573,7 @@ export function WorkflowNavigator({
                   />
                 </svg>
                 <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
-                  Pipeline Settings
+                  Review settings
                 </span>
               </div>
             </button>
@@ -578,8 +604,8 @@ export function WorkflowNavigator({
           <button
             onClick={handleReset}
             disabled={profileMutationPending}
-            className="py-2 px-3 border border-gray-300 rounded-lg text-sm text-gray-600
-                         hover:bg-gray-50 transition-colors disabled:cursor-wait disabled:opacity-50"
+            className="py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-600 dark:text-gray-300
+                         hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:cursor-wait disabled:opacity-50"
           >
             Reset
           </button>
@@ -616,14 +642,14 @@ export function WorkflowNavigator({
           <div className="flex-1 relative">
             <button
               onClick={() => setExportMenuOpen(!exportMenuOpen)}
-              className="w-full py-1.5 px-3 border border-gray-300 rounded-lg text-xs text-gray-500
-                           hover:bg-gray-50 transition-colors"
+              className="w-full py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-xs text-gray-500 dark:text-gray-400
+                           hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
             >
               Export {exportMenuOpen ? "\u25B2" : "\u25BC"}
             </button>
             {exportMenuOpen && (
               <div
-                className="absolute bottom-full left-0 right-0 mb-1 bg-white border border-gray-200
+                className="absolute bottom-full left-0 right-0 mb-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700
                                 rounded-lg shadow-lg overflow-hidden z-10"
               >
                 <button
@@ -632,8 +658,8 @@ export function WorkflowNavigator({
                     setExportMenuOpen(false);
                   }}
                   disabled={!editingStep}
-                  className="w-full py-2 px-3 text-xs text-left text-gray-700 hover:bg-gray-50
-                               disabled:text-gray-300 disabled:hover:bg-white transition-colors"
+                  className="w-full py-2 px-3 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800
+                               disabled:text-gray-300 dark:disabled:text-gray-600 disabled:hover:bg-white dark:disabled:hover:bg-gray-900 transition-colors"
                 >
                   Export selected step
                 </button>
@@ -642,35 +668,35 @@ export function WorkflowNavigator({
                     handleExportProfile();
                     setExportMenuOpen(false);
                   }}
-                  className="w-full py-2 px-3 text-xs text-left text-gray-700 hover:bg-gray-50 transition-colors"
+                  className="w-full py-2 px-3 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                 >
-                  Export profile &ldquo;{activeProfileName}&rdquo;
+                  Export review &ldquo;{activeProfileName}&rdquo;
                 </button>
                 <button
                   onClick={() => {
                     handleExportBundle();
                     setExportMenuOpen(false);
                   }}
-                  className="w-full py-2 px-3 text-xs text-left text-gray-700 hover:bg-gray-50 transition-colors"
+                  className="w-full py-2 px-3 text-xs text-left text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
                 >
-                  Export all (profiles + settings)
+                  Export all (reviews + settings)
                 </button>
               </div>
             )}
           </div>
           <button
             onClick={handleImport}
-            className="flex-1 py-1.5 px-3 border border-gray-300 rounded-lg text-xs text-gray-500
-                         hover:bg-gray-50 transition-colors"
+            className="flex-1 py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-xs text-gray-500 dark:text-gray-400
+                         hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
           >
             Import
           </button>
           {onOpenGallery && (
             <button
               onClick={onOpenGallery}
-              title="Browse curated workflow templates"
-              className="flex-1 py-1.5 px-3 border border-gray-300 rounded-lg text-xs text-gray-500
-                           hover:bg-gray-50 transition-colors"
+              title="Browse curated review templates"
+              className="flex-1 py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-xs text-gray-500 dark:text-gray-400
+                           hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
             >
               Gallery
             </button>

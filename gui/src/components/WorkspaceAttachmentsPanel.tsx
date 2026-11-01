@@ -15,6 +15,7 @@ import Button from "../ui/Button";
 import Skeleton from "../ui/Skeleton";
 import type {
   ConversationSnapshot,
+  SessionSnapshot,
   EffectiveHarness,
   PaperWithRevision,
 } from "../lib/workbenchTypes";
@@ -34,7 +35,7 @@ export default function WorkspaceAttachmentsPanel({
 }: {
   mode: "import" | "documents";
   snapshot: ConversationSnapshot;
-  onSnapshot: (next: ConversationSnapshot) => void;
+  onSnapshot: (next: SessionSnapshot) => void;
   onBusy: (busy: boolean) => void;
   onClose: () => void;
 }) {
@@ -117,7 +118,7 @@ export default function WorkspaceAttachmentsPanel({
     });
   const selectPaper = (paperId: string | null) =>
     act(async () => {
-      const latest = await conversationClient.conversationSnapshot(
+      const latest = await conversationClient.sessionSnapshot(
         snapshot.session.id,
       );
       const effective = await harnessClient.effectiveHarness(

@@ -10,6 +10,10 @@ pub struct ConversationCapabilities {
     pub command_domains: Vec<String>,
     pub browser: bool,
     pub shell_write: bool,
+    /// Commands work in the conversation's private folder, not a project.
+    /// Omitted when false, so project conversations keep their fingerprints.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub private_folder: bool,
 }
 
 impl ConversationCapabilities {
@@ -69,6 +73,7 @@ impl ConversationCapabilities {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             shell_write,
+            private_folder: false,
         })
     }
 

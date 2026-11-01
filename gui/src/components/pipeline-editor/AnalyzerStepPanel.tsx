@@ -6,6 +6,7 @@ import {
   type AnalyzerInfo,
 } from "../../lib/analyzers";
 import { NetworkDisclosure } from "./AnalyzerChoice";
+import { MAX_STEP_LABEL_CHARS } from "./editorState";
 
 /** Editor for a Pipeline check step: no prompt, providers, or model. */
 export default function AnalyzerStepPanel({
@@ -56,6 +57,7 @@ export default function AnalyzerStepPanel({
         <input
           type="text"
           aria-label="Step label"
+          maxLength={MAX_STEP_LABEL_CHARS}
           value={step.label}
           onChange={(event) => onUpdate(step.id, { label: event.target.value })}
           className="w-full py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
@@ -73,7 +75,7 @@ export default function AnalyzerStepPanel({
             role="alert"
             className="mt-1 text-xs text-red-600 dark:text-red-400"
           >
-            This version of Pipeline does not provide this check. The workflow
+            This version of Pipeline does not provide this check. The review
             cannot run until the step is removed.
           </p>
         ) : (

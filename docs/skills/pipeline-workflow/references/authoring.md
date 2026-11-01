@@ -9,7 +9,7 @@ A portable workflow is the GUI's profile export envelope:
 ```json
 {
   "type": "profile",
-  "schema_version": 8,
+  "schema_version": 11,
   "name": "Detailed theory review",
   "steps": [],
   "merge": {},

@@ -1,7 +1,7 @@
 # Pipeline
 
 [![CI](https://github.com/mdroste/pipeline/actions/workflows/build.yml/badge.svg)](https://github.com/mdroste/pipeline/actions/workflows/build.yml)
-[![Version 1.3.2](https://img.shields.io/badge/version-1.3.2-blue)](CHANGELOG.md)
+[![Version 1.4.0](https://img.shields.io/badge/version-1.4.0-blue)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/github/license/mdroste/pipeline)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](#install)
 [![Windows](https://img.shields.io/badge/Windows-0078D4)](#install)
@@ -79,7 +79,7 @@ asks you to sign in again instead of switching to an API key. See
    choose **Grant Proposal Review**.
 4. Check the provider, model, and PDF extraction settings, then choose
    **Start review** to see the plan.
-5. Check the plan, then choose **Generate report**, or **Add to queue** if
+5. Check the plan, then choose **Start review** again, or **Add to queue** if
    other reviews are running.
 
 When the review finishes, read the report and open **Sources** to see the
@@ -134,7 +134,8 @@ Uninstalling the app leaves your research data in place. See
   Use **Review edits** to accept or discard changes; accepted changes can be undone.
   Large projects may need a smaller selection of files or **Direct edits**.
 - Searching the web, giving commands internet access, and letting the assistant
-  operate a browser are separate choices in **Assistant settings**. Pipeline
+  operate a browser are separate choices in
+  **Assistant settings → Manage agent profiles… → Access & inheritance**. Pipeline
   downloads command and browser software when needed. Web search needs no browser.
 - API and local models can run general commands on macOS, or Linux with
   `bubblewrap` and `socat`. On Windows, these models can run research commands you
@@ -148,7 +149,8 @@ and [Review edits](docs/analysis-and-writing.md#review-edits) for working with c
 
 `pipeline-cli` runs reviews without the desktop app, using the same settings
 and saved runs. The installer puts it beside the app but doesn't add it to
-your `PATH`. See the [command-line guide](docs/cli.md).
+your `PATH`. The [command-line guide](docs/cli.md) gives its location on each
+system.
 
 To run the app from source, install Node.js 24.18.0 and Rust 1.97.1, then:
 

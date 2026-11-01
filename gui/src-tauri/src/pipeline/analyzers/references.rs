@@ -2,30 +2,42 @@
 //! enables network lookups, check each against Crossref.
 //!
 //! Without the network the check is local: undefined LaTeX citations,
-//! duplicate entries, and malformed DOIs. With it, each reference is
+//! duplicate entries, and malformed DOIs. A key counts as undefined only when
+//! a complete bibliography was read. Otherwise, and when no bibliography was
+//! found, the check says what it could not cover. With the network, each
+//! reference is
 //! `matched`, `other_version` (for example a working paper later published),
 //! `metadata_mismatch`, `ambiguous`, `not_found`, or `lookup_failed`, and
 //! matched DOIs are checked for retractions, withdrawals, expressions of
 //! concern, and corrections, which Crossref records with Retraction Watch.
-//! `not_found` means not found in Crossref, never that a work is fabricated.
+//! A notice changes a reference's status only when the record is confirmed to
+//! be the cited work; on any other record the report says so and never calls
+//! the cited work retracted. `not_found` means not found in Crossref, never
+//! that a work is fabricated. References that went unchecked are always
+//! reported. If no lookup succeeded the local results stand, with a finding
+//! that says which online checks did not run.
 
 mod bibliography;
 mod bibtex;
 mod crossref;
+mod lookups;
 
 use crate::document_bundle::DocumentBundle;
 use bibliography::Block;
+#[cfg(test)]
+use lookups::{best_candidate, classify, notice_flag};
+use lookups::{record_lookup_gaps, resolve, Options};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-const DEFAULT_MAX_REFERENCES: usize = 150;
 const MAX_BIB_FILES: usize = 20;
 const MAX_BIB_BYTES: u64 = 4 * 1024 * 1024;
+/// Keeps the step's output bounded when a source cites nothing, so that every
+/// entry of every file is listed.
+const MAX_LISTED_REFERENCES: usize = MAX_BIB_FILES * 2_000;
 const MAX_REFERENCE_FINDINGS: usize = 60;
-const STRONG_TITLE: f64 = 0.85;
-const WEAK_TITLE: f64 = 0.6;
-const MAX_CONSECUTIVE_FAILURES: usize = 3;
+const MAX_LISTED_MALFORMED: usize = 40;
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Reference {
@@ -54,6 +66,16 @@ pub struct Reference {
     pub matched: Option<Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notices: Vec<Value>,
+    /// The notice lookup failed, so a clean status says nothing about notices.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub notices_unchecked: bool,
+}
+
+/// A bibliography file that was not read in full.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SkippedBibFile {
+    pub file: String,
+    pub reason: String,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -62,6 +84,16 @@ pub struct LocalChecks {
     pub uncited_entries: usize,
     pub duplicates: Vec<(usize, usize)>,
     pub malformed_dois: Vec<usize>,
+    pub skipped_bib_files: Vec<SkippedBibFile>,
+    /// Keys defined by `\bibitem` or a compiled `.bbl` file.
+    pub compiled_entries: usize,
+    /// What the check could not cover, written for the researcher.
+    pub limitations: Vec<String>,
+    /// What the Crossref lookups could not cover, written for the researcher.
+    pub lookup_limitations: Vec<String>,
+    /// Set when no lookup succeeded, saying which online checks did not run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crossref_outage: Option<String>,
 }
 
 fn bounded(text: &str, max: usize) -> String {
@@ -69,9 +101,110 @@ fn bounded(text: &str, max: usize) -> String {
     collapsed.chars().take(max).collect()
 }
 
+/// What a LaTeX source's bibliography files gave up. Each `(file, text)` pair
+/// names the file relative to the source folder.
+#[derive(Default)]
+struct BibliographySources {
+    bib: Vec<(String, String)>,
+    bbl: Vec<(String, String)>,
+    skipped: Vec<SkippedBibFile>,
+}
+
+/// Every `.bib` and `.bbl` within three levels of the source folder.
+fn project_bibliography_files(root: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut bib = Vec::new();
+    let mut bbl = Vec::new();
+    let mut stack = vec![(root.to_path_buf(), 0usize)];
+    while let Some((dir, depth)) = stack.pop() {
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut entries: Vec<_> = read.flatten().collect();
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if name.starts_with('.') || kind.is_symlink() {
+                continue;
+            }
+            if kind.is_dir() && depth < 3 {
+                stack.push((entry.path(), depth + 1));
+            } else if kind.is_file() && name.ends_with(".bib") {
+                bib.push(entry.path());
+            } else if kind.is_file() && name.ends_with(".bbl") {
+                bbl.push(entry.path());
+            }
+        }
+    }
+    bib.sort();
+    bbl.sort();
+    (bib, bbl)
+}
+
+/// UTF-8, or Latin-1 for the older files that are not. Citation keys are ASCII
+/// either way, and each Latin-1 byte maps to a character, so nothing is dropped.
+fn decode_bibliography(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes).unwrap_or_else(|error| {
+        error
+            .as_bytes()
+            .iter()
+            .map(|byte| char::from(*byte))
+            .collect()
+    })
+}
+
+fn read_bibliography_file(path: &Path, root: &Path) -> Result<String, String> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| "not found".to_string())?;
+    if !metadata.is_file() {
+        return Err("not a regular file".into());
+    }
+    if metadata.len() > MAX_BIB_BYTES {
+        return Err(format!(
+            "larger than the {} MB limit",
+            MAX_BIB_BYTES / (1024 * 1024)
+        ));
+    }
+    let canonical = path
+        .canonicalize()
+        .ok()
+        .filter(|canonical| canonical.starts_with(root))
+        .ok_or("outside the project folder")?;
+    std::fs::read(&canonical)
+        .map(decode_bibliography)
+        .map_err(|_| "could not be read".to_string())
+}
+
+fn read_bibliography_files(
+    paths: Vec<PathBuf>,
+    root: &Path,
+    skipped: &mut Vec<SkippedBibFile>,
+) -> Vec<(String, String)> {
+    let mut files = Vec::new();
+    for path in paths {
+        let file = path
+            .strip_prefix(root)
+            .map(|relative| relative.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        let read = if files.len() == MAX_BIB_FILES {
+            Err(format!("beyond the limit of {MAX_BIB_FILES} files"))
+        } else {
+            read_bibliography_file(&path, root)
+        };
+        match read {
+            Ok(text) => files.push((file, text)),
+            Err(reason) => skipped.push(SkippedBibFile { file, reason }),
+        }
+    }
+    files
+}
+
 /// `.bib` files named by `\bibliography`/`\addbibresource`, or every `.bib`
-/// within three levels of the source folder when none is named.
-fn bib_files(source_path: &str, latex: &str) -> Vec<(String, String)> {
+/// within three levels of the source folder when none is named, plus any
+/// compiled `.bbl`, which no command names. Everything that could not be read
+/// is recorded, because a citation may be defined in it.
+fn bib_files(source_path: &str, latex: &str) -> BibliographySources {
     let source = Path::new(source_path);
     let root = if source.is_dir() {
         source.to_path_buf()
@@ -79,88 +212,104 @@ fn bib_files(source_path: &str, latex: &str) -> Vec<(String, String)> {
         source.parent().map(Path::to_path_buf).unwrap_or_default()
     };
     if root.as_os_str().is_empty() {
-        return Vec::new();
+        return BibliographySources::default();
     }
-    let named = regex::Regex::new(r"\\(?:bibliography|addbibresource)\{([^}]*)\}")
+    let Ok(root) = root.canonicalize() else {
+        return BibliographySources::default();
+    };
+    let mut sources = BibliographySources::default();
+    let visible = crate::pipeline::extract::latex_without_comments(latex);
+    let mut candidates = Vec::new();
+    for capture in regex::Regex::new(r"\\(?:bibliography|addbibresource)\{([^}]*)\}")
         .expect("valid")
-        .captures_iter(latex)
-        .flat_map(|captures| {
-            captures[1]
-                .split(',')
-                .map(|name| name.trim().to_string())
-                .collect::<Vec<_>>()
-        })
-        .filter(|name| !name.is_empty() && !name.contains(".."))
-        .map(|name| {
-            if name.ends_with(".bib") {
-                name
+        .captures_iter(&visible)
+    {
+        for name in capture[1].split(',').map(str::trim) {
+            if name.is_empty() || name.contains('#') {
+                continue;
+            }
+            let file = if name.ends_with(".bib") {
+                name.to_string()
             } else {
                 format!("{name}.bib")
-            }
-        })
-        .collect::<Vec<_>>();
-    let mut candidates: Vec<PathBuf> = named.iter().map(|name| root.join(name)).collect();
-    if candidates.is_empty() {
-        let mut stack = vec![(root.clone(), 0usize)];
-        while let Some((dir, depth)) = stack.pop() {
-            let Ok(read) = std::fs::read_dir(&dir) else {
-                continue;
             };
-            let mut entries: Vec<_> = read.flatten().collect();
-            entries.sort_by_key(|entry| entry.file_name());
-            for entry in entries {
-                let name = entry.file_name().to_string_lossy().to_string();
-                let Ok(kind) = entry.file_type() else {
-                    continue;
-                };
-                if name.starts_with('.') || kind.is_symlink() {
-                    continue;
-                }
-                if kind.is_dir() && depth < 3 {
-                    stack.push((entry.path(), depth + 1));
-                } else if kind.is_file() && name.to_ascii_lowercase().ends_with(".bib") {
-                    candidates.push(entry.path());
-                }
+            if !name.contains("..") {
+                candidates.push(root.join(file));
+                continue;
+            }
+            // A captured project keeps a nearby file under its own name.
+            match crate::pipeline::extract::captured_reference(&root, &root, name) {
+                Some(Some(captured)) => candidates.push(captured),
+                _ => sources.skipped.push(SkippedBibFile {
+                    file,
+                    reason: "outside the project folder".into(),
+                }),
             }
         }
-        candidates.sort();
     }
-    candidates
-        .into_iter()
-        .filter_map(|path| {
-            let metadata = std::fs::symlink_metadata(&path).ok()?;
-            if !metadata.is_file() || metadata.len() > MAX_BIB_BYTES {
-                return None;
-            }
-            let canonical = path.canonicalize().ok()?;
-            if !canonical.starts_with(root.canonicalize().ok()?) {
-                return None;
-            }
-            let text = String::from_utf8(std::fs::read(&canonical).ok()?).ok()?;
-            let relative = path
-                .strip_prefix(&root)
-                .map(|relative| relative.to_string_lossy().replace('\\', "/"))
-                .unwrap_or_default();
-            Some((relative, text))
-        })
-        .take(MAX_BIB_FILES)
-        .collect()
+    let (found_bib, found_bbl) = project_bibliography_files(&root);
+    if candidates.is_empty() {
+        candidates = found_bib;
+    }
+    sources.bib = read_bibliography_files(candidates, &root, &mut sources.skipped);
+    sources.bbl = read_bibliography_files(found_bbl, &root, &mut sources.skipped);
+    sources
+}
+
+/// What to say when `\cite` keys could not be compared with a whole
+/// bibliography. A key missing from a partial read may be in the unread part.
+fn unread_bibliography_note(any_read: bool, skipped: &[SkippedBibFile]) -> String {
+    let unread = skipped
+        .iter()
+        .map(|file| format!("{} ({})", file.file, file.reason))
+        .collect::<Vec<_>>()
+        .join("; ");
+    if any_read {
+        format!(
+            "Part of the bibliography could not be read: {unread}. A citation missing from the part that was read may be in the rest, so undefined citations are not reported."
+        )
+    } else if unread.is_empty() {
+        "No bibliography file was found for this LaTeX source, so its citations could not be compared with one. Undefined citations are not reported.".to_string()
+    } else {
+        format!(
+            "No bibliography could be read for this LaTeX source: {unread}. Its citations could not be compared with one, so undefined citations are not reported."
+        )
+    }
 }
 
 fn from_bibtex(
-    files: &[(String, String)],
+    sources: BibliographySources,
+    latex: &str,
     cited: &[String],
     checks: &mut LocalChecks,
 ) -> Vec<Reference> {
     let mut references = Vec::new();
     let mut known = std::collections::HashSet::new();
-    for (file, text) in files {
-        for entry in bibtex::parse(text) {
+    let mut unlisted = 0usize;
+    let cited_keys: std::collections::HashSet<&str> = cited.iter().map(String::as_str).collect();
+    checks.skipped_bib_files = sources.skipped;
+    for (file, text) in &sources.bib {
+        let parsed = bibtex::parse(text);
+        let unfinished = parsed.stopped.or_else(|| {
+            (parsed.entries.is_empty() && !text.trim().is_empty())
+                .then(|| "no entries could be read".to_string())
+        });
+        if let Some(reason) = unfinished {
+            checks.skipped_bib_files.push(SkippedBibFile {
+                file: file.clone(),
+                reason,
+            });
+        }
+        for entry in parsed.entries {
             if !known.insert(entry.key.clone()) {
                 continue;
             }
-            if !cited.is_empty() && !cited.contains(&entry.key) {
+            if !cited.is_empty() && !cited_keys.contains(entry.key.as_str()) {
                 checks.uncited_entries += 1;
+                continue;
+            }
+            if references.len() == MAX_LISTED_REFERENCES {
+                unlisted += 1;
                 continue;
             }
             let field = |name: &str| {
@@ -220,12 +369,35 @@ fn from_bibtex(
             });
         }
     }
-    checks.undefined_citations = cited
-        .iter()
-        .filter(|key| !known.contains(*key))
-        .take(50)
-        .cloned()
-        .collect();
+    if unlisted > 0 {
+        checks.limitations.push(format!(
+            "Only the first {MAX_LISTED_REFERENCES} bibliography entries were listed. The other {unlisted} were not checked."
+        ));
+    }
+    // A compiled or written-out list holds every cited key as it stands, so
+    // it stands in for a `.bib` that is missing, as it is in an arXiv source.
+    let mut compiled: std::collections::HashSet<String> =
+        bibtex::bibitem_keys(latex).into_iter().collect();
+    for (_, text) in &sources.bbl {
+        compiled.extend(bibtex::compiled_keys(text));
+    }
+    checks.compiled_entries = compiled.len();
+    let any_read = !known.is_empty() || !compiled.is_empty();
+    let complete = !compiled.is_empty() || (any_read && checks.skipped_bib_files.is_empty());
+    known.extend(compiled);
+    if complete {
+        checks.undefined_citations = cited
+            .iter()
+            .filter(|key| !known.contains(*key))
+            .take(50)
+            .cloned()
+            .collect();
+    } else if !cited.is_empty() {
+        checks.limitations.push(unread_bibliography_note(
+            any_read,
+            &checks.skipped_bib_files,
+        ));
+    }
     references
 }
 
@@ -271,6 +443,30 @@ fn find_duplicates(references: &[Reference]) -> Vec<(usize, usize)> {
     duplicates
 }
 
+/// References under the document's bibliography heading. Only paragraph-level
+/// nodes separate that heading from its entries: other extractors keep a whole
+/// page in one node, so those read the extracted text instead.
+fn document_references(bundle: Option<&DocumentBundle>, text: &str) -> Vec<Reference> {
+    let paragraphs = bundle.filter(|bundle| bundle.nodes.iter().any(|n| n.kind == "text_block"));
+    let mut references = Vec::new();
+    if let Some(bundle) = paragraphs {
+        let mut nodes: Vec<_> = bundle.nodes.iter().collect();
+        nodes.sort_by_key(|node| node.order);
+        let blocks: Vec<Block<'_>> = nodes
+            .into_iter()
+            .map(|node| Block {
+                node_id: node.id.as_str(),
+                text: node.text.as_str(),
+            })
+            .collect();
+        references = from_document(&blocks);
+    }
+    if references.is_empty() {
+        references = from_document(&bibliography::text_blocks(text));
+    }
+    references
+}
+
 /// References from `.bib` files for LaTeX inputs, otherwise from the
 /// extracted bibliography.
 pub fn collect(
@@ -296,212 +492,28 @@ pub fn collect(
     };
     let mut references = Vec::new();
     if latex || Path::new(source_path).is_dir() {
-        let files = bib_files(source_path, latex_text);
-        let cited = bibtex::cited_keys(latex_text);
-        references = from_bibtex(&files, &cited, &mut checks);
+        let sources = bib_files(source_path, latex_text);
+        let cited = bibtex::cited_keys(&bibtex::outside_bibliography(latex_text));
+        references = from_bibtex(sources, latex_text, &cited, &mut checks);
     }
     if references.is_empty() {
-        let blocks: Vec<Block<'_>> = match bundle {
-            Some(bundle) if !bundle.nodes.is_empty() => {
-                let mut nodes: Vec<_> = bundle.nodes.iter().collect();
-                nodes.sort_by_key(|node| node.order);
-                nodes
-                    .into_iter()
-                    .map(|node| Block {
-                        node_id: node.id.as_str(),
-                        text: node.text.as_str(),
-                    })
-                    .collect()
-            }
-            _ => bibliography::text_blocks(text),
-        };
-        references = from_document(&blocks);
+        references = document_references(bundle, text);
+        checks.malformed_dois.extend(
+            references
+                .iter()
+                .filter(|item| item.doi.is_none() && bibliography::names_doi(&item.text))
+                .map(|item| item.index),
+        );
+    }
+    if references.is_empty() && checks.limitations.is_empty() && checks.uncited_entries == 0 {
+        checks.limitations.push(if checks.compiled_entries > 0 {
+            "This source's bibliography was used only to confirm its citation keys. Its entries could not be read one by one, so they were not checked for duplicates, DOIs, or Crossref records.".to_string()
+        } else {
+            "No bibliography was found, so no references were checked. The check looks for a heading such as References or Bibliography followed by at least three entries.".to_string()
+        });
     }
     checks.duplicates = find_duplicates(&references);
     (references, checks)
-}
-
-fn work_json(work: &crossref::Work) -> Value {
-    json!({
-        "doi": work.doi,
-        "title": work.title,
-        "authors": work.families.iter().take(5).collect::<Vec<_>>(),
-        "year": work.year,
-        "container": work.container,
-        "type": work.kind,
-    })
-}
-
-/// Classifies a reference against its best Crossref candidate.
-fn classify(reference: &mut Reference, work: &crossref::Work, by_doi: bool) {
-    let coverage = crossref::title_coverage(&work.title, &reference.text);
-    let author = crossref::author_present(work, &reference.text);
-    let year_gap = match (reference.year, work.year) {
-        (Some(cited), Some(found)) => cited.abs_diff(found),
-        _ => 0,
-    };
-    reference.matched = Some(work_json(work));
-    let detailed = super::fold::tokens(&reference.text).len() >= 6;
-    let (status, reason) = if by_doi && detailed && coverage < 0.5 {
-        (
-            "metadata_mismatch",
-            "The DOI belongs to a work with a different title.",
-        )
-    } else if !by_doi && coverage < WEAK_TITLE {
-        (
-            "not_found",
-            "No Crossref record closely matched this reference.",
-        )
-    } else if !by_doi && coverage < STRONG_TITLE {
-        (
-            "ambiguous",
-            "The closest Crossref record matched only part of the title.",
-        )
-    } else if !author {
-        (
-            "metadata_mismatch",
-            "The matching Crossref record lists different authors.",
-        )
-    } else if year_gap > 1
-        || (crossref::looks_unpublished(&reference.text) && work.kind == "journal-article")
-    {
-        ("other_version", "Crossref lists this work with a different year or as a published article; the cited version may be a working paper or an earlier draft.")
-    } else {
-        ("matched", "")
-    };
-    if status == "not_found" {
-        reference.matched = None;
-    }
-    reference.status = status;
-    reference.reason = reason.to_string();
-}
-
-pub struct Options {
-    pub network: bool,
-    pub check_retractions: bool,
-    pub max_references: usize,
-}
-
-impl Options {
-    pub fn from_value(options: &Value) -> Self {
-        Self {
-            network: options
-                .get("network")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            check_retractions: options
-                .get("check_retractions")
-                .and_then(Value::as_bool)
-                .unwrap_or(true),
-            max_references: options
-                .get("max_references")
-                .and_then(Value::as_u64)
-                .map(|count| count as usize)
-                .unwrap_or(DEFAULT_MAX_REFERENCES),
-        }
-    }
-}
-
-fn notice_flag(notices: &[crossref::Notice]) -> Option<&'static str> {
-    let has = |kinds: &[&str]| {
-        notices
-            .iter()
-            .any(|notice| kinds.contains(&notice.kind.as_str()))
-    };
-    if has(&["retraction", "withdrawal", "removal"]) {
-        Some("retracted")
-    } else if has(&["expression_of_concern"]) {
-        Some("expression_of_concern")
-    } else if has(&[
-        "correction",
-        "erratum",
-        "corrigendum",
-        "addendum",
-        "clarification",
-    ]) {
-        Some("corrected")
-    } else {
-        None
-    }
-}
-
-/// Resolves references against Crossref. Stops after repeated failures and
-/// marks the rest `not_checked`.
-async fn resolve(references: &mut [Reference], options: &Options) -> Result<u32, String> {
-    let mut client = crossref::Client::new()?;
-    let mut failures = 0usize;
-    for reference in references.iter_mut().take(options.max_references) {
-        if failures >= MAX_CONSECUTIVE_FAILURES {
-            reference.reason = "Stopped after repeated Crossref failures.".into();
-            continue;
-        }
-        let lookup = match reference.doi.clone() {
-            Some(doi) => client
-                .work(&doi)
-                .await
-                .map(|work| (work.into_iter().collect::<Vec<_>>(), true)),
-            None => client
-                .search(&reference.text)
-                .await
-                .map(|works| (works, false)),
-        };
-        let (works, by_doi) = match lookup {
-            Ok(found) => {
-                failures = 0;
-                found
-            }
-            Err(crossref::LookupError::Cancelled) => return Err("Pipeline cancelled".into()),
-            Err(crossref::LookupError::Failed(error)) => {
-                failures += 1;
-                reference.status = "lookup_failed";
-                reference.reason = error;
-                continue;
-            }
-        };
-        let best = works.iter().max_by(|left, right| {
-            crossref::title_coverage(&left.title, &reference.text)
-                .total_cmp(&crossref::title_coverage(&right.title, &reference.text))
-        });
-        match best {
-            Some(work) => classify(reference, work, by_doi),
-            None if by_doi => {
-                reference.status = "not_found";
-                reference.reason = "This DOI is not registered with Crossref. It may belong to another registration agency such as DataCite; check it manually.".into();
-            }
-            None => {
-                reference.status = "not_found";
-                reference.reason = "No Crossref record matched this reference.".into();
-            }
-        }
-        let matched_doi = reference
-            .matched
-            .as_ref()
-            .and_then(|work| work.get("doi"))
-            .and_then(Value::as_str)
-            .filter(|doi| !doi.is_empty())
-            .map(str::to_string);
-        if let (true, Some(doi)) = (options.check_retractions, matched_doi) {
-            match client.notices(&doi).await {
-                Ok(notices) => {
-                    reference.notices = notices
-                        .iter()
-                        .map(|notice| json!({"type": notice.kind, "doi": notice.notice_doi, "source": notice.source}))
-                        .collect();
-                    if let Some(flag) = notice_flag(&notices) {
-                        reference.status = flag;
-                    }
-                }
-                Err(crossref::LookupError::Cancelled) => return Err("Pipeline cancelled".into()),
-                Err(crossref::LookupError::Failed(error)) => {
-                    reference.reason =
-                        format!("{} Retraction check failed: {error}", reference.reason)
-                            .trim()
-                            .to_string();
-                }
-            }
-        }
-    }
-    Ok(client.requests)
 }
 
 fn evidence(reference: &Reference) -> Vec<Value> {
@@ -575,8 +587,89 @@ fn finding(
     })
 }
 
+fn limitation_finding(index: usize, limitation: &str) -> Value {
+    let mut item = finding(
+        format!("references-limitation-{}", index + 1),
+        "The reference check was limited".into(),
+        "info",
+        "high",
+        limitation.to_string(),
+        "Check the bibliography by hand, or supply a complete copy and run the Review again.",
+        Vec::new(),
+    );
+    item["consequence"] =
+        "Problems in references that were not read do not appear in this report.".into();
+    item
+}
+
+fn lookup_limitation_finding(index: usize, limitation: &str) -> Value {
+    let mut item = finding(
+        format!("references-not-checked-{}", index + 1),
+        "Some references were not checked against Crossref".into(),
+        "low",
+        "high",
+        limitation.to_string(),
+        "Check these references by hand, or run the Review again.",
+        Vec::new(),
+    );
+    item["consequence"] =
+        "Problems in references that were not checked do not appear in this report.".into();
+    item
+}
+
+fn crossref_outage_finding(outage: &str) -> Value {
+    let mut item = finding(
+        "references-crossref-unavailable".into(),
+        "References were not checked against Crossref".into(),
+        "medium",
+        "high",
+        outage.to_string(),
+        "Run the Review again when Crossref can be reached, or check the references by hand.",
+        Vec::new(),
+    );
+    item["consequence"] =
+        "A clean result here says nothing about whether these works exist or were retracted."
+            .into();
+    item
+}
+
+fn malformed_doi_finding(references: &[Reference], indexes: &[usize]) -> Value {
+    let listed: Vec<&Reference> = indexes
+        .iter()
+        .take(MAX_LISTED_MALFORMED)
+        .filter_map(|index| references.get(index - 1))
+        .collect();
+    let mut names = listed
+        .iter()
+        .map(|item| label(item))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if indexes.len() > listed.len() {
+        names.push_str(&format!(", and {} more", indexes.len() - listed.len()));
+    }
+    finding(
+        "references-malformed-dois".into(),
+        format!("{} references have a malformed DOI", indexes.len()),
+        "low",
+        "high",
+        format!(
+            "These references give a DOI that is not valid, so it could not be looked up: {names}."
+        ),
+        "Correct each DOI or remove it.",
+        listed
+            .iter()
+            .take(10)
+            .flat_map(|item| evidence(item))
+            .collect(),
+    )
+}
+
 fn findings(references: &[Reference], checks: &LocalChecks) -> Vec<Value> {
-    let mut items = Vec::new();
+    let mut items: Vec<Value> = checks
+        .crossref_outage
+        .iter()
+        .map(|outage| crossref_outage_finding(outage))
+        .collect();
     let order = [
         ("retracted", "high", "high", "has been retracted or withdrawn", "Remove the citation or explain why the retracted work is cited."),
         ("expression_of_concern", "medium", "high", "has an expression of concern", "Check the notice and qualify any claim that relies on this work."),
@@ -584,6 +677,7 @@ fn findings(references: &[Reference], checks: &LocalChecks) -> Vec<Value> {
         ("not_found", "medium", "low", "could not be found in Crossref", "Check that the work exists and that its details are correct. Books, reports, and data are often not in Crossref."),
         ("other_version", "low", "medium", "may cite an earlier version", "Cite the published version if one exists, or confirm that the earlier version is intended."),
         ("corrected", "low", "high", "has a published correction", "Check whether the correction affects the cited result."),
+        ("ambiguous", "low", "low", "could not be confirmed against Crossref", "Compare the reference with the Crossref record by hand."),
     ];
     let mut emitted = 0usize;
     for (status, severity, confidence, phrase, action) in order {
@@ -628,7 +722,7 @@ fn findings(references: &[Reference], checks: &LocalChecks) -> Vec<Value> {
         .filter(|reference| {
             !matches!(
                 reference.status,
-                "matched" | "not_checked" | "lookup_failed" | "ambiguous"
+                "matched" | "not_checked" | "lookup_failed"
             )
         })
         .count()
@@ -672,6 +766,15 @@ fn findings(references: &[Reference], checks: &LocalChecks) -> Vec<Value> {
             references.get(second - 1).map(evidence).unwrap_or_default(),
         ));
     }
+    if !checks.malformed_dois.is_empty() {
+        items.push(malformed_doi_finding(references, &checks.malformed_dois));
+    }
+    for (index, limitation) in checks.limitations.iter().enumerate() {
+        items.push(limitation_finding(index, limitation));
+    }
+    for (index, limitation) in checks.lookup_limitations.iter().enumerate() {
+        items.push(lookup_limitation_finding(index, limitation));
+    }
     items
 }
 
@@ -682,9 +785,22 @@ pub async fn run(
     options: &Value,
 ) -> Result<Value, String> {
     let options = Options::from_value(options);
-    let (mut references, checks) = collect(bundle, text, source_path);
+    let (references, checks) = collect(bundle, text, source_path);
+    report(references, checks, &options, crossref::API).await
+}
+
+/// Runs the lookups the options ask for and assembles the step's product.
+async fn report(
+    mut references: Vec<Reference>,
+    mut checks: LocalChecks,
+    options: &Options,
+    crossref_api: &str,
+) -> Result<Value, String> {
     let requests = if options.network && !references.is_empty() {
-        resolve(&mut references, &options).await?
+        let mut client = crossref::Client::new(crossref_api)?;
+        resolve(&mut client, &mut references, options).await?;
+        record_lookup_gaps(&references, options, &mut checks);
+        client.requests
     } else {
         0
     };
