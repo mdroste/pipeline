@@ -80,7 +80,7 @@
     ],
     "stdin": null,
     "status": 0,
-    "stdout": "Inspect or manage Pipeline's local PaddleOCR-VL Full Parser bundle\n\nUSAGE:\n  pipeline-cli engines [status] [--json]\n  pipeline-cli engines install paddle\n  pipeline-cli engines uninstall paddle --yes\n\nCOMMANDS:\n  status      Show availability, installation state, version, and disk usage.\n  install     Install or repair the checksum-pinned managed bundle.\n  uninstall   Remove both app-owned Paddle bundle roots. Requires --yes.\n\n`paddle` is an alias for the registry ID `paddleocr-vl-parser`. Installation\ndownloads roughly 2.9 GB and requires roughly 3.8 GB after installation. All\nfiles remain under ~/.pipeline/native/; no system Python, pip, Conda, Docker,\nor llama.cpp installation is used.\n",
+    "stdout": "Inspect or manage Pipeline's local PaddleOCR-VL Full Parser bundle\n\nUSAGE:\n  pipeline-cli engines [status] [--json]\n  pipeline-cli engines install paddle\n  pipeline-cli engines uninstall paddle --yes\n\nCOMMANDS:\n  status      Show availability, installation state, version, and disk usage.\n  install     Install or repair the checksum-pinned managed bundle.\n  uninstall   Remove both app-owned Paddle bundle roots. Requires --yes.\n\n`paddle` is an alias for the registry ID `paddleocr-vl-parser`. Installation\ndownloads roughly 2.9 GB and requires roughly 3.8 GB after installation. All\nfiles remain under ~/.pipeline/native/; no system Python, pip, Conda, Docker,\nor llama.cpp installation is used.\n\nOn Windows, `paddle-gpu` adds graphics card recognition to an installed parser.\nIt downloads roughly 1.9 GB and uses the Vulkan build included with Pipeline.\n",
     "stderr": ""
   },
   {
