@@ -229,6 +229,7 @@ async fn managed_paddle_server_exit_preserves_error_and_forgets_child() {
         model: pid_file.clone(),
         mmproj: directory.path().join("unused-projector"),
         integrity_sha256: "fixture".into(),
+        gpu: false,
     };
     let active = crate::run_scope::ActiveScope::begin("pdf-server-exit-characterization");
     let settings = crate::settings::Settings::default();
@@ -263,7 +264,7 @@ fn built_in_recognition_runs_the_sidecar_without_a_server() {
     let python = directory.path().join("fake-python");
     write_fake_executable(
         &python,
-        "#!/bin/sh\nprintf 'arg=%s\\n' \"$@\"\nprintf 'allocator=%s key=%s\\n' \"$FLAGS_use_system_allocator\" \"$PIPELINE_PADDLE_API_KEY\" >&2\nexit 23\n",
+        "#!/bin/sh\nprintf 'arg=%s\\n' \"$@\"\nprintf 'allocator=%s threads=%s/%s key=%s\\n' \"$FLAGS_use_system_allocator\" \"$OMP_NUM_THREADS\" \"$MKL_NUM_THREADS\" \"$PIPELINE_PADDLE_API_KEY\" >&2\nexit 23\n",
     );
     let model_dir = directory.path().join("recognition-model");
     let paths = crate::engines::PaddleFullParserPaths {
@@ -293,7 +294,12 @@ fn built_in_recognition_runs_the_sidecar_without_a_server() {
     })
     .unwrap();
     assert_eq!(output.status.code(), Some(23));
-    assert_eq!(output.stderr, b"allocator=1 key=\n");
+    let cores = crate::settings::resolved_paddle_cpu_threads(&crate::settings::Settings::default());
+    assert!(cores >= 1);
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!("allocator=1 threads={cores}/{cores} key=\n")
+    );
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("arg=--native-model-dir"));
     assert!(stdout.contains("recognition-model"));
@@ -319,6 +325,7 @@ fn managed_paddle_sidecar_preserves_failure_capture_and_private_key_environment(
             model: directory.path().join("unused-model"),
             mmproj: directory.path().join("unused-projector"),
             integrity_sha256: "fixture".into(),
+            gpu: false,
         }),
         release: "fixture".into(),
         integrity_sha256: "fixture".into(),

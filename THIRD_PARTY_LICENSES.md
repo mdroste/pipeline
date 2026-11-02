@@ -2,7 +2,8 @@
 
 Pipeline is released under the [MIT License](LICENSE). Its installers also
 contain Rust and JavaScript libraries and the Poppler PDF tools, which keep
-their own licenses as described below.
+their own licenses as described below. The Windows installer also contains
+llama.cpp.
 
 Every installer includes this notice, Pipeline's MIT license,
 `THIRD_PARTY_LIBRARIES.txt`, and the Poppler license text that came with that
@@ -32,6 +33,16 @@ Source code for Poppler and its distributions is available from:
 - the [Windows distribution](https://github.com/oschwartz10612/poppler-windows).
 
 The installed app doesn't include these source archives.
+
+## Bundled llama.cpp on Windows
+
+The Windows installer includes `llama-server` and the libraries it loads from
+llama.cpp's Vulkan release, for optional graphics card recognition. The archive
+is pinned by URL and SHA-256 in `scripts/release/llama-vulkan-lock.json`, and
+Pipeline signs these files. llama.cpp is licensed under the MIT license, and its
+license text is bundled in `llama-vulkan/licenses`. The archive also contains
+Microsoft's `libomp140.x86_64.dll`, distributed under its Visual Studio
+redistribution terms.
 
 ## Rust and JavaScript libraries
 
@@ -65,7 +76,7 @@ them when you uninstall the parser.
 | Component | Version | License |
 | --- | --- | --- |
 | PaddleOCR-VL 1.6 GGUF model and vision projector | Model revision `511b09642bb324401f15f97cc23bc67e8f0a291d` | Apache-2.0 |
-| PaddleOCR-VL 1.6 model, on Windows | Model revision `c5630abae1d940eafe0697512a0325494b02ab42` | Apache-2.0 |
+| PaddleOCR-VL 1.6 model, on new Windows installs | Model revision `c5630abae1d940eafe0697512a0325494b02ab42` | Apache-2.0 |
 | `llama.cpp` runtime, from the project's GitHub releases, except on new Windows installs | b9637 | MIT |
 | uv | 0.11.26 | MIT or Apache-2.0 |
 | CPython | 3.12.13 | Python Software Foundation License |

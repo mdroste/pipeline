@@ -18,6 +18,16 @@ fn extraction_budget_secs(
     }
 }
 
+fn recognition_start_error(engine: &crate::engines::PaddleEnginePaths, error: String) -> String {
+    if engine.gpu && error != "Pipeline cancelled" {
+        format!(
+            "{error}. Your graphics card may not have enough free memory. Close other programs, or turn off Use graphics card in Settings → PDF extraction."
+        )
+    } else {
+        error
+    }
+}
+
 pub(crate) async fn extract_paddle_full(
     app: &crate::emit::EventBus,
     path: &Path,
@@ -33,9 +43,10 @@ pub(crate) async fn extract_paddle_full(
         app,
         "Verifying the PaddleOCR-VL runtime (the first use each session may take a while)…",
     );
+    let use_gpu = settings.paddle_use_gpu;
     let (paths, engine_lease) = crate::commands::await_or_cancel(
         crate::engines::acquire_waiting_on_detached_gate(
-            crate::engines::paddle_full_parser_lease,
+            move || crate::engines::paddle_full_parser_lease(use_gpu),
             std::time::Duration::from_secs(120),
         ),
         None,
@@ -127,9 +138,15 @@ pub(crate) async fn extract_paddle_full(
         crate::engines::PaddleRecognition::Llama(engine) => {
             extraction_log(
                 app,
-                "PaddleOCR-VL Full Parser: loading the managed Q8 recognition server",
+                if engine.gpu {
+                    "PaddleOCR-VL Full Parser: loading the recognition model on your graphics card"
+                } else {
+                    "PaddleOCR-VL Full Parser: loading the managed Q8 recognition server"
+                },
             );
-            let server = start_paddle_server(engine, settings).await?;
+            let server = start_paddle_server(engine, settings)
+                .await
+                .map_err(|error| recognition_start_error(engine, error))?;
             let recognition = SidecarRecognition::Server {
                 base_url: format!("{}/v1", server.base_url),
                 api_key: server.api_key.clone(),
@@ -276,6 +293,7 @@ mod tests {
             model: "model".into(),
             mmproj: "projector".into(),
             integrity_sha256: "fixture".into(),
+            gpu: false,
         });
         assert_eq!(extraction_budget_secs(&llama, 100, 1800), 1800);
     }

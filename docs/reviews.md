@@ -108,7 +108,17 @@ single review.
 | --- | --- | --- |
 | Poppler (`pdftotext`) | Extracts text on your computer with the bundled PDF tools | Nothing to install. Equations, tables, and reading order may be incomplete |
 | Model extraction | Sends the document to the model connection you selected | Needs a working connection. The document leaves your computer |
-| PaddleOCR-VL Full Parser | Extracts text, layout, formulas, tables, and figures on your computer | Install it from Settings. It needs about 4 GB of disk space. On Windows it runs on the processor, so it's slower and needs about 6 GB of free memory, or about 10 GB for a few seconds as it starts |
+| PaddleOCR-VL Full Parser | Extracts text, layout, formulas, tables, and figures on your computer | Install it from Settings. It needs about 4 GB of disk space. On Windows it runs on the processor by default, so it's slower and needs about 6 GB of free memory, or about 10 GB for a few seconds as it starts. To use your graphics card, see below |
+
+On Windows, you can read pages with your graphics card instead. In **Settings
+→ Reviews**, install **Graphics card recognition** after the Full Parser. It
+works with NVIDIA, AMD, and Intel graphics and downloads about 1.9 GB. Page
+layout still runs on the processor. If your graphics card runs out of memory,
+the review stops and shows the error, and you can turn off **Use graphics card**
+under **Advanced parser settings**.
+
+On the processor, Windows reads pages with 4 cores. To change that, use
+**Processor cores** under **Advanced parser settings**.
 
 **By default, Pipeline uses the Full Parser if it's installed, and otherwise
 sends the PDF to your model connection.** If extraction fails, the review

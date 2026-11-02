@@ -18,6 +18,14 @@ const PHASES: { id: string; label: string; activity: string }[] = [
   },
 ];
 
+const GPU_PHASES: typeof PHASES = [
+  {
+    id: "gpu",
+    label: "Graphics card model",
+    activity: "Checking your graphics card…",
+  },
+];
+
 /** Sizes use the decimal units of the download estimate on the Install button. */
 function formatSize(bytes: number): string {
   if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`;
@@ -114,7 +122,8 @@ export default function EngineInstallStatus({
   }, []);
   useEffect(followLog, [followLog, logLines]);
 
-  const running = PHASES.find((phase) => phases[phase.id] === "running");
+  const steps = phases.gpu ? GPU_PHASES : PHASES;
+  const running = steps.find((phase) => phases[phase.id] === "running");
   const percent =
     download?.total_bytes && download.total_bytes > 0
       ? Math.min(
@@ -129,7 +138,7 @@ export default function EngineInstallStatus({
   return (
     <div className="space-y-3 rounded-lg bg-gray-50 p-3 dark:bg-gray-900">
       <ol className="flex flex-wrap gap-x-4 gap-y-1.5">
-        {PHASES.map((phase) => {
+        {steps.map((phase) => {
           const status = phases[phase.id];
           const shown = status === "running" && !active ? undefined : status;
           return (

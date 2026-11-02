@@ -35,7 +35,7 @@ pub(super) async fn cmd_engines(args: EnginesArgs) -> i32 {
             let bus: EventBus = Arc::new(CliEvents);
             match install_engine_with_interrupt(bus, &id).await {
                 Ok(()) => {
-                    eprintln!("PaddleOCR-VL Full Parser installation complete.");
+                    eprintln!("{} installation complete.", engine_label(&id));
                     0
                 }
                 Err(error) => report_run_error(&error),
@@ -45,7 +45,7 @@ pub(super) async fn cmd_engines(args: EnginesArgs) -> i32 {
             let bus: EventBus = Arc::new(CliEvents);
             match engines::uninstall_engine(&bus, &id).await {
                 Ok(()) => {
-                    eprintln!("PaddleOCR-VL Full Parser bundle removed.");
+                    eprintln!("{} removed.", engine_label(&id));
                     0
                 }
                 Err(error) => {
@@ -55,6 +55,13 @@ pub(super) async fn cmd_engines(args: EnginesArgs) -> i32 {
             }
         }
     }
+}
+
+fn engine_label(id: &str) -> &'static str {
+    engines::ENGINES
+        .iter()
+        .find(|engine| engine.id == id)
+        .map_or("Engine", |engine| engine.label)
 }
 
 async fn cmd_engine_status(json: bool) -> i32 {

@@ -793,6 +793,10 @@ export interface Settings {
   paddle_mtmd_batch_tokens: number;
   /** "auto" | "on" | "off". */
   paddle_flash_attention: string;
+  /** Use the optional Windows graphics-card component when installed. */
+  paddle_use_gpu: boolean;
+  /** Processor cores for built-in recognition: 1, 2, 4, 8, or 16. */
+  paddle_cpu_threads: number;
   /** Maximum generated tokens for one OCR page. */
   paddle_max_output_tokens: number;
   /** Retries for a failed or suspicious OCR page. */

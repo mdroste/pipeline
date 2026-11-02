@@ -488,8 +488,9 @@ fn normalize_engine_id(value: &str) -> Result<String, String> {
         "paddle" | "paddleocr-vl-full" | "paddleocr-vl-parser" => {
             Ok("paddleocr-vl-parser".to_string())
         }
+        "paddle-gpu" | "paddleocr-vl-gpu" => Ok("paddleocr-vl-gpu".to_string()),
         _ => Err(format!(
-            "unknown engine '{value}'; expected 'paddle' or 'paddleocr-vl-parser'"
+            "unknown engine '{value}'; expected 'paddle', 'paddleocr-vl-parser', or 'paddle-gpu'"
         )),
     }
 }

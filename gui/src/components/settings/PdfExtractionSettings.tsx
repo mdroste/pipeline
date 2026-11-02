@@ -21,10 +21,20 @@ export function ExtractionSection({
   onSystemChange?: () => void;
 }) {
   const [paddleInstalled, setPaddleInstalled] = useState(false);
+  const [gpuInstalled, setGpuInstalled] = useState(false);
+  // Only Windows lists this component, and only Windows reads pages with the
+  // processor.
+  const [gpuListed, setGpuListed] = useState(false);
   const handleEngineStatusChange = useCallback((engines: EngineStatus[]) => {
     setPaddleInstalled(
       engines.some(
         (engine) => engine.id === "paddleocr-vl-parser" && engine.installed,
+      ),
+    );
+    setGpuListed(engines.some((engine) => engine.id === "paddleocr-vl-gpu"));
+    setGpuInstalled(
+      engines.some(
+        (engine) => engine.id === "paddleocr-vl-gpu" && engine.installed,
       ),
     );
   }, []);
@@ -192,6 +202,40 @@ export function ExtractionSection({
             <div className="pl-1 border-l-2 border-gray-200 dark:border-neutral-700 ml-1">
               <SubsectionHeader label="Speed and memory" />
               <div className="space-y-3 pl-4">
+                {gpuInstalled && (
+                  <Toggle
+                    label="Use graphics card"
+                    description="Read pages with your graphics card. Turn this off to use the processor, which is slower but needs no graphics memory."
+                    checked={settings.paddle_use_gpu}
+                    onChange={(v) =>
+                      setSettings({ ...settings, paddle_use_gpu: v })
+                    }
+                  />
+                )}
+                {gpuListed && (
+                  <Field
+                    label="Processor cores"
+                    help="How many cores read pages when your graphics card isn't used. More cores leave less for other programs. Saved results are kept when you change this."
+                  >
+                    <select
+                      aria-label="PaddleOCR-VL processor cores"
+                      value={settings.paddle_cpu_threads}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          paddle_cpu_threads: parseInt(e.target.value, 10),
+                        })
+                      }
+                      className={selectClass}
+                    >
+                      <option value={1}>1 core</option>
+                      <option value={2}>2 cores</option>
+                      <option value={4}>4 cores (recommended)</option>
+                      <option value={8}>8 cores</option>
+                      <option value={16}>16 cores</option>
+                    </select>
+                  </Field>
+                )}
                 <Field
                   label="Concurrent pages"
                   help="How many pages to read at once. Automatic reads two on Apple Silicon and one on other computers. Each added page uses more memory."

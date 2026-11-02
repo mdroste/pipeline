@@ -3,6 +3,20 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
+## 1.4.1 — 2026-11-01
+
+- On Windows, the PaddleOCR-VL Full Parser can read pages with your graphics
+  card. Install **Graphics card recognition** in **Settings → Reviews** after
+  the Full Parser. It works with NVIDIA, AMD, and Intel graphics, downloads
+  about 1.9 GB, and comes with **Use graphics card** under **Advanced parser
+  settings** to turn it off. If your graphics card runs out of memory, the
+  review stops and shows the error.
+- On Windows, the Full Parser now asks for 4 processor cores when it reads pages
+  on the processor. To change that, use **Processor cores** under **Advanced
+  parser settings**.
+- The Windows installer is a little larger because it includes the signed
+  graphics card tools.
+
 ## 1.4.0 — 2026-11-01
 
 - Projects have a **Version control** tab under **Library**. See what changed

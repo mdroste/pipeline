@@ -401,6 +401,8 @@ export function settingsSearchEntries(
       "Flash Attention",
       "paddle_flash_attention",
     ],
+    ["Use graphics card", "Use graphics card", "paddle_use_gpu"],
+    ["PaddleOCR-VL processor cores", "Processor cores", "paddle_cpu_threads"],
     [
       "Layout detection and reading order",
       "Layout detection and reading order",

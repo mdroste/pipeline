@@ -134,6 +134,11 @@ jobs:
       - name: Verify bundled Poppler inventory (including cache hits)
         run: node scripts/release/poppler-inventory.mjs --verify
 
+      - name: Bundle llama.cpp Vulkan build
+        if: matrix.id == 'windows'
+        shell: bash
+        run: bash scripts/release/bundle-llama-vulkan.sh
+
       - name: Import Apple signing certificate
         if: startsWith(matrix.id, 'macos-')
         uses: apple-actions/import-codesign-certs@5142e029c445c10ffc7149d172e540235a065466 # v7.0.0
@@ -244,11 +249,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           Install-Module ArtifactSigning -RequiredVersion 0.1.8 -Scope CurrentUser -Repository PSGallery -Force
-          Get-ChildItem gui/src-tauri/resources/poppler -Recurse -File |
+          Get-ChildItem gui/src-tauri/resources/poppler, gui/src-tauri/resources/llama-vulkan -Recurse -File |
             Where-Object { $_.Extension -in @('.exe', '.dll') } |
             ForEach-Object {
               & ./scripts/release/windows-sign.ps1 -FilePath $_.FullName
-              if (-not $?) { throw "Poppler signing failed: $($_.FullName)" }
+              if (-not $?) { throw "Bundled tool signing failed: $($_.FullName)" }
             }
           node scripts/release/poppler-inventory.mjs windows
           if ($LASTEXITCODE -ne 0) { throw 'Cannot inventory signed Poppler' }

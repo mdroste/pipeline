@@ -297,6 +297,12 @@ pub(in crate::pipeline::extract) fn run_paddle_full_sidecar(
             // Paddle's pool otherwise keeps what loading the weights freed,
             // nearly doubling the memory held for the whole run.
             environment.push(("FLAGS_use_system_allocator".to_string(), "1".to_string()));
+            // Paddle defaults to one OpenMP thread as it starts. Only builds
+            // with OpenMP and MKL, such as Windows, read these. Apple's build
+            // ignores them.
+            let cores = crate::settings::resolved_paddle_cpu_threads(settings).to_string();
+            environment.push(("OMP_NUM_THREADS".to_string(), cores.clone()));
+            environment.push(("MKL_NUM_THREADS".to_string(), cores));
         }
     }
     command.args(arguments);

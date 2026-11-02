@@ -71,6 +71,7 @@ pub(super) fn paddle_paths_at(root: &Path) -> Option<PaddleEnginePaths> {
         model,
         mmproj,
         integrity_sha256,
+        gpu: false,
     })
 }
 
@@ -456,13 +457,15 @@ pub(super) fn refresh_paddle_parser_sidecar_locked(root: &Path) -> Result<Sideca
 
 /// Resolve the managed full parser and the native VLM stack it depends on.
 pub fn paddle_full_parser_paths() -> Result<PaddleFullParserPaths, String> {
-    let (paths, _lease) = paddle_full_parser_lease()?;
+    let (paths, _lease) = paddle_full_parser_lease(true)?;
     Ok(paths)
 }
 
 /// Keep the managed installation fixed through validation and native extraction.
 /// The same cross-process gate protects install, repair, cleanup and uninstall.
-pub(crate) fn paddle_full_parser_lease() -> Result<
+pub(crate) fn paddle_full_parser_lease(
+    use_gpu: bool,
+) -> Result<
     (
         PaddleFullParserPaths,
         std::sync::Arc<super::installer_io::InstallGuard>,
@@ -482,13 +485,17 @@ pub(crate) fn paddle_full_parser_lease() -> Result<
     {
         refresh_paddle_parser_sidecar_locked(&root)?;
     }
-    paddle_full_parser_paths_at(&root)
-        .map(|paths| (paths, lease))
-        .ok_or_else(|| {
-            "PaddleOCR-VL Full Parser is not installed or failed verification. \
+    let mut paths = paddle_full_parser_paths_at(&root).ok_or_else(|| {
+        "PaddleOCR-VL Full Parser is not installed or failed verification. \
          Install or repair it from Settings → PDF extraction."
-                .to_string()
-        })
+            .to_string()
+    })?;
+    if use_gpu {
+        if let Some(engine) = resolve_gpu_recognition()? {
+            paths.recognition = PaddleRecognition::Llama(engine);
+        }
+    }
+    Ok((paths, lease))
 }
 
 /// Runtime environment for the private parser process. Model weights and

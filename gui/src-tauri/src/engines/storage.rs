@@ -201,8 +201,21 @@ pub(super) fn cleanup_managed_engine_storage_at(
             }
         }
     }
+    let gpu_target = gpu_recognition_root_at(native_root);
+    let gpu_backup = native_root.join(GPU_BACKUP_NAME);
+    if path_present(&gpu_backup) {
+        if path_present(&gpu_target) {
+            collect_owned_removal(&gpu_backup, &mut removed, &mut errors);
+        } else {
+            match restore_owned_directory(&gpu_backup, &gpu_target) {
+                Ok(true) => {}
+                Ok(false) => removed += 1,
+                Err(error) => errors.push(error),
+            }
+        }
+    }
     match remove_children_matching(native_root, |name| {
-        name.starts_with(".paddleocr-vl-staging-")
+        name.starts_with(".paddleocr-vl-staging-") || name.starts_with(GPU_STAGING_PREFIX)
     }) {
         Ok(count) => removed += count,
         Err(error) => errors.push(error),
@@ -333,6 +346,7 @@ pub fn engine_statuses() -> Vec<EngineStatus> {
 
     ENGINES
         .iter()
+        .filter(|spec| spec.id != GPU_RECOGNITION_ID || gpu_recognition_listed())
         .map(|spec| {
             let (entry, version, support) = match spec.id {
                 "paddleocr-vl-parser" => {
@@ -346,6 +360,11 @@ pub fn engine_statuses() -> Vec<EngineStatus> {
                         full_parser_support(),
                     )
                 }
+                GPU_RECOGNITION_ID => (
+                    gpu_recognition_status(),
+                    String::new(),
+                    gpu_recognition_support(),
+                ),
                 _ => (None, String::new(), Err("Unknown engine".to_string())),
             };
             let unavailable_reason = support.as_ref().err().cloned().unwrap_or_default();

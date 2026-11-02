@@ -279,6 +279,7 @@ validation, and run check. See
 pipeline-cli engines status
 pipeline-cli engines status --json
 pipeline-cli engines install paddle
+pipeline-cli engines install paddle-gpu
 ```
 
 The Full Parser download is about 2.9 GB and takes about 3.8 GB once

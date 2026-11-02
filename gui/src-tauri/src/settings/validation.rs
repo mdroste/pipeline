@@ -115,6 +115,9 @@ impl Settings {
         if !matches!(self.paddle_flash_attention.as_str(), "auto" | "on" | "off") {
             return Err("PaddleOCR-VL Flash Attention must be auto, on, or off".to_string());
         }
+        if !matches!(self.paddle_cpu_threads, 1 | 2 | 4 | 8 | 16) {
+            return Err("PaddleOCR-VL processor cores must be 1, 2, 4, 8, or 16".to_string());
+        }
         if !matches!(self.paddle_max_output_tokens, 2048 | 4096 | 8192) {
             return Err("PaddleOCR-VL page output must be 2048, 4096, or 8192 tokens".to_string());
         }

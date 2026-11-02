@@ -51,7 +51,7 @@ fn registry_has_unique_ids() {
     }
     assert_eq!(
         ids,
-        std::collections::HashSet::from(["paddleocr-vl-parser"])
+        std::collections::HashSet::from(["paddleocr-vl-parser", GPU_RECOGNITION_ID])
     );
     assert!(engine("paddleocr-vl").is_ok());
 }

@@ -45,6 +45,8 @@ const PORTABLE_SETTINGS: &[&str] = &[
     "paddle_page_concurrency",
     "paddle_mtmd_batch_tokens",
     "paddle_flash_attention",
+    "paddle_use_gpu",
+    "paddle_cpu_threads",
     "paddle_max_output_tokens",
     "paddle_page_retries",
     "paddle_full_layout_detection",

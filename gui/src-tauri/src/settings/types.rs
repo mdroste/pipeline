@@ -178,6 +178,14 @@ pub struct Settings {
     #[serde(default = "default_paddle_flash_attention")]
     pub paddle_flash_attention: String,
 
+    /// Use the optional Windows graphics-card component when it is installed.
+    #[serde(default = "default_paddle_use_gpu")]
+    pub paddle_use_gpu: bool,
+
+    /// Processor cores for built-in recognition. Paddle uses one unless told.
+    #[serde(default = "default_paddle_cpu_threads")]
+    pub paddle_cpu_threads: u32,
+
     /// Maximum generated tokens for one PaddleOCR-VL page.
     #[serde(default = "default_paddle_max_output_tokens")]
     pub paddle_max_output_tokens: u32,
@@ -363,6 +371,14 @@ fn default_paddle_flash_attention() -> String {
     "auto".to_string()
 }
 
+fn default_paddle_use_gpu() -> bool {
+    true
+}
+
+fn default_paddle_cpu_threads() -> u32 {
+    4
+}
+
 fn default_paddle_max_output_tokens() -> u32 {
     4096
 }
@@ -459,6 +475,8 @@ impl Default for Settings {
             paddle_page_concurrency: default_paddle_page_concurrency(),
             paddle_mtmd_batch_tokens: default_paddle_mtmd_batch_tokens(),
             paddle_flash_attention: default_paddle_flash_attention(),
+            paddle_use_gpu: default_paddle_use_gpu(),
+            paddle_cpu_threads: default_paddle_cpu_threads(),
             paddle_max_output_tokens: default_paddle_max_output_tokens(),
             paddle_page_retries: default_paddle_page_retries(),
             paddle_full_layout_detection: true,

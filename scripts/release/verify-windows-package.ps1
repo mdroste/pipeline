@@ -53,3 +53,14 @@ node --input-type=module -e 'import { pathToFileURL } from "node:url"; const { v
 if ($LASTEXITCODE -ne 0) { throw 'Installed Poppler inventory verification failed' }
 node (Join-Path $PSScriptRoot 'smoke-poppler.mjs') $poppler
 if ($LASTEXITCODE -ne 0) { throw 'Installed Poppler tools failed to read a PDF' }
+$llama = Join-Path (Split-Path -Parent $poppler) 'llama-vulkan'
+$llamaServer = Join-Path $llama 'llama-server.exe'
+if (-not (Test-Path -LiteralPath $llamaServer -PathType Leaf)) { throw 'Missing installed llama.cpp Vulkan server' }
+Get-ChildItem -LiteralPath $llama -Recurse -File |
+    Where-Object { $_.Extension -in @('.exe', '.dll') } |
+    ForEach-Object {
+        & $verify -FilePath $_.FullName -VerifyOnly
+        if (-not $?) { throw "Installed resource signature verification failed: $($_.FullName)" }
+    }
+& $llamaServer --version
+if ($LASTEXITCODE -ne 0) { throw 'Installed llama.cpp Vulkan server failed to start' }

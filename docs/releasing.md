@@ -134,6 +134,11 @@ instead.
   checks its hash, and signs the executables and libraries before recording
   their bundled hashes.
 
+On Windows, [bundle-llama-vulkan.sh](../scripts/release/bundle-llama-vulkan.sh)
+fills `gui/src-tauri/resources/llama-vulkan/` from the archive pinned in
+`scripts/release/llama-vulkan-lock.json`. The release job signs these files with
+Poppler. Keep its version equal to `LLAMA_CPP_VERSION` in `engines.rs`.
+
 `resources/poppler/BUNDLE_INVENTORY.json` records the Poppler version and the
 hash of every bundled file. The release cache reuses a bundled Poppler folder
 only when every hash matches. See the
@@ -219,6 +224,9 @@ Before you publish, test the candidate by hand:
 - Install the PaddleOCR-VL Full Parser on each platform, on a machine with no
   earlier parser, and extract a PDF with a table and an equation. Windows matters
   most, because no automated run covers its recognition path.
+- On a Windows machine with Smart App Control on and a graphics card, install
+  **Graphics card recognition** and extract the same PDF. Confirm in Task Manager
+  that the graphics card does the work, and compare the time with the processor.
 - If `gui/src-tauri/resources/paddle-parser/` or `gui/src-tauri/src/engines/`
   changed since the last release, run **Paddle parser qualification** on the
   release tag. It covers Linux x64 only. It stays out of the **Release** workflow

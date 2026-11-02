@@ -106,6 +106,14 @@ pub fn bundled_poppler_dir() -> Option<&'static Path> {
         })
 }
 
+/// The signed llama.cpp Vulkan server Windows installers place beside Poppler.
+pub fn bundled_gpu_server() -> Option<PathBuf> {
+    bundled_poppler_dir()?
+        .parent()
+        .map(|resources| resources.join("llama-vulkan").join("llama-server.exe"))
+        .filter(|server| server.is_file())
+}
+
 /// Return the user's full PATH, with the bundled poppler dir prepended.
 ///
 /// The base PATH is resolved from the login shell on macOS/Linux when the

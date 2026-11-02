@@ -172,4 +172,7 @@ COMMANDS:
 downloads roughly 2.9 GB and requires roughly 3.8 GB after installation. All
 files remain under ~/.pipeline/native/; no system Python, pip, Conda, Docker,
 or llama.cpp installation is used.
+
+On Windows, `paddle-gpu` adds graphics card recognition to an installed parser.
+It downloads roughly 1.9 GB and uses the Vulkan build included with Pipeline.
 ";

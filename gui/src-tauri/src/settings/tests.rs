@@ -195,6 +195,7 @@ fn paddle_tuning_defaults_are_automatic_and_bounded() {
     assert_eq!(defaults.paddle_page_concurrency, 0);
     assert_eq!(defaults.paddle_mtmd_batch_tokens, 0);
     assert_eq!(defaults.paddle_flash_attention, "auto");
+    assert_eq!(defaults.paddle_cpu_threads, 4);
     assert_eq!(defaults.paddle_max_output_tokens, 4096);
     assert_eq!(defaults.paddle_page_retries, 1);
     assert!(defaults.paddle_full_layout_detection);
@@ -217,6 +218,7 @@ fn paddle_tuning_defaults_are_automatic_and_bounded() {
     assert_eq!(legacy.paddle_page_concurrency, 0);
     assert_eq!(legacy.paddle_mtmd_batch_tokens, 0);
     assert_eq!(legacy.paddle_flash_attention, "auto");
+    assert_eq!(legacy.paddle_cpu_threads, 4);
     assert_eq!(legacy.paddle_max_output_tokens, 4096);
     assert_eq!(legacy.paddle_page_retries, 1);
     assert!(legacy.paddle_full_layout_detection);
@@ -395,6 +397,12 @@ fn settings_validation_rejects_unsafe_or_out_of_range_values() {
 
     invalid = Settings {
         paddle_flash_attention: "sometimes".into(),
+        ..Default::default()
+    };
+    assert!(invalid.validate().is_err());
+
+    invalid = Settings {
+        paddle_cpu_threads: 3,
         ..Default::default()
     };
     assert!(invalid.validate().is_err());

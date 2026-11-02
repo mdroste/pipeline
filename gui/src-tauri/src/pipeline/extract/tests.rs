@@ -7,6 +7,7 @@ fn full_parser_cache_identity_uses_verified_content_digests() {
         model: PathBuf::from("/managed/models/model.gguf"),
         mmproj: PathBuf::from("/managed/models/projector.gguf"),
         integrity_sha256: "recognition-integrity-a".to_string(),
+        gpu: false,
     };
     let mut paths = crate::engines::PaddleFullParserPaths {
         python: PathBuf::from("/managed/parser/python"),

@@ -13,6 +13,8 @@ export function makeSettings(): Settings {
     paddle_page_concurrency: 0,
     paddle_mtmd_batch_tokens: 0,
     paddle_flash_attention: "auto",
+    paddle_use_gpu: true,
+    paddle_cpu_threads: 4,
     paddle_max_output_tokens: 4096,
     paddle_page_retries: 1,
     paddle_full_layout_detection: true,

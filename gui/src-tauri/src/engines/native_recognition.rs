@@ -4,7 +4,8 @@
 //! unsigned DLLs, so new Windows installs read pages with PaddlePaddle itself.
 //! The choice is recorded in the parser manifest when the runtime is installed
 //! and never changes during extraction. Installs made with managed llama.cpp
-//! keep using it.
+//! keep using it. Graphics-card recognition is a separate optional component;
+//! see `gpu_recognition.rs`.
 
 use super::*;
 

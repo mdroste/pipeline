@@ -42,6 +42,8 @@ Thumbs.db
 # Bundled poppler binaries — populated per-platform by CI, not committed
 /gui/src-tauri/resources/poppler/*
 !/gui/src-tauri/resources/poppler/.gitkeep
+# Windows llama.cpp Vulkan build — populated by CI, not committed
+/gui/src-tauri/resources/llama-vulkan/
 
 # Package notices are generated before Tauri builds; no complete SBOM is produced.
 /gui/src-tauri/resources/notices/*

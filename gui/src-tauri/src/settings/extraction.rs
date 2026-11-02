@@ -43,6 +43,12 @@ pub fn resolved_paddle_page_concurrency(settings: &Settings) -> u32 {
     }
 }
 
+/// Never ask for more cores than this computer has.
+pub fn resolved_paddle_cpu_threads(settings: &Settings) -> u32 {
+    let available = std::thread::available_parallelism().map_or(1, |cores| cores.get() as u32);
+    settings.paddle_cpu_threads.min(available)
+}
+
 pub fn resolved_paddle_mtmd_batch_tokens(settings: &Settings) -> u32 {
     match settings.paddle_mtmd_batch_tokens {
         0 if cfg!(all(target_os = "macos", target_arch = "aarch64")) => 2048,

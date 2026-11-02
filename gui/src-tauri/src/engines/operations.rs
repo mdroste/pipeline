@@ -3,7 +3,7 @@ use super::*;
 /// Install a registered native engine. Unknown and retired engine IDs are
 /// rejected before any download or subprocess can begin.
 pub async fn install_engine(app: &crate::emit::EventBus, engine_id: &str) -> Result<(), String> {
-    if engine_id != "paddleocr-vl-parser" {
+    if engine_id != "paddleocr-vl-parser" && engine_id != GPU_RECOGNITION_ID {
         return Err(format!("Unknown engine '{engine_id}'"));
     }
     let spec = engine(engine_id)?;
@@ -30,6 +30,14 @@ pub async fn install_engine(app: &crate::emit::EventBus, engine_id: &str) -> Res
     // plus bounded archive/cache headroom, not the whole shared stack again.
     let home = pipeline_home()?;
     std::fs::create_dir_all(&home).map_err(|e| format!("Failed to create ~/.pipeline: {e}"))?;
+    if engine_id == GPU_RECOGNITION_ID {
+        let (space_plan, required_mb) = install_space_requirement(engine_id, false, false, false)?;
+        if let Ok(free) = fs2::available_space(&home) {
+            check_install_space(free, space_plan, required_mb)
+                .map_err(|error| format!("{} ({})", error, spec.label))?;
+        }
+        return install_gpu_recognition(app, spec).await;
+    }
     let base_installed = match new_install_recognition_backend() {
         RecognitionBackend::ManagedLlama => paddle_root()
             .ok()
@@ -74,7 +82,7 @@ pub async fn install_engine(app: &crate::emit::EventBus, engine_id: &str) -> Res
 /// Uninstall a registered native engine. Retired engine IDs are intentionally
 /// rejected; Pipeline never executes their package managers or entry points.
 pub async fn uninstall_engine(app: &crate::emit::EventBus, engine_id: &str) -> Result<(), String> {
-    if engine_id != "paddleocr-vl-parser" {
+    if engine_id != "paddleocr-vl-parser" && engine_id != GPU_RECOGNITION_ID {
         return Err(format!("Unknown engine '{engine_id}'"));
     }
     let spec = engine(engine_id)?;
@@ -82,7 +90,14 @@ pub async fn uninstall_engine(app: &crate::emit::EventBus, engine_id: &str) -> R
     INSTALL_CANCEL.store(false, Ordering::Release);
     cleanup_managed_engine_storage_locked()?;
 
-    let roots = [paddle_parser_root()?, paddle_root()?];
+    if engine_id == GPU_RECOGNITION_ID {
+        return uninstall_gpu_recognition(app).await;
+    }
+    let roots = [
+        paddle_parser_root()?,
+        paddle_root()?,
+        gpu_recognition_root_at(&pipeline_home()?.join("native")),
+    ];
     tokio::task::spawn_blocking(move || {
         for root in roots {
             remove_owned_path(&root)?;

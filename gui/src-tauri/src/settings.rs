@@ -13,7 +13,10 @@ mod types;
 mod validation;
 
 pub(crate) use extraction::resolve_pdf_extractor;
-pub use extraction::{resolved_paddle_mtmd_batch_tokens, resolved_paddle_page_concurrency};
+pub use extraction::{
+    resolved_paddle_cpu_threads, resolved_paddle_mtmd_batch_tokens,
+    resolved_paddle_page_concurrency,
+};
 pub use persistence::{
     load_persisted, load_persisted_required, replace_active_profile_if, save,
     save_preserving_active, set_active_profile,
