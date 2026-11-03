@@ -3,7 +3,7 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
-## Unreleased
+## 1.4.2 — 2026-11-02
 
 - Conversations, reviews, and automations recover more reliably after interruptions.
   Failed attempts keep their files available for inspection, and review limits
@@ -19,7 +19,6 @@ public release was not tracked as a stable release series.
   message directs you to move Pipeline to Applications and reopen it there.
 - macOS release builds default to building signed and notarized installers for
   both Apple Silicon and Intel.
-
 - ChatGPT connections require Codex 0.165.0 or newer. Older versions show an
   upgrade message before sign-in instead of failing on the review configuration.
 
