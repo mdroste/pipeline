@@ -19,6 +19,7 @@ interface Props {
   runId?: string | null;
   markdown: string;
   pdfMarkdown: string;
+  loadFullReport?: () => Promise<{ markdown: string; pdfMarkdown: string }>;
   extractedText?: string;
 }
 export default function ReportHeader({
@@ -31,6 +32,7 @@ export default function ReportHeader({
   runId,
   markdown,
   pdfMarkdown,
+  loadFullReport,
   extractedText,
 }: Props) {
   const display = reportStatusDisplay(status, report?.quality);
@@ -136,6 +138,7 @@ export default function ReportHeader({
               runId={runId}
               markdown={markdown}
               pdfMarkdown={pdfMarkdown}
+              loadFullReport={loadFullReport}
               provenanceMarkdown={renderProvenanceMarkdown(provenance)}
               report={report}
               extractedText={extractedText}

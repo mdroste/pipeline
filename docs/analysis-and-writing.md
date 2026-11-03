@@ -66,7 +66,9 @@ unavailable, and flags rounding, sign, and unit mismatches. After inputs
 change, choose **Refresh dependent results and passages**.
 
 **Create a TeX macro from this value** writes the number as a macro in a
-working copy. Accept it in **Review edits**.
+working copy. Accept it in **Review edits**. Each macro joins the others in the
+same file, and staging one again updates it. Pipeline won't write into a file
+that holds anything it didn't generate, so choose a new file for these values.
 
 ### Data & samples
 
@@ -226,7 +228,8 @@ saved inputs. Your script reads each specification's values from
 order, including failures, timeouts, and exclusions. You can pause or cancel
 a running grid. If Pipeline restarts, the grid waits for you to resume it. If
 it can't tell whether a run finished, choose **Continue without this run** to
-keep that run as unknown and move on, or cancel the grid.
+keep that run as unknown and move on, or cancel the grid. If a grid can't
+continue, it stops and shows why.
 **Export all run attempts** saves the full record.
 
 ### Theory
@@ -273,7 +276,9 @@ keep that run as unknown and move on, or cancel the grid.
 your main TeX file by itself, and the file menu at the top switches files. Under
 **Edit in**, choose the **Project working copy** or an edit's copy. This menu
 appears when an edit has its own copy. Unsaved drafts are kept for each file. If
-a file changed elsewhere, Pipeline stops the save so you can compare first.
+a file changed elsewhere, Pipeline tells you when you come back to it, and stops
+any save. Choose **Compare with current file** to keep your draft and see it
+against the current file. A file with no draft updates by itself.
 **Source** and **Changes** appear once you have a draft.
 
 To build the manuscript:
@@ -317,7 +322,8 @@ combine duplicates. See [Reviews](reviews.md) for reading a single report.
 
 1. Under **Import referee or editor comments**, choose
    **Import local report**, then **Preview paragraph split**. Check the
-   numbering and choose **Import selected comments**. You can also import
+   numbering and choose **Import selected comments**. One import holds 500
+   comments, and the preview says if a report has more. You can also import
    findings from a finished review with **Enable importing review findings**.
 2. In the **Response matrix**, give each comment a category, severity, and
    disposition: addressed, deferred, or rejected. Draft the reply and link the

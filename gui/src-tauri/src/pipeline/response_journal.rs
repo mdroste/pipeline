@@ -113,14 +113,13 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .map_err(|error| format!("Failed to write response journal: {error}"))?;
     temp.flush()
         .map_err(|error| format!("Failed to flush response journal: {error}"))?;
-    temp.as_file()
-        .sync_all()
+    crate::safety::sync_file(temp.as_file())
         .map_err(|error| format!("Failed to sync response journal: {error}"))?;
     temp.persist(path)
         .map_err(|error| format!("Failed to publish response journal: {}", error.error))?;
     #[cfg(unix)]
     std::fs::File::open(directory)
-        .and_then(|directory| directory.sync_all())
+        .and_then(|directory| crate::safety::sync_file(&directory))
         .map_err(|error| format!("Failed to sync response journal directory: {error}"))?;
     Ok(())
 }
@@ -344,6 +343,23 @@ mod tests {
             AttemptStatus::RejectedContent.label(),
             "Rejected: unusable report content"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_journal_flushes_on_any_volume_and_reports_a_failed_save() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("attempt.md");
+        crate::safety::simulate_sync_failure(Some((libc::ENOTSUP, false)));
+        let adapted = write_atomic(&path, b"kept");
+        crate::safety::simulate_sync_failure(Some((libc::EIO, false)));
+        let failed = write_atomic(&path, b"lost");
+        crate::safety::simulate_sync_failure(None);
+        assert_eq!(adapted, Ok(()));
+        assert!(failed
+            .unwrap_err()
+            .contains("Failed to sync response journal"));
+        assert_eq!(std::fs::read(&path).unwrap(), b"kept");
     }
 
     #[test]

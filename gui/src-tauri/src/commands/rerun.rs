@@ -1,11 +1,13 @@
 use super::*;
 
+mod agents;
 mod document;
 mod files;
 mod inputs;
 mod reuse;
 mod workflow;
 
+pub(super) use agents::save_agent_overrides;
 use files::read_parent_report;
 pub(super) use files::{load_run_report, load_run_report_in, read_run_file, read_run_file_in};
 use reuse::orientation_contract_error;
@@ -67,6 +69,8 @@ pub struct RerunSecret {
 pub struct RerunRequirements {
     pub secrets: Vec<RerunSecret>,
     pub notice: Option<String>,
+    /// The one-report agents this re-run uses again, when the run had any.
+    pub agent_notice: Option<String>,
 }
 
 /// Check a re-run before it is queued: this refuses a run whose workflow can
@@ -79,8 +83,13 @@ pub async fn rerun_requirements(
     let settings = crate::settings::load_persisted_required()
         .map_err(|e| format!("Cannot re-run because settings could not be loaded safely: {e}"))?;
     let parent = crate::runs::load_manifest(&run_id)?;
-    let workflow =
+    let mut workflow =
         workflow::load_rerun_workflow(&run_id, &parent, &settings.active_profile, only_failed)?;
+    let agent_overrides = agents::saved_agent_overrides(&run_id)?;
+    if let Some(overrides) = agent_overrides.as_ref() {
+        let mut settings = settings.clone();
+        agents::reapply(overrides, &mut settings, &mut workflow.document.config)?;
+    }
     let secrets = secrets_to_reenter(&workflow.document.config, &parent.variables)
         .into_iter()
         .map(|spec| RerunSecret {
@@ -95,6 +104,7 @@ pub async fn rerun_requirements(
     Ok(RerunRequirements {
         secrets,
         notice: workflow.notice,
+        agent_notice: agent_overrides.as_ref().map(agents::notice),
     })
 }
 
@@ -116,12 +126,18 @@ pub(super) async fn rerun_run_inner(
     // stopped since then may not have its report yet.
     let parent_recovery = crate::runs::recover_stopped_run(parent_run_id);
     let parent = crate::runs::load_manifest(parent_run_id)?;
-    let workflow = workflow::load_rerun_workflow(
+    let mut workflow = workflow::load_rerun_workflow(
         parent_run_id,
         &parent,
         &settings.active_profile,
         only_failed,
     )?;
+    // The workflow snapshot predates a one-report agent choice, so it comes
+    // back here, before Settings defaults could fill those steps in.
+    let agent_overrides = agents::saved_agent_overrides(parent_run_id)?;
+    if let Some(overrides) = agent_overrides.as_ref() {
+        agents::reapply(overrides, &mut settings, &mut workflow.document.config)?;
+    }
     // As for a one-off CLI run, the run records the workflow it executes
     // without changing the persisted active profile.
     settings.active_profile = workflow.profile_id.clone();
@@ -147,6 +163,13 @@ pub(super) async fn rerun_run_inner(
         app.emit_event(
             "pipeline:log",
             serde_json::json!({ "line": format!("WARNING: {notice}") }),
+        )
+        .ok();
+    }
+    if let Some(overrides) = agent_overrides.as_ref() {
+        app.emit_event(
+            "pipeline:log",
+            serde_json::json!({ "line": agents::notice(overrides) }),
         )
         .ok();
     }
@@ -335,6 +358,7 @@ pub(super) async fn rerun_run_inner(
                 &workflow_json,
             )
             .map_err(|error| format!("Could not save the workflow snapshot: {error}"))?;
+        save_agent_overrides(writer, agent_overrides.as_ref())?;
         for (key, path) in &extra_input_sources {
             writer
                 .record_extra_input_source(key, path)

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FileAdapter, FileTable } from "../../../lib/fileWorkspaceClient";
 import { workbenchErrorMessage } from "../../../lib/workbenchError";
+import ReportIssueLink from "../../ReportIssueLink";
 
 /** Load more stops here, so the page stays usable. */
 const MAX_LOADED_ROWS = 10_000;
@@ -123,6 +124,7 @@ export default function TableViewer({
     return (
       <p role="alert" className="file-error">
         {error}
+        <ReportIssueLink />
       </p>
     );
   if (!table) return <p className="file-status">Reading table…</p>;
@@ -227,6 +229,7 @@ export default function TableViewer({
       {moreError && (
         <p role="alert" className="file-error">
           {moreError}
+          <ReportIssueLink />
         </p>
       )}
       <div className="file-table-scroll" tabIndex={0} ref={scroller}>

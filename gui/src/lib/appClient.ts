@@ -21,6 +21,7 @@ export interface RerunSecret {
 export interface RerunRequirements {
   secrets: RerunSecret[];
   notice: string | null;
+  agent_notice?: string | null;
 }
 
 export interface ExecutionPlanRequest {

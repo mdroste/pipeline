@@ -1,12 +1,10 @@
-import { useState } from "react";
-import type { WorkbenchEvent } from "../lib/workbenchTypes";
+import { useId, useState } from "react";
+import type {
+  ApprovalDetails as Approval,
+  RequestQuestion,
+  WorkbenchEvent,
+} from "../lib/workbenchTypes";
 
-const NETWORK_PROTOCOLS: Record<string, string> = {
-  http: "HTTP",
-  https: "HTTPS",
-  socks5Tcp: "SOCKS5 (TCP)",
-  socks5Udp: "SOCKS5 (UDP)",
-};
 /** Long diffs stay inspectable without letting one approval flood the page. */
 const DIFF_PREVIEW_CHARACTERS = 20_000;
 const FILE_LIST_LIMIT = 50;
@@ -23,74 +21,11 @@ interface Answer {
   written: string;
 }
 
-function questionOptions(question: Record<string, unknown>) {
-  return Array.isArray(question.options)
-    ? (question.options as Array<Record<string, unknown>>)
-    : [];
-}
-
 /** What a question's answer says, or null while it has none. */
-function answerText(
-  question: Record<string, unknown>,
-  answer: Answer | undefined,
-) {
-  const options = questionOptions(question);
-  if (!options.length || answer?.choice === OTHER_CHOICE)
+function answerText(question: RequestQuestion, answer: Answer | undefined) {
+  if (!question.options.length || answer?.choice === OTHER_CHOICE)
     return text(answer?.written);
-  const chosen = options[Number(answer?.choice || NaN)];
-  return chosen ? String(chosen.label) : null;
-}
-
-function networkAccess(value: unknown) {
-  if (!value || typeof value !== "object") return null;
-  const { host, protocol } = value as Record<string, unknown>;
-  if (typeof host !== "string" || !host) return null;
-  const label =
-    typeof protocol === "string"
-      ? (NETWORK_PROTOCOLS[protocol] ?? protocol)
-      : null;
-  return label ? `${host} over ${label}` : host;
-}
-
-/** The grants a command approval may carry, by the pinned protocol. */
-const PERMISSION_FIELDS = new Map([
-  ["fileSystem", ["entries", "globScanMaxDepth", "read", "write"]],
-  ["network", ["enabled"]],
-]);
-
-/** Whether a command approval would grant something Pipeline can't describe. */
-function hasUnknownPermission(permissions: unknown) {
-  if (permissions === null || permissions === undefined) return false;
-  const isRecord = (value: unknown): value is Record<string, unknown> =>
-    typeof value === "object" && value !== null && !Array.isArray(value);
-  if (!isRecord(permissions)) return true;
-  return Object.entries(permissions).some(([field, value]) => {
-    const known = PERMISSION_FIELDS.get(field);
-    if (!known) return true;
-    if (value === null) return false;
-    return (
-      !isRecord(value) ||
-      Object.keys(value).some((name) => !known.includes(name))
-    );
-  });
-}
-
-function networkRules(value: unknown) {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((rule) => {
-    const { action, host } = (rule ?? {}) as Record<string, unknown>;
-    return typeof action === "string" && typeof host === "string"
-      ? [`${action} ${host}`]
-      : [];
-  });
-}
-
-/** Whether the request lets Pipeline answer with `decision`; older requests don't list any. */
-function offers(params: Record<string, unknown>, decision: string) {
-  const { availableDecisions } = params;
-  return !Array.isArray(availableDecisions)
-    ? true
-    : availableDecisions.includes(decision);
+  return question.options[Number(answer?.choice || NaN)]?.label ?? null;
 }
 
 interface FileChange {
@@ -130,27 +65,21 @@ function fileChanges(item: unknown): FileChange[] | null {
 
 /** What a command or file-change approval would allow, shown before any decision. */
 function ApprovalDetails({
-  params,
-  method,
+  approval,
   item,
 }: {
-  params: Record<string, unknown>;
-  method: string | undefined;
+  approval: Approval | null;
   item: unknown;
 }) {
-  const reason = text(params.reason);
-  const command = text(params.command);
-  const cwd = text(params.cwd);
-  const network = networkAccess(params.networkApprovalContext);
-  const amendment = Array.isArray(params.proposedExecpolicyAmendment)
-    ? params.proposedExecpolicyAmendment.filter(
-        (part): part is string => typeof part === "string",
-      )
-    : [];
-  const grantRoot = text(params.grantRoot);
-  const permissions = params.additionalPermissions ?? null;
-  const rules = networkRules(params.proposedNetworkPolicyAmendments);
-  const isFileChange = method === "item/fileChange/requestApproval";
+  const reason = approval?.reason;
+  const command = approval?.command;
+  const cwd = approval?.cwd;
+  const network = approval?.network;
+  const amendment = approval?.suggestedRule ?? [];
+  const grantRoot = approval?.grantRoot;
+  const permissions = approval?.extraPermissions ?? null;
+  const rules = approval?.suggestedNetworkRules ?? [];
+  const isFileChange = approval?.type === "fileChange";
   const changes = isFileChange ? fileChanges(item) : null;
   const pre =
     "mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded border border-amber-300 bg-white/70 p-2 font-mono text-xs text-amber-950 dark:border-amber-800 dark:bg-neutral-950/60 dark:text-amber-100";
@@ -198,7 +127,7 @@ function ApprovalDetails({
           <span className="font-medium">
             Allow once also grants this command these permissions
           </span>
-          <pre className={pre}>{JSON.stringify(permissions, null, 2)}</pre>
+          <pre className={pre}>{permissions}</pre>
         </div>
       )}
       {amendment.length > 0 && (
@@ -279,6 +208,7 @@ export default function RequestCard({
     result?: Record<string, unknown>,
   ) => void | Promise<void>;
 }) {
+  const group = useId();
   const [resolving, setResolving] = useState(false);
   const resolve = async (result?: Record<string, unknown>) => {
     setResolving(true);
@@ -288,13 +218,14 @@ export default function RequestCard({
       setResolving(false);
     }
   };
-  const params = event.params ?? {};
-  const questions = Array.isArray(params.questions)
-    ? (params.questions as Array<Record<string, unknown>>)
-    : [];
+  const details = event.details ?? null;
+  const questions = details?.type === "question" ? details.questions : [];
+  const permission = details?.type === "permission" ? details : null;
+  const approval =
+    details?.type === "command" || details?.type === "fileChange"
+      ? details
+      : null;
   const [answers, setAnswers] = useState<Record<string, Answer>>({});
-  const questionId = (question: Record<string, unknown>) =>
-    String(question.id ?? "question");
   const updateAnswer = (id: string, change: Partial<Answer>) =>
     setAnswers((old) => ({
       ...old,
@@ -303,19 +234,16 @@ export default function RequestCard({
   const allAnswered =
     questions.length > 0 &&
     questions.every(
-      (question) =>
-        answerText(question, answers[questionId(question)]) !== null,
+      (question) => answerText(question, answers[question.id]) !== null,
     );
   const isQuestion = event.method === "item/tool/requestUserInput";
   const isPermission = event.method === "item/permissions/requestApproval";
   const isApproval = !isQuestion && !isPermission;
-  const unknownGrant =
-    isApproval && hasUnknownPermission(params.additionalPermissions);
-  const withheld = isApproval && (unknownGrant || !offers(params, "accept"));
-  const declining =
-    !offers(params, "decline") && offers(params, "cancel")
-      ? "cancel"
-      : "decline";
+  const unknownGrant = approval?.unknownGrant ?? false;
+  // A request without Pipeline's record has nothing to show, so nothing to allow.
+  const withheld =
+    (isApproval && (unknownGrant || !approval?.allowOffered)) ||
+    (isPermission && !permission);
   return (
     <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm dark:border-amber-800 dark:bg-amber-950/30">
       <div className="font-semibold text-amber-950 dark:text-amber-100">
@@ -325,68 +253,99 @@ export default function RequestCard({
             ? "Permission requested"
             : "Approval requested"}
       </div>
-      {!isQuestion && !isPermission && (
-        <ApprovalDetails params={params} method={event.method} item={item} />
-      )}
-      {isPermission && (
+      {isApproval && <ApprovalDetails approval={approval} item={item} />}
+      {permission && (
         <div className="mt-2 space-y-2">
-          {typeof params.reason === "string" && params.reason.trim() && (
+          {permission.reason && (
             <p className="whitespace-pre-wrap">
               <span className="font-medium">Assistant’s explanation:</span>{" "}
-              {params.reason}
+              {permission.reason}
             </p>
           )}
           <p>Duration: this turn</p>
-          <p>Working directory: {String(params.cwd ?? "Not specified")}</p>
+          <p>Working directory: {permission.cwd ?? "Not specified"}</p>
           <p>Requested permissions (including all paths and network access):</p>
           <pre className="whitespace-pre-wrap break-all rounded border p-2">
-            {JSON.stringify(params.permissions ?? {}, null, 2)}
+            {JSON.stringify(permission.permissions ?? {}, null, 2)}
           </pre>
         </div>
       )}
       {questions.map((question) => {
-        const id = questionId(question);
-        const prompt = String(question.question ?? "Response");
-        const options = questionOptions(question);
+        const { id, header, options, question: prompt } = question;
         const answer = answers[id];
         const field =
           "mt-1 w-full rounded border bg-white p-2 dark:bg-neutral-900";
         const written = (label?: string) => (
           <input
-            type={question.isSecret ? "password" : "text"}
+            type={question.secret ? "password" : "text"}
             aria-label={label}
             value={answer?.written ?? ""}
             onChange={(e) => updateAnswer(id, { written: e.target.value })}
             className={field}
           />
         );
+        const row =
+          "flex items-start gap-2 rounded border border-amber-200 bg-white p-2 dark:border-neutral-700 dark:bg-neutral-900";
+        const radio = "mt-1 accent-gray-900 dark:accent-gray-300";
         return (
           <div key={id} className="mt-3">
-            <label className="block">
-              <span className="block font-medium">{prompt}</span>
-              {options.length ? (
-                <select
-                  value={answer?.choice ?? ""}
-                  onChange={(e) => updateAnswer(id, { choice: e.target.value })}
-                  className={field}
-                >
-                  <option value="">Choose…</option>
-                  {options.map((option, index) => (
-                    <option key={index} value={String(index)}>
-                      {String(option.label)}
-                    </option>
-                  ))}
-                  {question.isOther === true && (
-                    <option value={OTHER_CHOICE}>Other…</option>
+            {header && header !== prompt && (
+              <div className="text-xs font-semibold uppercase tracking-wide text-amber-900 dark:text-amber-200">
+                {header}
+              </div>
+            )}
+            {options.length ? (
+              <fieldset>
+                <legend className="font-medium">{prompt}</legend>
+                <div className="mt-1 space-y-1">
+                  {options.map((option, index) => {
+                    const description = option.description?.trim();
+                    return (
+                      <label key={index} className={row}>
+                        <input
+                          type="radio"
+                          name={`${group}-${id}`}
+                          checked={answer?.choice === String(index)}
+                          onChange={() =>
+                            updateAnswer(id, { choice: String(index) })
+                          }
+                          className={radio}
+                        />
+                        <span className="min-w-0">
+                          <span className="block">{option.label}</span>
+                          {description && (
+                            <span className="block whitespace-pre-wrap text-xs text-gray-600 dark:text-neutral-400">
+                              {description}
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                    );
+                  })}
+                  {question.allowsOther && (
+                    <label className={row}>
+                      <input
+                        type="radio"
+                        name={`${group}-${id}`}
+                        checked={answer?.choice === OTHER_CHOICE}
+                        onChange={() =>
+                          updateAnswer(id, { choice: OTHER_CHOICE })
+                        }
+                        className={radio}
+                      />
+                      <span>Other…</span>
+                    </label>
                   )}
-                </select>
-              ) : (
-                written()
-              )}
-            </label>
-            {options.length > 0 &&
-              answer?.choice === OTHER_CHOICE &&
-              written(`Your answer to: ${prompt}`)}
+                </div>
+                {answer?.choice === OTHER_CHOICE &&
+                  written(`Your answer to: ${prompt}`)}
+              </fieldset>
+            ) : (
+              <label className="block">
+                <span className="block font-medium">{prompt}</span>
+                {written()}
+              </label>
+            )}
           </div>
         );
       })}
@@ -406,18 +365,15 @@ export default function RequestCard({
               if (isQuestion) {
                 void resolve({
                   answers: Object.fromEntries(
-                    questions.map((question) => {
-                      const id = questionId(question);
-                      return [
-                        id,
-                        { answers: [answerText(question, answers[id])] },
-                      ];
-                    }),
+                    questions.map((question) => [
+                      question.id,
+                      { answers: [answerText(question, answers[question.id])] },
+                    ]),
                   ),
                 });
               } else if (isPermission) {
                 void resolve({
-                  permissions: params.permissions as Record<string, unknown>,
+                  permissions: permission?.permissions,
                   scope: "turn",
                 });
               } else {
@@ -440,7 +396,10 @@ export default function RequestCard({
             if (isQuestion) void resolve();
             else if (isPermission)
               void resolve({ permissions: {}, scope: "turn" });
-            else void resolve({ decision: declining });
+            else
+              void resolve({
+                decision: approval?.declineDecision ?? "decline",
+              });
           }}
           className="rounded border border-amber-400 px-3 py-1.5"
         >

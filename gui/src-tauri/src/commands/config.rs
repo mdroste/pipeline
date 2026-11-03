@@ -78,6 +78,26 @@ fn redact_settings(mut settings: crate::settings::Settings) -> crate::settings::
     settings
 }
 
+/// An exact marker means "keep the saved key". Anything else that contains it
+/// is a corrupted key, which would be stored and sent as the credential.
+fn refuse_embedded_marker(candidate: &crate::settings::Settings) -> Result<(), String> {
+    let corrupted = [
+        &candidate.anthropic_api_key,
+        &candidate.openai_api_key,
+        &candidate.google_api_key,
+        &candidate.local_api_key,
+    ]
+    .into_iter()
+    .any(|secret| secret != STORED_SECRET && secret.contains(STORED_SECRET));
+    if corrupted {
+        return Err(
+            "This API key could not be saved because it includes Pipeline's saved-key placeholder. Enter the key again on its own."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn materialize_settings(
     mut candidate: crate::settings::Settings,
     persisted: &crate::settings::Settings,
@@ -129,6 +149,7 @@ pub async fn discard_undecryptable_secret(provider: String) -> Result<(), String
 
 #[tauri::command]
 pub async fn save_settings(settings: crate::settings::Settings) -> Result<(), String> {
+    refuse_embedded_marker(&settings)?;
     let persisted = crate::settings::load_persisted();
     let settings = materialize_settings(settings, &persisted);
     crate::settings::save_preserving_active(&settings)?;
@@ -146,6 +167,9 @@ pub async fn get_model_catalog(
     settings: Option<crate::settings::Settings>,
     refresh: Option<bool>,
 ) -> Result<crate::model_catalog::ModelCatalog, String> {
+    if let Some(candidate) = &settings {
+        refuse_embedded_marker(candidate)?;
+    }
     let persisted = crate::settings::load_persisted();
     let settings = settings
         .map(|candidate| materialize_settings(candidate, &persisted))
@@ -176,6 +200,42 @@ mod settings_response_tests {
         ] {
             assert_eq!(secret, STORED_SECRET);
         }
+    }
+
+    #[test]
+    fn a_key_pasted_after_the_marker_is_refused_on_every_provider() {
+        let pasted = format!("{STORED_SECRET}sk-new-key");
+        let candidates = [
+            crate::settings::Settings {
+                anthropic_api_key: pasted.clone(),
+                ..Default::default()
+            },
+            crate::settings::Settings {
+                openai_api_key: pasted.clone(),
+                ..Default::default()
+            },
+            crate::settings::Settings {
+                google_api_key: pasted.clone(),
+                ..Default::default()
+            },
+            crate::settings::Settings {
+                local_api_key: pasted,
+                ..Default::default()
+            },
+        ];
+        for candidate in candidates {
+            assert!(refuse_embedded_marker(&candidate).is_err());
+        }
+    }
+
+    #[test]
+    fn the_exact_marker_and_new_keys_are_accepted() {
+        let candidate = crate::settings::Settings {
+            anthropic_api_key: STORED_SECRET.into(),
+            openai_api_key: "sk-new-key".into(),
+            ..Default::default()
+        };
+        assert!(refuse_embedded_marker(&candidate).is_ok());
     }
 
     #[test]

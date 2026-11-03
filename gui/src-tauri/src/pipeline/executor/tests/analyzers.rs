@@ -131,3 +131,92 @@ async fn a_failed_parallel_check_is_recorded_and_the_run_continues() {
     assert_eq!(result.outputs.len(), 1);
     assert_eq!(result.outputs[0].step_id, "refs");
 }
+
+/// Accepts Crossref requests and never answers them.
+fn silent_crossref() -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = listener.accept() {
+            held.push(stream);
+        }
+    });
+    format!("http://{address}")
+}
+
+struct WaitingCheck {
+    _folder: tempfile::TempDir,
+    paper: String,
+    step: StepConfig,
+    api: String,
+}
+
+/// A reference check waiting on its first Crossref request.
+fn waiting_check() -> WaitingCheck {
+    let folder = tempfile::tempdir().unwrap();
+    let paper = folder.path().join("paper.txt");
+    std::fs::write(
+        &paper,
+        "Body.\n\nReferences\n[1] Card, D. 1994. Minimum wages. AER.\n[2] Neumark, D. 2000. A comment. AER.\n[3] Autor, D. 2013. The China syndrome. AER.",
+    )
+    .unwrap();
+    let mut step = analyzer("refs", Phase::Sequential, "reference_audit");
+    step.analyzer.as_mut().unwrap().options = serde_json::json!({"network": true});
+    WaitingCheck {
+        paper: paper.to_str().unwrap().to_string(),
+        _folder: folder,
+        step,
+        api: silent_crossref(),
+    }
+}
+
+async fn run_check(
+    check: &WaitingCheck,
+) -> Result<Result<StepOutput, crate::models::StepFailure>, String> {
+    let bus: crate::emit::EventBus = Arc::new(crate::emit::NullEvents);
+    super::super::analyzer_step::analyzer_result(
+        &bus,
+        &check.step,
+        &super::super::analyzer_step::AnalyzerInputs {
+            document_bundle_path: "",
+            paper_text_path: &check.paper,
+            source_path: "",
+            crossref_api: &check.api,
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn the_x_on_a_waiting_reference_check_fails_only_that_check() {
+    let check = waiting_check();
+    let run = crate::run_scope::ActiveScope::begin("analyzer-pass-cancel-test");
+    let scope = run.scope().clone();
+    let canceller = scope.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        canceller.cancel_pass("refs");
+    });
+    let started = std::time::Instant::now();
+    let outcome = crate::run_scope::scoped(scope, run_check(&check)).await;
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    let failure = outcome.unwrap().unwrap_err();
+    assert_eq!(failure.error, "Pass 'refs' cancelled");
+}
+
+#[tokio::test]
+async fn stop_ends_a_waiting_reference_check_at_once() {
+    let check = waiting_check();
+    let run = crate::run_scope::ActiveScope::begin("analyzer-stop-test");
+    let scope = run.scope().clone();
+    let canceller = scope.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        canceller.cancel();
+    });
+    let started = std::time::Instant::now();
+    let outcome = crate::run_scope::scoped(scope, run_check(&check)).await;
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert_eq!(outcome.err().as_deref(), Some("Pipeline cancelled"));
+}

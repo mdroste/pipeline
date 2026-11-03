@@ -180,9 +180,13 @@ fn exact(
 ) -> WorkbenchResult<Option<ResearchObjectRef>> {
     store.connection()?.query_row("SELECT revision FROM research_search_sources WHERE workspace_id=?1 AND kind=?2 AND id=?3 ORDER BY length(revision) DESC,revision DESC LIMIT 1",params![ws,kind,id],|r|Ok(ResearchObjectRef{kind:kind.into(),id:id.into(),revision:r.get(0)?,start:None,end:None})).optional().map_err(err)
 }
-/// Project links explicitly represented by host-owned fields; free prose is not a dependency.
-fn projected(store: &Store, ws: &str) -> WorkbenchResult<Vec<Relation>> {
+/// Rows each kind of link is read up to. Reaching it leaves the rest unread.
+const PROJECTED_LIMIT: usize = 1000;
+/// Project links explicitly represented by host-owned fields; free prose is not a
+/// dependency. The flag is set when a limit left some links unread.
+fn projected(store: &Store, ws: &str) -> WorkbenchResult<(Vec<Relation>, bool)> {
     let mut out = Vec::new();
+    let mut capped = false;
     let c = store.connection()?;
     let mut q=c.prepare("SELECT id,revision,kind,body_json FROM project_records WHERE workspace_id=?1 AND kind IN ('binding','response','theory','check','literature','specification','build','experiment') LIMIT 1000").map_err(err)?;
     let rows = q
@@ -197,6 +201,7 @@ fn projected(store: &Store, ws: &str) -> WorkbenchResult<Vec<Relation>> {
         .map_err(err)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;
+    capped |= rows.len() >= PROJECTED_LIMIT;
     for (id, revision, kind, body) in rows {
         let mut body: Value = serde_json::from_str(&body).map_err(err)?;
         if kind == "response" {
@@ -322,6 +327,7 @@ fn projected(store: &Store, ws: &str) -> WorkbenchResult<Vec<Relation>> {
         .map_err(err)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;
+    capped |= rows.len() >= PROJECTED_LIMIT;
     for (id, revision, manifest) in rows {
         let manifest: Value = serde_json::from_str(&manifest).map_err(err)?;
         for r in manifest["researchInputs"].as_array().into_iter().flatten() {
@@ -356,6 +362,7 @@ fn projected(store: &Store, ws: &str) -> WorkbenchResult<Vec<Relation>> {
         .map_err(err)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;
+    capped |= links.len() >= PROJECTED_LIMIT;
     for (claim, kind, target, assessment, relation) in links {
         let kind = match kind.as_str() {
             "paper_revision" => "paper",
@@ -376,6 +383,7 @@ fn projected(store: &Store, ws: &str) -> WorkbenchResult<Vec<Relation>> {
         }
     }
     let mut results=c.prepare("SELECT sr.id,sr.created_at,e.id,e.created_at FROM structured_results sr JOIN research_executions e ON e.id=sr.execution_id WHERE e.workspace_id=?1 LIMIT 1000").map_err(err)?;
+    let mut result_rows = 0;
     for row in results
         .query_map([ws], |r| {
             Ok((
@@ -388,6 +396,7 @@ fn projected(store: &Store, ws: &str) -> WorkbenchResult<Vec<Relation>> {
         .map_err(err)?
     {
         let (id, revision, run, run_revision) = row.map_err(err)?;
+        result_rows += 1;
         out.push(Relation {
             input: ResearchObjectRef {
                 kind: "execution".into(),
@@ -408,7 +417,7 @@ fn projected(store: &Store, ws: &str) -> WorkbenchResult<Vec<Relation>> {
             reason: "Result adopted from this execution".into(),
         });
     }
-    Ok(out)
+    Ok((out, capped || result_rows >= PROJECTED_LIMIT))
 }
 fn changed(
     store: &Store,
@@ -422,7 +431,7 @@ fn changed(
         "paper"=>c.query_row("SELECT CASE WHEN p.current_revision_id<>pr.id THEN 'passage_moved' END FROM paper_revisions pr JOIN papers p ON p.id=pr.paper_id WHERE pr.id=?1 AND p.workspace_id=?2",params![o.id,ws],|r|r.get(0)).optional().map_err(err)?.flatten(),
         "source"=>c.query_row("SELECT CASE WHEN v.access_state='unavailable' THEN 'source_unavailable' WHEN EXISTS(SELECT 1 FROM source_versions n WHERE n.source_id=v.source_id AND n.created_at>v.created_at) THEN 'review_needed' END FROM source_versions v JOIN sources s ON s.id=v.source_id WHERE v.id=?1 AND s.workspace_id=?2",params![o.id,ws],|r|r.get(0)).optional().map_err(err)?.flatten(),
         "note"=>c.query_row("SELECT CASE WHEN CAST(revision AS TEXT)<>?3 THEN 'input_changed' END FROM research_notes WHERE id=?1 AND workspace_id=?2",params![o.id,ws,o.revision],|r|r.get(0)).optional().map_err(err)?.flatten(),
-        "record"=>c.query_row("SELECT CASE WHEN CAST(revision AS TEXT)<>?3 THEN 'input_changed' WHEN kind='check' AND json_extract(body_json,'$.outcome')='failed' THEN 'check_failed' END FROM project_records WHERE id=?1 AND workspace_id=?2",params![o.id,ws,o.revision],|r|r.get(0)).optional().map_err(err)?.flatten(),
+        "record"=>c.query_row("SELECT CASE WHEN CAST(revision AS TEXT)<>?3 THEN 'input_changed' WHEN kind='check' AND json_extract(body_json,'$.check.outcome')='failed' THEN 'check_failed' END FROM project_records WHERE id=?1 AND workspace_id=?2",params![o.id,ws,o.revision],|r|r.get(0)).optional().map_err(err)?.flatten(),
         "execution"=>c.query_row("SELECT CASE WHEN outcome='failed' THEN 'check_failed' WHEN outcome='outcome_unknown' THEN 'unknown' END FROM research_executions WHERE id=?1 AND workspace_id=?2",params![o.id,ws],|r|r.get(0)).optional().map_err(err)?.flatten(),
         _=>{let newer:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM desk_records WHERE supersedes=?1 AND workspace_id=?2)",params![o.id,ws],|r|r.get(0)).map_err(err)?;newer.then(||"input_changed".into())}
     };
@@ -491,7 +500,8 @@ pub fn impact(store: &Store, ws: &str) -> WorkbenchResult<ImpactReport> {
         .into_iter()
         .map(|r| serde_json::from_value::<Relation>(r.body).map_err(err))
         .collect::<WorkbenchResult<Vec<_>>>()?;
-    relations.extend(projected(store, ws)?);
+    let (links, capped) = projected(store, ws)?;
+    relations.extend(links);
     let started = std::time::Instant::now();
     let mut bytes_read = 0;
     let mut queue = VecDeque::new();
@@ -512,7 +522,7 @@ pub fn impact(store: &Store, ws: &str) -> WorkbenchResult<ImpactReport> {
     }
     let mut visited = HashSet::new();
     let mut impacts = Vec::new();
-    let mut complete = relations.len() < 2000;
+    let mut complete = relations.len() < 2000 && !capped;
     while let Some(item) = queue.pop_front() {
         if !visited.insert(key(&item.object)) {
             continue;

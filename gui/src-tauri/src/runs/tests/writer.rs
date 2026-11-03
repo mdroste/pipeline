@@ -243,6 +243,67 @@ fn unlisted_artifact_cap_deletes_every_excess_file() {
     assert_eq!(fs::read_dir(&artifacts).unwrap().count(), 500);
 }
 
+/// The flush adapts to the volume, but a save that did not reach the drive
+/// still reports it: a manifest must not read as saved when it was not.
+#[test]
+#[cfg(unix)]
+fn run_records_flush_on_any_volume_and_still_report_a_failed_save() {
+    use crate::safety::simulate_sync_failure;
+    let temp = tempfile::tempdir().unwrap();
+    let writer = RunWriter::create_in(temp.path(), "sync-run").unwrap();
+    let dir = writer.dir().to_path_buf();
+    let manifest: RunManifest =
+        serde_json::from_slice(&fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+    let record = dir.join("record.txt");
+    fs::write(&record, "x").unwrap();
+
+    simulate_sync_failure(Some((libc::ENOTSUP, false)));
+    let adapted_manifest = write_manifest(&dir, &manifest);
+    let adapted_text = write_text_atomic(&dir, "recovered.txt", b"x");
+    let adapted_record = crate::runs::sync_run_file(&record);
+    simulate_sync_failure(Some((libc::EIO, false)));
+    let failed_manifest = write_manifest(&dir, &manifest);
+    let failed_text = write_text_atomic(&dir, "recovered.txt", b"y");
+    let failed_record = crate::runs::sync_run_file(&record);
+    simulate_sync_failure(None);
+
+    assert_eq!(adapted_manifest, Ok(()));
+    assert_eq!(adapted_text, Ok(()));
+    assert_eq!(adapted_record, Ok(()));
+    assert!(failed_manifest.unwrap_err().contains("Failed to sync"));
+    assert!(failed_text.unwrap_err().contains("Failed to sync"));
+    assert!(failed_record.unwrap_err().contains("Failed to sync"));
+    assert_eq!(fs::read(dir.join("recovered.txt")).unwrap(), b"x");
+}
+
+#[test]
+fn rejected_files_are_listed_apart_from_accepted_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut writer = RunWriter::create_in(temp.path(), "rejected-run").unwrap();
+    let dir = writer.dir().to_path_buf();
+    let rejected = dir.join(crate::pipeline::unit_files::REJECTED_FILES_DIR);
+    fs::create_dir_all(rejected.join("step/unit/attempt-01")).unwrap();
+    fs::write(rejected.join("step/unit/attempt-01/draft.csv"), "x").unwrap();
+    fs::create_dir_all(dir.join("artifacts/by-step/step/unit/files")).unwrap();
+    fs::write(dir.join("artifacts/by-step/step/unit/files/final.csv"), "x").unwrap();
+
+    writer.register_unlisted(
+        crate::pipeline::unit_files::REJECTED_FILES_DIR,
+        "rejected_files",
+    );
+    writer.register_unlisted("artifacts", "files");
+
+    let group_of = |name: &str| {
+        writer
+            .artifacts
+            .iter()
+            .find(|artifact| artifact.rel_path.ends_with(name))
+            .map(|artifact| artifact.group.as_str())
+    };
+    assert_eq!(group_of("draft.csv"), Some("rejected_files"));
+    assert_eq!(group_of("final.csv"), Some("files"));
+}
+
 #[test]
 #[cfg(unix)]
 fn unlisted_artifact_scan_removes_fifo_without_opening_it() {

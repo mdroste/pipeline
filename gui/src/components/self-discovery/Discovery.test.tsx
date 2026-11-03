@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { listen } from "@tauri-apps/api/event";
 import { beforeEach, expect, it, vi } from "vitest";
 import Builder from "./Builder";
 import Detail from "./Detail";
@@ -237,6 +238,64 @@ it("offers Retry on a run that needs attention and labels the state", async () =
   });
 });
 
+it("refreshes when a task event moves the run", async () => {
+  const handlers = new Map<string, () => void>();
+  vi.mocked(listen).mockImplementation(async (name, handler) => {
+    handlers.set(name, () => handler({ event: name, id: 0, payload: null }));
+    return () => {};
+  });
+  render(<SelfDiscovery initialRunId="portfolio" onBack={vi.fn()} />);
+  await screen.findByText("Choose projects to develop");
+  const reads = () =>
+    mocks.invoke.mock.calls.filter((c) => c[0] === "discovery_get").length;
+  const before = reads();
+  await waitFor(() => expect(handlers.has("tasks:changed")).toBe(true));
+  handlers.get("tasks:changed")!();
+  await waitFor(() => expect(reads()).toBeGreaterThan(before));
+});
+it("carries out Pause and Stop on the newer run when the revision has moved", async () => {
+  const running: DiscoveryRun = { ...run, state: "running" };
+  const newer: DiscoveryRun = { ...running, revision: 9 };
+  const updated = vi.fn();
+  mocks.invoke.mockImplementation(async (name: string, args) => {
+    if (name === "discovery_get") return newer;
+    if (name === "discovery_control") {
+      if (args.revision !== 9)
+        throw "This research discovery changed; reload before continuing";
+      return { ...newer, state: "paused", revision: 10 };
+    }
+    return [];
+  });
+  render(<Detail run={running} onUpdated={updated} onClose={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: /^Pause/ }));
+  await waitFor(() =>
+    expect(updated).toHaveBeenCalledWith(
+      expect.objectContaining({ state: "paused", revision: 10 }),
+    ),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+it("asks again before retrying a run that has moved", async () => {
+  const stuck: DiscoveryRun = { ...run, state: "attention" };
+  const updated = vi.fn();
+  mocks.invoke.mockImplementation(async (name: string) => {
+    if (name === "discovery_get") return { ...stuck, revision: 9 };
+    if (name === "discovery_control")
+      throw "This research discovery changed; reload before continuing";
+    return [];
+  });
+  render(<Detail run={stuck} onUpdated={updated} onClose={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This run just changed",
+  );
+  expect(updated).toHaveBeenCalledWith(
+    expect.objectContaining({ revision: 9 }),
+  );
+  expect(
+    mocks.invoke.mock.calls.filter((c) => c[0] === "discovery_control"),
+  ).toHaveLength(1);
+});
 it("offers no Retry after a run has stopped for review", () => {
   render(
     <Detail

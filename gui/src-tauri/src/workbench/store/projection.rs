@@ -79,9 +79,10 @@ pub(super) fn upsert_projected_turn(
         .filter(|value| !value.is_null())
         .map(|value| encode_projected_payload(value, "Projected turn error"))
         .transpose()?;
+    // A replayed start can arrive after the turn's ending; the ending stands.
     connection
         .execute(
-            "UPDATE turns SET state = ?1, usage_json = ?2, error_json = ?3, updated_at = ?4, terminal_at = CASE WHEN ?5 THEN ?4 ELSE terminal_at END WHERE id = ?6",
+            "UPDATE turns SET state = ?1, usage_json = ?2, error_json = ?3, updated_at = ?4, terminal_at = CASE WHEN ?5 THEN ?4 ELSE terminal_at END WHERE id = ?6 AND (?5 OR terminal_at IS NULL)",
             params![state, usage, error, timestamp, terminal, id],
         )
         .map_err(|error| WorkbenchError::storage("Failed to update projected turn", error))?;
@@ -103,11 +104,15 @@ pub(super) fn upsert_projected_item(
     let payload = encode_projected_payload(item, "Projected transcript item")?;
     let turn_id = ensure_projected_turn(connection, binding_id, provider_turn_id, timestamp)?;
     let id = new_id("item")?;
+    // A late started copy must not replace a finished item's payload.
     connection
         .execute(
-            "INSERT INTO transcript_items (id, binding_id, turn_id, provider_item_id, item_kind, payload_json, is_final, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) ON CONFLICT(binding_id, provider_item_id) DO UPDATE SET turn_id = excluded.turn_id, item_kind = excluded.item_kind, payload_json = excluded.payload_json, is_final = MAX(transcript_items.is_final, excluded.is_final), updated_at = excluded.updated_at",
+            "INSERT INTO transcript_items (id, binding_id, turn_id, provider_item_id, item_kind, payload_json, is_final, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8) ON CONFLICT(binding_id, provider_item_id) DO UPDATE SET turn_id = excluded.turn_id, item_kind = excluded.item_kind, payload_json = excluded.payload_json, is_final = MAX(transcript_items.is_final, excluded.is_final), updated_at = excluded.updated_at WHERE transcript_items.is_final = 0 OR excluded.is_final = 1",
             params![id, binding_id, turn_id, provider_item_id, item_kind, payload, is_final, timestamp],
         )
         .map_err(|error| WorkbenchError::storage("Failed to project transcript item", error))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

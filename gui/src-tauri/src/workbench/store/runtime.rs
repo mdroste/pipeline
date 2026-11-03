@@ -206,31 +206,47 @@ impl Store {
     ) -> WorkbenchResult<Option<i64>> {
         use crate::agent_runtime::events::NormalizedEvent;
         validate_id("binding id", binding_id)?;
+        // Scoped by binding: neither epochs nor provider item ids are unique
+        // across threads, and `change_log` keeps every operation id for good.
+        // A replay on this binding is still skipped here. Items and turns upsert
+        // by binding, so rows journaled under older ids can't be written twice.
         let (thread_id, operation_id) = match event {
             NormalizedEvent::TurnStarted {
                 epoch,
                 thread_id,
                 turn_id,
                 ..
-            } => (thread_id, format!("codex-{epoch}-turn-{turn_id}-started")),
+            } => (
+                thread_id,
+                format!("codex-{binding_id}-{epoch}-turn-{turn_id}-started"),
+            ),
             NormalizedEvent::TurnCompleted {
                 epoch,
                 thread_id,
                 turn_id,
                 ..
-            } => (thread_id, format!("codex-{epoch}-turn-{turn_id}-completed")),
+            } => (
+                thread_id,
+                format!("codex-{binding_id}-{epoch}-turn-{turn_id}-completed"),
+            ),
             NormalizedEvent::ItemStarted {
                 epoch,
                 thread_id,
                 item_id,
                 ..
-            } => (thread_id, format!("codex-{epoch}-item-{item_id}-started")),
+            } => (
+                thread_id,
+                format!("codex-{binding_id}-{epoch}-item-{item_id}-started"),
+            ),
             NormalizedEvent::ItemCompleted {
                 epoch,
                 thread_id,
                 item_id,
                 ..
-            } => (thread_id, format!("codex-{epoch}-item-{item_id}-completed")),
+            } => (
+                thread_id,
+                format!("codex-{binding_id}-{epoch}-item-{item_id}-completed"),
+            ),
             _ => return Ok(None),
         };
         let timestamp = now();
@@ -262,7 +278,7 @@ impl Store {
                         // give genuinely new rows strictly increasing times
                         // (random ids cannot order items within one batch).
                         let item_timestamp =
-                            prior_item_created_at(&transaction, &binding.session_id, item_id)?
+                            prior_item_created_at(&transaction, &binding, item_id)?
                                 .unwrap_or_else(|| offset_rfc3339(&timestamp, index));
                         upsert_projected_item(
                             &transaction,
@@ -291,7 +307,7 @@ impl Store {
                 item_kind,
                 item,
                 false,
-                &prior_item_created_at(&transaction, &binding.session_id, item_id)?
+                &prior_item_created_at(&transaction, &binding, item_id)?
                     .unwrap_or_else(|| timestamp.clone()),
             )?,
             NormalizedEvent::ItemCompleted {
@@ -308,7 +324,7 @@ impl Store {
                 item_kind,
                 item,
                 true,
-                &prior_item_created_at(&transaction, &binding.session_id, item_id)?
+                &prior_item_created_at(&transaction, &binding, item_id)?
                     .unwrap_or_else(|| timestamp.clone()),
             )?,
             _ => unreachable!("non-projectable events returned above"),
@@ -332,17 +348,18 @@ impl Store {
     }
 }
 
-/// The ordering time an earlier incarnation already assigned to this
-/// provider item, if any. Same-incarnation upserts keep created_at anyway.
+/// The ordering time an earlier incarnation of this thread already assigned to
+/// this provider item, if any. Same-incarnation upserts keep created_at anyway,
+/// and another thread's item with the same id is a different item.
 fn prior_item_created_at(
     connection: &Connection,
-    session_id: &str,
+    binding: &SessionBinding,
     provider_item_id: &str,
 ) -> WorkbenchResult<Option<String>> {
     connection
         .query_row(
-            "SELECT i.created_at FROM transcript_items i JOIN session_bindings b ON b.id = i.binding_id WHERE b.session_id = ?1 AND i.provider_item_id = ?2 ORDER BY b.incarnation DESC LIMIT 1",
-            params![session_id, provider_item_id],
+            "SELECT i.created_at FROM transcript_items i JOIN session_bindings b ON b.id = i.binding_id WHERE b.session_id = ?1 AND b.provider_thread_id = ?2 AND i.provider_item_id = ?3 ORDER BY b.incarnation DESC LIMIT 1",
+            params![binding.session_id, binding.provider_thread_id, provider_item_id],
             |row| row.get(0),
         )
         .optional()

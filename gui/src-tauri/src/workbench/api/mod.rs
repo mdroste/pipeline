@@ -10,6 +10,8 @@ use crate::agent_runtime::api::streaming;
 mod streaming_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tool_budget_tests;
 use crate::agent_runtime::api::wire;
 pub(crate) use crate::connections::{ApiConnection as Connection, ApiProvider as Provider};
 pub(crate) use config::selected;
@@ -27,7 +29,7 @@ fn identity() -> WorkbenchResult<String> {
 use super::commands::{run_store, RuntimeCommandError, SendTurnRequest, SendTurnResult};
 use super::research::PreparedHarness;
 use super::store::{SessionBinding, Store, WorkbenchError, WorkbenchResult};
-use super::turn_loop::TurnEvents;
+use super::turn_loop::{TurnEvents, UnsavedText};
 use crate::agent_runtime::events::NormalizedEvent;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -58,6 +60,7 @@ pub(super) struct Turn {
     pub model: Option<String>,
     pub runtime: String,
     pub usage: Arc<Mutex<Vec<Value>>>,
+    pub unsaved: UnsavedText,
 }
 
 impl Turn {
@@ -81,6 +84,17 @@ impl Turn {
             .await
     }
 
+    /// Keeps reply text a stopped or failed turn had streamed: on screen, and
+    /// in the history of the next message.
+    pub async fn save_unfinished(&self, app: &impl TurnEvents) {
+        for (item_id, text) in self.unsaved.take() {
+            if !text.trim().is_empty() {
+                let event = self.text_event(item_id, "agentMessage", &text, Some("incomplete"));
+                let _ = self.emit(app, event).await;
+            }
+        }
+    }
+
     fn item_event(
         &self,
         suffix: &str,
@@ -88,7 +102,16 @@ impl Turn {
         text: &str,
         phase: Option<&str>,
     ) -> NormalizedEvent {
-        let item_id = format!("{}-{suffix}", self.id);
+        self.text_event(format!("{}-{suffix}", self.id), kind, text, phase)
+    }
+
+    fn text_event(
+        &self,
+        item_id: String,
+        kind: &str,
+        text: &str,
+        phase: Option<&str>,
+    ) -> NormalizedEvent {
         NormalizedEvent::ItemCompleted {
             epoch: self.epoch,
             thread_id: self.thread.clone(),
@@ -190,6 +213,7 @@ pub(crate) async fn submit(
         model: Some(connection.model.clone()),
         runtime: provider.runtime().into(),
         usage: Arc::new(Mutex::new(Vec::new())),
+        unsaved: UnsavedText::default(),
     };
     // The draft may be cleared immediately after acknowledgement. Persist its
     // transcript copy before handing the request to the asynchronous worker.
@@ -219,8 +243,11 @@ pub(crate) async fn submit(
                 receiver,
             ))
             .await;
+        if result.is_err() {
+            task_turn.save_unfinished(&app).await;
+        }
         let capture = super::conversation_tools::finish(&task_turn.thread, &task_turn.id).await;
-        let result = result.and(capture.map_err(|error| error.message));
+        super::conversation_tools::report_capture(&app, epoch, capture);
         let cleanup_thread = thread.clone();
         let cleanup_turn = id.clone();
         let _ = run_store(move |store| {

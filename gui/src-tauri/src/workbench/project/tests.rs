@@ -1001,7 +1001,7 @@ fn completed_host_launchers_do_not_leave_capture_pipes_waiting_for_descendants()
 fn source_tree_capture_excludes_git_and_task_metadata() {
     let f = fixture();
     fs::write(f.root.join("paper.tex"), "Research source").unwrap();
-    for directory in [".git", ".pipeline-tasks"] {
+    for directory in [".git", ".pipeline-tasks", ".pipeline-workbench"] {
         fs::create_dir(f.root.join(directory)).unwrap();
         fs::write(
             f.root.join(directory).join("private.txt"),

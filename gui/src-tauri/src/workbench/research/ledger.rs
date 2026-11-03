@@ -3,6 +3,7 @@
 use super::*;
 
 const IMPORTED_MARK: &str = "imported:";
+const MAX_LEDGER_FLAGS: usize = 10_000;
 
 /// The origin or assessor of a record whose status stayed with its sender.
 pub(crate) fn imported_mark(status: &str, original: &str) -> String {
@@ -397,6 +398,26 @@ pub(crate) fn evidence(
         .map_err(|error| WorkbenchError::storage("Failed to read evidence link", error))
 }
 
+/// Ids of this project's claims that meet `condition`, newest first. The condition
+/// is one of the fixed strings in `research_ledger`, never caller text.
+fn claim_ids(
+    connection: &Connection,
+    workspace_id: &str,
+    condition: &str,
+) -> WorkbenchResult<Vec<String>> {
+    let mut statement = connection
+        .prepare(&format!(
+            "SELECT c.id FROM claims c WHERE c.workspace_id = ?1 AND c.current_version_id IS NOT NULL AND {condition} ORDER BY c.updated_at DESC LIMIT {MAX_LEDGER_FLAGS}"
+        ))
+        .map_err(|error| WorkbenchError::storage("Failed to prepare claim checks", error))?;
+    let ids = statement
+        .query_map([workspace_id], |row| row.get(0))
+        .map_err(|error| WorkbenchError::storage("Failed to check claims", error))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| WorkbenchError::storage("Failed to decode claim checks", error))?;
+    Ok(ids)
+}
+
 pub fn research_ledger(store: &Store, workspace_id: &str) -> WorkbenchResult<ResearchLedger> {
     validate_id("workspace id", workspace_id)?;
     let connection = open_connection(store)?;
@@ -412,29 +433,10 @@ pub fn research_ledger(store: &Store, workspace_id: &str) -> WorkbenchResult<Res
         .map_err(|error| WorkbenchError::storage("Failed to list evidence", error))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| WorkbenchError::storage("Failed to decode evidence", error))?;
-    let unsupported_accepted_claims = claims
-        .iter()
-        .filter(|claim| {
-            claim.workflow_state == "accepted"
-                && !evidence.iter().any(|item| {
-                    item.claim_version_id == claim.version_id
-                        && item.relation == "supports"
-                        && item.freshness == "current"
-                        // A model proposal or a failed check is not support.
-                        && matches!(item.assessment.as_str(), "human_confirmed" | "check_passed")
-                })
-        })
-        .map(|claim| claim.id.clone())
-        .collect();
-    let stale_claims = claims
-        .iter()
-        .filter(|claim| {
-            evidence
-                .iter()
-                .any(|item| item.claim_version_id == claim.version_id && item.freshness == "stale")
-        })
-        .map(|claim| claim.id.clone())
-        .collect();
+    // Over every claim and link: the lists above stop at their limits, and a
+    // claim's only support can be older than the newest links.
+    let unsupported_accepted_claims = claim_ids(&connection, workspace_id, "c.workflow_state = 'accepted' AND NOT EXISTS (SELECT 1 FROM evidence_links e WHERE e.workspace_id = c.workspace_id AND e.claim_version_id = c.current_version_id AND e.relation = 'supports' AND e.freshness = 'current' AND e.assessment IN ('human_confirmed', 'check_passed'))")?;
+    let stale_claims = claim_ids(&connection, workspace_id, "c.workflow_state <> 'retired' AND EXISTS (SELECT 1 FROM evidence_links e WHERE e.workspace_id = c.workspace_id AND e.claim_version_id = c.current_version_id AND e.freshness = 'stale')")?;
     Ok(ResearchLedger {
         claims,
         evidence,

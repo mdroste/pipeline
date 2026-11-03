@@ -8,6 +8,7 @@ import {
   type WorkflowGalleryItem,
 } from "../lib/workflowGallery";
 import PageHeader from "../ui/PageHeader";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   onInstalled: (config: PipelineConfig) => void;
@@ -108,6 +109,7 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
           className="mb-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
         >
           Workflow installation failed: {error}
+          <ReportIssueLink />
         </div>
       )}
       {installed && (

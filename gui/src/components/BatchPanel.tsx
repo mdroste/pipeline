@@ -5,6 +5,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import type { BatchJob, InputSlot, VarSpec, DepsReport } from "../lib/types";
 import { inputSlotExtensions } from "../lib/pipelineHelpers";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   onClose: () => void;
@@ -441,7 +442,10 @@ export default function BatchPanel({
             role="alert"
             className="flex items-start gap-3 p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400"
           >
-            <span className="flex-1">{error}</span>
+            <span className="flex-1">
+              {error}
+              <ReportIssueLink />
+            </span>
             {errorCanRetrySetup && (
               <button
                 type="button"
@@ -615,7 +619,7 @@ export default function BatchPanel({
                     className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-800"
                   >
                     <span className="flex-1 truncate" title={p}>
-                      {p.split("/").pop()}
+                      {p.split(/[\\/]/).pop()}
                     </span>
                     <button
                       type="button"

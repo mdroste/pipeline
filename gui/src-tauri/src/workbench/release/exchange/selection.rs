@@ -235,7 +235,7 @@ pub(super) fn load_object(
                 encoded.push(json!({"resultId":result_id,"body":serde_json::from_str::<Value>(&body).map_err(err)?}));
             }
             v["structuredResults"] = Value::Array(encoded);
-            if let Some(inputs) = e.input_manifest.get("inputs").and_then(Value::as_array) {
+            if let Some(inputs) = e.input_manifest.get("files").and_then(Value::as_array) {
                 for input in inputs {
                     let path = input
                         .get("path")

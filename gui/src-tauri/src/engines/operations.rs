@@ -31,12 +31,24 @@ pub async fn install_engine(app: &crate::emit::EventBus, engine_id: &str) -> Res
     let home = pipeline_home()?;
     std::fs::create_dir_all(&home).map_err(|e| format!("Failed to create ~/.pipeline: {e}"))?;
     if engine_id == GPU_RECOGNITION_ID {
+        if gpu_recognition_sound().await? {
+            log(app, format!("{} passed its check", spec.label));
+            emit_phase(app, engine_id, "gpu", "done");
+            return Ok(());
+        }
         let (space_plan, required_mb) = install_space_requirement(engine_id, false, false, false)?;
         if let Ok(free) = fs2::available_space(&home) {
             check_install_space(free, space_plan, required_mb)
                 .map_err(|error| format!("{} ({})", error, spec.label))?;
         }
         return install_gpu_recognition(app, spec).await;
+    }
+    // Never refuse a working install that only needs its sidecar refreshed.
+    if !lightweight_parser_refresh {
+        if let Err(error) = ensure_native_path(&home) {
+            emit_phase(app, engine_id, "runtime", "failed");
+            return Err(error);
+        }
     }
     let base_installed = match new_install_recognition_backend() {
         RecognitionBackend::ManagedLlama => paddle_root()
@@ -89,6 +101,10 @@ pub async fn uninstall_engine(app: &crate::emit::EventBus, engine_id: &str) -> R
     let _guard = acquire_install_guard()?;
     INSTALL_CANCEL.store(false, Ordering::Release);
     cleanup_managed_engine_storage_locked()?;
+    // Cleanup keeps a finished download for another attempt. Nobody wants one now.
+    remove_children_matching(&pipeline_home()?.join("native"), |name| {
+        name.starts_with(GPU_STAGING_PREFIX)
+    })?;
 
     if engine_id == GPU_RECOGNITION_ID {
         return uninstall_gpu_recognition(app).await;

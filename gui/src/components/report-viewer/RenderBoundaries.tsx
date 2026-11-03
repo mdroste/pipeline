@@ -1,5 +1,6 @@
 import React from "react";
 import { MAX_RENDER_CHARS } from "./limits";
+import ReportIssueLink from "../ReportIssueLink";
 
 export class ReportRenderErrorBoundary extends React.Component<
   { markdown: string; children: React.ReactNode },
@@ -34,6 +35,7 @@ export class ReportRenderErrorBoundary extends React.Component<
           className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
         >
           This response could not be formatted. Showing the saved text instead.
+          <ReportIssueLink />
         </div>
         <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed text-gray-800 dark:text-gray-200">
           {this.props.markdown.slice(0, MAX_RENDER_CHARS)}

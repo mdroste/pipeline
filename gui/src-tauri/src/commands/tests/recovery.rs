@@ -57,6 +57,83 @@ fn rerun_cache_invalidates_artifacts_when_the_output_contract_changes() {
     assert!(incompatible_reuse_ids(&config, &[invalid_json]).contains("review"));
 }
 
+#[tokio::test]
+async fn resume_reuses_a_pipeline_check_and_the_steps_that_read_it() {
+    let folder = tempfile::tempdir().unwrap();
+    let paper = folder.path().join("paper.txt");
+    std::fs::write(
+        &paper,
+        "Body.\n\nReferences\n[1] Card, D. 1994. Minimum wages. AER.\n[2] Neumark, D. 2000. A comment. AER.\n[3] Autor, D. 2013. The China syndrome. AER.",
+    )
+    .unwrap();
+    let mut config = empty_test_config();
+    config.steps = vec![
+        crate::pipeline_config::StepConfig {
+            id: "refs".into(),
+            label: "Reference check".into(),
+            enabled: true,
+            kind: crate::pipeline_config::StepKind::Analyzer,
+            analyzer: Some(crate::pipeline_config::AnalyzerSpec {
+                id: "reference_audit".into(),
+                version: 1,
+                options: serde_json::Value::Null,
+            }),
+            ..Default::default()
+        },
+        crate::pipeline_config::StepConfig {
+            id: "review".into(),
+            label: "Review".into(),
+            enabled: true,
+            after: vec!["refs".into()],
+            ..Default::default()
+        },
+    ];
+    let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+    let no_values = std::collections::HashMap::new();
+    let mut analyzer_only = config.clone();
+    analyzer_only.steps.truncate(1);
+    let result = crate::pipeline::executor::execute_steps(
+        &bus,
+        &analyzer_only,
+        "",
+        &serde_json::Value::Null,
+        paper.to_str().unwrap(),
+        "",
+        paper.to_str().unwrap(),
+        "",
+        "",
+        &no_values,
+        &no_values,
+        &no_values,
+        &Default::default(),
+        None,
+        &crate::settings::Settings::default(),
+    )
+    .await
+    .unwrap();
+    assert!(result.failed_steps.is_empty(), "{:?}", result.failed_steps);
+
+    let mut outputs = result.outputs;
+    outputs.push(crate::models::StepOutput {
+        step_id: "review".into(),
+        raw_text: "# Paid review".into(),
+        ..Default::default()
+    });
+    assert!(
+        incompatible_reuse_ids(&config, &outputs).is_empty(),
+        "{:?}",
+        incompatible_reuse_ids(&config, &outputs)
+    );
+
+    // A different check, or a result that cannot be read, is not reused.
+    let mut changed = outputs.clone();
+    changed[0].model = "reference_audit@0".into();
+    assert!(incompatible_reuse_ids(&config, &changed).contains("refs"));
+    let mut damaged = outputs;
+    damaged[0].raw_text = "{ cut off".into();
+    assert!(incompatible_reuse_ids(&config, &damaged).contains("refs"));
+}
+
 #[test]
 fn composite_failure_ids_normalize_to_the_base_step() {
     let failures = vec![crate::models::StepFailure {

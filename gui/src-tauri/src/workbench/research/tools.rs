@@ -284,7 +284,7 @@ pub fn handle_dynamic_tool_call(store: &Store, params: &Value) -> WorkbenchResul
                     WorkbenchError::storage("Failed to encode paper search result", error)
                 })?)
             }
-            "workbench_paper_page" => paper_page_image(
+            "workbench_paper_page" => paper_page_tool_image(
                 store,
                 &workspace_id,
                 required_argument(&arguments, "revisionId")?,

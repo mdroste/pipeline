@@ -4,8 +4,12 @@ use super::config::find_preset;
 use super::*;
 use crate::workbench::store::{CreateSessionRequest, CreateWorkspaceRequest, UpdateSessionRequest};
 
+#[path = "tests/automation_identity.rs"]
+mod automation_identity;
 #[path = "tests/paper_imports.rs"]
 mod paper_imports;
+#[path = "tests/session_moves.rs"]
+mod session_moves;
 
 struct Fixture {
     _temporary: tempfile::TempDir,

@@ -32,6 +32,7 @@ import type { PdfSelection } from "./PdfReader";
 import MediaViewer from "./viewers/MediaViewer";
 import HtmlViewer from "./viewers/HtmlViewer";
 import "./viewers/viewers.css";
+import ReportIssueLink from "../ReportIssueLink";
 
 const PdfReader = lazy(() => import("./PdfReader"));
 const ImageViewer = lazy(() => import("./viewers/ImageViewer"));
@@ -246,6 +247,16 @@ export default function FilePane({
     tailDecoder.current = new TextDecoder();
     onReload();
   };
+  const discard = async () => {
+    if (
+      await confirmDialog(`Discard your unsaved draft of ${file.path}?`, {
+        title: "Discard unsaved draft",
+        confirmLabel: "Discard",
+        destructive: true,
+      })
+    )
+      onDiscard();
+  };
   const body = () => {
     if (kind === "pdf" && (stream || file.base64))
       return (
@@ -339,7 +350,7 @@ export default function FilePane({
         )}
         {file.editable && dirty && (
           <>
-            <button className="file-action" onClick={onDiscard}>
+            <button className="file-action" onClick={() => void discard()}>
               Discard draft
             </button>
             <button
@@ -408,6 +419,7 @@ export default function FilePane({
       {loadError && (
         <p role="alert" className="file-error">
           {loadError}
+          <ReportIssueLink />
         </p>
       )}
       {buffer.status &&

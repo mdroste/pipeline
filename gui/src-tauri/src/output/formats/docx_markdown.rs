@@ -2,10 +2,12 @@
 //!
 //! Only structure that Word renders predictably is produced: styled
 //! paragraphs, bold/italic/strike/code runs, simple bullet or numbered list
-//! prefixes, block quotes, code blocks, and plain tables. Raw HTML in model
-//! output is dropped; link targets are written out after the link text.
+//! prefixes, block quotes, code blocks, and plain tables. HTML tags in model
+//! output are dropped and their text kept; link targets are written out after
+//! the link text.
 
 use super::math::{protect_source_math, restore_source_math, ProtectedMath};
+use super::raw_html::html_to_plain_text;
 use super::text::escape_xml;
 
 #[derive(Debug, Clone, Default)]
@@ -258,14 +260,16 @@ impl<'a> Converter<'a> {
         options.insert(Options::ENABLE_STRIKETHROUGH);
         let (markdown, math) = protect_source_math(markdown);
         self.math = math;
-        for event in Parser::new_ext(&markdown, options) {
+        for event in html_to_plain_text(Parser::new_ext(&markdown, options)) {
             match event {
                 Event::Start(Tag::Heading { level, .. }) => {
                     self.flush();
                     let level = (level as u32 + self.heading_base - 1).clamp(1, 3);
                     self.style = Some(format!("Heading{level}"));
                 }
-                Event::End(TagEnd::Heading(_) | TagEnd::Paragraph) => self.flush(),
+                Event::End(TagEnd::Heading(_) | TagEnd::Paragraph | TagEnd::HtmlBlock) => {
+                    self.flush()
+                }
                 Event::Start(Tag::Paragraph) => {}
                 Event::Start(Tag::BlockQuote(_)) => {
                     self.flush();
@@ -356,6 +360,15 @@ impl<'a> Converter<'a> {
                     }
                 }
                 Event::Code(text) => self.push_text(&text, true),
+                Event::Html(raw) => {
+                    // A block that held only markup leaves no paragraph behind.
+                    let text = self.source_text(&raw).replace('\n', " ");
+                    self.push_text(text.trim(), false);
+                }
+                Event::InlineHtml(raw) => {
+                    let text = self.source_text(&raw);
+                    self.push_text(&text.replace('\n', " "), false);
+                }
                 Event::SoftBreak => self.push_text(" ", false),
                 Event::HardBreak => self.push_text("\n", false),
                 Event::Rule => {

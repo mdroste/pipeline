@@ -41,7 +41,14 @@ it.each(["/project", "\\\\?\\C:\\project"])(
         initial={{ path: "notes/review.md" }}
       />,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Preview" }));
+    // The first test to reach this loads the preview's lazy module.
+    fireEvent.click(
+      await screen.findByRole(
+        "button",
+        { name: "Preview" },
+        { timeout: 15_000 },
+      ),
+    );
     expect(
       await screen.findByRole("img", { name: "Root image" }),
     ).toHaveAttribute("src", "data:image/png;base64,QUJT");
@@ -56,6 +63,7 @@ it.each(["/project", "\\\\?\\C:\\project"])(
     await screen.findByText("Nested sentinel");
     await waitFor(() => expect(read).toHaveBeenCalledWith("notes/results.csv"));
   },
+  30_000,
 );
 
 it("keeps captured Markdown isolated from live absolute paths", async () => {

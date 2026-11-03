@@ -10,6 +10,7 @@
 
 mod activity;
 mod answers;
+mod budget;
 mod protocol;
 mod shell;
 #[cfg(test)]
@@ -23,7 +24,7 @@ mod wsl;
 use super::commands::{run_store, RuntimeCommandError, SendTurnRequest, SendTurnResult};
 use super::research::PreparedHarness;
 use super::store::{SessionBinding, Store, WorkbenchError, WorkbenchResult};
-use super::turn_loop::TurnEvents;
+use super::turn_loop::{TurnEvents, UnsavedText};
 use crate::agent_runtime::events::NormalizedEvent;
 use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
@@ -68,6 +69,7 @@ pub(super) struct Turn {
     pub id: String,
     pub binding: String,
     pub model: Option<String>,
+    pub unsaved: UnsavedText,
 }
 
 impl Turn {
@@ -93,6 +95,26 @@ impl Turn {
             item_id: item_id.clone(), item_kind: kind.into(),
             item: json!({"id":item_id,"type":kind,"text":text,"runtime":"claude","model":self.model}),
         }).await
+    }
+
+    /// Keeps reply text a stopped or failed turn had streamed: on screen, and
+    /// in the history of the next message.
+    pub async fn save_unfinished(&self, app: &impl TurnEvents) {
+        for (item_id, text) in self.unsaved.take() {
+            if text.trim().is_empty() {
+                continue;
+            }
+            let item = json!({"id":item_id,"type":"agentMessage","text":text,"runtime":"claude","model":self.model,"phase":"incomplete"});
+            let event = NormalizedEvent::ItemCompleted {
+                epoch: self.epoch,
+                thread_id: self.thread.clone(),
+                turn_id: self.id.clone(),
+                item_id,
+                item_kind: "agentMessage".into(),
+                item,
+            };
+            let _ = self.emit(app, event).await;
+        }
     }
 }
 
@@ -199,6 +221,7 @@ pub(crate) async fn submit(
         id: id.clone(),
         binding: bound.id,
         model: request.model,
+        unsaved: UnsavedText::default(),
     };
     // The draft is cleared on acknowledgement, and Stop or a store failure can
     // end the worker before it writes anything. Save the transcript copy first.
@@ -227,8 +250,11 @@ pub(crate) async fn submit(
             ))
             .await;
         process.stop().await;
+        if result.is_err() {
+            task_turn.save_unfinished(&app).await;
+        }
         let capture = super::conversation_tools::finish(&task_turn.thread, &task_turn.id).await;
-        let result = result.and(capture.map_err(|error| error.message));
+        super::conversation_tools::report_capture(&app, epoch, capture);
         let cleanup_thread = thread.clone();
         let cleanup_turn = id.clone();
         let _ = run_store(move |store| {

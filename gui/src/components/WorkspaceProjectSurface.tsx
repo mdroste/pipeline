@@ -32,6 +32,7 @@ import { useProjectSelectionActions } from "./project-surface/useProjectSelectio
 import ProjectDestination from "./project-surface/ProjectDestination";
 import ProjectSubnav from "./project-surface/ProjectSubnav";
 import type { WorkspaceProjectSurfaceProps } from "./project-surface/types";
+import ReportIssueLink from "./ReportIssueLink";
 
 const PAPER_EXTENSIONS = [
   "pdf",
@@ -328,6 +329,7 @@ function WorkspaceProjectSurface({
           <>
             <p role="alert" className="mt-4 text-danger">
               {error}
+              <ReportIssueLink />
             </p>
             <button
               type="button"
@@ -433,7 +435,10 @@ function WorkspaceProjectSurface({
           role="alert"
           className="m-4 flex items-start gap-3 rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950/30 dark:text-red-200"
         >
-          <span className="min-w-0 flex-1">{error}</span>
+          <span className="min-w-0 flex-1">
+            {error}
+            <ReportIssueLink />
+          </span>
           <button
             type="button"
             className="shrink-0 underline"

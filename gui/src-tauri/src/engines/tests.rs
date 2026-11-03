@@ -952,13 +952,42 @@ fn extraction_waits_for_a_detached_verification_to_release_the_engine_gate() {
         drop(guard);
     });
     let runtime = tokio::runtime::Runtime::new().unwrap();
+    let announced = std::sync::atomic::AtomicBool::new(false);
     let lease = runtime
-        .block_on(acquire_waiting_on_detached_gate(
+        .block_on(acquire_waiting_on_engine_gate(
             || acquire_engine_guard(false),
-            std::time::Duration::from_secs(5),
+            || announced.store(true, std::sync::atomic::Ordering::SeqCst),
         ))
         .unwrap();
     holder.join().unwrap();
+    assert!(announced.load(std::sync::atomic::Ordering::SeqCst));
     drop(lease);
     assert!(!engine_gate_busy_without_install());
+}
+
+#[test]
+fn interrupted_parser_staging_is_swept_and_finished_caches_stay() {
+    let cache = tempfile::tempdir().unwrap();
+    let paper = cache.path().join("0123456789abcdef");
+    let abandoned = paper.join(format!("{PADDLE_FULL_STAGING_PREFIX}Ab12"));
+    let finished = paper.join("fedcba9876543210");
+    std::fs::create_dir_all(abandoned.join("assets")).unwrap();
+    std::fs::create_dir_all(&finished).unwrap();
+    std::fs::write(paper.join("active.json"), b"{}").unwrap();
+
+    assert_eq!(cleanup_parser_staging_at(cache.path()).unwrap(), 1);
+
+    assert!(!abandoned.exists());
+    assert!(finished.is_dir());
+    assert!(paper.join("active.json").is_file());
+    assert_eq!(cleanup_parser_staging_at(cache.path()).unwrap(), 0);
+}
+
+#[test]
+fn parser_staging_sweep_tolerates_a_missing_cache() {
+    let cache = tempfile::tempdir().unwrap();
+    assert_eq!(
+        cleanup_parser_staging_at(&cache.path().join("absent")).unwrap(),
+        0
+    );
 }

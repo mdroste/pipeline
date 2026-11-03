@@ -14,6 +14,7 @@ import {
   type MissionSummary,
 } from "../lib/missionClient";
 import "./research-missions/Missions.css";
+import ReportIssueLink from "./ReportIssueLink";
 const Builder = lazy(() => import("./research-missions/Builder"));
 const Detail = lazy(() => import("./research-missions/Detail"));
 const SelfDiscovery = lazy(() => import("./self-discovery/Page"));
@@ -144,6 +145,7 @@ export default function ResearchMissions({
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       <div

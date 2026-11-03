@@ -3,6 +3,7 @@ import useConversationIndex from "../hooks/useConversationIndex";
 import { projectDate } from "../lib/projectIndex";
 import PageHeader from "../ui/PageHeader";
 import "./project-surface/ProjectHome.css";
+import ReportIssueLink from "./ReportIssueLink";
 
 type Filter = "all" | "unfiled" | "archived";
 
@@ -94,6 +95,7 @@ export default function ConversationsPage({
         {(error || openError) && (
           <p role="alert" className="project-home-error">
             {openError ?? error}
+            <ReportIssueLink />
           </p>
         )}
         {loading && !conversations.length && (

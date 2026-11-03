@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { harnessClient } from "../../lib/workbench/harnessClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type { NativePromptCatalog } from "../../lib/workbenchTypes";
+import ReportIssueLink from "../ReportIssueLink";
 
 export default function NativePromptViewer({
   onUseTemplate,
@@ -42,7 +43,12 @@ export default function NativePromptViewer({
         Pipeline’s instructions, tools, permissions, and project instructions.
         Placeholders appear as saved.
       </p>
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <p role="alert">
+          {error}
+          <ReportIssueLink />
+        </p>
+      )}
       {!catalog && !error && <p role="status">Reading local prompt cache…</p>}
       {catalog && (
         <>

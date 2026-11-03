@@ -5,6 +5,7 @@ import { workspaceClient } from "../lib/workbench/workspaceClient";
 import { researchClient } from "../lib/workbench/researchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type { Workspace } from "../lib/workbenchTypes";
+import ReportIssueLink from "./ReportIssueLink";
 
 const PAPER_EXTENSIONS = ["pdf", "tex", "docx", "md", "txt"];
 const field =
@@ -234,6 +235,7 @@ export default function WorkspaceProjectDialog({
             className="rounded-md border border-red-300 bg-red-50 p-2 text-xs text-red-800 dark:bg-red-950/30 dark:text-red-200"
           >
             {error}
+            <ReportIssueLink />
           </p>
         )}
         <div className="flex justify-end gap-2">

@@ -607,6 +607,7 @@ fn add_markdown_nodes(bundle: &mut DocumentBundle, text: &str, method: &str) {
 
 mod adapters;
 mod bundle;
+mod docx_symbols;
 mod docx_xml;
 mod paddle;
 
@@ -618,6 +619,7 @@ use paddle::add_paddle_structured_nodes;
 
 pub use adapters::{companion_pdf, extract_docx_text};
 pub use bundle::build;
+pub(crate) use docx_xml::inline_character;
 
 #[cfg(test)]
 use adapters::{copy_docx_media_with_limits, read_docx_entry_limited};

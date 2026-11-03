@@ -234,17 +234,14 @@ it.each(["chat", "project"])(
     fireEvent.click(
       await screen.findByRole("button", { name: "Stop response" }),
     );
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Runtime disconnected",
-    );
-    expect(screen.getByRole("alert")).toBeVisible();
+    expect(await screen.findByText(/Runtime disconnected/)).toBeVisible();
     expect(mocks.reconcileSession).toHaveBeenCalledWith("conversation");
     expect(mocks.interruptTurn).toHaveBeenCalledWith("thread", "turn");
     fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
     expect(screen.getByRole("button", { name: "Stopping…" })).toBeDisabled();
     await act(async () => finish());
     expect(screen.getByRole("button", { name: "Stop response" })).toBeEnabled();
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText(/Runtime disconnected/)).toBeNull();
     expect(mocks.interruptTurn).toHaveBeenCalledTimes(2);
   },
 );
@@ -928,7 +925,7 @@ it("recovers an immediate mode-exit draft even if its database save fails", asyn
   expect(mocks.sendTurn).not.toHaveBeenCalled();
 });
 
-it("preserves the draft and blocks Send if the bottom model selector fails to save", async () => {
+it("sends with the saved model after the bottom model selector fails to save", async () => {
   mocks.accountState.mockResolvedValue({ status: "chatgpt" });
   await mount();
   fireEvent.click(screen.getByRole("button", { name: /^Model and thinking/ }));
@@ -939,16 +936,17 @@ it("preserves the draft and blocks Send if the bottom model selector fails to sa
   mocks.updateSession.mockRejectedValue(new Error("Store unavailable"));
   fireEvent.click(option);
   await screen.findByText(/Model selection could not be saved/);
+  mocks.sendTurn.mockResolvedValueOnce({
+    epoch: 1,
+    threadId: "thread",
+    turnId: "turn",
+  });
   fireEvent.click(screen.getByRole("button", { name: "Send" }));
-  await act(async () => {});
-  await screen.findByText(
-    /Message not sent because its settings or draft could not be saved/,
+  await waitFor(() =>
+    expect(mocks.sendTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "Keep this question", model: null }),
+    ),
   );
-  expect(screen.getByLabelText("Message")).toHaveValue("Keep this question");
-  expect(localStorage.getItem("pipeline.pendingDraft.conversation")).toBe(
-    "Keep this question",
-  );
-  expect(mocks.sendTurn).not.toHaveBeenCalled();
 });
 
 it("reverts a model that failed to save, so choosing it again retries", async () => {

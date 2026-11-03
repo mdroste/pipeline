@@ -1,6 +1,7 @@
 {
   "description": "Current accepted source/test size debt; values are [physical lines, UTF-8 bytes]. Do not refresh merely to hide growth.",
   "files": {
+    "gui/src-tauri/src/paddle_parser_sidecar.py": [1229, 47486],
     "gui/src-tauri/src/workbench/codex/probe.rs": [1283, 45964],
     "gui/src-tauri/src/workbench/programs/tests.rs": [1372, 50624],
     "gui/src/components/PipelinePage.test.tsx": [1395, 48875]

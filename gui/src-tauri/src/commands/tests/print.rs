@@ -35,6 +35,33 @@ fn print_html_is_self_contained_and_waits_for_fonts() {
 }
 
 #[test]
+fn printing_keeps_text_that_parses_as_html_and_removes_real_html() {
+    let html = render_print_markdown(
+        "In the <treated> group, n<N> units, and if p<q and r>s or a<b>c.\n\nBold <b>word</b>.\n\n<script>alert(2)</script>\n\n<iframe src=\"https://evil.example\"></iframe>",
+    );
+    assert!(
+        html.contains(
+            "In the &lt;treated&gt; group, n&lt;N&gt; units, and if p&lt;q and r&gt;s or a&lt;b&gt;c."
+        ),
+        "{html}"
+    );
+    assert!(html.contains("<b>word</b>"));
+    assert!(!html.contains("alert(2)"));
+    assert!(!html.contains("iframe"));
+}
+
+#[test]
+fn printing_removes_html_that_spans_lines_and_keeps_its_text() {
+    let html = render_print_markdown(
+        "<!-- first hidden line\nsecond hidden line -->\n\n<style>\nhidden-rule { color: red; }\n</style>\n\n<script>\nhiddenCall(1);\n</script>\n\n<div>\nif p<q and r>s holds\n</div>",
+    );
+    assert!(html.contains("if p&lt;q and r&gt;s holds"), "{html}");
+    for removed in ["hidden line", "hidden-rule", "hiddenCall"] {
+        assert!(!html.contains(removed), "{removed}: {html}");
+    }
+}
+
+#[test]
 fn print_html_preserves_latex_until_katex_rendering() {
     let html = build_print_report_html(
             "Inline $x_t^* = \\frac{a_b}{c^2}$ and display:\n\n$$\\sum_{i=1}^n \\beta_i x_i$$\n\nTariffs rose from $5 to $8 per unit.\n\n`$code_with_underscore$`",

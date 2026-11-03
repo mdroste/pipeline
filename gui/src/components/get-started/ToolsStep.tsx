@@ -8,6 +8,7 @@ import type {
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { Badge, Button } from "../../ui";
 import { pdfRows, REPLICATION_NOTE, TOOL_NOTES, type Tone } from "./guide";
+import ReportIssueLink from "../ReportIssueLink";
 
 function Row({
   tone,
@@ -130,6 +131,7 @@ export default function ToolsStep({
       {error && (
         <p role="alert" className="text-ui-label text-danger">
           The check did not finish: {error}
+          <ReportIssueLink />
         </p>
       )}
       {report && (

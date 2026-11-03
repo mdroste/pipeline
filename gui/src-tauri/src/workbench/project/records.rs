@@ -39,16 +39,52 @@ pub fn record(
     valid_id(object_id)?;
     store.connection()?.query_row("SELECT id,workspace_id,kind,revision,body_json,updated_at FROM project_records WHERE id=?1 AND workspace_id=?2 AND kind=?3",params![object_id,workspace_id,kind],read_record).optional().map_err(err)?.ok_or_else(||WorkbenchError::invalid("Project object is unavailable in this Workspace"))
 }
+/// How many records a list shows. Callers that need every record look them up
+/// with `records_with_values` or read through `records_up_to`.
+const RECORD_LIST_LIMIT: usize = 500;
+/// Upper bound for a reader that treats its records as complete.
+pub const RECORD_READ_LIMIT: usize = 20_000;
+
+/// The newest records of a kind, for a list that shows a page of them.
 pub fn records(
     store: &Store,
     workspace_id: &str,
     kind: &str,
 ) -> WorkbenchResult<Vec<ProjectRecord>> {
+    records_up_to(store, workspace_id, kind, RECORD_LIST_LIMIT)
+}
+/// The newest `limit` records of a kind.
+pub fn records_up_to(
+    store: &Store,
+    workspace_id: &str,
+    kind: &str,
+    limit: usize,
+) -> WorkbenchResult<Vec<ProjectRecord>> {
     scope(store, workspace_id)?;
     let conn = store.connection()?;
-    let mut statement=conn.prepare("SELECT id,workspace_id,kind,revision,body_json,updated_at FROM project_records WHERE workspace_id=?1 AND kind=?2 ORDER BY updated_at DESC,id LIMIT 500").map_err(err)?;
+    let mut statement=conn.prepare("SELECT id,workspace_id,kind,revision,body_json,updated_at FROM project_records WHERE workspace_id=?1 AND kind=?2 ORDER BY updated_at DESC,id LIMIT ?3").map_err(err)?;
     let result = statement
-        .query_map(params![workspace_id, kind], read_record)
+        .query_map(params![workspace_id, kind, limit as i64], read_record)
+        .map_err(err)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(err)?;
+    Ok(result)
+}
+/// Every record of a kind whose JSON value at `path` is one of `values`, however
+/// many records the project holds. The answer grows only with what was asked.
+pub fn records_with_values(
+    store: &Store,
+    workspace_id: &str,
+    kind: &str,
+    path: &str,
+    values: &[&str],
+) -> WorkbenchResult<Vec<ProjectRecord>> {
+    scope(store, workspace_id)?;
+    let wanted = serde_json::to_string(values).map_err(err)?;
+    let conn = store.connection()?;
+    let mut statement=conn.prepare("SELECT id,workspace_id,kind,revision,body_json,updated_at FROM project_records WHERE workspace_id=?1 AND kind=?2 AND json_extract(body_json,?3) IN (SELECT value FROM json_each(?4)) ORDER BY updated_at DESC,id").map_err(err)?;
+    let result = statement
+        .query_map(params![workspace_id, kind, path, wanted], read_record)
         .map_err(err)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(err)?;

@@ -49,7 +49,12 @@ pub struct RepositoryStatus {
     pub branch: Option<String>,
     /// None before the first commit.
     pub head: Option<String>,
+    /// None when the branch tracks nothing, or tracks a remote branch that no
+    /// longer exists, so the page offers to publish it.
     pub upstream: Option<String>,
+    /// The tracked name when its remote branch is gone. It still says which
+    /// remote the branch belongs to.
+    pub missing_upstream: Option<String>,
     /// Relative to `upstream` as of the last fetch.
     pub ahead: u32,
     pub behind: u32,
@@ -162,6 +167,7 @@ pub(super) fn parse_status(output: &str) -> RepositoryStatus {
     status.changed = changed;
     status.untracked = untracked;
     status.conflicts = conflicts;
+    let mut compared = false;
     for line in header {
         if let Some(oid) = line.strip_prefix("branch.oid ") {
             status.head = (oid != "(initial)").then(|| oid.chars().take(40).collect());
@@ -178,7 +184,13 @@ pub(super) fn parse_status(output: &str) -> RepositoryStatus {
             };
             status.ahead = number(parts.next());
             status.behind = number(parts.next());
+            compared = true;
         }
+    }
+    // Git prints no counts when the tracked ref doesn't exist, which happens
+    // after cloning an empty repository or when the remote branch was deleted.
+    if !compared {
+        status.missing_upstream = status.upstream.take();
     }
     status
 }
@@ -204,7 +216,7 @@ pub(super) fn parse_log(output: &str) -> Vec<RepositoryCommit> {
 pub fn inspect(root: &Path) -> Option<RepositoryStatus> {
     // This makes about seven calls for each Overview load.
     let direct = Git::open(root)?;
-    inspect_with(root, &|args| direct.read(args))
+    inspect_with(root, &|args| direct.read_for_status(args))
 }
 
 /// `inspect` over a caller's way of running Git in `root`.
@@ -274,6 +286,7 @@ pub(super) fn remote_name(status: &RepositoryStatus, run: &GitRunner<'_>) -> Opt
     status
         .upstream
         .as_deref()
+        .or(status.missing_upstream.as_deref())
         .and_then(|upstream| {
             remotes
                 .iter()

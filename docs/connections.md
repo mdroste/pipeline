@@ -49,7 +49,7 @@ Check the cited pages before relying on a review's claims.
 
 ## Connect ChatGPT
 
-1. Install the Codex command-line tool.
+1. Install version 0.165.0 or newer of the Codex command-line tool.
 2. Open **Settings → Connections → OpenAI**. Under **ChatGPT account**,
    choose **Sign in to ChatGPT** and finish signing in in your browser.
 3. For reviews, choose **Subscription** under **Reviews** on the same card.
@@ -202,7 +202,10 @@ setup fails. Linux may also need
 [Playwright's browser system dependencies](https://playwright.dev/docs/browsers#install-system-dependencies).
 Each conversation has its own browser profile, which remembers its sign-ins.
 Enter passwords and complete CAPTCHA prompts directly in the visible window.
-The browser closes when the turn stops; its profile stays on this device.
+When the assistant asks you to sign in, the window stays open for 10 minutes
+after its reply. Finish in the window, then send a message, and the assistant
+continues there. The browser then closes after 10 idle minutes; its profile
+stays on this device.
 Browser downloads use the conversation's file download tool.
 Pages can redirect to other sites, but images, scripts, and other parts of a
 page that redirect to a different site don't load.
@@ -263,6 +266,9 @@ Ollama, LM Studio, llama.cpp, or vLLM. On the **OpenAI-compatible** card:
 1. Enter the **Server URL**, such as `http://localhost:11434/v1` for Ollama.
 2. Add a key under **Local API Key** if the server needs one.
 3. Choose a **Model** from the list the server reports.
+
+A saved key belongs to its server. Changing the **Server URL** removes the key,
+so Pipeline asks first, and you can then add a key for the new server.
 
 For a conversation, choose **Local / custom** in the model picker. Choose a
 listed model or enter its name under **Model ID**.

@@ -373,8 +373,8 @@ pub fn snapshot_conversation_file(
     let root = store.runtime_root(session_id)?;
     let path = conversation_relative_path(&root, value)?;
     let folder = files::SafeRoot::open(&root)?;
-    let executable = folder.stat(&path)?.is_some_and(|stat| stat.executable);
-    crate::file_viewer::check_openable(&path, executable).map_err(WorkbenchError::invalid)?;
+    let program = folder.marked_as_program(&path)?;
+    crate::file_viewer::check_openable(&path, program).map_err(WorkbenchError::invalid)?;
     let bytes = folder.read(&path)?;
     let digest = hash(&bytes);
     let suffix = Path::new(&path)
@@ -392,41 +392,39 @@ pub fn snapshot_conversation_file(
     let directory = store.root_path().join("opened-conversation-files");
     fs::create_dir_all(&directory).map_err(err)?;
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).map_err(err)?;
-    }
+    crate::safety::restrict_permissions(&directory, 0o700).map_err(err)?;
     let target = directory.join(format!("{digest}{suffix}"));
     if target.exists() {
         verify_conversation_snapshot(&target, &bytes)?;
         return Ok(target);
     }
-    let mut temporary = tempfile::NamedTempFile::new_in(&directory).map_err(err)?;
-    temporary.write_all(&bytes).map_err(err)?;
-    temporary.flush().map_err(err)?;
-    temporary.as_file().sync_all().map_err(err)?;
-    match temporary.persist_noclobber(&target) {
-        Ok(_) => {}
-        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(error) => return Err(err(error.error)),
-    }
-    // Verify the final directory entry even when another writer won the
-    // no-clobber race. Never hand the shell a path based only on the bytes that
-    // were validated before publication.
+    crate::workbench::desk::write_blob_atomic(&target, &bytes, &digest).map_err(err)?;
+    // Verify the final directory entry even when another writer got there first.
+    // Never hand the shell a path based only on the bytes that were validated
+    // before publication.
     verify_conversation_snapshot(&target, &bytes)?;
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt as _;
-        fs::set_permissions(&target, fs::Permissions::from_mode(0o400)).map_err(err)?;
-        fs::File::open(&directory)
-            .and_then(|directory| directory.sync_all())
-            .map_err(err)?;
+        crate::safety::restrict_permissions(&target, 0o400).map_err(err)?;
+        if let Ok(directory) = fs::File::open(&directory) {
+            crate::safety::sync_landed(&directory);
+        }
     }
     Ok(target)
 }
 
+/// The snapshot can sit on a volume that marks every file as a program, where a
+/// name that passed on the conversation's own volume would run. It is judged by
+/// its own name, which drops an extension the source had if that is unusual.
 fn verify_conversation_snapshot(target: &Path, expected: &[u8]) -> WorkbenchResult<()> {
     let mut existing = crate::safety::open_regular_file(target).map_err(err)?;
+    let name = target.to_string_lossy();
+    if crate::file_viewer::marked_as_program(&name, &existing).map_err(err)? {
+        return Err(WorkbenchError::invalid(
+            "The drive holding Pipeline's research data would treat this file as a program. \
+             Reveal its folder to open it yourself.",
+        ));
+    }
     let mut existing_bytes = Vec::new();
     Read::by_ref(&mut existing)
         .take(MAX_FILE + 1)

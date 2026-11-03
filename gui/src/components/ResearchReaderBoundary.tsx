@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from "react";
+import ReportIssueLink from "./ReportIssueLink";
 export default class ResearchReaderBoundary extends Component<
   { children: ReactNode },
   { failed: boolean }
@@ -18,6 +19,7 @@ export default class ResearchReaderBoundary extends Component<
         >
           Retry reader
         </button>
+        <ReportIssueLink />
       </div>
     ) : (
       this.props.children

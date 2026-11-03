@@ -14,12 +14,15 @@ pub(super) struct RunSnapshot {
     pub(super) workflow_fingerprint: String,
     pub(super) workflow_json: String,
     pub(super) specialist_catalog_revision: String,
+    /// The one-report agent choice folded into `settings` and `config`, saved
+    /// with the run so Resume and Regenerate can use it again.
+    pub(super) agent_overrides: Option<RunParallelOverrides>,
 }
 
 /// One-report override for Parallel steps and, when selected, their Merge
 /// calls. `None` at the command boundary means use Settings and workflow
 /// choices unchanged; a present value is fingerprinted into the immutable
-/// launch snapshot and never persisted.
+/// launch snapshot, saved with the run, and never written to Settings.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct RunParallelOverrides {
     pub agents: Vec<String>,
@@ -178,6 +181,7 @@ pub(super) fn load_run_snapshot_for_workflow(
         workflow_fingerprint: document.fingerprint,
         workflow_json: document.canonical_json,
         specialist_catalog_revision,
+        agent_overrides: None,
     })
 }
 
@@ -367,14 +371,26 @@ pub(super) fn bind_parallel_overrides(
     let Some(overrides) = overrides else {
         return Ok(snapshot);
     };
+    apply_parallel_overrides(&mut snapshot.settings, &mut snapshot.config, overrides)?;
+    snapshot.agent_overrides = Some(overrides.clone());
+    snapshot.fingerprint = stable_snapshot_fingerprint(&(snapshot.fingerprint.as_str(), overrides))
+        .map_err(|error| format!("Could not fingerprint Parallel agent options: {error}"))?;
+    Ok(snapshot)
+}
+
+/// Folds a one-report agent choice into a run's settings and workflow.
+pub(super) fn apply_parallel_overrides(
+    settings: &mut crate::settings::Settings,
+    config: &mut PipelineConfig,
+    overrides: &RunParallelOverrides,
+) -> Result<(), String> {
     if overrides.agents.is_empty() {
         return Err("Select at least one Parallel agent".to_string());
     }
-    snapshot.settings.default_parallel_agents = overrides.agents.clone();
-    snapshot.settings.default_parallel_model_overrides = overrides.model_overrides.clone();
-    snapshot.settings.default_parallel_effort_overrides = overrides.effort_overrides.clone();
-    for step in snapshot
-        .config
+    settings.default_parallel_agents = overrides.agents.clone();
+    settings.default_parallel_model_overrides = overrides.model_overrides.clone();
+    settings.default_parallel_effort_overrides = overrides.effort_overrides.clone();
+    for step in config
         .steps
         .iter_mut()
         .filter(|step| step.phase == crate::pipeline_config::Phase::Parallel)
@@ -389,22 +405,19 @@ pub(super) fn bind_parallel_overrides(
         if merge_agent.trim().is_empty() {
             return Err("Select a Merge agent".to_string());
         }
-        snapshot.settings.default_merge_agent = merge_agent.to_string();
-        snapshot.settings.default_merge_model_overrides = overrides.merge_model_overrides.clone();
-        snapshot.settings.default_merge_effort_overrides = overrides.merge_effort_overrides.clone();
+        settings.default_merge_agent = merge_agent.to_string();
+        settings.default_merge_model_overrides = overrides.merge_model_overrides.clone();
+        settings.default_merge_effort_overrides = overrides.merge_effort_overrides.clone();
         // An explicit workflow Merge provider would otherwise bypass the
         // transient Settings policies above. Clearing it makes this one-run
         // selection the inherited, fully configured Merge default.
-        snapshot.config.merge.agents.clear();
+        config.merge.agents.clear();
     } else if !overrides.merge_model_overrides.is_empty()
         || !overrides.merge_effort_overrides.is_empty()
     {
         return Err("Merge model or thinking overrides require a Merge agent".to_string());
     }
-    snapshot.settings.validate()?;
-    snapshot.fingerprint = stable_snapshot_fingerprint(&(snapshot.fingerprint.as_str(), overrides))
-        .map_err(|error| format!("Could not fingerprint Parallel agent options: {error}"))?;
-    Ok(snapshot)
+    settings.validate()
 }
 
 /// One-run Review limits from the command line. `None` fields keep the

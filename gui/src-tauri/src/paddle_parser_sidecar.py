@@ -4,7 +4,8 @@ The Rust host either owns a llama.cpp service and passes an authenticated
 loopback URL, or passes a verified model directory for PaddlePaddle to recognize
 with directly.  This script owns only PaddleOCR's layout, recognition
 orchestration, page restructuring, and normalization into a small versioned JSON
-contract.  It intentionally has no package-management logic.
+contract.  It intentionally has no package-management logic.  While it runs, it
+reports progress on stdout and leaves stderr to diagnostics.
 """
 
 from __future__ import annotations
@@ -16,11 +17,18 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
+import time
+from collections import Counter, deque
 from pathlib import Path
 from typing import Any
 
 
 SCHEMA_VERSION = 2
+BLANK_PAGE_INK_LEVEL = 48
+BLANK_PAGE_INK_SHARE = 0.001
+# `paddle_server.rs` shows the stdout lines that start with this in the console.
+PROGRESS_PREFIX = "pipeline-progress: "
 MAX_RAW_BLOCK_CHARS = 200_000
 SUSPECT_BASELINE_MIN_CHARS = 200
 FIGURE_RELATED_BLOCK_LABELS = {
@@ -76,6 +84,149 @@ UNVERIFIED_IMAGE_TEXT_NOTICE = (
     "[Image text withheld as unverified: the recognizer returned the kind of data "
     "it makes up for plots. Read this figure from the image.]"
 )
+
+
+def _report_progress(message: str) -> None:
+    print(f"{PROGRESS_PREFIX}{message}", flush=True)
+
+
+def _counted(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _time_left(seconds: float) -> str:
+    minutes = round(seconds / 60)
+    if minutes < 1:
+        return "less than a minute left"
+    return f"about {_counted(minutes, 'minute')} left"
+
+
+class _PageProgress:
+    """Count extracted pages and estimate the time left.
+
+    `pages_finished` only moves forward, so the fine count from
+    `_watch_recognition` and the coarse count of pages Paddle has returned can
+    both feed it.  Recognition threads share this object.
+    """
+
+    def __init__(self, total_pages: int) -> None:
+        self.of_total = f" of {total_pages}" if total_pages else ""
+        self.total_pages = total_pages
+        self.started = time.monotonic()
+        self.lock = threading.RLock()
+        self.watching = True
+        self.reported = 0
+        self.pages_before_batch = 0
+        self.pages_in_batch = 0
+        self.pages_done_in_batch = 0
+        self.regions_left: Counter[int] = Counter()
+        self.region_pages: deque[int] = deque()
+
+    def pages_finished(self, pages: int) -> None:
+        with self.lock:
+            if pages <= self.reported:
+                return
+            self.reported = pages
+            message = f"{pages}{self.of_total} pages extracted"
+            pages_left = self.total_pages - pages
+            if pages_left > 0:
+                seconds_per_page = (time.monotonic() - self.started) / pages
+                message += f", {_time_left(seconds_per_page * pages_left)}"
+            _report_progress(message)
+
+    def begin_batch(self, pages: int, region_pages: list[int]) -> None:
+        """Take one batch's pages and each region's page, in request order."""
+        with self.lock:
+            if not self.watching:
+                return
+            if not self.pages_in_batch:
+                # Layout runs ahead of the first batch and alongside the rest,
+                # so counting from here gives the steadier estimate.
+                self.started = time.monotonic()
+            self.pages_before_batch += self.pages_in_batch
+            self.pages_in_batch = pages
+            self.regions_left = Counter(region_pages)
+            self.region_pages = deque(region_pages)
+            # A page with nothing to recognize is already finished.
+            self.pages_done_in_batch = pages - len(self.regions_left)
+            first = self.pages_before_batch + 1
+            last = self.pages_before_batch + pages
+            span = f"page {first}" if first == last else f"pages {first}-{last}"
+            _report_progress(
+                f"recognizing {span}{self.of_total}, "
+                f"{_counted(len(region_pages), 'region')}"
+            )
+            self.pages_finished(self.pages_before_batch + self.pages_done_in_batch)
+
+    def next_region(self) -> int | None:
+        with self.lock:
+            return self.region_pages.popleft() if self.region_pages else None
+
+    def region_finished(self, page: int | None) -> None:
+        with self.lock:
+            if page is None:
+                return
+            self.regions_left[page] -= 1
+            if self.regions_left[page] == 0:
+                self.pages_done_in_batch += 1
+                self.pages_finished(self.pages_before_batch + self.pages_done_in_batch)
+
+    def stop_watching(self) -> None:
+        """Keep the single-page retries that follow out of the page count."""
+        with self.lock:
+            self.watching = False
+            self.region_pages.clear()
+
+
+def _watch_recognition(pipeline: Any, progress: _PageProgress) -> None:
+    """Count regions as recognition finishes them.
+
+    Paddle merges queued pages into large batches and returns none of a batch
+    until all of it is done, which leaves minutes of silence on a long document.
+    This reaches into private parts of the pinned runtime.  Without them only
+    detail is lost, because `main` still counts the pages Paddle returns, and
+    the release qualification fails so that an upgrade cannot lose it unnoticed.
+    """
+    inner = getattr(getattr(pipeline, "paddlex_pipeline", None), "_pipeline", None)
+    recognizer = getattr(inner, "vl_rec_model", None)
+    aggregate = getattr(inner, "_paddleocr_vl_aggregate_vlm_batches", None)
+    if recognizer is None or aggregate is None:
+        return
+
+    def aggregate_and_begin_batch(page_results: list[Any]) -> Any:
+        aggregated = aggregate(page_results)
+        groups = aggregated[3].values()
+        progress.begin_batch(
+            len(page_results),
+            [page for group in groups for page, _ in group["vlm_block_ids"]],
+        )
+        return aggregated
+
+    inner._paddleocr_vl_aggregate_vlm_batches = aggregate_and_begin_batch
+
+    client = getattr(recognizer, "genai_client", None)
+    if client is None:
+        # Built-in recognition returns each region as it finishes.
+        predict = recognizer.predict
+
+        def predict_and_count(inputs: Any, **kwargs: Any) -> Any:
+            for result in predict(inputs, **kwargs):
+                progress.region_finished(progress.next_region())
+                yield result
+
+        recognizer.predict = predict_and_count
+        return
+
+    # A server batch comes back as one result, so count each of its requests.
+    send = client.create_chat_completion
+
+    def send_and_count(messages: Any, **kwargs: Any) -> Any:
+        page = progress.next_region()
+        future = send(messages, **kwargs)
+        future.add_done_callback(lambda _: progress.region_finished(page))
+        return future
+
+    client.create_chat_completion = send_and_count
 
 
 def _bool(value: str) -> bool:
@@ -373,6 +524,28 @@ def _page_image(result: Any) -> Any | None:
     return None
 
 
+def _page_is_blank(image: Any) -> bool:
+    """Whether almost nothing on the page image differs from its background.
+
+    Only this separates a blank page from one whose recognition failed. A scan
+    can carry specks, so a page need not be perfectly uniform.
+    """
+    if image is None:
+        return False
+    try:
+        import numpy
+
+        pixels = numpy.asarray(image)
+        if pixels.size == 0:
+            return False
+        background = int(numpy.median(pixels))
+        ink = numpy.abs(pixels.astype(numpy.int16) - background) > BLANK_PAGE_INK_LEVEL
+        return float(ink.mean()) < BLANK_PAGE_INK_SHARE
+    except Exception as error:
+        print(f"Could not measure a page image: {error}", file=sys.stderr)
+        return False
+
+
 def _copy_page_identity(source: Any, target: Any) -> None:
     for key in ("input_path", "page_index", "page_count"):
         try:
@@ -490,10 +663,9 @@ def _recover_suspicious_pages(
                     else "whole-page recognition"
                 )
                 for attempt in range(args.page_retries):
-                    print(
+                    _report_progress(
                         f"Page {page_number}: retrying incomplete {retry_mode} "
-                        f"({best_chars}/{baseline} substantive characters, attempt {attempt + 1}/{args.page_retries}).",
-                        file=sys.stderr,
+                        f"({best_chars}/{baseline} substantive characters, attempt {attempt + 1}/{args.page_retries})."
                     )
                     try:
                         candidate = _retry_page(
@@ -524,10 +696,9 @@ def _recover_suspicious_pages(
                     _is_suspicious(best_chars, effective_baseline)
                     and args.layout_detection
                 ):
-                    print(
+                    _report_progress(
                         f"Page {page_number}: layout retries remained incomplete; "
-                        "recovering the page with PaddleOCR-VL whole-page recognition.",
-                        file=sys.stderr,
+                        "recovering the page with PaddleOCR-VL whole-page recognition."
                     )
                     try:
                         candidate = _retry_page(
@@ -949,13 +1120,6 @@ def main() -> int:
     assets_dir = Path(args.assets_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     assets_dir.mkdir(parents=True, exist_ok=True)
-    pages = list(
-        pipeline.predict(
-            input=args.input,
-            max_new_tokens=args.max_new_tokens,
-            temperature=_recognition_temperature(args),
-        )
-    )
     try:
         parsed_baselines = json.loads(args.baseline_chars)
         baselines = (
@@ -974,6 +1138,18 @@ def main() -> int:
         )
     except (TypeError, ValueError, json.JSONDecodeError):
         prose_baselines = []
+    _report_progress("parser ready, reading the PDF")
+    progress = _PageProgress(len(baselines))
+    _watch_recognition(pipeline, progress)
+    pages = []
+    for page in pipeline.predict_iter(
+        input=args.input,
+        max_new_tokens=args.max_new_tokens,
+        temperature=_recognition_temperature(args),
+    ):
+        pages.append(page)
+        progress.pages_finished(len(pages))
+    progress.stop_watching()
     quality_notes: list[str] = []
     pages, source_text_chars = _recover_suspicious_pages(
         pipeline,
@@ -983,6 +1159,13 @@ def main() -> int:
         args,
         quality_notes,
     )
+    # Restructuring can move blocks between pages, so read the images first.
+    blank_pages = {
+        number
+        for number, (page, chars) in enumerate(zip(pages, source_text_chars), start=1)
+        if chars == 0 and _page_is_blank(_page_image(page))
+    }
+    _report_progress("assembling the document")
     pages = list(
         pipeline.restructure_pages(
             pages,
@@ -1006,6 +1189,8 @@ def main() -> int:
         page_number = page["number"]
         if 1 <= page_number <= len(source_text_chars):
             page["source_text_chars"] = source_text_chars[page_number - 1]
+        if page_number in blank_pages:
+            page["blank_page"] = True
     if not normalized:
         raise RuntimeError("PaddleOCR returned no pages")
     document = {

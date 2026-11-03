@@ -4,6 +4,8 @@ import {
   reportBodyForPdf,
   canonicalReportProblem,
   canonicalProblemMessage,
+  isLegacyReport,
+  statusWithReportProblem,
 } from "../lib/reportPresentation";
 import ProvenancePanel from "./report-workspace/ProvenancePanel";
 import LocalSources, { hasPageHeadings } from "./report-workspace/LocalSources";
@@ -15,6 +17,7 @@ import useTabList from "../hooks/useTabList";
 import RunMarkdown from "./file-workspace/RunMarkdown";
 import { Fragment, lazy, useMemo, useState, type ReactNode } from "react";
 import { detectReportIssues, type IssueEvidence } from "../lib/issues";
+import { reportExportClient } from "../lib/reportExportClient";
 import { buildRunProvenance } from "../lib/runProvenance";
 import {
   isPaperOrientation,
@@ -26,6 +29,7 @@ import type {
   ArtifactSelectionRequest,
   ArtifactSelectionTarget,
 } from "../lib/artifactTypes";
+import ReportIssueLink from "./ReportIssueLink";
 
 const loadArtifactExplorer = () => import("./ArtifactExplorer");
 const ArtifactExplorer = lazy(loadArtifactExplorer);
@@ -45,6 +49,9 @@ interface Props {
   /** Shown above the report header; receives the open tab. */
   notice?: (tab: WorkspaceTab) => ReactNode;
 }
+
+const TRUNCATED_REPORT_NOTICE =
+  "This report is too long to show in full. Export it to read the rest.";
 
 const TAB_LABELS = Object.fromEntries(
   REPORT_WORKSPACE_TABS.map((tab) => [tab.id, tab.label]),
@@ -106,16 +113,23 @@ export default function ReportWorkspace({
     );
 
   const [outputView, setOutputView] = useState<OutputView>("clean");
-  const { report, markdown, loading, reportError, markdownError, runManifest } =
-    useReportResources({
-      runId,
-      initialReport,
-      initialMarkdown,
-      initialSourceSelection,
-      setSourceRequest,
-      setTab,
-      setOutputView,
-    });
+  const {
+    report,
+    markdown,
+    markdownTruncated,
+    loading,
+    reportError,
+    markdownError,
+    runManifest,
+  } = useReportResources({
+    runId,
+    initialReport,
+    initialMarkdown,
+    initialSourceSelection,
+    setSourceRequest,
+    setTab,
+    setOutputView,
+  });
 
   const issues = useMemo(
     () => (report ? detectReportIssues(report) : null),
@@ -142,9 +156,10 @@ export default function ReportWorkspace({
     report && isPaperOrientation(report.orientation)
       ? (report.orientation.metadata?.title ?? "")
       : "";
+  const legacyReport = isLegacyReport(report);
   const presentation = useMemo(
-    () => splitUnexpectedPreamble(markdown, paperTitle),
-    [markdown, paperTitle],
+    () => splitUnexpectedPreamble(markdown, paperTitle, legacyReport),
+    [legacyReport, markdown, paperTitle],
   );
   const visibleMarkdown =
     outputView === "clean" ? presentation.clean : markdown;
@@ -156,6 +171,19 @@ export default function ReportWorkspace({
     () => reportBodyForPdf(presentation.clean),
     [presentation.clean],
   );
+  // On screen a long report is cut, so an export reads the saved file instead.
+  const loadFullReport =
+    runId && markdownTruncated
+      ? async () => {
+          const full = await reportExportClient.fullReport({ runId });
+          const { clean } = splitUnexpectedPreamble(
+            full,
+            paperTitle,
+            legacyReport,
+          );
+          return { markdown: full, pdfMarkdown: reportBodyForPdf(clean) };
+        }
+      : undefined;
   const provenance = useMemo(() => {
     if (!report) return null;
     const built = buildRunProvenance({
@@ -165,9 +193,10 @@ export default function ReportWorkspace({
       runId,
       durationSecs,
     });
-    return reportProblem && built.status === "done"
-      ? { ...built, status: "partial" }
-      : built;
+    return {
+      ...built,
+      status: statusWithReportProblem(built.status, reportProblem),
+    };
   }, [durationSecs, report, reportProblem, runId, runManifest, summary]);
   const title = reportTitle(report, summary);
   const loadProblem = [reportError, markdownError].filter(Boolean).join(" · ");
@@ -176,8 +205,7 @@ export default function ReportWorkspace({
     provenance?.status ||
     runManifest?.status ||
     (report?.failed_steps?.length || loadProblem ? "partial" : "done");
-  const status =
-    reportProblem && reportedStatus === "done" ? "partial" : reportedStatus;
+  const status = statusWithReportProblem(reportedStatus, reportProblem);
   const availableTabs: WorkspaceTab[] = [
     "report",
     ...(provenance ? ["provenance" as const] : []),
@@ -214,6 +242,12 @@ export default function ReportWorkspace({
     setPanels({ ...panels, visited: [...panels.visited, activeTab] });
   }
 
+  const reportViewer = (
+    <ReportViewer
+      markdown={visibleMarkdown}
+      truncationNotice={markdownTruncated ? TRUNCATED_REPORT_NOTICE : undefined}
+    />
+  );
   const panelContent = (id: WorkspaceTab) => {
     if (id === "issues")
       return (
@@ -235,6 +269,7 @@ export default function ReportWorkspace({
             <ProvenancePanel
               provenance={provenance}
               quality={report?.quality}
+              status={status}
             />
           </div>
         )
@@ -327,6 +362,7 @@ export default function ReportWorkspace({
                   >
                     Inspect preserved outputs
                   </button>
+                  <ReportIssueLink />
                 </div>
               </div>
             ) : markdown.trim() ? (
@@ -342,10 +378,10 @@ export default function ReportWorkspace({
                     setTab("sources");
                   }}
                 >
-                  <ReportViewer markdown={visibleMarkdown} />
+                  {reportViewer}
                 </RunMarkdown>
               ) : (
-                <ReportViewer markdown={visibleMarkdown} />
+                reportViewer
               )
             ) : (
               <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-500 dark:text-gray-400">
@@ -401,6 +437,7 @@ export default function ReportWorkspace({
               Back to history
             </button>
           )}
+          <ReportIssueLink />
         </div>
       </div>
     );
@@ -419,6 +456,7 @@ export default function ReportWorkspace({
         runId={runId}
         markdown={markdown}
         pdfMarkdown={pdfMarkdown}
+        loadFullReport={loadFullReport}
         extractedText={extractedText}
       />
 
@@ -475,6 +513,7 @@ export default function ReportWorkspace({
               ))}
             </ul>
           </details>
+          <ReportIssueLink />
         </div>
       )}
 

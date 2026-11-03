@@ -1,6 +1,6 @@
 use crate::document_bundle::DocumentBundle;
 use crate::models::{ExtractionResult, ReportQuality, RunProducts, StepFailure, StepOutput};
-use crate::pipeline::extract::is_withheld_image_text_note;
+use crate::pipeline::extract::is_informational_extraction_note;
 use crate::pipeline::orient::OrientationSample;
 use crate::pipeline_config::PipelineConfig;
 use sha2::{Digest as _, Sha256};
@@ -25,8 +25,11 @@ pub fn status_notes(quality: &ReportQuality, status: &str) -> Vec<String> {
         return Vec::new();
     }
     let mut notes = Vec::new();
-    if coverage_limited(quality) {
+    if reading_limited(quality) {
         notes.push("Part of the document may be incomplete.".to_string());
+    }
+    if !quality.coverage_notes.is_empty() {
+        notes.push("Some files or items were not read.".to_string());
     }
     let quotes = quality.partially_verified_evidence + quality.unverified_evidence;
     if quotes > 0 {
@@ -61,11 +64,15 @@ pub fn review_is_complete(quality: &ReportQuality) -> bool {
     }
 }
 
-fn coverage_limited(quality: &ReportQuality) -> bool {
+fn reading_limited(quality: &ReportQuality) -> bool {
     quality
         .extraction_notes
         .iter()
-        .any(|note| !is_withheld_image_text_note(note))
+        .any(|note| !is_informational_extraction_note(note))
+}
+
+fn coverage_limited(quality: &ReportQuality) -> bool {
+    reading_limited(quality) || !quality.coverage_notes.is_empty()
 }
 
 /// Build the provider-independent report quality ledger from durable inputs.
@@ -183,6 +190,11 @@ pub fn build_report_quality(
     extraction_notes.sort();
     extraction_notes.dedup();
 
+    let coverage_notes = unique_sorted(
+        outputs
+            .iter()
+            .filter_map(|output| output.coverage_note.clone()),
+    );
     let mut limitations = Vec::new();
     if orientation_sample.omitted_bytes > 0 {
         limitations.push(format!(
@@ -195,6 +207,7 @@ pub fn build_report_quality(
     for note in &extraction_notes {
         limitations.push(format!("Extraction: {note}"));
     }
+    limitations.extend(coverage_notes.iter().cloned());
     if !failed_steps.is_empty() {
         limitations.push(format!(
             "Failed or dependency-blocked steps: {}.",
@@ -231,7 +244,8 @@ pub fn build_report_quality(
     let status = if failures.is_empty() {
         if extraction_notes
             .iter()
-            .all(|note| is_withheld_image_text_note(note))
+            .all(|note| is_informational_extraction_note(note))
+            && coverage_notes.is_empty()
             && schema_retry_events == 0
             && partially_verified_evidence == 0
             && unverified_evidence == 0
@@ -266,6 +280,7 @@ pub fn build_report_quality(
         recovered_blocks: bundle.map_or(0, |value| value.nodes.len() as u32),
         recovered_assets: bundle.map_or(0, |value| value.assets.len() as u32),
         extraction_notes,
+        coverage_notes,
         completed_steps,
         failed_steps,
         skipped_steps,

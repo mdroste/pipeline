@@ -908,12 +908,13 @@ pub(super) async fn ensure_uv(app: &crate::emit::EventBus) -> Result<PathBuf, St
             .map_err(|error| format!("Failed to remove old uv backup: {error}"))?;
     }
     if uv_path.exists() {
-        std::fs::rename(&uv_path, &backup)
+        rename_when_free(&uv_path, &backup)
+            .await
             .map_err(|error| format!("Failed to stage the previous uv runtime: {error}"))?;
     }
-    if let Err(error) = std::fs::rename(&staged_uv, &uv_path) {
+    if let Err(error) = rename_when_free(&staged_uv, &uv_path).await {
         if backup.exists() {
-            let _ = std::fs::rename(&backup, &uv_path);
+            let _ = rename_when_free(&backup, &uv_path).await;
         }
         return Err(format!("Failed to activate managed uv: {error}"));
     }

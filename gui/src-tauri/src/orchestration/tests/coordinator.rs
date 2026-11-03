@@ -11,6 +11,7 @@ pub(super) fn coordinator_fixture() -> (tempfile::TempDir, Arc<Coordinator>) {
         active: Mutex::new(HashMap::new()),
         stopping: AtomicBool::new(false),
         background: AtomicBool::new(false),
+        listening: AtomicBool::new(true),
         _owner: owner,
         app: None,
     });
@@ -565,4 +566,87 @@ fn opening_a_run_in_progress_is_not_seeing_its_result() {
         .unwrap()
         .iter()
         .all(|e| e.kind != "seen"));
+}
+
+#[tokio::test]
+async fn resuming_keeps_a_later_run_for_its_time() {
+    let (_temp, m) = coordinator_fixture();
+    let later = now() + 7 * 86400;
+    let run = m
+        .store
+        .create(
+            "later",
+            chain(vec![delay("first")]),
+            Scope::default(),
+            json!({}),
+            later,
+            true,
+        )
+        .unwrap();
+    let paused = commands::control(&m, run.id.clone(), run.revision, "pause".into())
+        .await
+        .unwrap();
+    let resumed = commands::control(&m, run.id.clone(), paused.revision, "resume".into())
+        .await
+        .unwrap();
+    assert_eq!(resumed.state, "queued");
+    assert_eq!(resumed.due_at, Some(later));
+    m.tick().await.unwrap();
+    let held = m.store.get(&run.id).unwrap();
+    assert_eq!(held.state, "queued");
+    assert!(held.progress.receipts.is_empty());
+}
+
+#[tokio::test]
+async fn resuming_a_time_that_passed_during_the_pause_runs_now() {
+    let (_temp, m) = coordinator_fixture();
+    let run = m
+        .store
+        .create(
+            "passed",
+            chain(vec![delay("first")]),
+            Scope::default(),
+            json!({}),
+            now() - 60,
+            true,
+        )
+        .unwrap();
+    let paused = commands::control(&m, run.id.clone(), run.revision, "pause".into())
+        .await
+        .unwrap();
+    let resumed = commands::control(&m, run.id.clone(), paused.revision, "resume".into())
+        .await
+        .unwrap();
+    assert!(resumed.due_at.unwrap() >= now() - 1);
+}
+
+#[tokio::test]
+async fn resuming_a_started_run_goes_back_to_what_it_was_waiting_for() {
+    let (_temp, m) = coordinator_fixture();
+    let run = m
+        .store
+        .create(
+            "timer",
+            chain(vec![delay("first")]),
+            Scope::default(),
+            json!({}),
+            now(),
+            true,
+        )
+        .unwrap();
+    m.tick().await.unwrap();
+    let waiting = m.store.get(&run.id).unwrap();
+    assert_eq!(waiting.state, "waiting");
+    let wake = waiting.due_at.unwrap();
+    assert!(wake > now());
+    let paused = commands::control(&m, run.id.clone(), waiting.revision, "pause".into())
+        .await
+        .unwrap();
+    commands::control(&m, run.id.clone(), paused.revision, "resume".into())
+        .await
+        .unwrap();
+    m.tick().await.unwrap();
+    let resumed = m.store.get(&run.id).unwrap();
+    assert_eq!(resumed.state, "waiting");
+    assert_eq!(resumed.due_at, Some(wake));
 }

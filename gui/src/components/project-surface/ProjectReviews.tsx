@@ -15,6 +15,8 @@ import EmptyState from "../../ui/EmptyState";
 import Spinner from "../../ui/Spinner";
 import Button from "../../ui/Button";
 import { button, muted } from "../../ui/classes";
+import { listedRunStatus, runFinished } from "../../lib/reportPresentation";
+import ReportIssueLink from "../ReportIssueLink";
 
 export default function ProjectReviews({
   workspaceRoot,
@@ -72,7 +74,7 @@ export default function ProjectReviews({
   // the researcher's way: one action files this project's finished reviews.
   const untracked = projectRuns.filter(
     (run) =>
-      run.status === "complete" &&
+      runFinished(run.status) &&
       !linked.some((collection) => collection.run_ids.includes(run.run_id)),
   );
   const trackFindings = async () => {
@@ -111,6 +113,7 @@ export default function ProjectReviews({
     return (
       <p role="alert" className="text-sm text-red-600 dark:text-red-400">
         Reviews could not be loaded: {error}
+        <ReportIssueLink />
       </p>
     );
   if (!runs) return <Spinner label="Loading reviews…" />;
@@ -146,6 +149,7 @@ export default function ProjectReviews({
           {trackError && (
             <p role="alert" className="text-sm text-red-600 dark:text-red-400">
               {trackError}
+              <ReportIssueLink />
             </p>
           )}
         </section>
@@ -200,12 +204,12 @@ export default function ProjectReviews({
                 </span>
                 <span
                   className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                    run.status === "complete"
+                    runFinished(run.status)
                       ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
                       : "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
                   }`}
                 >
-                  {run.status}
+                  {listedRunStatus(run.status)}
                 </span>
               </button>
             ))}

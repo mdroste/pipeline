@@ -548,11 +548,9 @@ pub async fn workbench_export_conversation(
         std::fs::write(&target, markdown).map_err(|error| {
             WorkbenchError::storage("Failed to write conversation export", error)
         })?;
-        std::fs::File::open(&target)
-            .and_then(|file| file.sync_all())
-            .map_err(|error| {
-                WorkbenchError::storage("Failed to sync conversation export", error)
-            })?;
+        if let Ok(file) = std::fs::File::open(&target) {
+            crate::safety::sync_landed(&file);
+        }
         Ok(())
     })
     .await

@@ -49,5 +49,13 @@ pub(in crate::orchestration) fn failure_message(value: &Value) -> String {
     if oversized_reply(value) {
         return "The assistant's reply is over 512 KiB, too long for this step to use. The complete reply stays in its conversation.".into();
     }
-    format!("Workspace turn {}", value["state"])
+    let ending = match value["state"].as_str() {
+        Some("interrupted") => "was interrupted",
+        Some("cancelled") => "was cancelled",
+        _ => "failed",
+    };
+    match value["error"].as_str() {
+        Some(reason) => format!("This step's conversation turn {ending}: {reason}"),
+        None => format!("This step's conversation turn {ending}. No reason was recorded."),
+    }
 }

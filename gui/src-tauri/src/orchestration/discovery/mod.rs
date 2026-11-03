@@ -7,7 +7,7 @@
 //! record and a frozen manuscript version, never the author's chat or proposal
 //! scores. Role grants are revoked when the run ends.
 mod artifacts;
-use artifacts::{check_artifacts, consume, materialize};
+use artifacts::{check_artifacts, consume, materialize, Rejection};
 pub mod commands;
 mod engine;
 mod export;
@@ -55,12 +55,12 @@ fn notify(c: &Coordinator, r: &Run, previous: &str) {
     c.notify();
     if let Some(app) = &c.app {
         let _ = app.emit("discovery:changed", json!({"id":r.id,"state":r.state}));
-        if notice_transition(previous, &r.state) {
-            let _ = app.emit(
-                "discovery:notice",
-                json!({"id":r.id,"state":r.state,"revision":r.revision}),
-            );
-        }
+    }
+    if notice_transition(previous, &r.state) {
+        c.announce(
+            "discovery:notice",
+            json!({"id":r.id,"state":r.state,"revision":r.revision}),
+        );
     }
 }
 async fn save(
@@ -235,7 +235,10 @@ fn account(p: &mut Portfolio, child: &TaskRun) {
     p.run.active_child = None;
     p.run.active_scope = None;
 }
+const REJECTED: &str = "Research response could not be adopted: ";
 /// Only a completed, journaled model response may receive a bounded repair turn.
+/// After that the run waits for the researcher, who can retry it. A reply that
+/// can't be used ends a turn, never the work recorded so far.
 fn reject_response(p: &mut Portfolio, child: &TaskRun, e: String) {
     account(p, child);
     if p.run.repairs < 2
@@ -248,8 +251,8 @@ fn reject_response(p: &mut Portfolio, child: &TaskRun, e: String) {
         p.run.reason = format!("Repair the response contract: {e}");
         p.run.due_at = Some(now());
     } else {
-        p.run.state = "blocked".into();
-        p.run.reason = format!("Research response could not be adopted: {e}");
+        p.run.state = "attention".into();
+        p.run.reason = format!("{REJECTED}{e}");
         p.run.due_at = None;
     }
 }
@@ -316,13 +319,18 @@ async fn advance(c: &Arc<Coordinator>, p: &mut Portfolio) -> Result<()> {
                         .and(r.error.clone())
                 });
                 if oversized.is_none() {
-                    return Err(format!(
-                        "{}; the recorded child was not replayed",
-                        child
-                            .reason
-                            .as_deref()
-                            .unwrap_or("A research action did not finish")
-                    ));
+                    // The recovered receipt says why; the child's own reason
+                    // can predate that, as it does after a restart.
+                    let cause = recovered
+                        .progress
+                        .receipts
+                        .values()
+                        .find(|r| r.state == "failed")
+                        .and_then(|r| r.error.as_deref())
+                        .or(child.reason.as_deref())
+                        .unwrap_or("A research action did not finish");
+                    let cause = cause.trim_end_matches('.');
+                    return Err(format!("{cause}. This step was not sent again."));
                 }
                 child = recovered;
             }
@@ -342,10 +350,17 @@ async fn advance(c: &Arc<Coordinator>, p: &mut Portfolio) -> Result<()> {
                         account(&mut next, &child);
                         *p = next;
                     }
-                    Err(e) => reject_response(p, &child, e),
+                    Err(Rejection::Response(e)) => reject_response(p, &child, e),
+                    // The reply may be fine, so it costs no repair. The child
+                    // stays active, and Retry reads the same reply again.
+                    Err(Rejection::Host(e)) => {
+                        return Err(format!(
+                            "Pipeline could not save this step's files: {e}. The reply is kept; choose Retry to save it again."
+                        ))
+                    }
                 }
             }
-            if paused && !p.run.terminal() {
+            if paused && !p.run.terminal() && p.run.state != "attention" {
                 p.run.state = "paused".into();
                 p.run.due_at = None;
             }

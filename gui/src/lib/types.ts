@@ -408,6 +408,7 @@ export interface ReportQuality {
   recovered_blocks: number;
   recovered_assets: number;
   extraction_notes?: string[];
+  coverage_notes?: string[];
   completed_steps?: string[];
   failed_steps?: string[];
   skipped_steps?: string[];
@@ -795,7 +796,7 @@ export interface Settings {
   paddle_flash_attention: string;
   /** Use the optional Windows graphics-card component when installed. */
   paddle_use_gpu: boolean;
-  /** Processor cores for built-in recognition: 1, 2, 4, 8, or 16. */
+  /** Processor cores for layout and built-in recognition: 1, 2, 4, 8, or 16. */
   paddle_cpu_threads: number;
   /** Maximum generated tokens for one OCR page. */
   paddle_max_output_tokens: number;

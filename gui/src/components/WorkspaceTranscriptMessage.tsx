@@ -1,5 +1,5 @@
 import { memo, useMemo } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Options } from "react-markdown";
 import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
@@ -8,12 +8,25 @@ import {
   fileMarkdownComponents,
   fileMarkdownUrlTransform,
 } from "./file-workspace/markdownComponents";
+import { MathErrorBoundary } from "./report-viewer/RenderBoundaries";
 import WorkspaceMessageActions from "./WorkspaceMessageActions";
 import WorkspaceIcon from "./WorkspaceIcon";
+import { normalizeMathDelimiters } from "../lib/mathMarkdown";
+import {
+  rehypeValidateMath,
+  remarkRepairMath,
+  REPORT_KATEX_OPTIONS,
+} from "../lib/mathRepair";
+
+type PluggableList = NonNullable<Options["rehypePlugins"]>;
 
 // Module-level plugin lists keep the Markdown options identical between renders.
-const REMARK_PLUGINS = [remarkGfm, remarkMath];
-const REHYPE_PLUGINS = [rehypeKatex];
+const REMARK_PLUGINS = [remarkGfm, remarkMath, remarkRepairMath];
+const REHYPE_PLUGINS: PluggableList = [
+  rehypeValidateMath,
+  [rehypeKatex, REPORT_KATEX_OPTIONS],
+];
+const FALLBACK_REMARK_PLUGINS = [remarkGfm];
 
 /** Markdown, math and file links for one message; parsed again only when its text changes. */
 export const TranscriptMarkdown = memo(function TranscriptMarkdown({
@@ -28,16 +41,22 @@ export const TranscriptMarkdown = memo(function TranscriptMarkdown({
     () => (messageId ? { clobberPrefix: `message-${messageId}-` } : undefined),
     [messageId],
   );
+  // Assistants write `\\( \\)` as often as `$`. Copy keeps the original text.
+  const normalized = useMemo(() => normalizeMathDelimiters(text), [text]);
   return (
-    <ReactMarkdown
-      urlTransform={fileMarkdownUrlTransform}
-      remarkPlugins={REMARK_PLUGINS}
-      rehypePlugins={REHYPE_PLUGINS}
-      remarkRehypeOptions={options}
-      components={fileMarkdownComponents}
-    >
-      {text}
-    </ReactMarkdown>
+    <MathErrorBoundary resetKey={normalized}>
+      {(fallback) => (
+        <ReactMarkdown
+          urlTransform={fileMarkdownUrlTransform}
+          remarkPlugins={fallback ? FALLBACK_REMARK_PLUGINS : REMARK_PLUGINS}
+          rehypePlugins={fallback ? undefined : REHYPE_PLUGINS}
+          remarkRehypeOptions={options}
+          components={fileMarkdownComponents}
+        >
+          {normalized}
+        </ReactMarkdown>
+      )}
+    </MathErrorBoundary>
   );
 });
 

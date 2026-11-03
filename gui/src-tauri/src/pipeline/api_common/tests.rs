@@ -56,7 +56,15 @@ fn blocked_google_candidates_deserialize_without_content_or_parts() {
         "candidates": [{"content": {"role": "model"}, "finishReason": "MAX_TOKENS"}]
     }))
     .unwrap();
-    assert!(truncated.candidates.unwrap()[0].content.parts.is_empty());
+    let truncated = &truncated.candidates.unwrap()[0];
+    assert!(truncated.content.parts.is_empty());
+
+    // Only a warm-up accepts that cap, and only that reason.
+    let reason = truncated.finish_reason.as_deref();
+    assert!(super::loops::google_stop_fails(reason, false));
+    assert!(!super::loops::google_stop_fails(reason, true));
+    assert!(super::loops::google_stop_fails(Some("SAFETY"), true));
+    assert!(!super::loops::google_stop_fails(Some("STOP"), false));
 }
 
 #[test]

@@ -5,7 +5,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import ResearchMissions from "./ResearchMissions";
 import MissionDetail from "./research-missions/Detail";
 import MissionBuilder from "./research-missions/Builder";
@@ -186,6 +186,86 @@ it("keeps a recoverable mission draft after preparation fails", async () => {
     mocks.invoke.mock.calls.some(([name]) => name === "mission_control"),
   ).toBe(false);
 });
+describe("a saved draft and the conversation the builder opened from", () => {
+  const key = "pipeline.researchMission.draft.v1";
+  const saved = (sessionId: string) => {
+    const definition = newMission();
+    definition.name = "Earlier draft";
+    definition.policy.checkProfileIds = ["other-project-check"];
+    definition.methodIds = ["other-project-method"];
+    localStorage.setItem(
+      key,
+      JSON.stringify({ definition, sessionId, operationId: "earlier" }),
+    );
+  };
+  const open = async (initialSessionId: string | null) => {
+    render(
+      <MissionBuilder
+        initialSessionId={initialSessionId}
+        onPrepared={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByLabelText("Automation name");
+    return JSON.parse(localStorage.getItem(key)!);
+  };
+  it("takes the conversation it opened from, keeping the text but not the other project's tools", async () => {
+    saved("old-conversation");
+    const draft = await open("source");
+    expect(screen.getByLabelText("Source conversation")).toHaveValue("source");
+    expect(screen.getByLabelText("Automation name")).toHaveValue(
+      "Earlier draft",
+    );
+    expect(draft.sessionId).toBe("source");
+    expect(draft.definition.policy.checkProfileIds).toEqual([]);
+    expect(draft.definition.methodIds).toEqual([]);
+    expect(draft.operationId).not.toBe("earlier");
+  });
+  it("keeps a draft for the same conversation exactly as it was", async () => {
+    saved("source");
+    const draft = await open("source");
+    expect(draft.operationId).toBe("earlier");
+    expect(draft.definition.policy.checkProfileIds).toEqual([
+      "other-project-check",
+    ]);
+  });
+  it("keeps the draft's conversation when opened from no conversation", async () => {
+    saved("old-conversation");
+    const draft = await open(null);
+    expect(draft.sessionId).toBe("old-conversation");
+    expect(draft.operationId).toBe("earlier");
+  });
+});
+it("shows which check is waiting for approval until the automation ends", async () => {
+  const capability = {
+    id: "check",
+    kind: "check",
+    name: "Baseline check",
+    fingerprint: "pin",
+    parameters: {},
+    execution: {},
+    timeoutSeconds: 30,
+  };
+  const waiting = {
+    ...mission,
+    state: "running",
+    capabilities: [{ ...capability, unavailable: true }],
+  };
+  const view = render(
+    <MissionDetail mission={waiting} onUpdated={vi.fn()} onClose={vi.fn()} />,
+  );
+  expect(
+    await screen.findByText(/Waiting for your approval/),
+  ).toHaveTextContent("Baseline check");
+  view.rerender(
+    <MissionDetail
+      mission={{ ...waiting, state: "stopped" }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(screen.queryByText(/Waiting for your approval/)).toBeNull();
+});
 it("passes selected computations and monitors as bounded explicit policy", async () => {
   render(
     <MissionBuilder
@@ -331,6 +411,44 @@ it("offers reconciliation without automatically retrying an uncertain action", a
       action: "reconcile",
     }),
   );
+});
+it("lets a stuck action be left behind by reconsidering the agenda", async () => {
+  mocks.invoke.mockResolvedValue({ ...mission, state: "queued" });
+  render(
+    <MissionDetail
+      mission={{ ...mission, state: "attention", activeChild: "child" }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Retry interrupted action" }),
+  ).toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Reconsider the agenda" }),
+  );
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("mission_control", {
+      id: "mission1",
+      revision: 1,
+      action: "reconsider",
+    }),
+  );
+});
+it("offers only Reconsider the agenda when no action is stuck", () => {
+  render(
+    <MissionDetail
+      mission={{ ...mission, state: "attention" }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Reconsider the agenda" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Retry interrupted action" }),
+  ).toBeNull();
 });
 it("keeps terminal budget outcomes distinct from scientific completion", () => {
   render(

@@ -1,7 +1,23 @@
 //! One supervised unit call: retries, validation and response journaling.
 use super::findings::{check_finding_lineage, check_validation_dispositions, PreservedFinding};
 use crate::output::{extract_report_envelope, normalize_math_delimiters};
+use crate::pipeline::unit_files;
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Waits before each retry of a throttled call. Provider rate windows last
+/// about a minute, outlasting a CLI's own retries, so an immediate retry only
+/// spends the attempt. The step keeps its worker slot, which also eases the
+/// pressure that caused the throttling.
+const THROTTLE_RETRY_WAIT_SECS: [u64; 2] = [60, 120];
+
+fn throttle_retry_wait(error: &str, attempt: u32, max_retries: u32) -> Option<Duration> {
+    if attempt >= max_retries || !crate::pipeline::provider_error::is_throttling_error(error) {
+        return None;
+    }
+    let index = (attempt as usize).min(THROTTLE_RETRY_WAIT_SECS.len() - 1);
+    Some(Duration::from_secs(THROTTLE_RETRY_WAIT_SECS[index]))
+}
 
 pub(super) fn is_cancellation_error(error: &str) -> bool {
     crate::commands::is_pipeline_cancellation_error(error)
@@ -159,9 +175,24 @@ pub(super) async fn execute_metered_step_call(
     request: StepCallRequest<'_>,
 ) -> Result<StepCallResult, StepCallFailure> {
     let mut spent = StepCallResult::default();
+    let app = request.app;
+    let unit_root = request.write_dir;
+    if let Err(error) = unit_root.map_or(Ok(()), unit_files::begin_call) {
+        return Err(StepCallFailure { error, spent });
+    }
     match run_step_call_attempts(request, &mut spent).await {
-        Ok(text) => Ok(StepCallResult { text, ..spent }),
-        Err(error) => Err(StepCallFailure { error, spent }),
+        Ok(text) => match unit_root.map_or(Ok(()), unit_files::accept_call) {
+            Ok(()) => Ok(StepCallResult { text, ..spent }),
+            Err(error) => Err(StepCallFailure { error, spent }),
+        },
+        Err(error) => {
+            if let Some(root) = unit_root {
+                if let Err(reason) = unit_files::reject_call(root).await {
+                    crate::pipeline::logging::emit(app, format!("WARNING: {reason}"));
+                }
+            }
+            Err(StepCallFailure { error, spent })
+        }
     }
 }
 
@@ -201,6 +232,10 @@ async fn run_step_call_attempts(
                 "pipeline:pass",
                 serde_json::json!({ "name": request.pass_key, "status": "running" }),
             );
+            // What the rejected attempt wrote must not pass as this attempt's.
+            if let Some(root) = request.write_dir {
+                unit_files::set_aside_files(root).await?;
+            }
         }
 
         // Consume any stale compatibility file before starting this attempt.
@@ -424,6 +459,21 @@ async fn run_step_call_attempts(
                         || crate::pipeline::provider_error::is_non_retryable_error(&error)
                     {
                         return Err(error);
+                    }
+                    if let Some(wait) = throttle_retry_wait(&error, attempt, max_retries) {
+                        let _ = request.app.emit_event(
+                            "pipeline:log",
+                            serde_json::json!({ "line": format!(
+                                "{}: provider is limiting requests; waiting {}s before retrying",
+                                request.log_label,
+                                wait.as_secs(),
+                            )}),
+                        );
+                        crate::commands::await_or_cancel(
+                            tokio::time::sleep(wait),
+                            Some(request.pass_key),
+                        )
+                        .await?;
                     }
                     last_error = error;
                     continue;

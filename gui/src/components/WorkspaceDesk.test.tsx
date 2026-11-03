@@ -181,3 +181,24 @@ it("names the assistant pane a conversation in its controls", () => {
     screen.getByRole("menuitemradio", { name: "Project + conversation" }),
   ).toBeVisible();
 });
+
+it("shows the conversation's messages at the top only while its pane is hidden", () => {
+  render(
+    <WorkspaceDesk
+      project={<div>Project</div>}
+      assistantFeedback={<p>A response is still running.</p>}
+    >
+      <div>Conversation</div>
+    </WorkspaceDesk>,
+  );
+  resize(1000);
+  expect(screen.queryByText("A response is still running.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Hide conversation" }));
+  expect(screen.getByText("A response is still running.")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Show conversation" }));
+  expect(screen.queryByText("A response is still running.")).toBeNull();
+  // A narrow window that shows only the project hides the conversation too.
+  fireEvent.click(screen.getByRole("button", { name: "Hide conversation" }));
+  resize(700);
+  expect(screen.getByText("A response is still running.")).toBeVisible();
+});

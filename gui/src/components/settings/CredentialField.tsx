@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { inputClass } from "./controls";
 import { useSettingsOperation } from "./SaveState";
 
+/** `value` only says whether a key is saved. A saved key reaches the renderer as
+ *  an opaque marker, which must never become part of what is typed here. */
 export default function CredentialField({
   label,
   value,
@@ -14,11 +16,13 @@ export default function CredentialField({
   optional?: boolean;
 }) {
   const [editing, setEditing] = useState(!value);
-  const [draft, setDraft] = useState(value);
-  useEffect(() => {
-    setDraft(value);
-  }, [value]);
-  useSettingsOperation({ pending: draft !== value });
+  const [draft, setDraft] = useState("");
+  useSettingsOperation({ pending: draft !== "" });
+  const finish = (saved?: string) => {
+    if (saved !== undefined) onSave(saved);
+    setDraft("");
+    setEditing(false);
+  };
   return (
     <div className="settings-credential">
       {editing ? (
@@ -36,6 +40,7 @@ export default function CredentialField({
               type="password"
               className={inputClass}
               value={draft}
+              placeholder={value ? "Enter a new key" : undefined}
               autoComplete="off"
               spellCheck={false}
               onChange={(event) => setDraft(event.target.value)}
@@ -44,12 +49,8 @@ export default function CredentialField({
               type="button"
               className="settings-button-primary"
               aria-label={`Save ${label}`}
-              disabled={draft === value}
-              onClick={() => {
-                onSave(draft.trim());
-                setDraft(draft.trim());
-                setEditing(false);
-              }}
+              disabled={!draft.trim()}
+              onClick={() => finish(draft.trim())}
             >
               Save
             </button>
@@ -57,12 +58,19 @@ export default function CredentialField({
               <button
                 type="button"
                 className="settings-button"
-                onClick={() => {
-                  setDraft(value);
-                  setEditing(false);
-                }}
+                onClick={() => finish()}
               >
                 Cancel
+              </button>
+            )}
+            {value && (
+              <button
+                type="button"
+                className="settings-button"
+                aria-label={`Remove ${label}`}
+                onClick={() => finish("")}
+              >
+                Remove
               </button>
             )}
           </div>

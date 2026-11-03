@@ -506,6 +506,7 @@ pub fn paddle_full_parser_env(paths: &PaddleFullParserPaths) -> Vec<(String, Str
 }
 
 pub(super) fn paddle_full_parser_env_at(model_cache: &Path) -> Vec<(String, String)> {
+    let model_cache = native_path(model_cache);
     let managed_home = model_cache.to_string_lossy().to_string();
     vec![
         // pathlib.Path.home() uses USERPROFILE on Windows and HOME on Unix.
@@ -588,15 +589,16 @@ pub(super) fn dir_size(root: &Path) -> u64 {
 
 // ── Status ──────────────────────────────────────────────────────────
 
-/// Acquire through `acquire`, waiting (up to `deadline`) while the engine gate
-/// is held by a detached runtime verification rather than an install. A
-/// cancelled extraction leaves its verification running until the content
-/// hash finishes; an immediate re-run must wait for that, not fail.
-pub(crate) async fn acquire_waiting_on_detached_gate<T: Send + 'static>(
+/// Acquire through `acquire`, waiting while the engine gate is held by anything
+/// but an install: another extraction, which can take as long as its document,
+/// or a detached runtime verification that a cancelled extraction left running.
+/// `on_wait` runs once, when the first attempt finds the gate busy. Dropping
+/// the future stops the wait, so cancellation works at any point.
+pub(crate) async fn acquire_waiting_on_engine_gate<T: Send + 'static>(
     acquire: impl Fn() -> Result<T, String> + Send + Sync + Clone + 'static,
-    deadline: std::time::Duration,
+    on_wait: impl FnOnce() + Send,
 ) -> Result<T, String> {
-    let started = std::time::Instant::now();
+    let mut on_wait = Some(on_wait);
     loop {
         let attempt = acquire.clone();
         match tokio::task::spawn_blocking(attempt)
@@ -606,9 +608,11 @@ pub(crate) async fn acquire_waiting_on_detached_gate<T: Send + 'static>(
             Ok(value) => return Ok(value),
             Err(error)
                 if error.contains("already running")
-                    && super::installer_io::engine_gate_busy_without_install()
-                    && started.elapsed() < deadline =>
+                    && super::installer_io::engine_gate_busy_without_install() =>
             {
+                if let Some(on_wait) = on_wait.take() {
+                    on_wait();
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             }
             Err(error) => return Err(error),

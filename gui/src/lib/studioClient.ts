@@ -71,6 +71,8 @@ export interface TheoryNote {
   rejectionReason: string;
   origin: string;
   promotions: Promotion[];
+  importedFrom?: string | null;
+  importedStatus?: string | null;
 }
 export interface TheoryCheck {
   theoryId: string;
@@ -90,6 +92,8 @@ export interface TheoryCheckRecord {
   check: TheoryCheck;
   scope: string;
   label: string;
+  importedFrom?: string | null;
+  importedStatus?: string | null;
 }
 export interface ResearchDirection {
   question: string;
@@ -112,6 +116,7 @@ export interface TheoryEvidence {
   counterexamples: number;
   heuristic: number;
   modelAssessment: number;
+  imported: number;
   label: string;
 }
 export interface TheoryOverview {
@@ -191,6 +196,13 @@ export interface FindingPreview {
   packageHash: string;
   notice: string;
 }
+/** The most records a saved list holds. A longer list shows its newest. */
+export const RECORD_LIST_LIMIT = 500;
+export interface ReportPreview {
+  comments: ReportComment[];
+  /** Paragraphs in the report; more than `comments` when the split stopped. */
+  paragraphs: number;
+}
 export interface ReportComment {
   number: string;
   start: number;
@@ -259,6 +271,8 @@ export interface NumericBinding {
   reportedUnits: string;
   origin: string;
   confirmed: boolean;
+  importedFrom?: string | null;
+  importedStatus?: string | null;
 }
 export interface BindingCoverage {
   record: ProjectRecord<NumericBinding>;
@@ -273,7 +287,7 @@ export interface BindingCoverage {
     coverage?: string;
   };
   result: ResearchResultV1 | null;
-  anchor: Annotation;
+  anchor: Annotation | null;
 }
 export interface BibEntry {
   id: string;
@@ -315,6 +329,8 @@ export interface LiteratureRecord {
     assessmentMethod: string;
     freshness: string;
   };
+  importedFrom?: string | null;
+  importedStatus?: string | null;
 }
 export interface ZoteroItem {
   key: string;
@@ -547,7 +563,7 @@ export const studioClient = {
       package: packageValue,
     }),
   report: (workspaceId: string, revisionId: string) =>
-    invoke<ReportComment[]>("workbench_report_preview", {
+    invoke<ReportPreview>("workbench_report_preview", {
       workspaceId,
       revisionId,
     }),
@@ -613,6 +629,7 @@ export const studioClient = {
         sources: ProjectRecord<BibliographyRecord>[];
         notes: ProjectRecord<LiteratureRecord>[];
       }[];
+      coverage: string;
     }>("workbench_citation_navigation", { workspaceId, revisionId }),
   source: (workspaceId: string, versionId: string, start = 0, length = 65536) =>
     invoke<{ text: string; start: number; end: number; accessState: string }>(

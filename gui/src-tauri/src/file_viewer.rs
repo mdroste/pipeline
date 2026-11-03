@@ -21,18 +21,61 @@ pub fn check_openable(path: &str, executable: bool) -> Result<(), &'static str> 
     Ok(())
 }
 
-/// Whether any execute permission bit is set. Windows has no such bits.
-pub fn has_execute_bit(metadata: &std::fs::Metadata) -> bool {
+/// Whether the file behind `file`, named by `path`, is a program as far as
+/// `check_openable` goes. Windows has no execute bits. A volume that keeps them
+/// is taken at its word. On one that invents them every file looks like a
+/// program, so the contents decide, and a name with no extension still counts,
+/// because macOS treats such a file as a program there and runs it in a terminal.
+pub fn marked_as_program(path: &str, file: &std::fs::File) -> std::io::Result<bool> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt as _;
-        metadata.permissions().mode() & 0o111 != 0
+        use std::os::unix::fs::{FileExt as _, PermissionsExt as _};
+        if file.metadata()?.permissions().mode() & 0o111 == 0 {
+            return Ok(false);
+        }
+        if crate::safety::volume_keeps_permissions(file) {
+            return Ok(true);
+        }
+        let mut start = [0; 4];
+        let mut filled = 0;
+        while filled < start.len() {
+            match file.read_at(&mut start[filled..], filled as u64)? {
+                0 => break,
+                count => filled += count,
+            }
+        }
+        Ok(!has_extension(path) || starts_like_program(&start[..filled]))
     }
     #[cfg(not(unix))]
     {
-        let _ = metadata;
-        false
+        let _ = (path, file);
+        Ok(false)
     }
+}
+
+/// What macOS counts as an extension: a last dotted part with no space, after a
+/// name that is more than dots.
+#[cfg(any(unix, test))]
+fn has_extension(path: &str) -> bool {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    name.rsplit_once('.').is_some_and(|(stem, extension)| {
+        !extension.is_empty() && !extension.contains(' ') && !stem.trim_matches('.').is_empty()
+    })
+}
+
+/// Mach-O (either byte order, and universal), ELF, Windows PE, and `#!` scripts.
+#[cfg(any(unix, test))]
+fn starts_like_program(start: &[u8]) -> bool {
+    start.starts_with(b"#!")
+        || start.starts_with(b"MZ")
+        || matches!(
+            start,
+            [0x7f, b'E', b'L', b'F']
+                | [0xfe, 0xed, 0xfa, 0xce | 0xcf]
+                | [0xce | 0xcf, 0xfa, 0xed, 0xfe]
+                | [0xca, 0xfe, 0xba, 0xbe | 0xbf]
+                | [0xbe | 0xbf, 0xba, 0xfe, 0xca]
+        )
 }
 
 /// Whether the system would run this file instead of showing it, whatever its
@@ -152,6 +195,14 @@ pub fn system_path(path: &Path) -> std::path::PathBuf {
     path.to_path_buf()
 }
 
+/// Explorer reads `/select,"C:\\a b\\c.tex"` as one option. Rust's own quoting
+/// would wrap the option too, and Explorer then opens Documents. A Windows file
+/// name can't hold a quote, so this quoting is complete.
+#[cfg(any(windows, test))]
+fn select_argument(path: &str) -> String {
+    format!("/select,\"{path}\"")
+}
+
 pub fn reveal(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let mut command = {
@@ -162,7 +213,8 @@ pub fn reveal(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = {
         let mut c = std::process::Command::new("explorer.exe");
-        c.arg(format!("/select,{}", system_path(path).display()));
+        use std::os::windows::process::CommandExt as _;
+        c.raw_arg(select_argument(&system_path(path).to_string_lossy()));
         c
     };
     #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
@@ -182,7 +234,10 @@ pub fn reveal(path: &Path) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{check_openable, runnable_by_system, system_path, windows_system_path};
+    use super::{
+        check_openable, has_extension, runnable_by_system, select_argument, starts_like_program,
+        windows_system_path,
+    };
     use std::collections::BTreeMap;
     use std::path::Path;
 
@@ -377,7 +432,10 @@ mod tests {
             assert_eq!(windows_system_path(path), expected);
         }
         #[cfg(unix)]
-        assert_eq!(system_path(Path::new("/a/b.txt")), Path::new("/a/b.txt"));
+        assert_eq!(
+            super::system_path(Path::new("/a/b.txt")),
+            Path::new("/a/b.txt")
+        );
     }
 
     #[test]
@@ -395,6 +453,103 @@ mod tests {
                 "{refusal}"
             );
         }
+    }
+
+    #[test]
+    fn explorer_gets_one_selection_with_only_the_path_quoted() {
+        assert_eq!(
+            select_argument(r"C:\Users\Ada Lovelace\paper\main.tex"),
+            r#"/select,"C:\Users\Ada Lovelace\paper\main.tex""#
+        );
+    }
+
+    /// Names as macOS's own type lookup read them on an exFAT volume.
+    #[test]
+    fn a_name_has_an_extension_where_the_system_finds_one() {
+        for path in [
+            "main.tex",
+            "paper/report.2024",
+            "two.parts.q9",
+            "a.b-c",
+            "a.b_c",
+            "a.\u{4e2d}\u{6587}",
+        ] {
+            assert!(has_extension(path), "{path}");
+        }
+        for path in [
+            "results",
+            "paper/results",
+            "a.b/results",
+            ".bashrc",
+            "..x",
+            "v1. final",
+            "a.b c",
+            "trail.",
+            "a. ",
+        ] {
+            assert!(!has_extension(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn the_start_of_a_file_shows_each_kind_of_program() {
+        for start in [
+            b"#!/b".as_slice(),
+            b"#!",
+            b"MZ\x90\0",
+            b"\x7fELF",
+            b"\xfe\xed\xfa\xce",
+            b"\xfe\xed\xfa\xcf",
+            b"\xce\xfa\xed\xfe",
+            b"\xcf\xfa\xed\xfe",
+            b"\xca\xfe\xba\xbe",
+            b"\xca\xfe\xba\xbf",
+            b"\xbe\xba\xfe\xca",
+        ] {
+            assert!(starts_like_program(start), "{start:?}");
+        }
+        for start in [
+            b"%PDF".as_slice(),
+            b"\\doc",
+            b"PK\x03\x04",
+            b"\x89PNG",
+            b"",
+            b"#",
+            b"a,b\n",
+        ] {
+            assert!(!starts_like_program(start), "{start:?}");
+        }
+    }
+
+    /// Set `TMPDIR` to a folder on an exFAT drive to run this on one: the
+    /// ordinary files there carry the bit, and only the program is refused.
+    #[cfg(unix)]
+    #[test]
+    fn this_volume_refuses_real_programs_and_opens_ordinary_files() {
+        use super::marked_as_program;
+        use std::os::unix::fs::PermissionsExt as _;
+        let temp = tempfile::tempdir().unwrap();
+        let write = |name: &str, bytes: &[u8], mode: u32| {
+            let path = temp.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            std::fs::File::open(path).unwrap()
+        };
+        let marked = |name: &str, file: &std::fs::File| marked_as_program(name, file).unwrap();
+
+        let plain = write("paper.pdf", b"%PDF-1.7", 0o644);
+        let keeps = crate::safety::volume_keeps_permissions(&plain);
+        assert!(!marked("paper.pdf", &plain));
+        let notes = write("notes.txt", b"a note", 0o755);
+        assert_eq!(marked("notes.txt", &notes), keeps);
+
+        let program = std::fs::read("/bin/sh").unwrap();
+        let named = write("table.csv", &program, 0o755);
+        assert!(marked("table.csv", &named));
+        let script = write("report.dat", b"#!/bin/sh\n", 0o755);
+        assert!(marked("report.dat", &script));
+        let bare = write("results", b"rm -rf output\n", 0o755);
+        assert!(marked("results", &bare));
     }
 
     #[test]

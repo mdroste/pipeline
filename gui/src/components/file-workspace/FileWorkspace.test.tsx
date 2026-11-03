@@ -387,7 +387,7 @@ it("explains a save conflict and offers the comparison", async () => {
   expect(screen.getByLabelText("Source editor: a.py")).toHaveValue("Draft");
 });
 
-it("asks to stop the running response when a save is refused for an unchanged file", async () => {
+it("gives the reason when a save is refused for an unchanged file", async () => {
   const read = vi.fn(async () => file("a.py"));
   const adapter: FileAdapter = {
     id: "save-busy",
@@ -395,7 +395,8 @@ it("asks to stop the running response when a save is refused for an unchanged fi
     save: vi.fn(async () => {
       throw {
         code: "storage_conflict",
-        message: "Stop the active research turn before saving files",
+        message:
+          'The local job "Tables" is using a.py. Wait for it to finish or stop it, then try again.',
         recovery: "Refresh the Workbench record and retry your edit.",
       };
     }),
@@ -412,7 +413,9 @@ it("asks to stop the running response when a save is refused for an unchanged fi
   });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
   expect(
-    await screen.findByText("Stop the running response before saving."),
+    await screen.findByText(
+      'The local job "Tables" is using a.py. Wait for it to finish or stop it, then try again.',
+    ),
   ).toBeInTheDocument();
   expect(read).toHaveBeenCalledTimes(2);
   expect(screen.queryByText(/changed elsewhere/)).toBeNull();
@@ -422,6 +425,30 @@ it("asks to stop the running response when a save is refused for an unchanged fi
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled(),
   );
+});
+
+it("discards a draft only after confirmation", async () => {
+  confirmDialog.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  render(
+    <FileWorkspace
+      adapter={{
+        id: "discard-dirty",
+        read: vi.fn().mockResolvedValue(file("a.py")),
+        save: vi.fn(),
+      }}
+      paths={["a.py"]}
+      initial={{ path: "a.py" }}
+    />,
+  );
+  const editor = await screen.findByLabelText("Source editor: a.py");
+  fireEvent.change(editor, { target: { value: "Unsaved" } });
+  const discard = screen.getByRole("button", { name: "Discard draft" });
+  await act(async () => fireEvent.click(discard));
+  expect(confirmDialog).toHaveBeenCalledOnce();
+  expect(editor).toHaveValue("Unsaved");
+  await act(async () => fireEvent.click(discard));
+  await waitFor(() => expect(editor).not.toHaveValue("Unsaved"));
+  confirmDialog.mockClear();
 });
 
 it("reloads a file with unsaved edits only after confirmation", async () => {

@@ -168,9 +168,7 @@ pub fn write_file_for_tool(
     staged
         .write_all(content.as_bytes())
         .map_err(|e| format!("Failed to write {path}: {e}"))?;
-    staged
-        .as_file()
-        .sync_all()
+    crate::safety::sync_file(staged.as_file())
         .map_err(|e| format!("Failed to sync {path}: {e}"))?;
 
     // Reserve only once validation and the fallible data write have

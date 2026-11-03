@@ -6,6 +6,7 @@ import { AUTO_REVIEW_CONTRACT } from "../../lib/autoReview";
 import { ISSUES_SCHEMA } from "./stepTemplates";
 import { exampleInstance, outputSchemaError } from "./utils";
 import SchemaTreeView from "./SchemaTreeView";
+import ReportIssueLink from "../ReportIssueLink";
 
 const DIALECT_KEYWORDS: [string, string][] = [
   [
@@ -598,6 +599,7 @@ export default function SchemaEditorPanel({
                     className="mt-3 text-xs text-red-700 dark:text-red-300"
                   >
                     Could not resolve catalog references: {resolutionError}
+                    <ReportIssueLink />
                   </p>
                 )}
               </section>
@@ -754,6 +756,7 @@ export default function SchemaEditorPanel({
                   className="mt-3 text-xs text-red-700 dark:text-red-300"
                 >
                   Could not build the provider schema: {providerPreviewError}
+                  <ReportIssueLink />
                 </p>
               )}
               {providerPreview && (

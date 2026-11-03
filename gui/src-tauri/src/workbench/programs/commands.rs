@@ -520,10 +520,15 @@ pub fn start(app: tauri::AppHandle) {
         return;
     }
     tauri::async_runtime::spawn(async move {
+        // Jobs an ended launch left behind must not read as running in Activity,
+        // or hold up cleanup, until someone opens Local jobs. Those of another
+        // open Pipeline are left alone.
+        if let Err(e) = host::run_store(|s| research::jobs::reconcile_abandoned(&s)).await {
+            eprintln!("Interrupted jobs could not be marked: {}", e.message);
+        }
         loop {
-            let plans=host::run_store(|s|{let c=s.connection()?;let mut q=c.prepare("SELECT d.workspace_id,d.id FROM experiment_runs r JOIN desk_records d ON d.id=r.plan_id WHERE r.state IN ('running','paused','cancelled') AND (r.state='running' OR r.active_execution_id IS NOT NULL) ORDER BY r.updated_at LIMIT 4").map_err(err)?;let ids=q.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;for (ws,id) in ids{experiments::tick(&s,&ws,&id)?;}Ok(())}).await;
-            if let Err(e) = plans {
-                let _ = app.emit("workbench-program-error", json!({"message":e.message}));
+            if let Err(e) = host::run_store(|s| experiments::tick_due(&s)).await {
+                eprintln!("Experiment grids could not be read: {}", e.message);
             }
             research::jobs::launch_pending();
             if let Ok(checks) =

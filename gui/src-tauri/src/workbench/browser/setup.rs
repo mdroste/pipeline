@@ -35,48 +35,56 @@ pub(super) async fn install(root: PathBuf, runtime: &std::path::Path) -> Result<
         .map_err(|e| e.to_string())?;
     fs2::FileExt::try_lock_exclusive(&lock)
         .map_err(|_| "Another Pipeline instance is setting up the browser. Retry shortly.")?;
-    let stage = tempfile::Builder::new()
-        .prefix("setup-")
-        .tempdir_in(&root)
-        .map_err(|e| e.to_string())?;
-    let mut command = super::super::tool_setup::command_at(runtime);
+    // Kept after a failure or Cancel setup: Playwright skips what it finished,
+    // so a retry on a slow connection continues instead of starting over.
+    let stage = root.join(format!("stage-{VERSION}"));
+    crate::agent_runtime::codex::session::private_directory(&stage)?;
+    let mut command = super::super::tool_setup::setup_command_at(runtime);
     command
         .arg(runtime.to_path_buf().join("node_modules/playwright/cli.js"))
         .args(["install", "chromium"])
-        .env("PLAYWRIGHT_BROWSERS_PATH", stage.path());
-    super::super::tool_setup::run(command, "Browser download").await?;
+        .env("PLAYWRIGHT_BROWSERS_PATH", &stage);
+    super::super::tool_setup::run_download(command, "Browser download").await?;
     let mut verify = super::super::tool_setup::command_at(runtime);
     verify.args(["-e", "const p=require('playwright').chromium.executablePath(); if(!require('node:fs').existsSync(p)) process.exit(1); process.stdout.write(p)"])
-            .env("PLAYWRIGHT_BROWSERS_PATH", stage.path());
-    let result = super::super::tool_setup::run(verify, "Browser verification").await?;
+            .env("PLAYWRIGHT_BROWSERS_PATH", &stage);
+    let result = match super::super::tool_setup::run(verify, "Browser verification").await {
+        Ok(result) => result,
+        Err(error) => {
+            // What is staged is not usable, so a retry must not build on it.
+            let _ = std::fs::remove_dir_all(&stage);
+            return Err(error);
+        }
+    };
     let path = PathBuf::from(String::from_utf8(result).map_err(|e| e.to_string())?);
     let relative = path
-        .strip_prefix(stage.path())
+        .strip_prefix(&stage)
         .map_err(|_| "Browser executable is outside its installation")?;
     *BROWSER_PHASE.lock().unwrap_or_else(|e| e.into_inner()) =
         Some("Checking that the browser starts…".into());
     let mut start = super::super::tool_setup::command_at(runtime);
     start
         .args(["-e", START_CHECK])
-        .env("PLAYWRIGHT_BROWSERS_PATH", stage.path());
+        .env("PLAYWRIGHT_BROWSERS_PATH", &stage);
     confirm_start(start).await?;
     std::fs::write(
-        stage.path().join("complete"),
+        stage.join("complete"),
         relative.to_string_lossy().as_bytes(),
     )
     .map_err(|e| e.to_string())?;
     let target = browser_root(&root);
     if target.exists() {
-        std::fs::rename(
-            &target,
-            root.join(format!(
-                "incomplete-{}",
-                chrono::Utc::now().timestamp_micros()
-            )),
-        )
-        .map_err(|e| e.to_string())?;
+        let set_aside = root.join(format!(
+            "incomplete-{}",
+            chrono::Utc::now().timestamp_micros()
+        ));
+        crate::engines::rename_when_free(&target, &set_aside)
+            .await
+            .map_err(|e| e.to_string())?;
     }
-    std::fs::rename(stage.path(), target).map_err(|e| e.to_string())?;
+    crate::engines::rename_when_free(&stage, &target)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -100,6 +108,39 @@ mod tests {
         let mut command = std::process::Command::new("node");
         command.current_dir(folder.path()).args(["-e", START_CHECK]);
         Some(confirm_start(command).await)
+    }
+
+    /// A managed runtime whose node records what it fetched, then fails.
+    #[cfg(unix)]
+    fn runtime_that_fails_its_download(folder: &std::path::Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let runtime = folder.join("runtime-root");
+        let node = runtime.join("runtime/bin/node");
+        std::fs::create_dir_all(node.parent().unwrap()).unwrap();
+        std::fs::write(
+            &node,
+            "#!/bin/sh\necho x >> \"$PLAYWRIGHT_BROWSERS_PATH/attempts\"\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&node, std::fs::Permissions::from_mode(0o755)).unwrap();
+        runtime
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_failed_download_keeps_what_it_fetched_for_the_retry() {
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().join("browser");
+        let runtime = runtime_that_fails_its_download(folder.path());
+        for attempt in 1..=2 {
+            let error = install(root.clone(), &runtime).await.unwrap_err();
+            assert!(error.contains("Browser download failed"), "{error}");
+            let attempts = root.join(format!("stage-{VERSION}/attempts"));
+            assert_eq!(
+                std::fs::read_to_string(attempts).unwrap().lines().count(),
+                attempt
+            );
+        }
     }
 
     #[tokio::test]

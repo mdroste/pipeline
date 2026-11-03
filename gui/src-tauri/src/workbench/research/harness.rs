@@ -11,6 +11,24 @@ use super::{
 use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
 use serde_json::{json, Map, Value};
 
+/// Encodes source text for the instructions, keeping as much of its start as
+/// fits in `limit` bytes. Returns the encoded text and the source bytes kept.
+pub(super) fn fit_encoded_context(context: &str, limit: usize) -> WorkbenchResult<(String, usize)> {
+    let encode = |text: &str| {
+        serde_json::to_string(text)
+            .map(|encoded| encoded.replace('<', "\\u003c"))
+            .map_err(|error| WorkbenchError::storage("Failed to encode source context", error))
+    };
+    let mut kept = context;
+    let mut encoded = encode(kept)?;
+    while encoded.len() > limit && !kept.is_empty() {
+        let scaled = (kept.len() as u128 * limit as u128 / encoded.len() as u128) as usize;
+        kept = crate::workbench::search::prefix(kept, scaled.min(kept.len() - 1));
+        encoded = encode(kept)?;
+    }
+    Ok((encoded, kept.len()))
+}
+
 pub fn resolve_harness(store: &Store, session_id: &str) -> WorkbenchResult<EffectiveHarness> {
     resolve(store, session_id, None)
 }
@@ -112,6 +130,9 @@ fn resolve(
             .workspace
             .as_ref()
             .is_none_or(|workspace| workspace.root.is_none());
+    // A research automation's checks run through its coordinator, only as
+    // approved, so its roles never gain the run tool, whatever passes a test.
+    let automation_role = crate::workbench::missions::marks_role(&snapshot.session.overrides);
     let module_availability = catalog
         .iter()
         .map(|spec| {
@@ -121,6 +142,7 @@ fn resolve(
                 mode,
                 has_tested_execution_profile,
                 in_task_copy,
+                automation_role,
             );
             ModuleAvailability {
                 id: spec.id.to_string(),
@@ -246,15 +268,22 @@ fn resolve(
             text: developer[start..].trim_start().to_string(),
         });
     }
+    const CONTEXT_OPEN: &str = "\n\n<workspace_context role=\"source_material\">\n";
+    const CONTEXT_CLOSE: &str = "\n</workspace_context>";
+    // The source limit can exceed what the instructions may hold, and encoding
+    // lengthens the text, so sources give way rather than the conversation.
+    let available = MAX_INSTRUCTIONS_BYTES
+        .saturating_sub(developer.len() + CONTEXT_OPEN.len() + CONTEXT_CLOSE.len());
+    let (encoded_context, kept) = fit_encoded_context(&context_preview, available)?;
+    if kept < context_preview.len() {
+        context_preview.truncate(kept);
+        context_truncated = true;
+    }
     if !context_preview.is_empty() {
         let start = developer.len();
-        developer.push_str("\n\n<workspace_context role=\"source_material\">\n");
-        developer.push_str(
-            &serde_json::to_string(&context_preview)
-                .map_err(|error| WorkbenchError::storage("Failed to encode source context", error))?
-                .replace('<', "\\u003c"),
-        );
-        developer.push_str("\n</workspace_context>");
+        developer.push_str(CONTEXT_OPEN);
+        developer.push_str(&encoded_context);
+        developer.push_str(CONTEXT_CLOSE);
         sections.push(InstructionSection {
             id: "context".to_string(),
             label: "Selected sources".to_string(),
@@ -391,6 +420,7 @@ fn resolve(
         value_sources: Value::Object(sources),
         module_availability: Vec::new(),
         instruction_sections: Vec::new(),
+        project_checkpoint_id: None,
     };
     let conversation_tools = crate::workbench::conversation_tools::catalog(&effective);
     effective.dynamic_tools.extend(conversation_tools);
@@ -437,6 +467,9 @@ fn resolve(
     // existing native binding.
     effective.module_availability = module_availability;
     effective.instruction_sections = sections;
+    effective.project_checkpoint_id = snapshot.session.overrides["projectCheckpointId"]
+        .as_str()
+        .map(str::to_owned);
     Ok(effective)
 }
 
@@ -448,6 +481,7 @@ fn module_unavailability_reasons(
     mode: &str,
     has_tested_execution_profile: bool,
     in_task_copy: bool,
+    automation_role: bool,
 ) -> Vec<String> {
     let mut reasons = Vec::new();
     if spec.requires_workspace && !has_workspace {
@@ -463,6 +497,12 @@ fn module_unavailability_reasons(
         }
         if in_task_copy {
             reasons.push("Unavailable while this conversation works in a task copy.".to_string());
+        }
+        if automation_role {
+            reasons.push(
+                "Unavailable in a research automation, which runs only the checks you approved."
+                    .to_string(),
+            );
         }
     }
     reasons

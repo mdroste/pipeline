@@ -27,12 +27,16 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+#[cfg(all(test, unix))]
+mod action_tests;
 mod actions;
 mod errors;
 mod guard;
 #[cfg(all(test, unix))]
 mod guard_tests;
 mod inspect;
+#[cfg(all(test, unix))]
+mod listing_tests;
 mod status;
 #[cfg(all(test, unix))]
 mod tests;
@@ -41,6 +45,9 @@ pub use actions::{claim_project, perform, Action, ActionResult};
 pub(super) use guard::ReadGuard;
 pub use inspect::{commit_detail, diff, history, CommitDetail, DiffRequest, FileDiff, HistoryPage};
 use status::{BranchInfo, ChangedFile, LargeFile};
+
+/// How much of a `-z` listing a read keeps: more than 200,000 changed files.
+const MAX_LISTING: u64 = 32 * 1024 * 1024;
 
 /// How long a local action (commit, switch, merge) may run, hooks included.
 const LOCAL_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -64,6 +71,8 @@ pub struct RepositoryView {
     pub files_truncated: bool,
     /// New files over the size hosts accept, anywhere in `files`.
     pub large_files: Vec<LargeFile>,
+    /// There were too many new files to check, so `large_files` may be missing some.
+    pub large_files_cut_short: bool,
     pub branches: Vec<BranchInfo>,
     /// `merge`, `rebase`, `cherry-pick`, or `revert` while one is unfinished.
     pub operation: Option<String>,
@@ -146,6 +155,37 @@ impl Git {
         capture_git(command, &self.root, GitLimits::default())
     }
 
+    /// A `read` of a `-z` listing, which can be far longer than other output.
+    /// Past `MAX_LISTING` Git is stopped and the complete records before that
+    /// point come back, so a huge set of changes is shortened, not an error.
+    pub(super) fn read_listing(&self, args: &[&str]) -> WorkbenchResult<Vec<u8>> {
+        self.read_up_to(args, MAX_LISTING)
+    }
+
+    fn read_up_to(&self, args: &[&str], max_output: u64) -> WorkbenchResult<Vec<u8>> {
+        let guard = self.guard()?;
+        let mut command = self.command();
+        guard.read(&mut command, args);
+        let limits = GitLimits {
+            max_output,
+            keep_prefix: true,
+            ..GitLimits::default()
+        };
+        let mut output = capture_git(command, &self.root, limits)?;
+        let complete = output.iter().rposition(|byte| *byte == 0);
+        output.truncate(complete.map_or(0, |last| last + 1));
+        Ok(output)
+    }
+
+    /// `read`, with the longer limit for the status listing.
+    pub(super) fn read_for_status(&self, args: &[&str]) -> WorkbenchResult<Vec<u8>> {
+        if args == repository::STATUS_ARGS {
+            self.read_listing(args)
+        } else {
+            self.read(args)
+        }
+    }
+
     pub(super) fn read_text(&self, args: &[&str]) -> WorkbenchResult<String> {
         Ok(String::from_utf8_lossy(&self.read(args)?).into_owned())
     }
@@ -162,7 +202,12 @@ impl Git {
         let guard = self.guard()?;
         let mut command = self.command();
         guard.fetch(&mut command, options, remote)?;
-        capture_git(command, &self.root, GitLimits { timeout, cancel })
+        let limits = GitLimits {
+            timeout,
+            cancel,
+            ..GitLimits::default()
+        };
+        capture_git(command, &self.root, limits)
     }
 
     /// An action the researcher chose. Hooks run, as they would in a terminal.
@@ -174,7 +219,12 @@ impl Git {
     ) -> WorkbenchResult<Vec<u8>> {
         let mut command = self.command();
         command.args(["-c", "core.fsmonitor=false"]).args(args);
-        let result = capture_git(command, &self.root, GitLimits { timeout, cancel });
+        let limits = GitLimits {
+            timeout,
+            cancel,
+            ..GitLimits::default()
+        };
+        let result = capture_git(command, &self.root, limits);
         // Anything an action ran may have changed the config.
         *self.guard.lock().unwrap_or_else(|e| e.into_inner()) = None;
         result
@@ -209,7 +259,7 @@ pub(super) fn view(git: &Git) -> WorkbenchResult<VersionControl> {
     }
     // Inside a repository, a failed read must never look like "not tracked":
     // that would offer to start a second repository here.
-    let output = git.read(&repository::STATUS_ARGS).map_err(|_| {
+    let output = git.read_listing(&repository::STATUS_ARGS).map_err(|_| {
         WorkbenchError::invalid(
             "Git could not read this repository. It may have too many changed files to show here.",
         )
@@ -222,7 +272,7 @@ pub(super) fn view(git: &Git) -> WorkbenchResult<VersionControl> {
         .read_text(&["rev-parse", "--show-prefix"])?
         .trim_end_matches(['\n', '\r'])
         .to_string();
-    let changes = status::parse_changes(&output, &folder_prefix);
+    let mut changes = status::parse_changes(&output, &folder_prefix);
     let (operation, operation_message) =
         git_dir.map_or((None, None), |dir| status::operation_in(Path::new(dir)));
     let identity = status::identity(git);
@@ -233,8 +283,10 @@ pub(super) fn view(git: &Git) -> WorkbenchResult<VersionControl> {
         .count();
     let outside_conflicts = status::unmerged_count(git).saturating_sub(listed);
     let can_undo_commit = operation.is_none() && status::latest_commit_is_local(git, &status);
+    let large_files = status::review_new_files(git, &mut changes.files);
     Ok(VersionControl::Ready(Box::new(RepositoryView {
-        large_files: status::large_files(git, &changes.files),
+        large_files: large_files.found,
+        large_files_cut_short: large_files.cut_short,
         branches: status::branches(git),
         files: changes.files,
         files_truncated: changes.truncated,
@@ -310,7 +362,9 @@ pub fn cancel(root: &Path) {
 }
 
 /// A project-relative path from the page, checked before it reaches Git or the
-/// file system. `.` is the whole folder, which a new repository can show.
+/// file system. `.` is the whole folder, which a new repository can show. Earlier
+/// builds let the generated folder into commits, so its tracked files stay as
+/// reachable here as any others.
 fn checked_path(path: &str) -> WorkbenchResult<&str> {
     let invalid = || WorkbenchError::invalid("Invalid file path");
     if path.is_empty() || path.contains('\0') {
@@ -319,7 +373,12 @@ fn checked_path(path: &str) -> WorkbenchResult<&str> {
     for component in Path::new(path).components() {
         match component {
             Component::CurDir => {}
-            Component::Normal(name) if !files::reserved_component(&name.to_string_lossy()) => {}
+            Component::Normal(name) => {
+                let name = name.to_string_lossy();
+                if files::reserved_component(&name) && !files::generated_component(&name) {
+                    return Err(invalid());
+                }
+            }
             _ => return Err(invalid()),
         }
     }

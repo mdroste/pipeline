@@ -3,6 +3,7 @@ import { harnessClient } from "../lib/workbench/harnessClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type { EffectiveHarness } from "../lib/workbenchTypes";
 import Spinner from "../ui/Spinner";
+import ReportIssueLink from "./ReportIssueLink";
 
 /** The honesty surface: exactly what the assistant will see for this
  * conversation — instructions, enabled tools, and the assembled context. */
@@ -57,6 +58,7 @@ export default function WorkspaceContextInspector({
       ) : error ? (
         <p role="alert" className="text-xs text-red-600 dark:text-red-400">
           {error}
+          <ReportIssueLink />
         </p>
       ) : !harness ? (
         <Spinner inline label="Assembling context…" />

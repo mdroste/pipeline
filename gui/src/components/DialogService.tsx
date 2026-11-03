@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface ConfirmOptions {
   title?: string;
@@ -286,6 +287,7 @@ function ToastCard({
       <div className="flex gap-3">
         <span className="min-w-0 flex-1 whitespace-pre-line break-words">
           {toast.message}
+          {toast.kind === "error" && <ReportIssueLink />}
         </span>
         {toast.action && (
           <button

@@ -8,6 +8,7 @@ import {
   workspaceNotice,
   type AppNotice,
 } from "../lib/appNotifications";
+import { taskClient } from "../lib/taskClient";
 
 /** Subscribe at the shell, so navigating away from a feature doesn't mute it. */
 export function useAppNotifications(runs: QueuedRun[]) {
@@ -102,6 +103,11 @@ export function useAppNotifications(runs: QueuedRun[]) {
         });
       }),
     ].map((registration) => registration.catch(() => () => {}));
+    // Notices raised before this window could hear them wait for this call. The
+    // sidebar mark's listeners register first, in useAppAttention.
+    void Promise.all(pending).then(() => {
+      if (live) void taskClient.noticesReady().catch(() => {});
+    });
     return () => {
       live = false;
       pending.forEach((p) => void p.then((off) => off()).catch(() => {}));

@@ -28,6 +28,7 @@ const file = (
   unstaged: true,
   isDirectory: false,
   isSubmodule: false,
+  nestedRepository: false,
   conflict: null,
   ...overrides,
 });
@@ -63,6 +64,7 @@ const repository = (
   files: [],
   filesTruncated: false,
   largeFiles: [],
+  largeFilesCutShort: false,
   branches: [
     { name: "main", current: true, upstream: "origin/main", remoteRef: null },
     { name: "draft", current: false, upstream: null, remoteRef: null },
@@ -232,6 +234,31 @@ it("keeps each project's unchecked files to itself", async () => {
   expect(
     await screen.findByRole("checkbox", { name: "Include secrets.csv" }),
   ).toBeChecked();
+});
+
+it("keeps a folder with its own repository out of the commit, and says why", async () => {
+  stub(
+    repository({
+      files: [
+        file("paper.tex"),
+        file("replication", {
+          status: "untracked",
+          isDirectory: true,
+          nestedRepository: true,
+        }),
+      ],
+    }),
+  );
+  page();
+  const nested = await screen.findByRole("checkbox", {
+    name: "Include replication",
+  });
+  expect(nested).toBeDisabled();
+  expect(nested).not.toBeChecked();
+  expect(screen.getByLabelText("Include all files")).toBeChecked();
+  fireEvent.click(screen.getByText("replication"));
+  expect(await screen.findByText(/holds its own Git repository/)).toBeVisible();
+  await commitChecked();
 });
 
 it("asks for a name and email before the first commit", async () => {
@@ -445,6 +472,240 @@ it("asks before Git passes over an unsaved draft", async () => {
   fireEvent.click(screen.getByRole("checkbox", { name: "Include paper.tex" }));
   await commitChecked("notes.txt");
   expect(confirmDialog).not.toHaveBeenCalled();
+});
+
+it("asks about a draft in Write, but not one in a working copy", async () => {
+  localStorage.setItem(
+    `pipeline.manuscriptDraft.${project}.working.paper.tex`,
+    "{}",
+  );
+  localStorage.setItem(
+    `pipeline.manuscriptDraft.${project}.cp-1.notes.txt`,
+    "{}",
+  );
+  stub(repository({ files: [file("paper.tex"), file("notes.txt")] }));
+  page();
+  fireEvent.click(await screen.findByRole("button", { name: /Branch\s*main/ }));
+  fireEvent.click(screen.getByRole("menuitem", { name: "draft" }));
+  await waitFor(() => expect(confirmDialog).toHaveBeenCalledOnce());
+  const question = vi.mocked(confirmDialog).mock.calls[0][0];
+  expect(question).toContain("unsaved draft of paper.tex.");
+  expect(question).not.toContain("notes.txt");
+});
+
+it("asks about a draft inside a folder row", async () => {
+  localStorage.setItem(
+    `pipeline.files.draft.workspace:${project}:working.data/clean.do`,
+    "{}",
+  );
+  localStorage.setItem(
+    `pipeline.manuscriptDraft.${project}.working.data/paper.tex`,
+    "{}",
+  );
+  // A similar name beside the folder is not in it.
+  localStorage.setItem(
+    `pipeline.files.draft.workspace:${project}:working.data-old/x.do`,
+    "{}",
+  );
+  stub(
+    repository({
+      files: [file("data", { status: "untracked", isDirectory: true })],
+    }),
+  );
+  page();
+  fireEvent.change(
+    await screen.findByRole("textbox", { name: "Commit summary" }),
+    { target: { value: "Add the data" } },
+  );
+  fireEvent.click(screen.getByRole("button", { name: /^Commit 1 file/ }));
+  await waitFor(() => expect(confirmDialog).toHaveBeenCalledOnce());
+  const question = vi.mocked(confirmDialog).mock.calls[0][0];
+  expect(question).toContain("data/clean.do, data/paper.tex");
+  expect(question).not.toContain("data-old");
+});
+
+const folderRow = () =>
+  repository({
+    files: [
+      file("paper.tex"),
+      file("results", { status: "untracked", isDirectory: true }),
+    ],
+  });
+/** Unchecks a file, then lets Git fold it into a new folder row. */
+async function foldUncheckedFile() {
+  stub(
+    repository({
+      files: [file("paper.tex"), file("results/secrets.csv")],
+    }),
+  );
+  page();
+  fireEvent.click(
+    await screen.findByRole("checkbox", {
+      name: "Include results/secrets.csv",
+    }),
+  );
+  stub(folderRow());
+  fireEvent.focus(window);
+  return screen.findByRole("checkbox", { name: "Include results" });
+}
+
+it("keeps a folder out of the commit when it holds an unchecked file", async () => {
+  const folder = await foldUncheckedFile();
+  expect(folder).not.toBeChecked();
+  await commitChecked();
+
+  // Checking it again says what comes with it.
+  fireEvent.click(screen.getByRole("checkbox", { name: "Include results" }));
+  await waitFor(() => expect(confirmDialog).toHaveBeenCalledOnce());
+  expect(vi.mocked(confirmDialog).mock.calls[0][0]).toContain(
+    "You unchecked results/secrets.csv",
+  );
+  await vi.mocked(confirmDialog).mock.results[0].value;
+  expect(
+    screen.getByRole("checkbox", { name: "Include results" }),
+  ).not.toBeChecked();
+});
+
+it("includes such a folder once the researcher agrees", async () => {
+  vi.mocked(confirmDialog).mockResolvedValue(true);
+  fireEvent.click(await foldUncheckedFile());
+  await waitFor(() =>
+    expect(
+      screen.getByRole("checkbox", { name: "Include results" }),
+    ).toBeChecked(),
+  );
+});
+
+it("asks before Include all brings back a file inside a folder", async () => {
+  await foldUncheckedFile();
+  fireEvent.click(screen.getByRole("checkbox", { name: "Include all files" }));
+  await waitFor(() => expect(confirmDialog).toHaveBeenCalledOnce());
+  await vi.mocked(confirmDialog).mock.results[0].value;
+  expect(
+    screen.getByRole("checkbox", { name: "Include results" }),
+  ).not.toBeChecked();
+});
+
+it("offers a way to commit the rest of such a folder", async () => {
+  await foldUncheckedFile();
+  fireEvent.click(screen.getByText("results"));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Add to .gitignore" }),
+  );
+  await waitFor(() =>
+    expect(actions()).toEqual([
+      { kind: "ignore", path: "results/secrets.csv" },
+    ]),
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByRole("checkbox", { name: "Include results" }),
+    ).toBeChecked(),
+  );
+});
+
+it("keeps files out when an unchecked folder splits into rows", async () => {
+  stub(folderRow());
+  page();
+  fireEvent.click(
+    await screen.findByRole("checkbox", { name: "Include results" }),
+  );
+  stub(
+    repository({
+      files: [
+        file("paper.tex"),
+        file("results/a.csv", { status: "untracked" }),
+        file("results/b.csv", { status: "untracked" }),
+      ],
+    }),
+  );
+  fireEvent.focus(window);
+  const first = await screen.findByRole("checkbox", {
+    name: "Include results/a.csv",
+  });
+  expect(first).not.toBeChecked();
+  fireEvent.click(first);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("checkbox", { name: "Include results/a.csv" }),
+    ).toBeChecked(),
+  );
+  expect(
+    screen.getByRole("checkbox", { name: "Include results/b.csv" }),
+  ).not.toBeChecked();
+});
+
+it("names the remote that Change remote edits", async () => {
+  stub(
+    repository(
+      {},
+      {
+        upstream: "overleaf/main",
+        remote: {
+          name: "overleaf",
+          host: "git.overleaf.com",
+          owner: "",
+          repo: "64f0c0ffee",
+          provider: null,
+          webUrl: null,
+        },
+      },
+    ),
+  );
+  page();
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "More version control actions",
+    }),
+  );
+  fireEvent.click(screen.getByRole("menuitem", { name: "Change remote…" }));
+  expect(
+    await screen.findByText(/address of the remote named overleaf/),
+  ).toBeVisible();
+});
+
+it("says what Discard does to a deleted file", async () => {
+  stub(repository({ files: [file("paper.tex", { status: "deleted" })] }));
+  page();
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "More actions for paper.tex",
+    }),
+  );
+  fireEvent.click(screen.getByRole("menuitem", { name: "Discard changes" }));
+  await waitFor(() => expect(confirmDialog).toHaveBeenCalledOnce());
+  const question = vi.mocked(confirmDialog).mock.calls[0][0];
+  expect(question).toContain("Bring paper.tex back");
+  expect(question).not.toContain("Trash");
+});
+
+it("keeps a committed generated file out of Files but still offers Git's actions", async () => {
+  const figure = ".pipeline-workbench/generated/a/figure.svg";
+  stub(repository({ files: [file(figure)] }));
+  page();
+  await screen.findByRole("checkbox", { name: `Include ${figure}` });
+  expect(screen.queryByRole("button", { name: "Open in Files" })).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: `More actions for ${figure}` }),
+  );
+  expect(
+    screen.getByRole("menuitem", { name: "Discard changes" }),
+  ).toBeVisible();
+  expect(screen.queryByRole("menuitem", { name: "Open in Files" })).toBeNull();
+});
+
+it("says when there were too many new files to check for size", async () => {
+  stub(
+    repository({
+      files: [file("data", { status: "untracked", isDirectory: true })],
+      largeFilesCutShort: true,
+    }),
+  );
+  page();
+  expect(
+    await screen.findByText(/too many new files to check them all/),
+  ).toBeVisible();
+  expect(screen.queryByText(/Leave these out of Git/)).toBeNull();
 });
 
 it("shows Git's refusal without losing the commit message", async () => {

@@ -335,3 +335,99 @@ async fn a_recovered_delivery_does_not_accept_a_permission_change_made_meanwhile
     let binding = adapters::task_binding(&run.scope).unwrap();
     assert!(crate::workbench::tasks::validate_binding(&w, &binding).is_err());
 }
+
+/// A run with its action in flight, as the store holds it when the app stops.
+fn in_flight(m: &Coordinator, name: &str, state: &str) -> TaskRun {
+    let mut run = m
+        .store
+        .create(
+            name,
+            chain(vec![delay("step")]),
+            Scope::default(),
+            json!({}),
+            now(),
+            true,
+        )
+        .unwrap();
+    let Advance::Ready(ready) = state::advance(&run.chain, &mut run.progress, &run.inputs) else {
+        panic!()
+    };
+    done(&mut run.progress, &ready[0], json!({}));
+    run.progress.receipts.get_mut("step").unwrap().state = "running".into();
+    run.state = state.into();
+    m.store.save(&mut run, "fixture", "In flight").unwrap();
+    run
+}
+
+#[tokio::test]
+async fn a_crash_owes_one_notice_for_each_interrupted_run() {
+    let (_temp, m) = coordinator_fixture();
+    let run = in_flight(&m, "crashed", "running");
+    m.store.recover().unwrap();
+    let owed = m.store.take_notices().unwrap();
+    assert_eq!(owed.len(), 1);
+    assert_eq!(owed[0].event, "tasks:notice");
+    assert_eq!(owed[0].payload["id"], json!(run.id));
+    assert_eq!(owed[0].payload["state"], "attention");
+    // Neither a later start nor a second look raises it again.
+    m.store.recover().unwrap();
+    assert!(m.store.take_notices().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_run_already_announced_owes_nothing_when_its_sibling_is_recovered() {
+    let (_temp, m) = coordinator_fixture();
+    in_flight(&m, "announced", "attention");
+    m.store.recover().unwrap();
+    assert!(m.store.take_notices().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_quit_saves_the_notice_for_the_next_window_and_recovery_adds_none() {
+    let (_temp, m) = coordinator_fixture();
+    let run = in_flight(&m, "quit", "running");
+    m.stopping.store(true, Ordering::Release);
+    m.complete(&run.id, "step", Err("Task stopped".into()))
+        .await
+        .unwrap();
+    assert_eq!(m.store.get(&run.id).unwrap().state, "attention");
+    m.store.recover().unwrap();
+    let owed = m.store.take_notices().unwrap();
+    assert_eq!(owed.len(), 1);
+    assert_eq!(owed[0].payload["id"], json!(run.id));
+}
+
+#[tokio::test]
+async fn notices_raised_before_the_window_listens_go_out_once() {
+    let (_temp, m) = coordinator_fixture();
+    m.listening.store(false, Ordering::Release);
+    let mut run = in_flight(&m, "early", "running");
+    run.deadline_at = now() - 1;
+    m.store.save(&mut run, "fixture", "Past deadline").unwrap();
+    run.state = "attention".into();
+    m.save(&mut run, "deadline", "Task deadline reached")
+        .await
+        .unwrap();
+    m.save(&mut run, "attention", "Still in attention")
+        .await
+        .unwrap();
+    assert_eq!(m.release_notices().await.unwrap().len(), 1);
+    assert!(m.release_notices().await.unwrap().is_empty());
+
+    // From here on notices go straight to the window.
+    m.save(&mut run, "attention", "Live").await.unwrap();
+    assert!(m.store.take_notices().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_full_list_of_owed_notices_keeps_the_newest() {
+    let (_temp, m) = coordinator_fixture();
+    for i in 0..70 {
+        m.store
+            .owe_notice("tasks:notice", &json!({"id":i}))
+            .unwrap();
+    }
+    let owed = m.store.take_notices().unwrap();
+    assert_eq!(owed.len(), 64);
+    assert_eq!(owed[63].payload["id"], 69);
+}

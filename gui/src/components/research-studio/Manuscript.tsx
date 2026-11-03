@@ -9,6 +9,7 @@ import {
 } from "../../lib/fileWorkspaceClient";
 const PdfReader = lazy(() => import("../file-workspace/PdfReader"));
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { confirmDialog } from "../DialogService";
 import { EmptyState, IconButton, Menu, MenuItem, Sheet } from "../../ui";
 import { Icon } from "../../ui/icons";
 import {
@@ -33,6 +34,10 @@ import ManuscriptBuilds from "./ManuscriptBuilds";
 import "./manuscript.css";
 
 const BUILD_STARTED = "Build started. The result opens here when it ends.";
+const FILE_CHANGED =
+  "This file changed outside the editor. Compare with the current file to keep your draft, or reload to discard it.";
+const FILE_COMPARED =
+  "Changes now compares your draft with the current file. Saving replaces the current file with your draft.";
 const EDITABLE = /\.(tex|bib|md|markdown|rmd|qmd|txt)$/i;
 type SidePanel = "pdf" | "builds";
 
@@ -80,6 +85,10 @@ export default function Manuscript({
   );
   const [file, setFile] = useState<EditorFile | null>(null);
   const [draft, setDraft] = useState("");
+  // How the file on disk relates to the text the open draft started from.
+  const [fileState, setFileState] = useState<
+    "current" | "changed" | "compared"
+  >("current");
   const [notice, setNotice] = useState(
     cached.current
       ? "An unsaved draft is retained. Load its file to restore it."
@@ -269,26 +278,58 @@ export default function Manuscript({
     ) {
       setFile(retained.file);
       setDraft(retained.draft);
-      setNotice(
-        retained.file.hash === next.hash
-          ? "Restored unsaved draft"
-          : "Restored unsaved draft; the file changed externally. Preserve the draft before discarding and reloading.",
-      );
+      setFileState(retained.file.hash === next.hash ? "current" : "changed");
+      setNotice("Restored unsaved draft");
     } else {
       setFile(next);
       setDraft(next.content);
+      setFileState("current");
       setNotice("");
     }
   };
-  const load = () =>
-    run(async () => {
-      if (dirty)
-        throw new Error(
-          "Save or discard the current draft before reloading this file.",
+  const forgetDraft = () => {
+    cached.current = null;
+    try {
+      localStorage.removeItem(draftKey);
+      if (file)
+        localStorage.removeItem(
+          `${draftKey}.${file.checkpointId ?? "working"}.${file.path}`,
         );
+    } catch {
+      /* Current draft is still discarded. */
+    }
+  };
+  const load = async () => {
+    if (
+      dirty &&
+      !(await confirmDialog(
+        `Reload ${path} from the project and discard your unsaved draft?`,
+        {
+          title: "Discard unsaved draft",
+          confirmLabel: "Discard and reload",
+          destructive: true,
+        },
+      ))
+    )
+      return;
+    await run(async () => {
+      if (dirty && file) {
+        const current = await studioClient.editor(
+          workspaceId,
+          file.path,
+          file.checkpointId,
+        );
+        forgetDraft();
+        setFile(current);
+        setDraft(current.content);
+        setFileState("current");
+        setNotice("Reloaded from the project");
+        return;
+      }
       await openFile(path, checkpoint);
       setNotice((old) => old || "Reloaded from the project");
     });
+  };
   const switchFile = (target: string, inCopy = checkpoint) =>
     run(async () => {
       stashDraft();
@@ -378,6 +419,9 @@ export default function Manuscript({
     setPath(target);
     setFile(retained?.file ?? next);
     setDraft(retained?.draft ?? next.content);
+    setFileState(
+      retained && retained.file.hash !== next.hash ? "changed" : "current",
+    );
     revealLine(line);
     setNotice(
       "Opened the source location recorded in this build. The file may have changed since then. Unsaved drafts are still available for each file.",
@@ -403,45 +447,98 @@ export default function Manuscript({
     };
   }, [workspaceId, checkpoint, data.inventory]);
 
+  /** Notice a file that changed while this retained editor kept its text. A
+   * clean editor follows the file; a draft stays, and Compare can adopt it. */
+  const checkFile = async () => {
+    const opened = draftState.current.file;
+    if (!opened) return;
+    const current = await studioClient
+      .editor(workspaceId, opened.path, opened.checkpointId)
+      .catch(() => null);
+    // Typing can land during that read, and a save or another file replaces
+    // the record, so decide from the editor as it is now.
+    const now = draftState.current;
+    if (!current || now.file !== opened) return;
+    if (current.hash === opened.hash) {
+      setFileState((old) => (old === "changed" ? "current" : old));
+    } else if (now.draft !== opened.content) {
+      setFileState("changed");
+    } else {
+      setFile(current);
+      setDraft(current.content);
+      setFileState("current");
+      setNotice("Updated from the project");
+    }
+  };
+  const latestCheck = useRef(checkFile);
+  latestCheck.current = checkFile;
+  useEffect(() => {
+    if (active === false) return;
+    if (reopened) void latestCheck.current();
+    const focus = () => void latestCheck.current();
+    window.addEventListener("focus", focus);
+    return () => window.removeEventListener("focus", focus);
+  }, [active, reopened]);
+  /** Adopt the current file as the base, so Changes shows the draft against it
+   * and Save can replace it. */
+  const compare = () =>
+    run(async () => {
+      if (!file) return;
+      setFile(
+        await studioClient.editor(workspaceId, file.path, file.checkpointId),
+      );
+      setFileState("compared");
+      setShowChanges(true);
+    });
   const save = () =>
     run(async () => {
       if (!file) return;
-      const response = await studioClient.mutate<{ hash: string }>(
-        workspaceId,
-        {
+      let response: { hash: string };
+      try {
+        response = await studioClient.mutate<{ hash: string }>(workspaceId, {
           action: "saveText",
           checkpointId: file.checkpointId,
           path: file.path,
           expectedHash: file.hash,
           content: draft,
-        },
-      );
-      setFile({ ...file, content: draft, hash: response.hash });
-      cached.current = null;
-      try {
-        localStorage.removeItem(draftKey);
-        if (file)
-          localStorage.removeItem(
-            `${draftKey}.${file.checkpointId ?? "working"}.${file.path}`,
-          );
-      } catch {
-        /* Saving still succeeded. */
+        });
+      } catch (e) {
+        // A conflict is a newer file, or a save refused while a response runs.
+        if ((e as { code?: unknown } | null)?.code !== "storage_conflict")
+          throw e;
+        const current = await studioClient.editor(
+          workspaceId,
+          file.path,
+          file.checkpointId,
+        );
+        if (current.hash === file.hash) throw e;
+        setFileState("changed");
+        return;
       }
+      setFile({ ...file, content: draft, hash: response.hash });
+      setFileState("current");
+      forgetDraft();
       setNotice("Saved. Rebuild the manuscript to check the updated files.");
       await onRefresh();
     });
-  const discard = () => {
-    cached.current = null;
-    try {
-      localStorage.removeItem(draftKey);
-      if (file)
-        localStorage.removeItem(
-          `${draftKey}.${file.checkpointId ?? "working"}.${file.path}`,
-        );
-    } catch {
-      /* Current draft is still discarded. */
-    }
-    setDraft(file?.content ?? "");
+  const discard = async () => {
+    if (
+      !(await confirmDialog(`Discard your unsaved draft of ${path}?`, {
+        title: "Discard unsaved draft",
+        confirmLabel: "Discard",
+        destructive: true,
+      }))
+    )
+      return;
+    forgetDraft();
+    const current =
+      file &&
+      (await studioClient
+        .editor(workspaceId, file.path, file.checkpointId)
+        .catch(() => null));
+    if (current) setFile(current);
+    setDraft(current?.content ?? file?.content ?? "");
+    setFileState("current");
     setNotice("Draft discarded");
   };
   /** Follow a click in the PDF back to its source line. */
@@ -506,7 +603,13 @@ export default function Manuscript({
           </select>
         )}
         <span role="status" className="manuscript-status">
-          {dirty ? "Unsaved changes" : notice}
+          {!dirty
+            ? notice
+            : fileState === "changed"
+              ? FILE_CHANGED
+              : fileState === "compared"
+                ? FILE_COMPARED
+                : "Unsaved changes"}
         </span>
         {file && dirty && (
           <div className="file-modes" role="group" aria-label="View">
@@ -524,8 +627,21 @@ export default function Manuscript({
             </button>
           </div>
         )}
+        {dirty && fileState === "changed" && (
+          <button
+            className="file-action"
+            disabled={busy}
+            onClick={() => void compare()}
+          >
+            Compare with current file
+          </button>
+        )}
         {dirty && (
-          <button className="file-action" onClick={discard}>
+          <button
+            className="file-action"
+            disabled={busy}
+            onClick={() => void discard()}
+          >
             Discard unsaved draft
           </button>
         )}
@@ -592,6 +708,11 @@ export default function Manuscript({
           <MenuItem disabled={!path || busy} onSelect={() => void load()}>
             Reload file
           </MenuItem>
+          {dirty && (
+            <MenuItem disabled={busy} onSelect={() => void compare()}>
+              Compare with current file
+            </MenuItem>
+          )}
           <MenuItem
             disabled={!file || busy}
             onSelect={() =>

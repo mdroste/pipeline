@@ -98,8 +98,15 @@ pub fn resolve(store: &Store, ws: &str, spec: &AssetSpec) -> WorkbenchResult<Vec
             let bytes = artifact_bytes(store, ws, artifact_id, 8 * 1024 * 1024)?;
             let original: Value = serde_json::from_slice(&bytes).map_err(err)?;
             let pointer = format!("/{}", value["locator"].as_str().unwrap_or(""));
+            // Compare numbers, not JSON spellings: an export's `0` is stored as `0.0`.
+            let retained = original
+                .pointer(&pointer)
+                .cloned()
+                .and_then(|series| serde_json::from_value::<project::ImpulseResponse>(series).ok());
+            let stored: project::ImpulseResponse =
+                serde_json::from_value(value["series"].clone()).map_err(err)?;
             if desk::hash(&bytes) != value["artifactHash"].as_str().unwrap_or("")
-                || original.pointer(&pointer) != Some(&value["series"])
+                || retained.as_ref() != Some(&stored)
             {
                 return Err(WorkbenchError::invalid(
                     "Series values differ from their retained output artifact",
@@ -340,14 +347,24 @@ pub struct FigureRequest {
     pub spec: AssetSpec,
     pub python_profile_id: String,
     pub operation_id: String,
+    /// The figure this one replaces, once its run is saved.
+    #[serde(default)]
+    pub supersedes: Option<String>,
 }
 pub fn figure_plan(store: &Store, r: FigureRequest) -> WorkbenchResult<DeskRecord> {
     if !["coefficient", "irf"].contains(&r.spec.kind.as_str()) {
         return Err(WorkbenchError::invalid("Choose a coefficient or IRF plot"));
     }
     bounded(&r.operation_id, 150)?;
+    // A first version adds nothing here, so retrying a saved plan still matches.
+    let version = |mut value: Value| {
+        if let Some(previous) = &r.supersedes {
+            value["supersedes"] = json!(previous);
+        }
+        value
+    };
     let request_hash = desk::hash(
-        json!({"spec":r.spec,"profileId":r.python_profile_id})
+        version(json!({"spec":r.spec,"profileId":r.python_profile_id}))
             .to_string()
             .as_bytes(),
     );
@@ -358,6 +375,13 @@ pub fn figure_plan(store: &Store, r: FigureRequest) -> WorkbenchResult<DeskRecor
             ));
         }
         return Ok(prior);
+    }
+    if let Some(previous) = &r.supersedes {
+        if desk::record(store, &r.workspace_id, previous)?.kind != "publication_asset" {
+            return Err(WorkbenchError::invalid(
+                "A figure can replace only a saved table or figure",
+            ));
+        }
     }
     let entries = resolve(store, &r.workspace_id, &r.spec)?;
     let profile = research::get_execution_profile(store, &r.python_profile_id)?;
@@ -439,7 +463,9 @@ pub fn figure_plan(store: &Store, r: FigureRequest) -> WorkbenchResult<DeskRecor
         &r.workspace_id,
         "figure_recipe",
         &r.spec.title,
-        json!({"spec":r.spec,"entries":entries,"planId":plan.id,"sources":r.spec.entries.iter().map(|e|&e.source).collect::<Vec<_>>(),"adapter":"pipeline-matplotlib-v1","requestHash":request_hash}),
+        version(
+            json!({"spec":r.spec,"entries":entries,"planId":plan.id,"sources":r.spec.entries.iter().map(|e|&e.source).collect::<Vec<_>>(),"adapter":"pipeline-matplotlib-v1","requestHash":request_hash}),
+        ),
         None,
         &r.operation_id,
     )
@@ -502,7 +528,7 @@ pub fn adopt_figure(
         "publication_asset",
         &recipe.title,
         serde_json::to_value(asset).map_err(err)?,
-        None,
+        recipe.body["supersedes"].as_str(),
         operation,
     )
 }

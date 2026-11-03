@@ -276,6 +276,8 @@ pub(super) struct ParsedDocx {
     pub(super) markdown: String,
     pub(super) tables: Vec<Vec<Vec<String>>>,
     pub(super) equations: Vec<String>,
+    /// What extraction left out, for the report as well as the text.
+    pub(super) notes: Vec<String>,
 }
 
 fn read_docx_xml(path: &Path) -> Result<String, String> {
@@ -324,6 +326,8 @@ pub(super) fn parse_docx(path: &Path) -> Result<ParsedDocx, String> {
         markdown.push_str("\n\n");
     }
 
+    let mut notes_out = Vec::new();
+    let mut unreadable_symbols = body.unreadable_symbols;
     let tables = body.tables;
     if !tables.is_empty() {
         markdown.push_str("## Extracted tables\n\n");
@@ -373,33 +377,58 @@ pub(super) fn parse_docx(path: &Path) -> Result<ParsedDocx, String> {
                 .transpose()
         });
         match notes {
-            Ok(Some(items)) => {
-                if items.is_empty() {
-                    continue;
+            Ok(Some(notes)) => {
+                unreadable_symbols += notes.unreadable_symbols;
+                if !notes.items.is_empty() {
+                    markdown.push_str(&format!("## {heading}\n\n"));
+                    for (index, item) in notes.items.iter().enumerate() {
+                        markdown.push_str(&format!("{}. {item}\n", index + 1));
+                    }
+                    markdown.push('\n');
                 }
-                markdown.push_str(&format!("## {heading}\n\n"));
-                for (index, item) in items.iter().enumerate() {
-                    markdown.push_str(&format!("{}. {item}\n", index + 1));
+                if notes.omitted > 0 {
+                    let note = format!(
+                        "{} {} omitted. Only the first {} are read.",
+                        notes.omitted,
+                        heading.to_lowercase(),
+                        super::docx_xml::MAX_NOTES,
+                    );
+                    markdown.push_str(&format!("> Extraction note: {note}\n\n"));
+                    notes_out.push(note);
                 }
-                markdown.push('\n');
             }
             Ok(None) => {}
             Err(error) => {
-                markdown.push_str(&format!(
-                    "> Extraction note: {heading} were omitted ({error}).\n\n"
-                ));
+                let note = format!("{heading} were omitted ({error}).");
+                markdown.push_str(&format!("> Extraction note: {note}\n\n"));
+                notes_out.push(note);
             }
         }
+    }
+    if unreadable_symbols > 0 {
+        let note = if unreadable_symbols == 1 {
+            "1 symbol in a font Pipeline cannot read is shown as \u{FFFD}.".to_string()
+        } else {
+            format!(
+                "{unreadable_symbols} symbols in fonts Pipeline cannot read are shown as \u{FFFD}."
+            )
+        };
+        markdown.push_str(&format!("> Extraction note: {note}\n\n"));
+        notes_out.push(note);
     }
 
     let (equations, omitted) = super::docx_xml::equations(&xml, MAX_REPRESENTATION_BYTES, 1_000)?;
     if omitted > 0 {
-        markdown.push_str(&format!("\n> Extraction note: {omitted} equations exceeded the representation limits and were omitted.\n"));
+        let note =
+            format!("{omitted} equations exceeded the representation limits and were omitted.");
+        markdown.push_str(&format!("\n> Extraction note: {note}\n"));
+        notes_out.push(note);
     }
     Ok(ParsedDocx {
         markdown,
         tables,
         equations,
+        notes: notes_out,
     })
 }
 

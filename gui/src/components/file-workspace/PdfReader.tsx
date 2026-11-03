@@ -20,6 +20,7 @@ import useDraftText from "../../hooks/useDraftText";
 import { fetchRange } from "../../lib/fileWorkspaceClient";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./pdf.css";
+import ReportIssueLink from "../ReportIssueLink";
 GlobalWorkerOptions.workerSrc = workerUrl;
 
 export interface PdfSelection {
@@ -724,6 +725,7 @@ export default function PdfReader(props: Props) {
               Use page images
             </button>
           )}
+          <ReportIssueLink />
         </div>
       )}
       {!pdf && !error && <p className="file-status">Opening PDF…</p>}

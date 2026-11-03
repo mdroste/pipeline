@@ -10,6 +10,7 @@ import type {
   PrimaryInputSelection,
   RunParallelOverrides,
 } from "../lib/types";
+import ReportIssueLink from "./ReportIssueLink";
 
 const PRIVACY_NOTICE_KEY = "pipeline.privacyNoticeAcknowledged.v1";
 
@@ -152,6 +153,7 @@ export default function RunSetupPanel({
               >
                 Retry workflow
               </button>
+              <ReportIssueLink />
             </div>
           )}
           {launchError && (
@@ -161,6 +163,7 @@ export default function RunSetupPanel({
             >
               <p className="font-medium">The review could not be started.</p>
               <p className="mt-1 break-words">{launchError}</p>
+              <ReportIssueLink />
             </div>
           )}
           {dependenciesError && (
@@ -177,6 +180,7 @@ export default function RunSetupPanel({
               >
                 Retry system check
               </button>
+              <ReportIssueLink />
             </div>
           )}
           {showPrivacyNotice && (

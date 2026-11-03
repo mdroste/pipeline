@@ -6,6 +6,10 @@
 //! origin or assessor (`research::imported_status` reads it). Statuses that grant
 //! nothing, such as rejected or retired, travel unchanged. `.pwrx` restore brings
 //! back the researcher's own store and never uses this policy.
+//!
+//! Project records follow the same rule through `record_body`. The sender's status
+//! stays in `importedStatus`, `importedFrom` names the package's namespace, and the
+//! record's owner clears both when the researcher decides the same thing here.
 use super::{str_of, text};
 use crate::workbench::research::{imported_mark, split_imported_mark};
 use serde_json::{json, Value};
@@ -53,6 +57,86 @@ pub(super) fn stamp(value: &Value, namespace: &str) -> Value {
     stamped
 }
 
+/// State of an application or checkpoint whose decision stayed with its sender.
+/// Nothing can act on it here: it is neither undone, recovered, nor interrupted.
+const IMPORTED_STATE: &str = "imported";
+/// Source identity a sender recorded as checked.
+const SENDER_REPORTED: &str = "sender_reported";
+const RESEARCHER_CHECKED: &str = "researcher_checked";
+
+/// The status a project record's sender decided, as `importedStatus`.
+fn hold(body: &mut Value, status: &str) {
+    body["importedStatus"] = json!(status);
+}
+
+/// A project record's body as the importing store keeps it. Kinds that hold no
+/// decision are stored as sent. Their readers refuse unknown fields, so only kinds
+/// that declare the markers are stamped.
+pub(super) fn record_body(kind: &str, value: &Value, namespace: &str) -> Value {
+    if !matches!(
+        kind,
+        "binding" | "check" | "literature" | "theory" | "application" | "checkpoint"
+    ) || !value.is_object()
+    {
+        return value.clone();
+    }
+    let mut body = stamp(value, namespace);
+    if body.get("importedStatus").is_some_and(|v| !v.is_string()) {
+        body.as_object_mut().map(|b| b.remove("importedStatus"));
+    }
+    match kind {
+        "binding" if body["confirmed"] == true => {
+            body["confirmed"] = json!(false);
+            hold(&mut body, "confirmed");
+        }
+        "check" if body["check"]["outcome"] == "passed" => hold(&mut body, "passed"),
+        "literature" if body["checklist"]["identity"] == RESEARCHER_CHECKED => {
+            body["checklist"]["identity"] = json!(SENDER_REPORTED);
+            body["note"]["identityChecked"] = json!(false);
+            hold(&mut body, RESEARCHER_CHECKED);
+        }
+        "theory" if body["status"] == "supported" => {
+            body["status"] = json!("open");
+            hold(&mut body, "supported");
+        }
+        "application" => {
+            let state = text(&body, "state");
+            if matches!(state.as_str(), "applying" | "recovery_required" | "applied") {
+                body["state"] = json!(IMPORTED_STATE);
+                hold(&mut body, &state);
+            }
+        }
+        "checkpoint" => {
+            let state = text(&body, "state");
+            if matches!(state.as_str(), "accepted" | "partially_accepted") {
+                body["state"] = json!(IMPORTED_STATE);
+                hold(&mut body, &state);
+            }
+        }
+        _ => {}
+    }
+    body
+}
+
+/// Undoes `record_body` for comparison. The markers themselves never count.
+fn record_as_sent(kind: &str, body: &mut Value) {
+    let Some(status) = str_of(body, "importedStatus") else {
+        return;
+    };
+    match kind {
+        "binding" if body["confirmed"] == false => body["confirmed"] = json!(true),
+        "literature" if body["checklist"]["identity"] == SENDER_REPORTED => {
+            body["checklist"]["identity"] = json!(status);
+            body["note"]["identityChecked"] = json!(true);
+        }
+        "theory" if body["status"] == "open" => body["status"] = json!(status),
+        "application" | "checkpoint" if body["state"] == IMPORTED_STATE => {
+            body["state"] = json!(status);
+        }
+        _ => {}
+    }
+}
+
 fn restore(value: &mut Value, marked: &str, status: &str, held: &str) {
     let Some((sender_status, original)) = value
         .get(marked)
@@ -88,6 +172,10 @@ pub(super) fn as_sent(kind: &str, value: &mut Value) {
                 }
             }
         }
-        _ => {}
+        _ => {
+            if let Some(body) = value.get_mut("body") {
+                record_as_sent(kind, body);
+            }
+        }
     }
 }

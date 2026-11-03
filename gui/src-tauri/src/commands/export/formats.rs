@@ -107,6 +107,16 @@ fn file_name(path: &str) -> String {
         .unwrap_or_default()
 }
 
+fn report_text(dir: &Path) -> Result<String, String> {
+    read_bounded(&dir.join("report.md"), MAX_REPORT_MARKDOWN_BYTES, "report")
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// A saved report's whole text. Reading it for display stops at a preview limit.
+pub(super) fn read_full_report(run_id: &str) -> Result<String, String> {
+    report_text(&resolve_run(run_id)?.0)
+}
+
 fn load_run(dir: &Path, manifest: RunManifest) -> Result<LoadedRun, String> {
     if manifest.status == "running" {
         return Err("Wait for this Review to finish before exporting it".into());
@@ -117,9 +127,7 @@ fn load_run(dir: &Path, manifest: RunManifest) -> Result<LoadedRun, String> {
         "saved report data",
     )?)
     .map_err(|error| format!("The saved report data could not be read: {error}"))?;
-    let markdown = read_bounded(&dir.join("report.md"), MAX_REPORT_MARKDOWN_BYTES, "report")
-        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-        .unwrap_or_default();
+    let markdown = report_text(dir).unwrap_or_default();
     let bundle = read_bounded(
         &dir.join("context/document_bundle.json"),
         MAX_BUNDLE_BYTES,
@@ -413,7 +421,7 @@ fn write_atomically(target: &Path, bytes: &[u8]) -> Result<(), String> {
     }
     temporary
         .write_all(bytes)
-        .and_then(|_| temporary.as_file().sync_all())
+        .and_then(|_| crate::safety::sync_file(temporary.as_file()))
         .map_err(|error| format!("Could not write the exported file: {error}"))?;
     temporary
         .persist(target)

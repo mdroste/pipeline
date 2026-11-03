@@ -8,6 +8,7 @@ import type { WorkbenchSession, Workspace } from "../lib/workbenchTypes";
 import IconButton from "../ui/IconButton";
 import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
 import { Icon } from "../ui/icons";
+import ReportIssueLink from "./ReportIssueLink";
 
 export function ConversationMenu({
   session,
@@ -151,6 +152,7 @@ export function MoveConversationDialog({
             className="mt-3 text-xs text-red-600 dark:text-red-400"
           >
             {error}
+            <ReportIssueLink />
           </p>
         )}
         <div className="mt-4 flex justify-end gap-2">

@@ -504,6 +504,57 @@ describe("EnginesPanel", () => {
     expect(screen.queryByRole("progressbar")).toBeNull();
   });
 
+  it("repairs an installed parser through the installer", async () => {
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_engines")
+        return Promise.resolve([engine({ installed: true })]);
+      return Promise.resolve();
+    });
+    render(<EnginesPanel />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Repair" }),
+    );
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("install_engine", {
+        engineId: "paddleocr-vl-parser",
+      }),
+    );
+    expect(confirmDialog).not.toHaveBeenCalled();
+    expect(await screen.findByText(/is checked and ready/)).toBeInTheDocument();
+  });
+
+  it("shows why a repair failed and offers it again", async () => {
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_engines")
+        return Promise.resolve([engine({ installed: true })]);
+      if (cmd === "install_engine") return Promise.reject("Disk full");
+      return Promise.resolve();
+    });
+    render(<EnginesPanel />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Repair" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Disk full");
+    expect(screen.queryByText(/is checked and ready/)).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Repair" }),
+    ).toBeInTheDocument();
+  });
+
+  it("disables a repair for an engine unavailable here", async () => {
+    invoke.mockResolvedValue([
+      engine({
+        installed: true,
+        available: false,
+        unavailable_reason: "Not on this computer",
+      }),
+    ]);
+    render(<EnginesPanel />);
+    expect(
+      await screen.findByRole("button", { name: "Repair" }),
+    ).toBeDisabled();
+  });
+
   it("uninstall asks for confirmation and skips when declined", async () => {
     invoke.mockResolvedValue([engine({ installed: true, version: "3.7.0" })]);
     confirmDialog.mockResolvedValueOnce(false);

@@ -22,3 +22,4 @@ pub mod providers;
 pub mod reconcile;
 pub(crate) mod response_journal;
 pub mod structured;
+pub(crate) mod unit_files;

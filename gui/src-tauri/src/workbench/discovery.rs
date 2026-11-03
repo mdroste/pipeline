@@ -336,15 +336,15 @@ pub async fn resolve_autonomous_request(
         return false;
     };
     let namespace = supervisor.runtime_namespace();
-    let discovery = super::commands::run_store(move |s| {
+    let autonomous = super::commands::run_store(move |s| {
         let Some(session) = s.session_for_thread(&namespace, &thread)? else {
             return Ok(false);
         };
-        is_role(&s, &session)
+        Ok(is_role(&s, &session)? || super::missions::is_role(&s, &session)?)
     })
     .await
     .unwrap_or(false);
-    if !discovery {
+    if !autonomous {
         return false;
     }
     let response=match method.as_str() {

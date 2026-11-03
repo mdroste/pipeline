@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import ReportIssueLink from "./ReportIssueLink";
+import { workbenchErrorMessage } from "../lib/workbenchError";
 
 export type RootMappings = Record<string, string | null>;
 
@@ -45,7 +47,9 @@ export default function WorkspaceRestoreRootsDialog({
       const picked = await open({ directory: true, multiple: false });
       if (typeof picked === "string") setPath(index, picked);
     } catch (cause) {
-      setError(`The folder picker could not open: ${String(cause)}`);
+      setError(
+        `The folder picker could not open: ${workbenchErrorMessage(cause)}`,
+      );
     }
   };
 
@@ -117,6 +121,7 @@ export default function WorkspaceRestoreRootsDialog({
         {error && (
           <p role="alert" className="text-sm text-red-700 dark:text-red-300">
             {error}
+            <ReportIssueLink />
           </p>
         )}
         <div className="flex justify-end gap-2 pt-2">

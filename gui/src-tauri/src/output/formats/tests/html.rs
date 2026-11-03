@@ -138,6 +138,46 @@ fn unverified_runs_and_reports_without_findings_still_render() {
     assert_eq!(html.matches("Quality and limitations").count(), 1);
 }
 
+const INEQUALITIES: &str = "In the <treated> group, n<N> units, and if p<q and r>s or a<b>c.";
+
+#[test]
+fn text_that_parses_as_html_survives_and_real_html_does_not() {
+    let mut plain = export_with(Vec::new());
+    plain.report_markdown = format!(
+        "{INEQUALITIES}\n\nBold <b>word</b> and <img src=x onerror=alert(1)>.\n\n<script>alert(2)</script>\n\n<div onclick=\"steal()\">Block <treated> text</div>\n\n<!-- hidden note -->"
+    );
+    let html = render_html_report(&plain);
+    assert!(
+        html.contains(
+            "In the &lt;treated&gt; group, n&lt;N&gt; units, and if p&lt;q and r&gt;s or a&lt;b&gt;c."
+        ),
+        "{html}"
+    );
+    assert!(html.contains("<b>word</b>"));
+    assert!(html.contains("Block &lt;treated&gt; text"));
+    for removed in ["onerror", "alert(2)", "onclick", "steal()", "hidden note"] {
+        assert!(!html.contains(removed), "{removed}");
+    }
+}
+
+#[test]
+fn html_that_spans_lines_is_removed_and_its_text_stays() {
+    let mut plain = export_with(Vec::new());
+    plain.report_markdown = concat!(
+        "<!-- first hidden line\nsecond hidden line -->\n\n",
+        "<style>\nhidden-rule { color: red; }\n</style>\n\n",
+        "<script>\nhiddenCall(1);\n</script>\n\n",
+        "<div>\nif p<q and r>s holds\n</div>\n\n",
+    )
+    .to_string();
+    let html = render_html_report(&plain);
+    let report = html.split_once("aria-label=\"Report\">").unwrap().1;
+    assert!(report.contains("if p&lt;q and r&gt;s holds"), "{report}");
+    for removed in ["hidden line", "hidden-rule", "hiddenCall"] {
+        assert!(!report.contains(removed), "{removed}: {report}");
+    }
+}
+
 #[test]
 fn latex_in_a_report_keeps_its_source_and_stays_escaped() {
     let mut export = export_with(Vec::new());

@@ -11,6 +11,7 @@ import {
 import Builder from "./Builder";
 import Detail from "./Detail";
 import "./discovery.css";
+import ReportIssueLink from "../ReportIssueLink";
 
 export default function SelfDiscovery({
   initialRunId,
@@ -51,18 +52,23 @@ export default function SelfDiscovery({
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     void refresh();
-    const pending = listen("discovery:changed", () => {
+    const queue = () => {
       if (live && !timer)
         timer = setTimeout(() => {
           timer = undefined;
           if (live) void refresh();
         }, 200);
-    });
+    };
+    // A step starting or ending moves the run's revision with only a task event.
+    const pending = [
+      listen("discovery:changed", queue),
+      listen("tasks:changed", queue),
+    ];
     return () => {
       live = false;
       generation.current++;
       if (timer) clearTimeout(timer);
-      void pending.then((f) => f()).catch(() => undefined);
+      for (const p of pending) void p.then((f) => f()).catch(() => undefined);
     };
   }, [refresh]);
   function update(r: DiscoveryRun) {
@@ -99,6 +105,7 @@ export default function SelfDiscovery({
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       <div

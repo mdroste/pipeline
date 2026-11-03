@@ -14,6 +14,7 @@ impl Control {
             message: "Task stopped before dispatch; the message was not sent".into(),
             retryable: false,
             recovery: None,
+            transient: false,
         }
         .into()
     }

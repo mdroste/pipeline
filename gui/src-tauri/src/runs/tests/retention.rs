@@ -115,6 +115,9 @@ fn run_order_follows_the_instant_across_offsets() {
     let later = "2026-11-01T01:10:00-05:00".to_string();
     let mut created = vec![earlier.clone(), "unreadable".to_string(), later.clone()];
     sort_newest_first(&mut created, |value| value.as_str());
+    assert!(super::created_before(&earlier, &later));
+    assert!(!super::created_before(&later, &earlier));
+    assert!(super::created_before("unreadable", &earlier));
     assert_eq!(created, vec![later, earlier, "unreadable".to_string()]);
 }
 

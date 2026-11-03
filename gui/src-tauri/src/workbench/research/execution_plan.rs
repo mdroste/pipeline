@@ -104,14 +104,19 @@ pub fn capture(store: &Store, r: CapturePlanRequest) -> WorkbenchResult<DeskReco
     let launch = launch_manifest(&profile)?;
     for file in launch["launchFiles"].as_array().into_iter().flatten() {
         let path = Path::new(file["path"].as_str().unwrap_or(""));
-        let relative = path
-            .strip_prefix(&root)
-            .map_err(|_| WorkbenchError::invalid("Declare launch scripts inside the project cwd"))?
-            .to_string_lossy()
-            .to_string();
-        if !profile.inputs.contains(&relative) {
+        let relative = path.strip_prefix(&root).map_err(|_| {
+            WorkbenchError::invalid("Declare launch scripts inside the project cwd")
+        })?;
+        // By component: Windows writes this path with backslashes, and the
+        // declaration may use either separator.
+        if !profile
+            .inputs
+            .iter()
+            .any(|input| Path::new(input).components().eq(relative.components()))
+        {
             return Err(WorkbenchError::invalid(format!(
-                "Add launch script {relative} to the declared inputs"
+                "Add launch script {} to the declared inputs",
+                relative.display()
             )));
         }
     }

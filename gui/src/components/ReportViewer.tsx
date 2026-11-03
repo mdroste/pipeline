@@ -48,6 +48,8 @@ interface Props {
   initialContentsOpen?: boolean;
   /** Scrolls to the heading with this text; a new key repeats the request. */
   scrollRequest?: { key: number; heading: string } | null;
+  /** Says what to do when `markdown` was already cut before it got here. */
+  truncationNotice?: string;
 }
 
 /**
@@ -155,6 +157,7 @@ function ReportViewerContent({
   markdown,
   initialContentsOpen = true,
   scrollRequest = null,
+  truncationNotice,
 }: Props) {
   const contentRef = useRef<HTMLDivElement>(null);
   const instanceId = useId();
@@ -390,10 +393,10 @@ function ReportViewerContent({
             maxWidth: wideReading ? "68rem" : "52rem",
           }}
         >
-          {previewTruncated && (
+          {(previewTruncated || truncationNotice) && (
             <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
-              This response is too long to show in full. Open the saved file to
-              read the rest.
+              {truncationNotice ??
+                "This response is too long to show in full. Open the saved file to read the rest."}
             </div>
           )}
           <ReportMarkdown

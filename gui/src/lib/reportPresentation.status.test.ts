@@ -50,6 +50,22 @@ describe("reportStatusDisplay", () => {
     ]);
   });
 
+  it("announces a limitation when a step left files unread", () => {
+    expect(
+      reportStatusDisplay(
+        "degraded",
+        quality({
+          coverage_notes: ["Step 'Review' ran on 20 of 35 matching files."],
+        }),
+      ),
+    ).toEqual({
+      label: "Completed with limitations",
+      heading: "Completed with limitations",
+      tone: "caution",
+      notes: ["Some files or items were not read"],
+    });
+  });
+
   it("announces a limitation when the document may not have been read fully", () => {
     expect(
       reportStatusDisplay(

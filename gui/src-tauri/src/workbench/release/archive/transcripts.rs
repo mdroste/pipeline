@@ -39,7 +39,7 @@ pub(super) fn transcript_items(
          FROM transcript_items i JOIN session_bindings b ON b.id=i.binding_id \
          WHERE b.session_id=?1 AND NOT EXISTS (\
            SELECT 1 FROM transcript_items newer JOIN session_bindings nb ON nb.id=newer.binding_id \
-           WHERE nb.session_id=b.session_id AND newer.provider_item_id=i.provider_item_id AND nb.incarnation>b.incarnation\
+           WHERE nb.session_id=b.session_id AND nb.provider_thread_id=b.provider_thread_id AND newer.provider_item_id=i.provider_item_id AND nb.incarnation>b.incarnation\
          ) ORDER BY i.created_at,i.id",
     ).map_err(|error| WorkbenchError::storage("Failed to prepare transcript export", error))?;
     let items = statement
@@ -170,5 +170,46 @@ mod tests {
         assert!(markdown.contains("## You\n\nQuestion"), "{markdown}");
         assert!(markdown.contains("## Assistant\n\nAnswer"), "{markdown}");
         assert!(!markdown.contains("ChatGPT"));
+    }
+
+    #[test]
+    fn an_export_keeps_each_thread_item_and_only_the_newest_copy_of_one() {
+        use crate::agent_runtime::events::NormalizedEvent;
+        use crate::workbench::store::{CreateSessionRequest, Store};
+        let directory = tempfile::tempdir().unwrap();
+        let store = Store::open_at(&directory.path().join("store")).unwrap();
+        let session = store
+            .create_session(CreateSessionRequest {
+                workspace_id: None,
+                title: "Exported".into(),
+                operation_id: "create".into(),
+            })
+            .unwrap()
+            .record
+            .id;
+        let answer = |namespace: &str, thread: &str, text: &str| {
+            let binding = store.bind_session(&session, namespace, thread).unwrap();
+            let event = NormalizedEvent::ItemCompleted {
+                epoch: 1,
+                thread_id: thread.into(),
+                turn_id: "turn".into(),
+                item_id: "item-1".into(),
+                item_kind: "agentMessage".into(),
+                item: json!({"id":"item-1","text":text}),
+            };
+            store.project_codex_event(&binding.id, &event).unwrap();
+        };
+        answer("first", "thread-1", "Superseded copy");
+        answer("second", "thread-1", "On the first thread");
+        answer("second", "thread-2", "On the second thread");
+        let connection = store.connection().unwrap();
+        let items = transcript_items(&connection, &session).unwrap();
+        let texts: Vec<_> = items
+            .iter()
+            .map(|item| item["payload"]["text"].as_str().unwrap())
+            .collect();
+        assert_eq!(texts.len(), 2, "{texts:?}");
+        assert!(texts.contains(&"On the first thread"), "{texts:?}");
+        assert!(texts.contains(&"On the second thread"), "{texts:?}");
     }
 }

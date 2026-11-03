@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import type { Settings } from "../../lib/types";
 
 import { useProviderCatalogs } from "./useProviderCatalogs";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 const AUTOSAVE_DELAY_MS = 400;
 export function useSettingsDraft(onSystemChange?: () => void) {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -49,7 +50,7 @@ export function useSettingsDraft(onSystemChange?: () => void) {
       })
       .catch((e) => {
         console.error("Failed to load settings:", e);
-        setLoadError(e instanceof Error ? e.message : String(e));
+        setLoadError(workbenchErrorMessage(e));
         setLoading(false);
       });
   useEffect(() => {
@@ -74,7 +75,7 @@ export function useSettingsDraft(onSystemChange?: () => void) {
       saveChainRef.current = operation.catch(() => undefined);
       await operation;
     } catch (cause) {
-      setSaveError(cause instanceof Error ? cause.message : String(cause));
+      setSaveError(workbenchErrorMessage(cause));
     }
   };
 
@@ -106,7 +107,7 @@ export function useSettingsDraft(onSystemChange?: () => void) {
             // This value never reached disk, so it no longer counts as queued:
             // reverting and making the same edit again must save it.
             latestQueuedSnapshotRef.current = null;
-            setSaveError(e instanceof Error ? e.message : String(e));
+            setSaveError(workbenchErrorMessage(e));
           }
         } finally {
           if (latestSaveSequenceRef.current === saveSequence) {

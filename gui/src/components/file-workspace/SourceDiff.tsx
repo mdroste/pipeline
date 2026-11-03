@@ -3,6 +3,7 @@ import { applyFileHunks, fileHunks } from "../../lib/fileDiff";
 import { fileLanguage } from "../../lib/fileLanguages";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import HighlightedCode from "./HighlightedCode";
+import ReportIssueLink from "../ReportIssueLink";
 export default function SourceDiff({
   before,
   after,
@@ -80,6 +81,7 @@ export default function SourceDiff({
       {error && (
         <p role="alert" className="file-error">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       {hunks.map((h) => (

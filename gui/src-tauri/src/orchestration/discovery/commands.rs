@@ -43,7 +43,11 @@ pub async fn discovery_start(app: tauri::AppHandle, request: Start) -> Result<Va
         let b = crate::workbench::tasks::binding(&s, &session)?;
         crate::workbench::tasks::validate_binding(&s, &b)?;
         let h = crate::workbench::research::resolve_harness(&s, &session)?;
-        Ok((b, research::authority(&s, &session)?, h.context_preview))
+        Ok((
+            b,
+            research::source_authority(&s, &session)?,
+            h.context_preview,
+        ))
     })
     .await
     .map_err(|e| e.message)?;
@@ -320,6 +324,17 @@ pub(super) async fn retry(c: &Coordinator, p: &mut Portfolio) -> Result<Option<S
     p.run.source_scope = run_store(move |s| research::readopt_scope(&s, &source, &expected, false))
         .await
         .map_err(|e| e.message)?;
+    // A completed step whose files could not be saved keeps its reply. The
+    // next tick reads it again, so no model call is repeated.
+    if child
+        .as_ref()
+        .is_some_and(|c| c.state == "finished" && c.progress.outputs.get("action").is_some())
+    {
+        p.run.state = "running".into();
+        p.run.reason = "Saving the step's recorded reply again".into();
+        p.run.due_at = Some(now());
+        return Ok(None);
+    }
     if let Some(child) = &child {
         account(p, child);
     }
@@ -342,7 +357,15 @@ pub(super) async fn retry(c: &Coordinator, p: &mut Portfolio) -> Result<Option<S
         "running"
     }
     .into();
-    p.run.reason = "Retry authorized with the current conversation state".into();
+    // The next attempt is told what was wrong with the last reply, and has its
+    // repair turns again.
+    p.run.reason = match p.run.reason.strip_prefix(REJECTED) {
+        Some(rejected) => {
+            p.run.repairs = 1;
+            format!("Repair the response contract: {rejected}")
+        }
+        None => "Retry authorized with the current conversation state".into(),
+    };
     p.run.due_at = Some(now());
     Ok(child.map(|child| child.id))
 }

@@ -10,6 +10,7 @@ import {
 } from "../../lib/discoveryClient";
 
 import ResearchReaderBoundary from "../ResearchReaderBoundary";
+import ReportIssueLink from "../ReportIssueLink";
 const ReportViewer = lazy(() => import("../ReportViewer"));
 
 export default function Detail({
@@ -85,6 +86,23 @@ export default function Detail({
       setBusy(false);
     }
   }
+  // The run can move on between events. Pause and Stop mean the same thing on
+  // the newer run, so they go through. Anything else is asked again.
+  function control(action: "pause" | "resume" | "stop" | "retry") {
+    return act(async () => {
+      try {
+        return await discoveryClient.control(run, action);
+      } catch (e) {
+        if (!String(e).includes("reload before continuing")) throw e;
+        const fresh = await discoveryClient.get(run.id);
+        onUpdated(fresh);
+        if (action === "pause" || action === "stop")
+          return await discoveryClient.control(fresh, action);
+        setError("This run just changed. Check it and try again.");
+        return undefined;
+      }
+    });
+  }
   const choices = choosing
     ? candidates.filter((c) => run.selection?.shortlist.includes(c.id))
     : candidates;
@@ -112,31 +130,18 @@ export default function Detail({
       </p>
       <div className="task-actions">
         {run.state === "paused" ? (
-          <button
-            disabled={busy}
-            onClick={() =>
-              void act(() => discoveryClient.control(run, "resume"))
-            }
-          >
+          <button disabled={busy} onClick={() => void control("resume")}>
             Resume
           </button>
         ) : (
           ["running", "awaitingSelection"].includes(run.state) && (
-            <button
-              disabled={busy}
-              onClick={() =>
-                void act(() => discoveryClient.control(run, "pause"))
-              }
-            >
+            <button disabled={busy} onClick={() => void control("pause")}>
               Pause
             </button>
           )
         )}
         {!discoveryTerminal(run.state) && run.state !== "stopping" && (
-          <button
-            disabled={busy}
-            onClick={() => void act(() => discoveryClient.control(run, "stop"))}
-          >
+          <button disabled={busy} onClick={() => void control("stop")}>
             Stop
           </button>
         )}
@@ -163,6 +168,7 @@ export default function Detail({
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       {run.state === "attention" && (
@@ -175,9 +181,7 @@ export default function Detail({
           <button
             className="task-primary"
             disabled={busy}
-            onClick={() =>
-              void act(() => discoveryClient.control(run, "retry"))
-            }
+            onClick={() => void control("retry")}
           >
             Retry
           </button>

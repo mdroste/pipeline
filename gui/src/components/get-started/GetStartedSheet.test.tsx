@@ -69,7 +69,7 @@ function respond(command: string) {
           requiresOpenaiAuth: true,
         },
         epoch: 1,
-        version: "0.147.0",
+        version: "0.165.0",
         loginInProgress: false,
       });
     case "get_settings":

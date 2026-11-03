@@ -126,11 +126,48 @@ fn append_change(
     Ok(connection.last_insert_rowid())
 }
 
+/// The largest page image shown to the researcher.
+const VIEW_PAGE_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
+/// The largest page image a tool returns. Base64 adds a third, which leaves the
+/// reply inside the 8 MiB frame that Claude and ChatGPT conversations carry.
+pub(crate) const TOOL_PAGE_IMAGE_BYTES: u64 = 11 * 512 * 1024;
+
 pub(super) fn paper_page_image(
     store: &Store,
     workspace_id: &str,
     revision_id: &str,
     page: u32,
+) -> WorkbenchResult<Value> {
+    render_page_image(
+        store,
+        workspace_id,
+        revision_id,
+        page,
+        VIEW_PAGE_IMAGE_BYTES,
+    )
+}
+
+pub(super) fn paper_page_tool_image(
+    store: &Store,
+    workspace_id: &str,
+    revision_id: &str,
+    page: u32,
+) -> WorkbenchResult<Value> {
+    render_page_image(
+        store,
+        workspace_id,
+        revision_id,
+        page,
+        TOOL_PAGE_IMAGE_BYTES,
+    )
+}
+
+fn render_page_image(
+    store: &Store,
+    workspace_id: &str,
+    revision_id: &str,
+    page: u32,
+    limit: u64,
 ) -> WorkbenchResult<Value> {
     if page == 0 || page > crate::pipeline::extract::MAX_RENDERED_PDF_PAGES {
         return Err(WorkbenchError::invalid(
@@ -152,10 +189,11 @@ pub(super) fn paper_page_image(
     .map_err(WorkbenchError::invalid)?;
     let generated = rendered.path().join(preview.name);
     let (image_hash, size) = hash_file(&generated)?;
-    if size > 8 * 1024 * 1024 {
-        return Err(WorkbenchError::invalid(
-            "Rendered PDF page exceeded the 8 MiB tool limit",
-        ));
+    if size > limit {
+        return Err(WorkbenchError::invalid(format!(
+            "This page's image is too large to return ({:.1} MiB). Read the page's text instead.",
+            size as f64 / (1024.0 * 1024.0)
+        )));
     }
     let stored = store
         .root_path()

@@ -224,6 +224,57 @@ fn conversation_file_links_refuse_programs_and_copy_nothing() {
     snapshot_conversation_file(&f.store, &session.id, "table.csv").unwrap();
 }
 
+/// A snapshot keeps only a plain extension. One that loses it has no extension
+/// at all, and on a drive that marks every file as a program macOS would run it.
+#[test]
+fn a_snapshot_is_judged_by_its_own_name_on_a_volume_with_invented_permissions() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let f = fixture();
+    let session = f
+        .store
+        .create_session(CreateSessionRequest {
+            workspace_id: None,
+            title: "Generated files".into(),
+            operation_id: id("session").unwrap(),
+        })
+        .unwrap()
+        .record;
+    let root = f.store.runtime_root(&session.id).unwrap();
+    let snapshots = f.store.root_path().join("opened-conversation-files");
+    fs::create_dir_all(&snapshots).unwrap();
+    // What a write to such a drive leaves: `snapshot.csv` keeps its extension.
+    let plant = |name: &str, suffix: &str| {
+        fs::write(root.join(name), name).unwrap();
+        let target = snapshots.join(format!("{}{suffix}", hash(name.as_bytes())));
+        fs::write(&target, name).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    let long = format!("notes.{}", "a".repeat(17));
+    for name in ["run.v1-2", "notes.a_b", long.as_str()] {
+        plant(name, "");
+        crate::safety::simulate_invented_permissions(true);
+        let opened = snapshot_conversation_file(&f.store, &session.id, name);
+        crate::safety::simulate_invented_permissions(false);
+        let error = opened.unwrap_err();
+        assert!(error.message.contains("as a program"), "{name}");
+    }
+    plant("snapshot.csv", ".csv");
+    crate::safety::simulate_invented_permissions(true);
+    let opened = snapshot_conversation_file(&f.store, &session.id, "snapshot.csv");
+    crate::safety::simulate_invented_permissions(false);
+    opened.unwrap();
+
+    // The same name, written for real. Set `TMPDIR` to a folder on an exFAT
+    // drive to run this on one.
+    let probe = fs::File::open(&snapshots).unwrap();
+    let keeps = crate::safety::volume_keeps_permissions(&probe);
+    fs::write(root.join("fresh.v1-2"), "fresh").unwrap();
+    assert_eq!(
+        snapshot_conversation_file(&f.store, &session.id, "fresh.v1-2").is_ok(),
+        keeps
+    );
+}
+
 #[test]
 fn opening_a_csv_of_any_size_reads_only_its_head() {
     let f = fixture();
@@ -282,4 +333,36 @@ fn common_text_files_without_a_source_extension_can_be_edited() {
         .unwrap();
         assert!(file.editable, "{path}");
     }
+}
+
+#[test]
+fn generated_program_inputs_stay_out_of_the_file_tools() {
+    let f = fixture();
+    let directory = program_directory(&f.store, &f.ws, &"a".repeat(64)).unwrap();
+    write_program_input(&directory, "plot.py", b"print('plot')\n").unwrap();
+    let generated = format!(".pipeline-workbench/generated/{}/plot.py", "a".repeat(64));
+    assert!(f.root.join(&generated).is_file());
+
+    for alias in [
+        generated.clone(),
+        generated.to_ascii_uppercase(),
+        generated.replacen(".pipeline-workbench", ".pipeline-workbench.", 1),
+    ] {
+        assert!(files::relative(&alias).is_err(), "{alias}");
+        assert!(
+            assistant_files::create_file(&f.store, &f.ws, None, &alias, b"changed").is_err(),
+            "{alias}"
+        );
+    }
+    assert_eq!(
+        fs::read(f.root.join(&generated)).unwrap(),
+        b"print('plot')\n"
+    );
+    let inventory = inventory_at(&f.root, &[]).unwrap();
+    assert!(inventory
+        .files
+        .iter()
+        .all(|file| !file.path.starts_with(".pipeline-workbench")));
+    // The program's own writes start below the reserved name.
+    write_program_input(&directory, "figure.json", b"{}").unwrap();
 }

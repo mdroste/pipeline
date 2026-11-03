@@ -218,12 +218,7 @@ impl Scanner<'_> {
         let parent = self.parent();
         if empty {
             if let (Some(Frame::Run(run)), true) = (parent, self.in_paragraph()) {
-                let character = match name {
-                    b"w:tab" | b"w:ptab" => Some('\t'),
-                    b"w:br" | b"w:cr" => Some('\n'),
-                    b"w:noBreakHyphen" => Some('-'),
-                    _ => None,
-                };
+                let character = crate::document_bundle::inline_character(element);
                 if let Some(character) = character.filter(|_| self.math_depth == 0) {
                     let source = CharSource::Element {
                         run,
@@ -468,6 +463,17 @@ mod tests {
         );
         assert_eq!(scanned.first_paragraph, Some((0, 5)));
         assert!(scanned.texts[2].preserves_space);
+    }
+
+    #[test]
+    fn symbols_and_hyphens_read_as_the_extracted_text_does() {
+        let xml = doc(concat!(
+            r#"<w:p><w:r><w:t>long</w:t><w:noBreakHyphen/><w:t>term </w:t></w:r>"#,
+            r#"<w:r><w:rPr><w:rFonts w:ascii="Symbol"/></w:rPr><w:sym w:font="Symbol" w:char="F062"/></w:r>"#,
+            r#"<w:r><w:t xml:space="preserve"> = 0.3</w:t></w:r></w:p>"#,
+        ));
+        let scanned = scan_document(&xml).unwrap();
+        assert_eq!(scanned.visible_text(), "long-term β = 0.3 ");
     }
 
     #[test]

@@ -14,10 +14,12 @@ use quick_xml::{
 };
 use std::collections::BTreeMap;
 
+use super::docx_symbols::{symbol_char, UNREADABLE_SYMBOL};
+
 /// Deepest element nesting a Word part may use, the same bound as `equations`.
 const MAX_XML_DEPTH: usize = 512;
 const NESTING_ERROR: &str = "DOCX XML exceeds nesting or namespace limits";
-const MAX_NOTES: usize = 1_000;
+pub(super) const MAX_NOTES: usize = 1_000;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct Paragraph {
@@ -32,6 +34,16 @@ pub(super) struct Paragraph {
 pub(super) struct Body {
     pub(super) paragraphs: Vec<Paragraph>,
     pub(super) tables: Vec<Vec<Vec<String>>>,
+    pub(super) unreadable_symbols: usize,
+}
+
+/// The notes of a footnotes or endnotes part, and what reading them left out.
+#[derive(Debug, Default)]
+pub(super) struct Notes {
+    pub(super) items: Vec<String>,
+    /// Substantive notes past `MAX_NOTES`.
+    pub(super) omitted: usize,
+    pub(super) unreadable_symbols: usize,
 }
 
 #[derive(Default)]
@@ -81,7 +93,8 @@ struct Walk {
     tables: Vec<Vec<Vec<String>>>,
     notes: Vec<String>,
     notes_seen: usize,
-    finished: bool,
+    notes_omitted: usize,
+    unreadable_symbols: usize,
 }
 
 /// The heading level of a `w:pStyle` value such as `Heading2`.
@@ -104,6 +117,18 @@ fn is_substantive_note(element: &BytesStart<'_>) -> bool {
         .ok()
         .flatten()
         .is_none_or(|kind| kind.value.as_ref() == b"normal")
+}
+
+/// The character an element inside a run stands for. The comment scanner uses
+/// this too, so a quote from the extracted text matches the document.
+pub(crate) fn inline_character(element: &BytesStart<'_>) -> Option<char> {
+    match element.name().as_ref() {
+        b"w:tab" | b"w:ptab" => Some('\t'),
+        b"w:br" | b"w:cr" => Some('\n'),
+        b"w:noBreakHyphen" => Some('-'),
+        b"w:sym" => Some(symbol_char(element)),
+        _ => None,
+    }
 }
 
 /// The characters an event inside `w:t` or `m:t` contributes.
@@ -171,12 +196,18 @@ impl Walk {
     }
 
     fn open_note(&mut self, element: &BytesStart<'_>, empty: bool) {
-        if self.notes_seen == MAX_NOTES {
-            self.finished = true;
+        // Notes past the limit are still walked, to say how many were left out.
+        let within_limit = self.notes_seen < MAX_NOTES;
+        if within_limit {
+            self.notes_seen += 1;
+        }
+        if empty {
             return;
         }
-        self.notes_seen += 1;
-        if empty {
+        if !within_limit {
+            self.notes_omitted += usize::from(is_substantive_note(element));
+            let frame = self.hide();
+            self.stack.push(frame);
             return;
         }
         let frame = if is_substantive_note(element) {
@@ -210,11 +241,11 @@ impl Walk {
             self.open_note(element, empty);
             return Ok(());
         }
-        match name {
-            b"w:tab" => self.visible("\t"),
-            b"w:br" | b"w:cr" => self.visible("\n"),
-            b"w:pStyle" => self.record_heading(element),
-            _ => {}
+        if let Some(character) = inline_character(element) {
+            self.unreadable_symbols += usize::from(character == UNREADABLE_SYMBOL);
+            self.visible(character.encode_utf8(&mut [0; 4]));
+        } else if name == b"w:pStyle" {
+            self.record_heading(element);
         }
         let in_row = self
             .open_tables
@@ -328,7 +359,7 @@ impl Walk {
 fn walk(xml: &str, note: Option<&[u8]>) -> Result<Walk, String> {
     let mut reader = Reader::from_str(xml);
     let mut walk = Walk::default();
-    while !walk.finished {
+    loop {
         let event = reader
             .read_event()
             .map_err(|e| format!("Invalid DOCX XML: {e}"))?;
@@ -356,13 +387,19 @@ pub(super) fn body(xml: &str) -> Result<Body, String> {
     Ok(Body {
         paragraphs: walk.paragraphs,
         tables: walk.tables,
+        unreadable_symbols: walk.unreadable_symbols,
     })
 }
 
 /// The substantive notes of a footnotes or endnotes part, each joined into one
 /// line. `element` is the note's tag name, such as `w:footnote`.
-pub(super) fn notes(xml: &str, element: &[u8]) -> Result<Vec<String>, String> {
-    Ok(walk(xml, Some(element))?.notes)
+pub(super) fn notes(xml: &str, element: &[u8]) -> Result<Notes, String> {
+    let walk = walk(xml, Some(element))?;
+    Ok(Notes {
+        items: walk.notes,
+        omitted: walk.notes_omitted,
+        unreadable_symbols: walk.unreadable_symbols,
+    })
 }
 
 pub(super) fn text(xml: &str) -> String {
@@ -371,17 +408,8 @@ pub(super) fn text(xml: &str) -> String {
     let mut output = String::new();
     loop {
         match reader.read_event() {
-            Ok(Event::Start(e)) => match e.name().as_ref() {
-                b"w:t" | b"m:t" => in_text = true,
-                b"w:tab" => output.push('\t'),
-                b"w:br" | b"w:cr" => output.push('\n'),
-                _ => {}
-            },
-            Ok(Event::Empty(e)) => match e.name().as_ref() {
-                b"w:tab" => output.push('\t'),
-                b"w:br" | b"w:cr" => output.push('\n'),
-                _ => {}
-            },
+            Ok(Event::Start(e)) if matches!(e.name().as_ref(), b"w:t" | b"m:t") => in_text = true,
+            Ok(Event::Start(e) | Event::Empty(e)) => output.extend(inline_character(&e)),
             Ok(Event::End(e)) if matches!(e.name().as_ref(), b"w:t" | b"m:t") => in_text = false,
             Ok(Event::Eof) | Err(_) => break,
             Ok(event) if in_text => {
@@ -499,6 +527,16 @@ mod tests {
         assert_eq!(
             text("<w:r><w:t>con</w:t></w:r><w:r><w:t>tiguous</w:t></w:r>"),
             "contiguous"
+        );
+    }
+    #[test]
+    fn inline_elements_read_the_same_in_every_word_reader() {
+        assert_eq!(
+            text(concat!(
+                r#"<w:r><w:t>long</w:t><w:noBreakHyphen/><w:t>term</w:t></w:r>"#,
+                r#"<w:r><w:sym w:font="Symbol" w:char="F062"/></w:r>"#,
+            )),
+            "long-termβ"
         );
     }
     #[test]

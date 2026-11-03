@@ -11,21 +11,40 @@ import {
   type MissionMethod,
   type MissionMode,
 } from "../../lib/missionClient";
+import ReportIssueLink from "../ReportIssueLink";
 
 const draftKey = "pipeline.researchMission.draft.v1";
-function recover(sessionId?: string | null) {
+interface MissionDraft {
+  definition: MissionDefinition;
+  sessionId: string;
+  operationId: string;
+}
+/** Checks, experiments and methods belong to the conversation's project. */
+function forSession(draft: MissionDraft, sessionId: string): MissionDraft {
+  return {
+    ...draft,
+    sessionId,
+    operationId: crypto.randomUUID(),
+    definition: {
+      ...draft.definition,
+      policy: newMission().policy,
+      methodIds: [],
+    },
+  };
+}
+function recover(sessionId?: string | null): MissionDraft {
   try {
     const saved = JSON.parse(localStorage.getItem(draftKey) ?? "null");
     if (
       saved?.definition?.schemaVersion === 1 &&
       typeof saved.sessionId === "string" &&
       typeof saved.operationId === "string"
-    )
-      return saved as {
-        definition: MissionDefinition;
-        sessionId: string;
-        operationId: string;
-      };
+    ) {
+      // The conversation it was opened from outranks an earlier draft's.
+      return sessionId && sessionId !== saved.sessionId
+        ? forSession(saved, sessionId)
+        : saved;
+    }
   } catch {
     /* An unavailable local draft does not prevent preparation. */
   }
@@ -176,16 +195,7 @@ export default function MissionBuilder({
             onChange={(e) => {
               const sessionId = e.target.value;
               setError("");
-              setDraft((old) => ({
-                ...old,
-                sessionId,
-                operationId: crypto.randomUUID(),
-                definition: {
-                  ...old.definition,
-                  policy: newMission().policy,
-                  methodIds: [],
-                },
-              }));
+              setDraft((old) => forSession(old, sessionId));
             }}
           >
             <option value="">Choose a project conversation</option>
@@ -539,6 +549,7 @@ export default function MissionBuilder({
       {error && (
         <p role="alert" className="task-error">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       <button

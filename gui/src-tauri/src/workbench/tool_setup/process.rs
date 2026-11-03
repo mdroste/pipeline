@@ -30,7 +30,17 @@ async fn drain(mut reader: impl AsyncRead + Unpin) -> Result<Vec<u8>, String> {
         bytes.extend_from_slice(&buffer[..n.min((64 * 1024usize).saturating_sub(bytes.len()))]);
     }
 }
-pub(super) async fn run(mut command: Command, label: &str) -> Result<Vec<u8>, String> {
+/// Checks that start a program and read its answer.
+pub(super) const PROBE_LIMIT: Duration = Duration::from_secs(300);
+/// Steps that fetch packages or a browser. A slow connection needs far longer
+/// than a probe, and Cancel setup stops them at any time.
+pub(super) const DOWNLOAD_LIMIT: Duration = Duration::from_secs(60 * 60);
+
+pub(super) async fn run(
+    mut command: Command,
+    label: &str,
+    limit: Duration,
+) -> Result<Vec<u8>, String> {
     crate::process::configure_isolation(&mut command);
     command
         .stdin(Stdio::null())
@@ -49,7 +59,7 @@ pub(super) async fn run(mut command: Command, label: &str) -> Result<Vec<u8>, St
     };
     let stdout = child.child.stdout.take().unwrap();
     let stderr = child.child.stderr.take().unwrap();
-    let result = tokio::time::timeout(Duration::from_secs(300), async {
+    let result = tokio::time::timeout(limit, async {
         let wait = async {
             let status = child.child.wait().await.map_err(|e| e.to_string())?;
             crate::commands::lifecycle::kill_independent_process(pid);
@@ -83,7 +93,7 @@ mod tests {
             "-c",
             "echo ready > started; (sleep 1; echo leaked > leaked) & wait",
         ]);
-        let task = tokio::spawn(run(command, "Fixture"));
+        let task = tokio::spawn(run(command, "Fixture", PROBE_LIMIT));
         tokio::time::timeout(Duration::from_secs(5), async {
             while !dir.path().join("started").exists() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
@@ -95,5 +105,25 @@ mod tests {
         let _ = task.await;
         tokio::time::sleep(Duration::from_millis(1200)).await;
         assert!(!dir.path().join("leaked").exists());
+    }
+
+    #[tokio::test]
+    async fn a_step_ends_at_the_limit_it_was_given() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "sleep 30"]);
+        let error = run(command, "Fixture", Duration::from_millis(100))
+            .await
+            .unwrap_err();
+        assert!(error.contains("timed out"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_step_within_its_limit_returns_its_output() {
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "printf done"]);
+        assert_eq!(
+            run(command, "Fixture", DOWNLOAD_LIMIT).await.unwrap(),
+            b"done"
+        );
     }
 }

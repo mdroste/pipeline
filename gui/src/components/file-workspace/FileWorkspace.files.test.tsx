@@ -114,6 +114,37 @@ it("reloads a clean file that changed on disk", async () => {
   );
 });
 
+it("keeps checking the other tabs when one file can't be read", async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  let stamp = "stamp-1";
+  const read = vi.fn(async (path: string) => {
+    if (stamp === "stamp-2" && path === "a.py") throw new Error("Unreadable");
+    return file(
+      path,
+      stamp === "stamp-1"
+        ? {}
+        : { hash: "second", text: "From the assistant", stamp },
+    );
+  });
+  render(
+    <FileWorkspace
+      adapter={polled(read, () => stamp)}
+      paths={["a.py", "b.py"]}
+      initial={{ path: "a.py" }}
+    />,
+  );
+  await screen.findByLabelText("Source editor: a.py");
+  fireEvent.click(screen.getByRole("treeitem", { name: /b\.py/ }));
+  await screen.findByLabelText("Source editor: b.py");
+  stamp = "stamp-2";
+  await tick();
+  await waitFor(() =>
+    expect(screen.getByLabelText("Source editor: b.py")).toHaveValue(
+      "From the assistant",
+    ),
+  );
+});
+
 it("keeps a draft and says so when its file changes on disk", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   let stamp = "stamp-1";

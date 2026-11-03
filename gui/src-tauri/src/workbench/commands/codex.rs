@@ -1,6 +1,9 @@
 //! Codex Tauri commands.
 
+mod bridge_events;
+
 use super::*;
+pub(super) use bridge_events::BridgeEvents;
 
 #[tauri::command]
 pub async fn workbench_reconcile_workspace_roots(
@@ -689,43 +692,6 @@ pub fn workbench_codex_pending_requests() -> Vec<PendingRequest> {
     pending.into_iter().map(with_session).collect()
 }
 
-/// What the event bridge reads from one connection: its server requests, which
-/// lag can't drop, and everything else. A request goes first: the transport
-/// queues it before any later event, so its resolution can't overtake it.
-pub(super) struct BridgeEvents {
-    pub(super) events:
-        tokio::sync::broadcast::Receiver<crate::agent_runtime::events::NormalizedEvent>,
-    pub(super) requests: crate::agent_runtime::codex::ServerRequestSink,
-    pub(super) ended: bool,
-}
-
-impl BridgeEvents {
-    /// `None` after the connection's last event. The bridge holds the
-    /// connection open, so `Closed` alone would never arrive.
-    pub(super) async fn next(
-        &mut self,
-    ) -> Option<
-        Result<
-            crate::agent_runtime::events::NormalizedEvent,
-            tokio::sync::broadcast::error::RecvError,
-        >,
-    > {
-        if self.ended {
-            return None;
-        }
-        let received = tokio::select! {
-            biased;
-            Some(request) = self.requests.recv() => Ok(request),
-            received = self.events.recv() => received,
-        };
-        self.ended = matches!(
-            received,
-            Ok(crate::agent_runtime::events::NormalizedEvent::ConnectionClosed { .. })
-        );
-        Some(received)
-    }
-}
-
 /// Refuses a server request no screen can answer. It would otherwise show a card
 /// whose buttons can't reach Codex, and the turn would wait until Stop.
 pub(super) async fn refuse_unsupported_request(
@@ -763,11 +729,7 @@ pub(super) fn ensure_event_bridge(
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .clear();
-    let mut source = BridgeEvents {
-        events: supervisor.subscribe(),
-        requests: supervisor.request_sink(),
-        ended: false,
-    };
+    let mut source = BridgeEvents::new(supervisor.subscribe(), supervisor.request_sink());
     let recovery = supervisor.clone();
     let recovery_app = app.clone();
     tokio::spawn(async move {
@@ -779,7 +741,7 @@ pub(super) fn ensure_event_bridge(
             }
             if !recovery.status().connected {
                 recovery.shutdown().await;
-                crate::workbench::conversation_tools::stop_all().await;
+                stop_connection_tools(epoch).await;
                 close_active_connection(epoch);
                 announce_active_turn(&recovery_app, None);
                 break;
@@ -872,13 +834,14 @@ pub(super) fn ensure_event_bridge(
                                         }
                                     }
                                 }
-                                let success = response
+                                let succeeded = response
                                     .get("success")
                                     .and_then(Value::as_bool)
                                     .unwrap_or(false);
-                                let _ = tool_supervisor
-                                    .respond_to_server_request(request_id, Ok(response))
+                                let delivered = tool_supervisor
+                                    .respond_to_tool_call(request_id, response)
                                     .await;
+                                let success = succeeded && matches!(delivered, Ok(true));
                                 let _ = tool_app.emit(
                                     "workbench:event",
                                     json!({"kind":"researchToolCompleted","epoch":epoch,"success":success}),
@@ -925,7 +888,7 @@ pub(super) fn ensure_event_bridge(
                             // Transport failure alone does not prove the native
                             // process stopped. Reap it before releasing account use.
                             supervisor.shutdown().await;
-                            crate::workbench::conversation_tools::stop_all().await;
+                            stop_connection_tools(*epoch).await;
                             close_active_connection(*epoch);
                         }
                         crate::agent_runtime::events::NormalizedEvent::TurnCompleted {
@@ -935,12 +898,12 @@ pub(super) fn ensure_event_bridge(
                             status,
                             ..
                         } => {
-                            if let Err(error) =
+                            crate::workbench::conversation_tools::report_capture(
+                                &app,
+                                *epoch,
                                 crate::workbench::conversation_tools::finish(thread_id, turn_id)
-                                    .await
-                            {
-                                let _ = app.emit("workbench:event", crate::agent_runtime::events::NormalizedEvent::ProtocolWarning {epoch:*epoch,message:format!("The working copy could not be captured: {}. Its files are retained; refresh the working copy before accepting changes.",error.message)});
-                            }
+                                    .await,
+                            );
                             complete_active_turn(*epoch, thread_id, turn_id);
                             if status == "completed" {
                                 spawn_title_generation(
@@ -974,7 +937,7 @@ pub(super) fn ensure_event_bridge(
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                     supervisor.shutdown().await;
-                    crate::workbench::conversation_tools::stop_all().await;
+                    stop_connection_tools(epoch).await;
                     close_active_connection(epoch);
                     announce_active_turn(&app, None);
                     return;
@@ -1048,9 +1011,11 @@ async fn reconcile_active_turn(
     // so it must not reread the conversation's items.
     if let Ok(recent) = supervisor.recent_turns(&thread).await {
         if let Some(native_turn) = recovered_terminal(&recent, &turn) {
-            if let Err(error) = crate::workbench::conversation_tools::finish(&thread, &turn).await {
-                let _ = app.emit("workbench:event", crate::agent_runtime::events::NormalizedEvent::ProtocolWarning {epoch,message:format!("The working copy could not be captured: {}. Its files are retained; refresh before accepting changes.",error.message)});
-            }
+            crate::workbench::conversation_tools::report_capture(
+                app,
+                epoch,
+                crate::workbench::conversation_tools::finish(&thread, &turn).await,
+            );
             complete_active_turn(epoch, &thread, &turn);
             // The same loss that hid completion from the permit owner can hide
             // it from the renderer. Re-emit the authoritative terminal identity.

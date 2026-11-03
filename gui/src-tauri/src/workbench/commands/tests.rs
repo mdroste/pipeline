@@ -618,11 +618,7 @@ fn bridge_client(
 }
 
 fn bridge_source(client: &crate::workbench::codex::AppServerClient) -> BridgeEvents {
-    BridgeEvents {
-        events: client.subscribe(),
-        requests: client.connection_request_sink(),
-        ended: false,
-    }
+    BridgeEvents::new(client.subscribe(), client.connection_request_sink())
 }
 
 #[tokio::test]
@@ -675,6 +671,99 @@ async fn an_approval_inside_a_lagged_stretch_still_reaches_the_bridge() {
     assert!(matches!(
         source.next().await,
         Some(Err(tokio::sync::broadcast::error::RecvError::Lagged(_)))
+    ));
+}
+
+async fn write_frames(server: &mut tokio::io::DuplexStream, frames: &[Value]) {
+    use tokio::io::AsyncWriteExt as _;
+    for frame in frames {
+        server
+            .write_all(format!("{frame}\n").as_bytes())
+            .await
+            .unwrap();
+    }
+}
+
+fn file_change_started() -> Value {
+    json!({"method":"item/started","params":{"threadId":"thread-1","turnId":"turn-1","item":{"id":"change-1","type":"fileChange","status":"inProgress","changes":[]}}})
+}
+
+fn file_change_approval() -> Value {
+    json!({"id":"approval-1","method":"item/fileChange/requestApproval","params":{"threadId":"thread-1","turnId":"turn-1","itemId":"change-1"}})
+}
+
+#[tokio::test]
+async fn an_approval_arrives_after_the_item_it_asks_about() {
+    let (client, mut server) = bridge_client(23);
+    let mut source = bridge_source(&client);
+    let resolved = json!({"method":"serverRequest/resolved","params":{"threadId":"thread-1","requestId":"approval-1"}});
+    write_frames(
+        &mut server,
+        &[file_change_started(), file_change_approval(), resolved],
+    )
+    .await;
+    // All three are queued before the bridge reads any of them.
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(matches!(
+        source.next().await,
+        Some(Ok(NormalizedEvent::ItemStarted { .. }))
+    ));
+    assert!(matches!(
+        source.next().await,
+        Some(Ok(NormalizedEvent::ServerRequest { .. }))
+    ));
+    assert!(matches!(
+        source.next().await,
+        Some(Ok(NormalizedEvent::ServerRequestResolved { .. }))
+    ));
+}
+
+#[tokio::test]
+async fn an_approval_behind_a_lagged_stretch_comes_after_the_lag() {
+    let (client, mut server) = bridge_client(24);
+    let mut source = bridge_source(&client);
+    let flood = (0..4200)
+        .map(|index| json!({"method":"simulator/progress","params":{"index":index}}))
+        .collect::<Vec<_>>();
+    write_frames(&mut server, &flood).await;
+    write_frames(&mut server, &[file_change_approval()]).await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(matches!(
+        source.next().await,
+        Some(Err(tokio::sync::broadcast::error::RecvError::Lagged(_)))
+    ));
+    let mut events = 0;
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), source.next())
+            .await
+            .unwrap()
+        {
+            Some(Ok(NormalizedEvent::ServerRequest { .. })) => break,
+            Some(Ok(_)) => events += 1,
+            other => panic!("expected the approval, got {other:?}"),
+        }
+    }
+    assert_eq!(
+        events, 4096,
+        "the request waits for everything still queued"
+    );
+}
+
+#[tokio::test]
+async fn a_request_is_not_held_for_events_sent_after_it() {
+    let (client, mut server) = bridge_client(25);
+    let mut source = bridge_source(&client);
+    write_frames(&mut server, &[file_change_approval()]).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    write_frames(&mut server, &[file_change_started()]).await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(matches!(
+        source.next().await,
+        Some(Ok(NormalizedEvent::ServerRequest { .. }))
+    ));
+    assert!(matches!(
+        source.next().await,
+        Some(Ok(NormalizedEvent::ItemStarted { .. }))
     ));
 }
 

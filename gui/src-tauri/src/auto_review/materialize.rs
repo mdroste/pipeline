@@ -304,7 +304,12 @@ pub fn materialize_config(
             .iter()
             .find(|genre| genre.id == genre_id)
             .ok_or_else(|| format!("Auto-review orientation names unknown genre '{genre_id}'"))?;
-        for step in materialized.steps.iter_mut().filter(|step| step.enabled) {
+        // A Pipeline check makes no model call, so it has no prompt to extend.
+        for step in materialized
+            .steps
+            .iter_mut()
+            .filter(|step| step.enabled && step.kind.is_model())
+        {
             step.prompt = with_document_genre(&step.prompt, genre);
         }
     }

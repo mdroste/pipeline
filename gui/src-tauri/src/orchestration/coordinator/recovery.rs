@@ -5,32 +5,56 @@ use super::{adapters, Coordinator};
 use serde_json::Value;
 
 impl Coordinator {
-    /// Role conversations are hidden, so no window asks their runtime to settle
-    /// a turn that outlived its receipt. An unreachable runtime leaves the turn
-    /// open, and the action takes the same path as any turn with no live owner.
-    async fn settle_child_turn(&self, child: &TaskRun) {
-        if !child
+    /// An automation's conversation is rarely open, and role conversations are
+    /// hidden, so no window asks the runtime to settle a turn that outlived its
+    /// receipt. An unreachable runtime leaves the turn open, and the action takes
+    /// the same path as any turn with no live owner.
+    pub(crate) async fn settle_turns(&self, run: &TaskRun) {
+        if !run.progress.receipts.values().any(|r| r.state == "unknown") {
+            return;
+        }
+        if let Some(session) = run.scope.session_id.clone() {
+            adapters::settle_turn(self.app.clone(), session).await;
+        }
+    }
+
+    /// Before Retry replaces an attempt, takes up the turn it left in the
+    /// conversation. Any other turn stays a change the researcher must review.
+    pub(crate) async fn adopt_own_turn(&self, run: &mut TaskRun) -> Result<()> {
+        let Some(session) = run.scope.session_id.clone() else {
+            return Ok(());
+        };
+        let operations: Vec<_> = run
             .progress
             .receipts
             .values()
-            .any(|r| r.state == "unknown")
-        {
-            return;
+            .filter(|r| matches!(r.state.as_str(), "unknown" | "failed"))
+            .map(|r| r.operation.clone())
+            .collect();
+        if operations.is_empty() {
+            return Ok(());
         }
-        let Some(session) = child.scope.session_id.clone() else {
-            return;
+        let newest = || {
+            let (session, operations) = (session.clone(), operations.clone());
+            crate::workbench::commands::run_store(move |s| {
+                crate::workbench::tasks::own_newest_turn(&s, &session, &operations)
+            })
         };
-        let local = crate::workbench::commands::reconcile_local_session(session.clone()).await;
-        if let (Ok(false), Some(app)) = (local, self.app.clone()) {
-            let _ =
-                crate::workbench::commands::workbench_codex_reconcile_session(app, session).await;
+        let mut turn = newest().await.map_err(|e| e.message)?;
+        if turn.as_ref().is_some_and(|(_, ended)| !ended) {
+            self.settle_turns(run).await;
+            turn = newest().await.map_err(|e| e.message)?;
         }
+        if let Some((cursor, true)) = turn {
+            run.scope.session_cursor = Some(cursor);
+        }
+        Ok(())
     }
 
     /// Settles and reads a managed child's interrupted action without replaying
     /// it. A failure found here is saved before the owner classifies it.
     pub(crate) async fn recover_child(&self, child: &TaskRun) -> Result<TaskRun> {
-        self.settle_child_turn(child).await;
+        self.settle_turns(child).await;
         let mut recovered = child.clone();
         self.recover_results(&mut recovered).await?;
         if recovered.progress.receipts.iter().any(|(key, receipt)| {

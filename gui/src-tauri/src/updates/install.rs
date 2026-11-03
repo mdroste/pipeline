@@ -74,6 +74,10 @@ static JOB: Mutex<Job> = Mutex::new(Job {
     package: None,
 });
 
+/// Set when the updater is about to launch the installer and this app has
+/// stopped its runtimes. Verifying and unpacking the package come first.
+static RUNTIMES_STOPPED: AtomicBool = AtomicBool::new(false);
+
 fn job() -> MutexGuard<'static, Job> {
     JOB.lock().unwrap_or_else(|error| error.into_inner())
 }
@@ -164,6 +168,7 @@ async fn fetch_package(
             builder
                 .timeout(MANIFEST_TIMEOUT)
                 .on_before_exit(move || {
+                    RUNTIMES_STOPPED.store(true, Ordering::Release);
                     crate::stop_runtimes();
                     exit_app.cleanup_before_exit();
                 })
@@ -297,11 +302,17 @@ pub async fn restart(app: AppHandle) -> Result<(), String> {
         job.state = failed(job.state.version.clone(), message.clone());
         publish(&bus, &job.state);
     }
-    // The updater stops the runtimes and hides the window before launching
-    // the installer, so a launch that failed needs a fresh start.
-    #[cfg(windows)]
-    app.request_restart();
+    if needs_fresh_start(cfg!(windows)) {
+        app.request_restart();
+    }
     Err(message)
+}
+
+/// A failed launch of the Windows installer leaves the runtimes stopped and the
+/// window hidden. Any earlier failure leaves the app running, and the researcher
+/// needs to see why.
+fn needs_fresh_start(windows: bool) -> bool {
+    windows && RUNTIMES_STOPPED.load(Ordering::Acquire)
 }
 
 fn failure_message(error: &Error) -> String {
@@ -320,6 +331,14 @@ fn failure_message(error: &Error) -> String {
             "The update failed and Pipeline could not be put back in place. Your previous copy is at {}.",
             path.display()
         ),
+        // tempfile preserves the error kind when adding a path, but not the raw OS code.
+        Error::Io(error) if error.kind() == std::io::ErrorKind::ReadOnlyFilesystem => {
+            if cfg!(target_os = "macos") {
+                "The update could not be installed because its location is read-only. Quit Pipeline, use Finder to move Pipeline.app to Applications, then reopen it from Applications and try again. If you opened Pipeline from a disk image, copy it to Applications and eject the disk image first.".to_string()
+            } else {
+                "The update could not be installed because its location is read-only. Move or reinstall Pipeline on a writable drive, reopen it, and try again.".to_string()
+            }
+        }
         Error::Io(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
             "Pipeline doesn't have permission to replace itself.".to_string()
         }
@@ -384,6 +403,57 @@ mod tests {
                 "error": "no",
             })
         );
+    }
+
+    #[test]
+    fn only_a_failed_installer_launch_restarts_the_app() {
+        assert!(
+            !needs_fresh_start(true),
+            "the updater failed before its hook"
+        );
+        RUNTIMES_STOPPED.store(true, Ordering::Release);
+        assert!(needs_fresh_start(true));
+        assert!(!needs_fresh_start(false));
+        RUNTIMES_STOPPED.store(false, Ordering::Release);
+    }
+
+    #[test]
+    fn read_only_install_errors_explain_how_to_retry() {
+        use std::io::{Error as IoError, ErrorKind};
+
+        let message = failure_message(&Error::Io(IoError::from(ErrorKind::ReadOnlyFilesystem)));
+        assert!(message.contains("read-only"));
+        assert!(message.contains("try again"));
+        if cfg!(target_os = "macos") {
+            assert!(message.contains("Quit Pipeline"));
+            assert!(message.contains("Finder"));
+            assert!(message.contains("reopen it from Applications"));
+            assert!(message.contains("eject the disk image"));
+        } else {
+            assert!(message.contains("writable drive"));
+            assert!(!message.contains("Finder"));
+        }
+
+        // Match tempfile's path-wrapped error, which has no raw_os_error().
+        let wrapped = IoError::new(
+            ErrorKind::ReadOnlyFilesystem,
+            "Read-only file system (os error 30) at path \"/private/var/folders/example/T/AppTranslocation/example/d/tauri_current_app\"",
+        );
+        assert_eq!(wrapped.raw_os_error(), None);
+        assert_eq!(failure_message(&Error::Io(wrapped)), message);
+
+        #[cfg(target_os = "macos")]
+        assert_eq!(
+            failure_message(&Error::Io(IoError::from_raw_os_error(30))),
+            message
+        );
+
+        let unrelated = failure_message(&Error::Io(IoError::new(
+            ErrorKind::NotFound,
+            "missing update archive",
+        )));
+        assert!(unrelated.contains("missing update archive"));
+        assert!(!unrelated.contains("read-only"));
     }
 
     #[test]

@@ -82,22 +82,9 @@ pub async fn mission_prepare(app: tauri::AppHandle, request: Prepare) -> Result<
         scope.profiles.insert(id.clone(), pin);
     }
     let workspace_id = ws.clone();
-    let watch_cursor = run_store(move |s| {
-        s.connection()?
-            .query_row(
-                "SELECT COALESCE(MAX(rowid),0) FROM research_attention WHERE workspace_id=?1",
-                [workspace_id],
-                |r| r.get(0),
-            )
-            .map_err(|e| {
-                crate::workbench::store::WorkbenchError::storage(
-                    "Research automation watch baseline",
-                    e,
-                )
-            })
-    })
-    .await
-    .map_err(|e| e.message)?;
+    let watch_cursor = run_store(move |s| workspace::watch_baseline(&s, &workspace_id))
+        .await
+        .map_err(|e| e.message)?;
     let workspace_id = ws.clone();
     let monitors = request.definition.policy.monitor_ids.clone();
     let watch_snapshots =
@@ -208,7 +195,7 @@ pub async fn mission_control(
     if m.revision != revision {
         return Err("This research automation changed; reload before continuing".into());
     }
-    let previous = m.state.clone();
+    let mut previous = m.state.clone();
     match action.as_str() {
         "start" if m.state == "draft" => {
             // Validate all role permissions before granting any captured host plans.
@@ -259,24 +246,11 @@ pub async fn mission_control(
             m.due_at = m.active_child.as_ref().map(|_| now() + 2);
         }
         "resume" if m.state == "paused" => {
-            if let Some(id) = m.active_child.clone() {
-                coordinator
-                    .db(move |s| {
-                        let mut child = s.get(&id)?;
-                        if child.state == "paused" {
-                            child.state = "queued".into();
-                            child.due_at = Some(now());
-                            s.save(&mut child, "missionResume", "Owning automation resumed")?;
-                        }
-                        Ok(())
-                    })
-                    .await?;
-                m.state = "running".into();
-            } else {
-                m.state = "queued".into();
+            resume(&coordinator, &mut m).await?;
+            // Going back to a wait the researcher already knows about is no news.
+            if m.state == "waiting" {
+                previous = m.state.clone();
             }
-            m.reason = "Resuming within the remaining budget".into();
-            m.due_at = Some(now());
         }
         "stop" if !m.terminal() && m.state != "stopping" => {
             m.reason =
@@ -295,11 +269,41 @@ pub async fn mission_control(
             reconcile(&coordinator, &mut m).await?;
         }
         "retry" if m.state == "attention" => retry(&coordinator, &mut m).await?,
+        "reconsider" if m.state == "attention" => reconsider(&coordinator, &mut m).await?,
         _ => return Err("This action is unavailable in the automation's current state".into()),
     }
     save(&coordinator, &mut m, &action).await?;
     notify(&coordinator, &m, &previous);
     Ok(m)
+}
+
+/// Takes up where the pause left off. A wait that is still open stays a wait, so
+/// nothing is spent asking the same question again, and the next check reads any
+/// tracked change made during the pause.
+pub(super) async fn resume(coordinator: &Coordinator, m: &mut Mission) -> Result<()> {
+    m.reason = "Resuming within the remaining budget".into();
+    m.due_at = Some(now());
+    if let Some(id) = m.active_child.clone() {
+        coordinator
+            .db(move |s| {
+                let mut child = s.get(&id)?;
+                if child.state == "paused" {
+                    child.state = "queued".into();
+                    child.due_at = Some(now());
+                    s.save(&mut child, "missionResume", "Owning automation resumed")?;
+                }
+                Ok(())
+            })
+            .await?;
+        m.state = "running".into();
+    } else if let Some(wait) = planning::open_wait(m) {
+        m.state = "waiting".into();
+        m.reason = wait.into();
+        m.due_at = planning::wait_due(m);
+    } else {
+        m.state = "queued".into();
+    }
+    Ok(())
 }
 
 /// Settles and reads the interrupted action, replaying nothing. A result on
@@ -343,6 +347,67 @@ pub(super) async fn reconcile(coordinator: &Coordinator, m: &mut Mission) -> Res
     Ok(())
 }
 
+/// Takes up any check the researcher has approved again, and marks the ones still
+/// waiting for that approval. Permissions never widen here: an unapproved check
+/// keeps its old pin and stays refused. Returns the checks newly marked.
+pub(super) async fn refresh_checks(m: &mut Mission) -> Result<Vec<String>> {
+    let refused = adapters::repin_checks(&mut m.scope).await?;
+    let mut newly_refused = Vec::new();
+    for capability in &mut m.capabilities {
+        let pinned = m
+            .scope
+            .checks
+            .get(&capability.id)
+            .or_else(|| m.scope.captured_checks.get(&capability.id));
+        if let Some(pinned) = pinned {
+            capability.fingerprint = pinned.clone();
+        }
+        let unavailable = refused.contains(&capability.id);
+        if unavailable && !capability.unavailable {
+            newly_refused.push(capability.name.clone());
+        }
+        capability.unavailable = unavailable;
+    }
+    Ok(newly_refused)
+}
+
+/// The check the next action needs, if it is still waiting for approval.
+fn refused_selection(m: &Mission) -> Option<String> {
+    let selected = m.rounds.last().and_then(|r| r.selected.as_ref());
+    selected
+        .filter(|_| m.phase == Phase::Investigate)
+        .and_then(|c| c.capability_id.as_ref())
+        .and_then(|id| m.capabilities.iter().find(|c| &c.id == id))
+        .filter(|c| c.unavailable)
+        .map(|c| c.name.clone())
+}
+
+/// The child must have stopped before the automation can move past it.
+async fn stopped_child(coordinator: &Coordinator, id: String) -> Result<TaskRun> {
+    let child = coordinator.db(move |s| s.get(&id)).await?;
+    if child
+        .progress
+        .receipts
+        .values()
+        .any(|r| r.state == "running")
+    {
+        return Err("The previous step is still stopping. Try again in a moment.".into());
+    }
+    Ok(child)
+}
+
+async fn close_child(coordinator: &Coordinator, m: &mut Mission, child: &str) -> Result<()> {
+    let mut copy = m.clone();
+    let child = child.to_string();
+    *m = coordinator
+        .db(move |s| {
+            storage::adopted(&s, &mut copy, &child)?;
+            Ok(copy)
+        })
+        .await?;
+    Ok(())
+}
+
 pub(super) async fn retry(coordinator: &Coordinator, m: &mut Mission) -> Result<()> {
     if exhausted(m) {
         return Err(
@@ -350,71 +415,94 @@ pub(super) async fn retry(coordinator: &Coordinator, m: &mut Mission) -> Result<
                 .into(),
         );
     }
-    if let Some(id) = m.active_child.clone() {
-        let child = coordinator.db(move |s| s.get(&id)).await?;
-        if child
-            .progress
-            .receipts
-            .values()
-            .any(|r| r.state == "running")
-        {
-            return Err("The previous step is still stopping. Try again in a moment.".into());
-        }
-        account(m, &child);
-        // Explicit retry may adopt the researcher's intervening reply, but never
-        // altered permissions, roots, selected context or execution grants.
-        let target = match m.phase {
-            Phase::Plan => &mut m.planner_scope,
-            Phase::Challenge => &mut m.challenger_scope,
-            _ => &mut m.scope,
-        };
-        let session = target
-            .session_id
-            .clone()
-            .ok_or("This automation's conversation is missing")?;
-        let expected = m.authority_fingerprints.get(&session).cloned().ok_or(
-            "This automation's permission record is unavailable. Start a new research automation.",
-        )?;
-        let old = target.clone();
-        *target = run_store(move |s| workspace::readopt_scope(&s, &old, &expected, true))
-            .await
-            .map_err(|e| e.message)?;
+    let Some(id) = m.active_child.clone() else {
+        return reconsider(coordinator, m).await;
+    };
+    let child = stopped_child(coordinator, id).await?;
+    // Accounting takes back the child's scope, so checks are read after it. On
+    // a copy, because a refused retry spends nothing: it could only fail again.
+    let mut next = m.clone();
+    account(&mut next, &child);
+    refresh_checks(&mut next).await?;
+    if let Some(name) = refused_selection(&next) {
+        return Err(format!(
+            "'{name}' changed and needs your approval. Approve it in the project's Results view and retry, or choose Reconsider the agenda."
+        ));
+    }
+    *m = next;
+    // Explicit retry may adopt the researcher's intervening reply, but never
+    // altered permissions, roots, selected context or execution grants.
+    let target = match m.phase {
+        Phase::Plan => &mut m.planner_scope,
+        Phase::Challenge => &mut m.challenger_scope,
+        _ => &mut m.scope,
+    };
+    let session = target
+        .session_id
+        .clone()
+        .ok_or("This automation's conversation is missing")?;
+    let expected = m.authority_fingerprints.get(&session).cloned().ok_or(
+        "This automation's permission record is unavailable. Start a new research automation.",
+    )?;
+    let old = target.clone();
+    *target = run_store(move |s| workspace::readopt_scope(&s, &old, &expected, true))
+        .await
+        .map_err(|e| e.message)?;
+    m.active_child = None;
+    m.state = "queued".into();
+    m.due_at = Some(now());
+    m.reason =
+        "Retry authorized with current conversation input and the original resource limits".into();
+    close_child(coordinator, m, &child.id).await
+}
+
+/// Goes back to the planner, leaving any stuck action behind. The action that
+/// could not run may belong to any role, and a role's conversation may have
+/// moved on (a steering message, a turn that settled later), so every role takes
+/// up its own conversation again or the next dispatch fails the same way.
+pub(super) async fn reconsider(coordinator: &Coordinator, m: &mut Mission) -> Result<()> {
+    if exhausted(m) {
+        return Err(
+            "This automation has used its budget. Start a new research automation to do more work."
+                .into(),
+        );
+    }
+    let child = match m.active_child.clone() {
+        Some(id) => Some(stopped_child(coordinator, id).await?),
+        None => None,
+    };
+    // Accounting takes back the child's scope, so everything below reads after it.
+    if let Some(child) = &child {
+        account(m, child);
         m.active_child = None;
-        m.state = "queued".into();
-        m.due_at = Some(now());
-        m.reason =
-            "Retry authorized with current conversation input and the original resource limits"
-                .into();
-        let mut copy = m.clone();
-        let child_id = child.id.clone();
-        *m = coordinator
-            .db(move |s| {
-                storage::adopted(&s, &mut copy, &child_id)?;
-                Ok(copy)
-            })
-            .await?;
-    } else {
-        // Attention without a child (stagnation, a scope failure during
-        // dispatch): the planner conversation may have received a
-        // steering message meanwhile, so re-adopt its cursor exactly as
-        // the active-child branch does, or every Retry fails again.
-        m.phase = Phase::Plan;
-        let session = m
-            .planner_scope
+    }
+    refresh_checks(m).await?;
+    let mut scopes = Vec::new();
+    for scope in [&m.scope, &m.planner_scope, &m.challenger_scope] {
+        let session = scope
             .session_id
             .clone()
             .ok_or("This automation's conversation is missing")?;
         let expected = m.authority_fingerprints.get(&session).cloned().ok_or(
             "This automation's permission record is unavailable. Start a new research automation.",
         )?;
-        let old = m.planner_scope.clone();
-        m.planner_scope = run_store(move |s| workspace::readopt_scope(&s, &old, &expected, true))
-            .await
-            .map_err(|e| e.message)?;
-        m.state = "queued".into();
-        m.due_at = Some(now());
-        m.reason = "Reconsidering the agenda within the remaining budget".into();
-        m.stagnant_rounds = 0;
+        let old = scope.clone();
+        scopes.push(
+            run_store(move |s| workspace::readopt_scope(&s, &old, &expected, true))
+                .await
+                .map_err(|e| e.message)?,
+        );
+    }
+    m.challenger_scope = scopes.pop().ok_or("Role scope is missing")?;
+    m.planner_scope = scopes.pop().ok_or("Role scope is missing")?;
+    m.scope = scopes.pop().ok_or("Role scope is missing")?;
+    m.phase = Phase::Plan;
+    m.state = "queued".into();
+    m.due_at = Some(now());
+    m.reason = "Reconsidering the agenda within the remaining budget".into();
+    m.stagnant_rounds = 0;
+    if let Some(child) = child {
+        close_child(coordinator, m, &child.id).await?;
     }
     Ok(())
 }

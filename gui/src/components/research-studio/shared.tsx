@@ -13,6 +13,7 @@ import type { ProjectHome } from "../../lib/projectClient";
 import type { ReviewHandoff } from "../../lib/workbenchTypes";
 import { button, input } from "../../ui/classes";
 import "../project-surface/ProjectPage.css";
+import ReportIssueLink from "../ReportIssueLink";
 export { button, input };
 export const panel = "project-section";
 export interface StudioProps {
@@ -155,7 +156,11 @@ export function useDraftGuard(draft: unknown) {
       if (confirmed) load();
     });
   }, []);
-  return { markSaved, replace };
+  const isDirty = useCallback(
+    () => JSON.stringify(latest.current) !== saved.current,
+    [],
+  );
+  return { markSaved, replace, isDirty };
 }
 export function ErrorNotice({ error }: { error: string | null }) {
   const alert = useRef<HTMLParagraphElement>(null);
@@ -170,6 +175,7 @@ export function ErrorNotice({ error }: { error: string | null }) {
       className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-900 dark:bg-red-950/40 dark:text-red-200"
     >
       {error}
+      <ReportIssueLink />
     </p>
   ) : null;
 }

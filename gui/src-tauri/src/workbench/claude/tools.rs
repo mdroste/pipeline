@@ -101,7 +101,20 @@ pub(super) async fn message(
             )
         }
     };
-    Ok(json!({"mcp_response":{"jsonrpc":"2.0","id":id,"result":result}}))
+    Ok(bounded_reply(id, result))
+}
+
+/// A reply over Claude's input limit would end the turn when it is written, so
+/// it becomes a failed result the model can act on.
+pub(super) fn bounded_reply(id: &Value, result: Value) -> Value {
+    let reply = json!({"mcp_response":{"jsonrpc":"2.0","id":id,"result":result}});
+    if reply.to_string().len() > super::transport::TOOL_REPLY_LIMIT {
+        return refused(
+            id,
+            "This tool's reply is too large to send. Ask for less text or a single image.",
+        );
+    }
+    reply
 }
 
 /// A failed tool result the model can read and correct, as opposed to an `Err`,

@@ -11,6 +11,7 @@ import { router } from "../lib/router";
 import ProjectIssueLedgerPanel from "./ProjectIssueLedgerPanel";
 import { confirmDialog, notify } from "./DialogService";
 import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   onDirtyChange?: (dirty: boolean) => void;
@@ -589,6 +590,7 @@ export default function ProjectsPage({
             className="m-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
           >
             {error}
+            <ReportIssueLink />
           </div>
         )}
         {warnings.length > 0 && (

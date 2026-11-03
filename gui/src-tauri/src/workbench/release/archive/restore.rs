@@ -515,7 +515,7 @@ pub fn import_archive(
                 })?;
         }
     }
-    imported.execute_batch("UPDATE discovery_roles SET enabled=0; DELETE FROM execution_plan_state; UPDATE experiment_runs SET state='attention',authorized_hash=NULL,reason='Restored material requires execution reconciliation and new authorization'; UPDATE scheduled_checks SET enabled=0; UPDATE research_followups SET state='attention' WHERE state IN ('queued','dispatching','running'); DELETE FROM research_fts; UPDATE research_index_state SET generation=generation+1,cursor='',byte_offset=0,complete=0;").map_err(|e|WorkbenchError::storage("Reset imported desk authority and projection",e))?;
+    imported.execute_batch("UPDATE discovery_roles SET enabled=0; DELETE FROM execution_plan_state; UPDATE experiment_runs SET authorized_hash=NULL; UPDATE experiment_runs SET state='attention',reason='Restored material requires execution reconciliation and new authorization' WHERE state IN ('ready','running','paused'); UPDATE scheduled_checks SET enabled=0; UPDATE research_followups SET state='attention' WHERE state IN ('queued','dispatching','running'); DELETE FROM research_fts; UPDATE research_index_state SET generation=generation+1,cursor='',byte_offset=0,complete=0;").map_err(|e|WorkbenchError::storage("Reset imported desk authority and projection",e))?;
     imported
         .execute("DELETE FROM execution_authorizations", [])
         .map_err(|error| {

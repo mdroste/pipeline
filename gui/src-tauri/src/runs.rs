@@ -54,7 +54,7 @@ pub use artifacts::{
     open_artifact_stream, read_artifact, read_page_artifact, read_pdf_artifact_bytes,
     read_pdf_artifact_page,
 };
-pub use history::{list_runs, load_latest_report_for_input, update_run_meta};
+pub use history::{created_before, list_runs, load_latest_report_for_input, update_run_meta};
 pub use identity::{
     input_identity, new_run_id, open_run_lock, run_lock_path, runs_dir, validate_run_id,
 };

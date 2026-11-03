@@ -180,6 +180,78 @@ fn moved_away_and_deleted_text_is_not_read() {
 }
 
 #[test]
+fn word_symbols_reach_the_text_and_an_unknown_one_is_reported() {
+    let body = concat!(
+        r#"<w:p><w:r><w:t xml:space="preserve">The coefficient </w:t></w:r>"#,
+        r#"<w:r><w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol"/></w:rPr><w:sym w:font="Symbol" w:char="F062"/></w:r>"#,
+        r#"<w:r><w:t xml:space="preserve"> = 0.3 in the long</w:t><w:noBreakHyphen/><w:t>term.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:sym w:font="Webdings" w:char="F021"/></w:r></w:p>"#,
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let path = write_docx(directory.path(), &[("word/document.xml", document(body))]);
+    let parsed = parse_docx(&path).unwrap();
+    assert!(
+        parsed
+            .markdown
+            .contains("The coefficient β = 0.3 in the long-term."),
+        "{}",
+        parsed.markdown
+    );
+    assert!(parsed.markdown.contains("\u{FFFD}\n"));
+    assert_eq!(parsed.notes.len(), 1);
+    assert!(parsed.notes[0].starts_with("1 symbol in a font"));
+    assert!(parsed
+        .markdown
+        .contains(&format!("> Extraction note: {}", parsed.notes[0])));
+}
+
+#[test]
+fn notes_past_the_limit_are_counted_and_reach_the_report() {
+    let footnote = |id: usize| {
+        format!(
+            r#"<w:footnote w:id="{id}"><w:p><w:r><w:t>Note {id}.</w:t></w:r></w:p></w:footnote>"#
+        )
+    };
+    let separator = r#"<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>"#;
+    let notes: String = (1..=1_004).map(footnote).collect();
+    let footnotes = format!(r#"<w:footnotes {NAMESPACES}>{separator}{notes}</w:footnotes>"#);
+    let directory = tempfile::tempdir().unwrap();
+    let path = write_docx(
+        directory.path(),
+        &[
+            ("word/document.xml", document(&paragraph("Body."))),
+            ("word/footnotes.xml", footnotes),
+        ],
+    );
+    let text = extract_docx_text(&path).unwrap();
+    assert!(text.contains("Note 999."));
+    assert!(!text.contains("Note 1000."));
+    assert!(
+        text.contains("> Extraction note: 5 footnotes omitted. Only the first 1000 are read."),
+        "{}",
+        &text[text.len() - 200..]
+    );
+
+    let run = tempfile::tempdir().unwrap();
+    let bundle = build(
+        &ExtractionResult {
+            text,
+            method: "pandoc".into(),
+            source_path: path.to_string_lossy().into_owned(),
+            paper_hash: "hash".into(),
+            quality_notes: Vec::new(),
+        },
+        run.path(),
+    )
+    .unwrap()
+    .bundle;
+    assert!(bundle
+        .quality
+        .iter()
+        .any(|note| note.message.starts_with("5 footnotes omitted.")));
+}
+
+#[test]
 fn notes_use_the_same_reader_as_the_body() {
     let footnotes = format!(
         concat!(

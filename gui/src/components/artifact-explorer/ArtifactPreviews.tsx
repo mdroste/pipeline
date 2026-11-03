@@ -5,6 +5,7 @@ import type { ArtifactEntry, ArtifactContent } from "../../lib/artifactTypes";
 import HighlightedCode from "../file-workspace/HighlightedCode";
 import { parseResearchTable } from "../ResearchTablePreview";
 import { ext, formatBytes } from "./format";
+import ReportIssueLink from "../ReportIssueLink";
 const MAX_CSV_ROWS = 200;
 export function CodeView({ text, relPath }: { text: string; relPath: string }) {
   return <HighlightedCode text={text} language={fileLanguage(relPath)} />;
@@ -114,6 +115,7 @@ export function BinaryCard({
       {openError && (
         <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-400">
           {openError}
+          <ReportIssueLink />
         </p>
       )}
     </div>

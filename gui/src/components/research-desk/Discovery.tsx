@@ -12,6 +12,7 @@ import useReopenCount from "../../hooks/useReopenCount";
 import { folderName } from "../project-surface/shared";
 import { plainLabel } from "../research-panel/format";
 import { button, input, card, muted, type DeskProps } from "./shared";
+import ReportIssueLink from "../ReportIssueLink";
 
 const INBOX_PAGE = 60;
 
@@ -117,6 +118,7 @@ export default function Discovery({
           {r.body.error && (
             <p role="alert" className="text-sm text-danger">
               {r.body.error}
+              <ReportIssueLink />
             </p>
           )}
           {r.body.sourceVersionId && (

@@ -476,6 +476,7 @@ fn new_or_id(object_id: Option<&str>) -> WorkbenchResult<String> {
     }
 }
 fn exact_text(store: &Store, ws: &str, revision: &str) -> WorkbenchResult<String> {
+    documents::require_text(store, ws, revision)?;
     let view = read_document(store, ws, revision, 0, None)?;
     if view.total_bytes > 2 * 1024 * 1024 {
         return Err(WorkbenchError::invalid(
@@ -491,6 +492,12 @@ fn exact_text(store: &Store, ws: &str, revision: &str) -> WorkbenchResult<String
         }
         offset = part.end;
         text.push_str(&part.text);
+    }
+    // A scanned PDF extracts successfully, as nothing but page breaks.
+    if text.trim().is_empty() {
+        return Err(WorkbenchError::invalid(
+            "This document has no readable text. A scanned PDF needs a version with a text layer.",
+        ));
     }
     Ok(text)
 }
@@ -543,7 +550,7 @@ pub fn stage_publication_files(
                 "Destination {path} changed; refresh the task copy before staging"
             )));
         }
-        if root.executable(path)? {
+        if root.marked_as_program(path)? {
             return Err(WorkbenchError::invalid(
                 "Publication files cannot overwrite an executable file",
             ));
@@ -553,14 +560,10 @@ pub fn stage_publication_files(
     for (path, expected, bytes) in files_to_write {
         if root.optional_read(&path)?.as_deref() != Some(bytes.as_slice()) {
             let claim = id("publication")?;
-            root.replace(
-                &path,
-                expected.as_deref(),
-                false,
-                Some(&bytes),
-                false,
-                &claim,
-            )?;
+            // Not a program by the check above, though a volume with invented
+            // permissions shows the bit on every file.
+            let mode = root.executable(&path)?;
+            root.replace(&path, expected.as_deref(), mode, Some(&bytes), mode, &claim)?;
             root.clear_claim(&path, &claim)?;
         }
         staged.push(json!({"path":path,"hash":hash(&bytes)}));

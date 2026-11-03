@@ -10,7 +10,7 @@ use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub const CURRENT_SCHEMA_VERSION: u32 = 19;
+pub const CURRENT_SCHEMA_VERSION: u32 = 20;
 const MAX_WORKSPACE_NAME_BYTES: usize = 300;
 const MAX_SESSION_TITLE_BYTES: usize = 300;
 const MAX_DRAFT_BYTES: usize = 1_000_000;
@@ -50,6 +50,10 @@ pub struct WorkbenchError {
     pub message: String,
     pub retryable: bool,
     pub recovery: Option<String>,
+    /// Refused only for the moment. Background work tries again rather than
+    /// stopping. Never serialized: the code stays what its callers expect.
+    #[serde(skip)]
+    pub transient: bool,
 }
 
 impl WorkbenchError {
@@ -59,7 +63,14 @@ impl WorkbenchError {
             message: message.into(),
             retryable: false,
             recovery: None,
+            transient: false,
         }
+    }
+
+    pub(crate) fn transient(mut self) -> Self {
+        self.retryable = true;
+        self.transient = true;
+        self
     }
 
     pub(crate) fn conflict(message: impl Into<String>) -> Self {
@@ -68,6 +79,7 @@ impl WorkbenchError {
             message: message.into(),
             retryable: true,
             recovery: Some("Refresh the Workbench record and retry your edit.".to_string()),
+            transient: false,
         }
     }
 
@@ -77,6 +89,7 @@ impl WorkbenchError {
             message: format!("{context}: {error}"),
             retryable: false,
             recovery: Some("Retry after checking local storage availability.".to_string()),
+            transient: false,
         }
     }
 
@@ -88,6 +101,7 @@ impl WorkbenchError {
             ),
             retryable: false,
             recovery: Some("Open the store with the newer Pipeline version that created it.".to_string()),
+            transient: false,
         }
     }
 
@@ -100,6 +114,7 @@ impl WorkbenchError {
                 "Retry the operation. Restart Pipeline if database workers remain unavailable."
                     .to_string(),
             ),
+            transient: false,
         }
     }
 }

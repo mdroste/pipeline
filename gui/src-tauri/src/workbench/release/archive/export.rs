@@ -115,9 +115,6 @@ fn compact_page_receipts(snapshot: &Connection) -> WorkbenchResult<()> {
             .map_err(|error| WorkbenchError::storage("Failed to decode page receipts", error))?;
         ids
     };
-    if ids.is_empty() {
-        return Ok(());
-    }
     // One at a time: together these rows may not fit in memory.
     for id in ids {
         let result: String = snapshot
@@ -136,6 +133,28 @@ fn compact_page_receipts(snapshot: &Connection) -> WorkbenchResult<()> {
                 params![id, without_page_images(&response).to_string()],
             )
             .map_err(|error| WorkbenchError::storage("Failed to compact page receipts", error))?;
+    }
+    Ok(())
+}
+
+/// A finished job's journal repeats its receipt. A run with no final outcome
+/// keeps its own, which is what lets it be reconciled after a restore.
+fn clear_finished_job_journals(snapshot: &Connection) -> WorkbenchResult<()> {
+    snapshot
+        .execute("UPDATE execution_jobs SET finalization_json=NULL WHERE finalization_json IS NOT NULL AND execution_id IN (SELECT id FROM research_executions WHERE outcome IN ('completed','failed','interrupted','timed_out'))", [])
+        .map_err(|error| WorkbenchError::storage("Failed to compact job journals", error))?;
+    Ok(())
+}
+
+/// A copied database brings its free pages with it, so space given back by the
+/// steps above or already free in the live store would still count toward the
+/// archive-entry limit.
+fn reclaim_free_pages(snapshot: &Connection) -> WorkbenchResult<()> {
+    let free: i64 = snapshot
+        .query_row("PRAGMA freelist_count", [], |row| row.get(0))
+        .map_err(|error| WorkbenchError::storage("Failed to compact archive snapshot", error))?;
+    if free == 0 {
+        return Ok(());
     }
     snapshot
         .execute_batch("VACUUM")
@@ -275,6 +294,8 @@ pub fn export_archive_without(
     }
     make_references_portable(&snapshot)?;
     compact_page_receipts(&snapshot)?;
+    clear_finished_job_journals(&snapshot)?;
+    reclaim_free_pages(&snapshot)?;
     // A retention row left outside blobs/ keeps nothing in a restored store,
     // and its path says where this folder used to be.
     snapshot
@@ -463,7 +484,7 @@ pub fn export_archive_without(
     {
         return Err(WorkbenchError::invalid("Research archive exceeds 2 GiB"));
     }
-    file.sync_all()
+    crate::safety::sync_file(&file)
         .map_err(|error| WorkbenchError::storage("Failed to sync research archive", error))?;
     drop(file);
     temporary_archive.persist(&target).map_err(|error| {

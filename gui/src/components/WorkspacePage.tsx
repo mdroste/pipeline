@@ -45,6 +45,7 @@ import WorkspaceComposerMenu from "./WorkspaceComposerMenu";
 import WorkspaceConversationOutline from "./WorkspaceConversationOutline";
 import { MoveConversationDialog } from "./WorkspaceConversationActions";
 import type { ReviewHandoff } from "../lib/workbenchTypes";
+import ReportIssueLink from "./ReportIssueLink";
 
 const WorkspaceProjectSurface = lazy(() => import("./WorkspaceProjectSurface"));
 const WorkspaceProjectDialog = lazy(() => import("./WorkspaceProjectDialog"));
@@ -143,6 +144,7 @@ export default function WorkspacePage({
       requestItem,
       backgroundTurn,
       notice,
+      warnings,
       acceptSnapshot,
       setSubmitting,
     },
@@ -392,12 +394,38 @@ export default function WorkspacePage({
               className="p-3 text-sm text-red-700 dark:text-red-300"
             >
               {actionError}
+              <ReportIssueLink />
             </p>
           ) : actionNotice ? (
             <p role="status" className="p-3 text-sm">
               {actionNotice}
             </p>
           ) : null
+        }
+        assistantFeedback={
+          <>
+            {warnings.map((warning) => (
+              <p key={warning} role="status" className="p-3 text-sm">
+                {warning}
+              </p>
+            ))}
+            {error && (
+              <p
+                role="alert"
+                className="p-3 text-sm text-red-700 dark:text-red-300"
+              >
+                {error}{" "}
+                <button
+                  type="button"
+                  className="underline"
+                  onClick={() => setError(null)}
+                >
+                  Dismiss
+                </button>
+                <ReportIssueLink />
+              </p>
+            )}
+          </>
         }
         assistantRequest={assistantRequest}
         projectRequest={projectRequest}
@@ -684,7 +712,7 @@ export default function WorkspacePage({
                           }}
                           onRefresh={() => hydrate()}
                           onBranch={async (id) => {
-                            await loadSessions(workspaceId);
+                            await loadSessions(workspaceId, undefined, true);
                             await selectSession(id);
                           }}
                         />
@@ -788,6 +816,7 @@ export default function WorkspacePage({
             messageRef={messageRef}
             error={error}
             notice={notice}
+            warnings={warnings}
             draft={draft}
             disabled={
               !sessionId ||

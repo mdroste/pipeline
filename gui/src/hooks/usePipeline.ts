@@ -26,6 +26,7 @@ import {
   type EnqueueRunRequest,
   type StartBatchRequest,
 } from "../lib/appClient";
+import { workbenchErrorMessage } from "../lib/workbenchError";
 
 /** How long (ms) log lines wait before they are flushed to state. */
 const LOG_FLUSH_DELAY = 200;
@@ -203,7 +204,7 @@ export function usePipeline() {
     // listenersReady) would otherwise stay disabled forever with no feedback.
     setupPromise.catch((e: unknown) => {
       if (!mounted) return;
-      const message = e instanceof Error ? e.message : String(e);
+      const message = workbenchErrorMessage(e);
       console.error("Failed to register Tauri event listeners:", e);
       setSetupError(
         `Failed to register event listeners: ${message}. Reload the window to retry.`,

@@ -1,10 +1,19 @@
 //! One independently supervised CLI process per Workspace turn. No Review state.
 use super::super::turn_loop::{ModelClock, TurnEvents, HOST_TIME_LIMIT};
+use super::budget::OutputBudget;
 use super::*;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
+
+/// The most Pipeline writes to Claude Code in one frame.
+const INPUT_FRAME_LIMIT: usize = 8 * 1024 * 1024;
+/// The largest tool reply that fits in an input frame with its envelope.
+pub(super) const TOOL_REPLY_LIMIT: usize = INPUT_FRAME_LIMIT - 4096;
+/// The most Claude Code may write in one frame. It echoes each tool result, and
+/// the echo can carry the result twice, so this is twice the input limit.
+const OUTPUT_FRAME_LIMIT: usize = 2 * INPUT_FRAME_LIMIT;
 
 pub(super) struct Process {
     child: Child,
@@ -120,8 +129,13 @@ impl Process {
     }
 
     pub async fn write(&mut self, value: &Value) -> Result<(), String> {
+        self.write_sized(value).await.map(|_| ())
+    }
+
+    /// One frame, returning its size on the wire.
+    async fn write_sized(&mut self, value: &Value) -> Result<usize, String> {
         let mut text = serde_json::to_vec(value).map_err(|e| e.to_string())?;
-        if text.len() > 8 * 1024 * 1024 {
+        if text.len() > INPUT_FRAME_LIMIT {
             return Err("Claude input exceeded its 8 MiB limit".into());
         }
         text.push(b'\n');
@@ -129,7 +143,8 @@ impl Process {
             .write_all(&text)
             .await
             .map_err(|e| e.to_string())?;
-        self.stdin.flush().await.map_err(|e| e.to_string())
+        self.stdin.flush().await.map_err(|e| e.to_string())?;
+        Ok(text.len())
     }
 
     pub async fn read(&mut self) -> Result<Value, String> {
@@ -138,7 +153,7 @@ impl Process {
 
     /// One frame and its size on the wire, which a turn counts against its budget.
     async fn read_sized(&mut self) -> Result<(Value, usize), String> {
-        let line = crate::pipeline::logging::next_bounded_line(&mut self.stdout, 2 * 1024 * 1024).await.map_err(|e| e.to_string())?
+        let line = crate::pipeline::logging::next_bounded_line(&mut self.stdout, OUTPUT_FRAME_LIMIT).await.map_err(|e| e.to_string())?
             .ok_or("Claude Code closed its output before completing the turn. Check its subscription sign-in and CLI version.")?;
         if line.truncated {
             return Err("Claude output exceeded its frame limit".into());
@@ -225,8 +240,8 @@ async fn control_answer(
 /// and stdout. Time spent running a command in Claude's Bash tool or in
 /// Pipeline's project tools, including a local job that a research run waits
 /// for under its own profile timeout, is not counted.
-const MODEL_TIME_LIMIT: Duration = Duration::from_secs(15 * 60);
-const MODEL_TIMEOUT: &str = "Claude turn timed out after 15 minutes of model time. Time spent in commands, project tools and local jobs is not counted.";
+const MODEL_TIME_LIMIT: Duration = Duration::from_secs(60 * 60);
+const MODEL_TIMEOUT: &str = "Claude turn timed out after 60 minutes of model time. Time spent in commands, project tools and local jobs is not counted.";
 const HOST_TIMEOUT: &str =
     "Claude turn stopped after 4 hours in commands, project tools and local jobs.";
 
@@ -241,8 +256,23 @@ pub(super) async fn drive(
     turn: &Turn,
     prompt: &protocol::Prompt,
     specs: Vec<Value>,
+    clock: ModelClock,
+    cancel: watch::Receiver<bool>,
+) -> Result<(), String> {
+    let budget = OutputBudget::default();
+    drive_within(process, app, turn, prompt, specs, clock, cancel, budget).await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn drive_within(
+    process: &mut Process,
+    app: &impl TurnEvents,
+    turn: &Turn,
+    prompt: &protocol::Prompt,
+    specs: Vec<Value>,
     mut clock: ModelClock,
     mut cancel: watch::Receiver<bool>,
+    mut budget: OutputBudget,
 ) -> Result<(), String> {
     let work = async {
         turn.emit(
@@ -260,7 +290,6 @@ pub(super) async fn drive(
             .model(process.write(&message))
             .await
             .ok_or(MODEL_TIMEOUT)??;
-        let mut bytes = 0usize;
         let mut answers = super::answers::Answers::default();
         let mut calls = 0;
         let mut activity = super::activity::Activity::default();
@@ -276,13 +305,17 @@ pub(super) async fn drive(
                     .ok_or(MODEL_TIMEOUT)?
             };
             let (value, size) = frame?;
-            bytes += size;
-            if bytes > 64 * 1024 * 1024 {
-                return Err("Claude turn exceeded its output budget".into());
-            }
+            budget.frame(&value, size)?;
             activity.observe(&value, turn, app).await?;
             for event in answers.observe(&value, turn) {
-                turn.emit(app, event).await?;
+                turn.emit(app, event.clone()).await?;
+                match &event {
+                    NormalizedEvent::ItemStarted { item_id, item, .. } => turn
+                        .unsaved
+                        .set(item_id, item["text"].as_str().unwrap_or_default()),
+                    NormalizedEvent::ItemCompleted { item_id, .. } => turn.unsaved.saved(item_id),
+                    _ => {}
+                }
             }
             match value["type"].as_str() {
                 Some("control_request") => {
@@ -296,18 +329,21 @@ pub(super) async fn drive(
                         .host(control_answer(&value, &specs, Some(turn)))
                         .await
                         .ok_or(HOST_TIMEOUT)??;
-                    clock
-                        .model(process.write(&answer))
+                    let written = clock
+                        .model(process.write_sized(&answer))
                         .await
                         .ok_or(MODEL_TIMEOUT)??;
+                    budget.supplied(&value, written);
                 }
                 Some("stream_event") if value["parent_tool_use_id"].is_null() => {
                     if let Some(delta) = value["event"]["delta"]["text"].as_str() {
+                        let item_id = format!("{}-assistant-{}", turn.id, answers.stream_index());
+                        turn.unsaved.append(&item_id, delta);
                         let _ = app.publish(&NormalizedEvent::AgentMessageDelta {
                             epoch: turn.epoch,
                             thread_id: turn.thread.clone(),
                             turn_id: turn.id.clone(),
-                            item_id: format!("{}-assistant-{}", turn.id, answers.stream_index()),
+                            item_id,
                             delta: delta.into(),
                         });
                     }

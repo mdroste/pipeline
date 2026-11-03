@@ -33,7 +33,7 @@ pub(crate) fn cancel(thread: &str, turn: &str) {
 
 pub(crate) async fn finish(thread: &str, turn: &str) -> WorkbenchResult<()> {
     cancel(thread, turn);
-    super::browser::stop().await;
+    super::browser::release_after_turn().await;
     let thread = thread.to_owned();
     let turn = turn.to_owned();
     run_store(move |store| {
@@ -42,6 +42,21 @@ pub(crate) async fn finish(thread: &str, turn: &str) -> WorkbenchResult<()> {
         if let Some(session)=session {super::project::assistant_files::capture_session(&store,&session)?;}
         Ok(())
     }).await
+}
+
+/// A working copy that can't be captured doesn't undo a finished answer. Every
+/// runtime reports it the same way, and the files stay where they are.
+pub(crate) fn report_capture(
+    app: &impl super::turn_loop::TurnEvents,
+    epoch: u64,
+    capture: WorkbenchResult<()>,
+) {
+    if let Err(error) = capture {
+        let _ = app.publish(&crate::agent_runtime::events::NormalizedEvent::ProtocolWarning {
+            epoch,
+            message: format!("The working copy could not be captured: {}. Its files are retained; refresh the working copy before accepting changes.", error.message),
+        });
+    }
 }
 
 pub(crate) async fn stop_all() {
@@ -95,7 +110,8 @@ struct Context {
     binding: String,
     turn: String,
     receipt: String,
-    fingerprint: String,
+    tool: String,
+    access: Value,
 }
 enum Admission {
     Run(Context),
@@ -106,6 +122,21 @@ fn err(e: impl std::fmt::Display) -> WorkbenchError {
 }
 fn response(success: bool, value: Value) -> Value {
     json!({"success":success,"contentItems":[{"type":"inputText","text":value.to_string()}]})
+}
+
+/// What these tools may do and where, compared with what the turn started with.
+/// The fingerprint can't answer that: it also covers context and instructions,
+/// which move with ordinary project activity while a turn runs. Modules are left
+/// out because they add research tools with their own admission, and one becomes
+/// available the moment an execution profile passes its test.
+fn access(effective: &EffectiveHarness) -> Value {
+    json!({"workspace":effective.workspace_id,"workingCopy":effective.project_checkpoint_id,
+        "permission":effective.permission_profile,"mode":effective.mode,
+        "fileMode":effective.file_mode,"webSearch":effective.web_search,
+        "network":effective.command_network,"capabilities":effective.capabilities})
+}
+fn offered(effective: &EffectiveHarness, tool: &str) -> bool {
+    effective.dynamic_tools.iter().any(|s| s["name"] == tool)
 }
 
 fn prepare(store: &Store, input: &Value) -> WorkbenchResult<Admission> {
@@ -137,9 +168,7 @@ fn prepare(store: &Store, input: &Value) -> WorkbenchResult<Admission> {
     })?;
     let saved: EffectiveHarness = serde_json::from_str(&snapshot).map_err(err)?;
     let current = super::research::resolve_harness(store, &session)?;
-    if saved.fingerprint != current.fingerprint
-        || !saved.dynamic_tools.iter().any(|s| s["name"] == tool)
-    {
+    if access(&saved) != access(&current) || !offered(&saved, tool) || !offered(&current, tool) {
         return Err(WorkbenchError::invalid(
             "This tool is unavailable or conversation access changed; send a new message",
         ));
@@ -173,16 +202,20 @@ fn prepare(store: &Store, input: &Value) -> WorkbenchResult<Admission> {
         binding,
         turn: turn.into(),
         receipt,
-        fingerprint: saved.fingerprint,
+        tool: tool.into(),
+        access: access(&saved),
     }))
 }
 
 fn active(store: &Store, context: &Context) -> WorkbenchResult<()> {
     let running: bool = store.connection()?.query_row("SELECT EXISTS(SELECT 1 FROM turns t JOIN session_bindings b ON b.id=t.binding_id WHERE t.binding_id=?1 AND t.provider_turn_id=?2 AND t.terminal_at IS NULL AND b.retired_at IS NULL)",params![context.binding,context.turn],|r|r.get(0)).map_err(err)?;
-    if !running
-        || super::research::resolve_harness(store, &context.session)?.fingerprint
-            != context.fingerprint
-    {
+    if !running {
+        return Err(WorkbenchError::invalid(
+            "Conversation stopped or its access changed",
+        ));
+    }
+    let current = super::research::resolve_harness(store, &context.session)?;
+    if access(&current) != context.access || !offered(&current, &context.tool) {
         return Err(WorkbenchError::invalid(
             "Conversation stopped or its access changed",
         ));

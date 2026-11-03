@@ -105,7 +105,7 @@ pub(in crate::pipeline) async fn supervise_artifact_writes(
                 crate::run_scope::spawn_blocking(move || check_live_artifact_quota(&path))
                     .await
                     .map_err(|e| format!("Artifact monitor failed: {e}"))?;
-            final_check?;
+            final_check.map_err(artifact_limit_error)?;
             return result;
         }
         let path = directory.clone();
@@ -113,12 +113,76 @@ pub(in crate::pipeline) async fn supervise_artifact_writes(
             .await
             .map_err(|e| format!("Artifact monitor failed: {e}"))?;
         if let Err(error) = check {
-            if let Some(key) = &pass_key {
-                let _ = crate::commands::cancel_pass(key.clone(), None).await;
-            } else {
-                crate::commands::kill_all_children();
+            // The researcher cancelled nothing, so the pass stays uncancelled
+            // and this error is the one the step reports.
+            match &pass_key {
+                Some(key) => crate::commands::kill_pass_children(key),
+                None => crate::commands::kill_all_children(),
             }
-            return Err(error);
+            return Err(artifact_limit_error(error));
         }
+    }
+}
+
+/// A stop noticed during the scan stays a cancellation.
+fn artifact_limit_error(error: String) -> String {
+    if crate::commands::is_pipeline_cancellation_error(&error) {
+        error
+    } else {
+        format!(
+            "{} {error}",
+            crate::pipeline::provider_error::ARTIFACT_LIMIT_PREFIX
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn over_the_file_limit() -> tempfile::TempDir {
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::File::create(folder.path().join("huge.bin"))
+            .unwrap()
+            .set_len(MAX_LIVE_ARTIFACT_FILE_BYTES + 1)
+            .unwrap();
+        folder
+    }
+
+    #[tokio::test]
+    async fn a_live_breach_reports_itself_and_leaves_the_pass_uncancelled() {
+        let folder = over_the_file_limit();
+        let run = crate::run_scope::ActiveScope::begin("artifact-limit-live-test");
+        let error = crate::run_scope::scoped(
+            run.scope().clone(),
+            supervise_artifact_writes(
+                Box::pin(std::future::pending()),
+                folder.path().to_str().unwrap(),
+                Some("audit".to_string()),
+            ),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("Artifact safety quota exceeded"), "{error}");
+        assert!(crate::pipeline::provider_error::is_non_retryable_error(
+            &error
+        ));
+        assert!(!crate::commands::is_pipeline_cancellation_error(&error));
+        assert!(!run.scope().is_pass_cancelled("audit"));
+    }
+
+    #[tokio::test]
+    async fn a_breach_found_after_the_call_is_reported_the_same_way() {
+        let folder = over_the_file_limit();
+        let error = supervise_artifact_writes(
+            Box::pin(std::future::ready(Ok("done".to_string()))),
+            folder.path().to_str().unwrap(),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert!(crate::pipeline::provider_error::is_non_retryable_error(
+            &error
+        ));
     }
 }

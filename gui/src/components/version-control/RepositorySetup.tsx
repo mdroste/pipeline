@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { Button, EmptyState } from "../../ui";
+import type { RepositoryRemote } from "../../lib/repositoryClient";
 import type {
   VersionControlAction,
   VersionControlState,
@@ -79,10 +80,13 @@ const HOSTS = [
 /** Connects a repository made on a host's own site. Pipeline holds no account
  * with either host, so creating the repository happens there. */
 export function ConnectRemote({
+  remote = null,
   busy,
   onAct,
   onDone,
 }: {
+  /** The remote this replaces. Git keeps the name and any others. */
+  remote?: RepositoryRemote | null;
   busy: boolean;
   onAct: (action: VersionControlAction) => Promise<boolean>;
   onDone: () => void;
@@ -94,6 +98,12 @@ export function ConnectRemote({
   };
   return (
     <form className="vc-connect" onSubmit={(event) => void submit(event)}>
+      {remote && (
+        <p>
+          This changes the address of the remote named {remote.name}. Any other
+          remotes stay as they are.
+        </p>
+      )}
       <p>
         A remote keeps a copy of this repository online, where coauthors can
         reach it. Create an empty repository on your host, with no README or

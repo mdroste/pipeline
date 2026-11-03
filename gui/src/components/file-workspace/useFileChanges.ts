@@ -44,50 +44,54 @@ export default function useFileChanges({
           open.slice(0, MAX_PATHS).map((b) => b.file.path),
         );
         for (const { path, stamp } of stamps) {
-          const buffer = latest.current[path];
-          if (!buffer) continue;
-          if (stamp === null) {
-            if (!buffer.missing)
+          try {
+            const buffer = latest.current[path];
+            if (!buffer) continue;
+            if (stamp === null) {
+              if (!buffer.missing)
+                update(path, (old) => ({
+                  ...old,
+                  missing: true,
+                  status: isDirty(old)
+                    ? "This file was moved or deleted. Your draft is still open."
+                    : "This file was moved or deleted.",
+                }));
+              continue;
+            }
+            // A file that returns can bring back the stamp it left with.
+            if (buffer.file.stamp === stamp && !buffer.missing) continue;
+            const current = await adapter.read(path);
+            // Typing can land during that read, so decide from the buffer as it
+            // is now. Whatever the disk holds, a draft stays.
+            const now = latest.current[path];
+            if (!now) {
+              release(current);
+              continue;
+            }
+            // Our own save, or a touch that left the bytes alone.
+            if (current.hash === now.file.hash) {
+              release(now.file);
               update(path, (old) => ({
                 ...old,
-                missing: true,
-                status: isDirty(old)
-                  ? "This file was moved or deleted. Your draft is still open."
-                  : "This file was moved or deleted.",
+                file: current,
+                missing: false,
+                status: old.missing ? "" : old.status,
               }));
-            continue;
-          }
-          // A file that returns can bring back the stamp it left with.
-          if (buffer.file.stamp === stamp && !buffer.missing) continue;
-          const current = await adapter.read(path);
-          // Typing can land during that read, so decide from the buffer as it
-          // is now. Whatever the disk holds, a draft stays.
-          const now = latest.current[path];
-          if (!now) {
-            release(current);
-            continue;
-          }
-          // Our own save, or a touch that left the bytes alone.
-          if (current.hash === now.file.hash) {
-            release(now.file);
-            update(path, (old) => ({
-              ...old,
-              file: current,
-              missing: false,
-              status: old.missing ? "" : old.status,
-            }));
-          } else if (isDirty(now)) {
-            release(current);
-            update(path, (old) => ({
-              ...old,
-              missing: false,
-              file: { ...old.file, stamp: current.stamp },
-              status:
-                "The file changed on disk. Compare with the current file to keep your draft, or reload to discard it.",
-            }));
-          } else {
-            release(current);
-            await load(path, true);
+            } else if (isDirty(now)) {
+              release(current);
+              update(path, (old) => ({
+                ...old,
+                missing: false,
+                file: { ...old.file, stamp: current.stamp },
+                status:
+                  "The file changed on disk. Compare with the current file to keep your draft, or reload to discard it.",
+              }));
+            } else {
+              release(current);
+              await load(path, true);
+            }
+          } catch {
+            /* One unreadable file waits for the next check; the rest go on. */
           }
         }
       } catch {

@@ -2,6 +2,7 @@ import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { unified } from "unified";
+import { removeHtmlTags, replaceMathSpans } from "./mathMarkdown";
 import { latexToReadableText, remarkRepairMath } from "./mathRepair";
 
 interface MarkdownAstNode {
@@ -196,16 +197,19 @@ export function plainHeadingText(markdown: string): string {
     return token;
   };
 
-  let text = markdown
-    .trim()
-    .replace(/\s+#+\s*$/, "")
-    // Preserve literal formatting characters in code spans and escapes.
-    .replace(/(`+)(.*?)\1/g, (_match, _ticks, value: string) => protect(value))
-    .replace(/\\([\\`*_[\]{}()#+\-.!<>])/g, (_match, value: string) =>
-      protect(value),
-    )
-    .replace(/<!--.*?-->/g, "")
-    .replace(/<\/?[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*?)?\s*\/?>/g, "")
+  let text = removeHtmlTags(
+    markdown
+      .trim()
+      .replace(/\s+#+\s*$/, "")
+      // Preserve literal formatting characters in code spans and escapes.
+      .replace(/(`+)(.*?)\1/g, (_match, _ticks, value: string) =>
+        protect(value),
+      )
+      .replace(/\\([\\`*_[\]{}()#+\-.!<>])/g, (_match, value: string) =>
+        protect(value),
+      )
+      .replace(/<!--.*?-->/g, ""),
+  )
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/\[([^\]]+)\]\[[^\]]*\]/g, "$1");
@@ -228,10 +232,8 @@ export function plainHeadingText(markdown: string): string {
   // without leaking raw delimiters, commands, or braces into navigation.
   // PaddleOCR author-footnote markers remain useful in the document title but
   // are not part of its navigation label, so omit those entirely.
-  text = text.replace(
-    /(\$\$|\$)([\s\S]*?)\1/g,
-    (_match, _delimiter: string, expression: string) =>
-      isAuthorFootnoteMath(expression) ? "" : latexToReadableText(expression),
+  text = replaceMathSpans(text, (expression) =>
+    isAuthorFootnoteMath(expression) ? "" : latexToReadableText(expression),
   );
 
   if (typeof document !== "undefined" && text.includes("&")) {

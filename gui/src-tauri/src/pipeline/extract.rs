@@ -41,7 +41,7 @@ pub(crate) use folder_snapshot::{
     MAX_FOLDER_COPY_BYTES, MAX_FOLDER_COPY_FILES, MAX_FOLDER_COPY_FILE_BYTES,
 };
 pub(crate) use latex::{latex_without_comments, stage_selected_source, TEX_GRAPHICS_PATTERN};
-pub(crate) use pdf::{extract_pdftotext, is_withheld_image_text_note};
+pub(crate) use pdf::{extract_pdftotext, is_informational_extraction_note};
 pub use rendering::{
     render_pdf_page_preview, render_pdf_pages, RenderedPdfPagePreview, RenderedPdfPages,
 };

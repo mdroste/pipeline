@@ -12,12 +12,24 @@ use std::path::{Path, PathBuf};
 /// List every run on disk as a summary row, newest first. Unreadable or
 /// malformed manifests are skipped rather than failing the whole listing.
 pub fn list_runs() -> Result<Vec<RunSummary>, String> {
-    let dir = runs_dir()?;
+    list_runs_in(&runs_dir()?, listing_walk())
+}
+
+/// The whole store must list however slow its disk is: the entry limit bounds
+/// this walk, and a time limit would turn a large synced or network folder into
+/// an error in History and stop retention.
+pub(super) fn listing_walk() -> crate::safety::WalkBudget {
+    crate::safety::WalkBudget::new("Run history listing").without_time_limit()
+}
+
+pub(super) fn list_runs_in(
+    dir: &Path,
+    mut walk: crate::safety::WalkBudget,
+) -> Result<Vec<RunSummary>, String> {
     let mut summaries = Vec::new();
-    let Ok(entries) = fs::read_dir(&dir) else {
+    let Ok(entries) = fs::read_dir(dir) else {
         return Ok(summaries);
     };
-    let mut walk = crate::safety::WalkBudget::new("Run history listing");
     for entry in entries.flatten() {
         walk.entry()?;
         if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
@@ -72,13 +84,20 @@ pub fn list_runs() -> Result<Vec<RunSummary>, String> {
 /// the local offset it was written with, so its text sorts correctly only
 /// within one offset. A timestamp that cannot be read sorts last.
 pub(super) fn sort_newest_first<T>(items: &mut [T], created: impl Fn(&T) -> &str) {
-    items.sort_by_cached_key(|item| {
-        let text = created(item);
-        let instant = chrono::DateTime::parse_from_rfc3339(text)
-            .ok()
-            .map(|time| time.with_timezone(&chrono::Utc));
-        std::cmp::Reverse((instant, text.to_string()))
-    });
+    items.sort_by_cached_key(|item| std::cmp::Reverse(creation_order(created(item))));
+}
+
+/// True when `first` was created at an earlier instant than `second`. A
+/// timestamp that cannot be read counts as the earlier one.
+pub fn created_before(first: &str, second: &str) -> bool {
+    creation_order(first) < creation_order(second)
+}
+
+fn creation_order(created: &str) -> (Option<chrono::DateTime<chrono::Utc>>, String) {
+    let instant = chrono::DateTime::parse_from_rfc3339(created)
+        .ok()
+        .map(|time| time.with_timezone(&chrono::Utc));
+    (instant, created.to_string())
 }
 
 /// The manifest bytes when they could actually be read, or `None` on any
@@ -112,7 +131,8 @@ pub fn load_latest_report_for_input(
         .canonicalize()
         .unwrap_or_else(|_| PathBuf::from(input_path));
     let mut candidates: Vec<(String, PathBuf)> = Vec::new();
-    let mut walk = crate::safety::WalkBudget::new_cancellable("Prior report discovery");
+    let mut walk =
+        crate::safety::WalkBudget::new_cancellable("Prior report discovery").without_time_limit();
     for entry in fs::read_dir(runs_dir()?).map_err(|e| format!("Failed to list runs: {e}"))? {
         walk.entry()?;
         let Ok(entry) = entry else { continue };

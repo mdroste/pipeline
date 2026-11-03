@@ -4,7 +4,7 @@ use super::{err, hash, id, now, MAX_FILE};
 use crate::workbench::store::{outside_folder_error, Store, WorkbenchError, WorkbenchResult};
 use rusqlite::params;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::Path;
 
 pub(super) fn blob(
@@ -22,15 +22,7 @@ pub(super) fn blob(
         .join("blobs")
         .join(format!("{digest}.project"));
     if !reference.exists() {
-        let mut tmp =
-            tempfile::NamedTempFile::new_in(store.root_path().join("blobs")).map_err(err)?;
-        tmp.write_all(bytes).map_err(err)?;
-        tmp.as_file().sync_all().map_err(err)?;
-        match tmp.persist_noclobber(&reference) {
-            Ok(_) => (),
-            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => (),
-            Err(e) => return Err(err(e)),
-        }
+        crate::workbench::desk::write_blob_atomic(&reference, bytes, &digest).map_err(err)?;
     }
     if hash(&fs::read(&reference).map_err(err)?) != digest {
         return Err(WorkbenchError::invalid("Immutable blob integrity failure"));

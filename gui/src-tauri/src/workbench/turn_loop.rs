@@ -2,6 +2,7 @@
 //! that keeps model time apart from host time, and the sink for live events.
 //! Neither carries runtime state, so each turn loop keeps its own lifecycle.
 use crate::agent_runtime::events::NormalizedEvent;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::Emitter;
 
@@ -41,6 +42,44 @@ impl ModelClock {
         self.deadline += elapsed;
         self.host_left = self.host_left.saturating_sub(elapsed);
         result
+    }
+}
+
+/// Reply text a turn has streamed and not saved, by item. Deltas reach the
+/// screen and no store, so a turn that ends early saves what is here.
+#[derive(Clone, Default)]
+pub(crate) struct UnsavedText(Arc<Mutex<Vec<(String, String)>>>);
+
+/// Well inside what one transcript item may hold once encoded.
+const MAX_UNSAVED_TEXT: usize = 4 * 1024 * 1024;
+
+impl UnsavedText {
+    fn items(&self) -> std::sync::MutexGuard<'_, Vec<(String, String)>> {
+        self.0.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    pub(crate) fn append(&self, item: &str, delta: &str) {
+        let mut items = self.items();
+        match items.iter_mut().find(|(id, _)| id == item) {
+            Some((_, text)) if text.len() + delta.len() <= MAX_UNSAVED_TEXT => text.push_str(delta),
+            Some(_) => {}
+            None => items.push((item.into(), delta.into())),
+        }
+    }
+
+    /// The item's whole text so far, which replaces its deltas.
+    pub(crate) fn set(&self, item: &str, text: &str) {
+        self.saved(item);
+        self.items().push((item.into(), text.into()));
+    }
+
+    /// The item's text reached the store by its normal route.
+    pub(crate) fn saved(&self, item: &str) {
+        self.items().retain(|(id, _)| id != item);
+    }
+
+    pub(crate) fn take(&self) -> Vec<(String, String)> {
+        std::mem::take(&mut *self.items())
     }
 }
 

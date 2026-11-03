@@ -241,6 +241,7 @@ fn paddle_structure_preserves_roles_exact_markdown_and_page_evidence() {
         pages: vec![crate::pipeline::extract::PaddleStructuredPage {
             number: 2,
             markdown: String::new(),
+            blank_page: false,
             source_text_chars: None,
             width: None,
             height: None,
@@ -327,6 +328,7 @@ fn withheld_image_text_stays_labeled_and_cannot_be_quoted() {
         pages: vec![crate::pipeline::extract::PaddleStructuredPage {
             number: 1,
             markdown: notice.to_string(),
+            blank_page: false,
             source_text_chars: None,
             width: Some(1224),
             height: Some(1584),
@@ -405,6 +407,7 @@ fn full_paddle_structure_preserves_layout_semantics_and_merges_formula_numbers()
         pages: vec![crate::pipeline::extract::PaddleStructuredPage {
             number: 1,
             markdown: "# Results\n\n## Baseline\n\n| x | y |".to_string(),
+            blank_page: false,
             source_text_chars: None,
             width: Some(1200),
             height: Some(1600),
@@ -582,6 +585,7 @@ fn paddle_formula_numbers_require_unambiguous_page_geometry() {
         pages: vec![crate::pipeline::extract::PaddleStructuredPage {
             number: 1,
             markdown: String::new(),
+            blank_page: false,
             source_text_chars: None,
             width: Some(1200),
             height: Some(1600),

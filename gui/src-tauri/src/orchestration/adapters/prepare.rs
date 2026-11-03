@@ -87,7 +87,7 @@ pub async fn prepare(chain: &Chain, session: Option<String>, inputs: &Value) -> 
                 .map_err(|e| e.message)?;
                 if !preview.authorized {
                     return Err(format!(
-                        "Authorize the selected check '{}' in Research tools first",
+                        "Authorize the selected check '{}' in the project's Results view first",
                         profile_id
                     ));
                 }
@@ -105,7 +105,10 @@ pub async fn prepare(chain: &Chain, session: Option<String>, inputs: &Value) -> 
                 .await
                 .map_err(|e| e.message)?;
                 if !status.authorized {
-                    return Err("Authorize this exact captured plan in Research tools first".into());
+                    return Err(
+                        "Authorize this exact captured plan in the project's Results view first"
+                            .into(),
+                    );
                 }
                 scope
                     .captured_checks
@@ -118,6 +121,59 @@ pub async fn prepare(chain: &Chain, session: Option<String>, inputs: &Value) -> 
         return Err("Task inputs must be an object".into());
     }
     Ok(scope)
+}
+
+/// Pins each check to what it would run now, but only where the researcher has
+/// approved exactly that. A check they have not approved keeps its old pin, so
+/// the step stays refused, and its id is returned.
+pub async fn repin_checks(scope: &mut Scope) -> Result<Vec<String>> {
+    let Some(workspace) = scope.workspace_id.clone() else {
+        return Ok(Vec::new());
+    };
+    let checks: Vec<_> = scope.checks.keys().cloned().collect();
+    let plans: Vec<_> = scope.captured_checks.keys().cloned().collect();
+    if checks.is_empty() && plans.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (approved_checks, approved_plans) = run_store(move |s| {
+        let profiles = crate::workbench::research::list_execution_profiles(&s, &workspace)?;
+        let mut approved_checks = Vec::new();
+        for id in checks
+            .into_iter()
+            .filter(|id| profiles.iter().any(|p| &p.id == id))
+        {
+            // A declared input that is missing makes the preview an error.
+            match crate::workbench::research::preview_host_execution(&s, &id) {
+                Ok(preview) if preview.authorized => {
+                    approved_checks.push((id, preview.fingerprint))
+                }
+                _ => {}
+            }
+        }
+        let mut approved_plans = Vec::new();
+        for id in plans {
+            match crate::workbench::research::execution_plan::status(&s, &workspace, &id) {
+                Ok(status) if status.authorized => {
+                    approved_plans.push((id, status.record.content_hash))
+                }
+                _ => {}
+            }
+        }
+        Ok((approved_checks, approved_plans))
+    })
+    .await
+    .map_err(|e| e.message)?;
+    let mut refused: Vec<_> = scope.checks.keys().cloned().collect();
+    refused.extend(scope.captured_checks.keys().cloned());
+    refused.retain(|id| {
+        !approved_checks
+            .iter()
+            .chain(&approved_plans)
+            .any(|(approved, _)| approved == id)
+    });
+    scope.checks.extend(approved_checks);
+    scope.captured_checks.extend(approved_plans);
+    Ok(refused)
 }
 
 fn flatten<'a>(steps: &'a [Step], out: &mut Vec<&'a Step>) {

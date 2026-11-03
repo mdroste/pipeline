@@ -221,6 +221,8 @@ mod prompts;
 
 mod schedule;
 
+mod unit_files;
+
 mod units;
 
 mod unstarted;

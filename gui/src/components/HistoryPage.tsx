@@ -22,6 +22,7 @@ import type {
   TrashedRun,
 } from "../lib/types";
 import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
+import ReportIssueLink from "./ReportIssueLink";
 
 const ComparePage = lazy(() => import("./ComparePage"));
 
@@ -235,6 +236,10 @@ export default function HistoryPage({
       ]);
       if (request !== refreshRequestRef.current) return;
       setRuns(nextRuns);
+      // A report that left the list cannot be compared, and its row is gone.
+      setCompareIds((prev) =>
+        prev.filter((id) => nextRuns.some((run) => run.run_id === id)),
+      );
       setUsage(nextUsage);
       if (nextProjects) setProjects(nextProjects.projects);
       setError(null);
@@ -400,6 +405,7 @@ export default function HistoryPage({
     try {
       await reviewHistoryClient.trash({ runId: r.run_id });
       notify("Report moved to Trash.", "success");
+      setCompareIds((prev) => prev.filter((id) => id !== r.run_id));
       if (openRunId === r.run_id) {
         setOpenRunId(null);
         setOpenSourceSelection(null);
@@ -714,6 +720,7 @@ export default function HistoryPage({
           className="mx-4 mt-4 shrink-0 p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400"
         >
           {error}
+          <ReportIssueLink />
         </div>
       )}
       <div ref={scroll.listRef} className="flex-1 overflow-auto p-4">

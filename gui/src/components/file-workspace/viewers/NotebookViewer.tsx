@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import ReportViewer from "../../ReportViewer";
 import HighlightedCode from "../HighlightedCode";
+import ReportIssueLink from "../../ReportIssueLink";
 
 type Multiline = string | string[];
 interface NotebookOutput {
@@ -109,6 +110,7 @@ export default function NotebookViewer({
     return (
       <p role="alert" className="file-error">
         {error}
+        <ReportIssueLink />
       </p>
     );
   if (text === null && loaded === null)
@@ -117,6 +119,7 @@ export default function NotebookViewer({
     return (
       <p role="alert" className="file-error">
         This notebook could not be read. Use Source to inspect it.
+        <ReportIssueLink />
       </p>
     );
   const language =

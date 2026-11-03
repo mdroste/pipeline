@@ -115,6 +115,7 @@ export function resolveFileLink(
       return (
         p === ".git" ||
         p === ".pipeline-tasks" ||
+        p === ".pipeline-workbench" ||
         p.startsWith(".pipeline-apply-")
       );
     })

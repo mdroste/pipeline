@@ -20,12 +20,14 @@ const mocks = vi.hoisted(() => ({
   runExecution: vi.fn(),
   invoke: vi.fn(),
   listExecutionProfiles: vi.fn(),
+  confirmDialog: vi.fn(),
 }));
 vi.mock("../../lib/studioClient", async (original) => ({
   ...(await original<typeof import("../../lib/studioClient")>()),
   studioClient: mocks,
 }));
 vi.mock("../../lib/projectClient", () => ({ projectClient: mocks }));
+vi.mock("../DialogService", () => ({ confirmDialog: mocks.confirmDialog }));
 vi.mock("../../lib/workbench/executionClient", () => ({
   executionClient: mocks,
 }));
@@ -114,8 +116,9 @@ it("does not discard a dirty draft when another file is loaded", async () => {
   fireEvent.click(
     screen.getByRole("button", { name: "More manuscript actions" }),
   );
+  mocks.confirmDialog.mockResolvedValue(false);
   fireEvent.click(screen.getByRole("menuitem", { name: "Reload file" }));
-  await screen.findByRole("alert");
+  await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalled());
   expect(mocks.editor).toHaveBeenCalledTimes(1);
   expect(screen.getByLabelText("Manuscript source editor")).toHaveValue(
     "Draft",
@@ -168,13 +171,23 @@ it("restores the original draft hash and does not resurrect a discarded draft", 
       "Retained draft",
     ),
   );
+  mocks.confirmDialog.mockResolvedValue(true);
   fireEvent.click(screen.getByText("Discard unsaved draft"));
-  expect(localStorage.getItem("pipeline.manuscriptDraft.ws")).toBeNull();
+  await waitFor(() =>
+    expect(localStorage.getItem("pipeline.manuscriptDraft.ws")).toBeNull(),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("Draft discarded"),
+  );
   fireEvent.click(
     screen.getByRole("button", { name: "More manuscript actions" }),
   );
   fireEvent.click(screen.getByRole("menuitem", { name: "Reload file" }));
-  await waitFor(() => expect(mocks.editor).toHaveBeenCalledTimes(2));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Reloaded from the project",
+    ),
+  );
   expect(screen.getByLabelText("Manuscript source editor")).toHaveValue(
     "Old text",
   );

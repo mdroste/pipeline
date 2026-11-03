@@ -55,6 +55,15 @@ export function workspaceNotice(event: WorkbenchEvent): AppNotice | null {
   return null; // Stopped turns and connection lifecycle events are not failures.
 }
 
+/** A problem in a conversation the researcher has left. */
+export function notifyConversationProblem(sessionId: string, message: string) {
+  notify(message, "error", {
+    label: "Open conversation",
+    run: () =>
+      void router.navigate({ page: "workspace", sessionId, surface: "chat" }),
+  });
+}
+
 export function automationNotice(
   source: string,
   value: {

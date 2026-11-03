@@ -470,3 +470,170 @@ async fn staging_a_publication_writes_nothing_into_a_copy_a_job_works_in() {
     stage_publication(&f.store, &f.ws, &copy_id, "out.md", None, b"staged").unwrap();
     assert_eq!(fs::read(task_root.join("out.md")).unwrap(), b"staged");
 }
+
+fn journal(f: &Fixture, id: &str) -> Option<String> {
+    f.store
+        .connection()
+        .unwrap()
+        .query_row(
+            "SELECT finalization_json FROM execution_jobs WHERE execution_id=?1",
+            [id],
+            |r| r.get(0),
+        )
+        .unwrap()
+}
+
+#[test]
+fn a_job_left_by_an_earlier_launch_is_marked_at_startup_and_reconciling_clears_its_journal() {
+    let f = fixture();
+    let (e, _) = exported_result(&f, 1., "units");
+    let c = f.store.connection().unwrap();
+    c.execute("INSERT INTO execution_jobs(execution_id,operation_id,request_hash,owner,process_instance,created_at,finalization_json) VALUES(?1,'operation','hash','detached','previous-instance','now',?2)",params![e.id,json!({"outcome":e.outcome,"endedAt":e.ended_at,"exitStatus":e.exit_status,"stdout":e.stdout,"stderr":e.stderr,"outputs":e.output_manifest,"validation":e.validation}).to_string()]).unwrap();
+    c.execute(
+        "UPDATE research_executions SET outcome='running' WHERE id=?1",
+        [&e.id],
+    )
+    .unwrap();
+
+    research::jobs::reconcile_abandoned(&f.store).unwrap();
+    assert_eq!(outcome(&f, &e.id), "outcome_unknown");
+    assert!(journal(&f, &e.id).is_some());
+
+    let restored = research::jobs::reconcile_job(&f.store, &f.ws, &e.id).unwrap();
+    assert_eq!(restored.outcome, "completed");
+    assert_eq!(restored.stdout, e.stdout);
+    assert_eq!(journal(&f, &e.id), None);
+}
+
+#[test]
+fn a_job_of_this_launch_is_left_alone_at_startup() {
+    let f = fixture();
+    let (e, _) = exported_result(&f, 1., "units");
+    let c = f.store.connection().unwrap();
+    c.execute("INSERT INTO execution_jobs(execution_id,operation_id,request_hash,owner,process_instance,created_at) VALUES(?1,'operation','hash','detached',?2,'now')",params![e.id,research::jobs::process_instance()]).unwrap();
+    c.execute(
+        "UPDATE research_executions SET outcome='running',validation_json=json_set(validation_json,'$.processInstance',?2) WHERE id=?1",
+        params![e.id, research::jobs::process_instance()],
+    )
+    .unwrap();
+    research::jobs::reconcile_abandoned(&f.store).unwrap();
+    assert_eq!(outcome(&f, &e.id), "running");
+}
+
+fn finished_run(f: &Fixture, command: &str) -> research::ResearchExecution {
+    let p = profile(f, command, vec![], vec![]);
+    research::run_execution(
+        &f.store,
+        research::RunExecutionRequest {
+            plan_id: None,
+            profile_id: p.id,
+            session_id: None,
+            test_only: true,
+            operation_id: id("run").unwrap(),
+        },
+    )
+    .unwrap()
+}
+const PAGE: usize = 64 * 1024;
+
+#[test]
+fn a_saved_log_pages_on_whole_characters() {
+    let f = fixture();
+    // The two bytes of the accent fall on either side of the page limit.
+    let e = finished_run(
+        &f,
+        r"head -c 65535 /dev/zero | tr '\0' a; printf '\303\251 after'",
+    );
+    let page = |offset| research::jobs::log_page(&f.store, &f.ws, &e.id, "stdout", offset).unwrap();
+    let first = page(0);
+    assert_eq!(first.next_offset, PAGE - 1);
+    assert!(!first.text.contains(char::REPLACEMENT_CHARACTER));
+    let second = page(first.next_offset);
+    assert_eq!(second.text, "é after");
+    // An offset from the live log can land inside a character of the saved text.
+    assert_eq!(page(PAGE).text, " after");
+}
+
+#[test]
+fn a_live_log_holds_back_a_character_still_arriving() {
+    let f = fixture();
+    let e = finished_run(&f, "exit 0");
+    let page = |offset| research::jobs::log_page(&f.store, &f.ws, &e.id, "stdout", offset).unwrap();
+    let euro = "€".as_bytes();
+    research::jobs::append_log(&e.id, "stdout", b"ab");
+    research::jobs::append_log(&e.id, "stdout", &euro[..2]);
+    let first = page(0);
+    assert_eq!((first.text.as_str(), first.next_offset), ("ab", 2));
+    research::jobs::append_log(&e.id, "stdout", &euro[2..]);
+    let second = page(first.next_offset);
+    assert_eq!((second.text.as_str(), second.next_offset), ("€", 5));
+}
+
+/// A job row owned by another instance, in the given state.
+fn job_of(f: &Fixture, operation: &str, instance: &str, state: &str) -> String {
+    let (e, _) = exported_result(f, 1., operation);
+    let c = f.store.connection().unwrap();
+    c.execute("INSERT INTO execution_jobs(execution_id,operation_id,request_hash,owner,process_instance,created_at) VALUES(?1,?2,'hash','detached',?3,'now')",params![e.id,operation,instance]).unwrap();
+    c.execute(
+        "UPDATE research_executions SET outcome=?2 WHERE id=?1",
+        params![e.id, state],
+    )
+    .unwrap();
+    e.id
+}
+/// The lock another open Pipeline would hold on its own file.
+fn alive_elsewhere(f: &Fixture, instance: &str) -> (PathBuf, fs::File) {
+    use fs2::FileExt as _;
+    let path = research::jobs::instance_lock_path(&f.store, instance).unwrap();
+    let file = fs::File::create(&path).unwrap();
+    file.try_lock_exclusive().unwrap();
+    (path, file)
+}
+
+#[test]
+fn jobs_of_another_open_pipeline_are_left_alone_until_it_ends() {
+    let f = fixture();
+    let (path, held) = alive_elsewhere(&f, "instance_other");
+    let running = job_of(&f, "running", "instance_other", "running");
+    let queued = job_of(&f, "queued", "instance_other", "queued");
+
+    research::jobs::reconcile_abandoned(&f.store).unwrap();
+    research::jobs::list_jobs(&f.store, &f.ws).unwrap();
+    research::jobs::complete_tool_result(&f.store, &running).unwrap();
+    assert_eq!(outcome(&f, &running), "running");
+    assert_eq!(outcome(&f, &queued), "queued");
+    assert!(research::jobs::instance_alive(&f.store, "instance_other"));
+
+    drop(held);
+    research::jobs::reconcile_abandoned(&f.store).unwrap();
+    assert_eq!(outcome(&f, &running), "outcome_unknown");
+    assert_eq!(outcome(&f, &queued), "outcome_unknown");
+    assert!(!path.exists());
+    assert!(!research::jobs::instance_alive(&f.store, "instance_other"));
+}
+
+#[test]
+fn a_saved_instance_id_never_reaches_a_file_outside_the_store() {
+    let f = fixture();
+    let outside = f.store.root_path().with_file_name("outside.lock");
+    fs::write(&outside, "kept").unwrap();
+    let id = job_of(&f, "crafted", "../outside", "running");
+    assert_eq!(
+        research::jobs::instance_lock_path(&f.store, "../outside"),
+        None
+    );
+    research::jobs::reconcile_abandoned(&f.store).unwrap();
+    assert_eq!(outcome(&f, &id), "outcome_unknown");
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "kept");
+}
+
+#[test]
+fn queueing_a_job_marks_this_process_alive_to_a_second_launch() {
+    use fs2::FileExt as _;
+    let f = fixture();
+    research::jobs::hold_instance(&f.store).unwrap();
+    research::jobs::hold_instance(&f.store).unwrap();
+    let path =
+        research::jobs::instance_lock_path(&f.store, research::jobs::process_instance()).unwrap();
+    assert!(fs::File::open(&path).unwrap().try_lock_exclusive().is_err());
+}

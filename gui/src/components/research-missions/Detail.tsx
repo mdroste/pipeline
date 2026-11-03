@@ -8,6 +8,7 @@ import {
 import { taskTime } from "../../lib/taskPresentation";
 import { type Json } from "../../lib/taskTypes";
 import useMissionActivity from "./useMissionActivity";
+import ReportIssueLink from "../ReportIssueLink";
 const ReportViewer = lazy(() => import("../ReportViewer"));
 
 function Answer({
@@ -270,11 +271,23 @@ export default function MissionDetail({
               <p className="task-muted">
                 Each analysis uses a new copy of its saved inputs and runs with
                 your computer’s permissions. Starting approves the listed
-                variants. Changed plans require your approval again.
+                variants. If a check or plan changes, approve it again in the
+                project's Results view, then retry.
               </p>
             </details>
           )}
         </div>
+      )}
+      {!terminal && m.capabilities.some((c) => c.unavailable) && (
+        <p className="task-attention">
+          Waiting for your approval:{" "}
+          {m.capabilities
+            .filter((c) => c.unavailable)
+            .map((c) => c.name)
+            .join(", ")}
+          . The automation won’t use this until you approve it in the project’s
+          Results view.
+        </p>
       )}
       <div className="task-actions">
         {m.state === "draft" && (
@@ -322,10 +335,13 @@ export default function MissionDetail({
                 Check saved results and update status
               </button>
             )}
-            <button disabled={busy} onClick={() => void control("retry")}>
-              {m.activeChild
-                ? "Retry interrupted action"
-                : "Reconsider the agenda"}
+            {m.activeChild && (
+              <button disabled={busy} onClick={() => void control("retry")}>
+                Retry interrupted action
+              </button>
+            )}
+            <button disabled={busy} onClick={() => void control("reconsider")}>
+              Reconsider the agenda
             </button>
             {m.activeChild && onTask && (
               <button onClick={() => navigate(onTask, m.activeChild!)}>
@@ -338,6 +354,7 @@ export default function MissionDetail({
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       <div

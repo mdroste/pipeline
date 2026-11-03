@@ -20,6 +20,7 @@ pub struct AnalyzerContext<'a> {
     pub document_bundle_path: &'a str,
     pub paper_text_path: &'a str,
     pub source_path: &'a str,
+    pub crossref_api: &'a str,
 }
 
 fn read_bounded(path: &str, max: u64) -> Option<Vec<u8>> {
@@ -49,7 +50,14 @@ pub async fn run(spec: &AnalyzerSpec, context: &AnalyzerContext<'_>) -> Result<V
             let text = read_bounded(context.paper_text_path, 16 * 1024 * 1024)
                 .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
                 .unwrap_or_default();
-            references::run(bundle.as_ref(), &text, context.source_path, &spec.options).await
+            references::run(
+                bundle.as_ref(),
+                &text,
+                context.source_path,
+                &spec.options,
+                context.crossref_api,
+            )
+            .await
         }
         registry::REPLICATION_STATIC => {
             let root = std::path::PathBuf::from(context.source_path);

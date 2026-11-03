@@ -192,6 +192,37 @@ describe("App launch", () => {
     expect(checks).toBe(2);
   });
 
+  it("opens the dependencies window before the check finishes", async () => {
+    const defaultInvoke = invoke.getMockImplementation()!;
+    let finishCheck: (() => void) | undefined;
+    let held = false;
+    invoke.mockImplementation(async (command: string, args: unknown) => {
+      const result = await defaultInvoke(command, args);
+      if (command === "get_execution_plan" && held) {
+        await new Promise<void>((resolve) => {
+          finishCheck = resolve;
+        });
+      }
+      return result;
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    const status = await screen.findByRole("button", { name: "System ready" });
+    held = true;
+    await user.click(status);
+
+    expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
+      "Checking dependencies…",
+    );
+    await waitFor(() => expect(finishCheck).toBeDefined());
+    await act(async () => finishCheck?.());
+    await waitFor(() =>
+      expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
+        "Pipeline has the model access and parsing tools it needs.",
+      ),
+    );
+  });
+
   it("does not rebuild the execution plan when per-report agents change", async () => {
     const user = userEvent.setup();
     render(<App />);

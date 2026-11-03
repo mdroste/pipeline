@@ -18,6 +18,7 @@ fn success_marks_only_the_last_answer_final_without_duplicate_transcript_items()
             id: "claude-turn".into(),
             binding: bound.id.clone(),
             model: None,
+            unsaved: Default::default(),
         };
         let mut answers = super::answers::Answers::default();
         let answer = r#"{"summary":"The calibrated result"}"#;
@@ -64,6 +65,7 @@ fn failed_claude_result_never_promotes_partial_json_to_a_final_answer() {
         id: "claude-turn".into(),
         binding: bound.id.clone(),
         model: None,
+        unsaved: Default::default(),
     };
     let mut answers = super::answers::Answers::default();
     assert_eq!(answers.stream_index(), 0);
@@ -416,6 +418,7 @@ fn recorded_turn(label: &str) -> Turn {
         id,
         binding: bound.id,
         model: None,
+        unsaved: Default::default(),
     }
 }
 
@@ -442,6 +445,110 @@ async fn drive_fake_cli(label: &str, script: &str, model_limit: u64) -> Result<(
     .await;
     process.stop().await;
     result
+}
+
+/// A `user` frame of about `megabytes` MiB, as Claude Code echoes a tool result.
+#[cfg(unix)]
+fn large_echo(megabytes: usize) -> String {
+    format!(
+        r#"printf '{{"type":"user","message":{{"content":[{{"type":"tool_result","tool_use_id":"page","content":"'
+head -c {} /dev/zero | tr '\0' a
+printf '"}}]}}}}\n'
+"#,
+        megabytes * 1024 * 1024
+    )
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn an_echoed_page_image_does_not_end_the_turn() {
+    // A page at the tool limit, base64 encoded and carried twice.
+    let script = format!("{}{FINISH}", large_echo(15));
+    assert_eq!(drive_fake_cli("large-echo", &script, 20_000).await, Ok(()));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_frame_over_the_limit_still_ends_the_turn() {
+    let script = format!("{}{FINISH}", large_echo(17));
+    let error = drive_fake_cli("oversized-frame", &script, 20_000)
+        .await
+        .unwrap_err();
+    assert!(error.contains("frame limit"), "{error}");
+}
+
+/// Claude calls a Pipeline tool, reads the reply, and repeats it in a `user`
+/// frame of `echo` bytes. `call` is the tool name the model used.
+#[cfg(unix)]
+fn tool_turn(call: &str, echo: usize) -> String {
+    format!(
+        r#"printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"page","name":"{call}","input":{{}}}}]}}}}'
+printf '%s\n' '{{"type":"control_request","request_id":"r1","request":{{"subtype":"mcp_message","server_name":"pipeline","message":{{"id":1,"method":"tools/call","params":{{"name":"absent","arguments":{{}}}}}}}}}}'
+read reply
+printf '{{"type":"user","message":{{"content":[{{"type":"tool_result","tool_use_id":"page","content":"'
+head -c {echo} /dev/zero | tr '\0' a
+printf '"}}]}}}}\n'
+{FINISH}"#
+    )
+}
+
+#[cfg(unix)]
+async fn drive_with_budget(label: &str, script: &str, limit: usize) -> Result<(), String> {
+    use std::time::Duration;
+    let mut process = fake_cli(script);
+    let (_cancel, receiver) = watch::channel(false);
+    let result = transport::drive_within(
+        &mut process,
+        &super::super::turn_loop::RecordedEvents::default(),
+        &recorded_turn(label),
+        &protocol::Prompt {
+            text: "Read the page".into(),
+            user_text: "Read the page".into(),
+        },
+        Vec::new(),
+        super::super::turn_loop::ModelClock::new(Duration::from_secs(20), Duration::from_secs(20)),
+        receiver,
+        budget::OutputBudget::new(limit),
+    )
+    .await;
+    process.stop().await;
+    result
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_repeated_tool_reply_does_not_spend_the_turn_s_budget() {
+    let script = tool_turn("mcp__pipeline__absent", 3000);
+    assert_eq!(drive_with_budget("echo", &script, 1024).await, Ok(()));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_result_pipeline_did_not_supply_still_spends_it() {
+    let script = tool_turn("Bash", 3000);
+    let error = drive_with_budget("native-result", &script, 1024)
+        .await
+        .unwrap_err();
+    assert!(error.contains("output budget"), "{error}");
+}
+
+#[test]
+fn a_tool_reply_too_large_to_write_becomes_a_failed_result() {
+    let id = json!(7);
+    let reply = |bytes: usize| {
+        let image = format!("data:image/jpeg;base64,{}", "a".repeat(bytes));
+        tools::bounded_reply(
+            &id,
+            json!({"content":[{"type":"image","mimeType":"image/jpeg","data":image}],"isError":false}),
+        )
+    };
+    let fits = reply(transport::TOOL_REPLY_LIMIT - 1024);
+    assert_eq!(fits["mcp_response"]["result"]["isError"], false);
+    let refused = reply(transport::TOOL_REPLY_LIMIT);
+    let result = &refused["mcp_response"]["result"];
+    assert_eq!(result["isError"], true);
+    assert_eq!(result["content"][0]["type"], "text");
+    assert_eq!(refused["mcp_response"]["id"], 7);
 }
 
 #[test]
@@ -520,7 +627,7 @@ async fn silence_with_no_command_running_is_still_model_time() {
     let error = drive_fake_cli("model-silent", &script, 200)
         .await
         .unwrap_err();
-    assert!(error.contains("15 minutes of model time"), "{error}");
+    assert!(error.contains("60 minutes of model time"), "{error}");
     assert!(error.contains("commands"), "{error}");
 }
 
@@ -548,6 +655,7 @@ async fn a_tool_mistake_goes_back_to_claude_as_a_failed_result() {
             .unwrap()
             .id,
         model: None,
+        unsaved: Default::default(),
     };
     let call = |id: u64, name: &str, arguments: Value| json!({"server_name":"pipeline","message":{"id":id,"method":"tools/call","params":{"name":name,"arguments":arguments}}});
     for (request, expected) in [
@@ -934,4 +1042,90 @@ fn shared_web_access_does_not_grant_shell_network_or_main_project_writes() {
     assert_eq!(codex["web_search"], "live");
     assert!(codex.get("features.network_proxy").is_none());
     assert_eq!(effective.permission_profile, "workbench-inspect");
+}
+
+#[cfg(unix)]
+async fn stopped_turn(label: &str, script: &str, frames: usize) -> Vec<Value> {
+    use std::time::Duration;
+    let mut process = fake_cli(script);
+    let turn = recorded_turn(label);
+    let (cancel, receiver) = watch::channel(false);
+    let events = super::super::turn_loop::RecordedEvents::default();
+    let prompt = protocol::Prompt {
+        text: "Draft it".into(),
+        user_text: "Draft it".into(),
+    };
+    let clock =
+        super::super::turn_loop::ModelClock::new(Duration::from_secs(30), Duration::from_secs(30));
+    let run = transport::drive(
+        &mut process,
+        &events,
+        &turn,
+        &prompt,
+        Vec::new(),
+        clock,
+        receiver,
+    );
+    let stop = async {
+        // The turn's start, then what the script streams.
+        while events.events.lock().unwrap().len() < frames {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        cancel.send(true).unwrap();
+    };
+    let (result, ()) =
+        tokio::time::timeout(Duration::from_secs(10), async { tokio::join!(run, stop) })
+            .await
+            .unwrap();
+    process.stop().await;
+    assert_eq!(result, Err("interrupted".to_string()));
+    turn.save_unfinished(&events).await;
+    let items = run_store({
+        let binding = turn.binding.clone();
+        move |store| {
+            let connection = store.connection()?;
+            let mut statement = connection
+                .prepare(
+                    "SELECT payload_json FROM transcript_items WHERE binding_id=?1 AND is_final=1",
+                )
+                .unwrap();
+            let rows = statement
+                .query_map([binding], |row| row.get::<_, String>(0))
+                .unwrap()
+                .map(|row| serde_json::from_str(&row.unwrap()).unwrap())
+                .collect::<Vec<Value>>();
+            Ok(rows)
+        }
+    })
+    .await
+    .unwrap();
+    items
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn stop_between_deltas_and_the_assistant_frame_keeps_the_text() {
+    let delta = |text: &str| {
+        format!(
+            "printf '%s\\n' '{}'",
+            json!({"type":"stream_event","parent_tool_use_id":null,"event":{"delta":{"text":text}}})
+        )
+    };
+    let script = format!("{}\n{}\nsleep 30", delta("Half of "), delta("an answer"));
+    let items = stopped_turn("stopped-deltas", &script, 3).await;
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(items[0]["text"], "Half of an answer");
+    assert_eq!(items[0]["phase"], "incomplete");
+    assert_eq!(items[0]["runtime"], "claude");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn stop_after_an_open_assistant_item_finishes_it_once() {
+    let frame = json!({"type":"assistant","parent_tool_use_id":null,"message":{"content":[{"type":"text","text":"A whole paragraph"}]}});
+    let script = format!("printf '%s\\n' '{frame}'\nsleep 30");
+    let items = stopped_turn("stopped-item", &script, 2).await;
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(items[0]["text"], "A whole paragraph");
+    assert_eq!(items[0]["phase"], "incomplete");
 }

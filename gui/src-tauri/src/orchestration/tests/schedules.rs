@@ -302,6 +302,7 @@ async fn occurrences_survive_ordinary_research_activity() {
         active: Mutex::new(HashMap::new()),
         stopping: AtomicBool::new(false),
         background: AtomicBool::new(false),
+        listening: AtomicBool::new(true),
         _owner: owner,
         app: None,
     });
@@ -410,6 +411,7 @@ async fn a_slot_blocked_task_records_its_wait_once() {
         active: Mutex::new(HashMap::new()),
         stopping: AtomicBool::new(false),
         background: AtomicBool::new(false),
+        listening: AtomicBool::new(true),
         _owner: owner,
         app: None,
     });
@@ -481,6 +483,7 @@ fn fixture_coordinator(store: Store) -> Arc<Coordinator> {
         active: Mutex::new(HashMap::new()),
         stopping: AtomicBool::new(false),
         background: AtomicBool::new(false),
+        listening: AtomicBool::new(true),
         _owner: owner,
         app: None,
     })

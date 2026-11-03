@@ -20,6 +20,7 @@ export interface ChangedFile {
   unstaged: boolean;
   isDirectory: boolean;
   isSubmodule: boolean;
+  nestedRepository: boolean;
   conflict: string | null;
 }
 export interface LargeFile {
@@ -37,6 +38,8 @@ export interface RepositoryView {
   files: ChangedFile[];
   filesTruncated: boolean;
   largeFiles: LargeFile[];
+  /** Too many new files to check, so `largeFiles` may be missing some. */
+  largeFilesCutShort: boolean;
   branches: BranchInfo[];
   operation: "merge" | "rebase" | "cherry-pick" | "revert" | null;
   operationMessage: string | null;

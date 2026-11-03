@@ -91,14 +91,23 @@ impl Options {
     }
 }
 
+/// Crossref's list of update types is open-ended, so anything worded as a
+/// retraction or withdrawal counts as one rather than passing as clean.
+fn retracts(kind: &str) -> bool {
+    kind == "removal" || kind.contains("retract") || kind.contains("withdraw")
+}
+
 pub(super) fn notice_flag(notices: &[crossref::Notice]) -> Option<&'static str> {
     let has = |kinds: &[&str]| {
         notices
             .iter()
             .any(|notice| kinds.contains(&notice.kind.as_str()))
     };
-    if has(&["retraction", "withdrawal", "removal"]) {
+    let retractions = || notices.iter().filter(|notice| retracts(&notice.kind));
+    if retractions().any(|notice| !notice.kind.contains("partial")) {
         Some("retracted")
+    } else if retractions().next().is_some() {
+        Some("partially_retracted")
     } else if has(&["expression_of_concern"]) {
         Some("expression_of_concern")
     } else if has(&[
@@ -160,6 +169,7 @@ fn confirmed_work(reference: &Reference, work: &crossref::Work, by_doi: bool) ->
 fn unconfirmed_notice(flag: &str) -> &'static str {
     match flag {
         "retracted" => "Crossref has a retraction or withdrawal notice for this record, but the record could not be confirmed as the cited work, so whether the cited work was retracted could not be confirmed.",
+        "partially_retracted" => "Crossref has a partial retraction notice for this record, but the record could not be confirmed as the cited work, so whether it applies to the cited work could not be confirmed.",
         "expression_of_concern" => "Crossref has an expression of concern for this record, but the record could not be confirmed as the cited work, so whether it applies to the cited work could not be confirmed.",
         _ => "Crossref has a correction for this record, but the record could not be confirmed as the cited work, so whether it applies to the cited work could not be confirmed.",
     }

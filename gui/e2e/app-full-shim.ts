@@ -19,13 +19,13 @@ const versionControlFixture = {
   },
   files: [
     ...(params.get("git") === "conflict"
-      ? [{ path: "output/table4.tex", oldPath: null, status: "conflicted", staged: false, unstaged: false, isDirectory: false, isSubmodule: false, conflict: "changed on both sides" }]
+      ? [{ path: "output/table4.tex", oldPath: null, status: "conflicted", staged: false, unstaged: false, isDirectory: false, isSubmodule: false, nestedRepository: false, conflict: "changed on both sides" }]
       : []),
-    { path: "paper/main.tex", oldPath: null, status: "modified", staged: false, unstaged: true, isDirectory: false, isSubmodule: false, conflict: null },
-    { path: "analysis/event_study.do", oldPath: null, status: "modified", staged: true, unstaged: false, isDirectory: false, isSubmodule: false, conflict: null },
-    { path: "analysis/spillovers.do", oldPath: "analysis/robustness.do", status: "renamed", staged: true, unstaged: false, isDirectory: false, isSubmodule: false, conflict: null },
-    { path: "data/panel.dta", oldPath: null, status: "untracked", staged: false, unstaged: true, isDirectory: false, isSubmodule: false, conflict: null },
-    { path: "notes", oldPath: null, status: "untracked", staged: false, unstaged: true, isDirectory: true, isSubmodule: false, conflict: null },
+    { path: "paper/main.tex", oldPath: null, status: "modified", staged: false, unstaged: true, isDirectory: false, isSubmodule: false, nestedRepository: false, conflict: null },
+    { path: "analysis/event_study.do", oldPath: null, status: "modified", staged: true, unstaged: false, isDirectory: false, isSubmodule: false, nestedRepository: false, conflict: null },
+    { path: "analysis/spillovers.do", oldPath: "analysis/robustness.do", status: "renamed", staged: true, unstaged: false, isDirectory: false, isSubmodule: false, nestedRepository: false, conflict: null },
+    { path: "data/panel.dta", oldPath: null, status: "untracked", staged: false, unstaged: true, isDirectory: false, isSubmodule: false, nestedRepository: false, conflict: null },
+    { path: "notes", oldPath: null, status: "untracked", staged: false, unstaged: true, isDirectory: true, isSubmodule: false, nestedRepository: false, conflict: null },
   ],
   filesTruncated: false,
   largeFiles: params.get("git") === "conflict" ? [] : [{ path: "data/panel.dta", size: 241 * 1024 * 1024 }],

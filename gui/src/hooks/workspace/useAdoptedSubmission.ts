@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type { ActiveTurn, WorkbenchEvent } from "../../lib/workbenchTypes";
+import { reportProblem } from "./reportProblem";
 import type { WorkspaceConversationRuntime } from "./useWorkspaceConversationRuntime";
 
 export const terminalKey = (epoch: unknown, thread: unknown, turn: unknown) =>
@@ -46,6 +47,7 @@ type AdoptionContext = Pick<
   | "completedTurnsRef"
   | "draftOwedRef"
   | "hydrate"
+  | "missedProblemsRef"
   | "sessionRef"
   | "setActive"
   | "setError"
@@ -55,7 +57,7 @@ type AdoptionContext = Pick<
   | "submissionOwner"
   | "submissionRef"
   | "submittingRef"
-> & { finishSubmission: (status: string) => void };
+> & { finishSubmission: (status: string, reason?: string | null) => void };
 
 /**
  * Follows a send found running after its page closed. It has no promise to
@@ -71,6 +73,7 @@ export function useAdoptedSubmission({
   draftOwedRef,
   finishSubmission,
   hydrate,
+  missedProblemsRef,
   sessionRef,
   setActive,
   setError,
@@ -101,7 +104,7 @@ export function useAdoptedSubmission({
       const terminal = completedTurnsRef.current.get(key);
       if (terminal) {
         completedTurnsRef.current.delete(key);
-        finishSubmission(terminal);
+        finishSubmission(terminal.status, terminal.reason);
       } else if (selected) {
         activeRef.current = { threadId, turnId };
         setActive({ threadId, turnId });
@@ -113,7 +116,15 @@ export function useAdoptedSubmission({
       submissionRef.current = null;
       submittingRef.current = false;
       setSubmissionOwner(null);
-      if (!selected) return;
+      if (!selected) {
+        if (failure)
+          reportProblem(
+            { missedProblemsRef, sessionRef, setError },
+            owner.sessionId,
+            adoptedFailureMessage(failure),
+          );
+        return;
+      }
       // Hydration unlocks the composer in the render that returns its draft.
       // Unlocking first would let autosave write the empty composer over it,
       // so a read that fails or loses to another leaves the composer locked.
@@ -145,6 +156,7 @@ export function useAdoptedSubmission({
     draftOwedRef,
     finishSubmission,
     hydrate,
+    missedProblemsRef,
     sessionRef,
     setActive,
     setError,

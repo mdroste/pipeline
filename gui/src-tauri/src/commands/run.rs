@@ -43,6 +43,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         workflow_fingerprint,
         workflow_json,
         specialist_catalog_revision,
+        agent_overrides,
         ..
     } = snapshot;
     pipeline_config::apply_agent_defaults(&mut config, &settings);
@@ -221,6 +222,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             &workflow_json,
         )
         .map_err(|error| format!("Could not save the workflow snapshot: {error}"))?;
+        super::rerun::save_agent_overrides(w, agent_overrides.as_ref())?;
         w.add_text(
             crate::runs::DOCUMENT_TEXT_PATH,
             "Readable document",
@@ -410,7 +412,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         return Err("Pipeline cancelled".into());
     }
 
-    let report = report::assemble_report(
+    let mut report = report::assemble_report(
         app,
         &mut run_writer,
         &execution_config,
@@ -422,17 +424,11 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         &scoped_source_path,
     );
 
-    // Optional diff
-    let mut diff_text = None;
-    if diff || settings.auto_revision_reconciliation {
-        if let Ok(Some(prior)) =
-            crate::runs::load_latest_report_for_input(paper_path, &extraction.paper_hash)
-        {
-            if let Ok(dt) = reconcile::reconcile(app, &prior, &report).await {
-                diff_text = Some(dt);
-            }
-        }
-    }
+    let diff_text = if diff || settings.auto_revision_reconciliation {
+        revision_diff(app, paper_path, &extraction.paper_hash, &mut report).await
+    } else {
+        None
+    };
     let elapsed = pipeline_start.elapsed();
     let markdown = output::render_markdown(&report, diff_text.as_deref(), elapsed, &settings);
 
@@ -459,4 +455,97 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             parent_run_id: None,
         },
     )
+}
+
+/// The comparison with this paper's previous Review. When one was asked for
+/// and cannot be made, the report says so: a missing section must not read as
+/// a paper with nothing to compare.
+async fn revision_diff(
+    app: &crate::emit::EventBus,
+    paper_path: &str,
+    paper_hash: &str,
+    report: &mut crate::models::PipelineReport,
+) -> Option<String> {
+    let compared = match crate::runs::load_latest_report_for_input(paper_path, paper_hash) {
+        Ok(None) => return None,
+        Ok(Some(prior)) => reconcile::reconcile(app, &prior, report).await,
+        Err(error) => Err(error),
+    };
+    match compared {
+        Ok(diff) => Some(diff),
+        Err(error) => {
+            record_failed_revision_diff(app, report, &error);
+            None
+        }
+    }
+}
+
+fn record_failed_revision_diff(
+    app: &crate::emit::EventBus,
+    report: &mut crate::models::PipelineReport,
+    error: &str,
+) {
+    crate::pipeline::logging::emit(app, format!("WARNING: revision diff failed: {error}"));
+    report.quality.limitations.push(
+        "The comparison with the previous Review of this paper could not be completed, so this report has no revision diff."
+            .to_string(),
+    );
+}
+
+#[cfg(test)]
+mod revision_diff_tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct Lines(std::sync::Mutex<Vec<String>>);
+
+    impl crate::emit::Events for Lines {
+        fn emit_event(
+            &self,
+            event: &str,
+            payload: serde_json::Value,
+        ) -> Result<(), crate::emit::EmitError> {
+            if event == "pipeline:log" {
+                self.0.lock().unwrap().push(payload.to_string());
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_failed_revision_diff_is_named_in_the_report_and_the_log() {
+        let lines = std::sync::Arc::new(Lines::default());
+        let app: crate::emit::EventBus = lines.clone();
+        let mut report = crate::models::PipelineReport {
+            orientation: serde_json::Value::Null,
+            step_outputs: Vec::new(),
+            failed_steps: Vec::new(),
+            products: Default::default(),
+            quality: crate::models::ReportQuality {
+                schema_version: 2,
+                status: "done".into(),
+                ..Default::default()
+            },
+            referee_reports: Vec::new(),
+            editor: None,
+            report_date: chrono::Local::now().date_naive(),
+            paper_hash: "test".into(),
+        };
+
+        record_failed_revision_diff(&app, &mut report, "You've hit your limit");
+
+        let markdown = crate::output::render_markdown(
+            &report,
+            None,
+            std::time::Duration::from_secs(1),
+            &crate::settings::Settings::default(),
+        );
+        assert!(markdown.contains("no revision diff"), "{markdown}");
+        assert!(lines
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|line| line.contains("revision diff failed: You've hit your limit")));
+    }
 }

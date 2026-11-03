@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   citations: vi.fn(),
   source: vi.fn(),
   listSources: vi.fn(),
+  importSource: vi.fn(),
+  open: vi.fn(),
   confirm: vi.fn(),
 }));
 vi.mock("../../lib/studioClient", async (original) => ({
@@ -26,13 +28,16 @@ vi.mock("../../lib/studioClient", async (original) => ({
   },
 }));
 vi.mock("../../lib/workbench/researchClient", () => ({
-  researchClient: { listSources: mocks.listSources },
+  researchClient: {
+    listSources: mocks.listSources,
+    importSource: mocks.importSource,
+  },
 }));
 vi.mock("../DialogService", async (original) => ({
   ...(await original<typeof import("../DialogService")>()),
   confirmDialog: mocks.confirm,
 }));
-vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: mocks.open }));
 
 const data = {
   settings: { body: { manuscriptRevisionId: "manuscript" } },
@@ -97,6 +102,68 @@ it("opens the manuscript at a citation's own bytes", async () => {
     start: 120,
     end: 128,
   });
+});
+
+it("says what the citation search can miss", async () => {
+  mocks.citations.mockResolvedValue({
+    citations: [],
+    coverage: "Finds citation commands written out in the TeX source.",
+  });
+  render(view());
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Find literal TeX citations" }),
+  );
+  expect(
+    await screen.findByText(
+      "Finds citation commands written out in the TeX source.",
+    ),
+  ).toBeInTheDocument();
+});
+
+it("adding a source drops the old passage and keeps a key left blank", async () => {
+  const passage = {
+    ...saved,
+    body: {
+      ...saved.body,
+      note: {
+        ...saved.body.note,
+        citationKey: "card1994",
+        sourceVersionId: "old-version",
+        start: 4,
+        end: 9,
+        quote: "wages",
+        support: "supports",
+      },
+    },
+  };
+  mocks.records.mockImplementation(async (_w: string, kind: string) =>
+    kind === "literature" ? [passage] : [],
+  );
+  mocks.open.mockResolvedValue("/project/new.pdf");
+  mocks.importSource.mockResolvedValue({
+    source: { versionId: "new-version" },
+  });
+  render(view());
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Saved question" }),
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText("Citation key")).toHaveValue("card1994"),
+  );
+  fireEvent.change(screen.getByLabelText(/Source title/), {
+    target: { value: "A newer version" },
+  });
+  fireEvent.click(screen.getByText("Choose and retain local source"));
+  await waitFor(() => expect(mocks.importSource).toHaveBeenCalledOnce());
+  await waitFor(() =>
+    expect(screen.getByLabelText("Passage assessment")).toHaveValue(
+      "unsupported",
+    ),
+  );
+  expect(screen.getByLabelText("Citation key")).toHaveValue("card1994");
+  expect(
+    screen.getByText(/Exact passage:\s+None — supporting evidence/),
+  ).toBeInTheDocument();
 });
 
 it("asks before a question in the table replaces an unsaved note", async () => {
@@ -172,4 +239,30 @@ it("stops paging at the end of a saved source, on a fresh pane each time", async
   fireEvent.click(next);
   await screen.findByText(/This is the end of the saved source/);
   expect(next).toBeDisabled();
+});
+
+it("marks a sender's assessment and says when a list shows only its newest", async () => {
+  const imported = {
+    ...saved,
+    body: {
+      ...saved.body,
+      importedFrom: "namespace",
+      importedStatus: "researcher_checked",
+    },
+  };
+  mocks.records.mockImplementation(async (_w: string, kind: string) =>
+    kind === "literature"
+      ? [imported]
+      : Array.from({ length: 500 }, (_, n) => ({
+          id: `b${n}`,
+          body: { entry: { key: `k${n}` }, source: {} },
+        })),
+  );
+  render(view());
+  expect(
+    await screen.findByText(/the sender checked the source identity/),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/most recently imported entries/),
+  ).toBeInTheDocument();
 });

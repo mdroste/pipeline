@@ -34,6 +34,13 @@ pub(crate) fn anthropic_stop_fails(reason: Option<&str>, accept_output_cap: bool
     anthropic_output_incomplete(reason) && !accept_output_cap
 }
 
+/// Whether a Google finish reason fails the call. Only the output cap can be
+/// accepted, by a warm-up: see [`anthropic_stop_fails`]. A blocked or malformed
+/// response never counts.
+pub(crate) fn google_stop_fails(reason: Option<&str>, accept_output_cap: bool) -> bool {
+    google_output_incomplete(reason) && !(reason == Some("MAX_TOKENS") && accept_output_cap)
+}
+
 /// Run the tool-use loop for Anthropic. Returns (text, usage).
 #[allow(clippy::too_many_arguments)]
 pub async fn anthropic_tool_loop(
@@ -439,6 +446,7 @@ pub struct GoogleToolLoopContext<'a> {
     pub timeout_secs: u64,
     pub label: &'a str,
     pub access: &'a ToolAccess,
+    pub accept_output_cap: bool,
 }
 
 /// Run the tool-use loop for Google. Returns (text, usage).
@@ -454,6 +462,7 @@ pub async fn google_tool_loop(
         timeout_secs,
         label,
         access,
+        accept_output_cap,
     } = context;
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
@@ -624,7 +633,7 @@ pub async fn google_tool_loop(
             .collect::<Vec<_>>()
             .join("");
 
-        if google_output_incomplete(candidate.finish_reason.as_deref()) {
+        if google_stop_fails(candidate.finish_reason.as_deref(), accept_output_cap) {
             return Err(format!(
                 "Google did not complete {label} (finish reason: {})",
                 candidate.finish_reason.as_deref().unwrap_or("unknown")

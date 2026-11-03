@@ -183,9 +183,10 @@ pub(in crate::commands) fn render_print_markdown(markdown: &str) -> String {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
-    let parser = Parser::new_ext(&markdown, options);
+    // Text that only parses as HTML, such as `n<N>`, must survive the sanitizer.
+    let events = output::formats::escape_html_text(Parser::new_ext(&markdown, options));
     let mut html_body = String::new();
-    html::push_html(&mut html_body, parser);
+    html::push_html(&mut html_body, events.into_iter());
 
     // Sanitize HTML to strip <script>, event handlers, and other XSS vectors
     // that could be injected via LLM output (e.g. prompt injection in paper

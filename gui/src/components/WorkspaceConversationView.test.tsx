@@ -500,3 +500,57 @@ it("does not call a conversation empty while older pages are still unread", () =
   page.rerender(view({ snapshot: empty, totalItems: 0, hasEarlier: false }));
   expect(screen.getByText("What are you working on?")).toBeInTheDocument();
 });
+
+it("keeps a failed turn's reason in the transcript, after that turn", () => {
+  const item = (id: string, text: string): TranscriptItem => ({
+    id,
+    turnId: "turn",
+    providerItemId: id,
+    itemKind: id === "question" ? "userMessage" : "agentMessage",
+    payload: { text },
+    isFinal: true,
+    createdAt: "2026-11-01T10:00:00Z",
+    updatedAt: "2026-11-01T10:00:00Z",
+  });
+  const renderedItems = [item("question", "Question"), item("part", "Part")];
+  render(
+    view({
+      renderedItems,
+      totalItems: 2,
+      transcriptEnd: 2,
+      snapshot: {
+        session: { id: "A", overrides: {} },
+        items: renderedItems,
+        turns: [
+          {
+            id: "turn",
+            bindingId: "binding",
+            clientSubmissionId: "submission",
+            providerTurnId: "provider-turn",
+            state: "failed",
+            error: { message: "You have reached your usage limit." },
+            createdAt: "2026-11-01T10:00:00Z",
+            updatedAt: "2026-11-01T10:00:00Z",
+            terminalAt: "2026-11-01T10:00:01Z",
+          },
+        ],
+      } as unknown as ComponentProps<
+        typeof WorkspaceConversationView
+      >["snapshot"],
+    }),
+  );
+  const failure = screen.getByText(
+    "The response failed: You have reached your usage limit.",
+  );
+  expect(
+    screen.getByText("Part").compareDocumentPosition(failure) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+});
+
+it("shows warnings beside the composer", () => {
+  render(view({ warnings: ["Refresh the working copy before accepting."] }));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Refresh the working copy before accepting.",
+  );
+});

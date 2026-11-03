@@ -5,6 +5,7 @@ import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import type { EngineDownloadProgress, EngineStatus } from "../lib/types";
 import EngineInstallStatus, { type PhaseStatus } from "./EngineInstallStatus";
 import InfoButton from "./InfoButton";
+import ReportIssueLink from "./ReportIssueLink";
 
 /** Cap the streamed install log kept in memory. */
 const MAX_LOG_LINES = 200;
@@ -30,6 +31,7 @@ export default function EnginesPanel({
   const [logLines, setLogLines] = useState<string[]>([]);
   const [uninstalling, setUninstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [repaired, setRepaired] = useState<string | null>(null);
   const [listenersReady, setListenersReady] = useState(false);
   const [listenerError, setListenerError] = useState<string | null>(null);
   const [listenerAttempt, setListenerAttempt] = useState(0);
@@ -151,16 +153,20 @@ export default function EnginesPanel({
     };
   }, [listenerAttempt]);
 
-  const install = async (id: string) => {
+  // The installer leaves sound files alone and rebuilds what fails its check,
+  // so repairing is the same call as installing.
+  const install = async (id: string, repairLabel?: string) => {
     cancelRequested.current = false;
     setBusy(id);
     setError(null);
+    setRepaired(null);
     setPhases({});
     setDownload(null);
     setLogLines([]);
     try {
       await invoke("install_engine", { engineId: id });
       onSystemChange?.();
+      if (repairLabel) setRepaired(repairLabel);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -186,6 +192,7 @@ export default function EnginesPanel({
     setBusy(id);
     setUninstalling(true);
     setError(null);
+    setRepaired(null);
     setPhases({});
     setDownload(null);
     setLogLines([]);
@@ -266,6 +273,7 @@ export default function EnginesPanel({
       {openDirError && (
         <p role="alert" className="mb-3 text-xs text-red-700 dark:text-red-400">
           {openDirError}
+          <ReportIssueLink />
         </p>
       )}
 
@@ -274,7 +282,10 @@ export default function EnginesPanel({
           role="alert"
           className="mb-3 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
         >
-          <span className="flex-1">{engineStatusError}</span>
+          <span className="flex-1">
+            {engineStatusError}
+            <ReportIssueLink />
+          </span>
           <button
             type="button"
             onClick={refresh}
@@ -290,7 +301,10 @@ export default function EnginesPanel({
           role="alert"
           className="mb-3 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
         >
-          <span className="flex-1">{listenerError}</span>
+          <span className="flex-1">
+            {listenerError}
+            <ReportIssueLink />
+          </span>
           <button
             type="button"
             onClick={() => setListenerAttempt((attempt) => attempt + 1)}
@@ -339,14 +353,24 @@ export default function EnginesPanel({
                       Cancel
                     </button>
                   ) : engine.installed ? (
-                    <button
-                      type="button"
-                      onClick={() => uninstall(engine.id)}
-                      disabled={!listenersReady}
-                      className="text-xs py-1.5 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                    >
-                      Uninstall
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => install(engine.id, engine.label)}
+                        disabled={!listenersReady || !available}
+                        className="text-xs py-1.5 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                      >
+                        Repair
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => uninstall(engine.id)}
+                        disabled={!listenersReady}
+                        className="text-xs py-1.5 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                      >
+                        Uninstall
+                      </button>
+                    </>
                   ) : (
                     <button
                       type="button"
@@ -420,9 +444,19 @@ export default function EnginesPanel({
         </p>
       )}
 
+      {repaired && (
+        <p
+          className="mt-3 text-xs text-gray-500 dark:text-gray-400"
+          role="status"
+        >
+          {repaired} is checked and ready.
+        </p>
+      )}
+
       {error && (
         <p className="mt-3 text-xs text-red-600 dark:text-red-400" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
     </div>

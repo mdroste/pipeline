@@ -15,10 +15,13 @@ import { listen } from "@tauri-apps/api/event";
 import { conversationClient } from "../../lib/workbench/conversationClient";
 import { runtimeClient } from "../../lib/workbench/runtimeClient";
 import {
+  keepNewerSession,
   mergeSessionSnapshot,
   newOperation,
 } from "../../lib/workspaceSessionState";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
+import { turnFailureReason, withReason } from "../../lib/workspaceTurnLabels";
+import { reportConnectionWarning, reportProblem } from "./reportProblem";
 import { createStreamStore } from "./streamStore";
 import {
   addTurnText,
@@ -66,6 +69,12 @@ export function useWorkspaceConversationRuntime(
   const [requests, setRequests] = useState<WorkbenchEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Warnings about the conversation on screen. They outlast the response that
+  // raised them, and a stopped response's notice must not replace them.
+  const [warnings, setWarnings] = useState<string[]>([]);
+  // Live file-change items, so an approval can show the files it would change.
+  // State, because a request can reach the page before the item it refers to.
+  const [fileChanges, setFileChanges] = useState<FileChanges>(() => new Map());
   // Mirrors submissionRef for rendering: a message may still be running in
   // a conversation the researcher has since left.
   const [submissionOwner, setSubmissionOwner] =
@@ -77,13 +86,14 @@ export function useWorkspaceConversationRuntime(
   const submissionRef = useRef<PendingSubmission | null>(null);
   const activeRef = useRef(active);
   const submittingRef = useRef(false);
-  const completedTurnsRef = useRef(new Map<string, string>());
+  const completedTurnsRef = useRef(new Map<string, TurnEnd>());
+  // What went wrong in a conversation while another was on screen, shown when
+  // the researcher returns to it.
+  const missedProblemsRef = useRef(new Map<string, string>());
   const streamBufferRef = useRef("");
   const streamFlushRef = useRef<number | null>(null);
   const streamItemRef = useRef<string | null>(null);
   const turnTextRef = useRef<TurnText | null>(null);
-  // Live file-change items, so an approval can show the files it would change.
-  const fileChangesRef = useRef(new Map<string, Record<string, unknown>>());
   sessionRef.current = sessionId;
   snapshotRef.current = snapshot;
   activeRef.current = active;
@@ -152,14 +162,9 @@ export function useWorkspaceConversationRuntime(
           await load(selectedSession);
         return;
       }
-      const current = snapshotRef.current;
-      if (
-        current?.session.id === selectedSession &&
-        (current.sequence > next.sequence ||
-          current.session.revision > next.session.revision)
-      )
-        return;
-      setSnapshot(next);
+      next = keepNewerSession(snapshotRef.current, next);
+      const loaded = next;
+      setSnapshot((old) => keepNewerSession(old, loaded));
       let recoveredDraft: string | null = null;
       try {
         recoveredDraft = localStorage.getItem(
@@ -289,6 +294,8 @@ export function useWorkspaceConversationRuntime(
     setError,
     notice,
     setNotice,
+    warnings,
+    setWarnings,
     submissionOwner,
     setSubmissionOwner,
     activeTurn,
@@ -300,11 +307,13 @@ export function useWorkspaceConversationRuntime(
     activeRef,
     submittingRef,
     completedTurnsRef,
+    missedProblemsRef,
     streamBufferRef,
     streamFlushRef,
     streamItemRef,
     turnTextRef,
-    fileChangesRef,
+    fileChanges,
+    setFileChanges,
     draftEditRevision,
     hydrationGeneration,
     draftOwedRef,
@@ -341,7 +350,7 @@ interface SubmissionPresentation {
 export function createWorkspaceSubmission(
   conversation: WorkspaceConversationRuntime,
   persistence: WorkspaceSessionPersistence,
-  finishSubmission: (status: string) => void,
+  finishSubmission: (status: string, reason?: string | null) => void,
   presentation: SubmissionPresentation,
 ) {
   const {
@@ -357,6 +366,7 @@ export function createWorkspaceSubmission(
     clearStream,
     setError,
     setNotice,
+    setWarnings,
     setPendingUser,
     setDraft,
     draftEditRevision,
@@ -409,6 +419,7 @@ export function createWorkspaceSubmission(
     setTranscriptPage(0);
     setError(null);
     setNotice(null);
+    setWarnings([]);
     setPendingUser(text);
     setDraft("");
     try {
@@ -420,7 +431,9 @@ export function createWorkspaceSubmission(
     let dispatched = false;
     try {
       await selectionSaveRef.current;
-      await draftSaveRef.current;
+      // The host saves the draft with the message, so a failed autosave is not
+      // a reason to hold this send back.
+      await draftSaveRef.current.catch(() => undefined);
       dispatched = true;
       const result = await runtimeClient.sendTurn({
         sessionId,
@@ -448,7 +461,7 @@ export function createWorkspaceSubmission(
         completedTurnsRef.current.get(terminalKey(result.epoch, "", ""));
       if (terminal) {
         completedTurnsRef.current.delete(key);
-        finishSubmission(terminal);
+        finishSubmission(terminal.status, terminal.reason);
       } else if (sessionRef.current === sessionId) {
         const turn = { threadId: result.threadId, turnId: result.turnId };
         activeRef.current = turn;
@@ -485,14 +498,22 @@ export function createWorkspaceSubmission(
           : notSent
             ? `Message not sent: ${workbenchErrorMessage(cause)}`
             : `Message not sent because its settings or draft could not be saved: ${workbenchErrorMessage(cause)}`;
-        if (sessionRef.current === sessionId) setError(message);
+        reportProblem(conversation, sessionId, message);
         return;
       }
-      if (sessionRef.current === sessionId)
-        setError(
-          `Pipeline could not confirm whether the message was received. It was preserved as a draft and will not be retried automatically. ${workbenchErrorMessage(cause)}`,
-        );
       if (sessionRef.current === sessionId) setPendingUser(null);
+      else {
+        try {
+          localStorage.setItem(`pipeline.pendingDraft.${sessionId}`, text);
+        } catch {
+          /* The host keeps the saved draft until it accepts a message. */
+        }
+      }
+      reportProblem(
+        conversation,
+        sessionId,
+        `Pipeline could not confirm whether the message was received. It was preserved as a draft and will not be retried automatically. ${workbenchErrorMessage(cause)}`,
+      );
       await hydrate(sessionId);
       if (
         sessionRef.current === sessionId &&
@@ -526,13 +547,20 @@ export interface SubmissionOwner {
   sessionId: string;
   threadId: string | null;
 }
+/** How a turn ended, kept until its submission can be told. */
+export interface TurnEnd {
+  status: string;
+  reason: string | null;
+}
+type FileChanges = ReadonlyMap<string, Record<string, unknown>>;
+
 /** A plain sentence for a response that ended without completing. */
-function endedMessage(status: string) {
+function endedMessage(status: string, reason?: string | null) {
   if (status === "interrupted") return "Response stopped.";
   if (status === "connection closed")
     return "The connection to the assistant closed before the response finished.";
-  if (status === "failed") return "The response failed.";
-  return "The response did not finish.";
+  if (status === "failed") return withReason("The response failed", reason);
+  return withReason("The response did not finish", reason);
 }
 
 type WorkbenchEventBridge = Pick<
@@ -543,8 +571,8 @@ type WorkbenchEventBridge = Pick<
   | "completedTurnsRef"
   | "draftEditRevision"
   | "draftOwedRef"
-  | "fileChangesRef"
   | "hydrate"
+  | "missedProblemsRef"
   | "observeActiveTurn"
   | "refreshActiveTurn"
   | "refreshSessionRecord"
@@ -552,6 +580,7 @@ type WorkbenchEventBridge = Pick<
   | "setActive"
   | "setDraft"
   | "setError"
+  | "setFileChanges"
   | "setModels"
   | "setNotice"
   | "setPendingUser"
@@ -559,6 +588,7 @@ type WorkbenchEventBridge = Pick<
   | "setStream"
   | "setSubmissionOwner"
   | "setSubmitting"
+  | "setWarnings"
   | "snapshotRef"
   | "streamBufferRef"
   | "streamFlushRef"
@@ -580,8 +610,8 @@ function useWorkbenchEvents({
   completedTurnsRef,
   draftEditRevision,
   draftOwedRef,
-  fileChangesRef,
   hydrate,
+  missedProblemsRef,
   observeActiveTurn,
   persistDraft,
   refreshActiveTurn,
@@ -590,6 +620,7 @@ function useWorkbenchEvents({
   setActive,
   setDraft,
   setError,
+  setFileChanges,
   setModels,
   setNotice,
   setPendingUser,
@@ -597,6 +628,7 @@ function useWorkbenchEvents({
   setStream,
   setSubmissionOwner,
   setSubmitting,
+  setWarnings,
   snapshotRef,
   streamBufferRef,
   streamFlushRef,
@@ -719,12 +751,17 @@ function useWorkbenchEvents({
   // when the saved transcript (the newest items only) no longer reaches it,
   // and restoring it would let the researcher send it twice.
   const restorePrompt = useCallback(
-    (owner: PendingSubmission, status: string, editRevision: number) => {
+    (
+      owner: PendingSubmission,
+      status: string,
+      reason: string | null | undefined,
+      editRevision: number,
+    ) => {
       if (owner.turnId) return;
       const selected = sessionRef.current === owner.sessionId;
       if (selected && draftEditRevision.current !== editRevision) {
         setError(
-          `${endedMessage(status)} Its message is not in the conversation.`,
+          `${endedMessage(status, reason)} Its message is not in the conversation.`,
         );
         return;
       }
@@ -738,18 +775,25 @@ function useWorkbenchEvents({
         /* Optional cache. */
       }
       void persistDraft(owner.sessionId, owner.text).catch(() => undefined);
-      if (selected) {
-        setDraft(owner.text);
-        setError(
-          `${endedMessage(status)} Its message was restored to this conversation.`,
-        );
-      }
+      if (selected) setDraft(owner.text);
+      reportProblem(
+        { missedProblemsRef, sessionRef, setError },
+        owner.sessionId,
+        `${endedMessage(status, reason)} Its message was restored to this conversation.`,
+      );
     },
-    [sessionRef, draftEditRevision, setError, persistDraft, setDraft],
+    [
+      missedProblemsRef,
+      sessionRef,
+      draftEditRevision,
+      setError,
+      persistDraft,
+      setDraft,
+    ],
   );
 
   const finishSubmission = useCallback(
-    (status: string) => {
+    (status: string, reason?: string | null) => {
       const owner = submissionRef.current;
       if (!owner) return;
       submissionRef.current = null;
@@ -763,12 +807,23 @@ function useWorkbenchEvents({
         setSubmitting(false);
         setActive(null);
         if (status === "interrupted") setNotice(endedMessage(status));
-        else if (status !== "completed") setError(endedMessage(status));
+        else if (status !== "completed") setError(endedMessage(status, reason));
+      } else if (
+        owner.turnId &&
+        !["completed", "interrupted"].includes(status)
+      ) {
+        // An accepted message stays in the transcript, so nothing is restored
+        // and this is the only word the researcher gets.
+        reportProblem(
+          { missedProblemsRef, sessionRef, setError },
+          owner.sessionId,
+          endedMessage(status, reason),
+        );
       }
       void settleTurn(owner.sessionId)
         .then(() => {
           if (status !== "completed")
-            restorePrompt(owner, status, editRevision);
+            restorePrompt(owner, status, reason, editRevision);
         })
         .catch(() => undefined);
     },
@@ -776,6 +831,7 @@ function useWorkbenchEvents({
       submissionRef,
       submittingRef,
       setSubmissionOwner,
+      missedProblemsRef,
       sessionRef,
       draftEditRevision,
       flushStream,
@@ -796,6 +852,7 @@ function useWorkbenchEvents({
     draftOwedRef,
     finishSubmission,
     hydrate,
+    missedProblemsRef,
     sessionRef,
     setActive,
     setError,
@@ -832,10 +889,10 @@ function useWorkbenchEvents({
 
       if (payload.kind === "connectionClosed") {
         turnTextRef.current = null;
-        completedTurnsRef.current.set(
-          terminalKey(payload.epoch, "", ""),
-          "connection closed",
-        );
+        completedTurnsRef.current.set(terminalKey(payload.epoch, "", ""), {
+          status: "connection closed",
+          reason: null,
+        });
         if (owner?.epoch === payload.epoch)
           finishSubmission("connection closed");
         else if (!owner && activeRef.current) {
@@ -895,17 +952,32 @@ function useWorkbenchEvents({
         );
 
       if (
+        payload.kind === "protocolWarning" &&
+        typeof payload.message === "string"
+      ) {
+        reportConnectionWarning(
+          { missedProblemsRef, sessionRef, setError, setWarnings },
+          owner?.sessionId ?? (activeRef.current ? sessionRef.current : null),
+          payload.message,
+        );
+      }
+
+      if (
         (payload.kind === "itemStarted" || payload.kind === "itemCompleted") &&
         payload.itemKind === "fileChange" &&
         typeof payload.itemId === "string" &&
         payload.item &&
         typeof payload.item === "object"
       ) {
-        const changes = fileChangesRef.current;
-        changes.delete(payload.itemId);
-        changes.set(payload.itemId, payload.item as Record<string, unknown>);
-        if (changes.size > FILE_CHANGE_LIMIT)
-          changes.delete(changes.keys().next().value!);
+        const { itemId, item } = payload;
+        setFileChanges((old) => {
+          const changes = new Map(old);
+          changes.delete(itemId);
+          changes.set(itemId, item as Record<string, unknown>);
+          if (changes.size > FILE_CHANGE_LIMIT)
+            changes.delete(changes.keys().next().value!);
+          return changes;
+        });
       }
 
       // Keep every thread's requests: one may belong to a running turn in a
@@ -973,12 +1045,16 @@ function useWorkbenchEvents({
           payload.threadId,
           payload.turnId,
         );
-        completedTurnsRef.current.set(key, String(payload.status ?? "failed"));
+        const status = String(payload.status ?? "failed");
+        const reason = turnFailureReason(
+          (payload.turn as { error?: unknown } | undefined)?.error,
+        );
+        completedTurnsRef.current.set(key, { status, reason });
         if (completedTurnsRef.current.size > 100) {
           const oldest = completedTurnsRef.current.keys().next().value;
           if (oldest) completedTurnsRef.current.delete(oldest);
         }
-        if (ownsTurn) finishSubmission(String(payload.status ?? "failed"));
+        if (ownsTurn) finishSubmission(status, reason);
         else if (
           !owner &&
           matchesThread(payload.threadId) &&
@@ -1013,9 +1089,9 @@ function useWorkbenchEvents({
     activeRef,
     clearStream,
     completedTurnsRef,
-    fileChangesRef,
     flushStream,
     hydrate,
+    missedProblemsRef,
     observeActiveTurn,
     observeAdoptedSend,
     refreshActiveTurn,
@@ -1023,9 +1099,11 @@ function useWorkbenchEvents({
     sessionRef,
     setActive,
     setError,
+    setFileChanges,
     setPendingUser,
     setRequests,
     setStream,
+    setWarnings,
     settleTurn,
     snapshotRef,
     streamBufferRef,

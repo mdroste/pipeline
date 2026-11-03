@@ -1,5 +1,5 @@
 //! Existing target resolution, blob staging, and transactional record import.
-use super::authority::{claim_status, evidence_status, note_status, stamp};
+use super::authority::{claim_status, evidence_status, note_status, record_body, stamp};
 use super::import_plan::{local_object, plan, rewrite_ids};
 use super::package::extract;
 use super::types::{BlobEntry, ExchangeTarget, ImportExchangeRequest, ImportReport};
@@ -56,12 +56,17 @@ pub fn import_exchange(
                 &mut tmp,
             )
             .map_err(err)?;
-            tmp.as_file().sync_all().map_err(err)?;
-            match tmp.persist_noclobber(&destination) {
-                Ok(_) => {}
-                Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(err(e)),
+            // The name is the hash, so renaming over a file that appeared
+            // meanwhile changes nothing, and a volume with no exclusive rename
+            // can still hold these.
+            let (hash, _) = hash_file(tmp.path())?;
+            if hash != b.sha256 {
+                return Err(WorkbenchError::invalid(format!(
+                    "Package blob {name} does not match its hash"
+                )));
             }
+            crate::safety::sync_file(tmp.as_file()).map_err(err)?;
+            tmp.persist(&destination).map_err(|e| err(e.error))?;
         }
         blob_paths.insert(
             b.archive_path.clone(),
@@ -287,10 +292,11 @@ pub fn import_exchange(
                     tx.execute("INSERT INTO research_notes(id,workspace_id,paper_id,kind,body,state,origin,pinned,revision,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,1,?9,?10)", params![id, workspace_id, str_of(&value,"paperId").filter(|p| paper_exists(&tx, p)), text(&value,"kind"), text(&value,"body"), state, origin, value["pinned"].as_bool().unwrap_or(false), text(&value,"createdAt"), text(&value,"updatedAt")]).map_err(err)?;
                 }
                 record_kind => {
-                    let body = value["body"].clone();
-                    if body.is_null() {
+                    if value["body"].is_null() {
                         return Err(WorkbenchError::invalid(format!("Record {id} has no body")));
                     }
+                    let body =
+                        record_body(record_kind, &value["body"], &x.manifest.source_namespace);
                     tx.execute("INSERT INTO project_records(id,workspace_id,kind,revision,body_json,updated_at) VALUES(?1,?2,?3,1,?4,?5)", params![id, workspace_id, record_kind, body.to_string(), timestamp]).map_err(err)?;
                 }
             }

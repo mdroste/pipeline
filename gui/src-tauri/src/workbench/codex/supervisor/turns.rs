@@ -352,10 +352,10 @@ pub(super) fn project_turns(
     Ok(())
 }
 
-/// Projects a turn's finished items one by one. An item already projected in
-/// this epoch has the same operation id, so the store skips it. A running item
-/// is left to its own completion event, whose operation id a partial copy
-/// here would take.
+/// Projects a turn's finished items one by one. An item already projected for
+/// this binding in this epoch has the same operation id, so the store skips it.
+/// A running item is left to its own completion event, whose operation id a
+/// partial copy here would take.
 fn project_items(
     store: &crate::workbench::store::Store,
     binding_id: &str,

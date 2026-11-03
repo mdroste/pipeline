@@ -11,7 +11,9 @@ import {
   type TheoryCheckRecord,
   type TheoryNote,
   type TheoryOverview,
+  RECORD_LIST_LIMIT,
 } from "../../lib/studioClient";
+import { importedLabel } from "../research-panel/format";
 import type { ProjectRecord } from "../../lib/projectClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import useReopenCount from "../../hooks/useReopenCount";
@@ -235,6 +237,12 @@ export default function Theory({
           the evidence label is computed from recorded checks. A numerical check
           covers tested instances only and is never a proof.
         </p>
+        {notes.length >= RECORD_LIST_LIMIT && (
+          <p className="text-xs text-gray-500">
+            Showing the {RECORD_LIST_LIMIT} most recently changed notes. Older
+            notes are kept.
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
           <Select
             label="Filter by kind"
@@ -283,6 +291,11 @@ export default function Theory({
                       <td className="p-2">
                         {n.body.status}
                         {n.body.origin === "proposed" && " · proposed"}
+                        {n.body.importedStatus && (
+                          <p className="text-gray-500">
+                            {importedLabel(n.body.importedStatus)}
+                          </p>
+                        )}
                       </td>
                       <td className="max-w-xs p-2">
                         {overview?.evidence[n.id]?.label}
@@ -485,6 +498,11 @@ export default function Theory({
                       <span className="min-w-0 flex-1">
                         {label(c.body.check.method)} · {c.body.check.outcome} ·{" "}
                         <span className="text-gray-500">{c.body.label}</span>
+                        {c.body.importedStatus && (
+                          <span className="block text-gray-500">
+                            {importedLabel(c.body.importedStatus)}
+                          </span>
+                        )}
                       </span>
                       <button
                         className={button}
@@ -663,7 +681,12 @@ export default function Theory({
               </div>
               <button
                 className={button}
-                disabled={busy || !task || !current.body.body.trim()}
+                disabled={
+                  busy ||
+                  !task ||
+                  !current.body.body.trim() ||
+                  noteGuard.isDirty()
+                }
                 onClick={() =>
                   void run(async () => {
                     const parsed = afterLine.trim()
@@ -694,6 +717,11 @@ export default function Theory({
               >
                 Stage derivation into manuscript
               </button>
+              {noteGuard.isDirty() && (
+                <p className="text-xs">
+                  Save the theory note first. Staging uses the saved version.
+                </p>
+              )}
             </>
           )}
           {sectionNotice("check")}

@@ -1,12 +1,115 @@
 //! Capture exact evidence and manuscript bytes through the owning adapters.
 use super::*;
+use crate::orchestration::adapters::SnapshotFailure;
+
+/// Why a reply could not be taken up. Only a reply at fault may use a repair turn.
+pub(super) enum Rejection {
+    /// The reply broke its contract or named something that can't be captured.
+    Response(String),
+    /// Pipeline itself could not read or save what the reply named.
+    Host(String),
+}
+impl From<String> for Rejection {
+    fn from(error: String) -> Self {
+        Rejection::Response(error)
+    }
+}
+impl From<&str> for Rejection {
+    fn from(error: &str) -> Self {
+        Rejection::Response(error.into())
+    }
+}
+impl From<SnapshotFailure> for Rejection {
+    fn from(failure: SnapshotFailure) -> Self {
+        match failure {
+            SnapshotFailure::Input(error) => Rejection::Response(error),
+            SnapshotFailure::Host(error) => Rejection::Host(error),
+        }
+    }
+}
+type Consumed<T> = std::result::Result<T, Rejection>;
+
+/// Text the reply carried is Pipeline's to save, so failing here is never the reply's fault.
+fn capture_text(
+    s: &store::Store,
+    scope: &store::Scope,
+    text: String,
+    name: &str,
+) -> Consumed<Value> {
+    adapters::snapshot(s, scope, json!(text), name).map_err(Rejection::Host)
+}
+
+fn capture_dossier(
+    s: &store::Store,
+    scope: &store::Scope,
+    round: usize,
+    memo: String,
+    files: Vec<String>,
+) -> Consumed<BTreeMap<String, Value>> {
+    let mut out = BTreeMap::new();
+    out.insert(
+        format!("r{round}-dossier"),
+        capture_text(s, scope, memo, "dossier.json")?,
+    );
+    for (i, path) in files.into_iter().enumerate() {
+        let filename = std::path::Path::new(&path)
+            .file_name()
+            .and_then(|p| p.to_str())
+            .ok_or("Artifact filename missing")?;
+        out.insert(
+            format!("r{round}-file{i}"),
+            adapters::capture(s, scope, json!({"path":path}), filename)?,
+        );
+    }
+    check_artifacts(&out)?;
+    Ok(out)
+}
+
+fn capture_manuscript(
+    s: &store::Store,
+    scope: &store::Scope,
+    v: Manuscript,
+) -> Consumed<BTreeMap<String, Value>> {
+    let mut out = BTreeMap::new();
+    for (name, text) in [
+        ("paper.md", v.markdown),
+        ("paper.tex", v.latex),
+        ("references.bib", v.bibliography),
+    ] {
+        out.insert(name.into(), capture_text(s, scope, text, name)?);
+    }
+    for (i, path) in v.files.into_iter().enumerate() {
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .and_then(|p| p.to_str())
+            .ok_or("Artifact name missing")?;
+        let artifact = adapters::capture(s, scope, json!({"path":path}), name)?;
+        if let Some(canonical) = out.get(name) {
+            if canonical["hash"] != artifact["hash"] {
+                return Err(Rejection::Response(format!(
+                    "Listed {name} differs from the returned manuscript source"
+                )));
+            }
+        }
+        out.insert(format!("attachment-{i}-{name}"), artifact);
+    }
+    if out.keys().any(|k| k.ends_with(".pdf"))
+        && !out
+            .keys()
+            .any(|k| k.starts_with("attachment-") && k.ends_with("-paper.tex"))
+    {
+        return Err("A PDF attachment must include its matching paper.tex source".into());
+    }
+    check_artifacts(&out)?;
+    Ok(out)
+}
 
 pub(super) async fn consume(
     c: &Coordinator,
     p: &mut Portfolio,
     child: &TaskRun,
     output: &Value,
-) -> Result<()> {
+) -> Consumed<()> {
     let mut evidence = BTreeMap::new();
     let mut artifacts = BTreeMap::new();
     if let Phase::Research { paper } = p.run.phase {
@@ -16,35 +119,25 @@ pub(super) async fn consume(
         let refs = v.sources.clone();
         let sources = run_store(move |s| research::sources(&s, &ws, &refs))
             .await
-            .map_err(|e| e.message)?;
+            .map_err(|e| {
+                // A source the reply named wrongly is refused as invalid input.
+                if e.code == "invalid_input" {
+                    Rejection::Response(e.message)
+                } else {
+                    Rejection::Host(e.message)
+                }
+            })?;
         let round = p.papers[paper].rounds.len() + 1;
         for (i, source) in sources.into_iter().enumerate() {
             evidence.insert(format!("r{round}-source{i}"), source);
         }
         let scope = child.scope.clone();
-        let memo = serde_json::to_string_pretty(&v).map_err(store::err)?;
+        let memo = serde_json::to_string_pretty(&v).map_err(|e| Rejection::Host(store::err(e)))?;
         let files = v.files;
         let captured = c
-            .db(move |s| {
-                let mut out = BTreeMap::new();
-                out.insert(
-                    format!("r{round}-dossier"),
-                    adapters::snapshot(&s, &scope, json!(memo), "dossier.json")?,
-                );
-                for (i, path) in files.into_iter().enumerate() {
-                    let filename = std::path::Path::new(&path)
-                        .file_name()
-                        .and_then(|p| p.to_str())
-                        .ok_or("Artifact filename missing")?;
-                    out.insert(
-                        format!("r{round}-file{i}"),
-                        adapters::snapshot(&s, &scope, json!({"path":path}), filename)?,
-                    );
-                }
-                check_artifacts(&out)?;
-                Ok(out)
-            })
-            .await?;
+            .db(move |s| Ok(capture_dossier(&s, &scope, round, memo, files)))
+            .await
+            .map_err(Rejection::Host)??;
         evidence.extend(captured);
     }
     if let Phase::Draft { paper } = p.run.phase {
@@ -52,48 +145,12 @@ pub(super) async fn consume(
         validate::manuscript(&v, &p.papers[paper])?;
         let scope = child.scope.clone();
         artifacts = c
-            .db(move |s| {
-                let mut out = BTreeMap::new();
-                for (name, text) in [
-                    ("paper.md", v.markdown),
-                    ("paper.tex", v.latex),
-                    ("references.bib", v.bibliography),
-                ] {
-                    out.insert(
-                        name.into(),
-                        adapters::snapshot(&s, &scope, json!(text), name)?,
-                    );
-                }
-                for (i, path) in v.files.into_iter().enumerate() {
-                    let name = std::path::Path::new(&path)
-                        .file_name()
-                        .and_then(|p| p.to_str())
-                        .ok_or("Artifact name missing")?;
-                    let artifact = adapters::snapshot(&s, &scope, json!({"path":path}), name)?;
-                    if let Some(canonical) = out.get(name) {
-                        if canonical["hash"] != artifact["hash"] {
-                            return Err(format!(
-                                "Listed {name} differs from the returned manuscript source"
-                            ));
-                        }
-                    }
-                    out.insert(format!("attachment-{i}-{name}"), artifact);
-                }
-                if out.keys().any(|k| k.ends_with(".pdf"))
-                    && !out
-                        .keys()
-                        .any(|k| k.starts_with("attachment-") && k.ends_with("-paper.tex"))
-                {
-                    return Err(
-                        "A PDF attachment must include its matching paper.tex source".into(),
-                    );
-                }
-                check_artifacts(&out)?;
-                Ok(out)
-            })
-            .await?;
+            .db(move |s| Ok(capture_manuscript(&s, &scope, v)))
+            .await
+            .map_err(Rejection::Host)??;
     }
-    engine::consume(p, output, evidence, artifacts)
+    engine::consume(p, output, evidence, artifacts)?;
+    Ok(())
 }
 /// A paper's versions with any manuscript text moved out of its record read
 /// back from the artifacts of that version. A version whose files can't be

@@ -22,6 +22,7 @@ import ScheduleCard from "./tasks/ScheduleCard";
 import { Status } from "./tasks/shared";
 import PageHeader from "../ui/PageHeader";
 import "./TasksPage.css";
+import ReportIssueLink from "./ReportIssueLink";
 const ResearchMissions = lazy(() => import("./ResearchMissions"));
 
 export default function TasksPage({
@@ -241,6 +242,7 @@ export default function TasksPage({
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       {views

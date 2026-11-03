@@ -269,6 +269,9 @@ pub fn control(
             if !matches!(current["run"]["state"].as_str(), Some("ready" | "paused")) {
                 return Err(WorkbenchError::conflict("Only a ready or explicitly paused family can start; reconcile uncertain attempts first"));
             }
+            // Before the grid names this instance, so another open Pipeline
+            // can tell it is alive.
+            research::jobs::hold_instance(store)?;
             for spec in &plan.specifications {
                 if let Some(id) = &spec.plan_id {
                     let p = desk::record(store, ws, id)?;
@@ -291,8 +294,9 @@ pub fn control(
             if let Some(execution) = current["run"]["activeExecutionId"].as_str() {
                 // An attempt that already ended needs no stopping, and one with
                 // an unknown outcome must not keep the family from ending.
-                let attempt = research::get_execution(store, execution)?;
-                if ["queued", "running"].contains(&attempt.outcome.as_str()) {
+                // Nor must an attempt whose record is gone.
+                let attempt = research::get_execution(store, execution).ok();
+                if attempt.is_some_and(|a| ["queued", "running"].contains(&a.outcome.as_str())) {
                     research::cancel_execution(
                         store,
                         research::CancelExecutionRequest {
@@ -327,10 +331,12 @@ fn reconcile(store: &Store, ws: &str, id: &str) -> WorkbenchResult<()> {
                 "Inspect and reconcile this execution; its launch outcome is not established",
             ));
         }
+        // A cancelled or finished grid has ended. Its last receipt can be
+        // resolved without giving it a way to start again.
         store
             .connection()?
             .execute(
-                "UPDATE experiment_runs SET state='paused',reason=NULL WHERE plan_id=?1",
+                "UPDATE experiment_runs SET state='paused',reason=NULL WHERE plan_id=?1 AND state NOT IN ('cancelled','finished')",
                 [id],
             )
             .map_err(err)?;
@@ -375,6 +381,86 @@ fn continue_past_unknown(store: &Store, ws: &str, id: &str) -> WorkbenchResult<(
     tx.execute("UPDATE experiment_runs SET state='paused',next_index=?2,active_execution_id=NULL,reason=?3,revision=revision+1,updated_at=?4 WHERE plan_id=?1 AND state IN ('attention','paused')",params![id,index+1,format!("Specification {} was set aside with an unknown outcome.",index+1),desk::now()]).map_err(err)?;
     tx.commit().map_err(err)
 }
+/// One background pass over the grids that can advance. No grid's failure holds
+/// back the others.
+pub fn tick_due(store: &Store) -> WorkbenchResult<()> {
+    let due: Vec<(String, String)> = {
+        let c = store.connection()?;
+        let mut q=c.prepare("SELECT d.workspace_id,d.id FROM experiment_runs r JOIN desk_records d ON d.id=r.plan_id WHERE r.state IN ('running','paused','cancelled') AND (r.state='running' OR r.active_execution_id IS NOT NULL) ORDER BY r.updated_at LIMIT 4").map_err(err)?;
+        let due = q
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(err)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(err)?;
+        due
+    };
+    tick_each(store, due, |ws, id| tick(store, ws, id));
+    Ok(())
+}
+/// A saved plan or record that can't be used won't improve, so its grid stops and
+/// says why. Anything else, such as a busy store, gets another try on the next pass.
+pub(super) fn tick_each(
+    store: &Store,
+    due: Vec<(String, String)>,
+    mut advance: impl FnMut(&str, &str) -> WorkbenchResult<()>,
+) {
+    for (ws, id) in due {
+        let Err(error) = advance(&ws, &id) else {
+            continue;
+        };
+        let unresolved = if persistent(&error) {
+            stopped(store, &id, &error.message)
+        } else {
+            Err(error)
+        };
+        if let Err(error) = unresolved {
+            eprintln!("Experiment grid {id} will try again: {}", error.message);
+        }
+    }
+}
+fn persistent(error: &WorkbenchError) -> bool {
+    error.code == "invalid_input"
+}
+/// Shows why a grid stopped on the grid itself. A cancelled grid stays cancelled,
+/// and it lets go of its attempt only once that has a receipt or never will.
+fn stopped(store: &Store, id: &str, reason: &str) -> WorkbenchResult<()> {
+    let (state, index, active): (String, i64, Option<String>) = store
+        .connection()?
+        .query_row(
+            "SELECT state,next_index,active_execution_id FROM experiment_runs WHERE plan_id=?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(err)?;
+    let mut let_go = true;
+    if let Some(active) = active.as_deref().filter(|_| state == "cancelled") {
+        match research::get_execution(store, active) {
+            Ok(e) if ["queued", "running"].contains(&e.outcome.as_str()) => let_go = false,
+            Ok(e) => finish_attempt(store, id, index, &e)?,
+            Err(error) if !persistent(&error) => return Err(error),
+            Err(_) => {}
+        }
+    }
+    store.connection()?.execute("UPDATE experiment_runs SET active_execution_id=CASE WHEN state='cancelled' AND ?4 THEN NULL ELSE active_execution_id END,state=CASE state WHEN 'cancelled' THEN state ELSE 'attention' END,reason=?2,revision=revision+1,updated_at=?3 WHERE plan_id=?1 AND state IN ('running','paused','cancelled')",params![id,format!("This grid stopped: {reason}"),desk::now(),let_go]).map_err(err)?;
+    Ok(())
+}
+/// Saves an ended attempt's receipt and moves the grid past it.
+fn finish_attempt(
+    store: &Store,
+    id: &str,
+    index: i64,
+    e: &research::ResearchExecution,
+) -> WorkbenchResult<()> {
+    let mut c = store.connection()?;
+    let tx = c.transaction().map_err(err)?;
+    tx.execute(
+        "UPDATE experiment_attempts SET state=?3,result_json=?4 WHERE plan_id=?1 AND ordinal=?2",
+        params![id, index, e.outcome, serde_json::to_string(e).map_err(err)?],
+    )
+    .map_err(err)?;
+    tx.execute("UPDATE experiment_runs SET next_index=?2,active_execution_id=NULL,revision=revision+1 WHERE plan_id=?1",params![id,index+1]).map_err(err)?;
+    tx.commit().map_err(err)
+}
 /// Bounded serial producer. It never holds the database gate over a process wait.
 pub fn tick(store: &Store, ws: &str, id: &str) -> WorkbenchResult<()> {
     let gate = family_gate(store, id);
@@ -394,6 +480,13 @@ pub fn tick(store: &Store, ws: &str, id: &str) -> WorkbenchResult<()> {
         )
         .map_err(err)?;
     if state == "running" && instance.as_deref() != Some(research::jobs::process_instance()) {
+        // Another open Pipeline is running this grid.
+        if instance
+            .as_deref()
+            .is_some_and(|owner| research::jobs::instance_alive(store, owner))
+        {
+            return Ok(());
+        }
         store.connection()?.execute("UPDATE experiment_runs SET state='paused',reason='Pipeline restarted. Review the last receipt and explicitly resume remaining specifications.' WHERE plan_id=?1",[id]).map_err(err)?;
         return Ok(());
     }
@@ -401,18 +494,20 @@ pub fn tick(store: &Store, ws: &str, id: &str) -> WorkbenchResult<()> {
     if let Some(id_run) = current["run"]["activeExecutionId"].as_str() {
         let e = research::get_execution(store, id_run)?;
         if ["queued", "running"].contains(&e.outcome.as_str()) {
-            if !research::jobs::execution_active(id_run) && state != "cancelled" {
+            if !research::jobs::execution_live(store, id_run)? && state != "cancelled" {
                 attention(store,id,"A prior process may have launched this attempt. Reconcile its receipt before continuing")?;
             }
             return Ok(());
         }
         if e.outcome == "outcome_unknown" && state != "cancelled" {
-            attention(store, id, "The active attempt has an unknown outcome")?;
+            // A job still running here ends with a real receipt.
+            if !research::jobs::execution_active(id_run) {
+                attention(store, id, "The active attempt has an unknown outcome")?;
+            }
             return Ok(());
         }
-        store.connection()?.execute("UPDATE experiment_attempts SET state=?3,result_json=?4 WHERE plan_id=?1 AND ordinal=?2",params![id,index as i64,e.outcome,serde_json::to_string(&e).map_err(err)?]).map_err(err)?;
+        finish_attempt(store, id, index as i64, &e)?;
         index += 1;
-        store.connection()?.execute("UPDATE experiment_runs SET next_index=?2,active_execution_id=NULL,revision=revision+1 WHERE plan_id=?1",params![id,index as i64]).map_err(err)?;
     }
     if state != "running" {
         return Ok(());
@@ -446,14 +541,9 @@ pub fn tick(store: &Store, ws: &str, id: &str) -> WorkbenchResult<()> {
             tx.execute("UPDATE experiment_runs SET next_index=?2,active_execution_id=?3,revision=revision+1,updated_at=?4 WHERE plan_id=?1",params![id,index as i64,e.id,desk::now()]).map_err(err)?;
             tx.commit().map_err(err)?;
         }
-        Err(e) => {
-            if !e.message.contains("active")
-                && !e.message.contains("already running")
-                && !e.message.contains("write resources")
-            {
-                attention(store, id, &e.message)?;
-            }
-        }
+        // A busy project or a full queue clears up, and the next pass tries again.
+        Err(e) if e.transient => {}
+        Err(e) => attention(store, id, &e.message)?,
     }
     Ok(())
 }

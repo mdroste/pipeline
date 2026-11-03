@@ -169,12 +169,13 @@ fn nt_error(status: i32) -> io::Error {
 
 /// Checking the long name from the opened object also catches DOS 8.3 aliases.
 /// App-owned recovery names are reachable only when requested exactly.
-fn permitted(resolved: &Path, internal: Option<&str>) -> bool {
+fn permitted(resolved: &Path, internal: Option<&str>, records: bool) -> bool {
     let Some(name) = resolved.file_name().and_then(|s| s.to_str()) else {
         return false;
     };
     match internal {
         Some(expected) => name.eq_ignore_ascii_case(expected),
+        None if records && super::generated_component(name) => true,
         None => !super::reserved_component(name),
     }
 }
@@ -194,7 +195,7 @@ fn reopen(file: &File, resolved: &Path, access: u32, share: u32) -> io::Result<F
     Ok(reopened)
 }
 
-fn open_child(parent: &File, name: &str, directory: bool) -> io::Result<File> {
+fn open_child(parent: &File, name: &str, directory: bool, records: bool) -> io::Result<File> {
     let kind = if directory {
         FILE_DIRECTORY_FILE
     } else {
@@ -214,7 +215,7 @@ fn open_child(parent: &File, name: &str, directory: bool) -> io::Result<File> {
         return Err(invalid());
     }
     let resolved = final_path(&file)?;
-    if !permitted(&resolved, None) {
+    if !permitted(&resolved, None, records) {
         return Err(invalid());
     }
     if !directory && cloud {
@@ -223,11 +224,11 @@ fn open_child(parent: &File, name: &str, directory: bool) -> io::Result<File> {
     Ok(file)
 }
 
-pub(super) fn open_relative(root: &File, path: &str) -> io::Result<File> {
+pub(super) fn open_relative(root: &File, path: &str, records: bool) -> io::Result<File> {
     let mut parent = root.try_clone()?;
     let mut parts = path.split('/').peekable();
     while let Some(name) = parts.next() {
-        parent = open_child(&parent, name, parts.peek().is_some())?;
+        parent = open_child(&parent, name, parts.peek().is_some(), records)?;
     }
     Ok(parent)
 }
@@ -239,6 +240,7 @@ pub(super) fn open_parent<'a>(
     root: &File,
     path: &'a str,
     create: bool,
+    records: bool,
 ) -> io::Result<(File, &'a str)> {
     let mut directory = root.try_clone()?;
     let mut parts = path.split('/').peekable();
@@ -260,7 +262,7 @@ pub(super) fn open_parent<'a>(
                 Err(error) => return Err(error),
             }
         }
-        directory = open_child(&directory, name, true)?;
+        directory = open_child(&directory, name, true, records)?;
     }
     Err(invalid())
 }
@@ -284,7 +286,12 @@ pub(super) fn exists(parent: &File, name: &str) -> io::Result<bool> {
 /// Open a regular file to verify its bytes and then rename or delete it. The
 /// share mode admits other readers only, so no writer can change the file
 /// between verification and the handle-relative rename.
-pub(super) fn open_exclusive(parent: &File, name: &str, internal: bool) -> io::Result<File> {
+pub(super) fn open_exclusive(
+    parent: &File,
+    name: &str,
+    internal: bool,
+    records: bool,
+) -> io::Result<File> {
     let probe = nt_open(
         parent,
         name,
@@ -298,7 +305,7 @@ pub(super) fn open_exclusive(parent: &File, name: &str, internal: bool) -> io::R
         return Err(invalid());
     }
     let resolved = final_path(&probe)?;
-    if !permitted(&resolved, internal.then_some(name)) {
+    if !permitted(&resolved, internal.then_some(name), records) {
         return Err(invalid());
     }
     // The probe holds no data access, so this stricter reopen cannot conflict
@@ -440,7 +447,7 @@ pub(super) fn stat(parent: &File, name: &str) -> io::Result<Option<EntryStat>> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    if !permitted(&final_path(&file)?, None) {
+    if !permitted(&final_path(&file)?, None, false) {
         return Err(invalid());
     }
     handle_stat(&file).map(Some)
@@ -449,7 +456,7 @@ pub(super) fn stat(parent: &File, name: &str) -> io::Result<Option<EntryStat>> {
 pub(super) fn open_directory(root: &File, path: &str) -> io::Result<File> {
     let mut directory = root.try_clone()?;
     for name in path.split('/') {
-        directory = open_child(&directory, name, true)?;
+        directory = open_child(&directory, name, true, false)?;
     }
     Ok(directory)
 }
@@ -656,11 +663,11 @@ mod tests {
             Err(error) => panic!("Failed to create file-symlink fixture: {error}"),
         }
         assert_eq!(safe.optional_read("missing/file.txt").unwrap(), None);
-        let parent = open_child(&safe.directory, "nested", true).unwrap();
+        let parent = open_child(&safe.directory, "nested", true, false).unwrap();
         fs::rename(root.join("nested"), root.join("moved")).unwrap();
         junction(&root.join("nested"), &outside);
         assert!(safe.read("nested/file.txt").is_err());
-        let mut original = open_child(&parent, "file.txt", false).unwrap();
+        let mut original = open_child(&parent, "file.txt", false, false).unwrap();
         let mut text = String::new();
         std::io::Read::read_to_string(&mut original, &mut text).unwrap();
         assert_eq!(text, "inside");

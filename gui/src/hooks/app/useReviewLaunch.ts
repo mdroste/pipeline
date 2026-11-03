@@ -14,6 +14,7 @@ import type { usePipeline } from "../usePipeline";
 import { confirmRerunRequirements } from "./rerunRequirements";
 import type { ReviewSetup } from "./useReviewSetup";
 import type { AppNavigation } from "./useAppNavigation";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 
 type ReviewQueue = Pick<
   ReturnType<typeof usePipeline>,
@@ -224,9 +225,9 @@ export function useReviewLaunch(
       });
     } catch (error) {
       await rejectLaunch(
-        `The review plan could not be prepared: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+        `The review plan could not be prepared: ${workbenchErrorMessage(
+          error,
+        )}`,
         snapshot,
         variables,
         extraInputs,
@@ -281,7 +282,7 @@ export function useReviewLaunch(
         router.apply({ page: "main", runKey: queued[0].key });
     } catch (error) {
       await rejectLaunch(
-        `The review could not be queued: ${error instanceof Error ? error.message : String(error)}`,
+        `The review could not be queued: ${workbenchErrorMessage(error)}`,
         prepared.snapshot,
         prepared.variables,
         prepared.extraInputs,
@@ -383,9 +384,7 @@ export function useReviewLaunch(
       const run = await enqueueRerun(runId, { onlyFailed, variables });
       await openRun(run.key);
     } catch (error) {
-      notify(
-        `The re-run could not be queued: ${error instanceof Error ? error.message : String(error)}`,
-      );
+      notify(`The re-run could not be queued: ${workbenchErrorMessage(error)}`);
     }
   };
 

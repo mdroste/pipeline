@@ -138,6 +138,11 @@ export function useWorkspaceSessionPersistence({
     sessionWriteRef.current = pending;
     selectionSaveRef.current = pending;
     void pending.catch((cause) => {
+      // The failed choice is reverted below, so it must not hold back a later
+      // send in this conversation or any other. A send already waiting on this
+      // save still fails, because it was going out with that choice.
+      const latest = selectionSaveRef.current === pending;
+      if (latest) selectionSaveRef.current = Promise.resolve();
       if (sessionRef.current !== selectedSession) return;
       setError(
         `Model selection could not be saved: ${workbenchErrorMessage(cause)}. Select the model again to retry.`,
@@ -145,7 +150,7 @@ export function useWorkspaceSessionPersistence({
       // Show what is saved, so selecting the same model again counts as a
       // change. A newer selection speaks for itself.
       const saved = snapshotRef.current;
-      if (selectionSaveRef.current !== pending || !saved) return;
+      if (!latest || !saved) return;
       if (saved.session.id !== selectedSession) return;
       const { overrides } = saved.session;
       setRuntime(conversationProvider(overrides.runtime));
@@ -178,6 +183,7 @@ export function useWorkspaceDraftAutosave(
     draft,
     pendingUser,
     sessionId,
+    sessionRef,
     snapshot,
     submitting,
     setError,
@@ -198,9 +204,12 @@ export function useWorkspaceDraftAutosave(
     const selectedSession = current.session.id;
     const text = draft;
     const timer = window.setTimeout(() => {
-      void persistDraft(selectedSession, text).catch((cause) =>
-        setError(`Draft could not be saved: ${workbenchErrorMessage(cause)}`),
-      );
+      // The browser keeps the text until a save lands, so a conversation the
+      // researcher has left loses nothing when this message is dropped.
+      void persistDraft(selectedSession, text).catch((cause) => {
+        if (sessionRef.current === selectedSession)
+          setError(`Draft could not be saved: ${workbenchErrorMessage(cause)}`);
+      });
     }, 350);
     return () => window.clearTimeout(timer);
   }, [
@@ -210,6 +219,7 @@ export function useWorkspaceDraftAutosave(
     pendingUser,
     persistDraft,
     sessionId,
+    sessionRef,
     snapshot,
     submitting,
   ]);

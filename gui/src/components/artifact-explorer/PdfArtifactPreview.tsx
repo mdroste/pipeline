@@ -7,6 +7,7 @@ import type {
   PdfArtifactPagePreview,
 } from "../../lib/artifactTypes";
 import { formatBytes } from "./format";
+import ReportIssueLink from "../ReportIssueLink";
 export function PdfView({
   runId,
   entry,
@@ -128,6 +129,7 @@ export function PdfView({
             >
               Retry
             </button>
+            <ReportIssueLink />
           </div>
         ) : preview ? (
           <img

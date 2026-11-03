@@ -6,7 +6,13 @@ use crate::workbench::{
 #[cfg(unix)]
 mod capsule_unix;
 #[cfg(unix)]
+mod figure_versions;
+#[cfg(unix)]
 mod grid_recovery;
+#[cfg(unix)]
+mod grid_ticks;
+#[cfg(unix)]
+mod irf_series;
 struct Fixture {
     _temp: tempfile::TempDir,
     store: Store,
@@ -205,6 +211,7 @@ fn figures_accept_a_python_script_profile_and_refuse_other_programs() {
                 spec: request,
                 python_profile_id: profile.id.clone(),
                 operation_id: operation.into(),
+                supersedes: None,
             },
         )
     };
@@ -798,6 +805,8 @@ fn assumption_branch_is_open_and_does_not_change_the_original_argument() {
         rejection_reason: String::new(),
         origin: "manual".into(),
         promotions: vec![],
+        imported_from: None,
+        imported_status: None,
     };
     let made = project::studio_mutate(
         &f.store,
@@ -976,6 +985,7 @@ fn qualified_scientific_figures_and_tex_table() {
             spec: table,
             python_profile_id: p.id.clone(),
             operation_id: "figure".into(),
+            supersedes: None,
         },
     )
     .unwrap();
@@ -1060,6 +1070,7 @@ fn qualified_scientific_figures_and_tex_table() {
             spec: irf,
             python_profile_id: p.id,
             operation_id: "irf".into(),
+            supersedes: None,
         },
     )
     .unwrap();

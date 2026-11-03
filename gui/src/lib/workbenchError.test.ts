@@ -10,10 +10,10 @@ describe("workbenchErrorMessage", () => {
         code: "app_server_unavailable",
         message: "No compatible Codex runtime was found.",
         retryable: false,
-        recovery: "Install Codex CLI 0.147.0 or newer and try again.",
+        recovery: "Install Codex CLI 0.165.0 or newer and try again.",
       }),
     ).toBe(
-      "No compatible Codex runtime was found. Install Codex CLI 0.147.0 or newer and try again.",
+      "No compatible Codex runtime was found. Install Codex CLI 0.165.0 or newer and try again.",
     );
   });
 

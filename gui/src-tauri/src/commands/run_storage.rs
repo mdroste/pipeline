@@ -6,8 +6,6 @@ const MIN_RUN_HEADROOM_BYTES: u64 = 512 * 1024 * 1024;
 /// work begins. A source-size multiplier covers temporary extraction assets;
 /// the fixed floor protects no-input and small-document runs.
 pub(super) fn preflight_run_storage(input: &std::path::Path) -> Result<(), String> {
-    use std::io::Write as _;
-
     let root = crate::runs::runs_dir()?;
     let source_bytes = input
         .metadata()
@@ -26,14 +24,27 @@ pub(super) fn preflight_run_storage(input: &std::path::Path) -> Result<(), Strin
         }
     }
 
-    let mut probe = tempfile::NamedTempFile::new_in(&root)
+    probe_durable_writes(&root)
+}
+
+/// One small durable write, flushed the way every run record will be.
+fn probe_durable_writes(root: &std::path::Path) -> Result<(), String> {
+    use std::io::Write as _;
+
+    let mut probe = tempfile::NamedTempFile::new_in(root)
         .map_err(|error| format!("Run history is not writable: {error}"))?;
     probe
         .write_all(b"pipeline-run-storage-probe\n")
         .map_err(|error| format!("Run history is not writable: {error}"))?;
     probe
         .flush()
-        .and_then(|()| probe.as_file().sync_all())
+        .and_then(|()| crate::safety::sync_file(probe.as_file()))
+        .map_err(|error| format!("Run history cannot be durably synced: {error}"))?;
+    // Every saved record also flushes its folder, so a volume that cannot do
+    // that must say so here rather than at the first manifest.
+    #[cfg(unix)]
+    std::fs::File::open(root)
+        .and_then(|directory| crate::safety::sync_file(&directory))
         .map_err(|error| format!("Run history cannot be durably synced: {error}"))?;
     Ok(())
 }
@@ -260,6 +271,11 @@ pub(super) fn finalize_run(
             }),
         );
     }
+    // Listed apart from accepted files, which an export may share.
+    w.register_unlisted(
+        crate::pipeline::unit_files::REJECTED_FILES_DIR,
+        "rejected_files",
+    );
     let extra_files = w.register_unlisted("artifacts", "files");
     if extra_files > 0 {
         let _ = app.emit_event(
@@ -321,5 +337,26 @@ pub(super) fn enforce_retention(app: &crate::emit::EventBus, keep: usize, max_by
             eprintln!("{line}");
             crate::pipeline::logging::emit(app, line);
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod durable_write_tests {
+    use super::*;
+
+    /// A share that refuses `F_FULLFSYNC` keeps working through a plain flush,
+    /// and one that refuses both is named before any work begins.
+    #[test]
+    fn the_preflight_flushes_the_way_a_run_record_will() {
+        let folder = tempfile::tempdir().unwrap();
+        crate::safety::simulate_sync_failure(Some((libc::ENOTSUP, false)));
+        let adapted = probe_durable_writes(folder.path());
+        crate::safety::simulate_sync_failure(Some((libc::ENOTSUP, true)));
+        let refused = probe_durable_writes(folder.path());
+        crate::safety::simulate_sync_failure(None);
+        assert_eq!(adapted, Ok(()));
+        assert!(refused
+            .unwrap_err()
+            .contains("Run history cannot be durably synced"));
     }
 }

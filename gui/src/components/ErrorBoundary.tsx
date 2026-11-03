@@ -1,4 +1,5 @@
 import { Component, Fragment, ReactNode } from "react";
+import ReportIssueLink from "./ReportIssueLink";
 import WindowControls from "./WindowControls";
 import { isWindows } from "../lib/platform";
 
@@ -57,7 +58,8 @@ export default class ErrorBoundary extends Component<Props, State> {
             </p>
             <p className="text-xs text-gray-600 dark:text-gray-400 mb-4">
               Try again to reset the interface. If the problem continues,
-              restart Pipeline and include the message above when reporting it.
+              restart Pipeline.
+              <ReportIssueLink />
             </p>
             {showTechnicalDetails && this.state.error.stack && (
               <details className="mb-4 text-left">

@@ -9,6 +9,7 @@ pub(super) struct AnalyzerInputs<'a> {
     pub document_bundle_path: &'a str,
     pub paper_text_path: &'a str,
     pub source_path: &'a str,
+    pub crossref_api: &'a str,
 }
 
 pub(super) async fn run_analyzer_step(
@@ -40,15 +41,20 @@ pub(super) async fn run_analyzer_step(
         );
     }
     let started = std::time::Instant::now();
-    let value = analyzers::run(
-        spec,
-        &AnalyzerContext {
-            document_bundle_path: inputs.document_bundle_path,
-            paper_text_path: inputs.paper_text_path,
-            source_path: inputs.source_path,
-        },
+    // Stops at every await inside the check, so ✕ and Stop end it at once.
+    let value = crate::commands::await_or_cancel(
+        analyzers::run(
+            spec,
+            &AnalyzerContext {
+                document_bundle_path: inputs.document_bundle_path,
+                paper_text_path: inputs.paper_text_path,
+                source_path: inputs.source_path,
+                crossref_api: inputs.crossref_api,
+            },
+        ),
+        Some(&step.id),
     )
-    .await?;
+    .await??;
     let raw_text = serde_json::to_string_pretty(&value)
         .map_err(|error| format!("Could not record analyzer output: {error}"))?;
     Ok(StepOutput {
@@ -69,7 +75,8 @@ pub(super) async fn run_analyzer_step(
     })
 }
 
-/// An analyzer's output, or its recorded failure. Cancellation propagates.
+/// An analyzer's output, or its recorded failure. Stopping the Review
+/// propagates; ✕ on this check fails only this check, as it does a model step.
 pub(super) async fn analyzer_result(
     app: &crate::emit::EventBus,
     step: &StepConfig,
@@ -77,7 +84,12 @@ pub(super) async fn analyzer_result(
 ) -> Result<Result<StepOutput, StepFailure>, String> {
     match run_analyzer_step(app, step, inputs).await {
         Ok(output) => Ok(Ok(output)),
-        Err(error) if super::step_call::is_cancellation_error(&error) => Err(error),
+        Err(error)
+            if super::step_call::is_cancellation_error(&error)
+                && crate::commands::is_cancelled() =>
+        {
+            Err("Pipeline cancelled".to_string())
+        }
         Err(error) => {
             let _ = app.emit_event(
                 "pipeline:pass",

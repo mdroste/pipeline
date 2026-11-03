@@ -124,6 +124,22 @@ pub(crate) fn turn_has_live_owner(thread: &str, turn: &str) -> bool {
     state.thread_id.as_deref() == Some(thread) && state.turn_id.as_deref() == Some(turn)
 }
 
+/// Stops the tools and browser a closed App Server connection leaves behind.
+/// Only one turn runs at a time, so they are its turn's, or left from a finished
+/// one, unless a Claude, API or newer ChatGPT turn holds the permit. That turn's
+/// tools and browser belong to it.
+pub(super) async fn stop_connection_tools(epoch: u64) {
+    let another_runtime = {
+        let state = active_turn_state()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.epoch != Some(epoch) && (state.setup_in_progress || state.epoch.is_some())
+    };
+    if !another_runtime {
+        super::conversation_tools::stop_all().await;
+    }
+}
+
 fn close_active_connection(epoch: u64) {
     let mut state = active_turn_state()
         .lock()

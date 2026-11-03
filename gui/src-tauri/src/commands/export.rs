@@ -26,6 +26,8 @@ pub(super) use manifest::{enumerate_export_files, finalize_export_metadata};
 pub(super) use package::{write_custom_payload, write_shareable_package};
 #[cfg(test)]
 pub(super) use print::build_print_report_html;
+#[cfg(test)]
+pub(super) use print::render_print_markdown;
 
 #[tauri::command]
 pub async fn save_report_md(
@@ -36,6 +38,14 @@ pub async fn save_report_md(
     let clean = output::normalize_math_delimiters(&output::clean_export_markdown(&markdown));
     let name = suggested_name.as_deref().unwrap_or("report.md");
     save_via_dialog(&app, name, "Markdown", "md", clean.into_bytes()).await
+}
+
+/// A saved run's whole report, for an export of one too long to show on screen.
+#[tauri::command]
+pub async fn read_full_report(run_id: String) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || formats::read_full_report(&run_id))
+        .await
+        .map_err(|error| format!("Report read failed: {error}"))?
 }
 
 /// Save a saved run's report as one self-contained, offline HTML file.

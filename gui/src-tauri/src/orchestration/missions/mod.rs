@@ -47,12 +47,15 @@ pub(crate) fn notify(m: &Coordinator, mission: &Mission, previous: &str) {
             "missions:changed",
             json!({"id":mission.id,"state":mission.state}),
         );
-        if mission.state != previous
-            && (mission.terminal() || matches!(mission.state.as_str(), "attention" | "waiting"))
-        {
-            let _=app.emit("missions:notice",json!({"id":mission.id,"name":mission.definition.name,"state":mission.state,"reason":mission.reason}));
-            // Notification delivery belongs to the shell's device preferences.
-        }
+    }
+    if mission.state != previous
+        && (mission.terminal() || matches!(mission.state.as_str(), "attention" | "waiting"))
+    {
+        // Notification delivery belongs to the shell's device preferences.
+        m.announce(
+            "missions:notice",
+            json!({"id":mission.id,"name":mission.definition.name,"state":mission.state,"reason":mission.reason}),
+        );
     }
 }
 async fn save(m: &Coordinator, mission: &mut Mission, kind: &str) -> Result<()> {
@@ -266,6 +269,14 @@ async fn advance(coordinator: &Arc<Coordinator>, m: &mut Mission) -> Result<()> 
     let scope = run_store(move |s| workspace::refresh_scope(&s, &scope, &fingerprint))
         .await
         .map_err(|e| e.message)?;
+    // Each plan sees the checks as they stand. One approved again is taken up here,
+    // so it can't be left out for the rest of the run. One still waiting is left out
+    // of the plan with no action failing, so the researcher hears of it here, once.
+    let refused = if m.phase == Phase::Plan {
+        commands::refresh_checks(m).await?
+    } else {
+        Vec::new()
+    };
     let chain = child_chain(m)?;
     let mut copy = m.clone();
     *m = coordinator
@@ -274,6 +285,16 @@ async fn advance(coordinator: &Arc<Coordinator>, m: &mut Mission) -> Result<()> 
             Ok(copy)
         })
         .await?;
+    if !refused.is_empty() {
+        let reason = format!(
+            "Waiting for your approval: {}. Approve it in the project's Results view.",
+            refused.join(", ")
+        );
+        coordinator.announce(
+            "missions:notice",
+            json!({"id":m.id,"name":m.definition.name,"state":m.state,"reason":reason}),
+        );
+    }
     Ok(())
 }
 

@@ -18,6 +18,15 @@ const MAX_TOTAL_SCANNED_BYTES: u64 = 200 * 1024 * 1024;
 const MAX_CODE_FILE_BYTES: u64 = 2 * 1024 * 1024;
 const LARGE_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_LOCATIONS: usize = 25;
+const CODE_COVERAGE: &str = "code_coverage";
+/// Checks that look for something in lines of code.
+const LINE_CHECKS: &[&str] = &[
+    "absolute_paths",
+    "backslash_paths",
+    "random_seeds",
+    "referenced_files",
+    "exported_outputs",
+];
 const SKIPPED_DIRS: &[&str] = &[
     ".git",
     "node_modules",
@@ -140,24 +149,72 @@ fn file_name(path: &str) -> String {
     path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase()
 }
 
-/// Code files read for line checks, within per-file and total byte limits.
-fn code_files(inventory: &Inventory) -> Vec<(String, String)> {
+/// Code files read for line checks, within per-file and total byte limits,
+/// and the code files that could not be, each with the reason.
+fn code_files(inventory: &Inventory) -> (Vec<(String, String)>, Vec<Location>) {
     let mut total = 0u64;
     let mut files = Vec::new();
+    let mut unread = Vec::new();
+    let mut total_reached = false;
     for (path, size) in &inventory.files {
-        if !CODE_EXTENSIONS.contains(&extension(path).as_str()) || *size > MAX_CODE_FILE_BYTES {
+        if !CODE_EXTENSIONS.contains(&extension(path).as_str()) {
             continue;
         }
-        if total + size > MAX_TOTAL_SCANNED_BYTES {
-            break;
-        }
-        let Ok(bytes) = std::fs::read(inventory.root.join(path)) else {
-            continue;
+        let reason = if *size > MAX_CODE_FILE_BYTES {
+            "Larger than the 2 MB limit for one file"
+        } else if total_reached || total + size > MAX_TOTAL_SCANNED_BYTES {
+            total_reached = true;
+            "Past the 200 MB limit for all code"
+        } else {
+            match std::fs::read(inventory.root.join(path)) {
+                Ok(bytes) => {
+                    total += size;
+                    files.push((path.clone(), String::from_utf8_lossy(&bytes).into_owned()));
+                    continue;
+                }
+                Err(_) => "Could not be read",
+            }
         };
-        total += size;
-        files.push((path.clone(), String::from_utf8_lossy(&bytes).into_owned()));
+        unread.push(Location {
+            path: path.clone(),
+            line: None,
+            snippet: reason.to_string(),
+        });
     }
-    files
+    (files, unread)
+}
+
+/// Says which code the line checks never saw. A check that found nothing says
+/// so about the code it read, not about the package.
+fn code_coverage_check(unread: &[Location], truncated: bool, checks: &mut Vec<Check>) {
+    if unread.is_empty() && !truncated {
+        return;
+    }
+    let count = unread.len();
+    let gap = match (count, truncated) {
+        (0, _) => "the package has more files than this check lists".to_string(),
+        (_, false) => format!("{count} code files were not"),
+        (_, true) => format!(
+            "{count} code files were not, and the package has more files than this check lists"
+        ),
+    };
+    for check in checks
+        .iter_mut()
+        .filter(|check| LINE_CHECKS.contains(&check.id) && check.locations.is_empty())
+    {
+        check
+            .detail
+            .push_str(&format!(" This covers only the code that was read; {gap}."));
+    }
+    checks.push(Check {
+        id: CODE_COVERAGE,
+        label: "Every code file was read",
+        status: "info",
+        detail: format!(
+            "Not all code was read: {gap}, so the line checks say nothing about the rest. A notebook with stored output can pass the 2 MB limit for one file. Check that code by hand, or clear the stored output and run the Review again."
+        ),
+        locations: unread.iter().take(MAX_LOCATIONS).cloned().collect(),
+    });
 }
 
 fn snippet(line: &str) -> String {
@@ -777,7 +834,7 @@ fn size_checks(inventory: &Inventory, checks: &mut Vec<Check>) {
 fn findings(checks: &[Check]) -> Vec<Value> {
     checks
         .iter()
-        .filter(|check| matches!(check.status, "fail" | "warn"))
+        .filter(|check| matches!(check.status, "fail" | "warn") || check.id == CODE_COVERAGE)
         .map(|check| {
             let evidence: Vec<Value> = check
                 .locations
@@ -801,11 +858,19 @@ fn findings(checks: &[Check]) -> Vec<Value> {
                 "id": format!("replication-{}", check.id.replace('_', "-")),
                 "title": check.label,
                 "category": "Replication package",
-                "severity": if check.status == "fail" { "high" } else { "medium" },
+                "severity": match check.status {
+                    "fail" => "high",
+                    "warn" => "medium",
+                    _ => "info",
+                },
                 "confidence": "medium",
                 "verification_status": "unverified",
                 "problem": check.detail,
-                "consequence": "A data editor or replicator may be unable to run the package or match its outputs to the paper.",
+                "consequence": if check.id == CODE_COVERAGE {
+                    "Problems in code that was not read do not appear in this report."
+                } else {
+                    "A data editor or replicator may be unable to run the package or match its outputs to the paper."
+                },
                 "recommended_action": check.detail,
                 "body": check.detail,
                 "evidence": evidence,
@@ -824,16 +889,17 @@ pub fn run(root: &Path, options: &Value) -> Result<Value, String> {
         .map(|count| count as usize)
         .unwrap_or(DEFAULT_MAX_FILES);
     let inventory = inventory(root, max_files);
-    let code = code_files(&inventory);
+    let (code, unread) = code_files(&inventory);
     let mut checks = Vec::new();
     readme_checks(&inventory, &mut checks);
-    main_script_check(&inventory, code.len(), &mut checks);
+    main_script_check(&inventory, code.len() + unread.len(), &mut checks);
     path_checks(&code, &mut checks);
     package_checks(&inventory, &code, &mut checks);
     seed_checks(&code, &mut checks);
     referenced_file_checks(&inventory, &code, &mut checks);
     output_checks(&code, &mut checks);
     size_checks(&inventory, &mut checks);
+    code_coverage_check(&unread, inventory.truncated, &mut checks);
     let mut summary = std::collections::BTreeMap::<&str, usize>::new();
     for check in &checks {
         *summary.entry(check.status).or_default() += 1;
@@ -843,6 +909,7 @@ pub fn run(root: &Path, options: &Value) -> Result<Value, String> {
         "version": 1,
         "files": inventory.files.len(),
         "code_files": code.len(),
+        "unread_code_files": unread.len(),
         "inventory_truncated": inventory.truncated,
         "summary": summary,
         "meaning": "Static checks of files only; nothing was run. Passing them does not show that the package reproduces the paper.",

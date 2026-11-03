@@ -27,6 +27,20 @@ pub struct ExecutionResult {
     pub budget_stop: Option<String>,
 }
 
+/// Puts each fan-out's coverage note on one of its final outputs, after merge
+/// and reassembly have replaced the unit outputs, so a checkpoint, a recovery,
+/// and a Resume that reuses the step all keep it.
+pub(super) fn record_coverage_notes(outputs: &mut [StepOutput], notes: Vec<(String, String)>) {
+    for (step_id, note) in notes {
+        if let Some(output) = outputs
+            .iter_mut()
+            .find(|output| !output.skipped && base_id(&output.step_id) == step_id)
+        {
+            output.coverage_note = Some(note);
+        }
+    }
+}
+
 /// Records every step not yet started as stopped by the Review's limit.
 async fn stop_at_budget(
     app: &crate::emit::EventBus,
@@ -277,6 +291,7 @@ pub async fn execute_steps(
         document_bundle_path,
         paper_text_path,
         source_path,
+        crossref_api: crate::pipeline::analyzers::references::CROSSREF_API,
     };
 
     while !remaining.is_empty() {
@@ -468,7 +483,7 @@ pub async fn execute_steps(
             }
 
             if !to_run.is_empty() {
-                let (mut wave_outputs, wave_failures, failed_calls) = run_parallel_wave(
+                let wave = run_parallel_wave(
                     app,
                     &to_run,
                     settings,
@@ -491,6 +506,9 @@ pub async fn execute_steps(
                     &shared_context_pool,
                 )
                 .await?;
+                let mut wave_outputs = wave.outputs;
+                let wave_failures = wave.failures;
+                let failed_calls = wave.failed_calls;
                 // Every dispatched step is terminal once its wave returns. A
                 // failed unit and a fan-out with zero matching units both lack
                 // a StepOutput, so deriving completion from outputs alone
@@ -600,6 +618,7 @@ pub async fn execute_steps(
                     wave_outputs,
                     &output_budget,
                 );
+                record_coverage_notes(&mut wave_outputs, wave.coverage_notes);
                 checkpoint_wave(
                     write_dir,
                     all_outputs.len(),

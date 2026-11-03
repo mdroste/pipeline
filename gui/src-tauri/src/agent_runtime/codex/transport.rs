@@ -122,9 +122,11 @@ struct Shared {
     epoch: u64,
     pending: Mutex<HashMap<u64, PendingReply>>,
     events: broadcast::Sender<NormalizedEvent>,
+    /// Events sent to `events` so far, which places a sink's request among them.
+    emitted: AtomicU64,
     /// Lossless delivery of server requests for threads whose owner
     /// registered a sink; the broadcast queue may drop them under lag.
-    request_sinks: Mutex<HashMap<String, mpsc::Sender<NormalizedEvent>>>,
+    request_sinks: Mutex<HashMap<String, mpsc::Sender<PlacedRequest>>>,
     closed: AtomicBool,
     close_reason: Mutex<Option<RequestError>>,
     close_signal: watch::Sender<Option<RequestError>>,
@@ -141,7 +143,7 @@ impl Shared {
         for (_, sender) in pending {
             let _ = sender.send(Err(error.clone()));
         }
-        let _ = self.events.send(NormalizedEvent::ConnectionClosed {
+        self.emit(NormalizedEvent::ConnectionClosed {
             epoch: self.epoch,
             reason: error.message,
             retryable: error.retryable,
@@ -156,6 +158,7 @@ impl Shared {
     }
 
     fn emit(&self, event: NormalizedEvent) {
+        self.emitted.fetch_add(1, Ordering::AcqRel);
         let _ = self.events.send(event);
     }
 
@@ -177,12 +180,24 @@ impl Shared {
         let Some(sender) = sender else {
             return Some(event);
         };
-        match sender.try_send(event) {
+        let placed = PlacedRequest {
+            after: self.emitted.load(Ordering::Acquire),
+            event,
+        };
+        match sender.try_send(placed) {
             Ok(()) => None,
-            Err(mpsc::error::TrySendError::Full(event))
-            | Err(mpsc::error::TrySendError::Closed(event)) => Some(event),
+            Err(mpsc::error::TrySendError::Full(placed))
+            | Err(mpsc::error::TrySendError::Closed(placed)) => Some(placed.event),
         }
     }
+}
+
+/// A server request and where it fell in the connection's event stream: the
+/// number of broadcast events the server sent before it.
+#[derive(Debug)]
+pub struct PlacedRequest {
+    pub after: u64,
+    pub event: NormalizedEvent,
 }
 
 /// Server requests for one thread or a whole connection, delivered in order and
@@ -191,14 +206,27 @@ impl Shared {
 pub struct ServerRequestSink {
     shared: Arc<Shared>,
     thread_id: String,
-    receiver: mpsc::Receiver<NormalizedEvent>,
+    receiver: mpsc::Receiver<PlacedRequest>,
 }
 
 impl ServerRequestSink {
     /// The next server request for this thread; `None` only after the
     /// transport is gone.
     pub async fn recv(&mut self) -> Option<NormalizedEvent> {
+        self.recv_placed().await.map(|placed| placed.event)
+    }
+
+    /// As `recv`, keeping the request's place for an owner that also reads
+    /// broadcast events and has to show the two in the server's order.
+    pub async fn recv_placed(&mut self) -> Option<PlacedRequest> {
         self.receiver.recv().await
+    }
+
+    /// Events sent so far. Read after subscribing, this is at or past the
+    /// subscription's first event, so a count kept from it can't wait for
+    /// an event the subscriber will never receive.
+    pub fn emitted(&self) -> u64 {
+        self.shared.emitted.load(Ordering::Acquire)
     }
 }
 
@@ -243,6 +271,7 @@ impl AppServerClient {
             auth_requests: Arc::new(tokio::sync::Semaphore::new(1)),
             pending: Mutex::new(HashMap::new()),
             events,
+            emitted: AtomicU64::new(0),
             request_sinks: Mutex::new(HashMap::new()),
             closed: AtomicBool::new(false),
             close_reason: Mutex::new(None),

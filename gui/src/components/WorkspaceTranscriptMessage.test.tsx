@@ -1,6 +1,8 @@
 import { fireEvent, render } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import TranscriptMessage from "./WorkspaceTranscriptMessage";
+import TranscriptMessage, {
+  TranscriptMarkdown,
+} from "./WorkspaceTranscriptMessage";
 
 const footnoted = (id: string) => (
   <TranscriptMessage
@@ -36,4 +38,18 @@ it("keeps each message's footnotes to itself", () => {
   expect(scroll).toHaveBeenCalledOnce();
   expect(second).toContainElement(scroll.mock.contexts[0] as HTMLElement);
   expect(window.location.hash).toBe(hash);
+});
+
+it("renders each math form and leaves dollar amounts as text", () => {
+  const math = render(
+    <TranscriptMarkdown
+      text={"Inline \\( \\beta_1 \\) and $x_i$.\n\n\\[ y = \\E[x] \\]"}
+    />,
+  );
+  expect(math.container.querySelectorAll(".katex")).toHaveLength(3);
+  const money = render(
+    <TranscriptMarkdown text="Costs were $5 to $8 per unit." />,
+  );
+  expect(money.container.querySelector(".katex")).toBeNull();
+  expect(money.container.textContent).toBe("Costs were $5 to $8 per unit.");
 });

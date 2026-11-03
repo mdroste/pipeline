@@ -36,6 +36,7 @@ async fn no_source_admission_preserves_validation_order_and_scope_cleanup() {
         workflow_fingerprint: "fixture".into(),
         workflow_json: String::new(),
         specialist_catalog_revision: String::new(),
+        agent_overrides: None,
     };
     let recorded = std::sync::Arc::new(RecordedRunEvents::default());
     let bus: crate::emit::EventBus = recorded.clone();

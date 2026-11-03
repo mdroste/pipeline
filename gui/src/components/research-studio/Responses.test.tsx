@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   mutate: vi.fn(),
   confirm: vi.fn(),
   exportResponses: vi.fn(),
+  report: vi.fn(),
 }));
 vi.mock("../../lib/studioClient", async (original) => ({
   ...(await original<typeof import("../../lib/studioClient")>()),
@@ -22,6 +23,7 @@ vi.mock("../../lib/studioClient", async (original) => ({
     records: mocks.records,
     mutate: mocks.mutate,
     exportResponses: mocks.exportResponses,
+    report: mocks.report,
   },
 }));
 vi.mock("../DialogService", async (original) => ({
@@ -229,4 +231,33 @@ it("brings a comment's form into view", async () => {
   await waitFor(() => expect(form).toHaveFocus());
   expect(scroll.mock.contexts).toContain(form);
   delete (Element.prototype as Partial<Element>).scrollIntoView;
+});
+
+it("says when a report has more paragraphs than one import holds", async () => {
+  mocks.report.mockResolvedValue({
+    comments: [{ number: "1", start: 0, end: 5, text: "First" }],
+    paragraphs: 3,
+  });
+  render(
+    <Responses
+      workspaceId="ws"
+      data={
+        {
+          ...data,
+          papers: [{ paper: { title: "Report" }, revision: { id: "rev" } }],
+        } as unknown as ProjectHome
+      }
+      onRefresh={async () => {}}
+      onDocument={() => {}}
+    />,
+  );
+  fireEvent.change(await screen.findByLabelText("Report revision"), {
+    target: { value: "rev" },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Preview paragraph split" }),
+  );
+  expect(
+    await screen.findByText(/This report has 3 paragraphs/),
+  ).toBeInTheDocument();
 });

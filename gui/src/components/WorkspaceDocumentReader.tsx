@@ -35,6 +35,18 @@ const button = "rounded border px-2 py-1 text-xs disabled:opacity-40";
 /** A whole page number of at least 1; anything else reads as page 1. */
 const pageNumber = (value: unknown) =>
   Math.max(1, Math.floor(Number(value)) || 1);
+/**
+ * Highlighted source reaches the page through the HTML parser, which turns each
+ * CRLF into LF. The saved text keeps the pair, so a position on screen falls
+ * short of the same position in the text by one for each line above it.
+ */
+function savedTextIndex(text: string, shownIndex: number) {
+  let index = 0;
+  for (let shown = 0; shown < shownIndex; shown += 1)
+    index += text.startsWith("\r\n", index) ? 2 : 1;
+  return index;
+}
+
 export default function WorkspaceDocumentReader({
   workspaceId,
   revisionId,
@@ -198,8 +210,15 @@ export default function WorkspaceDocumentReader({
     prefix.selectNodeContents(source.current);
     prefix.setEnd(range.startContainer, range.startOffset);
     const offset = prefix.toString().length;
+    const end = offset + range.toString().length;
+    const parsed = source.current.textContent?.length !== view.text.length;
     setSelection(
-      textSelection(view.text, offset, offset + range.toString().length, view),
+      textSelection(
+        view.text,
+        parsed ? savedTextIndex(view.text, offset) : offset,
+        parsed ? savedTextIndex(view.text, end) : end,
+        view,
+      ),
     );
   };
   const pagePoint = (

@@ -14,6 +14,7 @@ import {
   isOpenTask,
   type SurfaceApi,
 } from "./shared";
+import ReportIssueLink from "../ReportIssueLink";
 
 type Task = ProjectRecord<ResearchTask>;
 
@@ -205,7 +206,12 @@ export default function ProjectActionItems(props: SurfaceApi) {
           </select>
         </div>
       ))}
-      {pageError && <p role="alert">{pageError}</p>}
+      {pageError && (
+        <p role="alert">
+          {pageError}
+          <ReportIssueLink />
+        </p>
+      )}
       {cursor && (
         <button
           className={button}

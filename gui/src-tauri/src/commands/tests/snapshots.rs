@@ -27,6 +27,7 @@ fn runtime_snapshot_identity_is_order_stable_and_value_sensitive() {
             workflow_fingerprint: String::new(),
             workflow_json: String::new(),
             specialist_catalog_revision: String::new(),
+            agent_overrides: None,
         }
     };
     let variables_a = std::collections::HashMap::from([
@@ -161,6 +162,7 @@ fn parallel_override_snapshot_identity_is_order_stable_and_value_sensitive() {
         workflow_fingerprint: String::new(),
         workflow_json: String::new(),
         specialist_catalog_revision: String::new(),
+        agent_overrides: None,
     };
     let overrides = |entries: [(&str, &str, &str); 2]| {
         let mut model_overrides = std::collections::HashMap::new();
@@ -263,6 +265,7 @@ fn one_run_parallel_override_replaces_explicit_and_inherited_parallel_agents() {
         workflow_fingerprint: String::new(),
         workflow_json: String::new(),
         specialist_catalog_revision: String::new(),
+        agent_overrides: None,
     };
     let overrides = RunParallelOverrides {
         agents: vec!["codex".into(), "antigravity".into()],
@@ -307,6 +310,7 @@ fn one_run_merge_override_replaces_the_workflow_merge_provider_and_policy() {
         workflow_fingerprint: String::new(),
         workflow_json: String::new(),
         specialist_catalog_revision: String::new(),
+        agent_overrides: None,
     };
     let overrides = RunParallelOverrides {
         agents: vec!["claude".into(), "codex".into()],

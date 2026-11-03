@@ -28,7 +28,10 @@ pub use home::{
 use inventory::{check_for_changes, ignored, inventory_at, refresh};
 pub(crate) use inventory::{materialize_research_files, task_capture};
 pub use inventory::{FileEntry, Inventory};
-pub use records::{anchor_read, record, records, ProjectRecord};
+pub use records::{
+    anchor_read, record, records, records_up_to, records_with_values, ProjectRecord,
+    RECORD_READ_LIMIT,
+};
 use records::{decode, put, read_record};
 
 pub(crate) mod assistant_files;
@@ -83,6 +86,10 @@ const MAX_FILE: u64 = 32 * 1024 * 1024;
 const MAX_CAPTURE: u64 = 256 * 1024 * 1024;
 const MAX_FILES: usize = 5000;
 const SCRATCH: &str = ".pipeline-tasks";
+/// Inputs Pipeline writes for programs it generates. Reserved like `SCRATCH`, so
+/// nothing in the project's file tools reads or changes them: a program reaches
+/// its folder by the absolute path saved in its profile.
+const GENERATED: &str = ".pipeline-workbench";
 fn err(e: impl std::fmt::Display) -> WorkbenchError {
     WorkbenchError::storage("Project operation failed", e)
 }
@@ -145,6 +152,7 @@ fn lock(store: &Store, workspace_id: &str) -> WorkbenchResult<fs::File> {
         .map_err(err)?;
     file.try_lock_exclusive().map_err(|_| {
         WorkbenchError::conflict("Another project operation is in progress; retry when it finishes")
+            .transient()
     })?;
     Ok(file)
 }
@@ -366,7 +374,7 @@ pub(crate) fn program_directory(
         ));
     }
     let mut path = root(store, ws)?;
-    for part in [".pipeline-workbench", "generated", identity] {
+    for part in [GENERATED, "generated", identity] {
         path.push(part);
         if path.exists() {
             if fs::symlink_metadata(&path)
@@ -391,14 +399,16 @@ pub(crate) fn program_directory(
     Ok(path)
 }
 
-/// Read a confined accepted file for an explicit local change check. No content enters chat.
+/// Read a confined accepted file for an explicit local change check. No content
+/// enters chat. The path comes from a saved record, which may predate the reserved
+/// generated folder.
 pub(crate) fn program_file_hash(
     store: &Store,
     ws: &str,
     path: &str,
 ) -> WorkbenchResult<Option<String>> {
-    files::relative(path)?;
-    let source = files::SafeRoot::open(&root(store, ws)?)?;
+    files::recorded(path)?;
+    let source = files::SafeRoot::for_records(&root(store, ws)?)?;
     source
         .optional_read(path)
         .map(|bytes| bytes.as_deref().map(hash))

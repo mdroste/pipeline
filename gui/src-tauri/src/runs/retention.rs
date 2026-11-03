@@ -59,7 +59,7 @@ pub fn disk_usage() -> Result<RunsDiskUsage, String> {
     let Ok(entries) = fs::read_dir(&dir) else {
         return Ok(RunsDiskUsage { count: 0, bytes: 0 });
     };
-    let mut walk = crate::safety::WalkBudget::new("Run storage scan");
+    let mut walk = crate::safety::WalkBudget::new("Run storage scan").without_time_limit();
     for entry in entries.flatten() {
         walk.entry()?;
         if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
@@ -104,7 +104,7 @@ fn sized_runs_for_retention() -> Result<Vec<(RunSummary, u64)>, String> {
         // Each run directory gets its own walk budget. The scan covers only
         // app-owned run data, and one budget across the whole store trips at a
         // few hundred runs — which would silently disable retention forever.
-        let mut walk = crate::safety::WalkBudget::new("Run retention scan");
+        let mut walk = crate::safety::WalkBudget::new("Run retention scan").without_time_limit();
         let bytes = dir_size(&root.join(&summary.run_id), &mut walk)?;
         sized.push((summary, bytes));
     }
@@ -290,14 +290,13 @@ pub fn write_annotations(run_id: &str, content: &str) -> Result<(), String> {
         .map_err(|e| format!("Cannot write annotations: {e}"))?;
     temp.flush()
         .map_err(|e| format!("Cannot flush annotations: {e}"))?;
-    temp.as_file()
-        .sync_all()
+    crate::safety::sync_file(temp.as_file())
         .map_err(|e| format!("Cannot sync annotations: {e}"))?;
     temp.persist(destination)
         .map_err(|e| format!("Cannot save annotations: {}", e.error))?;
     #[cfg(unix)]
     fs::File::open(&dir)
-        .and_then(|directory| directory.sync_all())
+        .and_then(|directory| crate::safety::sync_file(&directory))
         .map_err(|e| format!("Cannot sync annotations directory: {e}"))?;
     Ok(())
 }

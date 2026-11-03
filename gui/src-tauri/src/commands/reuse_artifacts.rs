@@ -47,7 +47,8 @@ fn copy_regular(mut file: std::fs::File, destination: &Path, limit: u64) -> Resu
 }
 
 /// The one flush of a finished copy. Windows cannot open a directory to flush
-/// it. A rerun verifies retained copies against their fingerprint.
+/// it. A rerun verifies retained copies against their fingerprint, so a refused
+/// flush is logged and doesn't fail a copy that has landed.
 fn flush_copy(destination: &Path) -> Result<(), String> {
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
@@ -56,10 +57,9 @@ fn flush_copy(destination: &Path) -> Result<(), String> {
     } else if cfg!(not(unix)) {
         return Ok(());
     }
-    options
-        .open(destination)
-        .and_then(|file| file.sync_all())
-        .map_err(|e| e.to_string())
+    let copy = options.open(destination).map_err(|e| e.to_string())?;
+    crate::safety::sync_landed(&copy);
+    Ok(())
 }
 
 /// Copy a run-owned tree exactly: only regular files, through validated
@@ -67,6 +67,15 @@ fn flush_copy(destination: &Path) -> Result<(), String> {
 /// [`snapshot_folder`] instead, because this refuses what a folder can hold.
 /// Never link parent and child artifacts: a later write must remain isolated.
 pub(super) fn copy_tree(source: &Path, destination: &Path) -> Result<(), String> {
+    copy_tree_except(source, destination, |_| false)
+}
+
+/// [`copy_tree`], leaving out each path `skip` names.
+fn copy_tree_except(
+    source: &Path,
+    destination: &Path,
+    skip: impl Fn(&Path) -> bool,
+) -> Result<(), String> {
     let mut pending = vec![(source.to_path_buf(), destination.to_path_buf())];
     let mut budget = WalkBudget::new("Review artifact copy").without_time_limit();
     let mut remaining = crate::safety::MAX_RUN_OUTPUT_BYTES as u64;
@@ -87,6 +96,7 @@ pub(super) fn copy_tree(source: &Path, destination: &Path) -> Result<(), String>
             pending.extend(
                 entries
                     .into_iter()
+                    .filter(|e| !skip(&e.path()))
                     .map(|e| (e.path(), destination.join(e.file_name()))),
             );
         } else {
@@ -538,6 +548,8 @@ pub(super) fn build_bundle(
     Ok(build)
 }
 
+/// Carries reused steps' files into a new run. A unit the parent never
+/// finished stays behind, so its files cannot reach the new run's later steps.
 pub(super) fn restore_producers(
     parent: &Path,
     destination: &Path,
@@ -547,7 +559,10 @@ pub(super) fn restore_producers(
         let slug = crate::pipeline::executor::step_slug(&id);
         let source = parent.join("artifacts/by-step").join(&slug);
         if source.exists() {
-            copy_tree(&source, &destination.join("by-step").join(slug))?;
+            copy_tree_except(&source, &destination.join("by-step").join(slug), |path| {
+                path.parent() == Some(source.as_path())
+                    && crate::pipeline::unit_files::call_is_open(path)
+            })?;
         }
     }
     Ok(())
@@ -556,6 +571,31 @@ pub(super) fn restore_producers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resume_leaves_behind_a_unit_the_parent_never_finished() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().join("parent");
+        let step = parent
+            .join("artifacts/by-step")
+            .join(crate::pipeline::executor::step_slug("producer"));
+        for unit in ["finished", "cut-off"] {
+            std::fs::create_dir_all(step.join(unit).join("files")).unwrap();
+            std::fs::write(step.join(unit).join("files/table.csv"), "1,2").unwrap();
+        }
+        crate::pipeline::unit_files::begin_call(step.join("cut-off").to_str().unwrap()).unwrap();
+
+        let child = temp.path().join("child/artifacts");
+        restore_producers(&parent, &child, std::iter::once("producer".into())).unwrap();
+
+        let restored = child
+            .join("by-step")
+            .join(crate::pipeline::executor::step_slug("producer"));
+        assert!(restored.join("finished/files/table.csv").is_file());
+        assert!(!restored.join("cut-off").exists());
+        assert!(!child.join("checkpoints").exists());
+    }
+
     #[test]
     fn restored_sources_and_producers_are_independent_of_originals() {
         let temp = tempfile::tempdir().unwrap();

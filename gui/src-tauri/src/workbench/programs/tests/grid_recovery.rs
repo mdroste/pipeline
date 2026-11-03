@@ -144,3 +144,100 @@ fn only_a_followup_in_attention_can_be_dismissed() {
     .unwrap_err();
     assert!(error.message.contains("attention"), "{error:?}");
 }
+
+/// One grid per state, each with an approval that a restore must not carry over.
+fn grid_in(f: &Fixture, base: &DeskRecord, state: &str, active: Option<&str>) -> DeskRecord {
+    let mut request = grid_request(f, base);
+    request.title = format!("grid {state}");
+    request.operation_id = format!("grid-{state}");
+    let grid = experiments::prepare(&f.store, request).unwrap();
+    f.store.connection().unwrap().execute("UPDATE experiment_runs SET state=?2,active_execution_id=?3,authorized_hash='approved',reason=?4 WHERE plan_id=?1",params![grid.id,state,active,format!("Left {state}")]).unwrap();
+    grid
+}
+
+#[test]
+fn a_restore_keeps_ended_grids_ended_and_a_cancelled_grid_cannot_resume() {
+    use crate::workbench::release::{
+        export_archive, import_archive, ExportArchiveRequest, ImportArchiveRequest,
+    };
+    let f = fixture(true);
+    let p = profile(&f, "print('fixture')", 10);
+    let base = capture(&f, &p);
+    numeric(&f, "ended", 1.0, "sample");
+    let ready = grid_in(&f, &base, "ready", None);
+    let running = grid_in(&f, &base, "running", None);
+    let paused = grid_in(&f, &base, "paused", None);
+    let attention = grid_in(&f, &base, "attention", None);
+    let finished = grid_in(&f, &base, "finished", None);
+    let cancelled = grid_in(&f, &base, "cancelled", Some("execution_ended"));
+
+    let path = f._temp.path().join("backup.pwrx");
+    export_archive(
+        &f.store,
+        ExportArchiveRequest {
+            path: path.to_string_lossy().into_owned(),
+        },
+    )
+    .unwrap();
+    let target = tempfile::tempdir().unwrap();
+    let restored = Fixture {
+        store: Store::open_at(target.path()).unwrap(),
+        ws: f.ws.clone(),
+        root: f.root.clone(),
+        session: f.session.clone(),
+        _temp: target,
+    };
+    import_archive(
+        &restored.store,
+        ImportArchiveRequest {
+            path: path.to_string_lossy().into_owned(),
+            root_mappings: BTreeMap::from([(
+                f.store.workspace(&f.ws).unwrap().root.unwrap(),
+                None,
+            )]),
+        },
+    )
+    .unwrap();
+
+    let run = |grid: &DeskRecord| {
+        experiments::status(&restored.store, &restored.ws, &grid.id).unwrap()["run"].clone()
+    };
+    for grid in [&ready, &running, &paused] {
+        assert_eq!(run(grid)["state"], "attention");
+        assert!(run(grid)["reason"]
+            .as_str()
+            .unwrap()
+            .contains("new authorization"));
+    }
+    assert_eq!(run(&attention)["reason"], "Left attention");
+    assert_eq!(run(&finished)["state"], "finished");
+    assert_eq!(run(&finished)["reason"], "Left finished");
+    assert_eq!(run(&cancelled)["state"], "cancelled");
+    for grid in [&ready, &attention, &finished, &cancelled] {
+        assert!(run(grid)["authorizedHash"].is_null());
+    }
+
+    assert_eq!(
+        control(&restored, &cancelled, "reconcile").unwrap()["run"]["state"],
+        "cancelled"
+    );
+    let refused = control(&restored, &cancelled, "start").unwrap_err();
+    assert!(refused.message.contains("Only a ready"), "{refused:?}");
+    assert_eq!(run(&cancelled)["state"], "cancelled");
+}
+
+#[test]
+fn reconciling_a_cancelled_grid_never_gives_it_a_way_to_start() {
+    let f = fixture(true);
+    let grid = stranded(&f, "completed");
+    f.store
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE experiment_runs SET state='cancelled' WHERE plan_id=?1",
+            [&grid.id],
+        )
+        .unwrap();
+    let reconciled = control(&f, &grid, "reconcile").unwrap();
+    assert_eq!(reconciled["run"]["state"], "cancelled");
+}

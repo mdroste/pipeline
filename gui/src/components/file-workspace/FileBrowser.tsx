@@ -36,6 +36,7 @@ import type { FileLocation } from "../../lib/fileLinks";
 import { IconButton, Menu, MenuItem, MenuSeparator } from "../../ui";
 import { Icon } from "../../ui/icons";
 import FileIcon from "./FileIcon";
+import ReportIssueLink from "../ReportIssueLink";
 
 const POLL_MS = 2000;
 const MAX_FILTERED = 200;
@@ -581,6 +582,7 @@ export default function FileBrowser({
       {error && (
         <p role="alert" className="file-error">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       {filter.trim() ? (

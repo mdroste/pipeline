@@ -70,7 +70,9 @@ pub async fn reconcile_runs(
         crate::runs::load_manifest(&run_a).ok(),
         crate::runs::load_manifest(&run_b).ok(),
     ) {
-        (Some(ma), Some(mb)) if mb.created < ma.created => (&report_b, &report_a),
+        (Some(ma), Some(mb)) if crate::runs::created_before(&mb.created, &ma.created) => {
+            (&report_b, &report_a)
+        }
         _ => (&report_a, &report_b),
     };
     let bus = crate::emit::from_app(app);
@@ -180,9 +182,29 @@ pub async fn get_annotations(run_id: String) -> Result<String, String> {
     crate::runs::read_annotations(&run_id)
 }
 
-/// Extract (id, title, body) triples from any issues-shaped step output in a
-/// report — mirrors the frontend's `parseIssues`.
+/// Extract (id, title, body) triples for the issues a report shows, under the
+/// ids the Issues view saves annotations by. Mirrors the frontend's
+/// `detectReportIssues`: a report with published products reads them, and an
+/// older report reads the last issues-shaped step output.
 pub(super) fn extract_issues_from_report(report: &PipelineReport) -> Vec<(String, String, String)> {
+    if report.products.schema_version > 0 {
+        return report
+            .products
+            .findings
+            .iter()
+            .flat_map(|set| set.findings.iter())
+            .enumerate()
+            .map(|(index, finding)| {
+                let id = if finding.id.is_empty() {
+                    (index + 1).to_string()
+                } else {
+                    finding.id.clone()
+                };
+                (id, finding.title.clone(), finding.body.clone())
+            })
+            .filter(|(_, title, body)| !title.is_empty() || !body.is_empty())
+            .collect();
+    }
     for output in report.step_outputs.iter().rev() {
         if output.skipped {
             continue;
@@ -191,6 +213,8 @@ pub(super) fn extract_issues_from_report(report: &PipelineReport) -> Vec<(String
             continue;
         };
         let arr = if let Some(a) = value.as_array() {
+            a.clone()
+        } else if let Some(a) = value.get("findings").and_then(|v| v.as_array()) {
             a.clone()
         } else if let Some(a) = value.get("issues").and_then(|v| v.as_array()) {
             a.clone()
@@ -216,6 +240,7 @@ pub(super) fn extract_issues_from_report(report: &PipelineReport) -> Vec<(String
             let body = obj
                 .get("body")
                 .or_else(|| obj.get("description"))
+                .or_else(|| obj.get("detail"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
@@ -230,6 +255,35 @@ pub(super) fn extract_issues_from_report(report: &PipelineReport) -> Vec<(String
     Vec::new()
 }
 
+/// The ids a reviewer rejected in one run's saved annotations.
+fn rejected_ids(annotations: &str) -> Vec<String> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(annotations).unwrap_or(serde_json::json!({}));
+    let Some(obj) = parsed.as_object() else {
+        return Vec::new();
+    };
+    obj.iter()
+        .filter(|(_, v)| v.get("status").and_then(|s| s.as_str()) == Some("reject"))
+        .map(|(k, _)| k.clone())
+        .collect()
+}
+
+/// One run's rejected issues as short "title — body" lines.
+fn rejected_issue_lines(rejected: &[String], report: &PipelineReport) -> Vec<String> {
+    let issues = extract_issues_from_report(report);
+    rejected
+        .iter()
+        .filter_map(|id| issues.iter().find(|(iid, _, _)| iid == id))
+        .map(|(_, title, body)| {
+            let mut snippet = body.replace('\n', " ");
+            if snippet.chars().count() > 240 {
+                snippet = snippet.chars().take(240).collect::<String>() + "…";
+            }
+            format!("- {title} — {snippet}")
+        })
+        .collect()
+}
+
 /// Collect the issues a reviewer rejected (annotation status "reject") across
 /// all runs of `profile_id`, as short "title — body" lines. Capped.
 pub(super) fn collect_rejected_issues(profile_id: &str) -> Vec<String> {
@@ -237,30 +291,14 @@ pub(super) fn collect_rejected_issues(profile_id: &str) -> Vec<String> {
     let mut out = Vec::new();
     for r in runs.iter().filter(|r| r.profile_id == profile_id) {
         let ann_str = crate::runs::read_annotations(&r.run_id).unwrap_or_else(|_| "{}".to_string());
-        let ann: serde_json::Value =
-            serde_json::from_str(&ann_str).unwrap_or(serde_json::json!({}));
-        let Some(obj) = ann.as_object() else { continue };
-        let rejected: Vec<String> = obj
-            .iter()
-            .filter(|(_, v)| v.get("status").and_then(|s| s.as_str()) == Some("reject"))
-            .map(|(k, _)| k.clone())
-            .collect();
+        let rejected = rejected_ids(&ann_str);
         if rejected.is_empty() {
             continue;
         }
         let Ok(report) = load_run_report(&r.run_id) else {
             continue;
         };
-        let issues = extract_issues_from_report(&report);
-        for id in rejected {
-            if let Some((_, title, body)) = issues.iter().find(|(iid, _, _)| *iid == id) {
-                let mut snippet = body.replace('\n', " ");
-                if snippet.chars().count() > 240 {
-                    snippet = snippet.chars().take(240).collect::<String>() + "…";
-                }
-                out.push(format!("- {title} — {snippet}"));
-            }
-        }
+        out.extend(rejected_issue_lines(&rejected, &report));
         if out.len() >= 40 {
             break;
         }
@@ -361,11 +399,9 @@ pub async fn open_run_artifact_stream(run_id: String, rel_path: String) -> Resul
 fn check_artifact(rel_path: &str, path: &std::path::Path) -> Result<(), String> {
     let file =
         crate::safety::open_regular_file(path).map_err(|e| format!("Cannot open artifact: {e}"))?;
-    let metadata = file
-        .metadata()
-        .map_err(|e| format!("Cannot stat artifact: {e}"))?;
-    crate::file_viewer::check_openable(rel_path, crate::file_viewer::has_execute_bit(&metadata))
-        .map_err(str::to_string)
+    let program = crate::file_viewer::marked_as_program(rel_path, &file)
+        .map_err(|e| format!("Cannot inspect artifact: {e}"))?;
+    crate::file_viewer::check_openable(rel_path, program).map_err(str::to_string)
 }
 
 /// The system viewer for a retained artifact. Model-written programs stay one
@@ -433,5 +469,76 @@ mod open_tests {
         assert!(by_type.contains("this type of file"), "{by_type}");
         let plain = artifact(folder.path(), "notes", 0o644);
         check_artifact("notes", &plain).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A report as a current Review publishes it, through the real product step.
+    fn published_report() -> PipelineReport {
+        let mut config = pipeline_config::workflow_template().unwrap().config;
+        let step = config.outputs.primary_step.clone();
+        config.outputs.findings_step = step.clone();
+        let outputs = vec![crate::models::StepOutput {
+            step_id: step,
+            phase: "sequential".into(),
+            structured_json: true,
+            raw_text: serde_json::json!({
+                "findings": [
+                    {"id": "F-1", "title": "Weak instrument", "body": "The first stage is weak.",
+                     "severity": "high", "category": "Identification"},
+                    {"id": "F-2", "title": "Small sample", "body": "Only 40 units.",
+                     "severity": "low", "category": "Data"},
+                ]
+            })
+            .to_string(),
+            ..Default::default()
+        }];
+        PipelineReport {
+            products: crate::findings::build_run_products(&config, &outputs),
+            step_outputs: outputs,
+            ..serde_json::from_value(serde_json::json!({
+                "orientation": null,
+                "referee_reports": [],
+                "editor": null,
+                "report_date": "2026-01-01",
+                "paper_hash": "hash",
+            }))
+            .unwrap()
+        }
+    }
+
+    #[test]
+    fn a_rejected_finding_of_a_current_review_is_found() {
+        let report = published_report();
+        assert!(report.products.findings.is_some());
+        let rejected = rejected_ids(r#"{"F-2":{"status":"reject"},"F-1":{"status":"accept"}}"#);
+        assert_eq!(rejected, ["F-2"]);
+        assert_eq!(
+            rejected_issue_lines(&rejected, &report),
+            ["- Small sample — Only 40 units."]
+        );
+    }
+
+    #[test]
+    fn an_older_report_is_read_from_its_step_output() {
+        for key in ["findings", "issues"] {
+            let mut report = published_report();
+            report.products = Default::default();
+            report.step_outputs[0].raw_text = serde_json::json!({
+                key: [{"id": "A", "summary": "Old title", "detail": "Old body"}]
+            })
+            .to_string();
+            assert_eq!(
+                extract_issues_from_report(&report),
+                [(
+                    "A".to_string(),
+                    "Old title".to_string(),
+                    "Old body".to_string()
+                )]
+            );
+        }
     }
 }

@@ -3,6 +3,26 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
+## Unreleased
+
+- Conversations, reviews, and automations recover more reliably after interruptions.
+  Failed attempts keep their files available for inspection, and review limits
+  are reported more clearly.
+- Files preserve drafts through renames, handle external changes more carefully,
+  and give clearer errors when a preview or file operation fails.
+- Browser tools handle redirects, request limits, and cancellation more reliably.
+- PDF extraction handles blank pages, concurrent reviews, and recognition failures
+  more clearly. Word imports preserve more symbols and report unsupported content.
+- Settings, saved credentials, version control, and report exports handle errors
+  more consistently.
+- Update errors for read-only locations explain how to retry. On macOS, the
+  message directs you to move Pipeline to Applications and reopen it there.
+- macOS release builds default to building signed and notarized installers for
+  both Apple Silicon and Intel.
+
+- ChatGPT connections require Codex 0.165.0 or newer. Older versions show an
+  upgrade message before sign-in instead of failing on the review configuration.
+
 ## 1.4.1 — 2026-11-01
 
 - On Windows, the PaddleOCR-VL Full Parser can read pages with your graphics

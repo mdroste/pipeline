@@ -11,6 +11,7 @@ import type { WorkspaceDestination } from "../lib/workspaceNavigation";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import PageHeader from "../ui/PageHeader";
 import "./project-surface/ProjectHome.css";
+import ReportIssueLink from "./ReportIssueLink";
 
 const ProjectDialog = lazy(() => import("./WorkspaceProjectDialog"));
 
@@ -101,6 +102,7 @@ export default function ProjectIndexPage({
         {(error || actionError) && (
           <p role="alert" className="project-home-error">
             {actionError ?? error}
+            <ReportIssueLink />
           </p>
         )}
         {loading && !projects.length && (

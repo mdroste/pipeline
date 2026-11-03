@@ -6,6 +6,9 @@ use super::{
 use crate::orchestration::store::{self, now, Result};
 use std::collections::BTreeMap;
 
+const WAITING_FOR_INPUT: &str = "Waiting for your research input";
+const WAITING_FOR_CHANGE: &str = "Waiting for a tracked project change";
+
 pub(super) fn merge_questions(m: &mut Mission, questions: Vec<QuestionSpec>) -> Result<()> {
     for spec in questions {
         if let Some(existing) = m.questions.iter().find(|q| q.spec.id == spec.id) {
@@ -66,9 +69,9 @@ pub(crate) fn apply_plan(m: &mut Mission, p: Plan, child: &str) -> Result<()> {
             m.state = "waiting".into();
             m.phase = Phase::Plan;
             m.reason = if disposition == Disposition::WaitForInput {
-                "Waiting for your research input"
+                WAITING_FOR_INPUT
             } else {
-                "Waiting for a tracked project change"
+                WAITING_FOR_CHANGE
             }
             .into();
             if disposition == Disposition::WaitForInput
@@ -76,12 +79,37 @@ pub(crate) fn apply_plan(m: &mut Mission, p: Plan, child: &str) -> Result<()> {
             {
                 return Err("The proposed input wait has no unanswered question".into());
             }
-            m.due_at = if m.definition.policy.monitor_ids.is_empty() {
-                None
-            } else {
-                Some(now() + 60)
-            };
+            m.due_at = wait_due(m).map(|due| due + 60);
         }
     }
     Ok(())
+}
+
+/// Only tracked project changes can end a wait on their own.
+pub(super) fn wait_due(m: &Mission) -> Option<i64> {
+    (!m.definition.policy.monitor_ids.is_empty()).then(now)
+}
+
+/// The reason for the wait the last plan asked for, if nothing has ended it. Any
+/// answer ends a wait for input, as any tracked change ends a wait for one, and
+/// the plan then needs another look.
+pub(super) fn open_wait(m: &Mission) -> Option<&'static str> {
+    let round = m.rounds.last().filter(|_| m.phase == Phase::Plan)?;
+    let unanswered = |id: &str| {
+        m.questions
+            .iter()
+            .any(|q| q.spec.id == id && q.answer.is_none())
+    };
+    match round.plan.disposition {
+        Disposition::WaitForInput
+            if m.questions.iter().any(|q| q.answer.is_none())
+                && round.plan.questions.iter().all(|q| unanswered(&q.id)) =>
+        {
+            Some(WAITING_FOR_INPUT)
+        }
+        Disposition::WaitForChange if m.watch_epoch == round.change_cursor => {
+            Some(WAITING_FOR_CHANGE)
+        }
+        _ => None,
+    }
 }

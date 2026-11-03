@@ -345,7 +345,7 @@ impl SafeRoot {
         #[cfg(windows)]
         {
             relative(path)?;
-            let file = match windows::open_relative(&self.directory, path) {
+            let file = match windows::open_relative(&self.directory, path, self.records) {
                 Ok(file) => file,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
                 Err(e) => return Err(err(e)),
@@ -359,6 +359,16 @@ impl SafeRoot {
             Err(WorkbenchError::invalid(
                 "Scoped file access is unsupported on this platform",
             ))
+        }
+    }
+    /// Whether `path` is a program by `file_viewer::marked_as_program`.
+    pub(in crate::workbench::project) fn marked_as_program(
+        &self,
+        path: &str,
+    ) -> WorkbenchResult<bool> {
+        match self.open_read(path)? {
+            Some((file, _)) => crate::file_viewer::marked_as_program(path, &file).map_err(err),
+            None => Ok(false),
         }
     }
     /// Create one folder under an existing parent. An existing entry is refused.
@@ -377,7 +387,8 @@ impl SafeRoot {
                     err(error)
                 });
             }
-            directory.sync_all().map_err(err)
+            crate::safety::sync_landed(&directory);
+            Ok(())
         }
         #[cfg(windows)]
         {
@@ -467,8 +478,9 @@ impl SafeRoot {
                     err(error)
                 });
             }
-            from_directory.sync_all().map_err(err)?;
-            to_directory.sync_all().map_err(err)
+            crate::safety::sync_landed(&from_directory);
+            crate::safety::sync_landed(&to_directory);
+            Ok(())
         }
         #[cfg(windows)]
         {
@@ -711,6 +723,31 @@ mod tests {
         assert_eq!(denied.unwrap_err().raw_os_error(), Some(libc::EACCES));
         assert!(!temp.path().join("moved.txt").exists());
         assert_eq!(fs::read(temp.path().join("one.txt")).unwrap(), b"one");
+    }
+
+    /// Runs `work` on a volume whose flushes all fail the way a share's can.
+    fn with_flushes_refused<T>(code: i32, work: impl FnOnce() -> T) -> T {
+        crate::safety::simulate_sync_failure(Some((code, true)));
+        let result = work();
+        crate::safety::simulate_sync_failure(None);
+        result
+    }
+
+    #[test]
+    fn a_move_and_a_new_folder_that_landed_report_success() {
+        for code in [libc::ENOTSUP, libc::EIO] {
+            let temp = tempfile::tempdir().unwrap();
+            fs::write(temp.path().join("one.txt"), "one").unwrap();
+            fs::create_dir(temp.path().join("sub")).unwrap();
+            let safe = SafeRoot::open(temp.path()).unwrap();
+            with_flushes_refused(code, || {
+                safe.move_entry("one.txt", "sub/one.txt").unwrap();
+                safe.create_folder("made").unwrap();
+                safe.move_entry("sub", "Sub").unwrap();
+            });
+            assert_eq!(fs::read(temp.path().join("Sub/one.txt")).unwrap(), b"one");
+            assert!(temp.path().join("made").is_dir());
+        }
     }
 
     #[test]

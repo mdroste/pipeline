@@ -25,7 +25,8 @@ pub struct Work {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notice {
-    /// `retraction`, `withdrawal`, `expression_of_concern`, `correction`, ...
+    /// `retraction`, `partial_retraction`, `withdrawal`,
+    /// `expression_of_concern`, `correction`, ...
     pub kind: String,
     pub notice_doi: String,
     pub source: String,

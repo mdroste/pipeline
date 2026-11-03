@@ -4,6 +4,8 @@ use serde_json::{json, Value};
 
 const RETAINED_REPORT_BYTES: usize = 16 * 1024;
 const PROMPT_REPORT_BYTES: usize = 8 * 1024;
+/// Marks a capability the planner must not select, in the role's own context.
+const NEEDS_APPROVAL: &str = "needsApproval";
 
 pub(super) fn short(s: &str, n: usize) -> String {
     if s.len() <= n {
@@ -24,7 +26,7 @@ fn packet(m: &Mission) -> Value {
         "background":short(&m.definition.background,4000),"completionCriteria":m.definition.criteria,
         "sourceContext":short(&m.context,6000),"budget":m.definition.budget,
         "used":{"actions":m.actions_reserved,"activeSeconds":m.active_seconds,"rounds":m.rounds.len()},
-        "capabilities":m.capabilities.iter().map(|c|json!({"id":c.id,"kind":c.kind,"name":c.name,"parameters":c.parameters,"timeoutSeconds":c.timeout_seconds})).collect::<Vec<_>>(),"canEditTaskCopy":m.definition.policy.allow_edits,
+        "capabilities":m.capabilities.iter().map(|c|{let mut item=json!({"id":c.id,"kind":c.kind,"name":c.name,"parameters":c.parameters,"timeoutSeconds":c.timeout_seconds});if c.unavailable{item[NEEDS_APPROVAL]=json!(true);}item}).collect::<Vec<_>>(),"canEditTaskCopy":m.definition.policy.allow_edits,
         "goals":m.goals.iter().map(|g|json!({"id":g.spec.id,"question":short(&g.spec.question,250),"rationale":short(&g.spec.rationale,150),"resolvingEvidence":short(&g.spec.resolving_evidence,250),"dependsOn":g.spec.depends_on,"parentId":g.spec.parent_id,"state":g.state,"assessment":short(&g.assessment,200)})).collect::<Vec<_>>(),
         "previousInvestigations":m.rounds.iter().rev().take(4).map(|r|json!({"round":r.number,"selected":r.selected.as_ref().map(|c|json!({"question":c.question,"kind":c.kind,"capabilityId":c.capability_id})),"finding":r.finding.as_ref().map(|f|json!({"summary":short(&f.summary,1800),"outcome":short(&f.outcome,800),"limitations":f.limitations})),"challenge":r.challenge.as_ref().map(|c|json!({"summary":short(&c.summary,1800),"outcome":c.outcome,"unresolved":c.unresolved})),"evidenceIds":r.evidence.keys().collect::<Vec<_>>()})).collect::<Vec<_>>(),
         "questions":m.questions.iter().rev().take(16).collect::<Vec<_>>(),
@@ -105,7 +107,13 @@ fn shrink(context: &mut Value, key: &str) {
                 .as_array()
                 .map(|v| {
                     v.iter()
-                        .map(|c| json!({"id":c["id"],"kind":c["kind"],"name":c["name"]}))
+                        .map(|c| {
+                            let mut kept = json!({"id":c["id"],"kind":c["kind"],"name":c["name"]});
+                            if !c[NEEDS_APPROVAL].is_null() {
+                                kept[NEEDS_APPROVAL] = c[NEEDS_APPROVAL].clone();
+                            }
+                            kept
+                        })
                         .collect()
                 })
                 .unwrap_or_default();
@@ -145,7 +153,7 @@ fn render(instructions: &str, mut context: Value, contract: Value) -> Result<Str
     Ok(result)
 }
 pub fn plan(m: &Mission) -> Result<String> {
-    render("Choose the most informative feasible next investigation within the researcher's fixed mission. Add bounded subgoals only when necessary; existing goal IDs and meanings are immutable. Explain the uncertainty, possible outcomes, prerequisites, expected cost and reason for choosing among candidates. A negative result or refutation can advance the project. Do not optimize for statistical significance or favorable conclusions. Preserve prior unsuccessful approaches. Resolve dependencies before selecting a goal. Host computation must select an exact listed check or experiment capability; never write arbitrary host-execution instructions or request permissions. Workspace investigations may inspect sources and use the declared native tools; editing is confined to the already selected task copy when enabled. Propose questions only for material missing decisions; continue independent work when possible. Reuse exact unanswered question IDs. Use disposition investigate with a selectedId; assessCompletion with no selectedId to request independent final assessment; waitForInput with concrete questions; waitForChange only with configured monitors. You cannot mark goals or the mission complete. Source coverage limits constrain novelty claims. Discovery must state inspected precedents and a first discriminating test.",packet(m),json!({"summary":"Current research position","newGoals":[{"id":"g1","question":"Question within the mission","rationale":"Why this matters","resolvingEvidence":"What would settle it","parentId":null,"dependsOn":[]}],"candidates":[{"id":"c1","goalId":"g1","question":"First discriminating test","uncertainty":"What is unknown","rationale":"Why this investigation is useful","possibleOutcomes":["How a positive result changes the agenda","How a negative result changes the agenda"],"expectedCost":"Qualitative effort estimate","instruction":"Concrete bounded investigation","kind":"workspace","capabilityId":null}],"selectedId":"c1","selectionReason":"Why this candidate precedes alternatives","questions":[],"disposition":"investigate"}))
+    render("Choose the most informative feasible next investigation within the researcher's fixed mission. Add bounded subgoals only when necessary; existing goal IDs and meanings are immutable. Explain the uncertainty, possible outcomes, prerequisites, expected cost and reason for choosing among candidates. A negative result or refutation can advance the project. Do not optimize for statistical significance or favorable conclusions. Preserve prior unsuccessful approaches. Resolve dependencies before selecting a goal. Host computation must select an exact listed check or experiment capability; never write arbitrary host-execution instructions or request permissions. A capability marked needsApproval changed or lost its approval and cannot run: do not select it, and continue with other work, or ask the researcher if nothing else can proceed. Workspace investigations may inspect sources and use the declared native tools; editing is confined to the already selected task copy when enabled. Propose questions only for material missing decisions; continue independent work when possible. Reuse exact unanswered question IDs. Use disposition investigate with a selectedId; assessCompletion with no selectedId to request independent final assessment; waitForInput with concrete questions; waitForChange only with configured monitors. You cannot mark goals or the mission complete. Source coverage limits constrain novelty claims. Discovery must state inspected precedents and a first discriminating test.",packet(m),json!({"summary":"Current research position","newGoals":[{"id":"g1","question":"Question within the mission","rationale":"Why this matters","resolvingEvidence":"What would settle it","parentId":null,"dependsOn":[]}],"candidates":[{"id":"c1","goalId":"g1","question":"First discriminating test","uncertainty":"What is unknown","rationale":"Why this investigation is useful","possibleOutcomes":["How a positive result changes the agenda","How a negative result changes the agenda"],"expectedCost":"Qualitative effort estimate","instruction":"Concrete bounded investigation","kind":"workspace","capabilityId":null}],"selectedId":"c1","selectionReason":"Why this candidate precedes alternatives","questions":[],"disposition":"investigate"}))
 }
 pub fn investigate(m: &Mission) -> Result<String> {
     let mut p = packet(m);

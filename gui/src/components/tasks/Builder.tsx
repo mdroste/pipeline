@@ -12,6 +12,7 @@ import {
 import { NumberField } from "./NumberField";
 import OutlineEditor from "./OutlineEditor";
 import { Timing } from "./Timing";
+import ReportIssueLink from "../ReportIssueLink";
 
 const LIMITS = { maxActions: 64, deadlineHours: 168, actionTimeoutSecs: 7200 };
 
@@ -377,6 +378,7 @@ export default function Builder({
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       {notice && (

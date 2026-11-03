@@ -169,7 +169,7 @@ export default function WorkspaceRecipesPanel({
         {checks.map((check) => (
           <div
             key={check.input}
-            className={`rounded border p-2 text-xs ${check.available ? "border-emerald-200 text-emerald-700" : "border-amber-200 text-warning"}`}
+            className={`rounded border p-2 text-xs ${check.available ? "border-emerald-200 text-emerald-700 dark:border-neutral-700 dark:text-emerald-300" : "border-amber-200 text-warning dark:border-neutral-700"}`}
           >
             <span className="font-medium">
               {check.available ? "Ready" : "Missing"}:{" "}
@@ -344,7 +344,7 @@ export default function WorkspaceRecipesPanel({
               <div className="flex items-center gap-2">
                 <span className="font-medium">{run.recipe.name}</span>
                 <span
-                  className={`text-[11px] ${run.status === "completed" ? "text-emerald-600" : run.status === "incomplete" ? "text-amber-600" : "text-blue-600"}`}
+                  className={`text-[11px] ${run.status === "completed" ? "text-emerald-600 dark:text-emerald-400" : run.status === "incomplete" ? "text-amber-600 dark:text-amber-400" : "text-blue-600 dark:text-blue-400"}`}
                 >
                   {run.status}
                 </span>

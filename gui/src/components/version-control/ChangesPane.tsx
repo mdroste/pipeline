@@ -9,8 +9,20 @@ import type {
 } from "../../lib/versionControlClient";
 import { confirmDialog } from "../DialogService";
 import DiffView from "./DiffView";
-import { useExcludedFiles } from "./excludedFiles";
+import {
+  checkedAgain,
+  leftOutBy,
+  uncheckedInside,
+  useExcludedFiles,
+} from "./excludedFiles";
 import { FileName, StatusMark } from "./fileRows";
+
+/** Files reads no generated input, though an earlier version could commit one. */
+const opensInFiles = (file: ChangedFile) =>
+  !file.isDirectory &&
+  !file.isSubmodule &&
+  file.status !== "deleted" &&
+  !file.path.split("/").includes(".pipeline-workbench");
 
 const megabytes = (bytes: number) =>
   `${Math.round(bytes / (1024 * 1024)).toLocaleString()} MB`;
@@ -54,11 +66,9 @@ function FileActions({
         anchorRef={button}
         label={`Actions for ${file.path}`}
       >
-        {!file.isDirectory &&
-          !file.isSubmodule &&
-          file.status !== "deleted" && (
-            <MenuItem onSelect={onOpen}>Open in Files</MenuItem>
-          )}
+        {opensInFiles(file) && (
+          <MenuItem onSelect={onOpen}>Open in Files</MenuItem>
+        )}
         {isNew && <MenuItem onSelect={onIgnore}>Add to .gitignore</MenuItem>}
         {!file.isSubmodule && (
           <MenuItem danger onSelect={onDiscard}>
@@ -171,14 +181,19 @@ export default function ChangesPane({
   const [selected, setSelected] = useState<string | null>(null);
   const merging = operation !== null;
   const conflicts = files.filter((file) => file.status === "conflicted");
+  // A folder with its own repository would commit as a bare link.
+  const committable = files.filter((file) => !file.nestedRepository);
+  const leftOut = useMemo(() => leftOutBy(excluded), [excluded]);
   const included = merging
     ? files
-    : files.filter((file) => !excluded.has(file.path));
+    : committable.filter((file) => !leftOut(file));
   const current =
     files.find((file) => file.path === selected) ?? files[0] ?? null;
 
+  const heldInCurrent = current ? uncheckedInside(current, excluded) : [];
+
   const { summary, description } = message;
-  const allIncluded = included.length === files.length;
+  const allIncluded = included.length === committable.length;
   const request = useMemo(
     () =>
       current && {
@@ -189,12 +204,43 @@ export default function ChangesPane({
     [current],
   );
 
+  /** Checking a folder commits everything in it, so it says what that takes in. */
+  const includeHeld = (held: string[]) =>
+    !held.length ||
+    confirmDialog(
+      `You unchecked ${held.join(", ")}. Git lists a new folder as one item, so including the folder commits what you unchecked too.`,
+      { title: "Include this folder", confirmLabel: "Include" },
+    );
+  const toggle = async (file: ChangedFile) => {
+    if (!leftOut(file)) setExcluded(new Set(excluded).add(file.path));
+    else if (await includeHeld(uncheckedInside(file, excluded)))
+      setExcluded(checkedAgain(file, excluded, files));
+  };
+  const toggleAll = async () => {
+    if (allIncluded) setExcluded(new Set(files.map((file) => file.path)));
+    else if (
+      await includeHeld(
+        files.flatMap((file) => uncheckedInside(file, excluded)),
+      )
+    )
+      setExcluded(new Set());
+  };
+  const ignoreHeld = async (path: string) => {
+    if (await onAct({ kind: "ignore", path })) {
+      const next = new Set(excluded);
+      next.delete(path);
+      setExcluded(next);
+    }
+  };
+
   const discard = async (file: ChangedFile) => {
     const isNew = file.status === "untracked" || file.status === "added";
     const confirmed = await confirmDialog(
       isNew
         ? `Move ${file.path} to the Trash?`
-        : `Discard your changes to ${file.path}? Your current copy goes to the Trash, and the file returns to its last commit.`,
+        : file.status === "deleted"
+          ? `Bring ${file.path} back from its last commit?`
+          : `Discard your changes to ${file.path}? Your current copy goes to the Trash, and the file returns to its last commit.`,
       { title: "Discard changes", confirmLabel: "Discard", destructive: true },
     );
     if (confirmed) await onAct({ kind: "discard", paths: [file.path] });
@@ -247,30 +293,40 @@ export default function ChangesPane({
             A rebase is unfinished. Finish it from a terminal, or abort it here.
           </p>
         )}
-        {view.largeFiles.length > 0 && (
+        {(view.largeFiles.length > 0 || view.largeFilesCutShort) && (
           <div className="vc-banner" role="status">
-            <p>
-              GitHub refuses files over 100 MB, and large data slows every copy
-              of this repository. Leave these out of Git:
-            </p>
-            <ul>
-              {view.largeFiles.map((file) => (
-                <li key={file.path}>
-                  <span title={file.path}>
-                    {file.path} ({megabytes(file.size)})
-                  </span>
-                  <Button
-                    variant="link"
-                    disabled={busy}
-                    onClick={() =>
-                      void onAct({ kind: "ignore", path: file.path })
-                    }
-                  >
-                    Add to .gitignore
-                  </Button>
-                </li>
-              ))}
-            </ul>
+            {view.largeFiles.length > 0 && (
+              <>
+                <p>
+                  GitHub refuses files over 100 MB, and large data slows every
+                  copy of this repository. Leave these out of Git:
+                </p>
+                <ul>
+                  {view.largeFiles.map((file) => (
+                    <li key={file.path}>
+                      <span title={file.path}>
+                        {file.path} ({megabytes(file.size)})
+                      </span>
+                      <Button
+                        variant="link"
+                        disabled={busy}
+                        onClick={() =>
+                          void onAct({ kind: "ignore", path: file.path })
+                        }
+                      >
+                        Add to .gitignore
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {view.largeFilesCutShort && (
+              <p>
+                There are too many new files to check them all. Others may be
+                over GitHub&rsquo;s 100 MB limit.
+              </p>
+            )}
           </div>
         )}
         <label className="vc-list-head">
@@ -279,13 +335,7 @@ export default function ChangesPane({
               type="checkbox"
               checked={allIncluded}
               aria-label="Include all files"
-              onChange={() =>
-                setExcluded(
-                  allIncluded
-                    ? new Set(files.map((file) => file.path))
-                    : new Set(),
-                )
-              }
+              onChange={() => void toggleAll()}
             />
           )}
           <span>
@@ -303,13 +353,10 @@ export default function ChangesPane({
               {!merging && (
                 <input
                   type="checkbox"
-                  checked={!excluded.has(file.path)}
+                  checked={!leftOut(file) && !file.nestedRepository}
+                  disabled={file.nestedRepository}
                   aria-label={`Include ${file.path}`}
-                  onChange={() => {
-                    const next = new Set(excluded);
-                    if (!next.delete(file.path)) next.add(file.path);
-                    setExcluded(next);
-                  }}
+                  onChange={() => void toggle(file)}
                 />
               )}
               <button
@@ -405,13 +452,11 @@ export default function ChangesPane({
                   </p>
                 )}
               </div>
-              {current.status !== "deleted" &&
-                !current.isDirectory &&
-                !current.isSubmodule && (
-                  <Button onClick={() => onOpenFile(current.path)}>
-                    Open in Files
-                  </Button>
-                )}
+              {opensInFiles(current) && (
+                <Button onClick={() => onOpenFile(current.path)}>
+                  Open in Files
+                </Button>
+              )}
             </header>
             {current.status === "conflicted" && (
               <ConflictActions
@@ -421,11 +466,42 @@ export default function ChangesPane({
                 canChooseSide={operation !== "rebase"}
               />
             )}
-            <DiffView
-              workspaceId={workspaceId}
-              request={request}
-              stamp={stamp}
-            />
+            {!merging && heldInCurrent.length > 0 && (
+              <div className="vc-banner" role="status">
+                <p>
+                  Git lists this new folder as one item, so it stays out of the
+                  commit while it holds a file you unchecked. To commit the
+                  rest, keep that file out of Git:
+                </p>
+                <ul>
+                  {heldInCurrent.map((path) => (
+                    <li key={path}>
+                      <span title={path}>{path}</span>
+                      <Button
+                        variant="link"
+                        disabled={busy}
+                        onClick={() => void ignoreHeld(path)}
+                      >
+                        Add to .gitignore
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {current.nestedRepository ? (
+              <p className="vc-diff-message">
+                This folder holds its own Git repository, so it stays out of
+                commits here: a commit would save a link to it and none of its
+                files. Commit it in its own repository, or add it to .gitignore.
+              </p>
+            ) : (
+              <DiffView
+                workspaceId={workspaceId}
+                request={request}
+                stamp={stamp}
+              />
+            )}
           </>
         )}
       </section>

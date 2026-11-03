@@ -2,6 +2,7 @@
 // prompt produced) as readable markdown. Paper-shaped surveys have their own
 // dedicated renderer below; the generic renderer assumes nothing about keys.
 
+import { escapeTablePipes } from "./mathMarkdown";
 import { isPaperOrientation } from "./types";
 import type { OrientationMap, PaperMetadata, PipelineReport } from "./types";
 
@@ -20,7 +21,7 @@ function cell(value: unknown): string {
   else if (typeof value === "number" || typeof value === "boolean")
     text = String(value);
   else text = JSON.stringify(value);
-  return text.replace(/\|/g, "\\|").replace(/\s*\n\s*/g, " ");
+  return escapeTablePipes(text.replace(/\s*\n\s*/g, " "));
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -35,7 +36,7 @@ function renderObjectArray(rows: Record<string, unknown>[]): string {
       if (!columns.includes(key)) columns.push(key);
     }
   }
-  let md = `| ${columns.map(titleCase).join(" | ")} |\n`;
+  let md = `| ${columns.map((c) => cell(titleCase(c))).join(" | ")} |\n`;
   md += `|${columns.map(() => "---").join("|")}|\n`;
   for (const row of rows) {
     md += `| ${columns.map((c) => cell(row[c])).join(" | ")} |\n`;
@@ -149,7 +150,7 @@ function renderOrientationMap(orientation: OrientationMap): string {
           ? `${section.page_start}–${section.page_end}`
           : `${section.page_start}`
         : "";
-      md += `| ${section.number} | ${section.title} | ${pages} |\n`;
+      md += `| ${cell(section.number)} | ${cell(section.title)} | ${pages} |\n`;
     }
     md += `\n`;
   }
@@ -174,7 +175,7 @@ function renderOrientationMap(orientation: OrientationMap): string {
   if (orientation.notation?.length) {
     md += `## Notation\n\n| Symbol | Definition | Introduced |\n|--------|------------|------------|\n`;
     for (const notation of orientation.notation) {
-      md += `| ${notation.symbol} | ${notation.definition} | ${notation.page_introduced ? `p. ${notation.page_introduced}` : ""} |\n`;
+      md += `| ${cell(notation.symbol)} | ${cell(notation.definition)} | ${notation.page_introduced ? `p. ${notation.page_introduced}` : ""} |\n`;
     }
     md += `\n`;
   }

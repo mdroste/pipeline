@@ -8,6 +8,7 @@
 
 use super::math::{protect_source_math, restore_source_math};
 use super::model::{severity_label, ExportFinding, ReportExport, Verification};
+use super::raw_html::escape_html_text;
 use super::text::escape_xml as escape;
 
 const STYLE: &str = r#"
@@ -116,7 +117,7 @@ pub(super) fn sanitized_markdown(markdown: &str) -> String {
         other => other,
     });
     let mut rendered = String::new();
-    html::push_html(&mut rendered, events);
+    html::push_html(&mut rendered, escape_html_text(events).into_iter());
     let clean = ammonia::Builder::default()
         .url_schemes(["http", "https", "mailto"].into_iter().collect())
         .url_relative(ammonia::UrlRelative::Deny)

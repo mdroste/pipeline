@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { runInNewContext } from "node:vm";
+import yaml from "../../gui/node_modules/js-yaml/index.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const readText = (...segments) =>
@@ -102,6 +104,32 @@ test("release has one draft coordinator behind quality gates and no publication 
     "Build unsigned package", "Import Apple signing certificate"])
     assert.ok(contents.includes(required), required);
   assert.doesNotMatch(contents, /--clobber|--draft=false|gh release edit/);
+});
+
+test("macOS release selections always build both architectures, including by default", () => {
+  const workflow = yaml.load(readText(".github", "workflows", "release.yml"));
+  const platform = workflow.on.workflow_dispatch.inputs.platform;
+  assert.equal(platform.default, "macos");
+  const expected = {
+    macos: ["macos-arm64", "macos-x64"],
+    windows: ["windows"],
+    linux: ["linux"],
+    all: ["macos-arm64", "macos-x64", "windows", "linux"],
+  };
+  assert.deepEqual(platform.options, Object.keys(expected));
+  // This matrix uses the expression subset shared by GitHub Actions and JS.
+  const expression = workflow.jobs.package.strategy.matrix.include.trim().slice(3, -2);
+  for (const selection of platform.options) {
+    const matrix = runInNewContext(expression, {
+      inputs: { platform: selection }, fromJSON: JSON.parse,
+    });
+    assert.deepEqual(matrix.map(({ id }) => id), expected[selection], selection);
+    for (const entry of matrix.filter(({ id }) => id.startsWith("macos-"))) {
+      assert.equal(entry.rust_target, entry.id === "macos-arm64"
+        ? "aarch64-apple-darwin" : "x86_64-apple-darwin");
+      assert.equal(entry.bundle, "app,dmg");
+    }
+  }
 });
 
 test("new release tags reuse dependencies compiled on main under the same cache key", () => {

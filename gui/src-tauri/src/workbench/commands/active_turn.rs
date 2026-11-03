@@ -134,6 +134,8 @@ pub struct PendingRequest {
     #[serde(flatten)]
     event: NormalizedEvent,
     session_id: Option<String>,
+    /// What the request card shows. Nothing in it is an App Server shape.
+    details: Option<crate::workbench::codex::RequestDetails>,
 }
 
 fn request_session(state: &ActiveTurnState, event: &NormalizedEvent) -> Option<String> {
@@ -153,7 +155,17 @@ pub(super) fn with_session(event: NormalizedEvent) -> PendingRequest {
             .unwrap_or_else(|error| error.into_inner()),
         &event,
     );
-    PendingRequest { event, session_id }
+    let details = match &event {
+        NormalizedEvent::ServerRequest { method, params, .. } => {
+            crate::workbench::codex::request_details(method, params)
+        }
+        _ => None,
+    };
+    PendingRequest {
+        event,
+        session_id,
+        details,
+    }
 }
 
 #[cfg(test)]
@@ -441,7 +453,12 @@ mod tests {
         };
         let session = |event: NormalizedEvent| {
             let session_id = request_session(&state, &event);
-            serde_json::to_value(PendingRequest { event, session_id }).unwrap()
+            serde_json::to_value(PendingRequest {
+                event,
+                session_id,
+                details: None,
+            })
+            .unwrap()
         };
         let named = session(request("thread-a"));
         assert_eq!(named["sessionId"], "session-a");
@@ -449,5 +466,20 @@ mod tests {
         assert_eq!(named["requestId"], 5);
         assert_eq!(named["params"]["threadId"], "thread-a");
         assert_eq!(session(request("thread-b"))["sessionId"], Value::Null);
+    }
+
+    #[test]
+    fn a_pending_request_reaches_the_card_as_an_app_record() {
+        let event = NormalizedEvent::ServerRequest {
+            epoch: 3,
+            request_id: json!(5),
+            method: "item/fileChange/requestApproval".into(),
+            params: json!({"threadId": "t", "turnId": "u", "grantRoot": "/output"}),
+        };
+        let pending = serde_json::to_value(with_session(event)).unwrap();
+        assert_eq!(pending["kind"], "serverRequest");
+        assert_eq!(pending["details"]["type"], "fileChange");
+        assert_eq!(pending["details"]["grantRoot"], "/output");
+        assert_eq!(pending["details"]["declineDecision"], "decline");
     }
 }

@@ -28,7 +28,10 @@ import {
 import { workspaceFileAdapter } from "../../lib/fileWorkspaceClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { confirmDialog, notify, promptDialog } from "../DialogService";
-import { unsavedDraftPaths } from "../file-workspace/useFileBuffers";
+import {
+  unsavedDraftPaths,
+  unsavedManuscriptPaths,
+} from "../file-workspace/useFileBuffers";
 import ChangesPane from "./ChangesPane";
 import HistoryPane from "./HistoryPane";
 import { ConnectRemote, RepositorySetup } from "./RepositorySetup";
@@ -41,6 +44,7 @@ import {
   type NetworkKind,
 } from "./pageSession";
 import "./versionControl.css";
+import ReportIssueLink from "../ReportIssueLink";
 
 /** Picks up edits made elsewhere while the page is open. */
 const REFRESH_MS = 15_000;
@@ -48,12 +52,17 @@ const REFRESH_MS = 15_000;
 /** The unsaved drafts an action would pass over: Git reads and replaces the saved
  * files, so it never sees a draft, and a draft may no longer match afterwards. */
 function draftsIn(action: VersionControlAction, drafts: string[]) {
+  // A row can be a new folder, or `.` for the whole project folder.
+  const under = (row: string, draft: string) =>
+    row === "." || draft === row || draft.startsWith(`${row}/`);
   switch (action.kind) {
     case "commit":
     case "discard":
-      return drafts.filter((path) => action.paths.includes(path));
+      return drafts.filter((draft) =>
+        action.paths.some((row) => under(row, draft)),
+      );
     case "resolve":
-      return drafts.filter((path) => path === action.path);
+      return drafts.filter((draft) => under(action.path, draft));
     case "pull":
     case "switchBranch":
     case "abortOperation":
@@ -391,14 +400,16 @@ export default function VersionControl({
 
   const act = useCallback(
     async (action: VersionControlAction) => {
-      const drafts = draftsIn(
-        action,
-        unsavedDraftPaths(workspaceFileAdapter({ workspaceId }).id),
-      );
+      const drafts = draftsIn(action, [
+        ...new Set([
+          ...unsavedDraftPaths(workspaceFileAdapter({ workspaceId }).id),
+          ...unsavedManuscriptPaths(workspaceId),
+        ]),
+      ]);
       if (
         drafts.length &&
         !(await confirmDialog(
-          `Git uses the saved copy of a file, not your unsaved draft of ${drafts.join(", ")}. Your draft stays in Files, where you can compare it with the file afterwards.`,
+          `Git uses the saved copy of a file, not your unsaved draft of ${drafts.join(", ")}. Your draft stays where you wrote it, in Files or Write, and you can compare it with the file afterwards.`,
           { title: "Unsaved draft", confirmLabel: "Continue" },
         ))
       )
@@ -460,6 +471,7 @@ export default function VersionControl({
         {error ? (
           <p className="vc-error" role="alert">
             {error}
+            <ReportIssueLink />
           </p>
         ) : (
           <div className="vc-diff-message">
@@ -475,6 +487,7 @@ export default function VersionControl({
         {error && (
           <p className="vc-error" role="alert">
             {error}
+            <ReportIssueLink />
           </p>
         )}
         <RepositorySetup
@@ -536,6 +549,7 @@ export default function VersionControl({
       {error && (
         <p className="vc-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       {state.operation && (
@@ -588,6 +602,7 @@ export default function VersionControl({
         width={420}
       >
         <ConnectRemote
+          remote={remote}
           busy={busy}
           onAct={act}
           onDone={() => setConnecting(false)}

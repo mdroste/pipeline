@@ -6,6 +6,7 @@ import type { DepsReport, ModelCatalog, Settings } from "../../lib/types";
 
 import InfoButton from "../InfoButton";
 import CredentialField from "./CredentialField";
+import LocalServerUrl from "./LocalServerUrl";
 import ConnectionStatus from "./ConnectionStatus";
 import { ReviewSaveFeedback } from "./SaveState";
 
@@ -17,9 +18,9 @@ import {
   ProviderHeader,
   CatalogStatus,
   selectClass,
-  inputClass,
   Field,
 } from "./controls";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 export function LocalProviderSection({
   settings,
   setSettings,
@@ -51,9 +52,7 @@ export function LocalProviderSection({
     try {
       await openUrl("https://ollama.com");
     } catch (error) {
-      setExternalLinkError(
-        error instanceof Error ? error.message : String(error),
-      );
+      setExternalLinkError(workbenchErrorMessage(error));
     }
   };
 
@@ -86,20 +85,7 @@ export function LocalProviderSection({
           Could not open ollama.com: {externalLinkError}
         </p>
       )}
-      <Field label="Server URL">
-        <input
-          aria-label="Local Server URL"
-          type="text"
-          value={settings.local_base_url}
-          onChange={(e) =>
-            setSettings({ ...settings, local_base_url: e.target.value })
-          }
-          placeholder="http://localhost:11434/v1"
-          className={`${inputClass} font-mono`}
-          autoComplete="off"
-          spellCheck={false}
-        />
-      </Field>
+      <LocalServerUrl settings={settings} setSettings={setSettings} />
       <CredentialField
         label="Local API Key"
         value={settings.local_api_key}

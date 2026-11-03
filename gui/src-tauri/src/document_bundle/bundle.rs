@@ -129,6 +129,13 @@ pub fn build(extraction: &ExtractionResult, run_dir: &Path) -> Result<BundleBuil
         add_tex_nodes(&mut bundle, &extraction.text, &extraction.method);
     } else if kind == "docx" {
         let parsed = parse_docx(Path::new(&extraction.source_path))?;
+        bundle
+            .quality
+            .extend(parsed.notes.into_iter().map(|message| DocumentQualityNote {
+                severity: "warning".to_string(),
+                scope: "extraction".to_string(),
+                message,
+            }));
         for (index, grid) in parsed.tables.into_iter().enumerate() {
             let table = node(
                 &bundle,

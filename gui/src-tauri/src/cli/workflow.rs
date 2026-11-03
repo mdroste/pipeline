@@ -53,7 +53,7 @@ fn workflow_validation_summary(workflow: &commands::HeadlessWorkflow) -> serde_j
         .flat_map(|step| step.agents.iter())
         .cloned()
         .collect::<std::collections::BTreeSet<_>>();
-    serde_json::json!({
+    let mut summary = serde_json::json!({
         "valid": true,
         "schema_version": workflow.document.schema_version,
         "name": workflow.document.name,
@@ -61,7 +61,12 @@ fn workflow_validation_summary(workflow: &commands::HeadlessWorkflow) -> serde_j
         "step_count": workflow.document.config.steps.len(),
         "agents": agents,
         "source": workflow.source,
-    })
+    });
+    let warnings = pipeline_config::steps_without_inputs(&workflow.document.config);
+    if !warnings.is_empty() {
+        summary["warnings"] = warnings.into();
+    }
+    summary
 }
 
 pub(super) fn cmd_workflow(args: WorkflowArgs) -> i32 {
@@ -119,6 +124,9 @@ pub(super) fn cmd_workflow(args: WorkflowArgs) -> i32 {
                     workflow.document.config.steps.len(),
                     workflow.document.fingerprint
                 ));
+                for warning in pipeline_config::steps_without_inputs(&workflow.document.config) {
+                    eprintln!("Warning: {warning}");
+                }
             }
             0
         }

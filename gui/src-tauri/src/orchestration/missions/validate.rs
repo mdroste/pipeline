@@ -186,6 +186,16 @@ pub fn plan(m: &Mission, p: &Plan) -> Result<()> {
                 .iter()
                 .find(|c| Some(&c.id) == p.selected_id.as_ref())
                 .ok_or("Select an available investigation")?;
+            if let Some(c) = m
+                .capabilities
+                .iter()
+                .find(|c| c.unavailable && Some(&c.id) == chosen.capability_id.as_ref())
+            {
+                return Err(format!(
+                    "The plan chose '{}' while it was waiting for your approval. Approve it in the project's Results view if you haven't, then retry, or choose Reconsider the agenda.",
+                    c.name
+                ));
+            }
             if m.goals.iter().any(|g| {
                 g.spec.id == chosen.goal_id
                     && matches!(g.state.as_str(), "supported" | "refuted" | "infeasible")

@@ -175,7 +175,7 @@ fn holds_only_reviewed_files(c: &Checkpoint, task_root: &Path) -> WorkbenchResul
     } else {
         &c.proposed
     };
-    let reader = files::SafeRoot::open(task_root)?;
+    let reader = files::SafeRoot::for_records(task_root)?;
     let mut found = BTreeSet::new();
     let mut visited = 0;
     let mut pending = vec![(task_root.to_path_buf(), String::new())];
@@ -262,16 +262,27 @@ pub(super) fn git_fetch(root: &Path, options: &[&str], remote: &str) -> Workbenc
     guard.fetch(&mut command, options, remote)?;
     capture_git(command, root, GitLimits::default())
 }
-/// How long a captured Git process may run, and what can stop it early.
+/// Bytes of standard error, and by default of standard output, a captured Git
+/// process may print.
+const GIT_OUTPUT_LIMIT: u64 = 2 * 1024 * 1024;
+
+/// How long a captured Git process may run, what can stop it early, and how much
+/// it may print.
 pub(super) struct GitLimits<'a> {
     pub(super) timeout: Duration,
     pub(super) cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    pub(super) max_output: u64,
+    /// Past `max_output`, stop Git and return the bytes before the limit
+    /// instead of failing.
+    pub(super) keep_prefix: bool,
 }
 impl Default for GitLimits<'_> {
     fn default() -> Self {
         Self {
             timeout: Duration::from_secs(30),
             cancel: None,
+            max_output: GIT_OUTPUT_LIMIT,
+            keep_prefix: false,
         }
     }
 }
@@ -297,15 +308,19 @@ pub(super) fn capture_git(
     let started = Instant::now();
     let mut wait = Duration::from_millis(1);
     let result = loop {
-        if out.metadata().map_err(err)?.len() > 2 * 1024 * 1024
-            || error.metadata().map_err(err)?.len() > 2 * 1024 * 1024
+        let printed = out.metadata().map_err(err)?.len();
+        if error.metadata().map_err(err)?.len() > GIT_OUTPUT_LIMIT
+            || (printed > limits.max_output && !limits.keep_prefix)
         {
             break Err(WorkbenchError::invalid(
                 "Git output exceeded its bounded capture limit",
             ));
         }
+        if printed > limits.max_output {
+            break Ok(None);
+        }
         match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
+            Ok(Some(status)) => break Ok(Some(status)),
             Ok(None)
                 if limits
                     .cancel
@@ -335,10 +350,11 @@ pub(super) fn capture_git(
     out.seek(SeekFrom::Start(0)).map_err(err)?;
     error.seek(SeekFrom::Start(0)).map_err(err)?;
     let mut bytes = Vec::new();
-    out.take(2 * 1024 * 1024 + 1)
+    out.take(limits.max_output + 1)
         .read_to_end(&mut bytes)
         .map_err(err)?;
-    if !result?.success() {
+    // `None` is Git stopped at `max_output`, which the caller asked for.
+    if result?.is_some_and(|status| !status.success()) {
         // A hook may print any bytes, and the limit can split a character.
         let mut raw = Vec::new();
         error.take(8192).read_to_end(&mut raw).map_err(err)?;
@@ -351,8 +367,11 @@ pub(super) fn capture_git(
             "Git task setup failed: {message}"
         )));
     }
-    if bytes.len() > 2 * 1024 * 1024 {
-        return Err(WorkbenchError::invalid("Git metadata exceeds its limit"));
+    if bytes.len() as u64 > limits.max_output {
+        if !limits.keep_prefix {
+            return Err(WorkbenchError::invalid("Git metadata exceeds its limit"));
+        }
+        bytes.truncate(limits.max_output as usize);
     }
     Ok(bytes)
 }
@@ -490,8 +509,7 @@ pub(super) fn checkpoint(
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&parent, fs::Permissions::from_mode(0o700)).map_err(err)?;
+        crate::safety::restrict_permissions(&parent, 0o700).map_err(err)?;
     }
     // Keep app-owned copies out of the source repository's untracked-file list.
     // This ignore file belongs to the private task directory, not the user's root.
@@ -502,7 +520,7 @@ pub(super) fn checkpoint(
     {
         Ok(mut file) => {
             file.write_all(b"*\n").map_err(err)?;
-            file.sync_all().map_err(err)?;
+            crate::safety::sync_file(&file).map_err(err)?;
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
         Err(error) => return Err(err(error)),
@@ -630,6 +648,12 @@ pub(super) fn capture_changes(
         if proposed.contains_key(path) || !ignored(path, &[]) {
             continue;
         }
+        // A copy from an earlier build can list a file in a folder that is now
+        // reserved. Nothing here can read that file, so it stays as it was.
+        if path.split('/').any(files::reserved_component) {
+            proposed.insert(path.clone(), entry.clone());
+            continue;
+        }
         if let Ok(bytes) = reader.read(path) {
             let mut f = entry.clone();
             f.size = bytes.len() as u64;
@@ -646,6 +670,10 @@ pub(super) fn capture_changes(
         .collect();
     put(store, ws, checkpoint_id, "checkpoint", r.revision, &c)
 }
+/// The project root for paths from saved edits and their journals, which earlier
+/// builds could write in the generated folder. Those paths stay reachable so that
+/// old edits can still be accepted, undone, and recovered. Capture gives a new
+/// edit no path there, so this reaches nothing a model has written since.
 fn original(store: &Store, ws: &str, identity: &str) -> WorkbenchResult<files::SafeRoot> {
     let p = root(store, ws)?;
     if super::super::store::root_identity(&p)? != identity {
@@ -653,7 +681,7 @@ fn original(store: &Store, ws: &str, identity: &str) -> WorkbenchResult<files::S
             "Project root identity changed; application cannot be replayed",
         ));
     }
-    files::SafeRoot::open(&p)
+    files::SafeRoot::for_records(&p)
 }
 fn changed(c: &Checkpoint) -> BTreeSet<String> {
     c.base

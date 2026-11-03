@@ -264,7 +264,7 @@ pub fn export_exchange(
         std::io::copy(&mut File::open(path).map_err(err)?, &mut zip).map_err(err)?;
     }
     let file = zip.finish().map_err(err)?;
-    file.sync_all().map_err(err)?;
+    crate::safety::sync_file(&file).map_err(err)?;
     drop(file);
     temporary
         .persist(&target)

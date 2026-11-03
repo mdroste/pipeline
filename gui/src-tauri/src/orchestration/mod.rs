@@ -42,6 +42,8 @@ use tokio::sync::{watch, Notify};
 static INSTANCE: OnceLock<Arc<Coordinator>> = OnceLock::new();
 static INITIALIZE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static DB_WORKERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+/// Set once a window listens for notices; a coordinator started later takes it up.
+static WINDOW_LISTENING: AtomicBool = AtomicBool::new(false);
 pub struct Coordinator {
     pub(crate) store: Store,
     pub(crate) gate: tokio::sync::Mutex<()>,
@@ -49,6 +51,7 @@ pub struct Coordinator {
     active: Mutex<HashMap<String, (String, watch::Sender<bool>)>>,
     stopping: AtomicBool,
     pub(crate) background: AtomicBool,
+    listening: AtomicBool,
     _owner: std::fs::File,
     app: Option<tauri::AppHandle>,
 }
@@ -104,6 +107,7 @@ pub(crate) async fn manager(app: tauri::AppHandle) -> Result<Arc<Coordinator>> {
         active: Mutex::new(HashMap::new()),
         stopping: AtomicBool::new(false),
         background: AtomicBool::new(background),
+        listening: AtomicBool::new(WINDOW_LISTENING.load(Ordering::Acquire)),
         _owner: lock,
         app: Some(app),
     });
@@ -122,6 +126,24 @@ pub fn start_if_present(app: tauri::AppHandle) {
             }
         });
     }
+}
+/// The window is listening, so what it missed can go out. With no store yet there
+/// is nothing owed, and asking must not create one.
+pub(crate) async fn window_listening(app: tauri::AppHandle) -> Result<()> {
+    WINDOW_LISTENING.store(true, Ordering::Release);
+    if INSTANCE.get().is_none()
+        && !Store::default_root().is_ok_and(|r| r.join("tasks.sqlite3").exists())
+    {
+        return Ok(());
+    }
+    let m = manager(app).await?;
+    let owed = m.release_notices().await?;
+    if let Some(app) = &m.app {
+        for notice in owed {
+            let _ = app.emit(&notice.event, notice.payload);
+        }
+    }
+    Ok(())
 }
 pub fn background_enabled() -> bool {
     INSTANCE
@@ -159,6 +181,22 @@ impl Coordinator {
         if let Some(app) = &self.app {
             let _ = app.emit("tasks:changed", ());
         }
+    }
+    /// Raises a notice now, or saves it for the next window that can hear it. It
+    /// is saved directly, without a store worker, because a notice can be raised
+    /// outside any task: this is one short write, and only as the app starts or quits.
+    pub(crate) fn announce(&self, event: &str, payload: serde_json::Value) {
+        if self.listening.load(Ordering::Acquire) && !self.stopping.load(Ordering::Acquire) {
+            if let Some(app) = &self.app {
+                let _ = app.emit(event, payload);
+            }
+        } else if let Err(error) = self.store.owe_notice(event, &payload) {
+            eprintln!("An automation notice was not saved: {error}");
+        }
+    }
+    async fn release_notices(&self) -> Result<Vec<store::OwedNotice>> {
+        self.listening.store(true, Ordering::Release);
+        self.db(|s| s.take_notices()).await
     }
     pub(crate) async fn db<T: Send + 'static>(
         &self,

@@ -15,7 +15,7 @@ const run = (id: string, path: string) => ({
   profile_id: "auto",
   profile_name: "Auto Paper Review",
   provider: "claude",
-  status: "complete",
+  status: "done",
   duration_secs: 100,
   input_tokens: 1,
   output_tokens: 1,
@@ -101,12 +101,17 @@ const collection = (id: string, name: string, run_ids: string[]) => ({
   run_ids,
 });
 
-function reviewsWith(collections: ReturnType<typeof collection>[]) {
+function reviewsWith(
+  collections: ReturnType<typeof collection>[],
+  status = "done",
+) {
   const stored = new Map(collections.map((item) => [item.id, item]));
   mocks.invoke.mockImplementation(
     async (command: string, args?: Record<string, string>) => {
       if (command === "list_runs")
-        return [run("in-project", "/papers/minwage/draft_v7.pdf")];
+        return [
+          { ...run("in-project", "/papers/minwage/draft_v7.pdf"), status },
+        ];
       if (command === "list_projects")
         return { projects: [...stored.values()], warnings: [] };
       if (command === "create_project") {
@@ -163,6 +168,20 @@ it("offers to track findings when no collection holds the project's reviews", as
   });
   expect(screen.queryByRole("button", { name: "Track findings" })).toBeNull();
   expect(onChanged).toHaveBeenCalledOnce();
+});
+
+it.each([
+  ["degraded", true],
+  ["partial", false],
+  ["failed", false],
+  ["running", false],
+])("treats a %s review as finished: %s", async (status, offered) => {
+  reviewsWith([], status);
+  render(<ProjectReviews workspaceRoot="/papers/minwage" workspaceName="M" />);
+  expect(await screen.findByText(/draft_v7/)).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Track findings" }) !== null,
+  ).toBe(offered);
 });
 
 it("adds a later review to the collection already tracking the project", async () => {

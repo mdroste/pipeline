@@ -47,14 +47,16 @@ pub(crate) fn captured_document_rel_path(
     Err("Legacy run has no exact captured extraction to resume from".to_string())
 }
 
+/// Listing and retention ask this of every run, so it looks at the report file
+/// rather than parsing it. Resume reports a report it cannot read.
 pub(super) fn run_has_resume_files(dir: &Path, manifest: &RunManifest) -> bool {
     if !resumable_status(&manifest.status) || captured_document_rel_path(dir, manifest).is_err() {
         return false;
     }
-    read_utf8_at_most(&dir.join("report.json"), MAX_REPORT_BYTES, "Run report")
+    crate::safety::open_regular_file(&dir.join("report.json"))
         .ok()
-        .and_then(|json| serde_json::from_str::<crate::models::PipelineReport>(&json).ok())
-        .is_some()
+        .and_then(|file| file.metadata().ok())
+        .is_some_and(|metadata| metadata.len() > 0 && metadata.len() <= MAX_REPORT_BYTES as u64)
 }
 
 /// Turn the durable pieces of an unfinished run into the same structured
@@ -110,7 +112,8 @@ pub(super) fn recover_resumable_run_dir(
     let checkpoint_dir = dir.join("artifacts").join("checkpoints");
     let mut checkpoints = Vec::new();
     if let Ok(entries) = fs::read_dir(&checkpoint_dir) {
-        let mut walk = crate::safety::WalkBudget::new("Incomplete-run checkpoint recovery");
+        let mut walk = crate::safety::WalkBudget::new("Incomplete-run checkpoint recovery")
+            .without_time_limit();
         for entry in entries.flatten() {
             walk.entry()?;
             let path = entry.path();

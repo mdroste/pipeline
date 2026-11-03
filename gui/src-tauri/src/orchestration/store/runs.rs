@@ -192,6 +192,11 @@ impl Store {
 
     fn recover_run(&self, id: &str, stopped: Option<i64>) -> Result<()> {
         let mut run = self.get(id)?;
+        // A run already in attention was announced, and one owned by an automation
+        // is announced by that automation when it reads the interruption.
+        let announce = run.state != "attention"
+            && crate::orchestration::missions::storage::owner(self, id)?.is_none()
+            && crate::orchestration::discovery::storage::owner(self, id)?.is_none();
         for receipt in run.progress.receipts.values_mut() {
             if receipt.state == "running" {
                 receipt.state = "unknown".into();
@@ -201,7 +206,11 @@ impl Store {
         }
         run.state = "attention".into();
         run.reason = Some("Interrupted task; inspect the recorded work before continuing".into());
-        self.write(&mut run, "recovery", "Task interrupted")
+        self.write(&mut run, "recovery", "Task interrupted")?;
+        if announce {
+            self.owe_notice("tasks:notice", &run.notice())?;
+        }
+        Ok(())
     }
 }
 

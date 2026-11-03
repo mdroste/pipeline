@@ -173,8 +173,7 @@ pub(super) fn copy_immutable_within(
             .write_all(&buffer[..count])
             .map_err(|error| WorkbenchError::storage("Failed to write snapshot", error))?;
     }
-    output
-        .sync_all()
+    crate::safety::sync_file(&output)
         .map_err(|error| WorkbenchError::storage("Failed to sync snapshot", error))?;
     let actual: String = hasher
         .finalize()
@@ -209,19 +208,41 @@ pub(super) fn extension_kind(path: &Path) -> WorkbenchResult<&'static str> {
     }
 }
 
+/// A text file's characters, and whether it had to be read as Latin-1. Older TeX
+/// sources often are, and each byte is then one character. A NUL byte means this
+/// is not such a text file at all.
+fn decode_text(bytes: Vec<u8>) -> Option<(String, bool)> {
+    match String::from_utf8(bytes) {
+        Ok(text) => Some((text, false)),
+        Err(error) if !error.as_bytes().contains(&0) => Some((
+            error.as_bytes().iter().map(|&b| char::from(b)).collect(),
+            true,
+        )),
+        Err(_) => None,
+    }
+}
+
 pub(super) fn extract_import_text(
     path: &Path,
     kind: &str,
 ) -> WorkbenchResult<(Option<String>, Value)> {
+    let mut latin1 = false;
     let result = match kind {
         "pdf" => crate::pipeline::extract::extract_pdftotext(path),
         "docx" => crate::document_bundle::extract_docx_text(path),
-        _ => fs::read_to_string(path).map_err(|error| error.to_string()),
+        _ => fs::read(path)
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| {
+                let (text, was_latin1) = decode_text(bytes)
+                    .ok_or_else(|| "This file is not text in a known encoding.".to_string())?;
+                latin1 = was_latin1;
+                Ok(text)
+            }),
     };
     match result {
         Ok(text) if text.len() <= MAX_TEXT_BYTES => Ok((
             Some(text),
-            json!({"status":"complete","method":if kind == "pdf" {"pdftotext"} else if kind == "docx" {"docx-local"} else {"utf8"},"qualityNotes":if kind == "pdf" {json!(["Text extracted deterministically with pdftotext; equation layout may be lossy."])} else {json!([])}}),
+            json!({"status":"complete","method":if kind == "pdf" {"pdftotext"} else if kind == "docx" {"docx-local"} else if latin1 {"latin1"} else {"utf8"},"qualityNotes":if kind == "pdf" {json!(["Text extracted deterministically with pdftotext; equation layout may be lossy."])} else if latin1 {json!(["Read as Latin-1 because the file is not UTF-8."])} else {json!([])}}),
         )),
         Ok(_) => Ok((
             None,
@@ -291,8 +312,10 @@ fn capture_paper_input(store: &Store, requested: &str) -> WorkbenchResult<Captur
             let path = item.path();
             let name = item.file_name();
             let name = name.to_string_lossy();
-            if matches!(name.as_ref(), ".git" | ".pipeline-tasks")
-                || name.starts_with(".pipeline-apply-")
+            if matches!(
+                name.as_ref(),
+                ".git" | ".pipeline-tasks" | ".pipeline-workbench"
+            ) || name.starts_with(".pipeline-apply-")
             {
                 continue;
             }
@@ -383,19 +406,13 @@ fn capture_paper_input(store: &Store, requested: &str) -> WorkbenchResult<Captur
             skipped.push(format!("{name} (unreadable)"));
             continue;
         };
-        let body = match String::from_utf8(bytes) {
-            Ok(body) => body,
-            // Older TeX sources are often Latin-1, where each byte is one
-            // character. A NUL byte means this is not such a text file at all.
-            Err(error) if !error.as_bytes().contains(&0) => {
-                latin1.push(name.to_string());
-                error.as_bytes().iter().map(|&b| char::from(b)).collect()
-            }
-            Err(_) => {
-                skipped.push(format!("{name} (not text)"));
-                continue;
-            }
+        let Some((body, was_latin1)) = decode_text(bytes) else {
+            skipped.push(format!("{name} (not text)"));
+            continue;
         };
+        if was_latin1 {
+            latin1.push(name.to_string());
+        }
         let addition = format!("\n\n===== {name} =====\n{body}");
         if text.len() + addition.len() > MAX_TEXT_BYTES {
             skipped.push(format!("{name} (over the 16 MiB text limit)"));

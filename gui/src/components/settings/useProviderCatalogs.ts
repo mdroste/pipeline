@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from "react";
 
 import type { ModelCatalog, Settings } from "../../lib/types";
 import { providerTransport, PROVIDERS } from "../../lib/providers";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 
 function catalogDiscoveryInputs(settings: Settings): Record<string, string> {
   return {
@@ -68,7 +69,7 @@ export function useProviderCatalogs(settings: Settings | null) {
             source_version: "",
             fetched_at: "",
             stale: true,
-            warning: String(error),
+            warning: workbenchErrorMessage(error),
             models: [],
             roles: [],
           },

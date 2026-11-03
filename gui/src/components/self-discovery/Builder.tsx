@@ -11,6 +11,7 @@ import {
   type DiscoveryDefinition,
   type DiscoveryRun,
 } from "../../lib/discoveryClient";
+import ReportIssueLink from "../ReportIssueLink";
 
 export default function Builder({
   initialMode,
@@ -334,6 +335,7 @@ export default function Builder({
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       <button

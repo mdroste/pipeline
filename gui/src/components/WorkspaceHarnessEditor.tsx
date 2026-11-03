@@ -34,6 +34,7 @@ import {
   compactModuleSummary,
   describePreset,
 } from "./harness-editor/harnessHelpers";
+import ReportIssueLink from "./ReportIssueLink";
 
 type Selection =
   { kind: "preset"; id: string } | { kind: "access" } | { kind: "preview" };
@@ -381,7 +382,7 @@ export default function WorkspaceHarnessEditor({
             </span>
           </span>
           {inUse && (
-            <span className="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+            <span className="shrink-0 rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-800 dark:bg-neutral-700 dark:text-neutral-100">
               In use
             </span>
           )}
@@ -553,6 +554,7 @@ export default function WorkspaceHarnessEditor({
             className="m-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
           >
             {error}
+            <ReportIssueLink />
           </div>
         )}
         {!catalog || !effective ? (

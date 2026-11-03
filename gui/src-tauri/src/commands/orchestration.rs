@@ -184,6 +184,7 @@ pub async fn execute(
         workflow_fingerprint: document.fingerprint,
         workflow_json: document.canonical_json,
         specialist_catalog_revision: pinned.catalog_revision,
+        agent_overrides: None,
     };
     let vars = variables.into_iter().collect();
     let extra = std::collections::HashMap::new();

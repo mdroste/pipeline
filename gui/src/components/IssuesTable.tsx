@@ -5,7 +5,10 @@ import { doiUrl, severityRank } from "../lib/issues";
 import { Icon } from "../ui/icons";
 import SafeMarkdownLink from "./SafeMarkdownLink";
 import { EvidenceVerificationBadge } from "./report-workspace/EvidenceVerificationBadge";
-import CompactMarkdown from "./report-viewer/CompactMarkdown";
+import CompactMarkdown, {
+  InlineMathText,
+} from "./report-viewer/CompactMarkdown";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   issues: Issue[];
@@ -500,6 +503,7 @@ export default function IssuesTable({
                 Retry
               </button>
             )}
+            <ReportIssueLink />
           </div>
         )}
       </div>
@@ -549,11 +553,11 @@ export default function IssuesTable({
                 >
                   <span className="min-w-0 flex-1">
                     <span className="block text-sm font-medium text-gray-900 group-hover:text-gray-950 dark:text-gray-100 dark:group-hover:text-white">
-                      {issue.title}
+                      <InlineMathText text={issue.title} />
                     </span>
                     {issue.section && (
                       <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
-                        {issue.section}
+                        <InlineMathText text={issue.section} />
                       </span>
                     )}
                   </span>
@@ -654,7 +658,11 @@ export default function IssuesTable({
                                 />
                                 {evidence.description &&
                                   evidence.description !== label && (
-                                    <span>{evidence.description}</span>
+                                    <span>
+                                      <InlineMathText
+                                        text={evidence.description}
+                                      />
+                                    </span>
                                   )}
                                 {evidence.nodeId && (
                                   <span className="font-mono text-[10px] text-gray-400">
@@ -693,7 +701,10 @@ export default function IssuesTable({
                               )}
                               {evidence.quote && (
                                 <blockquote className="mt-1.5 border-l-2 border-gray-300 pl-2 text-[11px] italic text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                                  {evidence.quote}
+                                  <InlineMathText
+                                    text={evidence.quote}
+                                    verbatim
+                                  />
                                 </blockquote>
                               )}
                             </div>

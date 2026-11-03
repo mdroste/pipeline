@@ -8,6 +8,7 @@ import {
   type TaskRun,
 } from "../../lib/taskTypes";
 import { Outline, Status } from "./shared";
+import ReportIssueLink from "../ReportIssueLink";
 
 function Output({
   receipt,
@@ -311,6 +312,7 @@ export default function Detail({
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       {run.progress.limitReached && (
@@ -332,7 +334,12 @@ export default function Detail({
                 </div>
                 <Status state={r.state === "timer" ? "waiting" : r.state} />
               </div>
-              {r.error && <p className="task-error">{r.error}</p>}
+              {r.error && (
+                <p className="task-error">
+                  {r.error}
+                  <ReportIssueLink />
+                </p>
+              )}
               {r.state === "input" ? (
                 acceptsInput(run) ? (
                   <InputForm

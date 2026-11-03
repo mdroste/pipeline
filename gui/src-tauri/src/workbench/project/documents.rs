@@ -42,6 +42,24 @@ pub(super) fn revision(
     valid_id(revision_id)?;
     store.connection()?.query_row("SELECT pr.id,pr.paper_id,pr.input_kind,pr.entrypoint,pr.dependency_manifest_json,pr.content_hash,pr.text_reference,pr.compiled_artifact_id,pr.extraction_json,pr.capture_complete,pr.captured_at FROM paper_revisions pr JOIN papers p ON p.id=pr.paper_id WHERE pr.id=?1 AND p.workspace_id=?2",params![revision_id,workspace_id],research::revision_from_row).optional().map_err(err)?.ok_or_else(||WorkbenchError::invalid("Document revision is not in this Workspace"))
 }
+/// Refuses a revision with no extracted text, with the reason extraction recorded.
+/// Reading one yields nothing, which is right for a viewer and wrong for an import.
+pub(super) fn require_text(
+    store: &Store,
+    workspace_id: &str,
+    revision_id: &str,
+) -> WorkbenchResult<()> {
+    let revision = revision(store, workspace_id, revision_id)?;
+    if revision.text_reference.is_some() {
+        return Ok(());
+    }
+    Err(WorkbenchError::invalid(
+        match revision.extraction["error"].as_str() {
+            Some(reason) => format!("Pipeline couldn't read this document's text: {reason}"),
+            None => "This document has no readable text.".into(),
+        },
+    ))
+}
 fn full_text(store: &Store, revision: &research::PaperRevision) -> WorkbenchResult<String> {
     let Some(reference) = &revision.text_reference else {
         return Ok(String::new());

@@ -31,6 +31,8 @@ import { confirmUpdateRestart } from "./lib/updateRestart";
 import { confirmDialog, notify } from "./components/DialogService";
 import { appEvents } from "./lib/appEvents";
 import type { QueuedRun } from "./lib/types";
+import ReportIssueLink from "./components/ReportIssueLink";
+import { workbenchErrorMessage } from "./lib/workbenchError";
 
 const ReviewRunView = lazy(() => import("./components/ReviewRunView"));
 const RunPlanPreview = lazy(() => import("./components/RunPlanPreview"));
@@ -264,22 +266,20 @@ function AppShell() {
       return;
     await cancelRun(run.key).catch((error: unknown) =>
       notify(
-        `The review could not be cancelled: ${error instanceof Error ? error.message : String(error)}`,
+        `The review could not be cancelled: ${workbenchErrorMessage(error)}`,
       ),
     );
   };
   const dismissReviews = (key?: string) => {
     void dismissRuns(key).catch((error: unknown) =>
-      notify(
-        `The list could not be updated: ${error instanceof Error ? error.message : String(error)}`,
-      ),
+      notify(`The list could not be updated: ${workbenchErrorMessage(error)}`),
     );
   };
   // A listed conversation can be gone by the time it is clicked.
   const openConversation = (id: string) => {
     void openWorkspaceSession(id).catch((error: unknown) => {
       notify(
-        `The conversation could not be opened: ${error instanceof Error ? error.message : String(error)}`,
+        `The conversation could not be opened: ${workbenchErrorMessage(error)}`,
       );
       appEvents.emit("conversations-changed", {});
     });
@@ -287,7 +287,7 @@ function AppShell() {
   const newConversation = () => {
     void startConversation().catch((error: unknown) =>
       notify(
-        `The conversation could not be started: ${error instanceof Error ? error.message : String(error)}`,
+        `The conversation could not be started: ${workbenchErrorMessage(error)}`,
       ),
     );
   };
@@ -309,9 +309,12 @@ function AppShell() {
           />
         </Suspense>
       )}
-      {showDeps && depsReport && (
+      {showDeps && (
         <DepsCheck
           report={depsReport}
+          checking={depsLoading}
+          error={depsError}
+          onRetry={() => void checkDependencies()}
           onDismiss={() => setShowDeps(false)}
           onOpenPdfSettings={() =>
             void router
@@ -385,6 +388,7 @@ function AppShell() {
           <span className="flex-1">
             Pipeline cannot warn you about unsaved changes when you quit. Save
             your review designs and settings first.
+            <ReportIssueLink />
           </span>
           <button
             type="button"
@@ -454,9 +458,8 @@ function AppShell() {
           recentProjectsLoading={projectsLoading}
           onOpenProject={openWorkspaceProject}
           onDependencies={() => {
-            void checkDependencies().then((report) => {
-              if (report) setShowDeps(true);
-            });
+            setShowDeps(true);
+            void checkDependencies();
           }}
         />
 

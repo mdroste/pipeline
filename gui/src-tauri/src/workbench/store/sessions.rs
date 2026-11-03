@@ -251,6 +251,30 @@ impl Store {
                 ));
             }
         }
+        let target = request.workspace_id.as_deref();
+        if let Some(name) = current
+            .preset_id
+            .as_deref()
+            .map(|id| scoped_elsewhere(&transaction, "presets", id, target))
+            .transpose()?
+            .flatten()
+        {
+            return Err(WorkbenchError::invalid(format!(
+                "This conversation uses the agent profile \"{name}\", which belongs to its current project. Choose a built-in or shared agent profile for it, then move it."
+            )));
+        }
+        if let Some(name) = current
+            .overrides
+            .get("recipeId")
+            .and_then(Value::as_str)
+            .map(|id| scoped_elsewhere(&transaction, "recipe_definitions", id, target))
+            .transpose()?
+            .flatten()
+        {
+            return Err(WorkbenchError::invalid(format!(
+                "This conversation uses the recipe \"{name}\", which belongs to its current project. Disable the recipe, then move it."
+            )));
+        }
         let bound_records: i64 = transaction
             .query_row(
                 "SELECT (SELECT COUNT(*) FROM recipe_runs WHERE session_id = ?1) + (SELECT COUNT(*) FROM tool_receipts WHERE session_id = ?1) + (SELECT COUNT(*) FROM research_executions WHERE session_id = ?1) + (SELECT COUNT(*) FROM session_context_items WHERE session_id = ?1)",
@@ -371,7 +395,7 @@ impl Store {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT t.provider_turn_id, t.terminal_at IS NOT NULL FROM session_bindings current JOIN session_bindings b ON b.session_id = current.session_id AND b.provider_thread_id = current.provider_thread_id JOIN turns t ON t.binding_id = b.id WHERE current.id = ?1 AND t.provider_turn_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turns newer JOIN session_bindings nb ON nb.id = newer.binding_id WHERE nb.session_id = b.session_id AND newer.provider_turn_id = t.provider_turn_id AND nb.incarnation > b.incarnation)",
+                "SELECT t.provider_turn_id, t.terminal_at IS NOT NULL FROM session_bindings current JOIN session_bindings b ON b.session_id = current.session_id AND b.provider_thread_id = current.provider_thread_id JOIN turns t ON t.binding_id = b.id WHERE current.id = ?1 AND t.provider_turn_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM turns newer JOIN session_bindings nb ON nb.id = newer.binding_id WHERE nb.session_id = b.session_id AND nb.provider_thread_id = b.provider_thread_id AND newer.provider_turn_id = t.provider_turn_id AND nb.incarnation > b.incarnation)",
             )
             .map_err(|error| WorkbenchError::storage("Failed to prepare projected turns", error))?;
         let states = statement
@@ -399,6 +423,30 @@ impl Store {
             .optional()
             .map_err(|error| WorkbenchError::storage("Failed to resolve thread binding", error))
     }
+}
+
+/// The name of a preset or recipe owned by a project other than `target`. Only its
+/// own project can resolve one, so a conversation moved away from it would stop
+/// working. Built-in and shared ones resolve anywhere.
+fn scoped_elsewhere(
+    transaction: &rusqlite::Transaction<'_>,
+    table: &str,
+    id: &str,
+    target: Option<&str>,
+) -> WorkbenchResult<Option<String>> {
+    let owner: Option<(Option<String>, String)> = transaction
+        .query_row(
+            &format!("SELECT workspace_id, name FROM {table} WHERE id = ?1"),
+            [id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .map_err(|error| {
+            WorkbenchError::storage("Failed to inspect conversation settings", error)
+        })?;
+    Ok(owner.and_then(|(workspace, name)| {
+        (workspace.is_some() && workspace.as_deref() != target).then_some(name)
+    }))
 }
 
 #[cfg(test)]
@@ -503,8 +551,8 @@ mod tests {
             })
             .unwrap()
             .record;
-        let project = |binding: &str, epoch: u64, turn: &str, status: &str| {
-            let thread_id = "thread-1".to_string();
+        let project_on = |binding: &str, thread: &str, epoch: u64, turn: &str, status: &str| {
+            let thread_id = thread.to_string();
             let turn_id = turn.to_string();
             let payload = json!({ "id": turn, "status": status, "items": [] });
             let event = if status == "inProgress" {
@@ -524,6 +572,9 @@ mod tests {
                 }
             };
             store.project_codex_event(binding, &event).unwrap();
+        };
+        let project = |binding: &str, epoch: u64, turn: &str, status: &str| {
+            project_on(binding, "thread-1", epoch, turn, status)
         };
         let first = store
             .bind_session(&session.id, "codex-0-147-0-epoch-1", "thread-1")
@@ -549,5 +600,14 @@ mod tests {
             .projected_turn_states(&successor.id)
             .unwrap()
             .is_empty());
+
+        // Another thread repeating a turn id doesn't hide this thread's turn.
+        project_on(&successor.id, "thread-2", 3, "turn-c", "completed");
+        let returned = store
+            .bind_session(&session.id, "codex-0-147-0-epoch-4", "thread-1")
+            .unwrap();
+        let states = store.projected_turn_states(&returned.id).unwrap();
+        assert!(states.contains_key("turn-c"), "{states:?}");
+        assert!(states.contains_key("turn-a"), "{states:?}");
     }
 }

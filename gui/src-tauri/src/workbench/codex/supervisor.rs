@@ -702,6 +702,18 @@ impl AppServerSupervisor {
             .await
     }
 
+    /// See [`crate::agent_runtime::codex::AppServerClient::respond_to_tool_call`].
+    pub async fn respond_to_tool_call(
+        &self,
+        request_id: Value,
+        response: Value,
+    ) -> Result<bool, RequestError> {
+        self.native
+            .client
+            .respond_to_tool_call(request_id, response)
+            .await
+    }
+
     pub async fn shutdown(&self) {
         for (_, task) in self.projection_tasks.lock().await.drain() {
             task.abort();

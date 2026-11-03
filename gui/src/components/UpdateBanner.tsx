@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
+import ReportIssueLink from "./ReportIssueLink";
 import type {
   UpdateInfo,
   UpdateInstallState,
@@ -220,6 +221,7 @@ export default function UpdateBanner({
     summary = (
       <span role="alert">
         <span className="font-medium">Update failed.</span> {install.error}
+        <ReportIssueLink />
       </span>
     );
     actions = (

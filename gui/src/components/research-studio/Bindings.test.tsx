@@ -151,9 +151,35 @@ it("opens the saved passage itself from a result link", async () => {
   expect(onDocument).not.toHaveBeenCalled();
 });
 
+it("keeps a link whose passage is gone listed, with nothing to open", async () => {
+  mocks.coverage.mockResolvedValue([
+    {
+      ...covered,
+      anchor: null,
+      state: "unavailable",
+      reasons: ["The linked passage is no longer in this project"],
+    },
+  ]);
+  const onAnchors = vi.fn();
+  render(
+    <Bindings
+      workspaceId="ws"
+      data={data}
+      onRefresh={async () => {}}
+      onDocument={vi.fn()}
+      onAnchors={onAnchors}
+    />,
+  );
+  expect(
+    await screen.findByText("Passage no longer available"),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Open exact passage")).toBeDisabled();
+  expect(screen.getByText("Inspect / edit link")).toBeEnabled();
+});
+
 it("shows the message of a structured load failure", async () => {
   mocks.coverage.mockResolvedValue([]);
   mocks.listStructuredResults.mockRejectedValue({ message: "Busy" });
   render(view());
-  expect(await screen.findByRole("alert")).toHaveTextContent(/^Busy$/);
+  expect(await screen.findByRole("alert")).toHaveTextContent(/^Busy/);
 });

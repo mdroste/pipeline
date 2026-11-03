@@ -131,3 +131,27 @@ describe("renderSurvey", () => {
     );
   });
 });
+
+describe("table cells", () => {
+  it("keep a conditional bar inside math as a bar, not a column", () => {
+    const md = renderSurvey({
+      metadata: { title: "Paper", paper_type: "empirical" },
+      sections: [{ number: "1", title: "Mean of $Y|X$", page_start: 3 }],
+      notation: [
+        {
+          symbol: "$E[Y|X]$",
+          definition: "A | B, norm $\\|x\\|$",
+          page_introduced: 4,
+        },
+      ],
+    } as never);
+    expect(md).toContain("| 1 | Mean of $Y\\vert X$ | 3 |");
+    expect(md).toContain("| $E[Y\\vert X]$ | A \\| B, norm $\\|x\\|$ | p. 4 |");
+  });
+
+  it("keep a generic table's rows whole", () => {
+    expect(renderGenericSurvey({ rows: [{ a: "x|y\nz" }] })).toContain(
+      "| x\\|y z |",
+    );
+  });
+});

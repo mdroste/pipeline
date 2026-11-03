@@ -544,15 +544,19 @@ mod gpu_recognition;
 mod installer_io;
 mod integrity;
 mod layout_model;
+mod native_paths;
 mod native_recognition;
 mod operations;
 mod paddle_install;
 mod process;
+mod rename;
 mod runtime;
 mod storage;
 
 pub use installer_io::*;
+pub(crate) use native_paths::native_path;
 pub use operations::*;
+pub(crate) use rename::rename_when_free;
 pub use runtime::*;
 pub use storage::*;
 
@@ -560,6 +564,7 @@ use download::*;
 use gpu_recognition::*;
 use integrity::*;
 use layout_model::*;
+use native_paths::ensure_native_path;
 use native_recognition::*;
 use paddle_install::*;
 use process::*;

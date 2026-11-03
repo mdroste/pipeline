@@ -2,6 +2,10 @@ const SENDER_STATUS: Record<string, string> = {
   accepted: "accepted this",
   human_confirmed: "confirmed this",
   check_passed: "recorded a passed check",
+  confirmed: "confirmed this",
+  passed: "recorded a passed check",
+  researcher_checked: "checked the source identity",
+  supported: "marked this supported",
 };
 
 /** A sender's status from a package, which is never the reader's own decision. */

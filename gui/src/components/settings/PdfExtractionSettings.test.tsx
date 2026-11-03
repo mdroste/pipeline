@@ -80,3 +80,15 @@ describe("graphics card setting", () => {
     });
   });
 });
+
+describe("dark mode colors", () => {
+  it("draws the quality scale without green", () => {
+    engines = [];
+    const { container } = render(
+      <ExtractionSection settings={makeSettings()} setSettings={vi.fn()} />,
+    );
+    const best = screen.getByText("Best quality");
+    expect(best.className).toContain("dark:bg-neutral-300");
+    expect(container.innerHTML).not.toMatch(/emerald|green-|teal|lime-/);
+  });
+});

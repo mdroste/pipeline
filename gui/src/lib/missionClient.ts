@@ -148,6 +148,8 @@ export interface MissionCapability {
   parameters: Json;
   execution: Json;
   timeoutSeconds: number;
+  /** It changed or lost its approval, so the planner leaves it out. */
+  unavailable?: boolean;
 }
 export interface Mission {
   id: string;

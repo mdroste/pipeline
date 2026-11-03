@@ -189,7 +189,7 @@ pub(super) fn verify_retired(connection: &Connection) -> WorkbenchResult<()> {
         "SELECT COUNT(*) FROM storage_trash",
         "SELECT COUNT(*) FROM discovery_roles WHERE enabled<>0",
         "SELECT COUNT(*) FROM scheduled_checks WHERE enabled<>0",
-        "SELECT COUNT(*) FROM experiment_runs WHERE state<>'attention' OR authorized_hash IS NOT NULL",
+        "SELECT COUNT(*) FROM experiment_runs WHERE state IN ('ready','running','paused') OR authorized_hash IS NOT NULL",
         "SELECT COUNT(*) FROM execution_profiles WHERE tested_at IS NOT NULL OR test_status IS NOT NULL",
         "SELECT COUNT(*) FROM research_followups WHERE state IN ('queued','dispatching','running')",
         "SELECT COUNT(*) FROM session_bindings WHERE retired_at IS NULL",

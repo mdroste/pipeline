@@ -7,6 +7,7 @@ import type {
 } from "../../../lib/fileWorkspaceClient";
 import { formatFileSize } from "../../../lib/fileKinds";
 import { workbenchErrorMessage } from "../../../lib/workbenchError";
+import ReportIssueLink from "../../ReportIssueLink";
 
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 16;
@@ -59,6 +60,7 @@ function ImageFrame({ src, alt, bytes, note, onFailed }: ImageProps) {
     return (
       <p role="alert" className="file-error">
         This image could not be displayed. Reload it, or open it externally.
+        <ReportIssueLink />
       </p>
     );
   const width = natural ? natural.w * scale : undefined;
@@ -194,6 +196,7 @@ export function ConvertedImage({
     return (
       <p role="alert" className="file-error">
         {error}
+        <ReportIssueLink />
       </p>
     );
   if (!preview) return <p className="file-status">Converting image…</p>;

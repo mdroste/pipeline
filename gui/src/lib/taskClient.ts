@@ -55,6 +55,7 @@ export const taskClient = {
       revision: schedule.revision,
     }),
   markSeen: (id: string) => invoke<void>("task_mark_seen", { id }),
+  noticesReady: () => invoke<void>("task_notices_ready"),
   times: (trigger: Trigger) =>
     invoke<number[]>("task_preview_times", {
       trigger,

@@ -2,12 +2,20 @@
 //! resolution. Each action refreshes and returns the page's state.
 use super::*;
 
+/// Pipeline's own folders, for Git's exclude file.
+const SCRATCH_LINES: [&str; 3] = [
+    ".pipeline-tasks/",
+    ".pipeline-apply-*",
+    ".pipeline-workbench/",
+];
+
 const STARTER_IGNORE: &str = "\
 # Files Git should leave alone. Add your own below.
 .DS_Store
 Thumbs.db
 .pipeline-tasks/
 .pipeline-apply-*
+.pipeline-workbench/
 
 # LaTeX build files
 *.aux
@@ -223,7 +231,7 @@ pub(super) fn run(
     cancel: &AtomicBool,
     trash: &dyn Fn(&Path) -> WorkbenchResult<()>,
 ) -> WorkbenchResult<Outcome> {
-    let status = repository::inspect_with(&git.root, &|args| git.read(args));
+    let status = repository::inspect_with(&git.root, &|args| git.read_for_status(args));
     let context = Context {
         git,
         status,
@@ -350,11 +358,15 @@ fn remote_address(url: &str) -> WorkbenchResult<String> {
     Ok(address)
 }
 
+/// Changes the remote the page shows, which isn't always `origin`. A new remote
+/// is added only when there is none. If the remotes can't be read, adding fails
+/// on an existing `origin`, so no other remote is changed.
 fn set_remote(context: &Context<'_>, url: &str) -> WorkbenchResult<Outcome> {
     let url = remote_address(url)?;
-    let exists = context.git.read(&["remote", "get-url", "origin"]).is_ok();
-    let verb = if exists { "set-url" } else { "add" };
-    context.local(&["remote", verb, "origin", &url])?;
+    match context.remote_name() {
+        Ok(name) => context.local(&["remote", "set-url", "--", &name, &url])?,
+        Err(_) => context.local(&["remote", "add", "origin", &url])?,
+    };
     Ok(Outcome::default())
 }
 
@@ -401,16 +413,20 @@ fn exclude_scratch(context: &Context<'_>) -> WorkbenchResult<()> {
         .read_text(&["rev-parse", "--git-path", "info/exclude"])?;
     let path = context.git.root.join(path.trim());
     let current = fs::read(&path).unwrap_or_default();
-    if String::from_utf8_lossy(&current)
-        .lines()
-        .any(|line| line == ".pipeline-tasks/")
-    {
+    let current = String::from_utf8_lossy(&current);
+    // Checked line by line: a repository may hold the list from an earlier build.
+    let missing: String = SCRATCH_LINES
+        .iter()
+        .filter(|scratch| !current.lines().any(|line| line == **scratch))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    if missing.is_empty() {
         return Ok(());
     }
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(err)?;
     }
-    append_lines(&path, ".pipeline-tasks/\n.pipeline-apply-*\n")
+    append_lines(&path, &missing)
 }
 
 fn commit(
@@ -449,13 +465,30 @@ fn commit(
         }
     }
     let chosen = selected(context, paths)?;
-    let add: Vec<&str> = chosen
+    if let Some(row) = chosen
+        .iter()
+        .find(|row| row.is_directory && status::holds_repository(context.git, &row.path))
+    {
+        return Err(WorkbenchError::invalid(format!(
+            "{} holds its own Git repository, so a commit here would save a link to it and none \
+             of its files. Commit it in its own repository, or add it to .gitignore.",
+            row.path
+        )));
+    }
+    // Git refuses `add -A` for a tracked file in an ignored folder, as the generated
+    // folder is once something untracked sits beside it. `add -u` skips that check.
+    let (new, tracked): (Vec<_>, Vec<_>) = chosen
         .iter()
         .filter(|row| row.unstaged)
-        .map(|row| row.path.as_str())
-        .collect();
-    if !add.is_empty() {
-        with_paths(context, &["add", "-A"], &add)?;
+        .partition(|row| row.status == "untracked");
+    let paths = |rows: &[&status::ChangedFile]| -> Vec<String> {
+        rows.iter().map(|row| row.path.clone()).collect()
+    };
+    for (flag, rows) in [("-A", paths(&new)), ("-u", paths(&tracked))] {
+        if !rows.is_empty() {
+            let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+            with_paths(context, &["add", flag], &rows)?;
+        }
     }
     // A file staged as new and then deleted is gone once added, so `--only`
     // would not find it. A rename needs its old name too, or the file would be
@@ -527,8 +560,9 @@ fn discard(
     }
     let mut unstage = Vec::new();
     let mut restore = Vec::new();
+    let mut moved = false;
     for row in &chosen {
-        keep_copy(context, &row.path, trash)?;
+        moved |= keep_copy(context, &row.path, trash)?;
         match row.status.as_str() {
             "untracked" => {}
             "added" | "copied" => unstage.push(row.path.as_str()),
@@ -536,7 +570,7 @@ fn discard(
                 unstage.push(row.path.as_str());
                 if let Some(old) = &row.old_path {
                     // New work may already sit at the old name.
-                    keep_copy(context, old, trash)?;
+                    moved |= keep_copy(context, old, trash)?;
                     restore.push(old.as_str());
                 }
             }
@@ -553,7 +587,12 @@ fn discard(
             &restore,
         )?;
     }
-    Ok(Outcome::notice("Moved to the Trash."))
+    // A deleted file has no working copy, so discarding it only brings it back.
+    Ok(if moved {
+        Outcome::notice("Moved to the Trash.")
+    } else {
+        Outcome::default()
+    })
 }
 
 /// A `.gitignore` line matching exactly this path from the project folder.
@@ -755,7 +794,7 @@ fn resolve(
             let kept = !(exists && folder) && keep_copy(context, path, trash)?;
             if exists {
                 context.local(&["checkout", flag, "--", path])?;
-                context.local(&["add", "--", path])?;
+                context.local(&["add", "-u", "--", path])?;
             } else {
                 context.local(&["rm", "--quiet", "--force", "--", path])?;
             }
@@ -773,7 +812,7 @@ fn resolve(
                     "This file still has conflict markers. Edit it, then try again.",
                 ));
             }
-            context.local(&["add", "-A", "--", path])?;
+            context.local(&["add", "-u", "--", path])?;
         }
     }
     Ok(Outcome::default())

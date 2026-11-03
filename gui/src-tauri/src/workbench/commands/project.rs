@@ -546,7 +546,7 @@ pub async fn workbench_finding_package_preview(
 pub async fn workbench_report_preview(
     workspace_id: String,
     revision_id: String,
-) -> WorkbenchResult<Vec<crate::workbench::project::ReportComment>> {
+) -> WorkbenchResult<crate::workbench::project::ReportPreview> {
     run_store(move |store| {
         crate::workbench::project::preview_report(&store, &workspace_id, &revision_id)
     })
@@ -672,9 +672,10 @@ pub async fn workbench_studio_export_file(path: String, content: String) -> Work
         }
         std::fs::write(&path, content)
             .map_err(|e| WorkbenchError::storage("Failed to export research document", e))?;
-        std::fs::File::open(path)
-            .and_then(|f| f.sync_all())
-            .map_err(|e| WorkbenchError::storage("Failed to sync research export", e))
+        if let Ok(file) = std::fs::File::open(path) {
+            crate::safety::sync_landed(&file);
+        }
+        Ok(())
     })
     .await
 }

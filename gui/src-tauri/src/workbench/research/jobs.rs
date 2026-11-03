@@ -7,14 +7,22 @@
 //!
 //! A job is owned by its turn (it stops with the turn) or detached (stopped from
 //! the job view). Each job records the process instance that started it. A queued
-//! or running job from another instance becomes `outcome_unknown` and never
+//! or running job whose instance has ended becomes `outcome_unknown` and never
 //! restarts. Reconciling applies a completed finalization journal only after
 //! re-hashing every adopted blob. Shutdown cancels jobs and waits long enough for
 //! a Stata launcher's 30-second cooperative stop.
+//!
+//! Pipeline can be open twice on one store, so another instance's job may be
+//! alive. An instance holds its own lock file from before its first job row until
+//! it exits; the operating system lets go of it on a crash, which is how a later
+//! launch tells an ended instance from a live one. The per-project job slot can't
+//! answer this: queued jobs and finalization don't hold it, and probing it could
+//! refuse a real job that is starting.
 use super::execution::*;
 use super::*;
+use fs2::FileExt as _;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::{oneshot, Semaphore};
+use tokio::sync::{oneshot, Semaphore, SemaphorePermit};
 
 static LIMIT: Semaphore = Semaphore::const_new(2);
 static STOPPING: AtomicBool = AtomicBool::new(false);
@@ -25,8 +33,88 @@ static ACTIVE: OnceLock<Mutex<HashMap<String, ActiveJob>>> = OnceLock::new();
 type Turns = HashMap<(PathBuf, String), oneshot::Receiver<()>>;
 static TURNS: OnceLock<Mutex<Turns>> = OnceLock::new();
 static LOGS: OnceLock<Mutex<HashMap<String, JobLog>>> = OnceLock::new();
+/// This process's lock file in each store it has work in.
+static HELD: OnceLock<Mutex<HashMap<PathBuf, fs::File>>> = OnceLock::new();
 pub(crate) fn process_instance() -> &'static str {
     INSTANCE.get_or_init(|| new_id("instance").expect("OS randomness"))
+}
+/// Instance ids come back from saved rows and restored backups, so one that isn't
+/// a plain id names no file.
+pub(crate) fn instance_lock_path(store: &Store, id: &str) -> Option<PathBuf> {
+    let plain = !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    plain.then(|| store.root_path().join(format!(".instance-{id}.lock")))
+}
+/// Marks this process alive in `store`. It must come before any row naming this
+/// instance is written, so no other process can probe the file before it is locked.
+pub(crate) fn hold_instance(store: &Store) -> WorkbenchResult<()> {
+    let path = instance_lock_path(store, process_instance())
+        .ok_or_else(|| WorkbenchError::invalid("Invalid process instance"))?;
+    let mut held = HELD
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    // A store that moved or was removed takes its lock file with it.
+    held.retain(|path, _| path.exists());
+    if held.contains_key(&path) {
+        return Ok(());
+    }
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|e| WorkbenchError::storage("Failed to open the job owner file", e))?;
+    file.try_lock_exclusive()
+        .map_err(|e| WorkbenchError::storage("Failed to lock the job owner file", e))?;
+    held.insert(path, file);
+    Ok(())
+}
+enum Instance {
+    Alive,
+    /// Ended, with the lock taken on its leftover file when there is one.
+    Ended(Option<(PathBuf, fs::File)>),
+}
+/// Anything but a clear answer counts as alive: leaving a row alone is safe, and
+/// marking a live job is not.
+fn probe_instance(store: &Store, id: &str) -> Instance {
+    if id == process_instance() {
+        return Instance::Alive;
+    }
+    let Some(path) = instance_lock_path(store, id) else {
+        return Instance::Ended(None);
+    };
+    match fs::OpenOptions::new().read(true).write(true).open(&path) {
+        Ok(file) if file.try_lock_exclusive().is_ok() => Instance::Ended(Some((path, file))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Instance::Ended(None),
+        _ => Instance::Alive,
+    }
+}
+pub(crate) fn instance_alive(store: &Store, id: &str) -> bool {
+    matches!(probe_instance(store, id), Instance::Alive)
+}
+/// The instance a job's row names. The ownership row wins; a crash between
+/// writing the receipt and that row leaves only the receipt's.
+const JOB_INSTANCE: &str =
+    "coalesce(j.process_instance,json_extract(e.validation_json,'$.processInstance'),'')";
+/// Whether a job is running here or in another open Pipeline.
+pub(crate) fn execution_live(store: &Store, id: &str) -> WorkbenchResult<bool> {
+    if execution_active(id) {
+        return Ok(true);
+    }
+    let owner: Option<String> = open_connection(store)?
+        .query_row(
+            &format!("SELECT {JOB_INSTANCE} FROM research_executions e LEFT JOIN execution_jobs j ON j.execution_id=e.id WHERE e.id=?1"),
+            [id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| WorkbenchError::storage("Failed to read job ownership", e))?;
+    Ok(owner.is_some_and(|owner| owner != process_instance() && instance_alive(store, &owner)))
 }
 fn pending() -> &'static Mutex<Vec<PreparedExecution>> {
     PENDING.get_or_init(Mutex::default)
@@ -181,9 +269,9 @@ pub(crate) fn queue(
     origin: Option<(&str, &str, &str)>,
 ) -> WorkbenchResult<ResearchExecution> {
     if STOPPING.load(Ordering::Acquire) {
-        return Err(WorkbenchError::invalid(
-            "The application is stopping its local jobs",
-        ));
+        return Err(
+            WorkbenchError::invalid("The application is stopping its local jobs").transient(),
+        );
     }
     if !matches!(owner, "detached" | "turn") || (owner == "turn" && origin.is_none()) {
         return Err(WorkbenchError::invalid(
@@ -191,6 +279,7 @@ pub(crate) fn queue(
         ));
     }
     validate_id("operation id", &request.operation_id)?;
+    hold_instance(store)?;
     let fingerprint = hash_bytes(
         &serde_json::to_vec(&json!({"request":request,"owner":owner,"origin":origin}))
             .map_err(|e| WorkbenchError::storage("Failed to encode job request", e))?,
@@ -212,7 +301,7 @@ pub(crate) fn queue(
         return get_execution(store, &id);
     }
     if active().lock().unwrap_or_else(|e| e.into_inner()).len() >= 16 {
-        return Err(WorkbenchError::invalid("The local queue is full (16 jobs)"));
+        return Err(WorkbenchError::invalid("The local queue is full (16 jobs)").transient());
     }
     match prepare_execution(store, request.clone(), origin)? {
         PreparedOrExisting::Existing(e) => Ok(*e),
@@ -275,6 +364,19 @@ async fn wait_for_turn(id: &str, ahead: &mut Option<oneshot::Receiver<()>>) {
         }
     }
 }
+/// Waits for a place among the jobs that may run at once, or until this job is
+/// stopped, which needs no place: a stopped job only records its receipt.
+async fn wait_for_slot<'a>(id: &str, limit: &'a Semaphore) -> Option<SemaphorePermit<'a>> {
+    loop {
+        if stop_requested(id) {
+            return None;
+        }
+        tokio::select! {
+            slot = limit.acquire() => return Some(slot.expect("local job queue stays open")),
+            _ = tokio::time::sleep(Duration::from_millis(200)) => {}
+        }
+    }
+}
 
 pub(crate) fn launch_pending() {
     let work = std::mem::take(&mut *pending().lock().unwrap_or_else(|e| e.into_inner()));
@@ -283,7 +385,7 @@ pub(crate) fn launch_pending() {
         let (turn, mut ahead) = join_line(&p);
         tokio::spawn(async move {
             wait_for_turn(&id, &mut ahead).await;
-            let slot = LIMIT.acquire().await.expect("local job queue stays open");
+            let slot = wait_for_slot(&id, &LIMIT).await;
             let start_id = id.clone();
             let job_store = p.store.clone();
             let start_store = job_store.clone();
@@ -345,8 +447,42 @@ pub struct JobStatus {
     pub can_reconcile: bool,
     pub resource: String,
 }
-fn reconcile_abandoned(store: &Store) -> WorkbenchResult<()> {
-    open_connection(store)?.execute("UPDATE research_executions SET outcome='outcome_unknown',validation_json=json_set(validation_json,'$.recovery','The application ended before a terminal receipt. Inspect retained evidence; no automatic restart.','$.stataCleanupRequired',CASE WHEN adapter='stata' THEN json('true') ELSE json('false') END) WHERE outcome IN ('queued','running') AND (id IN (SELECT execution_id FROM execution_jobs WHERE process_instance<>?1) OR coalesce(json_extract(validation_json,'$.processInstance'),'')<>?1)",[process_instance()]).map_err(|e|WorkbenchError::storage("Failed to reconcile interrupted jobs",e))?;
+/// Marks the unfinished jobs of instances that have ended. A job of this process
+/// or of another open Pipeline is left alone.
+pub(crate) fn reconcile_abandoned(store: &Store) -> WorkbenchResult<()> {
+    let conn = open_connection(store)?;
+    let rows = {
+        let mut q = conn
+            .prepare(&format!("SELECT e.id,{JOB_INSTANCE} FROM research_executions e LEFT JOIN execution_jobs j ON j.execution_id=e.id WHERE e.outcome IN ('queued','running')"))
+            .map_err(|e| WorkbenchError::storage("Failed to read unfinished jobs", e))?;
+        let rows = q
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .map_err(|e| WorkbenchError::storage("Failed to read unfinished jobs", e))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| WorkbenchError::storage("Failed to read unfinished jobs", e))?;
+        rows
+    };
+    let mut owners: HashMap<String, bool> = HashMap::new();
+    let mut leftovers = Vec::new();
+    for (id, owner) in rows {
+        let ended =
+            *owners
+                .entry(owner)
+                .or_insert_with_key(|owner| match probe_instance(store, owner) {
+                    Instance::Alive => false,
+                    Instance::Ended(file) => {
+                        leftovers.extend(file);
+                        true
+                    }
+                });
+        if ended {
+            conn.execute("UPDATE research_executions SET outcome='outcome_unknown',validation_json=json_set(validation_json,'$.recovery','The application ended before a terminal receipt. Inspect retained evidence; no automatic restart.','$.stataCleanupRequired',CASE WHEN adapter='stata' THEN json('true') ELSE json('false') END) WHERE id=?1 AND outcome IN ('queued','running')",[&id]).map_err(|e|WorkbenchError::storage("Failed to reconcile interrupted jobs",e))?;
+        }
+    }
+    // Nothing names these instances any more, and each file's lock is held here.
+    for (path, _file) in leftovers {
+        let _ = fs::remove_file(path);
+    }
     Ok(())
 }
 pub fn list_jobs(store: &Store, ws: &str) -> WorkbenchResult<Vec<JobStatus>> {
@@ -419,6 +555,24 @@ pub fn execution_output(store: &Store, ws: &str, id: &str) -> WorkbenchResult<Ex
         stderr: receipt.stderr,
     })
 }
+const LOG_PAGE_BYTES: usize = 64 * 1024;
+/// Backs `limit` up to the start of a character it would split, so that character
+/// arrives whole on the next page. Output that isn't valid UTF-8 has no boundary to
+/// find and stays where it is.
+fn page_end(bytes: &[u8], start: usize, limit: usize) -> usize {
+    for back in 1..=(limit - start).min(3) {
+        let byte = bytes[limit - back];
+        let width = match byte {
+            0x80..=0xBF => continue,
+            0xC2..=0xDF => 2,
+            0xE0..=0xEF => 3,
+            0xF0..=0xF4 => 4,
+            _ => return limit,
+        };
+        return if width > back { limit - back } else { limit };
+    }
+    limit
+}
 pub fn log_page(
     store: &Store,
     ws: &str,
@@ -458,7 +612,15 @@ pub fn log_page(
         )
     };
     let start = offset.min(bytes.len());
-    let end = (start + 64 * 1024).min(bytes.len());
+    // Live and saved text can differ by a few bytes, so an offset may land inside
+    // a character of the saved copy.
+    let start = start
+        + bytes[start..]
+            .iter()
+            .take(3)
+            .take_while(|byte| **byte & 0xC0 == 0x80)
+            .count();
+    let end = page_end(bytes, start, (start + LOG_PAGE_BYTES).min(bytes.len()));
     Ok(JobLogPage {
         text: String::from_utf8_lossy(&bytes[start..end]).into_owned(),
         next_offset: end,
@@ -526,6 +688,20 @@ pub async fn shutdown() {
     while has_active() && start.elapsed() < Duration::from_secs(35) {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+    // A job still stopping keeps its file; the next launch finds this instance
+    // ended and cleans up.
+    if !has_active() {
+        let held = std::mem::take(
+            &mut *HELD
+                .get_or_init(Mutex::default)
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        );
+        for (path, file) in held {
+            drop(file);
+            let _ = fs::remove_file(path);
+        }
+    }
 }
 
 pub(crate) fn complete_tool_result(store: &Store, execution_id: &str) -> WorkbenchResult<Value> {
@@ -539,3 +715,7 @@ pub(crate) fn complete_tool_result(store: &Store, execution_id: &str) -> Workben
     open_connection(store)?.execute("UPDATE tool_receipts SET result_json=?2,ended_at=?3 WHERE (binding_id,provider_turn_id,call_id) IN (SELECT binding_id,provider_turn_id,tool_call_id FROM research_executions WHERE id=?1) AND state='completed'",params![execution_id,response.to_string(),now()]).map_err(|e|WorkbenchError::storage("Failed to finish execution tool receipt",e))?;
     Ok(response)
 }
+
+#[cfg(test)]
+#[path = "jobs_tests.rs"]
+mod tests;

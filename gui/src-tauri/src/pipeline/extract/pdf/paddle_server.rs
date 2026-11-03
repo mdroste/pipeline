@@ -1,14 +1,23 @@
 //! Managed recognition server lifetime and full-parser sidecar invocation.
 
-use super::super::core::{run_bounded_output, BoundedOutput};
+use super::super::core::{run_bounded_output_observed, BoundedOutput};
 use super::page_quality::PdfPageTextBaseline;
+use super::server_log::ServerLog;
+use crate::engines::native_path;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
+
+/// Mirrors `PROGRESS_PREFIX` in the parser sidecar, which marks the stdout
+/// lines meant for the console.
+pub(in crate::pipeline::extract) const PADDLE_PROGRESS_PREFIX: &str = "pipeline-progress: ";
 
 pub(in crate::pipeline::extract) const PADDLE_MODEL_ALIAS: &str = "paddleocr-vl-1.6";
 pub(in crate::pipeline::extract) const MAX_PADDLE_MODEL_LIST_BYTES: usize = 1024 * 1024;
 pub(in crate::pipeline::extract) const PADDLE_READINESS_POLL_INTERVAL: std::time::Duration =
     std::time::Duration::from_millis(250);
+
+/// Hosts the parser reaches directly, whatever proxy the computer uses.
+const LOCAL_HOSTS: &str = "127.0.0.1,localhost";
 
 pub(in crate::pipeline::extract) fn paddle_server_token() -> Result<String, String> {
     use std::fmt::Write as _;
@@ -44,6 +53,7 @@ pub(in crate::pipeline::extract) struct PaddleServer {
     pid: u32,
     pub(super) base_url: String,
     pub(super) api_key: String,
+    pub(super) log: ServerLog,
 }
 
 impl Drop for PaddleServer {
@@ -121,7 +131,7 @@ pub(in crate::pipeline::extract) async fn start_paddle_server(
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
     let mut child = command
         .spawn()
         .map_err(|error| format!("Failed to start managed llama-server: {error}"))?;
@@ -129,6 +139,10 @@ pub(in crate::pipeline::extract) async fn start_paddle_server(
     if pid > 0 {
         crate::commands::register_child_pid(pid);
     }
+    let log = match child.stderr.take() {
+        Some(stderr) => ServerLog::capture(stderr, api_key.clone()),
+        None => ServerLog::default(),
+    };
     let base_url = format!("http://127.0.0.1:{port}");
     let client = &*crate::pipeline::api_common::LOCAL_HTTP_CLIENT;
     let started = std::time::Instant::now();
@@ -149,9 +163,14 @@ pub(in crate::pipeline::extract) async fn start_paddle_server(
             if pid > 0 {
                 crate::commands::unregister_child_pid(pid);
             }
-            return Err(format!(
-                "Managed llama-server exited during model loading (exit {})",
-                status.code().unwrap_or(-1)
+            // Its last words may still be in the pipe.
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            return Err(with_reason(
+                format!(
+                    "Managed llama-server exited during model loading (exit {})",
+                    status.code().unwrap_or(-1)
+                ),
+                &log,
             ));
         }
         if let Ok(response) = client
@@ -186,6 +205,7 @@ pub(in crate::pipeline::extract) async fn start_paddle_server(
                                     pid,
                                     base_url,
                                     api_key,
+                                    log,
                                 });
                             }
                         }
@@ -200,7 +220,10 @@ pub(in crate::pipeline::extract) async fn start_paddle_server(
             }
             let _ = child.kill();
             let _ = child.wait();
-            return Err("PaddleOCR-VL model loading timed out after 180 seconds".to_string());
+            return Err(with_reason(
+                "PaddleOCR-VL model loading timed out after 180 seconds".to_string(),
+                &log,
+            ));
         }
         let _ = crate::commands::await_or_cancel(
             tokio::time::sleep(PADDLE_READINESS_POLL_INTERVAL),
@@ -208,6 +231,45 @@ pub(in crate::pipeline::extract) async fn start_paddle_server(
         )
         .await;
     }
+}
+
+fn with_reason(error: String, log: &ServerLog) -> String {
+    match log.reason() {
+        Some(reason) => format!("{error}: {reason}"),
+        None => error,
+    }
+}
+
+/// The parser's environment for one extraction. Everything it reads stays on
+/// this computer, so its proxy exclusions can replace the researcher's.
+fn sidecar_environment(
+    paths: &crate::engines::PaddleFullParserPaths,
+    settings: &crate::settings::Settings,
+    recognition: &SidecarRecognition,
+) -> Vec<(String, String)> {
+    let mut environment = crate::engines::paddle_full_parser_env(paths);
+    // Paddle defaults to one OpenMP thread as it starts, and layout runs on
+    // the processor whichever recognition reads the pages. Only builds with
+    // OpenMP and MKL, such as Windows, read these. Apple's build ignores them.
+    let cores = crate::settings::resolved_paddle_cpu_threads(settings).to_string();
+    environment.push(("OMP_NUM_THREADS".to_string(), cores.clone()));
+    environment.push(("MKL_NUM_THREADS".to_string(), cores));
+    match recognition {
+        SidecarRecognition::Server { api_key, .. } => {
+            environment.push(("PIPELINE_PADDLE_API_KEY".to_string(), api_key.clone()));
+            // Recognition requests must reach the local server, not an ambient
+            // proxy. Setting these also stops Python reading a system proxy.
+            for name in ["NO_PROXY", "no_proxy"] {
+                environment.push((name.to_string(), LOCAL_HOSTS.to_string()));
+            }
+        }
+        SidecarRecognition::BuiltIn { .. } => {
+            // Paddle's pool otherwise keeps what loading the weights freed,
+            // nearly doubling the memory held for the whole run.
+            environment.push(("FLAGS_use_system_allocator".to_string(), "1".to_string()));
+        }
+    }
+    environment
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -220,6 +282,7 @@ pub(in crate::pipeline::extract) fn run_paddle_full_sidecar(
     recognition: &SidecarRecognition,
     baselines: &[PdfPageTextBaseline],
     timeout: std::time::Duration,
+    on_progress: &mut dyn FnMut(&str),
 ) -> Result<BoundedOutput, String> {
     let boolean = |value: bool| if value { "true" } else { "false" };
     let baseline_chars = baselines
@@ -240,13 +303,13 @@ pub(in crate::pipeline::extract) fn run_paddle_full_sidecar(
         "-B".into(),
         paths.script.as_os_str().to_owned(),
         "--input".into(),
-        input.as_os_str().to_owned(),
+        native_path(input).into_os_string(),
         "--output".into(),
-        output.as_os_str().to_owned(),
+        native_path(output).into_os_string(),
         "--assets-dir".into(),
-        assets.as_os_str().to_owned(),
+        native_path(assets).into_os_string(),
         "--layout-model-dir".into(),
-        paths.layout_model.as_os_str().to_owned(),
+        native_path(&paths.layout_model).into_os_string(),
         "--concurrency".into(),
         crate::settings::resolved_paddle_page_concurrency(settings)
             .to_string()
@@ -280,41 +343,115 @@ pub(in crate::pipeline::extract) fn run_paddle_full_sidecar(
         "--show-formula-numbers".into(),
         boolean(settings.paddle_full_show_formula_numbers).into(),
     ];
-    let mut environment = crate::engines::paddle_full_parser_env(paths);
-    match recognition {
-        SidecarRecognition::Server { base_url, api_key } => {
-            arguments.extend([
-                "--server-url".into(),
-                base_url.into(),
-                "--server-model".into(),
-                PADDLE_MODEL_ALIAS.into(),
-            ]);
-            environment.push(("PIPELINE_PADDLE_API_KEY".to_string(), api_key.clone()));
-        }
-        SidecarRecognition::BuiltIn { model_dir } => {
-            arguments.push("--native-model-dir".into());
-            arguments.push(model_dir.as_os_str().to_owned());
-            // Paddle's pool otherwise keeps what loading the weights freed,
-            // nearly doubling the memory held for the whole run.
-            environment.push(("FLAGS_use_system_allocator".to_string(), "1".to_string()));
-            // Paddle defaults to one OpenMP thread as it starts. Only builds
-            // with OpenMP and MKL, such as Windows, read these. Apple's build
-            // ignores them.
-            let cores = crate::settings::resolved_paddle_cpu_threads(settings).to_string();
-            environment.push(("OMP_NUM_THREADS".to_string(), cores.clone()));
-            environment.push(("MKL_NUM_THREADS".to_string(), cores));
-        }
+    if let SidecarRecognition::Server { base_url, .. } = recognition {
+        arguments.extend([
+            "--server-url".into(),
+            base_url.into(),
+            "--server-model".into(),
+            PADDLE_MODEL_ALIAS.into(),
+        ]);
     }
+    if let SidecarRecognition::BuiltIn { model_dir } = recognition {
+        arguments.push("--native-model-dir".into());
+        arguments.push(native_path(model_dir).into_os_string());
+    }
+    let environment = sidecar_environment(paths, settings, recognition);
     command.args(arguments);
     crate::engines::apply_managed_environment(&mut command, &environment);
     if let Some(parent) = output.parent() {
         command.current_dir(parent);
     }
-    run_bounded_output(
+    run_bounded_output_observed(
         command,
         "PaddleOCR-VL full parser",
         timeout,
         4 * 1024 * 1024,
         output.parent(),
+        Some(&mut |line| {
+            if let Some(message) = line.strip_prefix(PADDLE_PROGRESS_PREFIX) {
+                on_progress(message);
+            }
+        }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parser_paths() -> crate::engines::PaddleFullParserPaths {
+        crate::engines::PaddleFullParserPaths {
+            python: "python".into(),
+            script: "sidecar.py".into(),
+            model_cache: "cache".into(),
+            layout_model: "layout".into(),
+            recognition: crate::engines::PaddleRecognition::BuiltIn {
+                model_dir: "model".into(),
+            },
+            release: "release".into(),
+            integrity_sha256: "fixture".into(),
+            sidecar_sha256: "fixture".into(),
+        }
+    }
+
+    fn launched_environment(
+        recognition: &SidecarRecognition,
+    ) -> std::collections::HashMap<String, String> {
+        let environment = sidecar_environment(
+            &parser_paths(),
+            &crate::settings::Settings::default(),
+            recognition,
+        );
+        let mut command = StdCommand::new("python");
+        crate::engines::apply_managed_environment(&mut command, &environment);
+        command
+            .get_envs()
+            .filter_map(|(key, value)| {
+                Some((
+                    key.to_string_lossy().to_string(),
+                    value?.to_string_lossy().to_string(),
+                ))
+            })
+            .collect()
+    }
+
+    fn server() -> SidecarRecognition {
+        SidecarRecognition::Server {
+            base_url: "http://127.0.0.1:8080/v1".into(),
+            api_key: "key".into(),
+        }
+    }
+
+    fn built_in() -> SidecarRecognition {
+        SidecarRecognition::BuiltIn {
+            model_dir: "model".into(),
+        }
+    }
+
+    #[test]
+    fn local_server_requests_bypass_any_proxy() {
+        let environment = launched_environment(&server());
+        assert_eq!(environment["NO_PROXY"], "127.0.0.1,localhost");
+        assert_eq!(environment["no_proxy"], "127.0.0.1,localhost");
+    }
+
+    #[test]
+    fn layout_gets_the_configured_cores_with_either_recognition() {
+        let settings = crate::settings::Settings::default();
+        let cores = crate::settings::resolved_paddle_cpu_threads(&settings).to_string();
+        for recognition in [server(), built_in()] {
+            let environment = launched_environment(&recognition);
+            assert_eq!(environment["OMP_NUM_THREADS"], cores);
+            assert_eq!(environment["MKL_NUM_THREADS"], cores);
+        }
+    }
+
+    #[test]
+    fn the_allocator_flag_stays_with_built_in_recognition() {
+        assert_eq!(
+            launched_environment(&built_in())["FLAGS_use_system_allocator"],
+            "1"
+        );
+        assert!(!launched_environment(&server()).contains_key("FLAGS_use_system_allocator"));
+    }
 }

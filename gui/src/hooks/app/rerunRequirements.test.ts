@@ -58,6 +58,21 @@ describe("confirmRerunRequirements", () => {
     expect(promptDialog).toHaveBeenCalledTimes(1);
   });
 
+  it("names the agents the run reuses and stops when the researcher declines", async () => {
+    rerunRequirements.mockResolvedValue({
+      secrets: [],
+      notice: null,
+      agent_notice: "Parallel: Codex.",
+    });
+    confirmDialog.mockResolvedValueOnce(false);
+
+    await expect(confirmRerunRequirements("run", true)).resolves.toBeNull();
+    expect(confirmDialog).toHaveBeenCalledWith("Parallel: Codex.", {
+      title: "Same agents as before",
+      confirmLabel: "Continue",
+    });
+  });
+
   it("shows the notice first and stops when the researcher declines", async () => {
     rerunRequirements.mockResolvedValue({
       secrets: twoSecrets,

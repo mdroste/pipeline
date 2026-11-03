@@ -57,7 +57,9 @@ need **Allow edits** or an enabled tool. See
 Select a file the assistant names to open it, or choose **Reveal working files**
 from the conversation's actions menu. Deleting the conversation deletes its
 folder. **Move to project…** leaves the files in that folder, and the
-conversation works in the project instead.
+conversation works in the project instead. A conversation that uses an agent
+profile or recipe made for its current project can't move until you switch it
+to a built-in or shared one, or disable the recipe.
 
 ### Choose a model
 
@@ -234,7 +236,9 @@ Other files show their size, with **Open externally** and **Reveal in folder**.
 This includes Stata (.dta) files, which are usually too large to read here.
 Every open file has these in its **…** menu, along with **Reload**. Pipeline
 will not open a program or script with **Open externally** or **Open external
-editor**. On a Mac, that includes Python files.
+editor**. On a Mac, that includes Python files. On an exFAT drive or a network
+share, which can't mark a file as a program, Pipeline reads the start of the
+file instead, and also won't open a file with no extension.
 
 The editor handles LaTeX, BibTeX, Markdown, Stata, Python, R, Julia, MATLAB,
 and other common languages. Markdown has **Source** and **Preview** views, and
@@ -242,11 +246,11 @@ notebooks and HTML have their own view beside **Source**. LaTeX completion
 suggests labels and citation keys.
 
 **Save** and **Discard draft** appear once you change a file. You can also press
-Command/Ctrl+S to save. Unsaved drafts survive closing a tab. Pipeline watches
-open files while **Files** is showing. A file with no unsaved changes updates by
-itself. If you have a draft, Pipeline tells you, and you can choose **Compare
-with current file** or **Reload**. Select text and choose **Ask about selection**
-to ask the assistant.
+Command/Ctrl+S to save. **Discard draft** asks first. Unsaved drafts survive
+closing a tab. Pipeline watches open files while **Files** is showing. A file
+with no unsaved changes updates by itself. If you have a draft, Pipeline tells
+you, and you can choose **Compare with current file** or **Reload**. Select text
+and choose **Ask about selection** to ask the assistant.
 
 You can read PDF, image, audio, and video files of any practical size, and edit
 text files up to 2 MB. Larger text files open read-only, with **Load more**.
@@ -262,7 +266,7 @@ automations don't use this page.
 Choices here that change your files wait while a response is running, as they do
 in **Files**. They also wait for a local job, which the message names. A commit
 goes ahead if it leaves out the job's files. Git uses saved files, so Pipeline asks first if a file it would
-touch has an unsaved draft. Your commit message and a running push stay in place
+touch has an unsaved draft in **Files** or **Write**. Your commit message and a running push stay in place
 when you leave the page and come back.
 
 A folder's own Git settings can name programs, such as filters or an SSH
@@ -281,6 +285,11 @@ set it up yourself, run `git fetch` from a terminal in the folder.
 A submodule shows as changed when its commit changes, not when it has
 uncommitted work inside.
 
+A new folder that holds its own Git repository, such as an Overleaf clone, can't
+be included in a commit here. Git would save a link to it and none of its files,
+so coauthors would get an empty folder. Commit it in its own repository, or add
+it to `.gitignore`.
+
 **To start**, choose **Start tracking this folder**. Pipeline creates a
 repository and a starter `.gitignore`. Your files stay on your computer until
 you connect a remote and push.
@@ -295,12 +304,22 @@ The first time, Pipeline asks for the name and email to record on your commits.
 They're saved for this repository only. **Undo last commit**, in the **…** menu,
 puts a commit's changes back in your list if you haven't pushed it.
 
+Pipeline keeps the inputs of programs it generates in a hidden folder and leaves
+it out of Git. If an earlier version committed that folder, its files still
+appear here when they change, and you can commit or discard them, but they don't
+open in **Files**.
+
+Git lists a new folder as one item. If that folder holds a file you unchecked,
+the whole folder stays out of the commit. Select it to add that file to
+.gitignore and commit the rest.
+
 **Discard changes**, in a file's **…** menu, returns the file to its last
-commit. Your current copy goes to the Trash.
+commit. Your current copy goes to the Trash. A file you deleted simply comes back.
 
 **Add to .gitignore** keeps a new file out of Git. Use it for raw data and other
 large files. GitHub refuses files over 100 MB, so Pipeline lists any new file
-that size above your changes.
+that size above your changes. It checks up to 5,000 new files at a time and says
+so when there are more.
 
 **History** lists the commits that touch this folder. Select one to see its
 message and changed files. Commits marked **Not pushed** exist only on this
@@ -320,7 +339,9 @@ page shows only that folder, but branches apply to the whole repository.
 
 Other Git hosts work the same way, including Overleaf. If **Publish branch** says
 the remote already has commits, choose **Change remote…** in the **…** menu to
-connect an empty repository, or combine the two from a terminal.
+connect an empty repository, or combine the two from a terminal. **Change
+remote…** changes the address of the remote shown at the top of the page. Any
+other remotes stay as they are.
 
 Pipeline signs in with your computer's Git setup and never sees your password or
 token. If a push or pull is refused, set up Git once:
@@ -507,7 +528,10 @@ command runs show their results but never run again.
 Decisions stay with the person who made them. Notes and claims the sender
 accepted and evidence the sender confirmed arrive as proposals marked
 **Imported**. They stay out of future conversations and don't count as support
-until you accept or confirm them yourself.
+until you accept or confirm them yourself. The same holds for result links,
+theory notes and checks, and literature notes: each shows what the sender
+decided, and it counts only once you confirm or record it here. Accepted edits
+arrive as history and change nothing in your files.
 
 When an incoming item differs from yours, Pipeline keeps your version and
 lists it under **Import conflicts awaiting review**. **Compare** shows both,

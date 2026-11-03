@@ -19,6 +19,7 @@ import type {
   RunParallelOverrides,
 } from "../../lib/types";
 import type { AppPage } from "../../components/NavRail";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 
 export function useReviewSetup() {
   const [paperPath, setPaperPath] = useState<string | null>(null);
@@ -78,7 +79,7 @@ export function useReviewSetup() {
         return applyRunProfile(setup);
       } catch (error) {
         if (request !== runConfigRequest.current) return null;
-        const message = error instanceof Error ? error.message : String(error);
+        const message = workbenchErrorMessage(error);
         setRunConfigError(message);
         return null;
       } finally {
@@ -116,7 +117,7 @@ export function useReviewSetup() {
         return plan.readiness;
       } catch (error) {
         if (request !== dependencyRequest.current) return null;
-        const message = error instanceof Error ? error.message : String(error);
+        const message = workbenchErrorMessage(error);
         setDepsReport(null);
         setDepsError(message);
         return null;

@@ -10,6 +10,7 @@ import {
 } from "../../lib/projectClient";
 import { SectionHeader, SettingsCard, Toggle } from "./controls";
 import { ReviewSaveFeedback } from "./SaveState";
+import ReportIssueLink from "../ReportIssueLink";
 
 export default function AdvancedSettings({
   settings,
@@ -142,6 +143,7 @@ export default function AdvancedSettings({
           <p role="alert" className="settings-error">
             Could not read your update setting, so automatic checks are off. Use
             the switch above to set it again.
+            <ReportIssueLink />
           </p>
         )}
         <div className="settings-actions mt-4">
@@ -214,6 +216,7 @@ export default function AdvancedSettings({
         {error && (
           <p role="alert" className="settings-error">
             {error}
+            <ReportIssueLink />
           </p>
         )}
       </SettingsCard>

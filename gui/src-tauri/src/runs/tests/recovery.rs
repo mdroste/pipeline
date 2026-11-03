@@ -538,3 +538,24 @@ fn a_running_run_is_recovered_however_long_the_walk_over_the_store_takes() {
         serde_json::from_str(&fs::read_to_string(run_dir.join("manifest.json")).unwrap()).unwrap();
     assert_eq!(manifest.status, "interrupted");
 }
+
+#[test]
+fn history_lists_every_run_however_slow_the_folder_is() {
+    let temp = tempfile::tempdir().unwrap();
+    let runs = temp.path();
+    let mut writer = RunWriter::create_in(runs, "abc123_slow").unwrap();
+    writer
+        .add_text(DOCUMENT_TEXT_PATH, "Readable document", "document", "paper")
+        .unwrap();
+    let run_dir = writer.dir().to_path_buf();
+    let mut manifest = writer.current_manifest();
+    std::mem::forget(writer);
+    manifest.status = "partial".to_string();
+    write_manifest(&run_dir, &manifest).unwrap();
+    fs::write(run_dir.join("report.json"), "not parsed when listing").unwrap();
+
+    let walk = super::super::history::listing_walk().overdue();
+    let listed = super::super::history::list_runs_in(runs, walk).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(listed[0].resumable);
+}

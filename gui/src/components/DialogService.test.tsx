@@ -133,6 +133,23 @@ function toastTimers() {
   return () => vi.useRealTimers();
 }
 
+it("offers the issues link on error toasts only", () => {
+  const restore = toastTimers();
+  try {
+    mount();
+    act(() => notify("Could not copy the file."));
+    expect(
+      screen.getByRole("link", { name: "GitHub Issues" }),
+    ).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(6000));
+    act(() => notify("Copied.", "success"));
+    expect(screen.getByRole("status")).toBeInTheDocument();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  } finally {
+    restore();
+  }
+});
+
 it("keeps a toast while the pointer is on it, then lets it leave", () => {
   const restore = toastTimers();
   try {

@@ -137,3 +137,27 @@ async fn a_call_whose_every_attempt_fails_keeps_their_usage() {
         "both attempts were paid for"
     );
 }
+
+#[test]
+fn throttled_calls_wait_out_the_rate_window_before_retrying() {
+    let throttled =
+        "Codex call failed (exit 1): exceeded retry limit, last status: 429 Too Many Requests";
+    assert_eq!(
+        super::throttle_retry_wait(throttled, 0, 2),
+        Some(std::time::Duration::from_secs(60))
+    );
+    assert_eq!(
+        super::throttle_retry_wait(throttled, 1, 2),
+        Some(std::time::Duration::from_secs(120))
+    );
+    assert_eq!(
+        super::throttle_retry_wait(throttled, 2, 5),
+        Some(std::time::Duration::from_secs(120))
+    );
+    // No retry follows the last attempt, and other failures retry at once.
+    assert_eq!(super::throttle_retry_wait(throttled, 2, 2), None);
+    assert_eq!(
+        super::throttle_retry_wait("Codex returned empty output.", 0, 2),
+        None
+    );
+}

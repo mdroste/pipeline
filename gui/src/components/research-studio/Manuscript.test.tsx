@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   listExecutionProfiles: vi.fn(),
   goToLine: vi.fn(),
   editorProps: [] as Array<{ path: string; reveal?: SourceLineRequest | null }>,
+  confirmDialog: vi.fn(),
 }));
 vi.mock("../../lib/studioClient", async (original) => ({
   ...(await original<typeof import("../../lib/studioClient")>()),
@@ -26,6 +27,7 @@ vi.mock("../../lib/studioClient", async (original) => ({
 vi.mock("../../lib/workbench/executionClient", () => ({
   executionClient: mocks,
 }));
+vi.mock("../DialogService", () => ({ confirmDialog: mocks.confirmDialog }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: vi.fn() }));
 vi.mock("../file-workspace/PdfComparison", () => ({ default: () => null }));
@@ -39,6 +41,7 @@ vi.mock("../file-workspace/SourceEditor", async () => {
         value: string;
         path: string;
         reveal?: SourceLineRequest | null;
+        onChange?: (value: string) => void;
       },
       ref,
     ) {
@@ -47,7 +50,13 @@ vi.mock("../file-workspace/SourceEditor", async () => {
         focus: vi.fn(),
       }));
       mocks.editorProps.push(props);
-      return <textarea aria-label={props.label} value={props.value} readOnly />;
+      return (
+        <textarea
+          aria-label={props.label}
+          value={props.value}
+          onChange={(event) => props.onChange?.(event.target.value)}
+        />
+      );
     }),
   };
 });
@@ -294,4 +303,121 @@ it("reads a build's paths from its build folder", () => {
   );
   expect(buildFolder("/project", ["."])).toBe("");
   expect(buildFolder(undefined, ["paper"])).toBe("");
+});
+
+const openManuscript = async (active = true) => {
+  const view = (visible: boolean) => (
+    <Manuscript
+      workspaceId="ws"
+      data={data}
+      onRefresh={vi.fn()}
+      onDocument={vi.fn()}
+      active={visible}
+    />
+  );
+  const rendered = render(view(active));
+  const editor = await screen.findByLabelText("Manuscript source editor");
+  await waitFor(() => expect(editor).toHaveValue("\\section{Intro}"));
+  return { ...rendered, editor, view };
+};
+const onDisk = (content: string, hash: string) => ({
+  path: "main.tex",
+  content,
+  hash,
+  checkpointId: null,
+});
+
+it("follows the file when the page comes back with no draft open", async () => {
+  const { editor, rerender, view } = await openManuscript();
+  rerender(view(false));
+  mocks.editor.mockResolvedValue(onDisk("Accepted edit", "accepted"));
+  rerender(view(true));
+  await waitFor(() => expect(editor).toHaveValue("Accepted edit"));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Updated from the project",
+  );
+});
+
+it("keeps a draft when the file changes, and Compare lets it save", async () => {
+  const { editor } = await openManuscript();
+  fireEvent.change(editor, { target: { value: "My draft" } });
+  mocks.editor.mockResolvedValue(onDisk("Accepted edit", "accepted"));
+  fireEvent(window, new Event("focus"));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Compare with current file" }),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Changes now compares your draft",
+    ),
+  );
+  expect(editor).toHaveValue("My draft");
+  mocks.mutate.mockResolvedValue({ hash: "saved" });
+  fireEvent.click(screen.getByRole("button", { name: /^Save/ }));
+  await waitFor(() =>
+    expect(mocks.mutate).toHaveBeenCalledWith(
+      "ws",
+      expect.objectContaining({
+        action: "saveText",
+        expectedHash: "accepted",
+        content: "My draft",
+      }),
+    ),
+  );
+});
+
+it("turns a refused save into a way forward, not a dead end", async () => {
+  const { editor } = await openManuscript();
+  fireEvent.change(editor, { target: { value: "My draft" } });
+  mocks.mutate.mockRejectedValueOnce({
+    code: "storage_conflict",
+    message: "This file changed outside the editor.",
+  });
+  mocks.editor.mockResolvedValue(onDisk("Accepted edit", "accepted"));
+  fireEvent.click(screen.getByRole("button", { name: /^Save/ }));
+  expect(
+    await screen.findByRole("button", { name: "Compare with current file" }),
+  ).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "This file changed outside the editor",
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(editor).toHaveValue("My draft");
+});
+
+it("reports a save refused while a response runs as that, not as a change", async () => {
+  const { editor } = await openManuscript();
+  fireEvent.change(editor, { target: { value: "My draft" } });
+  mocks.mutate.mockRejectedValueOnce({
+    code: "storage_conflict",
+    message: "Stop the running response before saving.",
+  });
+  fireEvent.click(screen.getByRole("button", { name: /^Save/ }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Stop the running response",
+  );
+  expect(
+    screen.queryByRole("button", { name: "Compare with current file" }),
+  ).toBeNull();
+});
+
+it("discards and reloads a draft only after asking", async () => {
+  const { editor } = await openManuscript();
+  fireEvent.change(editor, { target: { value: "My draft" } });
+  mocks.confirmDialog.mockResolvedValueOnce(false);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Discard unsaved draft" }),
+  );
+  await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledOnce());
+  expect(editor).toHaveValue("My draft");
+
+  mocks.confirmDialog.mockResolvedValueOnce(true);
+  mocks.editor.mockResolvedValue(onDisk("Accepted edit", "accepted"));
+  fireEvent.click(
+    screen.getByRole("button", { name: "More manuscript actions" }),
+  );
+  fireEvent.click(screen.getByRole("menuitem", { name: "Reload file" }));
+  await waitFor(() => expect(editor).toHaveValue("Accepted edit"));
+  expect(mocks.confirmDialog).toHaveBeenCalledTimes(2);
+  expect(localStorage.getItem("pipeline.manuscriptDraft.ws")).toBeNull();
 });

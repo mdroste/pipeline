@@ -262,6 +262,41 @@ mod tests {
         assert!(error.message.contains("Task copy is missing"), "{error:?}");
     }
     #[test]
+    fn a_copy_from_an_earlier_build_still_settles_with_a_generated_file_in_it() {
+        let f = fixture();
+        fs::write(f.root.join("paper.md"), "original").unwrap();
+        let session = session(&f, "edit");
+        let (cp, root) = working_copy(&f, &session);
+        // Earlier builds copied Pipeline's generated inputs with everything else.
+        let generated = ".pipeline-workbench/generated/a/plot.py";
+        let saved = record(&f.store, &f.ws, &cp, "checkpoint").unwrap();
+        let mut body: Checkpoint = decode(&saved).unwrap();
+        let entry = body.base["paper.md"].clone();
+        body.base.insert(generated.to_string(), entry);
+        put(&f.store, &f.ws, &cp, "checkpoint", saved.revision, &body).unwrap();
+
+        fs::write(root.join("paper.md"), "revised").unwrap();
+        assistant_files::capture_session(&f.store, &session).unwrap();
+        let captured = record(&f.store, &f.ws, &cp, "checkpoint").unwrap();
+        // Selecting every change must not reach a file nothing can read.
+        tasks::apply(
+            &f.store,
+            &f.ws,
+            &cp,
+            vec!["paper.md".into()],
+            captured.revision,
+        )
+        .unwrap();
+        let settled: Checkpoint =
+            decode(&record(&f.store, &f.ws, &cp, "checkpoint").unwrap()).unwrap();
+        assert_eq!(settled.state, "accepted");
+        assert_eq!(
+            fs::read_to_string(f.root.join("paper.md")).unwrap(),
+            "revised"
+        );
+    }
+
+    #[test]
     fn files_in_build_and_cache_folders_keep_their_copy() {
         for unseen in [
             "output/target/estimates.csv",

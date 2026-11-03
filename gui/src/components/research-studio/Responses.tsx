@@ -63,6 +63,7 @@ export default function Responses({
   const [findingIds, setFindingIds] = useState<string[]>([]);
   const [report, setReport] = useState("");
   const [comments, setComments] = useState<ReportComment[]>([]);
+  const [splitNotice, setSplitNotice] = useState("");
   const [commentIds, setCommentIds] = useState<number[]>([]);
   const [changedAnchors, setChangedAnchors] = useState<string[]>([]);
   const [dependencies, setDependencies] = useState<string[]>([]);
@@ -147,6 +148,7 @@ export default function Responses({
             onChange={(v) => {
               setReport(v);
               setComments([]);
+              setSplitNotice("");
             }}
             options={data.papers.flatMap((p) =>
               p.revision
@@ -159,17 +161,23 @@ export default function Responses({
             disabled={!report || busy}
             onClick={() =>
               void run(async () => {
-                const c = await studioClient.report(workspaceId, report);
-                setComments(c);
-                setCommentIds(c.map((_, i) => i));
+                const preview = await studioClient.report(workspaceId, report);
+                setComments(preview.comments);
+                setCommentIds(preview.comments.map((_, i) => i));
+                setSplitNotice(
+                  preview.paragraphs > preview.comments.length
+                    ? `This report has ${preview.paragraphs} paragraphs. An import holds ${preview.comments.length}, so the rest are left out.`
+                    : "",
+                );
               })
             }
           >
             Preview paragraph split
           </button>
           <p className="text-xs text-gray-500">
-            Check the numbering and choose which comments to keep. Each comment
-            keeps its original text and source location.
+            {splitNotice && `${splitNotice} `}Check the numbering and choose
+            which comments to keep. Each comment keeps its original text and
+            source location.
           </p>
           <div className="max-h-72 space-y-2 overflow-auto">
             {comments.map((c, i) => (

@@ -6,6 +6,7 @@ import type {
   AutoReviewCatalogGroup,
   AutoReviewCatalogRole,
 } from "../lib/types";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   onClose: () => void;
@@ -272,6 +273,7 @@ export default function AutoReviewCatalogDialog({
           {error && (
             <p role="alert" className="text-sm text-red-700 dark:text-red-300">
               Could not load the specialist catalog: {error}
+              <ReportIssueLink />
             </p>
           )}
 

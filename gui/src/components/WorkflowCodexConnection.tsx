@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Status {
   epoch: number;
@@ -130,6 +131,7 @@ export default function WorkflowCodexConnection({
       {error && (
         <p role="alert" className="text-xs text-red-600 dark:text-red-400">
           {error}
+          <ReportIssueLink />
         </p>
       )}
     </div>

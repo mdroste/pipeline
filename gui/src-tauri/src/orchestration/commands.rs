@@ -150,10 +150,14 @@ pub(super) async fn control(
         }
         "resume" if run.state == "paused" => {
             run.state = "queued".into();
-            run.due_at = Some(now());
+            // A run set for later keeps its time. Once a run has started, the
+            // next tick works out what it is waiting for.
+            let held_until = run.due_at.filter(|_| run.progress.receipts.is_empty());
+            run.due_at = Some(held_until.map_or(now(), |at| at.max(now())));
             run.reason = None;
         }
         "reconcile" if run.state == "attention" => {
+            m.settle_turns(&run).await;
             m.recover_results(&mut run).await?;
             run.requeue_after_reconcile();
         }
@@ -182,11 +186,19 @@ pub(super) async fn control(
             run.scope.permission_profile = fresh.permission_profile;
             run.scope.preset_id = fresh.preset_id;
             run.scope.access = fresh.access;
+            let refused = adapters::repin_checks(&mut run.scope).await?;
             run.reason = Some(
-                "Context refreshed. Reconcile or explicitly retry an interrupted action.".into(),
+                if refused.is_empty() {
+                    "Context refreshed. Reconcile or explicitly retry an interrupted action."
+                } else {
+                    "Context refreshed. A check changed and still needs your approval in the project's Results view."
+                }
+                .into(),
             );
         }
         "retry" if run.state == "attention" => {
+            m.adopt_own_turn(&mut run).await?;
+            adapters::repin_checks(&mut run.scope).await?;
             let next = m
                 .db(move |s| {
                     s.retry(&mut run)?;
@@ -219,6 +231,11 @@ pub async fn task_input(
         .await?;
     m.notify();
     Ok(run)
+}
+/// The window calls this once it listens for automation notices.
+#[tauri::command]
+pub async fn task_notices_ready(app: tauri::AppHandle) -> Result<()> {
+    super::window_listening(app).await
 }
 /// Opening a finished run is what lets retention remove it later.
 #[tauri::command]

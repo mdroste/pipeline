@@ -25,11 +25,13 @@ pub fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 mod chains;
+mod notices;
 mod receipts;
 mod records;
 mod runs;
 mod schedules;
 mod signals;
+pub use notices::OwedNotice;
 pub use records::{BlockingRun, Event, Schedule, ScheduleView, Scope, Summary, TaskRun};
 pub(crate) use runs::insert_run;
 

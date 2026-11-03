@@ -96,6 +96,22 @@ fn fixture(name: &str, bytes: &[u8], paper_hash: &str, quote: &str) -> Fixture {
     }
 }
 
+#[test]
+fn a_report_too_long_for_the_screen_is_read_in_full_for_export() {
+    let fixture = fixture("paper.pdf", b"bytes", "abc", "quote");
+    let long = format!("# Referee Report\n\n{}\nEnd.", "body ".repeat(400_000));
+    assert!(long.len() > 1_000_000);
+    std::fs::write(fixture.run_dir.join("report.md"), &long).unwrap();
+    assert_eq!(report_text(&fixture.run_dir).unwrap(), long);
+
+    let beyond = "x".repeat(MAX_REPORT_MARKDOWN_BYTES as usize + 1);
+    std::fs::write(fixture.run_dir.join("report.md"), beyond).unwrap();
+    assert_eq!(
+        report_text(&fixture.run_dir).unwrap_err(),
+        "The report is too large to export"
+    );
+}
+
 fn snapshot(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut files = BTreeMap::new();
     let mut pending = vec![dir.to_path_buf()];

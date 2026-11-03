@@ -5,6 +5,8 @@ import { confirmDialog } from "../DialogService";
 import type { Settings } from "../../lib/types";
 
 import ValidatedNumber from "./ValidatedNumber";
+import ReportIssueLink from "../ReportIssueLink";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 
 export function RunRetention({
   settings,
@@ -82,7 +84,7 @@ export function RunRetention({
       );
       await loadUsage();
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
+      const detail = workbenchErrorMessage(error);
       setPurgeError(
         purgeStarted
           ? `Could not move reports to Trash: ${detail}`
@@ -155,6 +157,7 @@ export function RunRetention({
       {purgeError && (
         <p role="alert" className="mt-2 text-sm text-red-600 dark:text-red-400">
           {purgeError}
+          <ReportIssueLink />
         </p>
       )}
       {purgeResult && (

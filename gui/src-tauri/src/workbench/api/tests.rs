@@ -34,6 +34,7 @@ fn every_api_projects_one_structured_final_answer_after_tool_commentary() {
             model: None,
             runtime: provider.runtime().into(),
             usage: Arc::new(Mutex::new(Vec::new())),
+            unsaved: Default::default(),
         };
         let (progress, final_reply) = match provider {
             Provider::Anthropic => (
@@ -99,7 +100,7 @@ fn provider_selection_is_explicit_and_legacy_defaults_remain() {
     assert!(selected(&json!({"runtime":null})).is_err());
 }
 
-fn connection(provider: Provider) -> Connection {
+pub(super) fn connection(provider: Provider) -> Connection {
     Connection {
         provider,
         endpoint: "http://127.0.0.1:1/v1/chat/completions".into(),
@@ -191,7 +192,7 @@ fn refusals_and_content_blocks_stay_errors_and_are_not_called_length_stops() {
 }
 
 /// Serves one scripted reply per connection and returns each request's body.
-async fn scripted_server(
+pub(super) async fn scripted_server(
     replies: Vec<(&'static str, String)>,
 ) -> (String, tokio::task::JoinHandle<Vec<Value>>) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -320,6 +321,7 @@ async fn a_length_stop_saves_the_partial_reply_and_never_runs_its_tool_calls() {
             model: None,
             runtime: provider.runtime().into(),
             usage: Arc::new(Mutex::new(Vec::new())),
+            unsaved: Default::default(),
         };
         store
             .project_codex_event(&bound.id, &turn.reply_event(0, &reply))
@@ -562,7 +564,7 @@ async fn server_with_type(
 
 /// Answers one streamed request, writing each chunk after `pause`, and holds
 /// the connection for `linger` before it ends the reply.
-async fn trickling_server(
+pub(super) async fn trickling_server(
     chunks: Vec<String>,
     pause: std::time::Duration,
     linger: std::time::Duration,
@@ -742,7 +744,7 @@ fn scripted_reply(calls: &[(&str, &str)]) -> String {
 }
 
 /// A saved conversation with a recorded API turn, on the store turns write to.
-fn scripted_turn(label: &str) -> (Store, String, Turn) {
+pub(super) fn scripted_turn(label: &str) -> (Store, String, Turn) {
     let store = crate::orchestration::tests::disposable_workspace();
     let session = store
         .create_session(super::super::store::CreateSessionRequest {
@@ -767,13 +769,14 @@ fn scripted_turn(label: &str) -> (Store, String, Turn) {
         model: None,
         runtime: Provider::Local.runtime().into(),
         usage: Arc::new(Mutex::new(Vec::new())),
+        unsaved: Default::default(),
     };
     (store, session, turn)
 }
 
 /// Runs through the host's research tools, which turn this test's unbound
 /// caller away, so reaching that refusal shows a call passed its checks.
-fn read_tool() -> Value {
+pub(super) fn read_tool() -> Value {
     json!({"name":"scripted_read","description":"Read a file","inputSchema":{
         "type":"object",
         "properties":{"path":{"type":"string"}},

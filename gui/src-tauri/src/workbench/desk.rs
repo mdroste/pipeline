@@ -37,7 +37,7 @@ pub(crate) fn write_blob_atomic(
         .ok_or_else(|| std::io::Error::other("Blob path has no folder"))?;
     let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
     temporary.write_all(bytes)?;
-    temporary.as_file().sync_all()?;
+    crate::safety::sync_file(temporary.as_file())?;
     temporary.persist(path).map_err(|e| e.error)?;
     Ok(())
 }

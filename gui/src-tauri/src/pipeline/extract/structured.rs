@@ -24,6 +24,10 @@ pub(crate) struct PaddleStructuredPage {
     /// cross-page restructuring can move blocks between neighboring pages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) source_text_chars: Option<usize>,
+    /// The sidecar saw no ink on the page image, so an empty page is not a
+    /// failed recognition.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) blank_page: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) width: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

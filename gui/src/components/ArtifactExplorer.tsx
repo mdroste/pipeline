@@ -15,6 +15,7 @@ import ArtifactTree from "./artifact-explorer/ArtifactTree";
 import { Viewer } from "./artifact-explorer/ArtifactViewer";
 import useArtifactSelection from "./artifact-explorer/useArtifactSelection";
 import { PAGE_SELECTION_PREFIX } from "./artifact-explorer/navigation";
+import ReportIssueLink from "./ReportIssueLink";
 const FileWorkspace = lazy(() => import("./file-workspace/FileWorkspace"));
 
 export default function ArtifactExplorer({
@@ -82,6 +83,7 @@ export default function ArtifactExplorer({
           >
             Retry
           </button>
+          <ReportIssueLink />
         </div>
         {fallbackMarkdown && (
           <section aria-label="Saved report text">

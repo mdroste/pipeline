@@ -20,6 +20,77 @@ function dep(overrides: Partial<DepStatus>): DepStatus {
 }
 
 describe("DepsCheck", () => {
+  it("keeps green for a ready status, off the row behind it", () => {
+    render(
+      <DepsCheck
+        report={{
+          ready: true,
+          deps: [dep({ cli_auth_status: "signed_in" })],
+        }}
+        onDismiss={() => {}}
+      />,
+    );
+    const row = screen.getByText("Claude").closest("li")!;
+    expect(row.className).not.toMatch(/emerald/);
+    expect(row.className).toContain("dark:bg-neutral-800/30");
+    expect(row.innerHTML).toMatch(/text-emerald/);
+  });
+
+  it("opens with a progress message before the first result arrives", () => {
+    render(<DepsCheck report={null} checking onDismiss={() => {}} />);
+    expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
+      "Checking dependencies…",
+    );
+    for (const name of ["Model access", "PDF parsing"]) {
+      const section = screen.getByRole("region", { name });
+      expect(section).toHaveAttribute("aria-busy", "true");
+      expect(within(section).getByText("Checking")).toBeVisible();
+    }
+    expect(screen.queryByText("Needs attention")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close" })).toBeVisible();
+  });
+
+  it("keeps the last result on screen while a newer check runs", () => {
+    render(
+      <DepsCheck
+        report={{
+          ready: false,
+          deps: [dep({ authenticated: false })],
+        }}
+        checking
+        onDismiss={() => {}}
+      />,
+    );
+    const models = screen.getByRole("region", { name: "Model access" });
+    expect(within(models).getByText("Claude")).toBeVisible();
+    expect(within(models).getByText("Checking")).toBeVisible();
+    expect(within(models).queryByText("Needs attention")).toBeNull();
+    expect(
+      screen.queryByText(/Check the required model connections/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("explains a failed check and offers another attempt", async () => {
+    const onRetry = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <DepsCheck
+        report={null}
+        error="The workflow could not be read."
+        onRetry={onRetry}
+        onDismiss={() => {}}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The workflow could not be read.",
+    );
+    expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
+      "Pipeline could not finish checking its dependencies.",
+    );
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
   it("shows the managed Workflow sign-in as ready without CLI authentication", () => {
     render(
       <DepsCheck

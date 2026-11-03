@@ -91,6 +91,10 @@ describe("ErrorBoundary", () => {
     expect(
       screen.getByRole("button", { name: /try again/i }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "GitHub Issues" })).toHaveAttribute(
+      "href",
+      "https://github.com/mdroste/pipeline/issues",
+    );
   });
 
   it("hides raw stack details in release-mode fallback UI", () => {

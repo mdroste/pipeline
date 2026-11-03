@@ -144,13 +144,14 @@ pub(super) async fn install_paddle_engine(
             .map_err(|error| format!("Failed to clean an old engine backup: {error}"))?;
     }
     if target.exists() {
-        std::fs::rename(&target, &backup)
+        rename_when_free(&target, &backup)
+            .await
             .map_err(|error| format!("Failed to stage the previous engine version: {error}"))?;
     }
     let staged_path = staging.keep();
-    if let Err(error) = std::fs::rename(&staged_path, &target) {
+    if let Err(error) = rename_when_free(&staged_path, &target).await {
         if backup.exists() {
-            let _ = std::fs::rename(&backup, &target);
+            let _ = rename_when_free(&backup, &target).await;
         }
         return Err(format!("Failed to activate PaddleOCR-VL: {error}"));
     }
@@ -244,7 +245,8 @@ pub(super) async fn install_paddle_full_parser(
             .map_err(|error| format!("Failed to remove an old parser backup: {error}"))?;
     }
     if target.exists() {
-        std::fs::rename(&target, &backup)
+        rename_when_free(&target, &backup)
+            .await
             .map_err(|error| format!("Failed to stage the previous parser version: {error}"))?;
     }
     std::fs::create_dir_all(&target)
@@ -397,13 +399,13 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
             script.to_string_lossy().to_string(),
             "--warm-layout".to_string(),
             "--layout-model-dir".to_string(),
-            layout_model.to_string_lossy().to_string(),
+            native_path(&layout_model).to_string_lossy().to_string(),
             "--server-url".to_string(),
             "http://127.0.0.1:9/v1".to_string(),
         ];
         if let Some(model) = &native_model {
             warm_args.push("--native-model-dir".to_string());
-            warm_args.push(model.to_string_lossy().to_string());
+            warm_args.push(native_path(model).to_string_lossy().to_string());
         }
         run_install_step(app, &python, &warm_args, &environment, "layout model validation")
             .await?;
@@ -461,7 +463,7 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
     if let Err(error) = provision_result {
         let _ = std::fs::remove_dir_all(&target);
         if backup.exists() {
-            let _ = std::fs::rename(&backup, &target);
+            let _ = rename_when_free(&backup, &target).await;
         }
         fail_running_phases(app, spec.id);
         return Err(error);

@@ -468,24 +468,21 @@ fn an_older_archive_is_compared_at_its_own_schema_version() {
     let (_root, source, session) = fixture();
     let output = tempfile::tempdir().unwrap();
     let archive = export(&source, output.path());
-    // A plausible rollback to the previous schema that keeps one object from
-    // this version, so it matches neither version's reference.
+    // A plausible rollback to the schema before `store_location` that keeps that
+    // table, so it matches no version's reference.
+    const BEFORE_STORE_LOCATION: u32 = 18;
     let crafted = tampered(
         &archive,
         output.path(),
         "older",
-        &format!(
-            "PRAGMA user_version={};",
-            crate::workbench::store::CURRENT_SCHEMA_VERSION - 1
-        ),
+        &format!("PRAGMA user_version={BEFORE_STORE_LOCATION};"),
     );
     rewrite_entries(&crafted, |entry, bytes| {
         if entry != "manifest.json" {
             return bytes;
         }
         let mut manifest: Value = serde_json::from_slice(&bytes).unwrap();
-        manifest["storeSchemaVersion"] =
-            Value::from(crate::workbench::store::CURRENT_SCHEMA_VERSION - 1);
+        manifest["storeSchemaVersion"] = Value::from(BEFORE_STORE_LOCATION);
         serde_json::to_vec(&manifest).unwrap()
     });
     let target = tempfile::tempdir().unwrap();

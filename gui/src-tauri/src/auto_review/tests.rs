@@ -764,6 +764,55 @@ fn every_discipline_fallback_materializes_and_the_run_stays_bounded() {
 }
 
 #[test]
+fn a_classified_genre_never_gives_a_pipeline_check_a_prompt() {
+    let mut config = configured_auto_review();
+    config.steps.insert(
+        0,
+        crate::pipeline_config::StepConfig {
+            id: "refs".into(),
+            label: "Check References".into(),
+            enabled: true,
+            phase: crate::pipeline_config::Phase::Parallel,
+            kind: crate::pipeline_config::StepKind::Analyzer,
+            analyzer: Some(crate::pipeline_config::AnalyzerSpec {
+                id: "reference_audit".into(),
+                version: 1,
+                options: serde_json::Value::Null,
+            }),
+            ..Default::default()
+        },
+    );
+    // The saved validation step reads the report whose findings it preserves.
+    config
+        .steps
+        .iter_mut()
+        .find(|step| step.id == "auto_validate")
+        .unwrap()
+        .context
+        .include
+        .push(ArtifactSelector::Step {
+            step: "auto_synthesis".into(),
+            parts: vec![crate::pipeline_config::StepArtifactPart::Report],
+            glob: String::new(),
+        });
+    let mut orientation = valid_orientation();
+    orientation["review_plan"]["genre"] = serde_json::json!("genre_survey_review");
+    let materialized = materialize_config(&config, &orientation).unwrap();
+    let check = materialized
+        .steps
+        .iter()
+        .find(|step| step.id == "refs")
+        .unwrap();
+    assert!(check.prompt.is_empty());
+    assert!(materialized
+        .steps
+        .iter()
+        .filter(|step| step.enabled && step.kind.is_model())
+        .all(|step| step.prompt.contains("## Document Genre")));
+    crate::pipeline_config::validate_runtime_config(&materialized).unwrap();
+}
+
+#[test]
 fn specialists_copy_a_reviewer_step_rather_than_a_pipeline_check() {
     let mut config = configured_auto_review();
     config.steps.insert(

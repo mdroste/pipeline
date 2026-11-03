@@ -43,12 +43,27 @@ pub fn is_usage_limit_error(error: &str) -> bool {
     .any(|pattern| lower.contains(pattern))
 }
 
-/// Runtime uncertainty and rejected capabilities must never enter a model retry loop.
+/// True when a provider refused a call because requests arrived too quickly.
+/// Exhausted plans are excluded: waiting a moment cannot restore them.
+pub fn is_throttling_error(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    !is_usage_limit_error(error)
+        && ["too many requests", "rate limit", "rate_limit"]
+            .iter()
+            .any(|pattern| lower.contains(pattern))
+}
+
+/// Opens the error of a step stopped for what it wrote to disk.
+pub const ARTIFACT_LIMIT_PREFIX: &str = "Stopped at the artifact safety limit:";
+
+/// Runtime uncertainty, rejected capabilities, and a breach of the artifact
+/// safety limit must never enter a model retry loop.
 pub fn is_non_retryable_error(error: &str) -> bool {
     [
         "[codex-outcome-unknown]",
         "[codex-capability]",
         "[codex-auth]",
+        ARTIFACT_LIMIT_PREFIX,
     ]
     .iter()
     .any(|marker| error.contains(marker))
@@ -57,6 +72,25 @@ pub fn is_non_retryable_error(error: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recognizes_throttling_but_not_plan_exhaustion_or_other_failures() {
+        assert!(is_throttling_error(
+            "Codex call failed (exit 1): exceeded retry limit, last status: 429 Too Many Requests"
+        ));
+        assert!(is_throttling_error(
+            "Anthropic: Rate limited. Wait a moment and try again."
+        ));
+        assert!(!is_throttling_error(
+            "Rate limit reached: exceeded your current quota"
+        ));
+        assert!(!is_throttling_error(
+            "Service overloaded. Try again in a few minutes."
+        ));
+        assert!(!is_throttling_error(
+            "OAuth refresh token was rejected: invalid_grant"
+        ));
+    }
 
     #[test]
     fn distinguishes_plan_exhaustion_from_transient_throttling() {

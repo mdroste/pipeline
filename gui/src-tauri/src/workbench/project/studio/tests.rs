@@ -5,7 +5,11 @@ mod ignored_paths;
 mod job_queue;
 #[cfg(unix)]
 mod no_hard_links;
+mod reports_and_citations;
 mod scoped_ids;
+mod text_imports;
+#[cfg(unix)]
+mod value_macros;
 static JOB_TEST_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[test]
 fn bibtex_preserves_nested_fields_and_duplicate_keys() {
@@ -239,7 +243,7 @@ fn report_import_is_idempotent_and_preserves_corrected_decisions() {
         "The appendix lacks a derivation.\n\nAdd a robustness analysis.",
     );
     let revision = p.revision.unwrap().id;
-    let mut comments = preview_report(&f.store, &f.ws, &revision).unwrap();
+    let mut comments = preview_report(&f.store, &f.ws, &revision).unwrap().comments;
     comments[0].number = "R1.2".into();
     let imported = import_report(&f.store, &f.ws, &revision, comments.clone()).unwrap();
     let id = imported[0]["id"].as_str().unwrap();
@@ -295,7 +299,7 @@ fn added_analysis_statements_are_flagged_and_tex_export_escapes_source() {
     let f = fixture();
     let p = paper(&f, "report.md", "Check 10% & x_y.");
     let revision = p.revision.unwrap().id;
-    let comments = preview_report(&f.store, &f.ws, &revision).unwrap();
+    let comments = preview_report(&f.store, &f.ws, &revision).unwrap().comments;
     let imported = import_report(&f.store, &f.ws, &revision, comments).unwrap();
     let object_id = imported[0]["id"].as_str().unwrap();
     let old = record(&f.store, &f.ws, object_id, "response").unwrap();
@@ -385,6 +389,8 @@ fn numeric_bindings_check_rounding_sign_units_and_only_their_dependencies() {
         reported_units: "log points".into(),
         origin: "manual".into(),
         confirmed: true,
+        imported_from: None,
+        imported_status: None,
     };
     let saved = bind_number(&f.store, &f.ws, None, 0, b.clone()).unwrap();
     assert_eq!(
@@ -873,6 +879,8 @@ fn theory_note(kind: &str, status: &str) -> TheoryNote {
         rejection_reason: String::new(),
         origin: "manual".into(),
         promotions: vec![],
+        imported_from: None,
+        imported_status: None,
     }
 }
 #[test]

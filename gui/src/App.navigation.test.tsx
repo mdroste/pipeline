@@ -196,6 +196,56 @@ describe("App navigation", () => {
     );
   });
 
+  it.each([
+    ["opened", "workbench_session_snapshot"],
+    ["started", "workbench_create_session"],
+  ])(
+    "reads a structured error when a conversation cannot be %s",
+    async (word, failing) => {
+      const user = userEvent.setup();
+      localStorage.setItem("pipeline.ui.page", "home");
+      localStorage.setItem(
+        "pipeline.ui.navRailSections",
+        JSON.stringify({ conversations: true }),
+      );
+      const unhandled = invoke.getMockImplementation()!;
+      invoke.mockImplementation((command: string, args?: unknown) => {
+        if (command === "workbench_list_workspaces")
+          return Promise.resolve({ workspaces: [] });
+        if (command === "workbench_list_sessions")
+          return Promise.resolve({
+            sessions: [{ id: "gone", title: "Deleted", updatedAt: "now" }],
+          });
+        if (command === failing)
+          return Promise.reject({
+            code: "not_found",
+            message: "This conversation no longer exists.",
+            retryable: false,
+            recovery: "Choose another conversation.",
+          });
+        return unhandled(command, args);
+      });
+      render(<App />);
+
+      if (word === "opened")
+        await user.click(
+          await screen.findByRole("button", { name: "Deleted" }),
+        );
+      else {
+        await user.click(await screen.findByRole("button", { name: "New" }));
+        await user.click(
+          await screen.findByRole("menuitem", { name: /New conversation/ }),
+        );
+      }
+
+      await waitFor(() =>
+        expect(mocks.notify).toHaveBeenCalledWith(
+          `The conversation could not be ${word}: This conversation no longer exists. Choose another conversation.`,
+        ),
+      );
+    },
+  );
+
   it("leaves Search closed behind a confirmation", async () => {
     localStorage.setItem("pipeline.ui.page", "home");
     render(<App />);

@@ -260,6 +260,7 @@ pub async fn call_google_api(
                     timeout_secs,
                     label: &warm_label,
                     access: &access,
+                    accept_output_cap: true,
                 },
                 warm_request,
             )
@@ -295,6 +296,7 @@ pub async fn call_google_api(
             timeout_secs,
             label,
             access: &access,
+            accept_output_cap: false,
         },
         request,
     )
@@ -322,6 +324,7 @@ pub async fn call_google_api(
                     timeout_secs: retry_timeout,
                     label,
                     access: &access,
+                    accept_output_cap: false,
                 },
                 fallback_request,
             )

@@ -103,7 +103,9 @@ fn artifact_fan_out_expands_bounded_elements_with_lineage() {
     let artifact = r#"{"findings":[{"id":"first","title":"A"},{"id":"second","title":"B"},{"id":"third","title":"C"}]}"#;
     let settings = crate::settings::Settings::default();
     let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-    let units = build_units(&step, &settings, "", Some(artifact), &bus).unwrap();
+    let units = build_units(&step, &settings, "", Some(artifact), &bus)
+        .unwrap()
+        .units;
     // The cap bounds expansion; suffixes are deterministic by index and
     // each unit carries its element's lineage id.
     assert_eq!(units.len(), 2);
@@ -123,8 +125,18 @@ fn artifact_fan_out_expands_bounded_elements_with_lineage() {
         Some("first")
     );
 
+    assert_eq!(
+        build_units(&step, &settings, "", Some(artifact), &bus)
+            .unwrap()
+            .coverage_note
+            .as_deref(),
+        Some(
+            "Step 'verify' ran on 2 of 3 items from 'auto_synthesis'. It stops at 2, so 1 was not read."
+        )
+    );
+
     // A missing upstream artifact degrades to zero units with a warning.
-    let missing = build_units(&step, &settings, "", None, &bus).unwrap();
+    let missing = build_units(&step, &settings, "", None, &bus).unwrap().units;
     assert!(missing.is_empty());
 }
 

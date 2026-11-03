@@ -9,13 +9,17 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import Assets from "./Assets";
 
-const mocks = vi.hoisted(() => ({ call: vi.fn(), records: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  call: vi.fn(),
+  records: vi.fn(),
+  planStatus: vi.fn(),
+}));
 vi.mock("../../lib/programClient", () => ({
   programClient: { call: mocks.call },
 }));
 vi.mock("../../lib/deskClient", async (original) => ({
   ...(await original<typeof import("../../lib/deskClient")>()),
-  deskClient: { records: mocks.records },
+  deskClient: { records: mocks.records, planStatus: mocks.planStatus },
 }));
 
 const choices = {
@@ -207,4 +211,83 @@ it("brings the form into view when editing a saved table", async () => {
   await waitFor(() => expect(form).toHaveFocus());
   expect(scroll.mock.contexts).toContain(form);
   delete (Element.prototype as Partial<Element>).scrollIntoView;
+});
+
+it("sends the figure a new version replaces with its plan", async () => {
+  const user = userEvent.setup();
+  mocks.call.mockImplementation(async (_workspace, action) =>
+    action.action === "choices"
+      ? {
+          ...choices,
+          profiles: [
+            {
+              id: "py",
+              name: "Python script",
+              adapter: "python",
+              argv: ["python3", "a.py"],
+            },
+          ],
+        }
+      : action.action === "figurePlan"
+        ? { id: "recipe", body: { planId: "plan" } }
+        : {},
+  );
+  mocks.planStatus.mockResolvedValue({
+    authorized: false,
+    record: { id: "plan", contentHash: "h", body: {} },
+  });
+  mocks.records.mockImplementation(async (_workspace, kind) =>
+    kind === "publication_asset"
+      ? [
+          {
+            id: "figure_1",
+            title: "Figure 1",
+            contentHash: "abcdef123456",
+            createdAt: "2026-09-07T00:00:00Z",
+            body: {
+              spec: {
+                title: "Figure 1",
+                kind: "coefficient",
+                entries: [
+                  {
+                    label: "Main estimate",
+                    source: { kind: "result", id: "run/beta", revision: "1" },
+                  },
+                ],
+                digits: 3,
+                uncertainty: "ci",
+                notes: "",
+              },
+              entries: [],
+              artifacts: [],
+            },
+          },
+        ]
+      : [],
+  );
+  render(<Assets workspaceId="w" onOpen={vi.fn()} onError={vi.fn()} />);
+
+  await user.click(
+    await screen.findByRole("button", { name: "Edit as new version" }),
+  );
+  expect(screen.getByText(/This creates a new asset version/)).toBeVisible();
+  await user.selectOptions(
+    screen.getByLabelText("Local Python profile with matplotlib"),
+    await screen.findByRole("option", { name: "Python script" }),
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Preview figure setup" }),
+  );
+
+  await waitFor(() =>
+    expect(mocks.call).toHaveBeenCalledWith(
+      "w",
+      expect.objectContaining({
+        action: "figurePlan",
+        request: expect.objectContaining({ supersedes: "figure_1" }),
+      }),
+    ),
+  );
+  await screen.findByText("Review figure execution");
+  expect(screen.queryByText(/This creates a new asset version/)).toBeNull();
 });

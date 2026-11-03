@@ -116,7 +116,8 @@ export default function Bindings({
               {coverage.map((c) => (
                 <tr className="border-t" key={c.record.id}>
                   <td className="max-w-lg p-2">
-                    {c.anchor.selection.quote.slice(0, 220)}
+                    {c.anchor?.selection.quote.slice(0, 220) ??
+                      "Passage no longer available"}
                     <p>
                       {c.record.body.role} · {c.record.body.origin}
                     </p>
@@ -143,11 +144,12 @@ export default function Bindings({
                     </button>
                     <button
                       className={button}
-                      onClick={() =>
-                        onAnchors
-                          ? onAnchors(c.record.body.anchorId, null)
-                          : onDocument(c.anchor.selection.revisionId)
-                      }
+                      disabled={!c.anchor}
+                      onClick={() => {
+                        if (!c.anchor) return;
+                        if (onAnchors) onAnchors(c.record.body.anchorId, null);
+                        else onDocument(c.anchor.selection.revisionId);
+                      }}
                     >
                       Open exact passage
                     </button>
@@ -367,7 +369,7 @@ export default function Bindings({
                   ],
                 });
                 setNotice(
-                  "The macro is ready in the working copy. Review and accept it in Review edits.",
+                  `\\${macro} is in ${file} in the working copy, with any other values already there. Review and accept it in Review edits.`,
                 );
                 await onRefresh();
               })

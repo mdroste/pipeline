@@ -8,7 +8,9 @@ import {
   type LiteratureRecord,
   type LiteratureNote,
   type ZoteroPreview,
+  RECORD_LIST_LIMIT,
 } from "../../lib/studioClient";
+import { importedLabel } from "../research-panel/format";
 import type { ProjectRecord } from "../../lib/projectClient";
 import type { SourceRecord } from "../../lib/workbenchTypes";
 import { researchClient } from "../../lib/workbench/researchClient";
@@ -254,6 +256,12 @@ export default function Literature({
               Import selected source records
             </button>
           )}
+          {bibliography.length >= RECORD_LIST_LIMIT && (
+            <p className="text-xs text-gray-500">
+              Showing the {RECORD_LIST_LIMIT} most recently imported entries.
+              Citation searches and duplicate checks still cover all of them.
+            </p>
+          )}
           <div className="max-h-52 space-y-2 overflow-auto">
             {bibliography.map((b) => (
               <div key={b.id} className="border-t py-2 text-xs">
@@ -430,6 +438,7 @@ export default function Literature({
         >
           Find literal TeX citations
         </button>
+        {citations && <p className="text-xs">{citations.coverage}</p>}
         {citations && (
           <div className="max-h-64 overflow-auto">
             {citations.citations.map((c, i) => (
@@ -528,10 +537,15 @@ export default function Literature({
                 acquiredVia: path.endsWith(".pdf") ? "local_pdf" : "local_file",
                 operationId: `source-${crypto.randomUUID()}`,
               });
+              // A passage belongs to one exact source version.
               setNote((n) => ({
                 ...n,
                 sourceVersionId: imported.source.versionId,
-                citationKey: sourceKey,
+                citationKey: sourceKey || n.citationKey,
+                start: null,
+                end: null,
+                quote: "",
+                support: "unsupported",
               }));
               setSourceText(null);
               await refresh();
@@ -725,6 +739,12 @@ export default function Literature({
       </div>
       <section className={panel}>
         <h2 className="font-semibold">Literature comparison table</h2>
+        {notes.length >= RECORD_LIST_LIMIT && (
+          <p className="text-xs text-gray-500">
+            Showing the {RECORD_LIST_LIMIT} most recently changed notes. Older
+            notes are kept.
+          </p>
+        )}
         <Text
           label="Filter by research question"
           value={filter}
@@ -765,6 +785,13 @@ export default function Literature({
                       <br />
                       {n.body.note.quote.slice(0, 150) ||
                         "Unsupported: no linked passage"}
+                      {n.body.importedFrom && (
+                        <p className="text-gray-500">
+                          {n.body.importedStatus
+                            ? importedLabel(n.body.importedStatus)
+                            : "Imported: this is the sender's assessment."}
+                        </p>
+                      )}
                     </td>
                   </tr>
                 ))}

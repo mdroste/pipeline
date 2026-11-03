@@ -48,8 +48,17 @@ pub(super) type Announced = std::collections::HashMap<tokio::task::Id, (String, 
 /// received, so a unit still running after this is ignoring cancellation.
 pub(crate) const UNIT_STOP_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Run all parallel steps in a wave concurrently. Returns the outputs, the
-/// failures, and the provider calls of failed units, which no output records.
+/// What one parallel wave produced. `failed_calls` are the provider calls of
+/// failed units, which no output records. `coverage_notes` pairs a step id with
+/// what its fan-out limit left out.
+pub(super) struct WaveResult {
+    pub(super) outputs: Vec<StepOutput>,
+    pub(super) failures: Vec<StepFailure>,
+    pub(super) failed_calls: Vec<StepCallRecord>,
+    pub(super) coverage_notes: Vec<(String, String)>,
+}
+
+/// Run all parallel steps in a wave concurrently.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_parallel_wave(
     app: &crate::emit::EventBus,
@@ -72,11 +81,12 @@ pub(super) async fn run_parallel_wave(
     output_budget: &Arc<OutputBudget>,
     context_cache_enabled: bool,
     shared_context_pool: &crate::pipeline::context_cache::PreparedContextPool,
-) -> Result<(Vec<StepOutput>, Vec<StepFailure>, Vec<StepCallRecord>), String> {
+) -> Result<WaveResult, String> {
     let mut tasks: JoinSet<ParallelTaskResult> = JoinSet::new();
     let mut immediate_results: Vec<((usize, String), StepOutput)> = Vec::new();
     let mut failures: Vec<StepFailure> = Vec::new();
     let mut failed_calls: Vec<StepCallRecord> = Vec::new();
+    let mut coverage_notes = Vec::new();
     // So an early return or a task panic still settles each announced unit.
     let mut announced = Announced::new();
 
@@ -131,7 +141,10 @@ pub(super) async fn run_parallel_wave(
         // running keep their provider calls, and dependency policy decides
         // what the failure means downstream. Cancellation still stops the run.
         let units = match discovery {
-            Ok(units) => units,
+            Ok(plan) => {
+                coverage_notes.extend(plan.coverage_note.map(|note| (step.id.clone(), note)));
+                plan.units
+            }
             Err(error) if is_cancellation_error(&error) => {
                 abandon(app, &mut tasks, &announced).await;
                 return Err(error);
@@ -467,6 +480,17 @@ pub(super) async fn run_parallel_wave(
                                 "pipeline:pass",
                                 serde_json::json!({ "name": step_key_emit, "status": "error" }),
                             );
+                            // This output is dropped, so its files go with it.
+                            if let Some(root) = task_write_dir.as_deref() {
+                                if let Err(reason) =
+                                    crate::pipeline::unit_files::reject_call(root).await
+                                {
+                                    crate::pipeline::logging::emit(
+                                        &app_handle,
+                                        format!("WARNING: {reason}"),
+                                    );
+                                }
+                            }
                             return Err(UnitFailure {
                                 failure: StepFailure {
                                     step_id: step_key.clone(),
@@ -591,11 +615,12 @@ pub(super) async fn run_parallel_wave(
 
     // Sort by original config order, then agent name
     results.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok((
-        results.into_iter().map(|(_, r)| r).collect(),
+    Ok(WaveResult {
+        outputs: results.into_iter().map(|(_, r)| r).collect(),
         failures,
         failed_calls,
-    ))
+        coverage_notes,
+    })
 }
 
 /// Reports an announced unit whose task ended without a terminal status

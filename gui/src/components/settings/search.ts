@@ -1,4 +1,4 @@
-import type { Settings } from "../../lib/types";
+import type { EngineStatus, Settings } from "../../lib/types";
 import type { AppPreferences } from "../../lib/appPreferences";
 import type { ThemePreference } from "../../lib/theme";
 import type { Section } from "./navigation";
@@ -21,10 +21,31 @@ export interface SettingsSearchEntry {
   description: string;
   value: string;
 }
+
+/** Parser controls that exist only where the graphics engine does. */
+export interface ParserControls {
+  graphicsCard: boolean;
+  processorCores: boolean;
+}
+export const NO_PARSER_CONTROLS: ParserControls = {
+  graphicsCard: false,
+  processorCores: false,
+};
+export function parserControls(engines: EngineStatus[]): ParserControls {
+  // Only Windows lists this component, and only Windows reads pages with the
+  // processor.
+  const graphics = engines.find((engine) => engine.id === "paddleocr-vl-gpu");
+  return {
+    graphicsCard: Boolean(graphics?.installed),
+    processorCores: Boolean(graphics),
+  };
+}
+
 export function settingsSearchEntries(
   s: Settings,
   p: AppPreferences,
   theme: ThemePreference,
+  controls: ParserControls = NO_PARSER_CONTROLS,
 ): SettingsSearchEntry[] {
   const entries: SettingsSearchEntry[] = [];
   const add = (
@@ -401,8 +422,6 @@ export function settingsSearchEntries(
       "Flash Attention",
       "paddle_flash_attention",
     ],
-    ["Use graphics card", "Use graphics card", "paddle_use_gpu"],
-    ["PaddleOCR-VL processor cores", "Processor cores", "paddle_cpu_threads"],
     [
       "Layout detection and reading order",
       "Layout detection and reading order",
@@ -459,13 +478,25 @@ export function settingsSearchEntries(
     paddle_full_relevel_titles: ", relevel titles",
     paddle_full_show_formula_numbers: ", formula numbers",
   };
+  const describe = (terms = "") =>
+    `Advanced PDF extraction, PaddleOCR parser${terms}`;
   for (const [target, label, key] of parser)
+    add("workflow", target, label, describe(parserTerms[key]), s[key]);
+  if (controls.graphicsCard)
     add(
       "workflow",
-      target,
-      label,
-      `Advanced PDF extraction, PaddleOCR parser${parserTerms[key] ?? ""}`,
-      s[key],
+      "Use graphics card",
+      "Use graphics card",
+      describe(),
+      s.paddle_use_gpu,
+    );
+  if (controls.processorCores)
+    add(
+      "workflow",
+      "PaddleOCR-VL processor cores",
+      "Processor cores",
+      describe(),
+      s.paddle_cpu_threads,
     );
   return entries;
 }

@@ -8,6 +8,7 @@ import type {
 import useModalDialog from "../../hooks/useModalDialog";
 import { MAX_STEP_LABEL_CHARS } from "./editorState";
 import AnalyzerChoice, { type AnalyzerSelection } from "./AnalyzerChoice";
+import ReportIssueLink from "../ReportIssueLink";
 
 export type StepContextPreset =
   "standard" | "input" | "prior_reports" | "isolated";
@@ -381,6 +382,7 @@ function AddStepDialog({
                   >
                     Try again
                   </button>
+                  <ReportIssueLink />
                 </div>
               )}
 
@@ -617,6 +619,7 @@ function AddStepDialog({
               className="mb-3 text-xs text-red-700 dark:text-red-300"
             >
               Could not copy this step: {submitError}
+              <ReportIssueLink />
             </p>
           )}
           <div className="flex items-center justify-between gap-3">

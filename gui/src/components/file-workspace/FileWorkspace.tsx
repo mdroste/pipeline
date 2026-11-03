@@ -30,6 +30,7 @@ import FileIcon from "./FileIcon";
 import { isDirty, useFileBuffers } from "./useFileBuffers";
 import useFileChanges from "./useFileChanges";
 import "./files.css";
+import ReportIssueLink from "../ReportIssueLink";
 const FilePane = lazy(() => import("./FilePane"));
 export interface FilePassage {
   path: string;
@@ -525,6 +526,7 @@ export default function FileWorkspace({
       {error && (
         <p role="alert" className="file-error">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       {tabs

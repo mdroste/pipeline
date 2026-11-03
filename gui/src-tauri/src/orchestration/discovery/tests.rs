@@ -2,6 +2,8 @@ use super::*;
 use crate::orchestration::{definition::*, state::Progress};
 use std::io::Read as _;
 
+mod repair;
+
 fn fixture(mode: Mode, count: usize) -> Portfolio {
     let mut d = Definition {
         mode,
@@ -516,6 +518,7 @@ async fn recovered_failure_is_durable_before_discovery_classifies_it() {
         active: Mutex::new(std::collections::HashMap::new()),
         stopping: AtomicBool::new(false),
         background: AtomicBool::new(false),
+        listening: AtomicBool::new(true),
         _owner: std::fs::File::create(temp.path().join("owner.lock")).unwrap(),
         app: None,
     };
@@ -585,6 +588,7 @@ fn coordinator(temp: &tempfile::TempDir) -> Arc<Coordinator> {
         active: Mutex::new(std::collections::HashMap::new()),
         stopping: AtomicBool::new(false),
         background: AtomicBool::new(false),
+        listening: AtomicBool::new(true),
         _owner: std::fs::File::create(temp.path().join("owner.lock")).unwrap(),
         app: None,
     })
@@ -598,7 +602,7 @@ fn started(c: &Coordinator) -> (crate::workbench::store::Store, Portfolio) {
     let b = crate::workbench::tasks::binding(&w, &session).unwrap();
     let mut p = fixture(Mode::Unsupervised, 50);
     p.run.workspace_id = b.workspace_id.clone().unwrap();
-    p.run.source_authority = research::authority(&w, &session).unwrap();
+    p.run.source_authority = research::source_authority(&w, &session).unwrap();
     p.run.source_session_id = session;
     p.run.source_scope = store::Scope {
         session_id: Some(b.session_id),

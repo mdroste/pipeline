@@ -86,6 +86,19 @@ fn skipped_step_ids(outputs: &[crate::models::StepOutput]) -> std::collections::
         .collect()
 }
 
+/// Analyzers have no output schema: validation forbids one. Their output is
+/// reusable when the same pinned check wrote a readable JSON result.
+fn analyzer_output_compatible(
+    step: &crate::pipeline_config::StepConfig,
+    output: &crate::models::StepOutput,
+) -> bool {
+    step.analyzer.as_ref().is_some_and(|spec| {
+        output.structured_json
+            && output.model == format!("{}@{}", spec.id, spec.version)
+            && serde_json::from_str::<serde_json::Value>(&output.raw_text).is_ok()
+    })
+}
+
 pub(in crate::commands) fn incompatible_reuse_ids(
     config: &crate::pipeline_config::PipelineConfig,
     outputs: &[crate::models::StepOutput],
@@ -113,6 +126,7 @@ pub(in crate::commands) fn incompatible_reuse_ids(
                     .map(crate::pipeline::structured::resolve_schema_reference);
                 !prior.is_empty()
                     && prior.iter().all(|output| match resolved_schema.as_ref() {
+                        None if !step.kind.is_model() => analyzer_output_compatible(step, output),
                         Some(Ok(schema)) => {
                             output.structured_json
                                 && crate::pipeline::structured::canonicalize(

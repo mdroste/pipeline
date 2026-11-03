@@ -203,7 +203,9 @@ Validation reports unknown fields, broken dependencies, unsupported
 connections or tools, and file access the workflow isn't allowed. A workflow
 also needs at least one enabled step set to Sequential, which writes the
 report. Older
-exports are converted to the current format, version 11.
+exports are converted to the current format, version 11, and read what they
+read when imported in the app. Validation also warns about a step that reads
+nothing from the run.
 
 ### Give a step the document
 

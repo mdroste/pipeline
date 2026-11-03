@@ -3,6 +3,11 @@ import { useCallback, useState } from "react";
 import type { EngineStatus, Settings } from "../../lib/types";
 
 import EnginesPanel from "../EnginesPanel";
+import {
+  NO_PARSER_CONTROLS,
+  parserControls,
+  type ParserControls,
+} from "./search";
 
 import {
   selectClass,
@@ -15,28 +20,26 @@ export function ExtractionSection({
   settings,
   setSettings,
   onSystemChange,
+  knownControls = NO_PARSER_CONTROLS,
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
   onSystemChange?: () => void;
+  /** Lets a search result reach its control before the engine list reloads. */
+  knownControls?: ParserControls;
 }) {
   const [paddleInstalled, setPaddleInstalled] = useState(false);
-  const [gpuInstalled, setGpuInstalled] = useState(false);
-  // Only Windows lists this component, and only Windows reads pages with the
-  // processor.
-  const [gpuListed, setGpuListed] = useState(false);
+  const [
+    { graphicsCard: gpuInstalled, processorCores: gpuListed },
+    setControls,
+  ] = useState(knownControls);
   const handleEngineStatusChange = useCallback((engines: EngineStatus[]) => {
     setPaddleInstalled(
       engines.some(
         (engine) => engine.id === "paddleocr-vl-parser" && engine.installed,
       ),
     );
-    setGpuListed(engines.some((engine) => engine.id === "paddleocr-vl-gpu"));
-    setGpuInstalled(
-      engines.some(
-        (engine) => engine.id === "paddleocr-vl-gpu" && engine.installed,
-      ),
-    );
+    setControls(parserControls(engines));
   }, []);
   const manualMethods = [
     {
@@ -44,7 +47,7 @@ export function ExtractionSection({
       label: "Local parser: PaddleOCR-VL 1.6 Full Parser",
       quality: "Best quality",
       qualityClass:
-        "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300",
+        "bg-gray-800 text-white dark:bg-neutral-300 dark:text-neutral-900",
       description:
         "Keeps reading order, headings, equations, and tables, including tables that span pages.",
     },
@@ -53,7 +56,7 @@ export function ExtractionSection({
       label: "Selected model",
       quality: "High quality",
       qualityClass:
-        "bg-blue-100 text-blue-700 dark:bg-blue-950/70 dark:text-blue-300",
+        "bg-gray-200 text-gray-800 dark:bg-neutral-700 dark:text-neutral-100",
       description:
         "Reads the PDF a few pages at a time. It can lose more detail than PaddleOCR-VL, takes longer, and adds model costs.",
     },
@@ -124,7 +127,7 @@ export function ExtractionSection({
             <div className="relative space-y-1.5 pl-4">
               <div
                 aria-hidden="true"
-                className="absolute bottom-3 left-[3px] top-3 w-0.5 rounded-full bg-gradient-to-b from-emerald-500 via-blue-400 to-gray-300 dark:from-emerald-400 dark:via-blue-500 dark:to-neutral-600"
+                className="absolute bottom-3 left-[3px] top-3 w-0.5 rounded-full bg-gradient-to-b from-gray-700 via-gray-400 to-gray-200 dark:from-neutral-300 dark:via-neutral-500 dark:to-neutral-700"
               />
               {manualMethods.map(
                 ({ value, label, quality, qualityClass, description }) => (
@@ -215,7 +218,7 @@ export function ExtractionSection({
                 {gpuListed && (
                   <Field
                     label="Processor cores"
-                    help="How many cores read pages when your graphics card isn't used. More cores leave less for other programs. Saved results are kept when you change this."
+                    help="How many cores lay out and read pages. When your graphics card reads pages, this applies to layout only. More cores leave less for other programs. Saved results are kept when you change this."
                   >
                     <select
                       aria-label="PaddleOCR-VL processor cores"

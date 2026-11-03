@@ -1,8 +1,7 @@
 //! Saved transitions and completion adoption; distinct from restart recovery.
 use super::store::{now, Result, TaskRun};
 use super::{adapters, discovery, missions, state, Coordinator};
-use serde_json::{json, Value};
-use tauri::Emitter;
+use serde_json::Value;
 
 impl Coordinator {
     pub(crate) async fn save(&self, run: &mut TaskRun, kind: &str, detail: &str) -> Result<()> {
@@ -61,14 +60,9 @@ impl Coordinator {
                 || run.state == "attention"
                 || needs_input)
         {
-            if let Some(app) = &self.app {
-                let _ = app.emit(
-                    "tasks:notice",
-                    json!({"id":run.id,"name":run.name,"state":run.state,"reason":run.reason}),
-                );
-                // The shell applies notification preferences to this notice,
-                // including when the main window is hidden in background mode.
-            }
+            // The shell applies notification preferences to this notice,
+            // including when the main window is hidden in background mode.
+            self.announce("tasks:notice", run.notice());
         }
         Ok(())
     }
@@ -97,11 +91,10 @@ impl Coordinator {
                 receipt.state = "failed".into();
                 receipt.output = Some(adapters::output_preview(&value));
                 receipt.error = Some(message.clone());
-                if adapters::oversized_reply(&value) {
-                    // That turn did finish, so the conversation moved past it.
-                    if let Some(cursor) = value.get("cursor").and_then(Value::as_str) {
-                        run.scope.session_cursor = Some(cursor.into());
-                    }
+                // This run's own turn moved the conversation past the recorded
+                // cursor, so a Retry starts from where that turn left it.
+                if let Some(cursor) = value.get("cursor").and_then(Value::as_str) {
+                    run.scope.session_cursor = Some(cursor.into());
                 }
                 if !["cancelled", "cancelling"].contains(&run.state.as_str()) {
                     run.state = "attention".into();

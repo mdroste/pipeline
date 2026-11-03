@@ -19,6 +19,7 @@ import type {
   EffectiveHarness,
   PaperWithRevision,
 } from "../lib/workbenchTypes";
+import ReportIssueLink from "./ReportIssueLink";
 
 /**
  * The two ways to bring a document into a conversation. "import" adds files
@@ -180,6 +181,7 @@ export default function WorkspaceAttachmentsPanel({
           className="whitespace-pre-wrap text-ui-meta text-danger"
         >
           {error}
+          <ReportIssueLink />
         </p>
       )}
       {loading ? (

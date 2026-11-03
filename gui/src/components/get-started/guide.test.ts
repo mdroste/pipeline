@@ -33,7 +33,7 @@ describe("connection rows", () => {
           requiresOpenaiAuth: false,
         },
         epoch: 1,
-        version: "0.147.0",
+        version: "0.165.0",
         loginInProgress: false,
       },
       accountError: null,

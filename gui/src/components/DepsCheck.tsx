@@ -2,9 +2,15 @@ import { useId } from "react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import type { DepsReport } from "../lib/types";
 import useModalDialog from "../hooks/useModalDialog";
+import { Button, Skeleton, Spinner } from "../ui";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
-  report: DepsReport;
+  /** The latest result, kept on screen while a newer check runs. */
+  report: DepsReport | null;
+  checking?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
   onDismiss: () => void;
   onOpenPdfSettings?: () => void;
 }
@@ -36,7 +42,7 @@ const TONE_STYLES: Record<
   { row: string; icon: string; badge: string; text: string }
 > = {
   success: {
-    row: "bg-emerald-50/70 dark:bg-emerald-950/20",
+    row: "bg-gray-50/70 dark:bg-neutral-800/30",
     icon: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400",
     badge:
       "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300",
@@ -300,22 +306,28 @@ function DependencyRow({
   );
 }
 
-function SectionStatus({ ready }: { ready: boolean }) {
+function SectionStatus({
+  ready,
+  checking,
+}: {
+  ready: boolean;
+  checking: boolean;
+}) {
+  const tone = checking ? "neutral" : ready ? "success" : "danger";
   return (
     <span
-      className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-        ready
-          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"
-          : "bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300"
-      }`}
+      className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${TONE_STYLES[tone].badge}`}
     >
-      {ready ? "Ready" : "Needs attention"}
+      {checking ? "Checking" : ready ? "Ready" : "Needs attention"}
     </span>
   );
 }
 
 export default function DepsCheck({
   report,
+  checking: checkRunning = false,
+  error,
+  onRetry,
   onDismiss,
   onOpenPdfSettings,
 }: Props) {
@@ -324,8 +336,13 @@ export default function DepsCheck({
   const modelsTitleId = useId();
   const pdfTitleId = useId();
   const dialogRef = useModalDialog<HTMLDivElement>(onDismiss);
-  const providerDeps = report.deps.filter(isProviderDependency);
-  const pdfDeps = report.deps.filter((dep) => !isProviderDependency(dep));
+  // The window opens before the first result arrives, so an empty report with
+  // no error means a check is still on its way.
+  const checking = checkRunning || (!report && !error);
+  const failed = !report && !checking;
+  const deps = report?.deps ?? [];
+  const providerDeps = deps.filter(isProviderDependency);
+  const pdfDeps = deps.filter((dep) => !isProviderDependency(dep));
   const visible = (dep: Dependency) =>
     !HIDDEN_DEPENDENCIES.has(dep.name) ||
     (dep.required &&
@@ -339,7 +356,7 @@ export default function DepsCheck({
   const modelAccessReady = providerDeps.every(
     (dep) => !dep.required || dependencyAvailable(dep),
   );
-  const bundledPdfUnavailable = report.deps.some(
+  const bundledPdfUnavailable = deps.some(
     (dep) =>
       BUNDLED_PDF_DEPENDENCIES.has(dep.name) &&
       dep.required &&
@@ -348,7 +365,7 @@ export default function DepsCheck({
   const pdfReady =
     !bundledPdfUnavailable &&
     pdfDeps.every((dep) => !dep.required || dependencyAvailable(dep));
-  const hasBlockers = !report.ready;
+  const hasBlockers = report ? !report.ready : false;
   const blockerMessage =
     !modelAccessReady && !pdfReady
       ? "Model access and PDF parsing need attention."
@@ -384,93 +401,124 @@ export default function DepsCheck({
           id={descriptionId}
           className="mt-1 text-sm text-gray-600 dark:text-gray-300"
         >
-          {hasBlockers
-            ? "Complete the highlighted setup before running a review."
-            : "Pipeline has the model access and parsing tools it needs."}
+          {checking ? (
+            <Spinner inline label="Checking dependencies…" />
+          ) : failed ? (
+            "Pipeline could not finish checking its dependencies."
+          ) : hasBlockers ? (
+            "Complete the highlighted setup before running a review."
+          ) : (
+            "Pipeline has the model access and parsing tools it needs."
+          )}
         </p>
 
-        <div className="mt-5 space-y-4">
-          <section
-            aria-labelledby={modelsTitleId}
-            className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700"
+        {failed ? (
+          <p
+            role="alert"
+            className="mt-5 rounded-xl bg-red-50/80 px-3.5 py-3 text-sm [overflow-wrap:anywhere] text-red-700 dark:bg-red-950/25 dark:text-red-300"
           >
-            <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50/80 px-3.5 py-3 dark:border-gray-700 dark:bg-gray-800/60">
-              <div>
-                <h3
-                  id={modelsTitleId}
-                  className="text-sm font-semibold text-gray-900 dark:text-gray-100"
-                >
-                  Model access
-                </h3>
-                <p className="mt-0.5 text-xs leading-5 text-gray-600 dark:text-gray-300">
-                  Each provider a review uses needs a subscription or API key.
-                </p>
-              </div>
-              <SectionStatus ready={modelAccessReady} />
-            </div>
-            <div className="p-3">
-              <ul className="grid grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] gap-2">
-                {visibleProviders.map((dep) => (
-                  <ProviderTile key={dep.name} dep={dep} />
-                ))}
-              </ul>
-              {providerProblems.map((dep) => {
-                const label = PROVIDER_LABELS[dep.name];
-                return (
-                  <p
-                    key={dep.name}
-                    className="mt-2 text-xs leading-5 text-gray-600 dark:text-gray-300"
+            {error}
+            <ReportIssueLink />
+          </p>
+        ) : (
+          <div className="mt-5 space-y-4">
+            <section
+              aria-labelledby={modelsTitleId}
+              aria-busy={checking}
+              className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700"
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50/80 px-3.5 py-3 dark:border-gray-700 dark:bg-gray-800/60">
+                <div>
+                  <h3
+                    id={modelsTitleId}
+                    className="text-sm font-semibold text-gray-900 dark:text-gray-100"
                   >
-                    {!dep.hint.includes(label) && (
-                      <>
-                        <span className="font-medium text-gray-900 dark:text-gray-100">
-                          {label}:
-                        </span>{" "}
-                      </>
-                    )}
-                    <DependencyHint dep={dep} />
+                    Model access
+                  </h3>
+                  <p className="mt-0.5 text-xs leading-5 text-gray-600 dark:text-gray-300">
+                    Each provider a review uses needs a subscription or API key.
                   </p>
-                );
-              })}
-            </div>
-          </section>
-
-          <section
-            aria-labelledby={pdfTitleId}
-            className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700"
-          >
-            <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50/80 px-3.5 py-3 dark:border-gray-700 dark:bg-gray-800/60">
-              <div>
-                <h3
-                  id={pdfTitleId}
-                  className="text-sm font-semibold text-gray-900 dark:text-gray-100"
-                >
-                  PDF parsing
-                </h3>
-                <p className="mt-0.5 text-xs leading-5 text-gray-600 dark:text-gray-300">
-                  Tools for reading PDF inputs.
-                </p>
+                </div>
+                <SectionStatus ready={modelAccessReady} checking={checking} />
               </div>
-              <SectionStatus ready={pdfReady} />
-            </div>
-            <div className="divide-y divide-gray-200/80 dark:divide-gray-700/80">
-              {pdfDeps.filter(visible).map((dep) => (
-                <DependencyRow
-                  key={dep.name}
-                  dep={dep}
-                  onOpenPdfSettings={onOpenPdfSettings}
+              <div className="p-3">
+                {report ? (
+                  <ul className="grid grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] gap-2">
+                    {visibleProviders.map((dep) => (
+                      <ProviderTile key={dep.name} dep={dep} />
+                    ))}
+                  </ul>
+                ) : (
+                  <Skeleton label="Checking model access" lines={2} />
+                )}
+                {providerProblems.map((dep) => {
+                  const label = PROVIDER_LABELS[dep.name];
+                  return (
+                    <p
+                      key={dep.name}
+                      className="mt-2 text-xs leading-5 text-gray-600 dark:text-gray-300"
+                    >
+                      {!dep.hint.includes(label) && (
+                        <>
+                          <span className="font-medium text-gray-900 dark:text-gray-100">
+                            {label}:
+                          </span>{" "}
+                        </>
+                      )}
+                      <DependencyHint dep={dep} />
+                    </p>
+                  );
+                })}
+              </div>
+            </section>
+
+            <section
+              aria-labelledby={pdfTitleId}
+              aria-busy={checking}
+              className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700"
+            >
+              <div className="flex items-start justify-between gap-4 border-b border-gray-200 bg-gray-50/80 px-3.5 py-3 dark:border-gray-700 dark:bg-gray-800/60">
+                <div>
+                  <h3
+                    id={pdfTitleId}
+                    className="text-sm font-semibold text-gray-900 dark:text-gray-100"
+                  >
+                    PDF parsing
+                  </h3>
+                  <p className="mt-0.5 text-xs leading-5 text-gray-600 dark:text-gray-300">
+                    Tools for reading PDF inputs.
+                  </p>
+                </div>
+                <SectionStatus ready={pdfReady} checking={checking} />
+              </div>
+              {report ? (
+                <div className="divide-y divide-gray-200/80 dark:divide-gray-700/80">
+                  {pdfDeps.filter(visible).map((dep) => (
+                    <DependencyRow
+                      key={dep.name}
+                      dep={dep}
+                      onOpenPdfSettings={onOpenPdfSettings}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <Skeleton
+                  label="Checking PDF parsing"
+                  lines={2}
+                  className="p-3"
                 />
-              ))}
-            </div>
-          </section>
-        </div>
+              )}
+            </section>
+          </div>
+        )}
 
         <div className="mt-5 flex items-center justify-end gap-2 border-t border-gray-200 pt-4 dark:border-gray-800">
-          {hasBlockers && (
+          {hasBlockers && !checking && (
             <p className="mr-auto text-sm text-red-600 dark:text-red-400">
               {blockerMessage}
             </p>
           )}
+          {failed && onRetry && <Button onClick={onRetry}>Try again</Button>}
           <button
             type="button"
             onClick={onDismiss}

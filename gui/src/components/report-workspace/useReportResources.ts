@@ -11,6 +11,7 @@ import type { OutputView, WorkspaceTab } from "./types";
 
 interface ArtifactContent {
   text: string | null;
+  truncated?: boolean;
 }
 interface Props {
   runId?: string | null;
@@ -37,6 +38,7 @@ export default function useReportResources({
   );
   const [reportError, setReportError] = useState<string | null>(null);
   const [markdownError, setMarkdownError] = useState<string | null>(null);
+  const [markdownTruncated, setMarkdownTruncated] = useState(false);
   const [runManifest, setRunManifest] = useState<RunManifest | null>(null);
 
   useEffect(() => {
@@ -69,6 +71,7 @@ export default function useReportResources({
     setOutputView("clean");
     setReportError(null);
     setMarkdownError(null);
+    setMarkdownTruncated(false);
     if (!runId || (initialReport && initialMarkdown)) {
       setLoading(false);
       return;
@@ -99,6 +102,7 @@ export default function useReportResources({
         if (artifact.status === "fulfilled") {
           setMarkdown(artifact.value.text ?? "");
           setMarkdownError(null);
+          setMarkdownTruncated(Boolean(artifact.value.truncated));
         } else {
           setMarkdownError(
             artifact.reason instanceof Error
@@ -118,5 +122,13 @@ export default function useReportResources({
     };
   }, [initialMarkdown, initialReport, initialSourceSelection, runId]);
 
-  return { report, markdown, loading, reportError, markdownError, runManifest };
+  return {
+    report,
+    markdown,
+    markdownTruncated,
+    loading,
+    reportError,
+    markdownError,
+    runManifest,
+  };
 }

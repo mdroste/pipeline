@@ -27,13 +27,32 @@ export function reportTitle(
   return "Pipeline report";
 }
 
-export function splitUnexpectedPreamble(markdown: string, paperTitle = "") {
+/**
+ * Whether a saved report predates the quality ledger. Only those can hold stray
+ * narration or unmarked run details. A report that could not be loaded proves
+ * nothing, so it is not cleaned on a guess.
+ */
+export function isLegacyReport(report: PipelineReport | null): boolean {
+  return report !== null && (report.quality?.schema_version ?? 0) === 0;
+}
+
+/**
+ * Remove Pipeline's run details from a report. The rest is for reports from
+ * before the quality ledger: a newer report's body is the model's text, so it
+ * may open with "I agree" or have a section called "Run summary of the results".
+ */
+export function splitUnexpectedPreamble(
+  markdown: string,
+  paperTitle: string,
+  legacyReport: boolean,
+) {
   let clean = markdown
     .replace(
       /<!-- PIPELINE RUN DETAILS START -->[\s\S]*?<!-- PIPELINE RUN DETAILS END -->\s*/g,
       "",
     )
     .trim();
+  if (!legacyReport) return { clean, preamble: "" };
   const narration: string[] = [];
 
   const firstHeading = clean.search(/^#\s+\S/m);
@@ -173,6 +192,17 @@ const counted = (count: number, one: string, many: string) =>
   count === 1 ? `1 ${one}` : `${count} ${many}`;
 
 /**
+ * The status to show once the report text has been checked. A stored `done` or
+ * `degraded` both claim a finished report, which a missing one contradicts.
+ */
+export function statusWithReportProblem(
+  status: string,
+  problem: CanonicalReportProblem | null,
+): string {
+  return problem && runFinished(status) ? "partial" : status;
+}
+
+/**
  * How a report's stored status reads to a researcher. `degraded` stays the
  * stored value, but it also covers a single misquotation or a retry that
  * succeeded, so only a problem with the reading of the document is announced
@@ -208,17 +238,18 @@ export function reportStatusDisplay(
     };
 
   // Without the quality record there is no way to rule out a coverage problem.
-  const limited =
-    !quality ||
-    (quality.extraction_notes ?? []).some(
-      (note) => !note.startsWith(WITHHELD_IMAGE_TEXT_NOTE),
-    );
+  const readingLimited = (quality?.extraction_notes ?? []).some(
+    (note) => !note.startsWith(WITHHELD_IMAGE_TEXT_NOTE),
+  );
+  const inputSkipped = (quality?.coverage_notes ?? []).length > 0;
+  const limited = !quality || readingLimited || inputSkipped;
   const quotes =
     (quality?.partially_verified_evidence ?? 0) +
     (quality?.unverified_evidence ?? 0);
   const manual = quality?.manual_review_items ?? 0;
   const notes = [
-    ...(quality && limited ? ["Part of the document may be incomplete"] : []),
+    ...(readingLimited ? ["Part of the document may be incomplete"] : []),
+    ...(inputSkipped ? ["Some files or items were not read"] : []),
     ...(quotes > 0
       ? [`${counted(quotes, "quote needs", "quotes need")} checking`]
       : []),
@@ -248,6 +279,11 @@ export function reportStatusDisplay(
  */
 export function listedRunStatus(status: string): string {
   return status === "degraded" ? "done" : status;
+}
+
+/** Whether a run produced its report: the status a list shows as done. */
+export function runFinished(status: string): boolean {
+  return listedRunStatus(status) === "done";
 }
 
 /** Remove Pipeline's private markdown boundary tokens before presentation. */

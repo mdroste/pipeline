@@ -6,6 +6,7 @@ import type {
   WorkspaceModelCatalog,
   WorkspaceRateLimits,
 } from "../lib/workbenchTypes";
+import ReportIssueLink from "./ReportIssueLink";
 
 /** Names a rate-limit window by its length, such as "7-day limit". */
 function windowLimitLabel(minutes: number | null) {
@@ -226,6 +227,7 @@ export default function ChatgptConnection({
       {error && (
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           {error}
+          <ReportIssueLink />
         </p>
       )}
     </div>

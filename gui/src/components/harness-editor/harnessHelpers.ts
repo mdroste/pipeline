@@ -322,7 +322,7 @@ export const ACCESS_ROWS: AccessRow[] = [
     key: "contextBudgetBytes",
     label: "Source text limit",
     description:
-      "Maximum amount of paper text and notes included with each message.",
+      "Maximum amount of paper text and notes included with each message. Instructions and sources together stay under 256 KiB, so the largest limits can be shortened.",
     builtIn: 65536,
     kind: "select",
     options: [

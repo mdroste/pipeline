@@ -195,7 +195,11 @@ pub(super) struct BoundedOutput {
     pub(super) stderr_truncated: bool,
 }
 
-pub(super) fn drain_capped<R: std::io::Read>(mut reader: R, limit: usize) -> (Vec<u8>, bool) {
+pub(super) fn drain_capped<R: std::io::Read>(
+    mut reader: R,
+    limit: usize,
+    mut observe: impl FnMut(&[u8]),
+) -> (Vec<u8>, bool) {
     let mut kept = Vec::new();
     let mut truncated = false;
     let mut chunk = [0u8; 16 * 1024];
@@ -204,6 +208,7 @@ pub(super) fn drain_capped<R: std::io::Read>(mut reader: R, limit: usize) -> (Ve
             Ok(0) | Err(_) => break,
             Ok(count) => count,
         };
+        observe(&chunk[..count]);
         let remaining = limit.saturating_sub(kept.len());
         let take = count.min(remaining);
         kept.extend_from_slice(&chunk[..take]);
@@ -212,14 +217,88 @@ pub(super) fn drain_capped<R: std::io::Read>(mut reader: R, limit: usize) -> (Ve
     (kept, truncated)
 }
 
+/// The most of one stdout line handed to an observer.
+const MAX_OBSERVED_LINE_BYTES: usize = 4 * 1024;
+/// Lines waiting for the poll loop. A longer backlog loses lines rather than
+/// stalling the child on its own pipe.
+const MAX_OBSERVED_LINE_BACKLOG: usize = 256;
+
+/// Split a child's output into bounded lines for the poll loop.
+struct LineForwarder {
+    sender: std::sync::mpsc::SyncSender<String>,
+    line: Vec<u8>,
+}
+
+impl LineForwarder {
+    fn push(&mut self, mut bytes: &[u8]) {
+        while let Some(end) = bytes.iter().position(|byte| *byte == b'\n') {
+            self.extend(&bytes[..end]);
+            self.finish_line();
+            bytes = &bytes[end + 1..];
+        }
+        self.extend(bytes);
+    }
+
+    fn extend(&mut self, bytes: &[u8]) {
+        let room = MAX_OBSERVED_LINE_BYTES.saturating_sub(self.line.len());
+        self.line.extend_from_slice(&bytes[..bytes.len().min(room)]);
+    }
+
+    fn finish_line(&mut self) {
+        let line = String::from_utf8_lossy(&self.line);
+        let _ = self
+            .sender
+            .try_send(line.trim_end_matches('\r').to_string());
+        self.line.clear();
+    }
+
+    fn finish(&mut self) {
+        if !self.line.is_empty() {
+            self.finish_line();
+        }
+    }
+}
+
+fn deliver_lines(
+    lines: &std::sync::mpsc::Receiver<String>,
+    on_stdout_line: &mut Option<&mut dyn FnMut(&str)>,
+) {
+    if let Some(on_stdout_line) = on_stdout_line {
+        for line in lines.try_iter() {
+            on_stdout_line(&line);
+        }
+    }
+}
+
 /// Run a blocking extraction subprocess with bounded capture, cancellation,
 /// timeout, process-tree termination, and PID cleanup.
 pub(super) fn run_bounded_output(
+    command: StdCommand,
+    label: &str,
+    timeout: std::time::Duration,
+    output_limit: usize,
+    watched_output_dir: Option<&Path>,
+) -> Result<BoundedOutput, String> {
+    run_bounded_output_observed(
+        command,
+        label,
+        timeout,
+        output_limit,
+        watched_output_dir,
+        None,
+    )
+}
+
+/// Like `run_bounded_output`, and hands each stdout line to `on_stdout_line`
+/// while the child runs. The callback runs on this thread, inside its run
+/// scope, so it can log. Lines are best effort and stdout is still captured.
+pub(super) fn run_bounded_output_observed(
     mut command: StdCommand,
     label: &str,
     timeout: std::time::Duration,
     output_limit: usize,
     watched_output_dir: Option<&Path>,
+    mut on_stdout_line: Option<&mut dyn FnMut(&str)>,
 ) -> Result<BoundedOutput, String> {
     use std::process::Stdio;
 
@@ -240,15 +319,29 @@ pub(super) fn run_bounded_output(
     let stderr = child.stderr.take();
     let (stdout_tx, stdout_rx) = std::sync::mpsc::sync_channel(1);
     let (stderr_tx, stderr_rx) = std::sync::mpsc::sync_channel(1);
+    let (line_tx, line_rx) = std::sync::mpsc::sync_channel(MAX_OBSERVED_LINE_BACKLOG);
+    let mut forwarder = on_stdout_line.is_some().then(|| LineForwarder {
+        sender: line_tx,
+        line: Vec::new(),
+    });
     let stdout_thread = std::thread::spawn(move || {
         let result = stdout
-            .map(|pipe| drain_capped(pipe, output_limit))
+            .map(|pipe| {
+                drain_capped(pipe, output_limit, |bytes| {
+                    if let Some(forwarder) = forwarder.as_mut() {
+                        forwarder.push(bytes);
+                    }
+                })
+            })
             .unwrap_or_default();
+        if let Some(forwarder) = forwarder.as_mut() {
+            forwarder.finish();
+        }
         let _ = stdout_tx.send(result);
     });
     let stderr_thread = std::thread::spawn(move || {
         let result = stderr
-            .map(|pipe| drain_capped(pipe, output_limit))
+            .map(|pipe| drain_capped(pipe, output_limit, |_| {}))
             .unwrap_or_default();
         let _ = stderr_tx.send(result);
     });
@@ -256,6 +349,7 @@ pub(super) fn run_bounded_output(
     let started = std::time::Instant::now();
     let mut last_output_scan = std::time::Instant::now();
     let result = loop {
+        deliver_lines(&line_rx, &mut on_stdout_line);
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
             Ok(None) if crate::commands::is_cancelled() => {
@@ -351,6 +445,7 @@ pub(super) fn run_bounded_output(
     if stderr_result.is_some() {
         let _ = stderr_thread.join();
     }
+    deliver_lines(&line_rx, &mut on_stdout_line);
     let (stdout, stdout_truncated) = stdout_result
         .ok_or_else(|| format!("{label} stdout pipe did not close after termination"))?;
     let (stderr, stderr_truncated) = stderr_result

@@ -10,14 +10,24 @@ export async function confirmRerunRequirements(
   runId: string,
   onlyFailed: boolean,
 ): Promise<Record<string, string> | null> {
-  const { secrets, notice } = await appClient.rerunRequirements(
-    runId,
-    onlyFailed,
-  );
+  const {
+    secrets,
+    notice,
+    agent_notice: agentNotice,
+  } = await appClient.rerunRequirements(runId, onlyFailed);
   if (
     notice &&
     !(await confirmDialog(notice, {
       title: "Review design not saved",
+      confirmLabel: "Continue",
+    }))
+  ) {
+    return null;
+  }
+  if (
+    agentNotice &&
+    !(await confirmDialog(agentNotice, {
+      title: "Same agents as before",
       confirmLabel: "Continue",
     }))
   ) {

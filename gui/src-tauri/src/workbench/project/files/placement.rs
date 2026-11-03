@@ -103,7 +103,7 @@ fn copy_exclusive(directory: &fs::File, from: &CStr, to: &CStr) -> io::Result<()
     let mut target = open_at(directory, to, flags, 0o600)?;
     let written = (|| {
         target.write_all(&bytes)?;
-        target.sync_all()?;
+        crate::safety::sync_file(&target)?;
         let mut check = Vec::new();
         open_at(directory, to, libc::O_RDONLY, 0)?.read_to_end(&mut check)?;
         if check != bytes {
@@ -186,6 +186,48 @@ mod tests {
             assert!(left.is_empty(), "{left:?}");
         }
         simulate(0);
+    }
+    /// A share can refuse `F_FULLFSYNC` on files and refuse any flush on folders.
+    #[test]
+    fn a_save_lands_where_the_full_flush_is_refused() {
+        let (_temp, safe, root) = folder();
+        fs::write(root.join("main.tex"), "before").unwrap();
+        let mode = safe.executable("main.tex").unwrap();
+        crate::safety::simulate_sync_failure(Some((libc::ENOTSUP, false)));
+        let saved = safe.replace(
+            "main.tex",
+            Some(&hash(b"before")),
+            mode,
+            Some(b"after"),
+            mode,
+            "save",
+        );
+        let cleared = safe.clear_claim("main.tex", "save");
+        crate::safety::simulate_sync_failure(None);
+        saved.unwrap();
+        cleared.unwrap();
+        assert_eq!(fs::read_to_string(root.join("main.tex")).unwrap(), "after");
+    }
+    /// The file's own flush comes before anything lands, so a real failure
+    /// there stops the save with the original in its recovery file.
+    #[test]
+    fn a_failed_flush_of_the_new_bytes_stops_the_save() {
+        let (_temp, safe, root) = folder();
+        fs::write(root.join("main.tex"), "before").unwrap();
+        let mode = safe.executable("main.tex").unwrap();
+        crate::safety::simulate_sync_failure(Some((libc::EIO, true)));
+        let saved = safe.replace(
+            "main.tex",
+            Some(&hash(b"before")),
+            mode,
+            Some(b"after"),
+            mode,
+            "save",
+        );
+        crate::safety::simulate_sync_failure(None);
+        assert!(saved.is_err());
+        assert!(safe.recover_claim("main.tex", "save").unwrap());
+        assert_eq!(fs::read_to_string(root.join("main.tex")).unwrap(), "before");
     }
     #[test]
     fn no_method_ever_replaces_an_existing_file() {

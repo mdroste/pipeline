@@ -218,6 +218,7 @@ fn zero_match_fan_out_is_terminal_and_unblocks_dependent_step() {
         &bus
     )
     .unwrap()
+    .units
     .is_empty());
 
     let deps = resolve_dependencies(&refs);
@@ -245,7 +246,7 @@ fn zero_match_fan_out_returns_visible_skipped_output() {
         .enable_all()
         .build()
         .unwrap();
-    let (outputs, failures, failed_calls) = runtime
+    let wave = runtime
         .block_on(run_parallel_wave(
             &bus,
             &steps,
@@ -269,22 +270,17 @@ fn zero_match_fan_out_returns_visible_skipped_output() {
             &shared_context_pool,
         ))
         .unwrap();
-    assert!(failures.is_empty());
-    assert!(failed_calls.is_empty());
+    assert!(wave.failures.is_empty());
+    assert!(wave.failed_calls.is_empty());
+    assert!(wave.coverage_notes.is_empty());
+    let outputs = wave.outputs;
     assert_eq!(outputs.len(), 1);
     assert!(outputs[0].skipped);
     assert_eq!(outputs[0].step_id, "fan");
     assert!(outputs[0].raw_text.contains("matched no files"));
 }
 
-type WaveResult = Result<
-    (
-        Vec<StepOutput>,
-        Vec<crate::models::StepFailure>,
-        Vec<crate::models::StepCallRecord>,
-    ),
-    String,
->;
+type WaveOutcome = Result<super::super::parallel::WaveResult, String>;
 
 /// Runs one parallel wave with no provider calls possible: the worker
 /// semaphore is closed when `closed` is set, so a dispatched unit can only
@@ -294,7 +290,7 @@ fn run_wave_recording(
     prior_outputs: &[StepOutput],
     source: &std::path::Path,
     closed: bool,
-) -> (WaveResult, Vec<serde_json::Value>) {
+) -> (WaveOutcome, Vec<serde_json::Value>) {
     let settings = crate::settings::Settings::default();
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
     if closed {
@@ -367,7 +363,8 @@ fn fan_out_discovery_error_fails_only_its_own_step() {
     };
 
     let (result, passes) = run_wave_recording(&[&fan, &sibling], &[notes], temp.path(), false);
-    let (outputs, failures, _) = result.expect("a discovery error must not abort the wave");
+    let wave = result.unwrap_or_else(|_| panic!("a discovery error must not abort the wave"));
+    let (outputs, failures) = (wave.outputs, wave.failures);
 
     assert_eq!(outputs.len(), 1);
     assert_eq!(outputs[0].step_id, "sibling");
@@ -387,7 +384,8 @@ fn unit_that_stops_before_its_provider_call_reports_an_error_status() {
     let solo = make_step("solo", Phase::Parallel);
 
     let (result, passes) = run_wave_recording(&[&solo], &[], temp.path(), true);
-    let (outputs, failures, failed_calls) = result.unwrap();
+    let wave = result.unwrap_or_else(|error| panic!("{error}"));
+    let (outputs, failures, failed_calls) = (wave.outputs, wave.failures, wave.failed_calls);
 
     assert!(outputs.is_empty());
     assert!(failed_calls.is_empty(), "no provider call was made");
@@ -414,8 +412,9 @@ fn unit_preparation_error_fails_only_its_own_unit() {
     });
 
     let (result, passes) = run_wave_recording(&[&first, &second], &[], temp.path(), true);
-    let (outputs, mut failures, _) =
-        result.expect("a unit that cannot be prepared must not abort the wave");
+    let wave =
+        result.unwrap_or_else(|_| panic!("a unit that cannot be prepared must not abort the wave"));
+    let (outputs, mut failures) = (wave.outputs, wave.failures);
 
     assert!(outputs.is_empty());
     failures.sort_by(|a, b| a.step_id.cmp(&b.step_id));
@@ -515,4 +514,83 @@ fn dependents_of_finds_transitive_downstream() {
     assert!(deps.contains("s"));
     assert!(!deps.contains("b"));
     assert!(!deps.contains("a")); // seeds excluded
+}
+
+#[test]
+fn a_fan_out_stopped_by_its_limit_says_how_many_files_went_unread() {
+    let temp = tempfile::tempdir().unwrap();
+    for name in ["a.tex", "b.tex", "c.tex", "d.tex", "e.tex"] {
+        std::fs::write(temp.path().join(name), "text").unwrap();
+    }
+    let mut fan = make_step("fan", Phase::Parallel);
+    fan.label = "Chapter review".into();
+    fan.for_each = Some(crate::pipeline_config::ForEach {
+        glob: "*.tex".into(),
+        max: 3,
+        artifact: None,
+    });
+    let (result, _) = run_wave_recording(&[&fan], &[], temp.path(), true);
+    let wave = result.unwrap_or_else(|error| panic!("{error}"));
+    let (step_id, note) = &wave.coverage_notes[0];
+    assert_eq!(step_id, "fan");
+    assert_eq!(
+        note,
+        "Step 'Chapter review' ran on 3 of 5 matching files. It stops at 3, so 2 were not read."
+    );
+
+    let extraction = crate::models::ExtractionResult {
+        text: "input".into(),
+        method: "test".into(),
+        source_path: "input.md".into(),
+        paper_hash: "abc".into(),
+        quality_notes: Vec::new(),
+    };
+    let mut outputs = vec![StepOutput {
+        step_id: "fan/a_tex".into(),
+        raw_text: "reviewed".into(),
+        ..Default::default()
+    }];
+    super::super::run::record_coverage_notes(&mut outputs, wave.coverage_notes);
+    let saved: StepOutput =
+        serde_json::from_value(serde_json::to_value(&outputs[0]).unwrap()).unwrap();
+    assert_eq!(saved.coverage_note, outputs[0].coverage_note);
+    let quality = crate::output::build_report_quality(
+        &extraction,
+        None,
+        &crate::pipeline::orient::orientation_sample(&extraction.text),
+        &PipelineConfig {
+            steps: vec![fan],
+            ..crate::pipeline_config::workflow_template().unwrap().config
+        },
+        &[saved],
+        &[],
+        &Default::default(),
+    );
+    assert_eq!(quality.status, "degraded");
+    assert!(quality
+        .limitations
+        .iter()
+        .any(|note| note.contains("3 of 5")));
+    assert_eq!(
+        crate::output::status_label(&quality, "degraded"),
+        "Completed with limitations"
+    );
+    assert!(!crate::output::review_is_complete(&quality));
+}
+
+#[test]
+fn a_fan_out_inside_its_limit_records_no_coverage_note() {
+    let temp = tempfile::tempdir().unwrap();
+    std::fs::write(temp.path().join("a.tex"), "text").unwrap();
+    let mut fan = make_step("fan", Phase::Parallel);
+    fan.for_each = Some(crate::pipeline_config::ForEach {
+        glob: "*.tex".into(),
+        max: 1,
+        artifact: None,
+    });
+    let (result, _) = run_wave_recording(&[&fan], &[], temp.path(), true);
+    assert!(result
+        .unwrap_or_else(|error| panic!("{error}"))
+        .coverage_notes
+        .is_empty());
 }

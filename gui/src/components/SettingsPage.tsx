@@ -49,6 +49,7 @@ import {
   settingsSearchEntries,
   type SettingsSearchEntry,
 } from "./settings/search";
+import { useParserControls } from "./settings/useParserControls";
 import { confirmDialog } from "./DialogService";
 import type { DepsReport, Settings } from "../lib/types";
 import type { ThemePreference } from "../lib/theme";
@@ -57,6 +58,7 @@ import { router } from "../lib/router";
 import StorageSettings from "./StorageSettings";
 import WorkspaceResearchDataSettings from "./WorkspaceResearchDataSettings";
 import "./SettingsPage.css";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   onClose: () => void;
@@ -133,6 +135,7 @@ export default function SettingsPage({
   const [destination, setDestination] = useState<string | undefined>();
   const [focusKey, setFocusKey] = useState(0);
   const [saveScope, setSaveScope] = useState("");
+  const parserControls = useParserControls(query.trim().length > 0);
   const lastFocusedCard = useRef("");
   const sectionRef = useRef(section);
   const sectionUnfinishedRef = useRef(false);
@@ -237,7 +240,7 @@ export default function SettingsPage({
     );
   const pageInfo = SECTION_INFO[section];
   const results = searchSettings(
-    settingsSearchEntries(settings, preferences, theme),
+    settingsSearchEntries(settings, preferences, theme, parserControls),
     query,
   );
   const openResult = (entry: SettingsSearchEntry) =>
@@ -383,6 +386,7 @@ export default function SettingsPage({
                       key
                     </button>
                   ))}
+                  <ReportIssueLink />
                 </div>
               )}
               <div className="settings-page-body">
@@ -488,6 +492,7 @@ export default function SettingsPage({
                         settings={settings}
                         setSettings={setSettings}
                         onSystemChange={onSystemChange}
+                        knownControls={parserControls}
                       />
                       <ReviewSaveFeedback />
                     </SettingsCard>

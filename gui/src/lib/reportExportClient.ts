@@ -42,6 +42,9 @@ const REPORT_FORMAT_COMMANDS: Record<ReportFormat, string> = {
 };
 
 export const reportExportClient = {
+  /** The saved report in full, which `read_artifact` cuts for display. */
+  fullReport: (args: { runId: string }) =>
+    invoke<string>("read_full_report", args),
   saveMarkdown: (args: { markdown: string; suggestedName: string }) =>
     invoke<unknown>("save_report_md", args),
   /** Resolves to null when the save dialog is cancelled. */

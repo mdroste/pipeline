@@ -280,7 +280,7 @@ pub(super) fn collapse_findings_fan_out(
         // The dispatch cap limits model work, never the preserved source ledger.
         let mut complete_source = for_each.clone();
         complete_source.max = u32::MAX;
-        let Ok(elements) =
+        let Ok((elements, _)) =
             artifact_fan_out_elements(step, source, &complete_source, Some(&source_text), app)
         else {
             continue;

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { executionClient } from "../../lib/workbench/executionClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type { ResearchExecution } from "../../lib/workbenchTypes";
+import ReportIssueLink from "../ReportIssueLink";
 
 const streams = [
   ["stdout", "Standard output"],
@@ -38,7 +39,13 @@ export default function RunOutput({
       live = false;
     };
   }, [workspaceId, run.id, run.outcome]);
-  if (error) return <p role="alert">{error}</p>;
+  if (error)
+    return (
+      <p role="alert">
+        {error}
+        <ReportIssueLink />
+      </p>
+    );
   if (!output) return <p className="text-gray-500">Loading output…</p>;
   const shown = streams.filter(([stream]) => output[stream]);
   const imported = run.validation.importedFrom != null && (

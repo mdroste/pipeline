@@ -587,3 +587,53 @@ fn a_page_number_too_large_for_a_page_is_refused() {
         "{result:?}"
     );
 }
+
+#[test]
+fn older_support_still_counts_behind_a_thousand_newer_links() {
+    let f = fixture();
+    let paper = paper(&f, "Text.\n", None, "paper");
+    let revision = paper.revision.unwrap().id;
+    let supported = claim(&f, "supported");
+    let bare = claim(&f, "bare");
+    let stale = claim(&f, "stale");
+    for (record, operation) in [(&supported, "a"), (&bare, "b")] {
+        set_claim_state(
+            &f.store,
+            SetClaimStateRequest {
+                claim_id: record.id.clone(),
+                state: "accepted".into(),
+                operation_id: format!("accept-{operation}"),
+            },
+        )
+        .unwrap();
+    }
+    let link = evidence_on(&f, &supported, "paper_revision", &revision, "link-a", false);
+    let old = evidence_on(&f, &stale, "paper_revision", &revision, "link-b", false);
+    let c = f.store.connection().unwrap();
+    c.execute(
+        "UPDATE evidence_links SET assessment='human_confirmed',updated_at='2000-01-01' WHERE id=?1",
+        [&link.id],
+    )
+    .unwrap();
+    c.execute(
+        "UPDATE evidence_links SET freshness='stale',updated_at='2000-01-01' WHERE id=?1",
+        [&old.id],
+    )
+    .unwrap();
+    // Copies of a real link, each newer than the two above.
+    let filler = evidence_on(&f, &bare, "paper_revision", &revision, "filler", false);
+    c.execute_batch(&format!(
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<1000)
+         INSERT INTO evidence_links(id,workspace_id,claim_version_id,target_type,target_id,locator_json,relation,assessment,assessor,dependency_hash,freshness,stale_reason,created_at,updated_at)
+         SELECT 'copy-'||i,workspace_id,claim_version_id,target_type,target_id,locator_json||' ',relation,assessment,assessor,dependency_hash,freshness,stale_reason,created_at,updated_at
+         FROM evidence_links, n WHERE id='{}'",
+        filler.id
+    ))
+    .unwrap();
+
+    let ledger = research_ledger(&f.store, &f.workspace_id).unwrap();
+    assert_eq!(ledger.evidence.len(), 1000);
+    assert!(!ledger.evidence.iter().any(|e| e.id == link.id));
+    assert_eq!(ledger.unsupported_accepted_claims, vec![bare.id]);
+    assert_eq!(ledger.stale_claims, vec![stale.id]);
+}

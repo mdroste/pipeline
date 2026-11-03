@@ -86,22 +86,26 @@ pub(super) fn convert_legacy_steps(
 /// Steps written before contexts became explicit read what their phase
 /// implied. An empty context would now mean an isolated step, so every save
 /// since has written the key, and steps without it get the flow they implied.
-/// A file with some of each cannot be read either way.
+/// A file with some of each cannot be read either way. A Pipeline check reads
+/// the run's inputs directly, so it decides neither way.
 pub(super) fn wire_implicit_context(
     raw_steps: &Value,
     steps: Vec<StepConfig>,
     input_mode: &str,
 ) -> Result<Vec<StepConfig>, String> {
-    let implicit = raw_steps
-        .as_array()
-        .into_iter()
-        .flatten()
+    let model_steps = || {
+        raw_steps.as_array().into_iter().flatten().filter(|step| {
+            step.get("analyzer").is_none()
+                && step.get("kind").and_then(Value::as_str) != Some("analyzer")
+        })
+    };
+    let implicit = model_steps()
         .filter(|step| step.get("context").is_none())
         .count();
     if implicit == 0 {
         return Ok(steps);
     }
-    if implicit < steps.len() {
+    if implicit < model_steps().count() {
         return Err(
             "Some steps in this file say what they read and others do not. Export it again, or add what each step reads.".to_string(),
         );

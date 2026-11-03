@@ -15,6 +15,8 @@ interface Props {
   runId?: string | null;
   markdown: string;
   pdfMarkdown?: string;
+  /** Replaces `markdown` and `pdfMarkdown` when those are a cut preview. */
+  loadFullReport?: () => Promise<{ markdown: string; pdfMarkdown: string }>;
   provenanceMarkdown?: string;
   report?: PipelineReport;
   extractedText?: string;
@@ -49,6 +51,7 @@ export default function ExportControls({
   runId,
   markdown,
   pdfMarkdown,
+  loadFullReport,
   provenanceMarkdown,
   report,
   extractedText,
@@ -75,7 +78,11 @@ export default function ExportControls({
     setMenuOpen(false);
     try {
       const suggestedName = `PIPELINE_REPORT_${new Date().toISOString().slice(0, 10)}.md`;
-      await reportExportClient.saveMarkdown({ markdown, suggestedName });
+      const full = await loadFullReport?.();
+      await reportExportClient.saveMarkdown({
+        markdown: full?.markdown ?? markdown,
+        suggestedName,
+      });
     } catch (e: unknown) {
       notify(`Failed to save: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -84,8 +91,9 @@ export default function ExportControls({
   const handlePrint = async () => {
     setMenuOpen(false);
     try {
+      const full = await loadFullReport?.();
       await reportExportClient.print({
-        markdown: pdfMarkdown ?? markdown,
+        markdown: full?.pdfMarkdown ?? pdfMarkdown ?? markdown,
         provenanceMarkdown: provenanceMarkdown ?? null,
       });
     } catch (e: unknown) {

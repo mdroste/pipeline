@@ -155,6 +155,7 @@ pub fn run() {
             orchestration::commands::task_update_schedule,
             orchestration::commands::task_delete_schedule,
             orchestration::commands::task_mark_seen,
+            orchestration::commands::task_notices_ready,
             orchestration::commands::task_preview_times,
             orchestration::commands::task_saved_chains,
             orchestration::commands::task_save_chain,
@@ -166,6 +167,7 @@ pub fn run() {
             orchestration::commands::task_export_artifact,
             orchestration::commands::task_export_chain,
             orchestration::commands::task_step_output,
+            commands::export::read_full_report,
             commands::export::save_report_md,
             commands::export::save_report_html,
             commands::export::save_report_docx,
@@ -496,7 +498,11 @@ pub fn run() {
 /// before the Windows updater ends the process, which skips the exit event.
 fn stop_runtimes() {
     workbench::store::Store::close_idle_connection();
+    workbench::tool_setup::workbench_tool_setup_cancel();
+    engines::cancel_install();
+    // The coordinator stops the reviews it owns through its own adapter first.
     tauri::async_runtime::block_on(orchestration::shutdown());
+    commands::lifecycle::stop_all_runs();
     tauri::async_runtime::block_on(workbench::claude::shutdown());
     tauri::async_runtime::block_on(workbench::api::shutdown());
     tauri::async_runtime::block_on(workbench::research::jobs::shutdown());
@@ -520,5 +526,14 @@ mod smoke_tests {
         let stops = &source[source.find("fn stop_runtimes").unwrap()..];
         let codex = stops.find("stop_codex_runtime()").unwrap();
         assert!(codex < stops.find("chatgpt::shutdown()").unwrap());
+    }
+
+    #[test]
+    fn exit_stops_reviews_after_the_coordinator() {
+        let source = include_str!("lib.rs");
+        let stops = &source[source.find("fn stop_runtimes").unwrap()..];
+        let coordinator = stops.find("orchestration::shutdown()").unwrap();
+        assert!(coordinator < stops.find("stop_all_runs()").unwrap());
+        assert!(stops.find("cancel_install()").unwrap() < coordinator);
     }
 }

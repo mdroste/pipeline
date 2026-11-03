@@ -1,10 +1,21 @@
 //! Workspace-owned Playwright process with managed first-use setup;
 //! conversations never download or execute model-selected packages or scripts.
+//! The window outlives its turn briefly, so the researcher can finish a sign-in
+//! the assistant handed over; app exit closes it at once, and so does a lost
+//! ChatGPT connection unless a Claude or API turn is running.
 mod setup;
 use super::store::{WorkbenchError, WorkbenchResult};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::{path::PathBuf, process::Stdio, sync::OnceLock, time::Duration};
+use std::{
+    path::PathBuf,
+    process::Stdio,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        OnceLock,
+    },
+    time::Duration,
+};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout},
@@ -12,7 +23,17 @@ use tokio::{
 };
 
 const VERSION: &str = "1.64.1";
+/// How long the window stays open after a turn ends, so the researcher can
+/// finish a sign-in the assistant asked for and send their next message.
+const OPEN_AFTER_TURN: Duration = Duration::from_secs(10 * 60);
+/// Tells the driver the turn is over, so it stops counting against the turn.
+const RELEASE: &str = "release";
+const RELEASE_LIMIT: Duration = Duration::from_secs(5);
+const COMMAND_LIMIT: Duration = Duration::from_secs(45);
+const SIGN_IN_NOTE: &str = "Sign-in and CAPTCHA belong to the researcher. To hand one over, ask them to finish it in this window and to message you when they are done, then end your reply. The window stays open for 10 minutes after your reply, and your next turn continues in it.";
 static PROCESS: OnceLock<Mutex<Option<Process>>> = OnceLock::new();
+/// Each new use or end of a turn replaces the close already scheduled.
+static CLOSE_GENERATION: AtomicU64 = AtomicU64::new(0);
 static INSTALL: OnceLock<Mutex<()>> = OnceLock::new();
 fn process() -> &'static Mutex<Option<Process>> {
     PROCESS.get_or_init(|| Mutex::new(None))
@@ -214,34 +235,26 @@ impl Process {
 }
 
 pub(crate) async fn call(session: &str, args: Value) -> WorkbenchResult<Value> {
+    if args["action"] == RELEASE {
+        return Err(err("Unsupported browser action"));
+    }
     workbench_browser_install().await.map_err(err)?;
     let _installation = INSTALL
         .get_or_init(|| Mutex::new(()))
         .try_lock()
         .map_err(|_| err("Browser setup is in progress; wait for it to finish"))?;
     let mut owner = process().lock().await;
+    CLOSE_GENERATION.fetch_add(1, Ordering::AcqRel);
     if owner.as_ref().is_some_and(|p| p.session != session) {
         owner.take();
     }
-    if owner.is_none() {
-        *owner = Some(Process::start(session).await?);
+    let mut value = request(&mut owner, session, args.clone()).await?;
+    // The researcher can quit the browser while its driver lives on. A refused
+    // command did nothing, so a new window can run it.
+    if refused_by_closed_window(&value) {
+        owner.take();
+        value = request(&mut owner, session, args).await?;
     }
-    let result = tokio::time::timeout(
-        Duration::from_secs(45),
-        owner.as_mut().unwrap().request(args),
-    )
-    .await;
-    let value = match result {
-        Ok(Ok(value)) => value,
-        Ok(Err(error)) => {
-            owner.take();
-            return Err(error);
-        }
-        Err(_) => {
-            owner.take();
-            return Err(err("Browser action timed out"));
-        }
-    };
     if value["ok"] != true {
         return Err(err(value["error"]
             .as_str()
@@ -254,12 +267,80 @@ pub(crate) async fn call(session: &str, args: Value) -> WorkbenchResult<Value> {
             json!({"type":"inputImage","imageUrl":image}),
         ]
     } else {
-        vec![json!({"type":"inputText","text":result.to_string()})]
+        vec![json!({"type":"inputText","text":with_sign_in_note(result.clone()).to_string()})]
     };
     Ok(json!({"success":true,"contentItems":content}))
 }
 
+/// One command and its reply. The process leaves the slot for the exchange and
+/// returns only with a complete reply: a line the driver answers after its
+/// caller is gone would otherwise be read as the answer to the next command. A
+/// call dropped by Stop or the end of a turn drops the process here, which
+/// closes the window, rather than leaving it a reply behind.
+async fn request(
+    owner: &mut Option<Process>,
+    session: &str,
+    args: Value,
+) -> WorkbenchResult<Value> {
+    let mut process = match owner.take() {
+        Some(process) => process,
+        None => Process::start(session).await?,
+    };
+    let reply = tokio::time::timeout(COMMAND_LIMIT, process.request(args))
+        .await
+        .map_err(|_| err("Browser action timed out"))??;
+    *owner = Some(process);
+    Ok(reply)
+}
+
+/// The driver's own verdict. One closed popup is not a closed browser, and
+/// starting another would close the page the researcher signed in on.
+fn refused_by_closed_window(value: &Value) -> bool {
+    value["ok"] != true && value["windowClosed"] == true
+}
+
+fn with_sign_in_note(mut snapshot: Value) -> Value {
+    if snapshot.is_object() {
+        snapshot["signIn"] = json!(SIGN_IN_NOTE);
+    }
+    snapshot
+}
+
+/// Leaves the window for the researcher when a turn ends. The assistant's
+/// request to sign in is the last thing a turn says, so closing here would take
+/// the window away before they read it. Nothing can drive it until the next
+/// turn, and the page's network rules stay in force.
+pub(crate) async fn release_after_turn() {
+    release_window(RELEASE_LIMIT).await;
+    close_after(OPEN_AFTER_TURN).await;
+}
+
+/// A driver that won't answer can't be kept: it may be a reply behind.
+async fn release_window(limit: Duration) {
+    let mut owner = process().lock().await;
+    if let Some(mut process) = owner.take() {
+        let told = process.request(json!({ "action": RELEASE }));
+        if matches!(tokio::time::timeout(limit, told).await, Ok(Ok(_))) {
+            *owner = Some(process);
+        }
+    }
+}
+
+async fn close_after(delay: Duration) {
+    let generation = CLOSE_GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    if process().lock().await.is_none() {
+        return;
+    }
+    tokio::spawn(async move {
+        tokio::time::sleep(delay).await;
+        if CLOSE_GENERATION.load(Ordering::Acquire) == generation {
+            stop().await;
+        }
+    });
+}
+
 pub(crate) async fn stop() {
+    CLOSE_GENERATION.fetch_add(1, Ordering::AcqRel);
     if let Some(mut process) = process().lock().await.take() {
         let _ = process.stdin.shutdown().await;
         crate::commands::lifecycle::kill_independent_process(process.pid);
@@ -267,3 +348,6 @@ pub(crate) async fn stop() {
         let _ = tokio::time::timeout(Duration::from_secs(5), process.child.wait()).await;
     }
 }
+
+#[cfg(all(test, unix))]
+mod tests;

@@ -2,6 +2,8 @@ import { useContext, useEffect, useRef, useState } from "react";
 import { appClient } from "../../lib/appClient";
 import type { DepsReport, ModelCatalog, Settings } from "../../lib/types";
 import { ReviewSaveState } from "./SaveState";
+import ReportIssueLink from "../ReportIssueLink";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 
 export default function ConnectionStatus({
   provider,
@@ -117,7 +119,8 @@ export default function ConnectionStatus({
             }
             await onCheck();
           } catch (cause) {
-            if (generation === checkGeneration.current) setError(String(cause));
+            if (generation === checkGeneration.current)
+              setError(workbenchErrorMessage(cause));
           } finally {
             if (generation === checkGeneration.current) setChecking(false);
           }
@@ -134,6 +137,7 @@ export default function ConnectionStatus({
             (provider === "local" && Boolean(settings.local_model))))) && (
         <p role="alert" className="settings-error">
           {error || catalog?.warning}
+          <ReportIssueLink />
         </p>
       )}
     </div>

@@ -16,9 +16,10 @@ purpose.
 
 ## Save changes
 
-Most settings save as soon as you change them. API keys need **Save**, and
-**Cancel** discards an unsaved key. A status note appears beside each setting
-you change. If you leave a section with unsaved edits, Pipeline asks first.
+Most settings save as soon as you change them. API keys need **Save**,
+**Cancel** discards an unsaved key, and **Remove** deletes a saved one. A status
+note appears beside each setting you change. If you leave a section with unsaved
+edits, Pipeline asks first.
 
 Review defaults apply to reviews you start afterward. A saved workflow can
 override them, and a running review keeps the settings it started with.
@@ -145,6 +146,11 @@ its progress, and then Pipeline reopens.
 If Pipeline can't install an update, the banner says why and offers **Try again**
 and **Download instead**, which opens the installer for your computer in your
 browser.
+
+On macOS, if an update reports a read-only location, quit Pipeline and use Finder
+to move Pipeline.app to Applications. If it's on a disk image, copy it to
+Applications and eject the disk image. Reopen Pipeline from Applications and try
+the update again.
 
 To stop the checks, turn off **Check automatically** in the banner, or
 **Check for updates automatically** under **Advanced & About**. **Check for

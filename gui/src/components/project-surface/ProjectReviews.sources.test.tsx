@@ -35,7 +35,7 @@ beforeEach(() => {
           input_name: "draft_v7.pdf",
           input_path: "/papers/minwage/draft_v7.pdf",
           profile_name: "Auto Paper Review",
-          status: "complete",
+          status: "done",
           title: "Review of draft_v7.pdf",
         },
       ];

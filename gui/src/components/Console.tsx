@@ -13,6 +13,7 @@ import RequestDetails from "./console/RequestDetails";
 import TokenUsage from "./console/TokenUsage";
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import type { LogEntry, UsageState } from "../lib/reviewRuntimeTypes";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   logs: LogEntry[];
@@ -491,6 +492,7 @@ export default function Console({ logs, usage, active = true }: Props) {
           className="shrink-0 border-b border-red-200 bg-red-50 px-4 py-1.5 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
         >
           {copyError}
+          <ReportIssueLink />
         </div>
       )}
 

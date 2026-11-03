@@ -18,6 +18,25 @@ use std::{
 const MANIFEST: &str = include_str!("../../resources/conversation-tools/node.json");
 const PACKAGE: &str = include_str!("../../resources/conversation-tools/package.json");
 const LOCK: &str = include_str!("../../resources/conversation-tools/package-lock.json");
+/// The same patience as a managed engine download: no fixed limit a slow
+/// connection can't meet, but a stalled one still ends.
+const CONNECT_LIMIT: Duration = Duration::from_secs(30);
+const STALL_LIMIT: Duration = Duration::from_secs(60);
+/// Proxy and certificate settings the setup downloads need on a managed
+/// network. Nothing else about the researcher's environment reaches them.
+const SETUP_NETWORK_SETTINGS: &[&str] = &[
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+    "no_proxy",
+    "NODE_EXTRA_CA_CERTS",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+];
 static INSTALL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static PHASE: Mutex<Option<String>> = Mutex::new(None);
 static CANCEL: OnceLock<tokio::sync::watch::Sender<u64>> = OnceLock::new();
@@ -93,6 +112,11 @@ fn parent() -> Result<PathBuf, String> {
 pub(crate) fn root() -> Result<PathBuf, String> {
     Ok(parent()?.join(identity()))
 }
+/// Kept between attempts, so a retry skips every package already fetched.
+/// npm checks each one against the lockfile's digest before using it.
+fn npm_cache_at(parent: &Path) -> PathBuf {
+    parent.join("npm-cache")
+}
 fn node_at(root: &Path) -> PathBuf {
     root.join(if cfg!(windows) {
         "runtime/node.exe"
@@ -163,15 +187,46 @@ pub(crate) fn command_at(root: &Path) -> Command {
     command.current_dir(root);
     command
 }
+
+/// `command_at` for a step that downloads: a network that needs a proxy or its
+/// own certificate would otherwise refuse it. Only setup gets these.
+pub(crate) fn setup_command_at(root: &Path) -> Command {
+    with_network_settings(command_at(root), |key| std::env::var_os(key))
+}
+
+fn with_network_settings(
+    mut command: Command,
+    setting: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Command {
+    for key in SETUP_NETWORK_SETTINGS {
+        if let Some(value) = setting(key) {
+            command.env(key, value);
+        }
+    }
+    command
+}
+
 pub(crate) async fn run(command: Command, label: &str) -> Result<Vec<u8>, String> {
-    process::run(command, label).await
+    process::run(command, label, process::PROBE_LIMIT).await
+}
+
+/// `run` for a step that fetches large files.
+pub(crate) async fn run_download(command: Command, label: &str) -> Result<Vec<u8>, String> {
+    process::run(command, label, process::DOWNLOAD_LIMIT).await
+}
+
+fn download_client(stall: Duration) -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
+        .connect_timeout(CONNECT_LIMIT)
+        .read_timeout(stall)
+        .timeout(process::DOWNLOAD_LIMIT)
+        // The pinned checksum below authenticates the archive, not the host.
+        .redirect(reqwest::redirect::Policy::limited(10))
 }
 
 async fn download(artifact: &Artifact, path: &Path) -> Result<(), String> {
-    let client = reqwest::Client::builder()
+    let client = download_client(STALL_LIMIT)
         .https_only(true)
-        // The pinned checksum below authenticates the archive, not the host.
-        .redirect(reqwest::redirect::Policy::limited(10))
         .build()
         .map_err(|e| e.to_string())?;
     let url = format!(
@@ -181,7 +236,6 @@ async fn download(artifact: &Artifact, path: &Path) -> Result<(), String> {
     );
     let mut response = client
         .get(url)
-        .timeout(Duration::from_secs(300))
         .send()
         .await
         .map_err(|e| format!("Runtime download failed: {e}"))?
@@ -209,7 +263,7 @@ async fn download(artifact: &Artifact, path: &Path) -> Result<(), String> {
     if format!("{:x}", hash.finalize()) != artifact.sha256 {
         return Err("Runtime checksum mismatch. No software was installed.".into());
     }
-    file.sync_all().map_err(|e| e.to_string())
+    crate::safety::sync_file(&file).map_err(|e| e.to_string())
 }
 
 pub(crate) async fn ensure() -> Result<(), String> {
@@ -260,18 +314,19 @@ async fn ensure_in(parent: PathBuf) -> Result<(), String> {
         fs::write(&empty, "").map_err(|e| e.to_string())?;
         let global = stage.path().join("global-npmrc");
         fs::write(&global, "").map_err(|e| e.to_string())?;
-        let mut command = command_at(stage.path());
+        let cache = npm_cache_at(&parent);
+        let mut command = setup_command_at(stage.path());
         command
             .arg(npm_at(stage.path()))
             .args(["ci", "--ignore-scripts", "--no-audit", "--no-fund"])
-            .arg("--userconfig")
+            .args(["--prefer-offline", "--userconfig"])
             .arg(&empty)
             .arg("--globalconfig")
             .arg(&global)
             .arg("--cache")
-            .arg(stage.path().join("cache"));
+            .arg(&cache);
         set_phase("Downloading command and browser tools…");
-        process::run(command, "Conversation tool setup").await?;
+        run_download(command, "Conversation tool setup").await?;
         fs::write(
             stage.path().join("driver.mjs"),
             include_str!("browser/driver.mjs"),
@@ -288,16 +343,19 @@ async fn ensure_in(parent: PathBuf) -> Result<(), String> {
         }
         // A broken installation is kept for diagnosis; never remove a live version.
         if target.exists() {
-            fs::rename(
-                &target,
-                parent.join(format!(
-                    "incomplete-{}",
-                    chrono::Utc::now().timestamp_micros()
-                )),
-            )
-            .map_err(|e| e.to_string())?;
+            let set_aside = parent.join(format!(
+                "incomplete-{}",
+                chrono::Utc::now().timestamp_micros()
+            ));
+            crate::engines::rename_when_free(&target, &set_aside)
+                .await
+                .map_err(|e| e.to_string())?;
         }
-        fs::rename(stage.path(), target).map_err(|e| e.to_string())?;
+        crate::engines::rename_when_free(stage.path(), &target)
+            .await
+            .map_err(|e| e.to_string())?;
+        // Finished: the packages are installed, so the copies are only size.
+        let _ = fs::remove_dir_all(cache);
         Ok(())
     })
     .await
@@ -367,6 +425,104 @@ mod tests {
         for artifact in manifest().artifacts {
             assert_eq!(artifact.sha256.len(), 64);
         }
+    }
+    #[test]
+    fn only_setup_downloads_get_network_settings_and_never_npm_settings() {
+        let root = Path::new("runtime");
+        let names = |command: &Command| {
+            command
+                .get_envs()
+                .filter(|(_, value)| value.is_some())
+                .map(|(key, _)| key.to_string_lossy().to_string())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        let every_name = [
+            "HTTPS_PROXY",
+            "http_proxy",
+            "NO_PROXY",
+            "NODE_EXTRA_CA_CERTS",
+            "SSL_CERT_FILE",
+            "NPM_CONFIG_REGISTRY",
+            "npm_config_userconfig",
+            "NPM_TOKEN",
+            "NODE_AUTH_TOKEN",
+            "NODE_OPTIONS",
+            "NODE_PATH",
+        ];
+        let setup = with_network_settings(command_at(root), |key| {
+            every_name.contains(&key).then(|| "value".into())
+        });
+        let added: Vec<_> = names(&setup)
+            .difference(&names(&command_at(root)))
+            .cloned()
+            .collect();
+        assert_eq!(
+            added,
+            [
+                "HTTPS_PROXY",
+                "NODE_EXTRA_CA_CERTS",
+                "NO_PROXY",
+                "SSL_CERT_FILE",
+                "http_proxy"
+            ]
+        );
+        // `command_at` also serves every later run, which must stay clean.
+        for name in SETUP_NETWORK_SETTINGS {
+            assert!(!names(&command_at(root)).contains(*name));
+        }
+    }
+    #[test]
+    fn the_npm_cache_survives_a_failed_attempt() {
+        let parent = Path::new("conversation-tools");
+        assert_eq!(npm_cache_at(parent).parent(), Some(parent));
+    }
+    /// Serves `chunks` slowly on a local port and returns the address.
+    fn slow_server(chunks: usize, gap: Duration) -> std::net::SocketAddr {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            use std::io::Read;
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.read(&mut [0; 2048]).unwrap();
+            let header = format!("HTTP/1.1 200 OK\r\nContent-Length: {chunks}\r\n\r\n");
+            stream.write_all(header.as_bytes()).unwrap();
+            for _ in 0..chunks {
+                std::thread::sleep(gap);
+                if stream.write_all(b"x").is_err() {
+                    return;
+                }
+            }
+        });
+        address
+    }
+    async fn fetch(
+        address: std::net::SocketAddr,
+        stall: Duration,
+    ) -> Result<usize, reqwest::Error> {
+        let client = download_client(stall).no_proxy().build().unwrap();
+        let mut response = client.get(format!("http://{address}/")).send().await?;
+        let mut bytes = 0;
+        while let Some(chunk) = response.chunk().await? {
+            bytes += chunk.len();
+        }
+        Ok(bytes)
+    }
+    #[tokio::test]
+    async fn a_slow_download_runs_past_the_stall_limit_while_bytes_arrive() {
+        let stall = Duration::from_millis(400);
+        let started = std::time::Instant::now();
+        let bytes = fetch(slow_server(5, Duration::from_millis(150)), stall).await;
+        assert_eq!(bytes.unwrap(), 5);
+        assert!(started.elapsed() > stall);
+    }
+    #[tokio::test]
+    async fn a_stalled_download_ends() {
+        let result = fetch(
+            slow_server(2, Duration::from_secs(5)),
+            Duration::from_millis(100),
+        )
+        .await;
+        assert!(result.unwrap_err().is_timeout());
     }
     #[test]
     fn partial_installations_are_never_ready() {

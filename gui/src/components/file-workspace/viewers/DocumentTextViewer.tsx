@@ -5,6 +5,7 @@ import type {
   FileAdapter,
 } from "../../../lib/fileWorkspaceClient";
 import { workbenchErrorMessage } from "../../../lib/workbenchError";
+import ReportIssueLink from "../../ReportIssueLink";
 
 export default function DocumentTextViewer({
   adapter,
@@ -37,6 +38,7 @@ export default function DocumentTextViewer({
     return (
       <p role="alert" className="file-error">
         {error}
+        <ReportIssueLink />
       </p>
     );
   if (!document) return <p className="file-status">Reading document…</p>;

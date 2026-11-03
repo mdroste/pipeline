@@ -20,10 +20,7 @@ export const isDirty = (buffer: Buffer) =>
 
 const draftPrefix = (adapterId: string) => `pipeline.files.draft.${adapterId}.`;
 
-/** Files with an unsaved draft. Read from where drafts are kept, because the
- * pages that need to know don't share these buffers. */
-export function unsavedDraftPaths(adapterId: string) {
-  const prefix = draftPrefix(adapterId);
+function pathsAfter(prefix: string) {
   try {
     return Array.from({ length: localStorage.length }, (_, index) =>
       localStorage.key(index),
@@ -34,6 +31,16 @@ export function unsavedDraftPaths(adapterId: string) {
     return [];
   }
 }
+
+/** Files with an unsaved draft. Read from where drafts are kept, because the
+ * pages that need to know don't share these buffers. */
+export const unsavedDraftPaths = (adapterId: string) =>
+  pathsAfter(draftPrefix(adapterId));
+
+/** Working files with an unsaved draft in Write, which keeps its drafts apart
+ * from Files, by project and by working copy. */
+export const unsavedManuscriptPaths = (workspaceId: string) =>
+  pathsAfter(`pipeline.manuscriptDraft.${workspaceId}.working.`);
 
 export function useFileBuffers({
   adapter,
@@ -51,6 +58,7 @@ export function useFileBuffers({
   latest.current = buffers;
   const [saving, setSaving] = useState<string | null>(null);
   const pending = useRef(new Map<string, Promise<void>>());
+  const retainTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recent = useRef<string[]>([]);
   const alive = useRef(true);
   const adapterRef = useRef(adapter);
@@ -166,6 +174,7 @@ export function useFileBuffers({
   );
   useEffect(() => {
     const timer = setTimeout(() => retain(buffers), 250);
+    retainTimer.current = timer;
     return () => clearTimeout(timer);
   }, [buffers, retain]);
   useEffect(() => {
@@ -232,8 +241,9 @@ export function useFileBuffers({
         setError(workbenchErrorMessage(e));
         return;
       }
-      // A conflict means either a newer copy of the file or a save refused
-      // while a response runs; the file's current hash tells them apart.
+      // A conflict means either a newer copy of the file or a save refused for
+      // now, such as by a running response, a local job, or a Git action. The
+      // file's current hash tells them apart, and a refusal says its own reason.
       let changed: boolean;
       try {
         const current = await adapter.read(path);
@@ -248,7 +258,9 @@ export function useFileBuffers({
         ...old,
         status: changed
           ? "The file changed elsewhere after you opened it. Compare with the current file to keep your draft, or reload to discard it."
-          : "Stop the running response before saving.",
+          : workbenchErrorMessage({
+              message: (e as { message?: unknown }).message,
+            }),
       }));
     } finally {
       setSaving(null);
@@ -314,6 +326,8 @@ export function useFileBuffers({
   /** Carry open files, and their drafts, across a rename or move. */
   const remap = useCallback(
     (from: string, to: string) => {
+      // React may defer the render that cancels the old draft's pending write.
+      if (retainTimer.current !== null) clearTimeout(retainTimer.current);
       moveRetainedDrafts(from, to);
       const moved = Object.keys(latest.current).flatMap((path) => {
         const next = movedPath(path, from, to);

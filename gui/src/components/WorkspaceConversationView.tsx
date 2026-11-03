@@ -6,6 +6,7 @@ import {
   TRANSCRIPT_WINDOW,
 } from "../lib/workspaceTranscript";
 import {
+  Fragment,
   useCallback,
   useDeferredValue,
   useLayoutEffect,
@@ -17,6 +18,7 @@ import { FileNavigationContext } from "./file-workspace/FileNavigation";
 import { workspaceFileAdapter } from "../lib/fileWorkspaceClient";
 import { appEvents } from "../lib/appEvents";
 import { conversationClient } from "../lib/workbench/conversationClient";
+import { turnFailures } from "../lib/workspaceTurnLabels";
 import type { MutableRefObject, ReactNode, RefObject } from "react";
 import TranscriptMessage, {
   TranscriptMarkdown,
@@ -34,6 +36,7 @@ import type {
   ConversationSnapshot,
   TranscriptItem,
 } from "../lib/workbenchTypes";
+import ReportIssueLink from "./ReportIssueLink";
 interface Props {
   assistantName?: string;
   taskCards?: ReactNode;
@@ -62,6 +65,8 @@ interface Props {
   error: string | null;
   /** A neutral update, such as a response the researcher stopped. */
   notice?: string | null;
+  /** Something the researcher should check, though the response may have finished. */
+  warnings?: string[];
   draft: string;
   disabled: boolean;
   active: boolean;
@@ -78,6 +83,10 @@ interface Props {
   onNewer: () => void;
   /** Shared with the controller: whether the latest message stays in view. */
   followLatestRef: MutableRefObject<boolean>;
+}
+/** Why a turn did not finish. Saved with the turn, so it stays in the transcript. */
+function TurnFailure({ text }: { text: string }) {
+  return <p className="my-2 text-sm text-red-700 dark:text-red-300">{text}</p>;
 }
 /** The answer as it arrives. Flushes re-render this message and nothing else. */
 function LiveMessage({
@@ -137,6 +146,7 @@ export default function WorkspaceConversationView({
   messageRef,
   error,
   notice = null,
+  warnings = [],
   draft,
   disabled,
   active,
@@ -168,6 +178,10 @@ export default function WorkspaceConversationView({
       total: totalItems,
       loadingEarlier,
     });
+  const failures = useMemo(
+    () => turnFailures(snapshot?.turns ?? [], renderedItems),
+    [snapshot?.turns, renderedItems],
+  );
   // WebKit ends an input-method composition before the Enter keydown that
   // confirms it, so that keydown alone does not report isComposing.
   const composing = useRef(false);
@@ -322,16 +336,24 @@ export default function WorkspaceConversationView({
           )}
           {renderedItems.map((item) => {
             const text = payloadText(item);
-            return text ? (
-              <TranscriptMessage
-                key={item.id}
-                id={item.id}
-                text={text}
-                role={roleFor(item)}
-                selected={selectedMessage === item.id}
-              />
-            ) : null;
+            const failure = failures.afterItem.get(item.id);
+            return (
+              <Fragment key={item.id}>
+                {text && (
+                  <TranscriptMessage
+                    id={item.id}
+                    text={text}
+                    role={roleFor(item)}
+                    selected={selectedMessage === item.id}
+                  />
+                )}
+                {failure && <TurnFailure text={failure} />}
+              </Fragment>
+            );
           })}
+          {failures.atEnd && transcriptEnd >= totalItems && (
+            <TurnFailure text={failures.atEnd} />
+          )}
           {pendingUser && (
             <article className="workspace-message workspace-message--user">
               <div className="workspace-message-author">You</div>
@@ -385,12 +407,22 @@ export default function WorkspaceConversationView({
             {notice}
           </div>
         )}
+        {warnings.map((warning) => (
+          <div
+            key={warning}
+            role="status"
+            className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100"
+          >
+            {warning}
+          </div>
+        ))}
         {error && (
           <div
             role="alert"
             className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
           >
             {error}
+            <ReportIssueLink />
           </div>
         )}
       </div>

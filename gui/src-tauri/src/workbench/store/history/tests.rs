@@ -74,11 +74,17 @@ fn page_byte_limit_and_successor_deduplication_remain_bounded() {
             .len(),
         1
     );
-    c.execute("INSERT INTO session_bindings(id,session_id,runtime_namespace,provider_thread_id,incarnation,created_at) VALUES('successor',?1,'audit','successor-thread',2,'now')",[&id]).unwrap();
+    c.execute("INSERT INTO session_bindings(id,session_id,runtime_namespace,provider_thread_id,incarnation,created_at) VALUES('successor',?1,'later-connection','native',2,'now')",[&id]).unwrap();
     c.execute("INSERT INTO transcript_items(id,binding_id,provider_item_id,item_kind,payload_json,is_final,created_at,updated_at) VALUES('replacement','successor','item-2','agentMessage','{}',1,'now','now')",[]).unwrap();
     let page = s.transcript_page(&id, None).unwrap();
     assert!(!page.items.iter().any(|i| i.id == "item-2"));
     assert!(page.items.iter().any(|i| i.id == "replacement"));
+    // The same id on another thread is another item, not a newer copy.
+    c.execute("INSERT INTO session_bindings(id,session_id,runtime_namespace,provider_thread_id,incarnation,created_at) VALUES('other',?1,'later-connection','other-thread',3,'now')",[&id]).unwrap();
+    c.execute("INSERT INTO transcript_items(id,binding_id,provider_item_id,item_kind,payload_json,is_final,created_at,updated_at) VALUES('other-item','other','item-2','agentMessage','{}',1,'now','now')",[]).unwrap();
+    let page = s.transcript_page(&id, None).unwrap();
+    assert!(page.items.iter().any(|i| i.id == "replacement"));
+    assert!(page.items.iter().any(|i| i.id == "other-item"));
 }
 
 #[test]

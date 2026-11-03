@@ -359,7 +359,7 @@ describe("BatchPanel profile semantics", () => {
       if (command === "start_batch") return Promise.resolve();
       return Promise.reject(new Error(`unexpected command: ${command}`));
     });
-    open.mockResolvedValueOnce(["/papers/paper.pdf"]);
+    open.mockResolvedValueOnce(["C:\\Users\\Ada\\paper.pdf"]);
     const user = userEvent.setup();
     render(<BatchPanel onClose={vi.fn()} onOpenRun={vi.fn()} />);
 
@@ -373,6 +373,10 @@ describe("BatchPanel profile semantics", () => {
 
     await user.selectOptions(approach, "theory");
     await user.click(screen.getByRole("button", { name: "Add files…" }));
+    expect(screen.getByText("paper.pdf")).toHaveAttribute(
+      "title",
+      "C:\\Users\\Ada\\paper.pdf",
+    );
     await user.click(screen.getByRole("button", { name: "Start batch (1)" }));
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith(

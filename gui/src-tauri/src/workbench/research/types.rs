@@ -58,6 +58,11 @@ pub struct EffectiveHarness {
     pub module_availability: Vec<ModuleAvailability>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instruction_sections: Vec<InstructionSection>,
+    /// The working copy this conversation's tools act in. The fingerprint
+    /// already hashes it apart from this field, which only a later comparison
+    /// of access reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_checkpoint_id: Option<String>,
 }
 
 fn default_file_mode() -> String {

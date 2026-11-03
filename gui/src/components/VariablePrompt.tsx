@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { inputSlotExtensions } from "../lib/pipelineHelpers";
 import type { VarSpec, InputSlot } from "../lib/types";
 import useModalDialog from "../hooks/useModalDialog";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   variables: VarSpec[];
@@ -167,6 +168,7 @@ export default function VariablePrompt({
             className="mb-3 break-words rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
           >
             {launchError}
+            <ReportIssueLink />
           </p>
         )}
         {pickerError && (
@@ -175,6 +177,7 @@ export default function VariablePrompt({
             className="mb-3 rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
           >
             {pickerError}
+            <ReportIssueLink />
           </p>
         )}
         <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">

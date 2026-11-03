@@ -538,6 +538,29 @@ async fn execute_inner(request: OwnedRequest) -> Result {
 
         let elapsed = total_started.elapsed().as_secs();
         let remaining = request.timeout_secs.saturating_sub(elapsed).max(1);
+        // The primary attempt failed, so its files are not the fallback's.
+        let set_aside = match request.write_dir.as_deref() {
+            Some(root) => super::unit_files::set_aside_files(root).await,
+            None => Ok(()),
+        };
+        if let Err(error) = set_aside {
+            emit_usage_limit_event(
+                &request,
+                primary_provider,
+                &primary_error,
+                "fallback_failed",
+                Some(fallback_provider),
+                Some(&resolution.resolved_model),
+            );
+            return Result {
+                output: Err(format!(
+                    "{primary_error}; usage-limit fallback was not run because {error}"
+                )),
+                usage: primary.usage,
+                duration_secs: total_started.elapsed().as_secs(),
+                usage_limit_fallback: None,
+            };
+        }
         let fallback_label = format!("{} · usage-limit fallback", request.log_label);
         super::logging::emit(
             &request.app,

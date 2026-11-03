@@ -1,8 +1,8 @@
 //! Codex App Server version admission, shared by Workspace and Reviews.
 //!
-//! The version check only rules out builds older than the implemented protocol
-//! generation. Each owner still validates the live handshake and, after every
-//! thread start or resume, the returned provider, cwd, roots, permission profile
+//! The version check rules out builds older than the required protocol and
+//! configuration features. Each owner still validates the live handshake and,
+//! after every thread start or resume, the returned provider, cwd, roots, permission profile
 //! and approval policy. A failed check disables that runtime; never weaken
 //! permissions or fall back to `codex exec`.
 //!
@@ -13,10 +13,11 @@
 
 use serde::Serialize;
 
-/// Oldest App Server contract implemented by Workspace. Newer builds are
+/// Oldest App Server build supporting the runtime configuration, including
+/// Review host-skill discovery isolation. Newer builds are
 /// admitted through the live handshake and fail-closed response validation,
 /// rather than an exact-version allowlist that breaks on routine CLI updates.
-pub const MINIMUM_CODEX_VERSION: &str = "0.147.0";
+pub const MINIMUM_CODEX_VERSION: &str = "0.165.0";
 /// Version that produced the checked-in schema reference. This is evidence for
 /// the implemented protocol generation, not an exact runtime allowlist.
 pub const SCHEMA_REFERENCE_CODEX_VERSION: &str = "0.147.0";
@@ -50,7 +51,7 @@ fn numeric_version(value: &str) -> Result<[u64; 3], String> {
 }
 
 /// Parse the documented `codex --version` response. Version establishes only
-/// the minimum protocol generation; the launched server must still satisfy
+/// the minimum runtime version; the launched server must still satisfy
 /// the live handshake and every operation's response invariants.
 pub fn detected_version(reported: &str) -> Result<DetectedCodexVersion, String> {
     let reported = reported.trim();
@@ -86,18 +87,22 @@ mod tests {
 
     #[test]
     fn accepts_the_minimum_and_newer_builds() {
-        let qualified = detected_version("codex-cli 0.147.0\n").unwrap();
+        let qualified = detected_version("codex-cli 0.165.0\n").unwrap();
         assert!(qualified.meets_minimum);
-        assert!(qualified.matches_reference_schema);
-        assert_eq!(qualified.version, SCHEMA_REFERENCE_CODEX_VERSION);
+        assert!(!qualified.matches_reference_schema);
+        assert_eq!(qualified.version, MINIMUM_CODEX_VERSION);
 
-        let newer = detected_version("codex-cli 0.153.4").unwrap();
+        let newer = detected_version("codex-cli 0.166.0").unwrap();
         assert!(newer.meets_minimum);
         assert!(!newer.matches_reference_schema);
 
-        let older = detected_version("codex-cli 0.146.9").unwrap();
+        let older = detected_version("codex-cli 0.164.9").unwrap();
         assert!(!older.meets_minimum);
         assert!(!older.matches_reference_schema);
+
+        let reference = detected_version("codex-cli 0.147.0").unwrap();
+        assert!(!reference.meets_minimum);
+        assert!(reference.matches_reference_schema);
     }
 
     #[test]

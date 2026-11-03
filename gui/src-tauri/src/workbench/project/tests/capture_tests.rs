@@ -280,3 +280,139 @@ fn a_missing_file_is_listed_once_and_then_leaves_the_inventory() {
     assert!(!path_listed(&scan(&f)));
     assert!(!path_listed(&scan(&f)));
 }
+
+const GENERATED_FILE: &str = ".pipeline-workbench/generated/a/plot.py";
+
+/// An edit as an earlier build left it, ready to review, with a change in the
+/// generated folder, which it treated as project content.
+fn reviewed_generated_change(f: &Fixture) -> ProjectRecord {
+    fs::write(f.root.join("a.md"), "before").unwrap();
+    fs::create_dir_all(f.root.join(GENERATED_FILE).parent().unwrap()).unwrap();
+    fs::write(f.root.join(GENERATED_FILE), "print('before')\n").unwrap();
+    let c = copy(f, &["a.md"]);
+    let body: Checkpoint = decode(&c).unwrap();
+    fs::write(Path::new(&body.task_root).join("a.md"), "after").unwrap();
+    let c = capture(f, &c);
+    let mut body: Checkpoint = decode(&c).unwrap();
+    let entry = |bytes: &[u8]| {
+        let mut entry = body.base["a.md"].clone();
+        entry.path = GENERATED_FILE.into();
+        entry.size = bytes.len() as u64;
+        entry.hash = Some(blob(&f.store, &f.ws, bytes, &c.id).unwrap());
+        entry
+    };
+    let (before, after) = (entry(b"print('before')\n"), entry(b"print('after')\n"));
+    body.base.insert(GENERATED_FILE.into(), before);
+    body.proposed.insert(GENERATED_FILE.into(), after);
+    put(&f.store, &f.ws, &c.id, "checkpoint", c.revision, &body).unwrap()
+}
+
+fn accept_all(f: &Fixture, c: &ProjectRecord) -> ProjectRecord {
+    mutation(
+        f,
+        ProjectAction::Apply {
+            checkpoint_id: c.id.clone(),
+            paths: vec![GENERATED_FILE.into(), "a.md".into()],
+            expected_revision: c.revision,
+        },
+    )
+}
+
+fn generated_text(f: &Fixture) -> String {
+    fs::read_to_string(f.root.join(GENERATED_FILE)).unwrap()
+}
+
+#[test]
+fn an_earlier_edit_in_the_generated_folder_can_be_accepted_and_undone() {
+    let f = fixture();
+    let c = reviewed_generated_change(&f);
+    let applied = accept_all(&f, &c);
+    assert_eq!(generated_text(&f), "print('after')\n");
+
+    assert!(program_file_hash(&f.store, &f.ws, GENERATED_FILE)
+        .unwrap()
+        .is_some());
+
+    tasks::undo(&f.store, &f.ws, &applied.id).unwrap();
+    assert_eq!(generated_text(&f), "print('before')\n");
+    assert_eq!(fs::read_to_string(f.root.join("a.md")).unwrap(), "before");
+}
+
+#[test]
+fn undo_still_refuses_to_overwrite_a_later_change_in_the_generated_folder() {
+    let f = fixture();
+    let c = reviewed_generated_change(&f);
+    let applied = accept_all(&f, &c);
+    fs::write(f.root.join(GENERATED_FILE), "print('rerun')\n").unwrap();
+    let error = tasks::undo(&f.store, &f.ws, &applied.id).unwrap_err();
+    assert!(error.message.contains("subsequent edits"), "{error:?}");
+    assert_eq!(generated_text(&f), "print('rerun')\n");
+}
+
+#[test]
+#[cfg(unix)]
+fn an_interrupted_acceptance_in_the_generated_folder_recovers() {
+    let f = fixture();
+    let c = reviewed_generated_change(&f);
+    let applied = accept_all(&f, &c);
+    let mut a: Application = decode(&applied).unwrap();
+    a.state = "applying".into();
+    put(
+        &f.store,
+        &f.ws,
+        &applied.id,
+        "application",
+        applied.revision,
+        &a,
+    )
+    .unwrap();
+    // The crash came after the file moved aside and before its new bytes landed.
+    let n = a
+        .files
+        .iter()
+        .position(|file| file.path == GENERATED_FILE)
+        .unwrap();
+    let file = f.root.join(GENERATED_FILE);
+    fs::write(
+        file.with_file_name(format!(".pipeline-apply-{}", a.files[n].claim)),
+        "print('before')\n",
+    )
+    .unwrap();
+    fs::remove_file(&file).unwrap();
+
+    tasks::recover(&f.store, &f.ws, &applied.id).unwrap();
+    assert_eq!(generated_text(&f), "print('before')\n");
+    let settled: Application =
+        decode(&record(&f.store, &f.ws, &applied.id, "application").unwrap()).unwrap();
+    assert_eq!(settled.state, "rolled_back");
+}
+
+#[test]
+fn the_record_route_opens_only_the_generated_folder() {
+    let f = fixture();
+    fs::create_dir_all(f.root.join(GENERATED_FILE).parent().unwrap()).unwrap();
+    fs::write(f.root.join(GENERATED_FILE), "print('before')\n").unwrap();
+    let records = files::SafeRoot::for_records(&f.root).unwrap();
+    assert!(records.optional_read(GENERATED_FILE).unwrap().is_some());
+    for path in [".git/config", ".pipeline-tasks/a", ".pipeline-apply-x"] {
+        assert!(records.optional_read(path).is_err(), "{path}");
+    }
+    let tools = files::SafeRoot::open(&f.root).unwrap();
+    assert!(tools.optional_read(GENERATED_FILE).is_err());
+}
+
+#[test]
+fn a_new_capture_never_proposes_a_model_write_in_the_generated_folder() {
+    let f = fixture();
+    let c = reviewed_generated_change(&f);
+    let body: Checkpoint = decode(&c).unwrap();
+    let in_copy = Path::new(&body.task_root).join(GENERATED_FILE);
+    fs::create_dir_all(in_copy.parent().unwrap()).unwrap();
+    fs::write(&in_copy, "print('from the model')\n").unwrap();
+
+    let captured: Checkpoint = decode(&capture(&f, &c)).unwrap();
+    assert_eq!(
+        captured.proposed[GENERATED_FILE].hash,
+        captured.base[GENERATED_FILE].hash
+    );
+}

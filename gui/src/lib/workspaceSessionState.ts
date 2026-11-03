@@ -20,6 +20,28 @@ export function mergeSessionSnapshot(
   };
 }
 
+/**
+ * Lands a conversation read on the snapshot it replaces. Only these reads carry
+ * a transcript, so a read's items and turns are always the newest there are. A
+ * session save that lands during the read raises the revision and sequence on
+ * screen, which says only that the session fields are newer: those stay.
+ */
+export function keepNewerSession(
+  current: ConversationSnapshot | null,
+  next: ConversationSnapshot,
+): ConversationSnapshot {
+  if (current?.session.id !== next.session.id) return next;
+  const sequence = Math.max(current.sequence, next.sequence);
+  return current.session.revision > next.session.revision
+    ? {
+        ...next,
+        session: current.session,
+        workspace: current.workspace,
+        sequence,
+      }
+    : { ...next, sequence };
+}
+
 // The caller serializes this write with other session mutations.
 export function newOperation(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;

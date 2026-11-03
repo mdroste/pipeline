@@ -390,3 +390,106 @@ fn block_comment_syntax_means_nothing_outside_stata() {
     let output = package_with("main.py", "x = 2 /* 3\nopen(\"C:/Users/me/a.txt\")\n");
     assert_eq!(status(&output, "absolute_paths"), "fail");
 }
+
+#[test]
+fn code_too_large_to_read_is_named_and_a_clean_result_says_what_it_covered() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root, "main.do", "display \"short\"\n");
+    // A stored plot pushes a notebook past the limit for one file.
+    let notebook = format!(
+        "{{\"cells\": [{{\"source\": \"open('C:/Users/me/x.csv')\", \"outputs\": \"{}\"}}]}}",
+        "a".repeat(MAX_CODE_FILE_BYTES as usize)
+    );
+    write(root, "analysis.ipynb", &notebook);
+
+    let output = run(root, &Value::Null).unwrap();
+
+    assert_eq!(output["code_files"], 1);
+    assert_eq!(output["unread_code_files"], 1);
+    let coverage = check(&output, CODE_COVERAGE);
+    assert_eq!(coverage["status"], "info");
+    assert_eq!(coverage["locations"][0]["path"], "analysis.ipynb");
+    let clean = check(&output, "absolute_paths");
+    assert_eq!(clean["status"], "pass");
+    assert!(clean["detail"]
+        .as_str()
+        .unwrap()
+        .contains("1 code files were not"));
+    let finding = output["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| finding["id"] == "replication-code-coverage")
+        .expect("the report names what was not read");
+    assert_eq!(finding["severity"], "info");
+    assert_eq!(finding["evidence"][0]["source_path"], "analysis.ipynb");
+}
+
+#[test]
+fn a_package_whose_only_code_is_too_large_still_has_code() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "analysis.do",
+        &"* padding\n".repeat(MAX_CODE_FILE_BYTES as usize / 5),
+    );
+    let output = run(dir.path(), &Value::Null).unwrap();
+    assert_eq!(output["code_files"], 0);
+    assert_eq!(check(&output, "main_script")["status"], "fail");
+}
+
+#[test]
+fn code_past_the_total_limit_is_named_rather_than_dropped() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let count = (MAX_TOTAL_SCANNED_BYTES / MAX_CODE_FILE_BYTES) as usize + 2;
+    let mut files = vec![("huge.ipynb".to_string(), MAX_TOTAL_SCANNED_BYTES * 2)];
+    for index in 0..count {
+        let path = format!("{index:03}.do");
+        write(root, &path, "display 1\n");
+        files.push((path, MAX_CODE_FILE_BYTES));
+    }
+    write(root, "huge.ipynb", "{}");
+    let inventory = Inventory {
+        root: root.to_path_buf(),
+        files,
+        left_out_folders: Vec::new(),
+        truncated: false,
+    };
+
+    let (read, unread) = code_files(&inventory);
+
+    // A file too large for its own limit does not count toward the total.
+    assert_eq!(read.len(), count - 2);
+    assert_eq!(unread.len(), 3);
+    assert!(unread[0].snippet.contains("2 MB"));
+    assert!(unread[1].snippet.contains("200 MB"));
+    assert_eq!(unread[2].path, format!("{:03}.do", count - 1));
+}
+
+#[test]
+fn a_cut_short_file_list_is_named_as_a_gap_in_the_code() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "a.do", "display 1\n");
+    write(dir.path(), "b.do", "display 2\n");
+    let output = run(dir.path(), &serde_json::json!({"max_files": 1})).unwrap();
+    assert_eq!(check(&output, CODE_COVERAGE)["status"], "info");
+    assert!(check(&output, "absolute_paths")["detail"]
+        .as_str()
+        .unwrap()
+        .contains("more files than this check lists"));
+}
+
+#[test]
+fn every_code_file_read_adds_no_coverage_note() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "main.do", "display 1\n");
+    let output = run(dir.path(), &Value::Null).unwrap();
+    assert_eq!(output["unread_code_files"], 0);
+    assert!(output["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|check| check["id"] != CODE_COVERAGE));
+}

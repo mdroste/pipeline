@@ -65,6 +65,12 @@ pub struct TheoryNote {
     /// Host-owned; client-supplied values are replaced by the stored list.
     #[serde(default)]
     pub promotions: Vec<Promotion>,
+    /// Host-owned: the package this note came from, until its status is decided here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_from: Option<String>,
+    /// Host-owned: the status its sender gave it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_status: Option<String>,
 }
 fn manual() -> String {
     "manual".into()
@@ -102,6 +108,12 @@ pub struct TheoryCheckRecord {
     /// `instances_only`, `refuting_instance`, `heuristic`, or `model_assessment`.
     pub scope: String,
     pub label: String,
+    /// Host-owned: the package this check came from. Recording it here clears this.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_from: Option<String>,
+    /// Host-owned: `passed` when its sender recorded it as passing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_status: Option<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -224,10 +236,16 @@ pub(super) fn save_theory(
             "A proposed note stays open until the researcher reviews it",
         ));
     }
-    note.promotions = match object_id {
-        Some(existing) => decode::<TheoryNote>(&record(store, ws, existing, "theory")?)?.promotions,
-        None => Vec::new(),
-    };
+    let stored = object_id
+        .map(|existing| decode::<TheoryNote>(&record(store, ws, existing, "theory")?))
+        .transpose()?;
+    note.promotions = stored
+        .as_ref()
+        .map(|old| old.promotions.clone())
+        .unwrap_or_default();
+    let imported = stored.filter(|_| note.status != "supported");
+    note.imported_from = imported.as_ref().and_then(|old| old.imported_from.clone());
+    note.imported_status = imported.and_then(|old| old.imported_status);
     put(store, ws, &id, "theory", expected, &note)
 }
 
@@ -364,6 +382,8 @@ pub(super) fn save_check(
             check,
             scope,
             label,
+            imported_from: None,
+            imported_status: None,
         },
     )
 }
@@ -410,6 +430,20 @@ pub(super) fn save_direction(
     put(store, ws, &new_or_id(object_id)?, "direction", expected, &d)
 }
 
+/// A task check holds less than a direction's test field. The objective keeps
+/// the whole test, so the check is only a short reference to it.
+fn check_excerpt(test: &str) -> String {
+    const MAX_CHECK_BYTES: usize = 1000;
+    if test.len() <= MAX_CHECK_BYTES {
+        return test.to_string();
+    }
+    let mut kept = MAX_CHECK_BYTES - '…'.len_utf8();
+    while !test.is_char_boundary(kept) {
+        kept -= 1;
+    }
+    format!("{}…", &test[..kept])
+}
+
 pub(super) fn convert_direction(
     store: &Store,
     ws: &str,
@@ -444,7 +478,7 @@ pub(super) fn convert_direction(
         objective,
         None,
         Vec::new(),
-        vec![d.first_discriminating_test.trim().to_string()],
+        vec![check_excerpt(d.first_discriminating_test.trim())],
     )?;
     d.status = "converted".into();
     d.task_id = Some(task.id.clone());
@@ -605,6 +639,8 @@ pub struct TheoryEvidence {
     pub counterexamples: usize,
     pub heuristic: usize,
     pub model_assessment: usize,
+    /// Passing checks reported by a sender. They count as evidence nowhere else.
+    pub imported: usize,
     pub label: String,
 }
 #[derive(Debug, Clone, Serialize)]
@@ -617,7 +653,12 @@ pub struct TheoryOverview {
 }
 pub fn theory_overview(store: &Store, ws: &str) -> WorkbenchResult<TheoryOverview> {
     let notes = records(store, ws, "theory")?;
-    let checks = records(store, ws, "check")?;
+    // A note's evidence counts every check, not only the newest page of them.
+    let checks = records_up_to(store, ws, "check", RECORD_READ_LIMIT)?;
+    let decoded = checks
+        .iter()
+        .map(decode::<TheoryCheckRecord>)
+        .collect::<WorkbenchResult<Vec<_>>>()?;
     let directions = records(store, ws, "direction")?;
     let mut evidence = BTreeMap::new();
     for note in &notes {
@@ -630,14 +671,18 @@ pub fn theory_overview(store: &Store, ws: &str) -> WorkbenchResult<TheoryOvervie
             counterexamples: 0,
             heuristic: 0,
             model_assessment: 0,
+            imported: 0,
             label: String::new(),
         };
-        for c in &checks {
-            let c: TheoryCheckRecord = decode(c)?;
+        for c in &decoded {
             if c.check.theory_id != note.id {
                 continue;
             }
             let passed = c.check.outcome == "passed";
+            if passed && c.imported_from.is_some() {
+                e.imported += 1;
+                continue;
+            }
             match c.check.method.as_str() {
                 "analytical_argument" if passed => e.analytical += 1,
                 "symbolic_identity" if passed => e.symbolic += 1,
@@ -669,6 +714,9 @@ pub fn theory_overview(store: &Store, ws: &str) -> WorkbenchResult<TheoryOvervie
                 .into()
         } else if e.heuristic + e.model_assessment > 0 {
             "Only heuristic or model assessment recorded; nothing is verified.".into()
+        } else if e.imported > 0 {
+            "Only imported checks recorded; their sender reported them and nothing was checked here."
+                .into()
         } else {
             "No checks recorded.".into()
         };
@@ -685,7 +733,7 @@ pub fn theory_overview(store: &Store, ws: &str) -> WorkbenchResult<TheoryOvervie
 /// Bounded text for the automatic project context: abandoned approaches only,
 /// so a later session finds them without treating working notes as decisions.
 pub fn rejected_approach_context(store: &Store, ws: &str) -> WorkbenchResult<String> {
-    let notes = records(store, ws, "theory")?;
+    let notes = records_up_to(store, ws, "theory", RECORD_READ_LIMIT)?;
     let mut text = String::new();
     let mut shown = 0;
     for record in &notes {

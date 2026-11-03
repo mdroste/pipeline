@@ -463,6 +463,43 @@ it("does not ask once the note has been saved", async () => {
   expect(mocks.confirm).not.toHaveBeenCalled();
 });
 
+it("stages only a saved note, so the text on screen is what reaches the manuscript", async () => {
+  mocks.theory.mockResolvedValue(
+    overview({ notes: [note("t1", "derivation")] }),
+  );
+  mocks.mutate.mockImplementation(
+    async (_w: string, action: { note: never }) => ({
+      id: "t1",
+      revision: 3,
+      body: action.note,
+    }),
+  );
+  const withChange = {
+    ...data,
+    changes: [{ id: "c1", body: { state: "isolated", taskId: "t" } }],
+  } as unknown as ProjectHome;
+  render(<Theory {...props()} data={withChange} />);
+  fireEvent.click(await screen.findByText("Edit / checks"));
+  fireEvent.change(screen.getByLabelText("Task change set"), {
+    target: { value: "c1" },
+  });
+  const stage = screen.getByRole("button", {
+    name: "Stage derivation into manuscript",
+  });
+  expect(stage).toBeEnabled();
+
+  fireEvent.change(screen.getByLabelText("Title"), {
+    target: { value: "Edited title" },
+  });
+  expect(stage).toBeDisabled();
+  expect(screen.getByText(/Save the theory note first/)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("Save theory note"));
+  await screen.findByText("Theory note saved.");
+  expect(stage).toBeEnabled();
+  expect(screen.queryByText(/Save the theory note first/)).toBeNull();
+});
+
 it("brings the note form into view from a row in the list", async () => {
   const scroll = vi.fn();
   const original = Element.prototype.scrollIntoView;
@@ -479,4 +516,49 @@ it("brings the note form into view from a row in the list", async () => {
   } finally {
     Element.prototype.scrollIntoView = original;
   }
+});
+
+it("shows what a sender decided beside an imported note and check", async () => {
+  mocks.theory.mockResolvedValue(
+    overview({
+      notes: [note("t1", "proposition", { importedStatus: "supported" })],
+      checks: [
+        {
+          id: "c1",
+          workspaceId: "ws",
+          kind: "check",
+          revision: 1,
+          updatedAt: "",
+          body: {
+            check: {
+              theoryId: "t1",
+              method: "analytical_argument",
+              outcome: "passed",
+              summary: "Argument",
+              domain: "",
+              tolerance: null,
+              precision: null,
+              executionId: null,
+              recipeRunId: null,
+              anchorIds: [],
+              claimsGenerality: true,
+              origin: "manual",
+            },
+            scope: "general",
+            label: "Recorded",
+            importedFrom: "namespace",
+            importedStatus: "passed",
+          },
+        },
+      ],
+    }),
+  );
+  render(<Theory {...props()} />);
+  expect(
+    await screen.findByText(/the sender marked this supported/),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Edit / checks" }));
+  expect(
+    await screen.findByText(/the sender recorded a passed check/),
+  ).toBeInTheDocument();
 });

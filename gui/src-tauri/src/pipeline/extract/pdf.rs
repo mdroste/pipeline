@@ -8,6 +8,7 @@ mod llm;
 mod native;
 mod paddle_server;
 mod page_quality;
+mod server_log;
 
 #[path = "paddle_full.rs"]
 mod full;
@@ -15,7 +16,7 @@ mod full;
 pub(super) use cache::{activate_paddle_full_cache, full_parser_cache_fingerprint};
 pub(super) use full::extract_paddle_full;
 pub(super) use full_structure::full_parser_extraction_from_structure;
-pub(crate) use full_structure::is_withheld_image_text_note;
+pub(crate) use full_structure::is_informational_extraction_note;
 pub(super) use llm::extract_llm;
 pub(crate) use native::extract_pdftotext;
 pub(super) use native::{find_command, pdftotext_page_metrics};
@@ -25,6 +26,8 @@ pub(super) use paddle_server::{run_paddle_full_sidecar, start_paddle_server, Sid
 pub(super) use full_structure::render_paddle_full_page;
 #[cfg(test)]
 pub(super) use llm::{extraction_requirements, provider_uses_direct_api};
+#[cfg(all(test, unix))]
+pub(super) use paddle_server::PADDLE_PROGRESS_PREFIX;
 #[cfg(test)]
 pub(super) use paddle_server::{
     paddle_model_list_has_alias, paddle_server_token, PADDLE_MODEL_ALIAS,

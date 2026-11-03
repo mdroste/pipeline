@@ -19,6 +19,21 @@ describe("ReportViewer", () => {
     );
   });
 
+  it("keeps dollar amounts as text in the report and its contents", () => {
+    const { container } = render(
+      <ReportViewer
+        markdown={
+          "# Costs of $5 and $10\n\nBetween $500 and $1,000 per subject, for $x$.\n\n## One\n\n## Two\n\n## Three\n"
+        }
+      />,
+    );
+    expect(container.textContent).toContain(
+      "Between $500 and $1,000 per subject, for",
+    );
+    expect(container.querySelectorAll(".katex")).toHaveLength(1);
+    expect(plainHeadingText("Costs of $5 and $10")).toBe("Costs of $5 and $10");
+  });
+
   it("renders markdown headings and body text", () => {
     render(<ReportViewer markdown={"# Report\n\nSome finding."} />);
     expect(screen.getByRole("heading", { name: "Report" })).toBeInTheDocument();
@@ -229,6 +244,43 @@ describe("ReportViewer", () => {
     expect(toc).not.toHaveTextContent(/<span|\*\*|_/);
   });
 
+  it("keeps the text between unspaced inequalities in Contents", () => {
+    expect(plainHeadingText("Case N<T and T>0 holds")).toBe(
+      "Case N<T and T>0 holds",
+    );
+    expect(plainHeadingText('<span class="x">Costs</span> <br/>a<b>')).toBe(
+      "Costs a",
+    );
+
+    render(
+      <ReportViewer
+        markdown={[
+          "## First",
+          "## Case N<T and T>0 holds",
+          "## Third",
+          "## Fourth",
+        ].join("\n\n")}
+      />,
+    );
+    const toc = screen.getByText("Contents").closest("nav");
+    expect(
+      within(toc!).getByRole("link", { name: "Case N<T and T>0 holds" }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringMatching(/-case-n-t-and-t-0-holds$/),
+    );
+  });
+
+  it("shows a caller's notice when the text was cut before it arrived", () => {
+    render(
+      <ReportViewer
+        markdown={"# Report\n\nStart."}
+        truncationNotice="Export it to read the rest."
+      />,
+    );
+    expect(screen.getByText("Export it to read the rest.")).toBeVisible();
+  });
+
   it("preserves literal formatting characters in heading labels", () => {
     expect(plainHeadingText("Use `**literal**` and \\*")).toBe(
       "Use **literal** and *",
@@ -318,7 +370,11 @@ describe("ReportViewer", () => {
 
     expect(stripPresentationalHtml(markdown)).toContain("Visible finding");
     expect(screen.getByText("Visible finding")).toBeVisible();
-    expect(screen.getByText("R2 and xt")).toBeVisible();
+    expect(
+      [...container.querySelectorAll(".katex annotation")].map(
+        (math) => math.textContent,
+      ),
+    ).toEqual(["^{2}", "_{t}"]);
     expect(container.textContent).not.toContain("<span");
     expect(container.textContent).not.toContain("</span>");
     expect(container.textContent).not.toContain("<sup>");

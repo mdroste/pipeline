@@ -16,9 +16,12 @@ const METADATA_VALUE =
 export default function ProvenancePanel({
   provenance,
   quality,
+  status,
 }: {
   provenance: RunProvenance;
   quality?: ReportQuality;
+  /** The status the report header shows, after checking the report text. */
+  status: string;
 }) {
   const { models, usesProviderDefault } = namedModelSummary(provenance);
   const fields = [
@@ -28,10 +31,7 @@ export default function ProvenancePanel({
     ["Provider", provenance.provider_summary],
   ];
   const showCacheWrite = provenance.totals.cache_write_input_tokens > 0;
-  const display = reportStatusDisplay(
-    quality?.status || provenance.status,
-    quality,
-  );
+  const display = reportStatusDisplay(status, quality);
 
   return (
     <div className="h-full overflow-y-auto">

@@ -66,8 +66,9 @@ produce an AppImage.
    ```
 
 4. Start **Release** on that tag. Choose `all` for a full release, or one
-   platform to rebuild a missing installer. The default is macOS on Apple
-   Silicon.
+   platform to rebuild missing installers. The default, `macos`, builds both
+   Apple Silicon and Intel installers. Both macOS architectures always build
+   together.
 
 The workflow first checks that the version matches, that GitHub verifies the
 tag signature, and that the tag points at the workflow's commit. It creates a
@@ -201,6 +202,8 @@ Before you publish, test the candidate by hand:
   restriction. Enable **Browser interaction** and let setup finish. Sign in
   directly, and confirm that stopping the turn closes it. Check private-address
   and redirect denial.
+- On Windows, choose **Reveal in folder** on a file whose path has a space, and
+  confirm Explorer opens that folder with the file selected.
 - On Windows, open a project on a mapped network drive. **Move to Trash** and
   **Discard changes** should refuse and leave the file in place. On a local
   project, check **Open externally** and **Reveal in folder** on a file in a
@@ -227,6 +230,10 @@ Before you publish, test the candidate by hand:
 - On a Windows machine with Smart App Control on and a graphics card, install
   **Graphics card recognition** and extract the same PDF. Confirm in Task Manager
   that the graphics card does the work, and compare the time with the processor.
+- On Windows, sign in to an account whose user folder has an accented letter, such
+  as `José`, install the Full Parser, and extract the same PDF. Run this with short
+  file names on, then off for that drive. With them off, the install must stop
+  before any download and say why. No automated run covers this path.
 - If `gui/src-tauri/resources/paddle-parser/` or `gui/src-tauri/src/engines/`
   changed since the last release, run **Paddle parser qualification** on the
   release tag. It covers Linux x64 only. It stays out of the **Release** workflow

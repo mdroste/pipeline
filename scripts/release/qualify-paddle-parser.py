@@ -207,8 +207,15 @@ class RecognitionHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def run(arguments: list[str], environment: dict[str, str], timeout: int = 1200) -> None:
-    subprocess.run(arguments, check=True, env=environment, timeout=timeout)
+def run(
+    arguments: list[str],
+    environment: dict[str, str],
+    timeout: int = 1200,
+    stdout: int | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        arguments, check=True, env=environment, timeout=timeout, stdout=stdout, text=True
+    )
 
 
 def qualify(workspace: Path) -> None:
@@ -344,7 +351,7 @@ def qualify(workspace: Path) -> None:
         fixture = workspace / "fixture.pdf"
         run([str(python), "-I", "-B", "-c", fixture_code, str(fixture)], environment)
         output = workspace / "structure.json"
-        run(
+        parse = run(
             [
                 str(python),
                 "-I",
@@ -371,6 +378,7 @@ def qualify(workspace: Path) -> None:
             ],
             environment,
             timeout=900,
+            stdout=subprocess.PIPE,
         )
     finally:
         server.shutdown()
@@ -382,6 +390,8 @@ def qualify(workspace: Path) -> None:
         raise RuntimeError("Full parser returned an incompatible structure")
     if not document.get("pages") or RecognitionHandler.requests_seen < 1:
         raise RuntimeError("Full parser did not complete real layout-to-recognition extraction")
+    if "pipeline-progress: recognizing page" not in parse.stdout:
+        raise RuntimeError("The sidecar no longer follows recognition in this Paddle runtime")
     print(
         json.dumps(
             {

@@ -197,7 +197,7 @@ its own folder.
 `codex app-server` process with an isolated `CODEX_HOME`.
 `agent_runtime/codex/compatibility.rs` sets the version rules:
 
-- Reject malformed version output and builds older than 0.147.0. Admit newer
+- Reject malformed version output and builds older than 0.165.0. Admit newer
   builds.
 - Treat the checksum-pinned schemas in `gui/src-tauri/codex-protocol/0.147.0/` as
   the field reference. Never edit them.
@@ -289,7 +289,9 @@ stream lost.
 method. The backend claims it before answering, so a duplicate click can't
 replay it, and an old connection can't approve on a new one. Requests reach the
 event bridge through a lossless queue, so lag can't drop one, and a method no
-screen can answer is refused at once rather than left waiting.
+screen can answer is refused at once rather than left waiting. The request card
+reads the app-owned record built in `workbench/codex/requests.rs`, not App Server
+params.
 
 **Harness.** Each turn saves a snapshot of the resolved harness. A changed
 fingerprint starts a new native binding. Bump `TOOL_CATALOG_VERSION` in
@@ -311,7 +313,7 @@ uncertain outcome instead of repeating work.
 | Conversation send | Draft and submission ID | No automatic resend |
 | Approval | Pending request with its epoch | An old request can't approve on a new connection |
 | Tool call | Running receipt | `outcome_unknown`; never reruns |
-| Local job | Record with the process instance | `outcome_unknown`; reconciling re-hashes outputs first |
+| Local job | Record with the process instance, whose lock file shows it is alive | `outcome_unknown` once that instance has ended; reconciling re-hashes outputs first |
 | Output adoption | Content-addressed staging | Unreferenced staging is disposable |
 | Store migration | Online backup in the store's `backups/` folder | Rollback keeps the old schema |
 | Review model call | Response journal; attempt receipt for Codex | No repeat; open receipts block new Codex calls until reviewed |
@@ -454,7 +456,7 @@ lifecycle, sandbox rules, and process cleanup without a model turn. The
 changing Codex transport, sandbox, or process code. Set
 `PIPELINE_PROBE_NETWORK=1` for the optional public-domain, denial, and proxy-bypass
 checks. Browser transport tests run with
-`node --test gui/src-tauri/src/workbench/browser/public-request.test.mjs`.
+`node --test gui/src-tauri/src/workbench/browser/public-request.test.mjs gui/src-tauri/src/workbench/browser/request-limits.test.mjs`.
 
 **Opt-in tests** are marked `#[ignore]`. Run one with
 `cargo test --locked --lib <name> -- --ignored`.

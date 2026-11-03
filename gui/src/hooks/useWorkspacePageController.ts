@@ -132,9 +132,12 @@ export function useWorkspacePageController({
     setError,
     notice,
     setNotice,
+    warnings,
+    setWarnings,
     submissionOwner,
     activeTurn,
-    fileChangesRef,
+    fileChanges,
+    missedProblemsRef,
     sessionRef,
     snapshotRef,
     activeRef,
@@ -289,8 +292,12 @@ export function useWorkspacePageController({
   useWorkspaceChromeSession(chrome, sessionId);
 
   useEffect(() => {
-    // Errors speak for the conversation that was on screen.
-    setError(null);
+    // Errors speak for the conversation that was on screen, and warnings too.
+    // One this conversation raised while it was left waits here.
+    const missed = sessionId ? missedProblemsRef.current.get(sessionId) : null;
+    if (sessionId) missedProblemsRef.current.delete(sessionId);
+    setError(missed ?? null);
+    setWarnings([]);
     if (!sessionId) {
       // Hydration resets these for a conversation; with none selected, a
       // response running elsewhere must not stay on this page. Its submission
@@ -361,6 +368,17 @@ export function useWorkspacePageController({
     [harnessEditor, saveCurrentDraft, workspaceId],
   );
 
+  // Opening the selected conversation again changes no state, so nothing else
+  // would load one whose first load failed.
+  const retryFailedLoad = useCallback(
+    (id: string) => {
+      if (snapshotRef.current?.session.id === id) return;
+      setError(null);
+      void hydrate(id);
+    },
+    [hydrate],
+  );
+
   const selectSession = useCallback(
     async (id: string) => {
       if (contextBusyRef.current || harnessEditor) return;
@@ -373,10 +391,11 @@ export function useWorkspacePageController({
         setDraft("");
       }
       setSessionId(id);
+      if (id === sessionId) retryFailedLoad(id);
       if (!workspaceId) setSurface("chat");
       setAssistantRequest((value) => value + 1);
     },
-    [harnessEditor, saveCurrentDraft, sessionId, workspaceId],
+    [harnessEditor, retryFailedLoad, saveCurrentDraft, sessionId, workspaceId],
   );
 
   const createSession = async () => {
@@ -394,7 +413,7 @@ export function useWorkspacePageController({
       workspaceId !== workspaceRef.current
     )
       return;
-    await loadSessions(workspaceId);
+    await loadSessions(workspaceId, undefined, true);
     if (
       generation !== navigationGeneration.current ||
       workspaceId !== workspaceRef.current
@@ -465,7 +484,7 @@ export function useWorkspacePageController({
         workspaceId !== workspaceRef.current
       )
         return;
-      await loadSessions(workspaceId);
+      await loadSessions(workspaceId, undefined, true);
       if (contextItems?.length)
         await deskClient.saveContext(
           session.id,
@@ -550,7 +569,7 @@ export function useWorkspacePageController({
     hydrate,
   });
 
-  const resolve = useWorkspaceRequestResolution(setRequests, setError);
+  const resolve = useWorkspaceRequestResolution(setRequests, conversation);
 
   const {
     allRenderedItems,
@@ -623,7 +642,7 @@ export function useWorkspacePageController({
     const itemId = request.params?.itemId;
     if (typeof itemId !== "string") return null;
     return (
-      fileChangesRef.current.get(itemId) ??
+      fileChanges.get(itemId) ??
       snapshot?.items.find((item) => item.providerItemId === itemId)?.payload ??
       null
     );
@@ -707,6 +726,8 @@ export function useWorkspacePageController({
           // on a later page, so the list must not choose a different one.
           else void loadSessions(project, false, true);
           if (target.sessionId) void hydrate(target.sessionId);
+        } else if (target.sessionId) {
+          retryFailedLoad(target.sessionId);
         }
         const entered = project ?? workspaceId;
         const landing =
@@ -805,6 +826,7 @@ export function useWorkspacePageController({
       requestItem,
       backgroundTurn,
       notice,
+      warnings,
       acceptSnapshot,
       setSubmitting,
       sessionRef,

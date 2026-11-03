@@ -17,6 +17,7 @@ mod model;
 mod pdf_annotate;
 mod pdf_words;
 mod quote_match;
+mod raw_html;
 mod text;
 
 pub use docx_comments::{annotate_docx, DocxAnnotation};
@@ -26,6 +27,7 @@ pub(crate) use math::{protect_math, ProtectedMath};
 pub use model::{ExportEvidence, ExportFinding, ReportExport, ReportMetadata, Verification};
 pub use pdf_annotate::{annotate_pdf, PdfAnnotation};
 pub use pdf_words::{parse_bbox_layout, pdftotext_bbox_layout, PageWords};
+pub(crate) use raw_html::escape_html_text;
 
 /// Author recorded on Word comments and PDF annotations.
 pub const ANNOTATION_AUTHOR: &str = "Pipeline Review";

@@ -17,6 +17,7 @@ interface Props {
   loadSessions: (
     workspaceId: string | null,
     archived?: boolean,
+    keepSelection?: boolean,
   ) => Promise<void>;
   refreshSessionRecord: (id: string) => Promise<void>;
   hydrate: (id?: string | null) => Promise<void>;
@@ -45,6 +46,16 @@ export function useWorkspaceSessionMutations({
   const [moveTarget, setMoveTarget] = useState<WorkbenchSession | null>(null);
   const [moving, setMoving] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
+  // The open conversation may be archived or on an unread page, so a list that
+  // omits it says nothing about it. Changing another must not move away from it.
+  const reloadAfter = (mutated: WorkbenchSession) => {
+    const open = sessionRef.current;
+    return loadSessions(
+      workspaceId,
+      showArchived,
+      open !== null && open !== mutated.id,
+    );
+  };
   const archiveSession = async (session: WorkbenchSession) => {
     const latest = await conversationClient.sessionSnapshot(session.id);
     await conversationClient.updateSession({
@@ -54,7 +65,7 @@ export function useWorkspaceSessionMutations({
       archived: !latest.session.archivedAt,
     });
     appEvents.emit("conversations-changed", {});
-    await loadSessions(workspaceId, showArchived);
+    await reloadAfter(session);
     if (sessionRef.current === session.id)
       await refreshSessionRecord(session.id);
   };
@@ -112,7 +123,7 @@ export function useWorkspaceSessionMutations({
       setSessionId(null);
       setDraft("");
     }
-    await loadSessions(workspaceId, showArchived);
+    await reloadAfter(session);
   };
 
   const moveSession = async (
@@ -141,7 +152,7 @@ export function useWorkspaceSessionMutations({
         }
         await hydrate(session.id);
       } else {
-        await loadSessions(workspaceId, showArchived);
+        await reloadAfter(session);
       }
     } catch (cause) {
       setMoveError(workbenchErrorMessage(cause));

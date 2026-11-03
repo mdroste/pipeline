@@ -37,6 +37,7 @@ const EDIT_STATES: Record<string, string> = {
   applied: "Accepted",
   accepted: "Accepted",
   rejected: "Discarded",
+  imported: "From the sender's computer; nothing changed here",
 };
 const editState = (state: string) =>
   EDIT_STATES[state] ?? state.replaceAll("_", " ");
@@ -167,6 +168,7 @@ function AcceptanceHistory({
       undone: "Undone",
       applying: "Interrupted while copying files",
       recovery_required: "Needs recovery",
+      imported: "From the sender's computer; nothing changed here",
     })[state] ?? state.replaceAll("_", " ");
   if (!applications.length) return null;
   return (

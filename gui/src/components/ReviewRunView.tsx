@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import PipelineProgress from "./PipelineProgress";
+import ReportIssueLink from "./ReportIssueLink";
 import { Button, EmptyState, Spinner } from "../ui";
 import type {
   PassTiming,
@@ -156,6 +157,7 @@ export default function ReviewRunView({
             }
           >
             {state.message}
+            {run.status !== "cancelled" && <ReportIssueLink />}
           </div>
           <button
             type="button"

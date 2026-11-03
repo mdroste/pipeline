@@ -43,7 +43,9 @@ pub(super) async fn run(
         let mut seen = HashSet::new();
         let mut ceiling = 0;
         for round in 0..32 {
+            wire::make_room(connection, instructions, &mut messages, specs);
             let mut body = wire::body(connection, instructions, &messages, specs);
+            let item_id = format!("{}-assistant-{round}", turn.id);
             let reply = wire::parse(
                 connection.provider,
                 clock
@@ -53,11 +55,12 @@ pub(super) async fn run(
                         &mut body,
                         &mut ceiling,
                         Some(&mut |text| {
+                            turn.unsaved.append(&item_id, text);
                             let _ = app.publish(&NormalizedEvent::AgentMessageDelta {
                                 epoch: turn.epoch,
                                 thread_id: turn.thread.clone(),
                                 turn_id: turn.id.clone(),
-                                item_id: format!("{}-assistant-{round}", turn.id),
+                                item_id: item_id.clone(),
                                 delta: text.into(),
                             });
                         }),
@@ -84,6 +87,7 @@ pub(super) async fn run(
             if !reply.text.is_empty() {
                 turn.emit(app, turn.reply_event(round, &reply)).await?;
             }
+            turn.unsaved.saved(&item_id);
             if !has_tool_calls(&reply)? {
                 return Ok(());
             }
@@ -160,6 +164,15 @@ pub(super) async fn cancellable<T>(
     }
 }
 
+/// What the model gets from a call whose result can't fit in a request. The
+/// call did run, so it must not look like a failure worth repeating.
+pub(super) fn bounded_result(response: Value) -> Value {
+    if response.to_string().len() <= wire::MAX_TOOL_RESULT {
+        return response;
+    }
+    json!({"success":false,"contentItems":[{"type":"inputText","text":"This tool ran, but its result is over the 4 MB limit and was left out. Do not repeat the same call. Ask for a smaller part, or use the extracted text of a page too large to view as an image."}]})
+}
+
 /// Why this call can't run, in terms the model can correct. Only a broken tool
 /// schema is the host's fault and ends the turn.
 fn refusal(call: &wire::Call, specs: &[Value]) -> Result<Option<String>, String> {
@@ -232,10 +245,8 @@ async fn execute(
             .map_err(|e| e.message)?;
         }
     }
+    let response = bounded_result(response);
     let encoded = response.to_string();
-    if encoded.len() > wire::MAX_BODY / 2 {
-        return Err("The tool result exceeded 4 MB".into());
-    }
     let mut completed = item;
     completed["status"] = json!(if response["success"] == true {
         "completed"

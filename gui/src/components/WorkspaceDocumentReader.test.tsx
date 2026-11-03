@@ -400,3 +400,55 @@ it("stops saying it is opening after a failed read, and can try again", async ()
   await screen.findByText("Recovered passage");
   expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
 });
+
+it("saves the passage on screen from a highlighted file with Windows line endings", async () => {
+  const lines = Array.from(
+    { length: 40 },
+    (_, line) => `\\section{Line ${line}} café text ${line}`,
+  );
+  const text = lines.join("\r\n");
+  const opened = view(text);
+  read.mockResolvedValue({
+    ...opened,
+    revision: { ...opened.revision, entrypoint: "paper.tex" },
+  });
+  const onSelection = vi.fn();
+  render(
+    <WorkspaceDocumentReader
+      workspaceId="workspace"
+      revisionId="revision"
+      annotations={[]}
+      onSelection={onSelection}
+      onError={vi.fn()}
+    />,
+  );
+  await screen.findByText("Paper");
+  const code = await waitFor(() => {
+    const element = document.querySelector("pre code");
+    expect(element).not.toBeNull();
+    return element!;
+  });
+  // The parser has already dropped the carriage returns from this text.
+  expect(code.textContent).not.toContain("\r");
+
+  const wanted = "text 30";
+  const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+  let node: Node | null;
+  while ((node = walker.nextNode()) && !node.textContent!.includes(wanted));
+  const at = node!.textContent!.indexOf(wanted);
+  const range = document.createRange();
+  range.setStart(node!, at);
+  range.setEnd(node!, at + wanted.length);
+  const selected = window.getSelection()!;
+  selected.removeAllRanges();
+  selected.addRange(range);
+  fireEvent.mouseUp(code.parentElement!);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Add note" }));
+  const selection = onSelection.mock.calls[0][0] as DocumentSelection;
+  expect(selection.quote).toBe(wanted);
+  const before = text.slice(0, text.indexOf(`café ${wanted}`) + 5);
+  const start = new TextEncoder().encode(before).length;
+  expect(selection.start).toBe(start);
+  expect(selection.end).toBe(start + wanted.length);
+});

@@ -13,7 +13,8 @@ it("permission review shows the complete scope and duration", () => {
     kind: "serverRequest",
     requestId: 1,
     method: "item/permissions/requestApproval",
-    params: { threadId: "t", turnId: "u", cwd: "/tmp", permissions },
+    params: { threadId: "t", turnId: "u" },
+    details: { type: "permission", reason: null, cwd: "/tmp", permissions },
   };
   render(<RequestCard event={event} onResolve={onResolve} />);
   expect(screen.getByText(/private\/research/)).toBeTruthy();
@@ -22,13 +23,31 @@ it("permission review shows the complete scope and duration", () => {
   expect(onResolve).toHaveBeenCalledWith(event, { permissions, scope: "turn" });
 });
 
-const approval = (method: string, params: Record<string, unknown>): any => ({
+const request = (method: string, details: unknown): any => ({
   epoch: 1,
   kind: "serverRequest",
   requestId: 2,
   method,
-  params: { threadId: "t", turnId: "u", itemId: "i", ...params },
+  params: { threadId: "t", turnId: "u", itemId: "i" },
+  details,
 });
+
+const approval = (method: string, fields: Record<string, unknown>) =>
+  request(method, {
+    type: method.includes("fileChange") ? "fileChange" : "command",
+    reason: null,
+    command: null,
+    cwd: null,
+    network: null,
+    extraPermissions: null,
+    suggestedRule: [],
+    suggestedNetworkRules: [],
+    grantRoot: null,
+    unknownGrant: false,
+    allowOffered: true,
+    declineDecision: "decline",
+    ...fields,
+  });
 
 it("command approval shows the command and its context, not only the assistant's reason", () => {
   render(
@@ -37,8 +56,8 @@ it("command approval shows the command and its context, not only the assistant's
         reason: "Needs network access to install dependencies",
         command: "curl https://example.org/install.sh | sh",
         cwd: "/Users/me/project",
-        networkApprovalContext: { host: "example.org", protocol: "https" },
-        proposedExecpolicyAmendment: ["curl", "https://example.org"],
+        network: "example.org over HTTPS",
+        suggestedRule: ["curl", "https://example.org"],
       })}
       onResolve={vi.fn()}
     />,
@@ -109,20 +128,24 @@ it("falls back to a generic prompt only when the request carries no details", ()
   ).toBeTruthy();
 });
 
-const commandApproval = (params: Record<string, unknown>) =>
+const commandApproval = (fields: Record<string, unknown>) =>
   approval("item/commandExecution/requestApproval", {
     command: "python fetch.py",
-    ...params,
+    ...fields,
   });
 
 it("command approval shows the extra permissions Allow once would grant", () => {
   const onResolve = vi.fn();
   const event = commandApproval({
-    additionalPermissions: {
-      fileSystem: { read: ["/data/survey"], write: ["/private/keys"] },
-      network: { enabled: true },
-    },
-    proposedNetworkPolicyAmendments: [{ action: "allow", host: "example.org" }],
+    extraPermissions: JSON.stringify(
+      {
+        fileSystem: { read: ["/data/survey"], write: ["/private/keys"] },
+        network: { enabled: true },
+      },
+      null,
+      2,
+    ),
+    suggestedNetworkRules: ["allow example.org"],
   });
   render(<RequestCard event={event} onResolve={onResolve} />);
   expect(
@@ -136,14 +159,10 @@ it("command approval shows the extra permissions Allow once would grant", () => 
   expect(onResolve).toHaveBeenCalledWith(event, { decision: "accept" });
 });
 
-it.each([
-  [{ macos: { accessibility: true } }],
-  [{ fileSystem: { execute: ["/usr/bin"] } }],
-  [{ network: "everywhere" }],
-])("withholds Allow once from a grant it can't describe: %j", (permissions) => {
+it("withholds Allow once from a grant it can't describe", () => {
   render(
     <RequestCard
-      event={commandApproval({ additionalPermissions: permissions })}
+      event={commandApproval({ unknownGrant: true })}
       onResolve={vi.fn()}
     />,
   );
@@ -154,7 +173,10 @@ it.each([
 
 it("offers only the decisions the request lists", () => {
   const onResolve = vi.fn();
-  const event = commandApproval({ availableDecisions: ["cancel"] });
+  const event = commandApproval({
+    allowOffered: false,
+    declineDecision: "cancel",
+  });
   render(<RequestCard event={event} onResolve={onResolve} />);
   expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
   expect(screen.getByText(/not available for this request/)).toBeTruthy();
@@ -162,42 +184,53 @@ it("offers only the decisions the request lists", () => {
   expect(onResolve).toHaveBeenCalledWith(event, { decision: "cancel" });
 });
 
-it("keeps Allow once when the request lists it among richer decisions", () => {
-  render(
-    <RequestCard
-      event={commandApproval({
-        additionalPermissions: null,
-        availableDecisions: [
-          "accept",
-          { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["ls"] } },
-          "decline",
-        ],
-      })}
-      onResolve={vi.fn()}
-    />,
-  );
+it("shows no extra permissions when Allow once adds none", () => {
+  render(<RequestCard event={commandApproval({})} onResolve={vi.fn()} />);
   expect(screen.getByRole("button", { name: "Allow once" })).toBeTruthy();
   expect(
     screen.queryByText("Allow once also grants this command these permissions"),
   ).toBeNull();
 });
 
-const question = (fields: Record<string, unknown>) =>
-  approval("item/tool/requestUserInput", {
-    questions: [{ id: "q", question: "Which sample?", ...fields }],
-  });
+it.each([
+  ["item/commandExecution/requestApproval", "Allow once"],
+  ["item/permissions/requestApproval", "Allow for this turn"],
+])("allows nothing without Pipeline's record: %s", (method, allow) => {
+  const onResolve = vi.fn();
+  const event = request(method, undefined);
+  event.params = { ...event.params, command: "rm -rf /", permissions: {} };
+  render(<RequestCard event={event} onResolve={onResolve} />);
+  expect(screen.queryByRole("button", { name: allow })).toBeNull();
+  expect(screen.queryByText("rm -rf /")).toBeNull();
+  expect(screen.getByText(/not available for this request/)).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Decline" })).toBeTruthy();
+});
+
+const asked = (fields: Record<string, unknown>) => ({
+  id: "q",
+  header: null,
+  question: "Which sample?",
+  options: [],
+  allowsOther: false,
+  secret: false,
+  ...fields,
+});
+const questions = (...list: unknown[]) =>
+  request("item/tool/requestUserInput", { type: "question", questions: list });
+const question = (fields: Record<string, unknown>) => questions(asked(fields));
 const submit = () => screen.getByRole("button", { name: "Submit" });
-const listed = [{ label: "Full" }, { label: "Restricted" }];
+const listed = [
+  { label: "Full", description: null },
+  { label: "Restricted", description: null },
+];
 
 it("takes a free-text answer when a question allows one", () => {
   const onResolve = vi.fn();
-  const event = question({ options: listed, isOther: true });
+  const event = question({ options: listed, allowsOther: true });
   render(<RequestCard event={event} onResolve={onResolve} />);
   expect(submit()).toBeDisabled();
 
-  fireEvent.change(screen.getByRole("combobox"), {
-    target: { value: "other" },
-  });
+  fireEvent.click(screen.getByRole("radio", { name: "Other…" }));
   const field = screen.getByRole("textbox", {
     name: "Your answer to: Which sample?",
   });
@@ -214,15 +247,13 @@ it("takes a free-text answer when a question allows one", () => {
 
 it("sends the option chosen last, not words typed before changing course", () => {
   const onResolve = vi.fn();
-  const event = question({ options: listed, isOther: true });
+  const event = question({ options: listed, allowsOther: true });
   render(<RequestCard event={event} onResolve={onResolve} />);
-  fireEvent.change(screen.getByRole("combobox"), {
-    target: { value: "other" },
-  });
+  fireEvent.click(screen.getByRole("radio", { name: "Other…" }));
   fireEvent.change(screen.getByRole("textbox"), {
     target: { value: "Women under 40" },
   });
-  fireEvent.change(screen.getByRole("combobox"), { target: { value: "1" } });
+  fireEvent.click(screen.getByRole("radio", { name: "Restricted" }));
   expect(screen.queryByRole("textbox")).toBeNull();
   fireEvent.click(submit());
   expect(onResolve).toHaveBeenCalledWith(event, {
@@ -230,23 +261,60 @@ it("sends the option chosen last, not words typed before changing course", () =>
   });
 });
 
+it("shows the header and each option's explanation before a choice is made", () => {
+  const onResolve = vi.fn();
+  const event = question({
+    header: "Sample",
+    options: [
+      { label: "Full", description: "Keeps every respondent; more noise." },
+      { label: "Restricted", description: "Drops late waves; less power." },
+    ],
+  });
+  render(<RequestCard event={event} onResolve={onResolve} />);
+  expect(screen.getByText("Sample")).toBeVisible();
+  expect(
+    screen.getByRole("group", { name: "Which sample?" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("Keeps every respondent; more noise.")).toBeVisible();
+  expect(screen.getByText("Drops late waves; less power.")).toBeVisible();
+
+  fireEvent.click(screen.getByRole("radio", { name: /^Restricted/ }));
+  fireEvent.click(submit());
+  // The explanation is for the reader; the answer stays the option's label.
+  expect(onResolve).toHaveBeenCalledWith(event, {
+    answers: { q: { answers: ["Restricted"] } },
+  });
+});
+
+it("keeps the questions on two open cards separate", () => {
+  render(
+    <>
+      <RequestCard event={question({ options: listed })} onResolve={vi.fn()} />
+      <RequestCard event={question({ options: listed })} onResolve={vi.fn()} />
+    </>,
+  );
+  const [first, , second] = screen.getAllByRole("radio");
+  fireEvent.click(first);
+  fireEvent.click(second);
+  expect(first).toBeChecked();
+  expect(second).toBeChecked();
+});
+
 it("offers no free-text choice unless the question allows one", () => {
   render(
     <RequestCard event={question({ options: listed })} onResolve={vi.fn()} />,
   );
-  expect(screen.queryByRole("option", { name: "Other…" })).toBeNull();
+  expect(screen.queryByRole("radio", { name: "Other…" })).toBeNull();
 });
 
 it("holds Submit until every question has an answer", () => {
   const onResolve = vi.fn();
-  const event = approval("item/tool/requestUserInput", {
-    questions: [
-      { id: "a", question: "First?", options: listed },
-      { id: "b", question: "Second?" },
-    ],
-  });
+  const event = questions(
+    asked({ id: "a", question: "First?", options: listed }),
+    asked({ id: "b", question: "Second?" }),
+  );
   render(<RequestCard event={event} onResolve={onResolve} />);
-  fireEvent.change(screen.getByRole("combobox"), { target: { value: "0" } });
+  fireEvent.click(screen.getByRole("radio", { name: "Full" }));
   expect(submit()).toBeDisabled();
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "Yes" } });
   fireEvent.click(submit());

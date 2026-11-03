@@ -118,6 +118,10 @@ const MIGRATIONS: [(&str, &str); CURRENT_SCHEMA_VERSION as usize] = [
         include_str!("../migrations/019_store_location.sql"),
         "Failed to apply Workbench migration 19",
     ),
+    (
+        include_str!("../migrations/020_clear_finished_job_journals.sql"),
+        "Failed to apply Workbench migration 20",
+    ),
 ];
 
 fn apply_migrations(transaction: &Transaction<'_>, from: u32, through: u32) -> WorkbenchResult<()> {

@@ -86,12 +86,13 @@ Pipeline.
 When an automation waits for input, its question appears on the automation.
 Type your answer and choose **Provide input**. Waiting uses no model calls.
 
-**Pause** lets the current step finish, then holds the next one. **Stop**
-cancels the current work, including setup before a message is sent. Saved
-results stay available.
+**Pause** lets the current step finish, then holds the next one. **Resume**
+keeps a **Later** automation's date and time. **Stop** cancels the current
+work, including setup before a message is sent. Saved results stay available.
 
 If Pipeline loses track of whether a step finished, for example because the
-app quit, the automation asks for attention:
+app quit, the automation asks for attention. If the app was closed at the time,
+the notice appears the next time you open Pipeline:
 
 - **Check saved results and update status** looks for a saved reply, review,
   or check result. Use it before retrying.
@@ -99,7 +100,8 @@ app quit, the automation asks for attention:
   conversation since the automation started.
 - **Retry unfinished actions** runs the unfinished steps again. Past the
   automation's deadline, it continues with a new deadline, as does answering a
-  **Wait for input** step.
+  **Wait for input** step. A check whose inputs changed runs only after you
+  approve it again in the project's **Results** view.
 
 **Activity log** keeps every earlier attempt and its output.
 
@@ -138,11 +140,17 @@ record…** on the Activity tab saves everything as JSON.
 
 **Pause research automation** lets the current action finish and holds the
 next. Answering a question doesn't resume a paused run; choose **Resume
-research automation**. **Stop research automation** cancels the current
-action.
+research automation**. A run that was waiting for your answer or for a project
+change goes back to waiting, unless the answer or change has arrived. **Stop
+research automation** cancels the current action.
 
-The automation runs only the checks and analyses you chose. If their scripts,
-inputs, or permissions change, it asks you to approve them again. The
+The automation runs only the checks and analyses you chose. If a check's
+scripts, inputs, or permissions change, you get a notice, the automation shows
+the check as waiting for your approval, and it carries on with other work.
+Approve the check again in the project's **Results** view, and the next plan
+can use it. An action already using the check stops and shows **Needs
+attention**. Approve the check, then choose **Retry interrupted action**, or
+choose **Reconsider the agenda** to have the planner pick something else. The
 investigator can edit files only if you turn on **Allow edits in the working
 copy**. The source conversation must work in a working copy, with **Allow
 edits** on. Edits stay in the working copy until you accept them in
@@ -198,7 +206,8 @@ response to reviewers. **Export papers and research** saves a ZIP. **Export
 portfolio report** saves a Markdown summary.
 
 If a step fails, or Pipeline quits during one, the run shows **Needs
-attention**. **Retry** repeats the step with the conversation as it is now, and
+attention**. So does a reply that still can't be used after two repair
+attempts. **Retry** repeats the step with the conversation as it is now, and
 **Stop** ends the run. A run marked **Stopped: needs review** has ended, and its
 recorded work stays available to export.
 

@@ -235,6 +235,51 @@ export interface ActiveTurn {
   composer: boolean;
 }
 
+/** What an approval would allow. Pipeline's own record of the request. */
+export interface ApprovalDetails {
+  type: "command" | "fileChange";
+  reason: string | null;
+  command: string | null;
+  cwd: string | null;
+  /** For example "example.org over HTTPS". */
+  network: string | null;
+  /** Permissions Allow once would add, as readable JSON. */
+  extraPermissions: string | null;
+  suggestedRule: string[];
+  suggestedNetworkRules: string[];
+  grantRoot: string | null;
+  /** Allow once would grant something Pipeline can't describe. */
+  unknownGrant: boolean;
+  allowOffered: boolean;
+  /** The decision that answers Decline. */
+  declineDecision: string;
+}
+
+export interface PermissionDetails {
+  type: "permission";
+  reason: string | null;
+  cwd: string | null;
+  /** What is granted, returned unchanged when the researcher allows it. */
+  permissions: Record<string, unknown> | null;
+}
+
+export interface RequestQuestion {
+  id: string;
+  header: string | null;
+  question: string;
+  options: Array<{ label: string; description: string | null }>;
+  allowsOther: boolean;
+  secret: boolean;
+}
+
+export interface QuestionDetails {
+  type: "question";
+  questions: RequestQuestion[];
+}
+
+export type RequestDetails =
+  ApprovalDetails | PermissionDetails | QuestionDetails;
+
 export interface WorkbenchEvent {
   kind: string;
   epoch: number;
@@ -249,6 +294,8 @@ export interface WorkbenchEvent {
   requestId?: string | number;
   method?: string;
   params?: Record<string, unknown>;
+  /** What a server request's card shows. */
+  details?: RequestDetails | null;
   status?: string;
   success?: boolean;
   error?: string | null;

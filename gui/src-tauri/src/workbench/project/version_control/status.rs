@@ -6,7 +6,7 @@ use super::*;
 /// practice for a repository of research data.
 const LARGE_FILE: u64 = 100 * 1024 * 1024;
 const MAX_LARGE_FILES: usize = 50;
-/// Bounds the walk through new folders on each refresh.
+/// Bounds the size checks of one refresh, over all new folders together.
 const MAX_SIZED_FILES: usize = 5000;
 const MAX_BRANCHES: &str = "--count=300";
 
@@ -25,6 +25,9 @@ pub struct ChangedFile {
     pub is_directory: bool,
     /// A submodule, whose contents belong to its own repository.
     pub is_submodule: bool,
+    /// A new folder that is, or contains, a repository of its own. Committing it
+    /// would record a pointer and none of its files.
+    pub nested_repository: bool,
     /// How the two sides of a conflict differ, such as `both modified`.
     pub conflict: Option<String>,
 }
@@ -52,7 +55,7 @@ pub(super) struct Changes {
 }
 
 pub(super) fn changes(git: &Git, prefix: &str) -> WorkbenchResult<Changes> {
-    let output = git.read(&[
+    let output = git.read_listing(&[
         "status",
         "--porcelain=v2",
         "-z",
@@ -76,8 +79,10 @@ fn conflict_label(xy: &str) -> &'static str {
 }
 
 /// Reduces a repository-relative path to one inside the project folder, and
-/// drops Pipeline's own scratch folders, which are never project content.
-fn project_path(path: &str, prefix: &str) -> Option<String> {
+/// drops Pipeline's own scratch folders, which are never project content. The
+/// generated folder drops only while untracked: earlier builds could commit it,
+/// and a tracked change or conflict there can stop a pull with no other sign.
+fn project_path(path: &str, prefix: &str, tracked: bool) -> Option<String> {
     let trimmed = path.trim_end_matches('/');
     let inside = if prefix.is_empty() {
         trimmed
@@ -87,7 +92,8 @@ fn project_path(path: &str, prefix: &str) -> Option<String> {
         trimmed.strip_prefix(prefix)?
     };
     let first = inside.split('/').next().unwrap_or(inside);
-    (!files::reserved_component(first)).then(|| inside.to_string())
+    let shown = !files::reserved_component(first) || (tracked && files::generated_component(first));
+    shown.then(|| inside.to_string())
 }
 
 /// Parses `git status --porcelain=v2 -z`.
@@ -112,7 +118,8 @@ pub(super) fn parse_changes(output: &str, prefix: &str) -> Changes {
             Some(b'?') => (tracked(2), None, "untracked"),
             _ => continue,
         };
-        let Some(project) = project_path(path, prefix) else {
+        let tracked = status != "untracked";
+        let Some(project) = project_path(path, prefix, tracked) else {
             continue;
         };
         total += 1;
@@ -126,12 +133,13 @@ pub(super) fn parse_changes(output: &str, prefix: &str) -> Changes {
             is_directory: status == "untracked" && path.ends_with('/'),
             // Only a tracked row has this field. An untracked row is `? <path>`,
             // so its later words belong to the file's name.
-            is_submodule: status != "untracked"
+            is_submodule: tracked
                 && entry
                     .split(' ')
                     .nth(2)
                     .is_some_and(|sub| sub.starts_with('S')),
-            old_path: old_path.and_then(|old| project_path(old, prefix)),
+            nested_repository: false,
+            old_path: old_path.and_then(|old| project_path(old, prefix, tracked)),
             path: project,
             status: status.to_string(),
             staged: !conflicted && status != "untracked" && bytes[0] != b'.',
@@ -157,48 +165,91 @@ fn tracked_status(xy: &str) -> &'static str {
     }
 }
 
-/// New files too large for a host, including those inside new folders.
-pub(super) fn large_files(git: &Git, files: &[ChangedFile]) -> Vec<LargeFile> {
-    let mut sized = 0;
-    let mut found = Vec::new();
-    let mut check = |path: &str, found: &mut Vec<LargeFile>| {
-        sized += 1;
-        if let Ok(meta) = fs::symlink_metadata(git.root.join(path)) {
-            if meta.is_file() && meta.len() > LARGE_FILE && found.len() < MAX_LARGE_FILES {
-                found.push(LargeFile {
-                    path: path.to_string(),
-                    size: meta.len(),
-                });
-            }
+/// What `git add` would take from a new folder. Git names a repository inside
+/// it with a trailing slash in place of that repository's files.
+fn new_files_in(git: &Git, folder: &str) -> Option<Vec<u8>> {
+    git.read_listing(&[
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+        "--",
+        folder,
+    ])
+    .ok()
+}
+
+fn lists_repository(listed: &str) -> bool {
+    listed.split('\0').any(|path| path.ends_with('/'))
+}
+
+/// Whether committing this new folder would record a pointer to a repository.
+/// A failed listing counts as yes: a refused commit can be tried again.
+pub(super) fn holds_repository(git: &Git, folder: &str) -> bool {
+    new_files_in(git, folder)
+        .is_none_or(|listed| lists_repository(&String::from_utf8_lossy(&listed)))
+}
+
+/// What one refresh learned about the size of new files.
+#[derive(Default)]
+pub(super) struct LargeFiles {
+    pub(super) found: Vec<LargeFile>,
+    /// Some files went unchecked or unlisted, so `found` may be incomplete.
+    pub(super) cut_short: bool,
+    checked: usize,
+}
+
+impl LargeFiles {
+    fn check(&mut self, git: &Git, path: &str) {
+        if self.checked == MAX_SIZED_FILES {
+            self.cut_short = true;
+            return;
         }
-    };
-    for file in files {
-        if matches!(file.status.as_str(), "deleted" | "conflicted") {
-            continue;
-        }
-        if !file.is_directory {
-            check(&file.path, &mut found);
-            continue;
-        }
-        let Ok(listed) = git.read(&[
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "-z",
-            "--",
-            &file.path,
-        ]) else {
-            continue;
+        self.checked += 1;
+        let Ok(meta) = fs::symlink_metadata(git.root.join(path)) else {
+            return;
         };
-        for path in String::from_utf8_lossy(&listed)
-            .split('\0')
-            .filter(|path| !path.is_empty())
-            .take(MAX_SIZED_FILES)
-        {
-            check(path, &mut found);
+        if !meta.is_file() || meta.len() <= LARGE_FILE {
+            return;
+        }
+        if self.found.len() == MAX_LARGE_FILES {
+            self.cut_short = true;
+            return;
+        }
+        self.found.push(LargeFile {
+            path: path.to_string(),
+            size: meta.len(),
+        });
+    }
+}
+
+/// Marks new folders that hold a repository, and finds the new files too large
+/// for a host, including those inside new folders. Every folder is marked, however
+/// many files came before it. Files on their own rows go first, so one big folder
+/// can't use up the checks.
+pub(super) fn review_new_files(git: &Git, files: &mut [ChangedFile]) -> LargeFiles {
+    let mut large = LargeFiles::default();
+    let reviewed = |file: &ChangedFile| !matches!(file.status.as_str(), "deleted" | "conflicted");
+    for file in files.iter().filter(|file| reviewed(file)) {
+        if !file.is_directory {
+            large.check(git, &file.path);
         }
     }
-    found
+    for file in files.iter_mut().filter(|file| reviewed(file)) {
+        if !file.is_directory {
+            continue;
+        }
+        let Some(listed) = new_files_in(git, &file.path) else {
+            large.cut_short = true;
+            continue;
+        };
+        let listed = String::from_utf8_lossy(&listed);
+        file.nested_repository = lists_repository(&listed);
+        for path in listed.split('\0').filter(|path| !path.is_empty()) {
+            large.check(git, path);
+        }
+    }
+    large
 }
 
 /// Local branches, plus remote branches with no local branch of the same name.
@@ -304,7 +355,7 @@ pub(super) fn unpushed(git: &Git) -> BTreeSet<String> {
 
 /// Unmerged files anywhere in the repository, not only the project folder.
 pub(super) fn unmerged_count(git: &Git) -> usize {
-    git.read(&["diff", "--name-only", "--diff-filter=U", "-z"])
+    git.read_listing(&["diff", "--name-only", "--diff-filter=U", "-z"])
         .map(|output| {
             output
                 .split(|byte| *byte == 0)

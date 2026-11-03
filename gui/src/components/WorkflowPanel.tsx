@@ -9,6 +9,7 @@ import {
   isAutoReview,
 } from "../lib/autoReview";
 import AutoReviewCatalogDialog from "./AutoReviewCatalogDialog";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   disabled: boolean;
@@ -100,6 +101,7 @@ export default function WorkflowPanel({
         >
           Retry
         </button>
+        <ReportIssueLink />
       </div>
     );
   }

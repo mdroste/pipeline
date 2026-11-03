@@ -379,6 +379,54 @@ it("keeps the finished prompt and answer on screen until the refreshed transcrip
   unmount();
 });
 
+it("keeps the finished answer and a newer save when the save lands during the reload", async () => {
+  const { result, saved, unmount } = await draftFixture({
+    activeBinding: binding,
+  });
+  await sendAcknowledged(result);
+  await stream("agent-1", "The answer");
+  // The reload reads the store first, then a title or draft save lands.
+  const read = recordedTurn(saved(), "The answer");
+  const refreshed = deferred<any>();
+  mocks.conversationSnapshot.mockImplementationOnce(() => refreshed.promise);
+  await emit({
+    epoch: 1,
+    kind: "turnCompleted",
+    threadId: "thread-A",
+    turnId: "turn-1",
+    status: "completed",
+  });
+  await act(async () => {
+    await result.current.persistence.editDraft("Next thought");
+  });
+  mocks.updateSession.mockClear();
+  await act(async () => {
+    await result.current.persistence.saveCurrentDraft();
+  });
+  expect(mocks.updateSession).toHaveBeenCalledOnce();
+  const before = result.current.conversation.snapshot!;
+  expect(before.session.revision).toBeGreaterThan(read.session.revision);
+  expect(before.sequence).toBeGreaterThan(read.sequence - 1);
+
+  await act(async () => {
+    refreshed.resolve(read);
+  });
+
+  await waitFor(() =>
+    expect(result.current.transcript.renderedItems).toHaveLength(2),
+  );
+  const after = result.current.conversation.snapshot!;
+  expect(after.items).toEqual(read.items);
+  expect(after.turns).toEqual(read.turns);
+  expect(after.session).toEqual(before.session);
+  expect(after.session.draft).toBe("Next thought");
+  expect(after.sequence).toBe(Math.max(before.sequence, read.sequence));
+  expect(result.current.conversation.streamStore.get()).toBe("");
+  expect(result.current.conversation.pendingUser).toBeNull();
+  expect(result.current.persistence.draft).toBe("Next thought");
+  unmount();
+});
+
 it("separates assistant messages that stream within one turn", async () => {
   const { result, unmount } = await draftFixture({ activeBinding: binding });
   await sendAcknowledged(result);

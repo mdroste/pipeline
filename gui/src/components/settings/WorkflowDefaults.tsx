@@ -13,6 +13,7 @@ import {
 
 import ModelStage from "./ModelStage";
 import AgentDefaultsControl from "../AgentDefaultsControl";
+import DecimalField from "../DecimalField";
 
 import { selectClass, inputClass, SectionHeader, Field } from "./controls";
 import { SettingRow } from "./SaveState";
@@ -327,28 +328,21 @@ export function ModelDefaultsSection({
 
 function LimitInput({
   label,
-  step,
   value,
   onChange,
 }: {
   label: string;
-  step: string;
   value: number;
   onChange: (value: number) => void;
 }) {
   return (
     <label className="flex flex-col gap-1 text-xs text-gray-600 dark:text-neutral-400">
       {label}
-      <input
+      <DecimalField
         aria-label={`Review limit: ${label}`}
-        type="number"
         min={0}
-        step={step}
         value={value}
-        onChange={(event) => {
-          const parsed = Number(event.target.value);
-          onChange(Number.isFinite(parsed) && parsed > 0 ? parsed : 0);
-        }}
+        onChange={(next) => onChange(next > 0 ? next : 0)}
         className={inputClass}
       />
     </label>
@@ -473,7 +467,6 @@ export function WorkflowSection({
             <div id="review-limits" className="grid gap-2 sm:grid-cols-3">
               <LimitInput
                 label="Cost (USD)"
-                step="0.5"
                 value={settings.review_max_cost_usd ?? 0}
                 onChange={(value) =>
                   setSettings({ ...settings, review_max_cost_usd: value })
@@ -481,7 +474,6 @@ export function WorkflowSection({
               />
               <LimitInput
                 label="Model calls"
-                step="1"
                 value={settings.review_max_calls ?? 0}
                 onChange={(value) =>
                   setSettings({
@@ -492,7 +484,6 @@ export function WorkflowSection({
               />
               <LimitInput
                 label="Minutes"
-                step="5"
                 value={settings.review_max_minutes ?? 0}
                 onChange={(value) =>
                   setSettings({

@@ -261,6 +261,76 @@ fn fresh_word_report_is_a_valid_package_with_escaped_content() {
 }
 
 #[test]
+fn word_reports_keep_text_that_parses_as_html_and_drop_real_tags() {
+    let mut plain = export_with(Vec::new());
+    plain.report_markdown = "In the <treated> group, n<N> units, and if p<q and r>s or a<b>c.\n\nBold <b>word</b> here.\n\n<script>alert(2)</script>\n\n<div class=\"x\">Block <treated> text</div>\n\n<!-- hidden note -->\n\nAfter.".to_string();
+    let text = docx_text(&render_docx_report(&plain).unwrap());
+    assert!(
+        text.contains("In the <treated> group, n<N> units, and if p<q and r>s or a<b>c."),
+        "{text}"
+    );
+    assert!(text.contains("Bold word here."), "{text}");
+    assert!(text.contains("Block <treated> text"), "{text}");
+    assert!(text.contains("After."), "{text}");
+    for removed in ["alert(2)", "<div", "hidden note"] {
+        assert!(!text.contains(removed), "{removed}: {text}");
+    }
+}
+
+#[test]
+fn word_reports_drop_html_that_spans_lines_and_keep_its_text() {
+    let mut plain = export_with(Vec::new());
+    plain.report_markdown = concat!(
+        "Before.\n\n",
+        "<!-- first hidden line\nsecond hidden line\n\nthird hidden line -->\n\n",
+        "<style>\nhidden-rule { color: red; }\n\n.other { color: blue; }\n</style>\n\n",
+        "<script>\nhiddenCall(1);\n\nif (a<b && c>d) { hiddenCall(2); }\n</script>\n\n",
+        "<div>\nif p<q and r>s holds for n<N> units\n</div>\n\n",
+        "<div\n  class=\"x\">Spanning tag</div>\n\n",
+        "Inline <!-- hidden\nmiddle --> comment.\n\n",
+        "<!-- never closed\nhidden to the end of the block\n\n",
+    )
+    .to_string();
+    let text = docx_text(&render_docx_report(&plain).unwrap());
+    assert!(text.contains("Before."), "{text}");
+    assert!(
+        text.contains("if p<q and r>s holds for n<N> units"),
+        "{text}"
+    );
+    assert!(text.contains("Spanning tag"), "{text}");
+    assert!(text.contains("Inline  comment."), "{text}");
+    for removed in [
+        "<!--",
+        "-->",
+        "hidden",
+        "<style",
+        "</style",
+        "<script",
+        "</script",
+        "<div",
+        "</div",
+        "hiddenCall",
+        ".other",
+        "class=",
+    ] {
+        assert!(!text.contains(removed), "{removed}: {text}");
+    }
+}
+
+#[test]
+fn a_word_report_block_of_only_markup_leaves_no_empty_paragraph() {
+    let render = |markdown: &str| {
+        let mut plain = export_with(Vec::new());
+        plain.report_markdown = markdown.to_string();
+        docx_text(&render_docx_report(&plain).unwrap())
+    };
+    assert_eq!(
+        render("Before.\n\n<!-- a\nb -->\n\n<style>\nx\n</style>\n\nAfter."),
+        render("Before.\n\nAfter.")
+    );
+}
+
+#[test]
 fn latex_keeps_its_source_in_word_reports_and_comments() {
     let source = r"Both $x^*$ and $y^*$ and $\{a\}$ at $a\,b$, with *emphasis*.";
     let mut plain = export_with(Vec::new());

@@ -7,6 +7,8 @@ use std::collections::BTreeSet;
 use std::io::Write;
 use zip::write::SimpleFileOptions;
 
+mod record_authority;
+
 fn fixture() -> (tempfile::TempDir, Store, String, PathBuf) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("project");

@@ -4,6 +4,7 @@ import {
   toolSetupClient,
   type ToolSetupStatus,
 } from "../../lib/workbench/toolSetupClient";
+import ReportIssueLink from "../ReportIssueLink";
 
 export default function ToolSetup({
   kind,
@@ -97,6 +98,7 @@ export default function ToolSetup({
         <>
           <p role="alert" className="mt-2 text-danger">
             {error}
+            <ReportIssueLink />
           </p>
           <button
             className="mt-2 rounded border px-2 py-1"

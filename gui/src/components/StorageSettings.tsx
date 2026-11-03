@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface StorageLocation {
   activeDirectory: string | null;
@@ -153,6 +154,7 @@ export default function StorageSettings({
       {(error || location?.error) && (
         <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">
           {error || location?.error}
+          <ReportIssueLink />
         </p>
       )}
       <p className="mt-4 text-xs leading-5 text-gray-500 dark:text-neutral-400">

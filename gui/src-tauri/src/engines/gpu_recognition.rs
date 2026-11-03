@@ -14,6 +14,8 @@ const GPU_BACKEND: &str = "Vulkan";
 const GPU_MANIFEST_ENGINE: &str = "paddleocr-vl-gpu";
 pub(super) const GPU_STAGING_PREFIX: &str = ".paddleocr-vl-gpu-staging-";
 pub(super) const GPU_BACKUP_NAME: &str = ".paddleocr-vl-gpu-backup";
+/// How long a finished download waits for another try at moving into place.
+const GPU_STAGE_KEEP: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 60 * 60);
 const DEVICE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 const DEVICE_PROBE_OUTPUT_BYTES: usize = 256 * 1024;
 
@@ -196,6 +198,18 @@ pub(super) fn gpu_recognition_status() -> Option<PathBuf> {
     gpu_install_committed(&root).then_some(root)
 }
 
+/// Whether the installed component passes full verification. Repair is
+/// offered on every install, so a sound copy must not cost another 1.9 GB.
+pub(super) async fn gpu_recognition_sound() -> Result<bool, String> {
+    let Some(server) = crate::env::bundled_gpu_server() else {
+        return Ok(false);
+    };
+    let target = gpu_recognition_root()?;
+    tokio::task::spawn_blocking(move || gpu_paths_at(&target, &server).is_some())
+        .await
+        .map_err(|error| format!("Graphics card check failed: {error}"))
+}
+
 pub(super) async fn install_gpu_recognition(
     app: &crate::emit::EventBus,
     spec: &EngineSpec,
@@ -236,9 +250,57 @@ async fn install_gpu_files(
     let native_dir = pipeline_home()?.join("native");
     std::fs::create_dir_all(&native_dir)
         .map_err(|error| format!("Failed to create native engine directory: {error}"))?;
+    let stage_root = native_dir.clone();
+    let stage_server = server.to_path_buf();
+    let finished = tokio::task::spawn_blocking(move || {
+        reusable_gpu_stage(&stage_root, |stage| {
+            gpu_paths_at(stage, &stage_server).is_some()
+        })
+    })
+    .await
+    .map_err(|error| format!("Graphics card check failed: {error}"))?;
+    let stage = match finished {
+        Some(stage) => {
+            log(app, "Using the model files already downloaded");
+            stage
+        }
+        None => download_gpu_stage(app, &native_dir, server).await?,
+    };
+    if INSTALL_CANCEL.load(Ordering::Acquire) {
+        return Err("Install cancelled".to_string());
+    }
+
+    let target = gpu_recognition_root()?;
+    let backup = native_dir.join(GPU_BACKUP_NAME);
+    remove_owned_path(&backup)?;
+    if target.exists() {
+        rename_when_free(&target, &backup)
+            .await
+            .map_err(|error| format!("Failed to stage the previous model: {error}"))?;
+    }
+    if let Err(error) = rename_when_free(&stage, &target).await {
+        if backup.exists() {
+            let _ = rename_when_free(&backup, &target).await;
+        }
+        return Err(format!(
+            "Failed to activate graphics card recognition: {error}"
+        ));
+    }
+    let _ = remove_owned_path(&backup);
+    log(app, format!("{} installed", spec.label));
+    Ok(())
+}
+
+/// Downloads and verifies the model files into a new staging folder, which is
+/// removed if anything fails and returned once it is complete.
+async fn download_gpu_stage(
+    app: &crate::emit::EventBus,
+    native_dir: &Path,
+    server: &Path,
+) -> Result<PathBuf, String> {
     let staging = tempfile::Builder::new()
         .prefix(GPU_STAGING_PREFIX)
-        .tempdir_in(&native_dir)
+        .tempdir_in(native_dir)
         .map_err(|error| format!("Failed to create graphics card staging directory: {error}"))?;
     let model_dir = staging.path().join("models");
     std::fs::create_dir_all(&model_dir)
@@ -288,26 +350,41 @@ async fn install_gpu_files(
     if INSTALL_CANCEL.load(Ordering::Acquire) {
         return Err("Install cancelled".to_string());
     }
+    Ok(staging.keep())
+}
 
-    let target = gpu_recognition_root()?;
-    let backup = native_dir.join(GPU_BACKUP_NAME);
-    remove_owned_path(&backup)?;
-    if target.exists() {
-        std::fs::rename(&target, &backup)
-            .map_err(|error| format!("Failed to stage the previous model: {error}"))?;
-    }
-    let staged_path = staging.keep();
-    if let Err(error) = std::fs::rename(&staged_path, &target) {
-        if backup.exists() {
-            let _ = std::fs::rename(&backup, &target);
+/// Whether cleanup leaves this staging folder: a finished download that could
+/// not be moved into place, until the next attempt or the end of its keep.
+pub(super) fn gpu_stage_worth_keeping(stage: &Path, now: std::time::SystemTime) -> bool {
+    std::fs::symlink_metadata(stage).is_ok_and(|metadata| metadata.is_dir())
+        && gpu_install_committed(stage)
+        && std::fs::metadata(stage.join("install.json"))
+            .and_then(|metadata| metadata.modified())
+            .is_ok_and(|written| {
+                now.duration_since(written)
+                    .is_ok_and(|age| age < GPU_STAGE_KEEP)
+            })
+}
+
+/// A finished download from an earlier attempt. One that fails `verified` is
+/// removed, so nothing unverified is ever moved into place.
+fn reusable_gpu_stage(native_dir: &Path, verified: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    let now = std::time::SystemTime::now();
+    for entry in std::fs::read_dir(native_dir).ok()?.flatten() {
+        let stage = entry.path();
+        let staged = entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(GPU_STAGING_PREFIX);
+        if !staged || !gpu_stage_worth_keeping(&stage, now) {
+            continue;
         }
-        return Err(format!(
-            "Failed to activate graphics card recognition: {error}"
-        ));
+        if verified(&stage) {
+            return Some(stage);
+        }
+        let _ = remove_owned_path(&stage);
     }
-    let _ = remove_owned_path(&backup);
-    log(app, format!("{} installed", spec.label));
-    Ok(())
+    None
 }
 
 pub(super) async fn uninstall_gpu_recognition(app: &crate::emit::EventBus) -> Result<(), String> {
@@ -419,6 +496,55 @@ mod tests {
         );
         let error = resolve_gpu_recognition_at(root.path(), Some(&server)).unwrap_err();
         assert!(error.contains("turn off Use graphics card"));
+    }
+
+    fn stage_in(native: &Path, name: &str) -> PathBuf {
+        let stage = native.join(format!("{GPU_STAGING_PREFIX}{name}"));
+        committed_component(&stage);
+        stage
+    }
+
+    #[test]
+    fn a_finished_download_survives_cleanup_and_is_reused() {
+        let native = tempfile::tempdir().unwrap();
+        let stage = stage_in(native.path(), "finished");
+        let partial = native.path().join(format!("{GPU_STAGING_PREFIX}partial"));
+        std::fs::create_dir_all(partial.join("models")).unwrap();
+        cleanup_managed_engine_storage_at(native.path(), true).unwrap();
+        assert!(stage.is_dir());
+        assert!(!partial.exists());
+        assert_eq!(reusable_gpu_stage(native.path(), |_| true), Some(stage));
+    }
+
+    #[test]
+    fn a_kept_download_that_fails_verification_is_removed() {
+        let native = tempfile::tempdir().unwrap();
+        let stage = stage_in(native.path(), "damaged");
+        assert_eq!(reusable_gpu_stage(native.path(), |_| false), None);
+        assert!(!stage.exists());
+    }
+
+    #[test]
+    fn a_kept_download_does_not_outlast_its_keep() {
+        let native = tempfile::tempdir().unwrap();
+        let stage = stage_in(native.path(), "old");
+        let now = std::time::SystemTime::now();
+        assert!(gpu_stage_worth_keeping(&stage, now));
+        assert!(!gpu_stage_worth_keeping(&stage, now + GPU_STAGE_KEEP));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_folder_is_never_kept_as_a_download() {
+        let native = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        committed_component(elsewhere.path());
+        let link = native.path().join(format!("{GPU_STAGING_PREFIX}link"));
+        std::os::unix::fs::symlink(elsewhere.path(), &link).unwrap();
+        assert!(!gpu_stage_worth_keeping(
+            &link,
+            std::time::SystemTime::now()
+        ));
     }
 
     #[test]

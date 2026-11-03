@@ -1,5 +1,5 @@
 //! Conflict inspection and revision-preserving human decisions.
-use super::authority::note_status;
+use super::authority::{note_status, record_body};
 use super::types::{ExchangeConflict, RECORD_KINDS};
 use super::{err, now, text};
 use crate::workbench::research::validate_text;
@@ -81,12 +81,19 @@ pub fn resolve_conflict(
                 tx.execute("UPDATE research_notes SET body=?2, state=?3, origin=?4, pinned=?5, revision=revision+1, updated_at=?6 WHERE id=?1 AND workspace_id=?7", params![conflict.object_id, body, state, origin, conflict.imported["pinned"].as_bool().unwrap_or(false), now(), ws]).map_err(err)?;
             }
             kind if RECORD_KINDS.contains(&kind) => {
-                let body = conflict.imported["body"].clone();
-                if !body.is_object() {
+                if !conflict.imported["body"].is_object() {
                     return Err(WorkbenchError::invalid(
                         "The imported copy of this record has no content; keep the local version",
                     ));
                 }
+                let namespace: String = tx
+                    .query_row(
+                        "SELECT source_namespace FROM exchange_imports WHERE id=?1",
+                        [&conflict.import_id],
+                        |r| r.get(0),
+                    )
+                    .map_err(err)?;
+                let body = record_body(kind, &conflict.imported["body"], &namespace);
                 tx.execute("UPDATE project_records SET revision=revision+1, body_json=?2, updated_at=?3 WHERE id=?1 AND workspace_id=?4", params![conflict.object_id, body.to_string(), now(), ws]).map_err(err)?;
             }
             _ => return Err(WorkbenchError::invalid(

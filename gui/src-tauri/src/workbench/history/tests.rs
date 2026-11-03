@@ -245,13 +245,13 @@ fn a_message_replayed_on_a_successor_binding_appears_once() {
     let first = binding_id(&store, &id);
     exchange(&store, &first, "shared", "The replayed question");
     let successor = store
-        .bind_session(&id, "codex-0-147-0-epoch-2", "next")
+        .bind_session(&id, "codex-0-147-0-epoch-2", "thread")
         .unwrap();
     assert_ne!(first, successor.id);
     project_on(
         &store,
         &successor.id,
-        "next",
+        "thread",
         "shared-user",
         "userMessage",
         json!({"text":"The replayed question"}),
@@ -259,6 +259,27 @@ fn a_message_replayed_on_a_successor_binding_appears_once() {
     let history = recent_context(&store, &id).unwrap();
     assert_eq!(history.matches("The replayed question").count(), 1);
     assert!(history.ends_with("History truncated: false"));
+}
+
+#[test]
+fn another_thread_repeating_an_item_id_keeps_both_messages() {
+    let (_temp, store, id) = fixture();
+    let first = binding_id(&store, &id);
+    exchange(&store, &first, "shared", "The earlier question");
+    let successor = store
+        .bind_session(&id, "codex-0-147-0-epoch-2", "next")
+        .unwrap();
+    project_on(
+        &store,
+        &successor.id,
+        "next",
+        "shared-user",
+        "userMessage",
+        json!({"text":"The later question"}),
+    );
+    let history = recent_context(&store, &id).unwrap();
+    assert_eq!(history.matches("The earlier question").count(), 1);
+    assert_eq!(history.matches("The later question").count(), 1);
 }
 
 #[test]

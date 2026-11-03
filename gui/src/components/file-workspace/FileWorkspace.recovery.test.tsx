@@ -336,6 +336,38 @@ it("brings the draft of an unread tab along with a rename", async () => {
   expect(localStorage.getItem("pipeline.files.draft.moves.a.py")).toBeNull();
 });
 
+it("does not restore an old draft when its timer fires during a rename", async () => {
+  vi.useFakeTimers();
+  const options = {
+    adapter: {
+      id: "rename-timer",
+      read: vi.fn(async (path: string) => file(path)),
+    },
+    onConflict: vi.fn(),
+    setError: vi.fn(),
+  };
+  const { result } = renderHook(() => useFileBuffers(options));
+  await act(async () => result.current.load("a.py"));
+  act(() =>
+    result.current.update("a.py", (buffer) => ({
+      ...buffer,
+      draft: "My draft",
+    })),
+  );
+  act(() => {
+    result.current.retain(result.current.latest.current);
+    result.current.remap("a.py", "b.py");
+    // Run the old timer before React commits the renamed buffers and effects.
+    vi.advanceTimersByTime(250);
+  });
+  expect(
+    localStorage.getItem("pipeline.files.draft.rename-timer.a.py"),
+  ).toBeNull();
+  expect(
+    JSON.parse(localStorage.getItem("pipeline.files.draft.rename-timer.b.py")!),
+  ).toMatchObject({ file: { path: "b.py" }, draft: "My draft" });
+});
+
 it("moves unread drafts with a folder and leaves other drafts alone", () => {
   const seed = (key: string, path: string) =>
     localStorage.setItem(

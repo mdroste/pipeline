@@ -47,6 +47,7 @@ export default function WorkspaceDesk({
   onStop,
   stopping = false,
   feedback,
+  assistantFeedback,
   workspaceId,
   projectName,
   toolLabel,
@@ -68,6 +69,8 @@ export default function WorkspaceDesk({
   onStop?: () => void;
   stopping?: boolean;
   feedback?: ReactNode;
+  /** The conversation's own messages, shown here only while its pane is hidden. */
+  assistantFeedback?: ReactNode;
   workspaceId?: string | null;
   projectName?: string;
   toolLabel?: string;
@@ -297,6 +300,7 @@ export default function WorkspaceDesk({
         )}
       </div>
       {feedback}
+      {effective === "project" && assistantFeedback}
       <div className="workspace-desk-panes" data-layout={effective}>
         {project && (
           <div

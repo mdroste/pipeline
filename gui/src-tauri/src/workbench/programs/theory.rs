@@ -119,6 +119,11 @@ pub fn branch(store: &Store, r: Branch) -> WorkbenchResult<DeskRecord> {
     note.assumptions = r.assumptions.clone();
     note.assumption_ids.clear();
     note.status = "open".into();
+    // A rejected approach must stay abandoned, and a branch reopens the idea
+    // under new assumptions, so the branch is a new conjecture.
+    if note.kind == "rejected_approach" {
+        note.kind = "conjecture".into();
+    }
     note.promotions.clear();
     note.rejection_reason.clear();
     note.origin = "manual".into();

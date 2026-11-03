@@ -20,6 +20,89 @@ fn resolve(binding: &Binding, run: &TaskRun, ready: &Ready) -> Result<Value> {
 /// as JSON, fits, so only a result that no turn can produce is refused here.
 const MAX_ACTION_OUTPUT: usize = 3 * 1024 * 1024;
 
+/// How long a turn may have no live owner before it counts as lost. A finished
+/// turn gives up its owner just before its ending reaches the store.
+const LOST_TURN_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Closes what the runtime left open for this conversation. API and Claude turns
+/// settle in process; a Codex turn needs the desktop to reach App Server.
+pub(in crate::orchestration) async fn settle_turn(app: Option<tauri::AppHandle>, session: String) {
+    let local = crate::workbench::commands::reconcile_local_session(session.clone()).await;
+    if let (Ok(false), Some(app)) = (local, app) {
+        let _ = crate::workbench::commands::workbench_codex_reconcile_session(app, session).await;
+    }
+}
+
+async fn read_outcome(session: &str, submission: &str) -> Result<Option<Value>> {
+    let (session, submission) = (session.to_string(), submission.to_string());
+    let value = run_store(move |s| tasks::outcome(&s, &session, &submission))
+        .await
+        .map_err(|e| e.message)?;
+    Ok(value.filter(|v| {
+        matches!(
+            v["state"].as_str(),
+            Some("completed" | "failed" | "interrupted" | "cancelled")
+        )
+    }))
+}
+
+/// Nobody can answer a request during a step, and interrupting the turn ends the
+/// request with it. What is left is to run the step again. Research automation
+/// roles decline such requests themselves, so this names the plain controls.
+fn unanswered_request(question: &str) -> String {
+    format!(
+        "The assistant asked for a decision during this step, and the turn was stopped: {question}. That request can no longer be answered. To run the step again, choose Retry unfinished actions. To give your answer first, reply in the conversation, then choose Use current conversation context and Retry unfinished actions."
+    )
+}
+
+/// Waits for a submitted turn to end. A connection lost mid-turn releases the
+/// turn's owner and nothing else, so the store would read as running until the
+/// time limit, with this action holding the conversation slot. Once no owner
+/// has come back, the turn is settled and takes the ending its runtime recorded.
+pub(in crate::orchestration) async fn await_turn(
+    app: &Option<tauri::AppHandle>,
+    session: &str,
+    submission: &str,
+    thread: &str,
+    turn: &str,
+    stop: &mut tokio::sync::watch::Receiver<bool>,
+    grace: std::time::Duration,
+) -> Result<Value> {
+    use crate::workbench::commands as workspace;
+    let mut unowned_since = None;
+    loop {
+        if *stop.borrow() {
+            let _ = workspace::workbench_codex_interrupt_turn(thread.to_string(), turn.to_string())
+                .await;
+            return Err("Task stopped; the conversation turn was interrupted".into());
+        }
+        if let Some(value) = read_outcome(session, submission).await? {
+            return Ok(value);
+        }
+        if let Some(question) = workspace::task_pending_request(thread, turn) {
+            let _ = workspace::workbench_codex_interrupt_turn(thread.to_string(), turn.to_string())
+                .await;
+            return Err(unanswered_request(&question));
+        }
+        if workspace::turn_has_live_owner(thread, turn) || workspace::turn_setup_in_progress() {
+            unowned_since = None;
+        } else if unowned_since
+            .get_or_insert_with(std::time::Instant::now)
+            .elapsed()
+            >= grace
+        {
+            tokio::select! {
+                _ = settle_turn(app.clone(), session.to_string()) => {}
+                _ = stop.changed() => {}
+            }
+            return read_outcome(session, submission).await?.ok_or_else(|| {
+                "The connection ended during this step, and how the turn finished is unknown. Check saved results, or retry the step.".to_string()
+            });
+        }
+        tokio::select! {_=tokio::time::sleep(std::time::Duration::from_millis(500))=>{},_=stop.changed()=>{}}
+    }
+}
+
 /// Completed adapter results are journaled before the coordinator consumes them.
 pub async fn execute(
     app: Option<tauri::AppHandle>,
@@ -153,40 +236,16 @@ pub async fn execute(
                     .join("child.json"),
                 &json!({"kind":"workspace","sessionId":session,"submissionId":submission,"threadId":thread,"turnId":turn}),
             )?;
-            loop {
-                if *stop.borrow() {
-                    let _ = crate::workbench::commands::workbench_codex_interrupt_turn(
-                        thread.clone(),
-                        turn.clone(),
-                    )
-                    .await;
-                    return Err("Task stopped; Workspace turn interrupted".into());
-                }
-                let ss = session.clone();
-                let op = submission.clone();
-                if let Some(value) = run_store(move |s| tasks::outcome(&s, &ss, &op))
-                    .await
-                    .map_err(|e| e.message)?
-                {
-                    if matches!(
-                        value["state"].as_str(),
-                        Some("completed" | "failed" | "interrupted" | "cancelled")
-                    ) {
-                        break value;
-                    }
-                }
-                if let Some(question) =
-                    crate::workbench::commands::task_pending_request(&thread, &turn)
-                {
-                    let _ = crate::workbench::commands::workbench_codex_interrupt_turn(
-                        thread.clone(),
-                        turn.clone(),
-                    )
-                    .await;
-                    return Err(format!("Workspace needs your input: {question}. The turn was interrupted; answer in the conversation, then refresh task context."));
-                }
-                tokio::select! {_=tokio::time::sleep(std::time::Duration::from_millis(500))=>{},_=stop.changed()=>{}}
-            }
+            await_turn(
+                &app,
+                &session,
+                &submission,
+                &thread,
+                &turn,
+                &mut stop,
+                LOST_TURN_GRACE,
+            )
+            .await?
         }
         Action::Review {
             profile_id,
@@ -266,13 +325,13 @@ pub async fn execute(
             let receipt=run_store(move|s| {
                 if let Some(plan_id) = plan {
                     let status = crate::workbench::research::execution_plan::status(&s,&workspace,&plan_id)?;
-                    if !status.authorized || status.record.content_hash != expected { return Err(crate::workbench::store::WorkbenchError::conflict("Captured check inputs or authorization changed")); }
+                    if !status.authorized || status.record.content_hash != expected { return Err(crate::workbench::store::WorkbenchError::conflict("This captured check changed or lost its approval. Approve it in the project's Results view, then retry.")); }
                     let captured: crate::workbench::research::execution_plan::ExecutionPlan = serde_json::from_value(status.record.body).map_err(|e|crate::workbench::store::WorkbenchError::invalid(e.to_string()))?;
                     return crate::workbench::research::jobs::queue(&s,crate::workbench::research::RunExecutionRequest{plan_id:Some(plan_id),profile_id:captured.profile.id,session_id:session,test_only:true,operation_id:op},"detached",None);
                 }
                 if !crate::workbench::research::list_execution_profiles(&s,&workspace)?.iter().any(|p|p.id==profile) {return Err(crate::workbench::store::WorkbenchError::invalid("Check belongs to another project"));}
                 let preview=crate::workbench::research::preview_host_execution(&s,&profile)?;
-                if preview.fingerprint!=expected||!preview.authorized{return Err(crate::workbench::store::WorkbenchError::conflict("Check inputs or authorization changed. Reauthorize this check before continuing."));}
+                if preview.fingerprint!=expected||!preview.authorized{return Err(crate::workbench::store::WorkbenchError::conflict("This check's inputs or approval changed. Approve it again in the project's Results view, then retry."));}
                 crate::workbench::research::jobs::queue(&s,crate::workbench::research::RunExecutionRequest{plan_id:None,profile_id:profile,session_id:session,test_only:false,operation_id:op},"detached",None)
             }).await.map_err(|e|e.message)?;
             crate::workbench::research::jobs::launch_pending();
@@ -323,4 +382,24 @@ pub async fn execute(
     }
     atomic_json(&journal, &result)?;
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unanswered_request;
+
+    #[test]
+    fn a_stopped_request_offers_only_controls_that_exist() {
+        let message = unanswered_request("Run pdftotext?");
+        let controls = include_str!("../../../../src/components/tasks/Detail.tsx");
+        for label in [
+            "Retry unfinished actions",
+            "Use current conversation context",
+        ] {
+            assert!(message.contains(label), "{message}");
+            assert!(controls.contains(label), "{label}");
+        }
+        assert!(message.contains("Run pdftotext?"));
+        assert!(!message.contains("refresh task context"));
+    }
 }

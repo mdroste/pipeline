@@ -436,6 +436,34 @@ describe("IssuesTable outside-source evidence", () => {
 });
 
 describe("IssuesTable issue bodies", () => {
+  it("renders math in titles and quotes, and nothing else", async () => {
+    invoke.mockImplementation((command: string) =>
+      command === "get_annotations" ? Promise.resolve("{}") : Promise.resolve(),
+    );
+    const { container } = render(
+      <IssuesTable
+        runId="run"
+        issues={[
+          {
+            ...issues[0],
+            title: "SEs for $\\hat\\beta$ in *Table 1*",
+            evidence: [{ page: 2, quote: "where $x_i$ is income" }],
+          },
+        ]}
+      />,
+    );
+
+    const title = await screen.findByRole("button", { name: /^SEs for/ });
+    expect(title.querySelector(".katex")).not.toBeNull();
+    expect(title).toHaveTextContent("in *Table 1*");
+    expect(title).not.toHaveTextContent("$");
+
+    await userEvent.setup().click(title);
+    const quote = container.querySelector("blockquote");
+    expect(quote?.querySelector(".katex")).not.toBeNull();
+    expect(container.querySelector(".katex-error")).toBeNull();
+  });
+
   it("renders math and cleans the body as the Report tab does", async () => {
     const user = userEvent.setup();
     const view = render(

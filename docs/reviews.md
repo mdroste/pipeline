@@ -118,7 +118,12 @@ the review stops and shows the error, and you can turn off **Use graphics card**
 under **Advanced parser settings**.
 
 On the processor, Windows reads pages with 4 cores. To change that, use
-**Processor cores** under **Advanced parser settings**.
+**Processor cores** under **Advanced parser settings**. Page layout uses the same
+number of cores when your graphics card reads the pages.
+
+If the parser or graphics card recognition reports a damaged file, choose
+**Repair** beside it in **Settings → Reviews**. Repair checks the installed files.
+It leaves a sound install alone and downloads again only if the check fails.
 
 **By default, Pipeline uses the Full Parser if it's installed, and otherwise
 sends the PDF to your model connection.** If extraction fails, the review
@@ -261,8 +266,8 @@ the designer, choose **+ Add step**, then **Pipeline check**. Or start from the
 
 | Check | What it does | Network |
 | --- | --- | --- |
-| Reference check | Finds the bibliography and reports undefined citation keys, duplicate entries, and malformed DOIs. With lookups on, it checks each reference against Crossref: found, mismatched details, another version (such as a working paper later published), retracted, expression of concern, or corrected | Only when you turn on lookups |
-| Replication package check | Reads a package folder and checks the README against the Social Science Data Editors template. Also checks for a main script, absolute paths, package installation, random seeds, missing files, exported tables and figures, very large files, and a license. It doesn't run the code | None |
+| Reference check | Finds the bibliography and reports undefined citation keys, duplicate entries, and malformed DOIs. With lookups on, it checks each reference against Crossref: found, mismatched details, another version (such as a working paper later published), retracted, partly retracted, expression of concern, or corrected | Only when you turn on lookups |
+| Replication package check | Reads a package folder and checks the README against the Social Science Data Editors template. Also checks for a main script, absolute paths, package installation, random seeds, missing files, exported tables and figures, very large files, and a license. It doesn't run the code. A code file over 2 MB, such as a notebook with stored output, isn't read, and a finding names it | None |
 
 The templates pair each check with a model step that explains the problems
 found. If Crossref can't find a reference, it may be a book, report, or
@@ -301,9 +306,9 @@ For batches, workflow files, and scripting, see the
 | Problem | What to do |
 | --- | --- |
 | The provider is unavailable | Open **Settings → Connections** and check the account or API key |
-| PDF extraction fails | Read the error. Repair or install the parser, choose another method, or use LaTeX source |
+| PDF extraction fails | Read the error. In **Settings → Reviews**, choose **Repair** or **Install** for the parser, choose another method, or use LaTeX source |
 | The document is too long for the model | Use a shorter document, or give the step less context |
 | Calls are queued or rate-limited | Check your provider's limits and run fewer reviews at once |
-| The run was interrupted | Open the saved run, check which steps finished, and use the recovery options it offers. **Resume** always runs the review design saved with that run. **Regenerate** does too, unless that design is the one selected now, in which case your edits apply. If the run used a secret variable, Pipeline asks for it again, because a run never keeps secret values |
+| The run was interrupted | Open the saved run, check which steps finished, and use the recovery options it offers. **Resume** always runs the review design saved with that run. **Regenerate** does too, unless that design is the one selected now, in which case your edits apply. Both use the agents you chose for that run, and Pipeline names them first. If the run used a secret variable, Pipeline asks for it again, because a run never keeps secret values |
 
 To report a bug, see [Support](../.github/SUPPORT.md).

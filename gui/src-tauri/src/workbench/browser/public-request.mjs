@@ -64,6 +64,9 @@ export function publicUrl(value) {
     );
   return url;
 }
+// A navigation is held to what Chromium allows, because sign-in and DOI chains
+// are long. Each of its hops is a new navigation with its own address check.
+const MAX_NAVIGATION_REDIRECTS = 20;
 const MAX_REDIRECTS = 5;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const BODY_HEADERS = [
@@ -174,14 +177,16 @@ export async function publicRequest(
   let url = publicUrl(value);
   let address = await pinnedAddress(url, signal, resolve);
   const firstOrigin = url.origin;
+  const maxRedirects =
+    resourceType === "document" ? MAX_NAVIGATION_REDIRECTS : MAX_REDIRECTS;
   const cookies = [];
   let hop = { url: value, method, headers, body };
   for (let redirects = 0; ; redirects++) {
     const response = await send(url, address, hop, signal, agent);
     if (response.location === undefined)
       return withHopCookies(response, cookies);
-    if (redirects === MAX_REDIRECTS)
-      throw redirectFailure(`more than ${MAX_REDIRECTS} redirects`);
+    if (redirects === maxRedirects)
+      throw redirectFailure(`more than ${maxRedirects} redirects`);
     cookies.push(...response.cookies);
     try {
       hop = nextHop(hop, response);
@@ -235,7 +240,7 @@ export class RedirectChains {
     const chain = this.#frames.get(frame);
     if (!chain?.hops)
       this.#frames.set(frame, { hops: 1, pages: new Set([url]) });
-    else if (chain.hops === MAX_REDIRECTS) return false;
+    else if (chain.hops === MAX_NAVIGATION_REDIRECTS) return false;
     else {
       chain.hops++;
       chain.pages.add(url);
@@ -294,7 +299,7 @@ export async function answerRoute(route, chains, network) {
       return response.body.length;
     }
     if (!chains.advance(frame, url))
-      throw redirectFailure(`more than ${MAX_REDIRECTS} redirects`);
+      throw redirectFailure(`more than ${MAX_NAVIGATION_REDIRECTS} redirects`);
     const page = redirectPage(response.redirect, response.cookies);
     await route.fulfill(page);
     return page.body.length;
@@ -404,4 +409,63 @@ function send(url, address, { method, headers, body }, signal, agent) {
     request.on("error", reject);
     request.end(body);
   });
+}
+
+const MAX_WAITING_REQUESTS = 2048;
+
+// Page requests answered at once. The rest wait, because a heavy journal page
+// needs every asset it asks for. A navigation goes to the front so that a slow
+// page cannot hold up leaving it. Past a limit no real page reaches, `run`
+// returns false without calling `task`.
+export class RequestQueue {
+  #running = 0;
+  #waiting = [];
+  constructor(limit) {
+    this.limit = limit;
+  }
+  async run(task, { first = false } = {}) {
+    if (this.#running >= this.limit) {
+      if (this.#waiting.length >= MAX_WAITING_REQUESTS) return false;
+      await new Promise((start) =>
+        first ? this.#waiting.unshift(start) : this.#waiting.push(start),
+      );
+    } else this.#running++;
+    try {
+      await task();
+      return true;
+    } finally {
+      const next = this.#waiting.shift();
+      if (next) next();
+      else this.#running--;
+    }
+  }
+}
+
+// The page the assistant moves to when its own closes.
+export function newestOpenPage(pages) {
+  return pages.findLast((page) => !page.isClosed());
+}
+
+const TURN_TRANSFER_LIMIT = 128 * 1024 * 1024;
+
+// What one turn may load. Pipeline releases the window when the turn ends, and
+// what the researcher then loads themselves counts against nothing.
+export class TurnTransfer {
+  notice =
+    "This browser has loaded its 128 MiB limit for this turn, so pages will not load. The limit resets with the next message.";
+  #used = 0;
+  #released = false;
+  add(bytes) {
+    if (!this.#released) this.#used += bytes;
+  }
+  spent() {
+    return !this.#released && this.#used >= TURN_TRANSFER_LIMIT;
+  }
+  release() {
+    this.#released = true;
+    this.#used = 0;
+  }
+  resume() {
+    this.#released = false;
+  }
 }

@@ -5,12 +5,13 @@ import SettingsPageComponent, { type SettingsSection } from "./SettingsPage";
 import { useSyncExternalStore, type ComponentProps } from "react";
 import { readAppPreferences } from "../lib/appPreferences";
 import { router } from "../lib/router";
-import { settingsSearchEntries } from "./settings/search";
+import { parserControls, settingsSearchEntries } from "./settings/search";
+import type { Section } from "./settings/navigation";
 // Existing Review behavior tests enter Reviews explicitly after the navigation redesign.
 const SettingsPage = (props: ComponentProps<typeof SettingsPageComponent>) => (
   <SettingsPageComponent initialSection="workflow" {...props} />
 );
-import { makeSettings } from "../test/settingsFixtures";
+import { makeSettings, paddleEngine } from "../test/settingsFixtures";
 import type { EngineStatus, Settings } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -251,6 +252,117 @@ describe("SettingsPage navigation", () => {
         ).not.toBeNull();
     },
   );
+
+  describe("every search result", () => {
+    const sections: Section[] = [
+      "general",
+      "providers",
+      "conversations",
+      "workflow",
+      "storage",
+      "notifications",
+      "advanced",
+    ];
+    const graphics = [
+      paddleEngine({ installed: true }),
+      paddleEngine({ id: "paddleocr-vl-gpu", installed: true }),
+    ];
+    it.each([
+      ["no graphics engine", []],
+      ["the graphics engine", graphics],
+    ])("lands on a control with %s", async (_name, engines) => {
+      for (const section of sections) {
+        const settings = makeSettings();
+        mockLoad(settings, [], engines);
+        const { unmount } = render(
+          <SettingsPage
+            onClose={() => {}}
+            theme="light"
+            onThemeChange={() => {}}
+            initialSection={section}
+          />,
+        );
+        await screen.findByRole("heading", { level: 1 });
+        const targets = settingsSearchEntries(
+          settings,
+          readAppPreferences(),
+          "light",
+          parserControls(engines),
+        )
+          .filter((entry) => entry.section === section)
+          .map((entry) => entry.target);
+        for (const target of targets)
+          await waitFor(() =>
+            expect(
+              document.getElementById(target) ??
+                document.querySelector(`[aria-label="${target}"]`),
+              `${section}: ${target}`,
+            ).not.toBeNull(),
+          );
+        unmount();
+      }
+    });
+
+    const search = async (engines: EngineStatus[], text: string) => {
+      mockLoad(makeSettings(), [], engines);
+      render(
+        <SettingsPage
+          onClose={() => {}}
+          theme="light"
+          onThemeChange={() => {}}
+          initialSection="general"
+        />,
+      );
+      await userEvent.type(
+        await screen.findByRole("searchbox", { name: "Search settings" }),
+        text,
+      );
+    };
+
+    it("leaves out controls this machine does not have", async () => {
+      await search([paddleEngine({ installed: true })], "graphics");
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("list_engines"));
+      await act(async () => {});
+      expect(
+        screen.queryByRole("button", { name: /Use graphics card/ }),
+      ).not.toBeInTheDocument();
+      await userEvent.clear(screen.getByRole("searchbox"));
+      await userEvent.type(screen.getByRole("searchbox"), "processor cores");
+      await act(async () => {});
+      expect(
+        screen.queryByRole("button", { name: /Processor cores/ }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("reaches the graphics control from another section", async () => {
+      await search(graphics, "graphics");
+      await userEvent.click(
+        await screen.findByRole("button", { name: /Use graphics card/ }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("switch", { name: "Use graphics card" }),
+        ).toHaveFocus(),
+      );
+    });
+
+    it("reaches the processor control from another section", async () => {
+      await search(
+        [paddleEngine({ id: "paddleocr-vl-gpu", installed: false })],
+        "processor cores",
+      );
+      await userEvent.click(
+        await screen.findByRole("button", { name: /Processor cores/ }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", {
+            name: "PaddleOCR-VL processor cores",
+          }),
+        ).toHaveFocus(),
+      );
+    });
+  });
 
   describe("a route that changes section while a key is being typed", () => {
     function Routed() {

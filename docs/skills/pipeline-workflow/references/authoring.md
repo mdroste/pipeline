@@ -37,7 +37,7 @@ For a five-to-seven-step paper review, a useful decomposition is: orientation (h
 - Named input: `{"kind":"named_input","key":"appendix","parts":["text"]}`.
 - Prior step: `{"kind":"step","step":"proof_audit","parts":["report"]}`. Supporting files may use `"files"` and an optional `glob`.
 
-An empty `context.include` intentionally isolates the step.
+An empty `context.include` intentionally isolates the step, and `workflow validate` warns about it. A file where no step has a `context` key is read as an older export: each step gets what its phase implied. Leaving the key out of only some model steps is refused.
 
 ## Providers, models, and tools
 
@@ -49,7 +49,7 @@ The only currently authorable optional tool is `WebSearch`. Add it only when ext
 
 - Declare prompt variables under `variables` and reference them as `{var:key}`. Pass values with repeated `--var key=value` options.
 - Declare additional inputs under `extraction.extra_inputs`, then pass them with `--extra-input key=path`.
-- `for_each` is Parallel-only and maps a bounded glob over folder inputs. Keep `max` small and review preflight work bounds.
+- `for_each` is Parallel-only and maps a bounded glob over folder inputs. Keep `max` small and review preflight work bounds. A step that stops at `max` lists what it left unread in the report's limitations.
 - `run_if` supports deterministic `output_matches` and `survey_path` guards. It is routing, not a general expression language.
 
 ## Validation and execution sequence

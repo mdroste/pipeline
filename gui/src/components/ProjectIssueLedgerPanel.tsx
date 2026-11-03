@@ -11,6 +11,7 @@ import type {
   RunSummary,
 } from "../lib/types";
 import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   project: Project;
@@ -471,6 +472,7 @@ export default function ProjectIssueLedgerPanel({
           className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
         >
           {error}
+          <ReportIssueLink />
         </div>
       )}
       {ledger && ledger.warnings.length > 0 && (

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { listAnalyzers, type AnalyzerInfo } from "../../lib/analyzers";
+import ReportIssueLink from "../ReportIssueLink";
 
 export interface AnalyzerSelection {
   info: AnalyzerInfo;
@@ -68,6 +69,7 @@ export default function AnalyzerChoice({
     return (
       <p role="alert" className="text-xs text-red-600 dark:text-red-400">
         Could not load Pipeline checks: {error}
+        <ReportIssueLink />
       </p>
     );
   }

@@ -10,6 +10,7 @@ import type { RunSummary } from "../lib/types";
 import type { WorkbenchEvent } from "../lib/workbenchTypes";
 import { button, muted, Inspect } from "./research-programs/shared";
 import PageHeader from "../ui/PageHeader";
+import ReportIssueLink from "./ReportIssueLink";
 interface Activity {
   turns: {
     sessionId: string;
@@ -140,7 +141,10 @@ export default function ResearchActivity({
         </div>
       )}
       {(error || reviewError) && (
-        <p role="alert">{[error, reviewError].filter(Boolean).join(" · ")}</p>
+        <p role="alert">
+          {[error, reviewError].filter(Boolean).join(" · ")}
+          <ReportIssueLink />
+        </p>
       )}
       <p className={`${muted} ${asPage ? "ui-page-toolbar" : "my-3"}`}>
         {activity?.pendingRequests.length ?? 0} unresolved conversation requests

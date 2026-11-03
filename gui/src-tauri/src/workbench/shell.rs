@@ -198,7 +198,7 @@ async fn launch(
     config
         .write_all(&serde_json::to_vec(&config_body).map_err(err)?)
         .map_err(err)?;
-    config.as_file().sync_all().map_err(err)?;
+    crate::safety::sync_file(config.as_file()).map_err(err)?;
     let mut command = std::process::Command::new(node);
     command.args([
         cli.as_os_str(),

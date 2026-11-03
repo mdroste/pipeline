@@ -158,7 +158,7 @@ fn full_parser_reports_withheld_image_text_once_per_document() {
                 .to_string()
         ]
     );
-    assert!(crate::pipeline::extract::is_withheld_image_text_note(
+    assert!(crate::pipeline::extract::is_informational_extraction_note(
         &extraction.quality_notes[0]
     ));
 
@@ -258,6 +258,39 @@ async fn managed_paddle_server_exit_preserves_error_and_forgets_child() {
 }
 
 #[cfg(unix)]
+#[tokio::test]
+async fn managed_paddle_server_exit_reports_what_it_said() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = directory.path().join("fake-server");
+    write_fake_executable(
+        &server,
+        "#!/bin/sh\necho 'ggml_vulkan: ErrorOutOfDeviceMemory' >&2\nexit 1\n",
+    );
+    let paths = crate::engines::PaddleEnginePaths {
+        server,
+        model: directory.path().join("unused-model"),
+        mmproj: directory.path().join("unused-projector"),
+        integrity_sha256: "fixture".into(),
+        gpu: true,
+    };
+    let active = crate::run_scope::ActiveScope::begin("pdf-server-reason-characterization");
+    let settings = crate::settings::Settings::default();
+    let result = crate::run_scope::scoped(active.scope().clone(), async {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            start_paddle_server(&paths, &settings),
+        )
+        .await
+        .expect("fake server exit should be observed promptly")
+    })
+    .await;
+    match result {
+        Err(error) => assert!(error.ends_with("(exit 1): ggml_vulkan: ErrorOutOfDeviceMemory")),
+        Ok(_) => panic!("fake server must not become ready"),
+    }
+}
+
+#[cfg(unix)]
 #[test]
 fn built_in_recognition_runs_the_sidecar_without_a_server() {
     let directory = tempfile::tempdir().unwrap();
@@ -290,6 +323,7 @@ fn built_in_recognition_runs_the_sidecar_without_a_server() {
             &SidecarRecognition::BuiltIn { model_dir },
             &[],
             std::time::Duration::from_secs(2),
+            &mut |_| {},
         )
     })
     .unwrap();
@@ -304,6 +338,107 @@ fn built_in_recognition_runs_the_sidecar_without_a_server() {
     assert!(stdout.contains("arg=--native-model-dir"));
     assert!(stdout.contains("recognition-model"));
     assert!(!stdout.contains("arg=--server-url"));
+}
+
+#[cfg(unix)]
+#[test]
+fn bounded_subprocess_hands_over_stdout_lines_while_it_runs() {
+    let directory = tempfile::tempdir().unwrap();
+    let proceed = directory.path().join("proceed");
+    // The child waits until its first line is seen, so a line held back until
+    // exit fails this test on the timeout.
+    let mut command = StdCommand::new("sh");
+    command
+        .args([
+            "-c",
+            "printf 'first\\r\\n'; while [ ! -e \"$0\" ]; do sleep 0.01; done; printf last",
+        ])
+        .arg(&proceed);
+    let mut lines = Vec::new();
+    let output = run_bounded_output_observed(
+        command,
+        "line test",
+        std::time::Duration::from_secs(10),
+        1024,
+        None,
+        Some(&mut |line| {
+            fs::write(&proceed, "").unwrap();
+            lines.push(line.to_string());
+        }),
+    )
+    .unwrap();
+    assert!(output.status.success());
+    assert_eq!(lines, ["first", "last"]);
+    assert_eq!(output.stdout, b"first\r\nlast");
+}
+
+#[cfg(unix)]
+#[test]
+fn observed_stdout_lines_are_bounded_without_losing_the_next_line() {
+    let mut command = StdCommand::new("sh");
+    command.args(["-c", "head -c 5000 /dev/zero | tr '\\0' x; echo; echo next"]);
+    let mut lines = Vec::new();
+    run_bounded_output_observed(
+        command,
+        "long line test",
+        std::time::Duration::from_secs(10),
+        1024,
+        None,
+        Some(&mut |line| lines.push(line.to_string())),
+    )
+    .unwrap();
+    assert_eq!(lines, ["x".repeat(4096).as_str(), "next"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn sidecar_progress_reaches_the_console_without_its_marker() {
+    assert!(
+        include_str!("../../../paddle_parser_sidecar.py")
+            .contains(&format!("PROGRESS_PREFIX = \"{PADDLE_PROGRESS_PREFIX}\"")),
+        "the sidecar and the host must mark progress lines the same way"
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let python = directory.path().join("fake-python");
+    write_fake_executable(
+        &python,
+        "#!/bin/sh\nprintf 'pipeline-progress: 3 of 28 pages extracted\\nnot progress\\n{\"ok\":true}\\n'\n",
+    );
+    let model_dir = directory.path().join("recognition-model");
+    let paths = crate::engines::PaddleFullParserPaths {
+        python,
+        script: directory.path().join("sidecar.py"),
+        model_cache: directory.path().join("cache"),
+        layout_model: directory.path().join("layout"),
+        recognition: crate::engines::PaddleRecognition::BuiltIn {
+            model_dir: model_dir.clone(),
+        },
+        release: "fixture".into(),
+        integrity_sha256: "fixture".into(),
+        sidecar_sha256: "fixture".into(),
+    };
+    let active = crate::run_scope::ActiveScope::begin("pdf-sidecar-progress-characterization");
+    let mut progress = Vec::new();
+    let output = crate::run_scope::enter_blocking(active.scope().clone(), || {
+        run_paddle_full_sidecar(
+            &paths,
+            &crate::settings::Settings::default(),
+            &directory.path().join("input.pdf"),
+            &directory.path().join("output.json"),
+            &directory.path().join("assets"),
+            &SidecarRecognition::BuiltIn { model_dir },
+            &[],
+            std::time::Duration::from_secs(5),
+            &mut |message| progress.push(message.to_string()),
+        )
+    })
+    .unwrap();
+    assert!(output.status.success());
+    assert_eq!(progress, ["3 of 28 pages extracted"]);
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .ends_with("{\"ok\":true}\n"));
+    assert!(output.stderr.is_empty());
 }
 
 #[cfg(unix)]
@@ -348,6 +483,7 @@ fn managed_paddle_sidecar_preserves_failure_capture_and_private_key_environment(
                 prose_chars: 120,
             }],
             std::time::Duration::from_secs(2),
+            &mut |_| {},
         )
     })
     .unwrap();
@@ -375,4 +511,56 @@ fn managed_paddle_sidecar_preserves_failure_capture_and_private_key_environment(
         .any(|pair| pair == ["arg=--baseline-prose-chars", "arg=[120]"]));
     assert!(!stdout.contains("sidecar-fixture-key"));
     assert!(!active.scope().has_child(pid));
+}
+
+#[test]
+fn a_blank_page_keeps_its_place_and_an_empty_unread_page_still_fails() {
+    let page = |number: u32, markdown: &str, blank_page: bool| PaddleStructuredPage {
+        number,
+        markdown: markdown.to_string(),
+        blank_page,
+        source_text_chars: Some(if markdown.is_empty() { 0 } else { 40 }),
+        width: Some(1200),
+        height: Some(1600),
+        blocks: Vec::new(),
+    };
+    let structure = |pages| PaddleStructure {
+        schema_version: PADDLE_STRUCTURE_SCHEMA,
+        parser: "paddleocr-vl-full".to_string(),
+        parser_version: "3.7.0".to_string(),
+        settings: serde_json::json!({}),
+        quality_notes: Vec::new(),
+        pages,
+    };
+    let path = Path::new("/tmp/paper.pdf");
+    let empty_baseline = || PdfPageTextBaseline {
+        total_chars: 0,
+        prose_chars: 0,
+    };
+    let baselines = [empty_baseline(), empty_baseline()];
+    let extraction = full_parser_extraction_from_structure(
+        &structure(vec![page(1, "Text on the page.", false), page(2, "", true)]),
+        path,
+        "0123456789abcdef",
+        Some(&baselines),
+    )
+    .unwrap();
+    assert!(extraction.text.contains("<!-- PAGE 2 -->"));
+    assert_eq!(extraction.quality_notes.len(), 1);
+    assert!(is_informational_extraction_note(
+        &extraction.quality_notes[0]
+    ));
+    assert!(extraction.quality_notes[0].ends_with(" 2."));
+
+    let failed = full_parser_extraction_from_structure(
+        &structure(vec![
+            page(1, "Text on the page.", false),
+            page(2, "", false),
+        ]),
+        path,
+        "0123456789abcdef",
+        Some(&baselines),
+    )
+    .unwrap_err();
+    assert!(failed.contains("no content for page 2"), "{failed}");
 }

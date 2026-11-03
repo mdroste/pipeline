@@ -3,6 +3,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { appClient } from "../lib/appClient";
 import { onFileDrop } from "../lib/fileDrop";
 import type { InputInterpretation, PrimaryInputSelection } from "../lib/types";
+import ReportIssueLink from "./ReportIssueLink";
 
 const RECENT_INPUTS_KEY = "pipeline.recentInputs.v1";
 const DOCUMENT_EXTENSIONS = ["pdf", "tex", "docx"];
@@ -375,6 +376,7 @@ export default function PaperSelector({
           className="mt-1.5 text-xs text-red-700 dark:text-red-400"
         >
           {pickerError}
+          <ReportIssueLink />
         </p>
       )}
     </div>

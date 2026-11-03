@@ -94,6 +94,57 @@ fn loop_limit_is_recorded_and_replay_does_not_rerun() {
     ));
 }
 
+fn while_limit_after_final_pass(result: Value) -> bool {
+    let c = chain(vec![step(
+        "loop",
+        Action::While {
+            max_iterations: 2,
+            condition: Condition::Equals {
+                left: output("review", "/open"),
+                right: json!(true),
+            },
+            steps: vec![delay("review")],
+        },
+    )]);
+    let inputs = json!({});
+    // The first entry has nothing to read yet, so a seeded output opens the loop.
+    let mut p = state::Progress {
+        outputs: json!({"review":{"open":true}}),
+        ..Default::default()
+    };
+    let Advance::Ready(first) = state::advance(&c, &mut p, &inputs) else {
+        panic!()
+    };
+    done(&mut p, &first[0], json!({"open":true}));
+    let Advance::Ready(second) = state::advance(&c, &mut p, &inputs) else {
+        panic!()
+    };
+    assert_eq!(second[0].address, "loop/1/review");
+    done(&mut p, &second[0], result);
+    assert!(matches!(
+        state::advance(&c, &mut p, &inputs),
+        Advance::Finished
+    ));
+    let flagged = p.limit_reached;
+    // Asking again spends nothing: no new step, and the result does not change.
+    assert_eq!(p.actions, 0);
+    assert!(matches!(
+        state::advance(&c, &mut p, &inputs),
+        Advance::Finished
+    ));
+    assert_eq!(p.limit_reached, flagged);
+    flagged
+}
+
+#[test]
+fn a_while_loop_reports_its_limit_only_when_the_last_pass_left_the_condition_open() {
+    assert!(!while_limit_after_final_pass(json!({"open":false})));
+    assert!(while_limit_after_final_pass(json!({"open":true})));
+    // A condition that can't be read says nothing about having finished, and a
+    // run that used to finish here still does.
+    assert!(while_limit_after_final_pass(json!({})));
+}
+
 #[test]
 fn parallel_branches_join_before_next_step() {
     let c = chain(vec![

@@ -1,17 +1,30 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { lookup } from "node:dns/promises";
-import http from "node:http";
-import { connect } from "node:net";
+import { spawn } from "node:child_process";
+import { cp, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
 import vm from "node:vm";
 import {
   answerRoute,
+  newestOpenPage,
   publicAddress,
   publicRequest,
   publicUrl,
   RedirectChains,
   redirectPage,
+  TurnTransfer,
 } from "./public-request.mjs";
+import {
+  fakeRoute,
+  FixtureAgent,
+  fixture,
+  listen,
+  names,
+  pageTarget,
+  redirect,
+} from "./public-request.fixture.mjs";
 
 test("public browser transport rejects local, reserved and disguised addresses", async () => {
   for (const ip of [
@@ -57,81 +70,6 @@ test("browser navigation cannot select local files, protocols, credentials or ex
   ])
     assert.throws(() => publicUrl(url));
   assert.equal(publicUrl("https://example.org/a?q=1").hostname, "example.org");
-});
-
-// The real transport against local servers. Only name resolution and the final
-// socket are replaced: hosts below resolve as stated, and each connection lands
-// on the local server standing in for its host, so ports 80 and 443 stay in
-// force and the address checks see the same answers they would in production.
-const PUBLIC = [{ address: "93.184.216.34", family: 4 }];
-const names = {
-  "paper.example": PUBLIC,
-  "mirror.example": PUBLIC,
-  "rebind.example": [{ address: "127.0.0.1", family: 4 }],
-  "split.example": [...PUBLIC, { address: "10.0.0.8", family: 4 }],
-};
-
-class FixtureAgent extends http.Agent {
-  constructor(ports) {
-    super();
-    this.ports = ports;
-  }
-  createConnection(options, callback) {
-    const port = this.ports[options.host] ?? this.ports.loopback;
-    return connect(port, "127.0.0.1", callback);
-  }
-}
-
-async function listen(handler) {
-  const requests = [];
-  const server = http.createServer((request, response) => {
-    const chunks = [];
-    request.on("data", (chunk) => chunks.push(chunk));
-    request.on("end", () => {
-      const seen = {
-        method: request.method,
-        url: request.url,
-        headers: request.headers,
-        body: Buffer.concat(chunks).toString(),
-      };
-      requests.push(seen);
-      handler(seen, response);
-    });
-  });
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return { requests, server, port: server.address().port };
-}
-
-// `routes` answers the public hosts; everything else reaches `loopback`.
-async function fixture(t, routes) {
-  const site = await listen((request, response) => {
-    const route = routes[`${request.headers.host}${request.url}`];
-    if (!route) response.writeHead(404).end("missing");
-    else response.writeHead(route.status, route.headers).end(route.body ?? "");
-  });
-  const loopback = await listen((_request, response) =>
-    response.writeHead(200).end("private-fixture"),
-  );
-  const agent = new FixtureAgent({
-    "paper.example": site.port,
-    "mirror.example": site.port,
-    loopback: loopback.port,
-  });
-  t.after(() => {
-    agent.destroy();
-    site.server.close();
-    loopback.server.close();
-  });
-  const network = {
-    agent,
-    lookup: async (host, options) => names[host] ?? lookup(host, options),
-  };
-  return { site, loopback, network };
-}
-
-const redirect = (location, status = 302, headers = {}) => ({
-  status,
-  headers: { location, ...headers },
 });
 
 const BLOCKED_TARGETS = [
@@ -413,53 +351,6 @@ test("a response with no redirect is returned as it arrived", async (t) => {
   assert.equal(site.requests.length, 3);
 });
 
-// Stands in for a Playwright route. It refuses the one thing the route handler
-// must never do, however a test gets there.
-function fakeRoute({
-  url,
-  resourceType = "document",
-  method = "GET",
-  headers = {},
-  body = null,
-  frame = {},
-}) {
-  const route = {
-    fulfilled: [],
-    aborted: [],
-    request: () => ({
-      url: () => url,
-      method: () => method,
-      allHeaders: async () => headers,
-      postDataBuffer: () => body,
-      resourceType: () => resourceType,
-      frame: () => {
-        if (frame === null) throw new Error("Frame is not available");
-        return frame;
-      },
-    }),
-    fulfill: async (response) => {
-      const redirected =
-        [301, 302, 303, 307, 308].includes(response.status) &&
-        response.headers?.location !== undefined;
-      assert.equal(redirected, false, "a 3xx reached Chromium");
-      route.fulfilled.push(response);
-    },
-    abort: async (code) => route.aborted.push(code),
-  };
-  return route;
-}
-
-function pageTarget(body) {
-  const script = /<script>(.*)<\/script>/s.exec(body.toString());
-  if (!script) return undefined;
-  const moves = [];
-  vm.runInNewContext(script[1], {
-    location: { replace: (to) => moves.push(to) },
-  });
-  assert.equal(moves.length, 1);
-  return moves[0];
-}
-
 // What Chromium does with a redirect page: files its cookies under its own URL,
 // runs its script, and sends the next navigation back through the route with
 // the cookies it holds for that host.
@@ -649,7 +540,7 @@ test("a fragment-only redirect loop ends in the plain failure page", async (t) =
   const chains = new RedirectChains();
   const frame = {};
   const url = "http://paper.example/a";
-  for (let hop = 0; hop < 5; hop++) {
+  for (let hop = 0; hop < 20; hop++) {
     const route = fakeRoute({ url, frame });
     await answerRoute(route, chains, network);
     assert.equal(pageTarget(route.fulfilled[0].body), url);
@@ -657,9 +548,9 @@ test("a fragment-only redirect loop ends in the plain failure page", async (t) =
   const route = fakeRoute({ url, frame });
   await answerRoute(route, chains, network);
   assert.equal(route.fulfilled[0].status, 403);
-  assert.match(route.fulfilled[0].body, /more than 5 redirects/);
+  assert.match(route.fulfilled[0].body, /more than 20 redirects/);
   assert.equal(chains.redirecting(frame, url), false);
-  assert.equal(site.requests.length, 6);
+  assert.equal(site.requests.length, 21);
 });
 
 test("a different page keeps its fragment", async (t) => {
@@ -771,7 +662,7 @@ test("a redirect loop across redirect pages ends in the plain failure page", asy
   const chains = new RedirectChains();
   const frame = {};
   let url = "http://paper.example/a";
-  for (let hop = 0; hop < 5; hop++) {
+  for (let hop = 0; hop < 20; hop++) {
     const route = fakeRoute({ url, frame });
     await answerRoute(route, chains, network);
     url = pageTarget(route.fulfilled[0].body);
@@ -782,8 +673,8 @@ test("a redirect loop across redirect pages ends in the plain failure page", asy
   const [failure] = route.fulfilled;
   assert.equal(failure.status, 403);
   assert.match(failure.contentType, /^text\/plain/);
-  assert.match(failure.body, /more than 5 redirects/);
-  assert.equal(site.requests.length, 6);
+  assert.match(failure.body, /more than 20 redirects/);
+  assert.equal(site.requests.length, 21);
   // The failure page ended the chain, so the frame can navigate again.
   const again = fakeRoute({ url: "http://paper.example/a", frame });
   await answerRoute(again, chains, network);
@@ -820,7 +711,7 @@ test("each frame has its own redirect limit, and a new window can start", async 
   const chains = new RedirectChains();
   const main = {};
   const embedded = {};
-  for (let hop = 0; hop < 5; hop++)
+  for (let hop = 0; hop < 20; hop++)
     for (const frame of [main, embedded]) {
       const route = fakeRoute({ url: "http://paper.example/a", frame });
       await answerRoute(route, chains, network);
@@ -1052,4 +943,135 @@ test("a route reports the bytes it served", async (t) => {
     await answerRoute(stub, chains, network),
     stub.fulfilled[0].body.length,
   );
+});
+
+test("a closed page gives way to the newest page still open", () => {
+  const page = (closed) => ({ isClosed: () => closed });
+  const main = page(false);
+  const popup = page(false);
+  assert.equal(newestOpenPage([main, popup, page(true)]), popup);
+  assert.equal(newestOpenPage([main, page(true)]), main);
+  assert.equal(newestOpenPage([page(true)]), undefined);
+});
+
+test("a turn's transfer limit ends with the turn", () => {
+  const limit = 128 * 1024 * 1024;
+  const transfer = new TurnTransfer();
+  transfer.add(limit - 1);
+  assert.equal(transfer.spent(), false);
+  transfer.add(1);
+  assert.equal(transfer.spent(), true);
+  assert.match(transfer.notice, /resets with the next message/);
+
+  // The researcher can keep browsing after the turn.
+  transfer.release();
+  transfer.add(limit * 2);
+  assert.equal(transfer.spent(), false);
+
+  // That browsing doesn't count against the next turn.
+  transfer.resume();
+  assert.equal(transfer.spent(), false);
+  transfer.add(limit);
+  assert.equal(transfer.spent(), true);
+});
+
+// The real driver against a stand-in Playwright. A page acts on special URLs.
+const fakePlaywright = `
+import { EventEmitter } from "node:events";
+const closed = new Error("Target page, context or browser has been closed");
+class Page extends EventEmitter {
+  closed = false;
+  constructor(context, name) { super(); this.context = context; this.name = name; }
+  isClosed() { return this.closed; }
+  url() { return "https://example.org/" + this.name; }
+  mainFrame() { return this; }
+  async title() { if (this.closed) throw closed; return this.name; }
+  async $$() { return []; }
+  locator() { return { innerText: async () => "" }; }
+  close() { this.closed = true; this.emit("close"); }
+  async goto(url) {
+    if (this.closed) throw closed;
+    if (url.endsWith("/open-popup")) this.context.open("popup");
+    if (url.endsWith("/close-self")) this.close();
+    if (url.endsWith("/close-all")) this.context.closeAll();
+  }
+}
+class Context extends EventEmitter {
+  all = [new Page(this, "main")];
+  pages() { return this.all.filter((page) => !page.closed); }
+  async route() {}
+  async routeWebSocket() {}
+  open(name) { const page = new Page(this, name); this.all.push(page); this.emit("page", page); return page; }
+  async newPage() { return this.open("fresh"); }
+  closeAll() { for (const page of this.pages()) page.close(); this.emit("close"); }
+  async close() {}
+}
+export const chromium = { launchPersistentContext: async () => new Context() };
+`;
+
+async function fakeDriver(t) {
+  const folder = await mkdtemp(join(tmpdir(), "driver-"));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const playwright = join(folder, "node_modules/playwright");
+  await mkdir(playwright, { recursive: true });
+  await writeFile(
+    join(playwright, "package.json"),
+    '{"type":"module","main":"index.js"}',
+  );
+  await writeFile(join(playwright, "index.js"), fakePlaywright);
+  for (const file of ["driver.mjs", "public-request.mjs"])
+    await cp(new URL(file, import.meta.url), join(folder, file));
+  const child = spawn(
+    process.execPath,
+    [join(folder, "driver.mjs"), "profile"],
+    {
+      stdio: ["pipe", "pipe", "inherit"],
+    },
+  );
+  t.after(() => child.kill());
+  const lines = createInterface({ input: child.stdout })[
+    Symbol.asyncIterator
+  ]();
+  const reply = async () => JSON.parse((await lines.next()).value);
+  assert.equal((await reply()).ready, true);
+  return async (args) => {
+    child.stdin.write(JSON.stringify(args) + "\n");
+    return reply();
+  };
+}
+const go = (path) => ({
+  action: "navigate",
+  url: `https://example.org/${path}`,
+});
+
+test("a closed popup leaves the driver on the page beneath it", async (t) => {
+  const send = await fakeDriver(t);
+  assert.equal((await send(go("open-popup"))).result.title, "popup");
+  const back = await send(go("close-self"));
+  assert.equal(back.result.title, "main");
+  assert.equal((await send({ action: "snapshot" })).result.title, "main");
+});
+
+test("closing every tab opens a page while the browser still runs", async (t) => {
+  const send = await fakeDriver(t);
+  await send(go("close-self"));
+  const reply = await send({ action: "snapshot" });
+  assert.equal(reply.ok, true);
+  assert.equal(reply.result.title, "fresh");
+});
+
+test("only a closed browser is reported as a closed window", async (t) => {
+  const send = await fakeDriver(t);
+  const during = await send(go("close-all"));
+  assert.equal(during.ok, false);
+  assert.equal(during.windowClosed, false);
+  const after = await send({ action: "snapshot" });
+  assert.equal(after.ok, false);
+  assert.equal(after.windowClosed, true);
+});
+
+test("releasing a turn is answered without touching the page", async (t) => {
+  const send = await fakeDriver(t);
+  const reply = await send({ action: "release" });
+  assert.deepEqual(reply, { ok: true, result: { released: true } });
 });

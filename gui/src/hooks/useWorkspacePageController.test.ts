@@ -476,21 +476,20 @@ it("serializes model selection and the current draft through the same revision l
   unmount();
 });
 
-it("does not dispatch when the selection save barrier failed and restores the draft", async () => {
+it("does not dispatch a send waiting on a selection save that fails, and restores the draft", async () => {
   const { result, unmount } = await draftFixture();
   mocks.sendTurn.mockReset();
-  mocks.updateSession.mockRejectedValueOnce(
-    new Error("selection revision conflict"),
-  );
-  act(() => result.current.persistence.saveSelection("chosen-model", "high"));
-  await waitFor(() =>
-    expect(result.current.feedback.error).toContain(
-      "Model selection could not be saved",
-    ),
+  let fail!: (cause: unknown) => void;
+  mocks.updateSession.mockImplementationOnce(
+    () => new Promise((_resolve, reject) => (fail = reject)),
   );
   act(() => result.current.persistence.editDraft("keep this unsent question"));
+  act(() => result.current.persistence.saveSelection("chosen-model", "high"));
+  await waitFor(() => expect(fail).toBeDefined());
   await act(async () => {
-    await result.current.conversation.send();
+    const sending = result.current.conversation.send();
+    fail(new Error("selection revision conflict"));
+    await sending;
   });
   expect(mocks.sendTurn).not.toHaveBeenCalled();
   expect(result.current.persistence.draft).toBe("keep this unsent question");

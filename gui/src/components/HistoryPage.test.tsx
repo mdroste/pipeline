@@ -8,6 +8,11 @@ const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 const listen = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/event", () => ({ listen }));
+const confirmDialog = vi.hoisted(() => vi.fn());
+vi.mock("./DialogService", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./DialogService")>()),
+  confirmDialog,
+}));
 
 function run(overrides: Partial<RunSummary>): RunSummary {
   return {
@@ -216,6 +221,44 @@ describe("HistoryPage", () => {
         ["get_run_report", { runId: "newer" }],
       ]);
     });
+  });
+
+  it("drops a report moved to Trash from the comparison", async () => {
+    confirmDialog.mockResolvedValue(true);
+    let listed = [
+      run({ run_id: "kept", title: "Kept run" }),
+      run({ run_id: "gone", title: "Gone run" }),
+    ];
+    invoke.mockImplementation((command: string, args: { runId?: string }) => {
+      if (command === "list_runs") return Promise.resolve(listed);
+      if (command === "runs_disk_usage")
+        return Promise.resolve({ count: 2, bytes: 1024 });
+      if (command === "delete_run") {
+        listed = listed.filter((entry) => entry.run_id !== args.runId);
+        return Promise.resolve(null);
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const user = userEvent.setup();
+    render(<HistoryPage onClose={vi.fn()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Compare" }));
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select Kept run for comparison" }),
+    );
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select Gone run for comparison" }),
+    );
+    expect(screen.getByText("2 of 2 selected")).toBeVisible();
+
+    await user.click(
+      screen.getAllByRole("button", { name: "Move to Trash" })[1],
+    );
+
+    expect(await screen.findByText("1 of 2 selected")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Compare selected" }),
+    ).toBeDisabled();
   });
 
   it("ignores an older refresh that resolves after a newer one", async () => {

@@ -24,12 +24,18 @@ const PARTIAL_PAGE_MIN_COVERAGE_PERCENT: usize = 80;
 /// recognition that looks made up out of its block's text and into this key of
 /// the block's raw record.
 const UNVERIFIED_IMAGE_TEXT_KEY: &str = "unverified_image_text";
+const BLANK_PAGES_NOTE: &str = "Blank pages with nothing to read: ";
 const WITHHELD_IMAGE_TEXT_NOTE: &str = "Image text withheld as unverified";
 
 /// Withheld image text leaves a figure as complete as any `chart` region, which
 /// is never recognized, so this note is reported without degrading the run.
-pub(crate) fn is_withheld_image_text_note(note: &str) -> bool {
+fn is_withheld_image_text_note(note: &str) -> bool {
     note.starts_with(WITHHELD_IMAGE_TEXT_NOTE)
+}
+
+/// A blank page has nothing to lose, so its note limits no coverage.
+pub(crate) fn is_informational_extraction_note(note: &str) -> bool {
+    is_withheld_image_text_note(note) || note.starts_with(BLANK_PAGES_NOTE)
 }
 
 fn withheld_image_text_note(structure: &PaddleStructure) -> Option<String> {
@@ -234,6 +240,7 @@ pub(in crate::pipeline::extract) fn full_parser_extraction_from_structure(
         }
     }
     let mut restructured_empty_pages = Vec::new();
+    let mut blank_pages = Vec::new();
     let mut coverage_notes = Vec::new();
     for (index, page) in structure.pages.iter().enumerate() {
         let expected = index as u32 + 1;
@@ -243,13 +250,16 @@ pub(in crate::pipeline::extract) fn full_parser_extraction_from_structure(
                 page.number
             ));
         }
-        if !paddle_full_page_has_content(page) && page.source_text_chars.unwrap_or(0) == 0 {
-            return Err(format!(
-                "PaddleOCR-VL full parser returned no content for page {expected}"
-            ));
-        }
         if !paddle_full_page_has_content(page) {
-            restructured_empty_pages.push(expected);
+            if page.source_text_chars.unwrap_or(0) > 0 {
+                restructured_empty_pages.push(expected);
+            } else if page.blank_page {
+                blank_pages.push(expected);
+            } else {
+                return Err(format!(
+                    "PaddleOCR-VL full parser returned no content for page {expected}"
+                ));
+            }
         }
         let rendered = render_paddle_full_page(page);
         let recognized_chars = page
@@ -311,6 +321,16 @@ pub(in crate::pipeline::extract) fn full_parser_extraction_from_structure(
         quality_notes.push(format!(
             "PaddleOCR cross-page restructuring moved all recognized content from page(s) {} into adjacent structured blocks.",
             restructured_empty_pages
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if !blank_pages.is_empty() {
+        quality_notes.push(format!(
+            "{BLANK_PAGES_NOTE}{}.",
+            blank_pages
                 .iter()
                 .map(u32::to_string)
                 .collect::<Vec<_>>()

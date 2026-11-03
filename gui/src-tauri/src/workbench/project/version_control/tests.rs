@@ -37,15 +37,15 @@ pub(super) fn identity(dir: &Path) {
     sh(dir, &["config", "commit.gpgsign", "false"]);
 }
 
-struct Clones {
-    _temp: TempDir,
-    mine: PathBuf,
-    theirs: PathBuf,
+pub(super) struct Clones {
+    pub(super) _temp: TempDir,
+    pub(super) mine: PathBuf,
+    pub(super) theirs: PathBuf,
 }
 
 /// A bare remote with one commit, cloned twice. Local-path remotes bypass the
 /// address check, which applies only to addresses the page enters.
-fn clones() -> Clones {
+pub(super) fn clones() -> Clones {
     let temp = tempfile::tempdir().unwrap();
     let remote = temp.path().join("remote.git");
     fs::create_dir(&remote).unwrap();
@@ -72,7 +72,7 @@ fn clones() -> Clones {
     }
 }
 
-fn act(root: &Path, action: Action) -> WorkbenchResult<actions_outcome::Seen> {
+pub(super) fn act(root: &Path, action: Action) -> WorkbenchResult<actions_outcome::Seen> {
     actions_outcome::run_action(root, action, &|path| {
         fs::remove_file(path)
             .or_else(|_| fs::remove_dir_all(path))
@@ -80,13 +80,13 @@ fn act(root: &Path, action: Action) -> WorkbenchResult<actions_outcome::Seen> {
     })
 }
 
-mod actions_outcome {
+pub(super) mod actions_outcome {
     use super::*;
     /// What an action left behind, read fresh from the repository.
-    pub(super) struct Seen {
-        pub(super) notice: Option<String>,
+    pub(in super::super) struct Seen {
+        pub(in super::super) notice: Option<String>,
     }
-    pub(super) fn run_action(
+    pub(in super::super) fn run_action(
         root: &Path,
         action: Action,
         trash: &dyn Fn(&Path) -> WorkbenchResult<()>,
@@ -99,14 +99,14 @@ mod actions_outcome {
     }
 }
 
-fn ready(root: &Path) -> RepositoryView {
+pub(super) fn ready(root: &Path) -> RepositoryView {
     match state(Some(root)).unwrap() {
         VersionControl::Ready(view) => *view,
         other => panic!("not ready: {other:?}"),
     }
 }
 
-fn commit_paths(paths: &[&str], summary: &str) -> Action {
+pub(super) fn commit_paths(paths: &[&str], summary: &str) -> Action {
     Action::Commit {
         paths: paths.iter().map(|p| p.to_string()).collect(),
         summary: summary.to_string(),
@@ -114,7 +114,7 @@ fn commit_paths(paths: &[&str], summary: &str) -> Action {
     }
 }
 
-fn file_paths(view: &RepositoryView) -> Vec<&str> {
+pub(super) fn file_paths(view: &RepositoryView) -> Vec<&str> {
     view.files.iter().map(|file| file.path.as_str()).collect()
 }
 
@@ -393,6 +393,46 @@ fn push_publishes_a_branch_and_pull_brings_commits_back() {
         fs::read_to_string(c.mine.join("reply.md")).unwrap(),
         "Dear editor, thanks\n"
     );
+}
+
+#[test]
+fn a_branch_whose_remote_branch_is_gone_can_be_published_again() {
+    let c = clones();
+    sh(&c.mine, &["switch", "-c", "feature"]);
+    sh(&c.mine, &["push", "-u", "origin", "feature"]);
+    // A coauthor merges and deletes the remote branch, and Check for updates prunes it.
+    sh(&c.theirs, &["push", "origin", "--delete", "feature"]);
+    act(&c.mine, Action::Fetch).unwrap();
+    fs::write(c.mine.join("reply.md"), "Dear editor\n").unwrap();
+    act(&c.mine, commit_paths(&["reply.md"], "Reply")).unwrap();
+
+    let status = ready(&c.mine).status;
+    assert_eq!(status.upstream, None);
+    assert_eq!(status.missing_upstream.as_deref(), Some("origin/feature"));
+    assert_eq!(status.remote.as_ref().unwrap().name, "origin");
+
+    act(&c.mine, Action::Push).unwrap();
+    let status = ready(&c.mine).status;
+    assert_eq!(status.upstream.as_deref(), Some("origin/feature"));
+    assert_eq!(status.missing_upstream, None);
+    assert_eq!((status.ahead, status.behind), (0, 0));
+}
+
+#[test]
+fn a_clone_of_an_empty_repository_can_publish_its_first_commit() {
+    let temp = tempfile::tempdir().unwrap();
+    let remote = temp.path().join("remote.git");
+    fs::create_dir(&remote).unwrap();
+    sh(&remote, &["init", "--bare", "--initial-branch=main"]);
+    sh(temp.path(), &["clone", remote.to_str().unwrap(), "mine"]);
+    let mine = temp.path().join("mine");
+    identity(&mine);
+    fs::write(mine.join("paper.tex"), "line one\n").unwrap();
+    act(&mine, commit_paths(&["paper.tex"], "First draft")).unwrap();
+    assert_eq!(ready(&mine).status.upstream, None);
+
+    act(&mine, Action::Push).unwrap();
+    assert_eq!(ready(&mine).status.upstream.as_deref(), Some("origin/main"));
 }
 
 #[test]

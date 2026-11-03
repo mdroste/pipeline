@@ -6,6 +6,8 @@ use super::*;
 use std::sync::{atomic::AtomicBool, Mutex};
 use tokio::sync::Notify;
 
+mod recovery;
+
 fn fixture() -> (tempfile::TempDir, Store, Mission) {
     let temp = tempfile::tempdir().unwrap();
     let store = Store::open(&temp.path().join("tasks")).unwrap();
@@ -136,6 +138,7 @@ fn coordinator(store: Store) -> Coordinator {
         active: Mutex::new(std::collections::HashMap::new()),
         stopping: AtomicBool::new(false),
         background: AtomicBool::new(false),
+        listening: AtomicBool::new(true),
         _owner: owner,
         app: None,
     }

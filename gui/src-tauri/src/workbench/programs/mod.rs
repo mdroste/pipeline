@@ -35,7 +35,10 @@ fn load<T: for<'de> Deserialize<'de>>(
     if record.kind != kind {
         return Err(WorkbenchError::invalid(format!("Select a {kind} record")));
     }
-    let body = serde_json::from_value(record.body.clone()).map_err(err)?;
+    // Stored text that doesn't decode won't on a later try either, so this reads
+    // as an unusable record rather than a storage failure.
+    let body = serde_json::from_value(record.body.clone())
+        .map_err(|e| WorkbenchError::invalid(format!("This saved {kind} can't be read: {e}")))?;
     Ok((record, body))
 }
 fn exact(store: &Store, ws: &str, object: &ResearchObjectRef) -> WorkbenchResult<()> {
@@ -88,11 +91,7 @@ fn blob(store: &Store, ws: &str, bytes: &[u8], extension: &str) -> WorkbenchResu
             ));
         }
     } else {
-        use std::io::Write;
-        let mut tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap()).map_err(err)?;
-        tmp.write_all(bytes).map_err(err)?;
-        tmp.as_file().sync_all().map_err(err)?;
-        tmp.persist_noclobber(&path).map_err(|e| err(e.error))?;
+        desk::write_blob_atomic(&path, bytes, &hash).map_err(err)?;
     }
     store.connection()?.execute("INSERT OR IGNORE INTO artifacts(id,workspace_id,content_hash,media_kind,size_bytes,origin,storage_reference,created_at) VALUES(?1,?2,?3,?4,?5,'research_program',?6,?7)",params![id,ws,hash,extension,bytes.len() as i64,path.to_string_lossy(),desk::now()]).map_err(err)?;
     let id: String = store

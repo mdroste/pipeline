@@ -162,6 +162,26 @@ it("does not persist an empty retention field and only commits valid input", asy
   const card = input.closest(".settings-card") as HTMLElement;
   await waitFor(() => expect(within(card).getByText("Saved")).toBeVisible());
 });
+it("shows why a connection check failed without an error prefix", async () => {
+  const user = userEvent.setup();
+  mocks.invoke.mockResolvedValue({
+    readiness: {
+      deps: [
+        { name: "Claude CLI", found: false, hint: "Install Claude Code." },
+      ],
+    },
+  });
+  render(
+    <ConnectionStatus
+      provider="claude"
+      settings={makeSettings()}
+      onCheck={vi.fn()}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Check connection" }));
+  expect(await screen.findByText(/Install Claude Code\./)).toBeVisible();
+  expect(screen.queryByText(/Error:/)).not.toBeInTheDocument();
+});
 it("discards an old sign-in check when the connection changes", async () => {
   const user = userEvent.setup();
   let finish!: (value: unknown) => void;

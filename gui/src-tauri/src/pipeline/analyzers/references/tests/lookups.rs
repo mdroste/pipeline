@@ -109,6 +109,103 @@ async fn a_confirmed_match_reports_its_retraction() {
     assert_eq!(output["references"][0]["notices"][0]["type"], "retraction");
 }
 
+fn update_of(doi: &str, kind: &str) -> Value {
+    json!({"message": {"items": [{
+        "DOI": "10.1/notice",
+        "update-to": [{"DOI": doi, "type": kind, "source": "publisher"}]
+    }]}})
+}
+
+#[tokio::test]
+async fn a_confirmed_match_reports_a_partial_retraction_however_crossref_names_it() {
+    for kind in [
+        "partial_retraction",
+        "partial-retraction",
+        "Partial Retraction",
+    ] {
+        let api = fake_crossref(move |target| {
+            if target.contains("filter=updates") {
+                (200, update_of("10.1/real", kind))
+            } else {
+                (
+                    200,
+                    json!({"message": {"items": [record("10.1/real", TITLE, "Rivera", 2013, "journal-article")]}}),
+                )
+            }
+        });
+        let output = report(
+            vec![listed(CITED, None)],
+            LocalChecks::default(),
+            &options(10),
+            &api,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            output["references"][0]["status"], "partially_retracted",
+            "{kind}"
+        );
+        let finding = finding_with_id(&output, "reference-1-partially_retracted");
+        assert_eq!(finding["severity"], "medium");
+        assert!(finding["problem"]
+            .as_str()
+            .unwrap()
+            .contains("has been partly retracted"));
+    }
+}
+
+#[test]
+fn any_notice_worded_as_a_retraction_is_flagged() {
+    let notice = |kind: &str| crossref::Notice {
+        kind: kind.into(),
+        notice_doi: "10.1/notice".into(),
+        source: String::new(),
+    };
+    for (kinds, expected) in [
+        (vec!["retraction"], Some("retracted")),
+        (vec!["retraction_notice"], Some("retracted")),
+        (vec!["partial_retraction", "retraction"], Some("retracted")),
+        (vec!["retraction_partial"], Some("partially_retracted")),
+        (vec!["partial_withdrawal"], Some("partially_retracted")),
+        (
+            vec!["correction", "partial_retraction"],
+            Some("partially_retracted"),
+        ),
+        (vec!["correction"], Some("corrected")),
+        (vec!["new_version"], None),
+    ] {
+        let notices: Vec<_> = kinds.iter().map(|kind| notice(kind)).collect();
+        assert_eq!(notice_flag(&notices), expected, "{kinds:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_serial_item_doi_is_looked_up_whole() {
+    const DOI: &str = "10.1002/(sici)1099-1255(199601)11:1<1::aid-jae372>3.0.co;2-d";
+    let api = fake_crossref(|target| {
+        if target.contains("filter=updates") {
+            (200, json!({"message": {"items": []}}))
+        } else if target.contains("3.0.co;2-d") {
+            (
+                200,
+                json!({"message": record(DOI, TITLE, "Rivera", 2013, "journal-article")}),
+            )
+        } else {
+            (404, json!({}))
+        }
+    });
+    let text = format!("{CITED} doi:10.1002/(SICI)1099-1255(199601)11:1<1::AID-JAE372>3.0.CO;2-D");
+    let output = report(
+        vec![listed(&text, bibliography::doi(&text).as_deref())],
+        LocalChecks::default(),
+        &options(10),
+        &api,
+    )
+    .await
+    .unwrap();
+    assert_eq!(output["references"][0]["status"], "matched");
+}
+
 #[tokio::test]
 async fn a_retraction_on_a_different_authors_record_never_reaches_the_citation() {
     let api = fake_crossref(|target| {
@@ -496,7 +593,9 @@ async fn a_failed_retraction_lookup_is_reported() {
 #[tokio::test]
 async fn offline_runs_report_malformed_dois_in_a_document_bibliography() {
     let text = "Intro.\n\nReferences\n[1] Card, D. 1994. Minimum wages. AER. doi:10.1257.\n[2] Neumark, D. 2000. A comment on wages. AER. https://doi.org/not-a-doi\n[3] Autor, D. 2013. The China syndrome. AER. doi:10.1257/aer.103.6.2121";
-    let output = run(None, text, "", &json!({})).await.unwrap();
+    let output = run(None, text, "", &json!({}), crossref::API)
+        .await
+        .unwrap();
     assert_eq!(output["local_checks"]["malformed_dois"], json!([1, 2]));
     let finding = output["findings"]
         .as_array()
@@ -524,6 +623,7 @@ async fn offline_runs_report_malformed_dois_in_a_bib_file() {
         r"\cite{a} \bibliography{refs}",
         tex.to_str().unwrap(),
         &json!({}),
+        crossref::API,
     )
     .await
     .unwrap();

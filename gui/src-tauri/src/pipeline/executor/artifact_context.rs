@@ -3,6 +3,7 @@ use super::paths::step_slug;
 use super::schedule::base_id;
 use crate::models::StepOutput;
 use crate::pipeline::claude::normalize_cli_root;
+use crate::pipeline::unit_files;
 use crate::pipeline_config::{
     ArtifactSelector, NamedInputArtifactPart, Phase, PrimaryArtifactPart, StepArtifactPart,
     StepConfig,
@@ -366,8 +367,8 @@ pub(super) fn resolve_artifact_context(
                 .flatten()
                 .filter_map(|instance| {
                     let files = instance.path().join("files");
-                    files
-                        .is_dir()
+                    // A unit without an accepted response passes nothing on.
+                    (files.is_dir() && !unit_files::call_is_open(&instance.path()))
                         .then(|| (instance.file_name().to_string_lossy().into_owned(), files))
                 })
                 .collect();

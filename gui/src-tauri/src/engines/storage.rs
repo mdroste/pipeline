@@ -1,5 +1,8 @@
 use super::*;
 
+/// Parser output in progress, inside a paper's folder in the parser cache.
+pub(crate) const PADDLE_FULL_STAGING_PREFIX: &str = ".full-parser-staging-";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct EngineInstallProgress {
     pub engine_id: String,
@@ -214,8 +217,11 @@ pub(super) fn cleanup_managed_engine_storage_at(
             }
         }
     }
+    let now = std::time::SystemTime::now();
     match remove_children_matching(native_root, |name| {
-        name.starts_with(".paddleocr-vl-staging-") || name.starts_with(GPU_STAGING_PREFIX)
+        name.starts_with(".paddleocr-vl-staging-")
+            || (name.starts_with(GPU_STAGING_PREFIX)
+                && !gpu_stage_worth_keeping(&native_root.join(name), now))
     }) {
         Ok(count) => removed += count,
         Err(error) => errors.push(error),
@@ -317,7 +323,46 @@ pub(super) fn cleanup_managed_engine_storage_locked() -> Result<usize, String> {
 /// safely deferred to the next startup or install attempt.
 pub fn cleanup_stale_managed_engine_storage() -> Result<usize, String> {
     let _guard = acquire_engine_guard(false)?;
-    cleanup_managed_engine_storage_locked()
+    let parser_cache = pipeline_home()?.join("cache").join("paddleocr-vl-full");
+    let staging = cleanup_parser_staging_at(&parser_cache);
+    let managed = cleanup_managed_engine_storage_locked();
+    Ok(managed? + staging?)
+}
+
+/// Remove parser output staged by an extraction that never finished, such as
+/// one stopped by quitting. Caller must hold the engine guard: every live
+/// extraction holds it from before its staging folder exists until after the
+/// folder is gone, so a folder found here belongs to nobody.
+pub(super) fn cleanup_parser_staging_at(cache_root: &Path) -> Result<usize, String> {
+    let entries = match std::fs::read_dir(cache_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => {
+            return Err(format!(
+                "Failed to inspect the parser cache {}: {error}",
+                cache_root.display()
+            ));
+        }
+    };
+    let mut removed = 0;
+    let mut errors = Vec::new();
+    for entry in entries.flatten() {
+        // Paper folders are real directories; never follow a link out.
+        if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        match remove_children_matching(&entry.path(), |name| {
+            name.starts_with(PADDLE_FULL_STAGING_PREFIX)
+        }) {
+            Ok(count) => removed += count,
+            Err(error) => errors.push(error),
+        }
+    }
+    if errors.is_empty() {
+        Ok(removed)
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 /// Start best-effort maintenance without extending the application's startup

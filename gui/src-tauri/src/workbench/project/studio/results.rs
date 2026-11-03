@@ -108,7 +108,7 @@ pub(super) fn result(
         .ok_or_else(|| WorkbenchError::invalid("Structured result is unavailable"))?;
     serde_json::from_str(&encoded).map_err(err)
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImpulseResponse {
     pub result_id: String,
@@ -352,7 +352,7 @@ pub fn compare_experiment(store: &Store, r: CompareExperimentRequest) -> Workben
         blockers.push("nonfinite change");
     }
     let comparable = blockers.is_empty();
-    let metadata = records(store, &r.workspace_id, "specification")?;
+    let metadata = records_up_to(store, &r.workspace_id, "specification", RECORD_READ_LIMIT)?;
     let metadata_for = |v: &research::ResearchResultV1| {
         metadata.iter().find(|s| {
             s.body["specificationId"] == v.specification_id && s.body["sampleId"] == v.sample_id
@@ -426,6 +426,12 @@ pub struct NumericBinding {
     pub reported_units: String,
     pub origin: String,
     pub confirmed: bool,
+    /// Host-owned: the package this link came from, until it is confirmed here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_from: Option<String>,
+    /// Host-owned: the status its sender gave it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_status: Option<String>,
 }
 fn component(r: &research::ResearchResultV1, key: &str) -> WorkbenchResult<Option<f64>> {
     match key {
@@ -443,8 +449,15 @@ pub(super) fn bind_number(
     ws: &str,
     object_id: Option<&str>,
     expected: i64,
-    b: NumericBinding,
+    mut b: NumericBinding,
 ) -> WorkbenchResult<ProjectRecord> {
+    // Only confirming a link here clears where it came from.
+    let stored = object_id
+        .filter(|_| !b.confirmed)
+        .and_then(|id| record(store, ws, id, "binding").ok())
+        .and_then(|old| decode::<NumericBinding>(&old).ok());
+    b.imported_from = stored.as_ref().and_then(|old| old.imported_from.clone());
+    b.imported_status = stored.and_then(|old| old.imported_status);
     let r = result(store, ws, &b.result)?;
     component(&r, &b.component)?;
     let a: Annotation = decode(&record(store, ws, &b.anchor_id, "anchor")?)?;
@@ -523,22 +536,37 @@ pub fn binding_coverage(store: &Store, ws: &str) -> WorkbenchResult<Vec<Value>> 
     let current = selected_manuscript(store, ws)?;
     let mut output = Vec::new();
     let mut cache: BTreeMap<String, Value> = BTreeMap::new();
-    for entry in records(store, ws, "binding")? {
+    for entry in records_up_to(store, ws, "binding", RECORD_READ_LIMIT)? {
         let b: NumericBinding = decode(&entry)?;
         let r = result(store, ws, &b.result);
-        let a: Annotation = decode(&record(store, ws, &b.anchor_id, "anchor")?)?;
+        // One lost passage leaves its own row unavailable, not the whole list.
+        let a = match record(store, ws, &b.anchor_id, "anchor") {
+            Ok(anchor) => Some(decode::<Annotation>(&anchor)?),
+            Err(error) if error.code == "invalid_input" => None,
+            Err(error) => return Err(error),
+        };
         let mut reasons: Vec<String> = Vec::new();
         let mut state = "current";
         if !b.confirmed {
             state = "unknown";
-            reasons.push("Proposed link requires explicit confirmation".into());
+            reasons.push(if b.imported_status.is_some() {
+                "Imported link: its sender confirmed it, which isn't your confirmation. Confirm it here to rely on it.".into()
+            } else {
+                "Proposed link requires explicit confirmation".into()
+            });
         }
-        if current
-            .as_ref()
-            .is_some_and(|id| id != &a.selection.revision_id)
-        {
-            state = "stale";
-            reasons.push("The accepted manuscript revision differs from this exact passage".into());
+        if let Some(a) = &a {
+            if current
+                .as_ref()
+                .is_some_and(|id| id != &a.selection.revision_id)
+            {
+                state = "stale";
+                reasons.push(
+                    "The accepted manuscript revision differs from this exact passage".into(),
+                );
+            }
+        } else {
+            reasons.push("The linked passage is no longer in this project".into());
         }
         let dependency = if let Some(v) = cache.get(&b.result.execution_id) {
             v.clone()
@@ -589,6 +617,9 @@ pub fn binding_coverage(store: &Store, ws: &str) -> WorkbenchResult<Vec<Value>> 
         if numeric_passed.is_none() && state == "current" {
             state = "unknown";
         }
+        if a.is_none() {
+            state = "unavailable";
+        }
         output.push(json!({"record":entry,"state":state,"reasons":reasons,"numericPassed":numeric_passed,"expected":expected,"dependency":dependency,"result":r.ok(),"anchor":a}));
     }
     Ok(output)
@@ -612,9 +643,12 @@ pub(super) fn generate_values(
             "Choose a TeX value macro file with 1–100 quantities",
         ));
     }
-    let mut content = String::from(
-        "% Generated from immutable Pipeline results. Review this change before acceptance.\n",
-    );
+    let safe = files::SafeRoot::open(&session_task_root(store, ws, cp)?)?;
+    let existing = safe.optional_read(path)?;
+    let mut blocks = match &existing {
+        Some(bytes) => generated_macros(path, bytes)?,
+        None => Vec::new(),
+    };
     let mut names = BTreeSet::new();
     for v in values {
         if v.name.is_empty()
@@ -628,7 +662,7 @@ pub(super) fn generate_values(
             ));
         }
         let r = result(store, ws, &v.result)?;
-        content.push_str(&format!(
+        let block = format!(
             "% {} / {} [{}]\n\\newcommand{{\\{}}}{{{:.*}}}\n",
             r.source_execution_id,
             r.result_id,
@@ -636,10 +670,49 @@ pub(super) fn generate_values(
             v.name,
             v.precision as usize,
             r.estimate
-        ));
+        );
+        match blocks.iter_mut().find(|(name, _)| *name == v.name) {
+            Some((_, current)) => *current = block,
+            None => blocks.push((v.name, block)),
+        }
     }
-    let safe = files::SafeRoot::open(&session_task_root(store, ws, cp)?)?;
-    let old = safe.optional_read(path)?.map(|b| hash(&b));
+    let mut content = format!("{GENERATED_VALUES}\n");
+    blocks.iter().for_each(|(_, block)| content.push_str(block));
+    let old = existing.as_deref().map(hash);
     stage_text(store, ws, cp, path, old.as_deref(), &content)?;
     Ok(json!(tasks::capture_changes(store, ws, cp)?))
+}
+const GENERATED_VALUES: &str =
+    "% Generated from immutable Pipeline results. Review this change before acceptance.";
+/// The macros of a file this function wrote, in file order, as (name, block). An
+/// empty file holds none. Anything else belongs to the researcher, so it stops here
+/// rather than being replaced.
+fn generated_macros(path: &str, bytes: &[u8]) -> WorkbenchResult<Vec<(String, String)>> {
+    let refused = || {
+        WorkbenchError::invalid(format!(
+            "{path} holds text Pipeline did not generate, and staging a value would replace it. Choose a new file for generated values, then add \\input for it to your manuscript."
+        ))
+    };
+    let text = std::str::from_utf8(bytes).map_err(|_| refused())?;
+    if text.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let definition = regex::Regex::new(r"^\\newcommand\{\\([A-Za-z]+)\}\{-?[0-9]+(?:\.[0-9]+)?\}$")
+        .expect("macro definition");
+    let mut lines = text.lines().filter(|line| !line.trim().is_empty());
+    if lines.next() != Some(GENERATED_VALUES) {
+        return Err(refused());
+    }
+    let mut blocks: Vec<(String, String)> = Vec::new();
+    while let Some(provenance) = lines.next() {
+        let line = lines.next().ok_or_else(refused)?;
+        let name = definition
+            .captures(line)
+            .filter(|_| provenance.starts_with("% "))
+            .map(|c| c[1].to_string())
+            .filter(|name| !blocks.iter().any(|(known, _)| known == name))
+            .ok_or_else(refused)?;
+        blocks.push((name, format!("{provenance}\n{line}\n")));
+    }
+    Ok(blocks)
 }

@@ -151,11 +151,11 @@ pub(super) fn read_at_most(path: &Path, limit: usize) -> Result<(Vec<u8>, bool),
 /// loss in the writeback window cannot lose both copies of the step outputs.
 pub(crate) fn sync_run_file(path: &Path) -> Result<(), String> {
     fs::File::open(path)
-        .and_then(|file| file.sync_all())
+        .and_then(|file| crate::safety::sync_file(&file))
         .map_err(|e| format!("Failed to sync {}: {e}", path.display()))?;
     #[cfg(unix)]
-    if let Some(parent) = path.parent() {
-        let _ = fs::File::open(parent).and_then(|directory| directory.sync_all());
+    if let Some(Ok(parent)) = path.parent().map(fs::File::open) {
+        crate::safety::sync_landed(&parent);
     }
     Ok(())
 }

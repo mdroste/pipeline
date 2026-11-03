@@ -8,6 +8,13 @@ use std::sync::LazyLock;
 use std::time::Duration;
 
 pub(crate) const MAX_BODY: usize = 8 * 1024 * 1024;
+/// The most one tool may add to a request, as encoded for the turn loop.
+pub(crate) const MAX_TOOL_RESULT: usize = MAX_BODY / 2;
+/// Tool images one request carries. Anthropic tightens its size limit on every
+/// image of a request holding more than 20, and a rendered page can exceed it.
+const MAX_REQUEST_IMAGES: usize = 20;
+/// What the model reads in place of an image a later request left out.
+const IMAGE_LEFT_OUT: &str = "An image from this result was left out to keep the request within its size limit. The result's text still identifies it. Request it again if you need to see it.";
 /// Reply ceilings for the providers that take one, highest first. These follow
 /// the Review default and its fallback; the last is accepted by every model a
 /// conversation could already use. OpenAI and local servers send no ceiling, so
@@ -106,6 +113,104 @@ pub(crate) fn body(
         };
     }
     body
+}
+
+/// Replaces the turn's oldest tool images with a note until the request fits, so
+/// a turn that reads many pages keeps its newest ones and goes on. Only tool
+/// results change: assistant parts and their signatures stay byte-for-byte.
+pub(crate) fn make_room(
+    connection: &Connection,
+    instructions: &str,
+    messages: &mut [Value],
+    specs: &[Value],
+) {
+    let encoded = |value: &Value| value.to_string().len();
+    let fixed = encoded(&body(connection, instructions, &[], specs));
+    // Streaming adds a few fields to the body just before it is sent.
+    let budget = MAX_BODY.saturating_sub(fixed + 128);
+    let provider = connection.provider;
+    let mut size: usize = messages.iter().map(|message| encoded(message) + 1).sum();
+    let mut images: usize = messages.iter().map(|m| tool_images(provider, m)).sum();
+    for message in messages.iter_mut() {
+        while size > budget || images > MAX_REQUEST_IMAGES {
+            let Some(freed) = leave_out_image(provider, message) else {
+                break;
+            };
+            size = size.saturating_sub(freed);
+            images -= 1;
+        }
+    }
+}
+
+fn is_tool_image(provider: Provider, part: &Value) -> bool {
+    match provider {
+        Provider::Anthropic => part["type"] == "image",
+        Provider::Google => part.get("inlineData").is_some(),
+        _ => part["type"] == "image_url",
+    }
+}
+
+/// The content arrays of one message that can hold tool images. An Anthropic
+/// image sits inside its tool result; the others sit in the message.
+fn image_parents(provider: Provider, message: &Value) -> Vec<&Vec<Value>> {
+    match provider {
+        Provider::Anthropic => message["content"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|block| block["content"].as_array())
+            .collect(),
+        Provider::Google => message["parts"].as_array().into_iter().collect(),
+        _ => message["content"].as_array().into_iter().collect(),
+    }
+}
+
+fn tool_images(provider: Provider, message: &Value) -> usize {
+    image_parents(provider, message)
+        .into_iter()
+        .flatten()
+        .filter(|part| is_tool_image(provider, part))
+        .count()
+}
+
+/// Leaves out the message's first tool image and returns the bytes saved.
+fn leave_out_image(provider: Provider, message: &mut Value) -> Option<usize> {
+    let key = if provider == Provider::Google {
+        "parts"
+    } else {
+        "content"
+    };
+    let top = message.get_mut(key)?.as_array_mut()?;
+    let parts: Vec<&mut Vec<Value>> = if provider == Provider::Anthropic {
+        top.iter_mut()
+            .filter_map(|block| block.get_mut("content")?.as_array_mut())
+            .collect()
+    } else {
+        vec![top]
+    };
+    for parts in parts {
+        let Some(index) = parts.iter().position(|p| is_tool_image(provider, p)) else {
+            continue;
+        };
+        let size = parts[index].to_string().len();
+        if provider == Provider::Google {
+            // Beside a function response, Gemini is only known to take media,
+            // so the note goes in the response this image belongs to.
+            parts.remove(index);
+            let owner = parts[..index]
+                .iter_mut()
+                .rev()
+                .find_map(|part| part.get_mut("functionResponse"));
+            if let Some(response) = owner {
+                let content = response["response"]["content"].as_str().unwrap_or_default();
+                response["response"]["content"] = json!(format!("{content}\n{IMAGE_LEFT_OUT}"));
+            }
+        } else {
+            parts[index] = json!({"type":"text","text":IMAGE_LEFT_OUT});
+        }
+        return Some(size.saturating_sub(IMAGE_LEFT_OUT.len()));
+    }
+    None
 }
 
 /// Lowers the reply ceiling of a built request.

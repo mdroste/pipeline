@@ -31,6 +31,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
+pub const CROSSREF_API: &str = crossref::API;
 const MAX_BIB_FILES: usize = 20;
 const MAX_BIB_BYTES: u64 = 4 * 1024 * 1024;
 /// Keeps the step's output bounded when a source cites nothing, so that every
@@ -38,6 +39,8 @@ const MAX_BIB_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_LISTED_REFERENCES: usize = MAX_BIB_FILES * 2_000;
 const MAX_REFERENCE_FINDINGS: usize = 60;
 const MAX_LISTED_MALFORMED: usize = 40;
+const MAX_LISTED_UNDEFINED: usize = 50;
+const MAX_LISTED_DUPLICATES: usize = 10;
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Reference {
@@ -80,7 +83,10 @@ pub struct SkippedBibFile {
 
 #[derive(Debug, Default, Serialize)]
 pub struct LocalChecks {
+    /// The first keys with no entry, for the report to name.
     pub undefined_citations: Vec<String>,
+    /// Every key with no entry, however many are named.
+    pub undefined_citation_count: usize,
     pub uncited_entries: usize,
     pub duplicates: Vec<(usize, usize)>,
     pub malformed_dois: Vec<usize>,
@@ -386,10 +392,11 @@ fn from_bibtex(
     let complete = !compiled.is_empty() || (any_read && checks.skipped_bib_files.is_empty());
     known.extend(compiled);
     if complete {
-        checks.undefined_citations = cited
-            .iter()
-            .filter(|key| !known.contains(*key))
-            .take(50)
+        let undefined: Vec<&String> = cited.iter().filter(|key| !known.contains(*key)).collect();
+        checks.undefined_citation_count = undefined.len();
+        checks.undefined_citations = undefined
+            .into_iter()
+            .take(MAX_LISTED_UNDEFINED)
             .cloned()
             .collect();
     } else if !cited.is_empty() {
@@ -401,8 +408,8 @@ fn from_bibtex(
     references
 }
 
-fn from_document(blocks: &[Block<'_>]) -> Vec<Reference> {
-    bibliography::entries(blocks)
+fn from_entries(entries: Vec<bibliography::RawEntry>) -> Vec<Reference> {
+    entries
         .into_iter()
         .enumerate()
         .map(|(index, entry)| Reference {
@@ -418,6 +425,27 @@ fn from_document(blocks: &[Block<'_>]) -> Vec<Reference> {
             ..Default::default()
         })
         .collect()
+}
+
+/// Plain statements of any part of a document's reference lists left unread.
+fn list_limitations(lists: &bibliography::Lists) -> Vec<String> {
+    let mut limitations = Vec::new();
+    if lists.unread > 0 {
+        limitations.push(format!(
+            "{} earlier {} headed like a reference list could not be read as one, so {} not checked.",
+            lists.unread,
+            if lists.unread == 1 { "section" } else { "sections" },
+            if lists.unread == 1 { "it was" } else { "they were" },
+        ));
+    }
+    if lists.cut_short > 0 {
+        limitations.push(format!(
+            "{} earlier reference {} stopped at text that does not read as a reference. Any entries after that point were not checked.",
+            lists.cut_short,
+            if lists.cut_short == 1 { "list" } else { "lists" },
+        ));
+    }
+    limitations
 }
 
 fn find_duplicates(references: &[Reference]) -> Vec<(usize, usize)> {
@@ -446,9 +474,13 @@ fn find_duplicates(references: &[Reference]) -> Vec<(usize, usize)> {
 /// References under the document's bibliography heading. Only paragraph-level
 /// nodes separate that heading from its entries: other extractors keep a whole
 /// page in one node, so those read the extracted text instead.
-fn document_references(bundle: Option<&DocumentBundle>, text: &str) -> Vec<Reference> {
+fn document_references(
+    bundle: Option<&DocumentBundle>,
+    text: &str,
+    limitations: &mut Vec<String>,
+) -> Vec<Reference> {
     let paragraphs = bundle.filter(|bundle| bundle.nodes.iter().any(|n| n.kind == "text_block"));
-    let mut references = Vec::new();
+    let mut found = bibliography::Lists::default();
     if let Some(bundle) = paragraphs {
         let mut nodes: Vec<_> = bundle.nodes.iter().collect();
         nodes.sort_by_key(|node| node.order);
@@ -459,12 +491,13 @@ fn document_references(bundle: Option<&DocumentBundle>, text: &str) -> Vec<Refer
                 text: node.text.as_str(),
             })
             .collect();
-        references = from_document(&blocks);
+        found = bibliography::lists(&blocks);
     }
-    if references.is_empty() {
-        references = from_document(&bibliography::text_blocks(text));
+    if found.entries.is_empty() {
+        found = bibliography::lists(&bibliography::text_blocks(text));
     }
-    references
+    limitations.extend(list_limitations(&found));
+    from_entries(found.entries)
 }
 
 /// References from `.bib` files for LaTeX inputs, otherwise from the
@@ -497,7 +530,7 @@ pub fn collect(
         references = from_bibtex(sources, latex_text, &cited, &mut checks);
     }
     if references.is_empty() {
-        references = document_references(bundle, text);
+        references = document_references(bundle, text, &mut checks.limitations);
         checks.malformed_dois.extend(
             references
                 .iter()
@@ -672,6 +705,7 @@ fn findings(references: &[Reference], checks: &LocalChecks) -> Vec<Value> {
         .collect();
     let order = [
         ("retracted", "high", "high", "has been retracted or withdrawn", "Remove the citation or explain why the retracted work is cited."),
+        ("partially_retracted", "medium", "high", "has been partly retracted", "Check whether the citation relies on the retracted part."),
         ("expression_of_concern", "medium", "high", "has an expression of concern", "Check the notice and qualify any claim that relies on this work."),
         ("metadata_mismatch", "medium", "medium", "does not match its Crossref record", "Correct the authors, title, or DOI."),
         ("not_found", "medium", "low", "could not be found in Crossref", "Check that the work exists and that its details are correct. Books, reports, and data are often not in Crossref."),
@@ -743,19 +777,26 @@ fn findings(references: &[Reference], checks: &LocalChecks) -> Vec<Value> {
             "references-undefined-citations".into(),
             format!(
                 "{} citation keys have no bibliography entry",
-                checks.undefined_citations.len()
+                checks.undefined_citation_count
             ),
             "medium",
             "high",
             format!(
-                "These keys are cited but missing from the bibliography files: {}.",
-                checks.undefined_citations.join(", ")
+                "These keys are cited but missing from the bibliography files: {}{}.",
+                checks.undefined_citations.join(", "),
+                match checks
+                    .undefined_citation_count
+                    .saturating_sub(checks.undefined_citations.len())
+                {
+                    0 => String::new(),
+                    more => format!(", and {more} more"),
+                }
             ),
             "Add the missing entries or correct the keys.",
             Vec::new(),
         ));
     }
-    for (first, second) in checks.duplicates.iter().take(10) {
+    for (first, second) in checks.duplicates.iter().take(MAX_LISTED_DUPLICATES) {
         items.push(finding(
             format!("references-duplicate-{first}-{second}"),
             format!("References {first} and {second} appear to be the same work"),
@@ -764,6 +805,21 @@ fn findings(references: &[Reference], checks: &LocalChecks) -> Vec<Value> {
             format!("References {first} and {second} share a DOI or identical text."),
             "Merge the duplicate entries.",
             references.get(second - 1).map(evidence).unwrap_or_default(),
+        ));
+    }
+    let unlisted_duplicates = checks
+        .duplicates
+        .len()
+        .saturating_sub(MAX_LISTED_DUPLICATES);
+    if unlisted_duplicates > 0 {
+        items.push(finding(
+            "references-duplicates-more".into(),
+            format!("{unlisted_duplicates} more pairs of references may be duplicates"),
+            "low",
+            "medium",
+            format!("{unlisted_duplicates} further pairs of references share a DOI or identical text; see the reference check output for the full list."),
+            "Review the full list in the check output.",
+            Vec::new(),
         ));
     }
     if !checks.malformed_dois.is_empty() {
@@ -783,10 +839,11 @@ pub async fn run(
     text: &str,
     source_path: &str,
     options: &Value,
+    crossref_api: &str,
 ) -> Result<Value, String> {
     let options = Options::from_value(options);
     let (references, checks) = collect(bundle, text, source_path);
-    report(references, checks, &options, crossref::API).await
+    report(references, checks, &options, crossref_api).await
 }
 
 /// Runs the lookups the options ask for and assembles the step's product.

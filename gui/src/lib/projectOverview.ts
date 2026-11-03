@@ -20,6 +20,7 @@ import type {
 } from "./studioClient";
 import type { ImpactReport } from "./deskClient";
 import type { CampaignStatus, MonitorState } from "./programClient";
+import { listedRunStatus, runFinished } from "./reportPresentation";
 import type { TaskSummary } from "./taskTypes";
 import type { WorkspaceDestination } from "./workspaceNavigation";
 import { remoteLabel, type RepositoryStatus } from "./repositoryClient";
@@ -273,14 +274,14 @@ export function draftBlock(
         text: `Last review: ${last.profile_name}`,
         detail: [
           overviewDay(last.created),
-          last.status,
+          listedRunStatus(last.status),
           last.failed_steps.length
             ? `${plural(last.failed_steps.length, "step")} failed`
             : "",
         ]
           .filter(Boolean)
           .join(" · "),
-        attention: last.status !== "complete",
+        attention: !runFinished(last.status),
         action: { kind: "run", label: "Open report", runId: last.run_id },
       });
   }
@@ -728,14 +729,20 @@ export function sinceBlock(
   }
 
   const reviews = (signals.runs ?? [])
-    .filter((run) => time(run.created) + run.duration_secs * 1000 > since)
+    .filter(
+      (run) =>
+        run.status !== "running" &&
+        time(run.created) + run.duration_secs * 1000 > since,
+    )
     .sort((a, b) => time(b.created) - time(a.created));
   for (const run of reviews.slice(0, 3))
     rows.push({
       id: `review-${run.run_id}`,
       text: `Review finished: ${run.title || run.input_name}`,
-      detail: [run.profile_name, run.status].filter(Boolean).join(" · "),
-      attention: run.status !== "complete",
+      detail: [run.profile_name, listedRunStatus(run.status)]
+        .filter(Boolean)
+        .join(" · "),
+      attention: !runFinished(run.status),
       action: { kind: "run", label: "Open report", runId: run.run_id },
     });
 

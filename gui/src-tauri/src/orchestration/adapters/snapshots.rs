@@ -3,43 +3,83 @@ use crate::orchestration::store::{err, hash, Result, Scope, Store};
 use serde_json::{json, Value};
 use std::{io::Read, path::Path};
 
+/// Why a snapshot failed, for callers that hold a model to what it asked for.
+pub enum SnapshotFailure {
+    /// What was asked for can't be captured: it is missing, unsuitable or too large.
+    Input(String),
+    /// Pipeline could not read or save it.
+    Host(String),
+}
+
+impl From<SnapshotFailure> for String {
+    fn from(failure: SnapshotFailure) -> Self {
+        match failure {
+            SnapshotFailure::Input(error) | SnapshotFailure::Host(error) => error,
+        }
+    }
+}
+
 pub fn snapshot(store: &Store, scope: &Scope, input: Value, filename: &str) -> Result<Value> {
+    capture(store, scope, input, filename).map_err(String::from)
+}
+
+pub fn capture(
+    store: &Store,
+    scope: &Scope,
+    input: Value,
+    filename: &str,
+) -> std::result::Result<Value, SnapshotFailure> {
+    use SnapshotFailure::{Host, Input};
     if filename.is_empty() || filename.contains(['/', '\\']) || filename == "." || filename == ".."
     {
-        return Err("Snapshot requires a plain filename".into());
+        return Err(Input("Snapshot requires a plain filename".into()));
     }
     let bytes = if let Some(path) = input.get("path").and_then(Value::as_str) {
         let root = scope
             .runtime_root
             .as_ref()
-            .ok_or("File snapshots need a bound Workspace folder")?;
-        if scope.root_identity.as_deref()
-            != Some(
-                &crate::workbench::store::root_identity(Path::new(root)).map_err(|e| e.message)?,
-            )
-        {
-            return Err("Task folder identity changed".into());
+            .ok_or_else(|| Host("File snapshots need a bound Workspace folder".into()))?;
+        let identity =
+            crate::workbench::store::root_identity(Path::new(root)).map_err(|e| Host(e.message))?;
+        if scope.root_identity.as_deref() != Some(&identity) {
+            return Err(Host("Task folder identity changed".into()));
         }
         let selected = Path::new(root).join(path);
-        let files = crate::workbench::project::task_capture(Path::new(root), &selected)
-            .map_err(|e| e.message)?;
-        if selected.is_dir() {
-            return snapshot_tree(store, files);
+        if !selected.exists() {
+            return Err(Input(format!("Listed file {path} does not exist")));
         }
-        files.into_iter().next().ok_or("Snapshot is empty")?.1
+        let files = crate::workbench::project::task_capture(Path::new(root), &selected).map_err(
+            |e| match e.code.as_str() {
+                "invalid_input" => Input(e.message),
+                _ => Host(e.message),
+            },
+        )?;
+        if selected.is_dir() {
+            if files.is_empty() {
+                return Err(Input("Snapshot folder is empty".into()));
+            }
+            return snapshot_tree(store, files).map_err(Host);
+        }
+        files
+            .into_iter()
+            .next()
+            .ok_or_else(|| Input("Snapshot is empty".into()))?
+            .1
     } else if let Some(text) = input.as_str() {
         text.as_bytes().to_vec()
     } else {
-        return Err("Snapshot input must be text or a scoped file path".into());
+        return Err(Input(
+            "Snapshot input must be text or a scoped file path".into(),
+        ));
     };
     if bytes.len() > 64 * 1024 * 1024 {
-        return Err("Snapshot exceeds 64 MiB".into());
+        return Err(Input("Snapshot exceeds 64 MiB".into()));
     }
     use sha2::{Digest, Sha256};
     let digest = format!("{:x}", Sha256::digest(&bytes));
     let dir = store.root.join("blobs").join(&digest);
     let path = dir.join(filename);
-    crate::orchestration::durable::publish(&path, &bytes)?;
+    crate::orchestration::durable::publish(&path, &bytes).map_err(Host)?;
     Ok(json!({"kind":"artifact","path":path,"hash":digest,"filename":filename,"bytes":bytes.len()}))
 }
 
@@ -90,9 +130,6 @@ fn tree_manifest(files: &[(String, Vec<u8>)]) -> Value {
 }
 
 fn snapshot_tree(store: &Store, files: Vec<(String, Vec<u8>)>) -> Result<Value> {
-    if files.is_empty() {
-        return Err("Snapshot folder is empty".into());
-    }
     let manifest = tree_manifest(&files);
     let digest = hash(&manifest)?;
     let root = store.root.join("blobs");

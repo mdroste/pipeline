@@ -100,7 +100,8 @@ async fn stopping_a_review_stops_its_parallel_wave_and_keeps_its_usage() {
     );
     assert_eq!(run.scope().usage().provider_attempts, 1);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
-    let (outputs, failures, _) = result.unwrap();
+    let wave = result.unwrap_or_else(|error| panic!("{error}"));
+    let (outputs, failures) = (wave.outputs, wave.failures);
     assert!(outputs.is_empty());
     assert_eq!(failures.len(), 2);
     assert!(failures
@@ -230,7 +231,7 @@ async fn cancelling_one_pass_leaves_the_rest_of_the_wave_running() {
             .await
             .expect("a stopped wave must return");
 
-    let (_, failures, _) = result.unwrap();
+    let failures = result.unwrap_or_else(|error| panic!("{error}")).failures;
     let error = |step: &str| {
         failures
             .iter()

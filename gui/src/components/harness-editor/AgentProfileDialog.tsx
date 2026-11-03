@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import useModalDialog from "../../hooks/useModalDialog";
+import ReportIssueLink from "../ReportIssueLink";
 
 export default function AgentProfileDialog({
   title,
@@ -45,6 +46,7 @@ export default function AgentProfileDialog({
             className="mt-3 text-xs text-red-700 dark:text-red-300"
           >
             {error}
+            <ReportIssueLink />
           </p>
         )}
         <form

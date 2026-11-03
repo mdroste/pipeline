@@ -306,8 +306,10 @@ export default function Assets(props: DeskProps) {
                     spec,
                     pythonProfileId: profile,
                     operationId: operation(),
+                    supersedes,
                   },
                 });
+                setSupersedes(null);
                 setRecipe(r.id);
                 setPreview(
                   await deskClient.planStatus(workspaceId, r.body.planId),

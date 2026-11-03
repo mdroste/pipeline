@@ -149,7 +149,7 @@ fn cancellation_before_launch_retains_an_unstarted_interrupted_receipt() {
     assert_eq!(receipt.outcome, "interrupted");
     assert_eq!(receipt.validation["processStarted"], false);
     assert_eq!(receipt.validation["stataCleanupRequired"], false);
-    assert!(journal(&f.store, &id).is_some());
+    assert_eq!(journal(&f.store, &id), None);
     assert!(crate::workbench::project::execution_lock(&f.store, &f.workspace_id).is_ok());
 }
 
@@ -187,7 +187,7 @@ fn a_linked_output_is_reported_without_following_it_and_keeps_the_run() {
     assert_eq!(receipt.outcome, "completed");
     assert_eq!(receipt.exit_status, Some(0));
     assert_eq!(receipt.stdout.as_deref(), Some("completed output\n"));
-    assert!(journal(&f.store, &id).is_some());
+    assert_eq!(journal(&f.store, &id), None);
     let entry = &receipt.output_manifest["notRetained"][0];
     assert_eq!(entry["path"], "result.txt");
     assert!(entry.get("contentHash").is_none(), "{entry}");
@@ -268,7 +268,7 @@ fn a_failed_command_reports_its_own_outcome_when_its_output_is_oversized() {
     assert_eq!(receipt.exit_status, Some(3));
     assert_eq!(receipt.stdout.as_deref(), Some("partial"));
     assert_eq!(receipt.output_manifest["notRetained"][0]["path"], "big.out");
-    assert!(journal(&f.store, &id).is_some());
+    assert_eq!(journal(&f.store, &id), None);
 }
 
 #[test]
@@ -292,7 +292,7 @@ fn an_adoption_error_still_saves_the_logs_and_the_process_outcome() {
     assert_eq!(receipt.outcome, "completed");
     assert_eq!(receipt.exit_status, Some(0));
     assert_eq!(receipt.stdout.as_deref(), Some("done"));
-    assert!(journal(&f.store, &id).is_some());
+    assert_eq!(journal(&f.store, &id), None);
     let entry = &receipt.output_manifest["notRetained"][0];
     assert_eq!(entry["path"], "result.txt");
     assert!(entry["contentHash"].is_string(), "{entry}");
@@ -405,8 +405,10 @@ fn finalization_journal_replay_is_idempotent_and_identity_bound() {
     assert_eq!(receipt.outcome, "completed");
     let profile = get_execution_profile(&f.store, &profile_id).unwrap();
     assert_eq!(profile.test_status.as_deref(), Some("passed"));
-    let original_journal = journal(&f.store, &id).unwrap();
-    let value: Value = serde_json::from_str(&original_journal).unwrap();
+    // The journal is gone once the receipt holds it, so this one is rebuilt from
+    // the receipt, the way a replay would have read it.
+    assert_eq!(journal(&f.store, &id), None);
+    let value = json!({"outcome":receipt.outcome,"endedAt":receipt.ended_at,"exitStatus":receipt.exit_status,"stdout":receipt.stdout,"stderr":receipt.stderr,"outputs":receipt.output_manifest,"validation":receipt.validation,"testOnly":true,"profileId":profile_id,"profileRevision":profile.revision});
     assert_eq!(artifact_count(&f.store), 1);
     for _ in 0..2 {
         crate::workbench::research::execution_finalization::apply(&f.store, &id, &value).unwrap();
@@ -416,10 +418,7 @@ fn finalization_journal_replay_is_idempotent_and_identity_bound() {
             profile
         );
         assert_eq!(artifact_count(&f.store), 1);
-        assert_eq!(
-            journal(&f.store, &id).as_deref(),
-            Some(original_journal.as_str())
-        );
+        assert_eq!(journal(&f.store, &id), None);
     }
     for field in ["profileId", "planId"] {
         let mut mismatched = value.clone();
@@ -440,6 +439,22 @@ fn finalization_journal_replay_is_idempotent_and_identity_bound() {
             profile
         );
     }
+}
+
+#[test]
+fn an_unknown_outcome_keeps_its_journal_so_it_can_be_reconciled() {
+    let f = fixture();
+    let prepared = prepare(&f, "exit 0", &[]);
+    let id = prepared.execution_id.clone();
+    start_execution(&f.store, &id).unwrap();
+    let mut output = completed_output();
+    output.outcome = "outcome_unknown".into();
+    let receipt = finalize_execution(&f.store, prepared, output).unwrap();
+    assert_eq!(receipt.outcome, "outcome_unknown");
+    let kept: Value = serde_json::from_str(&journal(&f.store, &id).unwrap()).unwrap();
+    assert_eq!(kept["stdout"], "completed output\n");
+    let jobs = crate::workbench::research::jobs::list_jobs(&f.store, &f.workspace_id).unwrap();
+    assert!(jobs[0].can_reconcile);
 }
 
 #[test]

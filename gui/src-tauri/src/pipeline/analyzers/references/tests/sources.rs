@@ -25,6 +25,7 @@ impl Prepared {
             &self.extraction.text,
             &self.source,
             &json!({}),
+            crossref::API,
         )
         .await
         .unwrap()

@@ -125,7 +125,9 @@ pub fn list_workspace_directory(
     })
 }
 /// Stamps for the change checks. Like a listing, this runs off the database
-/// workers on a folder from `search_folder`.
+/// workers on a folder from `search_folder`. A path that can't be reached counts
+/// as gone and doesn't stop the check for the others, as when a folder that's
+/// open in the tree is replaced by a link.
 pub fn stat_workspace_files(
     folder: &Path,
     request: FileStatRequest,
@@ -134,24 +136,24 @@ pub fn stat_workspace_files(
         return Err(WorkbenchError::invalid("Too many paths in one check"));
     }
     let safe = SafeRoot::open(folder)?;
-    request
+    Ok(request
         .paths
         .into_iter()
         .map(|path| {
             let stat = if path.is_empty() {
-                Some(safe.root_stat()?)
+                safe.root_stat().ok()
             } else {
-                safe.stat(&path)?
+                safe.stat(&path).ok().flatten()
             };
-            Ok(FileStamp {
+            FileStamp {
                 kind: stat.as_ref().map(|s| kind_label(s.kind)),
                 stamp: stat.as_ref().map(EntryStat::stamp),
                 size: stat.as_ref().map_or(0, |s| s.size),
                 modified_ms: stat.as_ref().map_or(0, |s| s.modified_ms),
                 path,
-            })
+            }
         })
-        .collect()
+        .collect())
 }
 fn live_target(store: &Store, request: &FileReadRequest) -> WorkbenchResult<(PathBuf, EntryStat)> {
     scope(store, &request.workspace_id)?;
@@ -183,8 +185,13 @@ pub fn external_target(store: &Store, request: &FileReadRequest) -> WorkbenchRes
     if stat.kind != EntryKind::File {
         return Err(WorkbenchError::invalid("Only regular files can be opened"));
     }
-    crate::file_viewer::check_openable(&request.path, stat.executable)
-        .map_err(WorkbenchError::invalid)?;
+    let folder = base(
+        store,
+        &request.workspace_id,
+        request.checkpoint_id.as_deref(),
+    )?;
+    let program = SafeRoot::open(&folder)?.marked_as_program(&request.path)?;
+    crate::file_viewer::check_openable(&request.path, program).map_err(WorkbenchError::invalid)?;
     Ok(crate::file_viewer::system_path(&path))
 }
 
@@ -382,6 +389,55 @@ mod tests {
         assert_eq!(stamps[2].stamp, None);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_path_that_cannot_be_reached_reads_as_gone_without_stopping_the_others() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        fs::create_dir_all(root.join("data")).unwrap();
+        fs::create_dir(root.join("notes")).unwrap();
+        fs::write(root.join("data/panel.csv"), "a").unwrap();
+        fs::write(root.join("notes/one.md"), "b").unwrap();
+        fs::write(root.join("paper.tex"), "c").unwrap();
+        // The data moved to another drive, with a link left behind, and a folder
+        // became a file.
+        fs::rename(root.join("data"), temp.path().join("moved")).unwrap();
+        std::os::unix::fs::symlink(temp.path().join("moved"), root.join("data")).unwrap();
+        fs::remove_dir_all(root.join("notes")).unwrap();
+        fs::write(root.join("notes"), "d").unwrap();
+
+        let stamps = stat_workspace_files(
+            &root,
+            FileStatRequest {
+                workspace_id: "unused".into(),
+                paths: vec![
+                    "data/panel.csv".into(),
+                    "notes/one.md".into(),
+                    ".git/config".into(),
+                    "paper.tex".into(),
+                    "data".into(),
+                ],
+                checkpoint_id: None,
+            },
+        )
+        .unwrap();
+        let seen: Vec<_> = stamps
+            .iter()
+            .map(|stamp| (stamp.path.as_str(), stamp.kind))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("data/panel.csv", None),
+                ("notes/one.md", None),
+                (".git/config", None),
+                ("paper.tex", Some("file")),
+                ("data", Some("link")),
+            ]
+        );
+        assert!(stamps[3].stamp.is_some());
+    }
+
     #[test]
     fn listing_is_metadata_only_folders_first_and_hides_reserved_names() {
         let temp = tempfile::tempdir().unwrap();
@@ -389,6 +445,7 @@ mod tests {
         fs::create_dir_all(root.join("zeta/deep")).unwrap();
         fs::create_dir(root.join(".git")).unwrap();
         fs::create_dir(root.join(".pipeline-tasks")).unwrap();
+        fs::create_dir(root.join(".pipeline-workbench")).unwrap();
         fs::write(root.join("alpha.txt"), "a").unwrap();
         fs::write(root.join("Beta.txt"), "b").unwrap();
         fs::write(root.join("zeta/inner.txt"), "c").unwrap();

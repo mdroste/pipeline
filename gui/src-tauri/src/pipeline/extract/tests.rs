@@ -392,6 +392,7 @@ fn full_parser_structure_drives_compatibility_text_and_page_verification() {
             PaddleStructuredPage {
                 number: 1,
                 markdown: "# Introduction\n\n![Plot](assets/page-0001-plot.png)".to_string(),
+                blank_page: false,
                 source_text_chars: None,
                 width: Some(1200),
                 height: Some(1600),
@@ -400,6 +401,7 @@ fn full_parser_structure_drives_compatibility_text_and_page_verification() {
             PaddleStructuredPage {
                 number: 2,
                 markdown: "## Results\n\nThe estimate is positive.".to_string(),
+                blank_page: false,
                 source_text_chars: None,
                 width: Some(1200),
                 height: Some(1600),
@@ -483,6 +485,7 @@ fn full_parser_uses_prose_baseline_only_for_fragmented_visual_pages() {
         number: 1,
         markdown: "Figure E5: Conditional correlation\n\nThe caption and note were recognized."
             .to_string(),
+        blank_page: false,
         source_text_chars: Some(1_007),
         width: Some(1200),
         height: Some(1600),
@@ -591,6 +594,7 @@ fn full_parser_image_labels_use_captions_and_disambiguate_repeated_numbers() {
     let page = |number: u32, blocks: Vec<PaddleStructuredBlock>| PaddleStructuredPage {
         number,
         markdown: String::new(),
+        blank_page: false,
         source_text_chars: None,
         width: None,
         height: None,
@@ -689,6 +693,7 @@ fn full_parser_uses_richer_blocks_when_page_markdown_is_partial() {
     let page = PaddleStructuredPage {
         number: 1,
         markdown: "References".to_string(),
+        blank_page: false,
         source_text_chars: None,
         width: None,
         height: None,

@@ -182,7 +182,8 @@ pub struct Settings {
     #[serde(default = "default_paddle_use_gpu")]
     pub paddle_use_gpu: bool,
 
-    /// Processor cores for built-in recognition. Paddle uses one unless told.
+    /// Processor cores for layout and built-in recognition. Paddle uses one
+    /// unless told.
     #[serde(default = "default_paddle_cpu_threads")]
     pub paddle_cpu_threads: u32,
 
