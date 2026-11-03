@@ -887,7 +887,9 @@ async fn a_discovery_action_reaches_the_runtime_boundary_of_a_real_submission() 
         Some("Workspace execution requires the desktop runtime")
     );
     // Nothing was sent, so a Retry remains available.
-    tick(&c).await.unwrap();
+    // The receipt can settle before completion finishes updating its parent.
+    // Use the coordinator gate, just as the production scheduler does.
+    c.tick().await.unwrap();
     let p = storage::load(&c.store, &p.run.id).unwrap();
     assert_eq!(p.run.state, "attention");
 }

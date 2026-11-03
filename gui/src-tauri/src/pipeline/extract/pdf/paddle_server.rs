@@ -431,8 +431,19 @@ mod tests {
     #[test]
     fn local_server_requests_bypass_any_proxy() {
         let environment = launched_environment(&server());
-        assert_eq!(environment["NO_PROXY"], "127.0.0.1,localhost");
-        assert_eq!(environment["no_proxy"], "127.0.0.1,localhost");
+        if cfg!(windows) {
+            // Command merges these spellings on Windows, where environment
+            // variable names are case-insensitive.
+            let exclusions: Vec<_> = environment
+                .iter()
+                .filter(|(name, _)| name.eq_ignore_ascii_case("NO_PROXY"))
+                .map(|(_, value)| value.as_str())
+                .collect();
+            assert_eq!(exclusions, ["127.0.0.1,localhost"]);
+        } else {
+            assert_eq!(environment["NO_PROXY"], "127.0.0.1,localhost");
+            assert_eq!(environment["no_proxy"], "127.0.0.1,localhost");
+        }
     }
 
     #[test]
