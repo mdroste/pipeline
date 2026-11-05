@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { taskClient, type SessionChoice } from "../../lib/taskClient";
+import { taskClient } from "../../lib/taskClient";
+import { type SessionChoice } from "../../lib/taskTypes";
 import {
   missionClient,
   newMission,
@@ -10,21 +11,40 @@ import {
   type MissionMethod,
   type MissionMode,
 } from "../../lib/missionClient";
+import ReportIssueLink from "../ReportIssueLink";
 
 const draftKey = "pipeline.researchMission.draft.v1";
-function recover(sessionId?: string | null) {
+interface MissionDraft {
+  definition: MissionDefinition;
+  sessionId: string;
+  operationId: string;
+}
+/** Checks, experiments and methods belong to the conversation's project. */
+function forSession(draft: MissionDraft, sessionId: string): MissionDraft {
+  return {
+    ...draft,
+    sessionId,
+    operationId: crypto.randomUUID(),
+    definition: {
+      ...draft.definition,
+      policy: newMission().policy,
+      methodIds: [],
+    },
+  };
+}
+function recover(sessionId?: string | null): MissionDraft {
   try {
     const saved = JSON.parse(localStorage.getItem(draftKey) ?? "null");
     if (
       saved?.definition?.schemaVersion === 1 &&
       typeof saved.sessionId === "string" &&
       typeof saved.operationId === "string"
-    )
-      return saved as {
-        definition: MissionDefinition;
-        sessionId: string;
-        operationId: string;
-      };
+    ) {
+      // The conversation it was opened from outranks an earlier draft's.
+      return sessionId && sessionId !== saved.sessionId
+        ? forSession(saved, sessionId)
+        : saved;
+    }
   } catch {
     /* An unavailable local draft does not prevent preparation. */
   }
@@ -53,6 +73,7 @@ export default function MissionBuilder({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const choiceVersion = useRef(0);
+  const blockedId = useId();
   useEffect(() => {
     let live = true;
     void Promise.all([
@@ -110,12 +131,28 @@ export default function MissionBuilder({
     patch({ policy: { ...draft.definition.policy, ...update } });
   }
   const d = draft.definition;
+  // Criteria keep their raw lines while typing; blank lines are not criteria.
+  const criteria = d.criteria.map((c) => c.trim()).filter(Boolean);
+  const blocked = !draft.sessionId
+    ? "Choose a project conversation."
+    : !choices
+      ? error
+        ? "The conversation’s project settings could not be loaded."
+        : "Loading the conversation’s project settings…"
+      : !d.name.trim()
+        ? "Name the automation."
+        : !d.objective.trim()
+          ? "Describe the research question and scope."
+          : !criteria.length
+            ? "Add at least one completion criterion."
+            : "";
   async function prepare() {
+    if (blocked) return;
     setBusy(true);
     setError("");
     try {
       const m = await missionClient.prepare(
-        d,
+        { ...d, criteria },
         draft.sessionId,
         draft.operationId,
       );
@@ -158,16 +195,7 @@ export default function MissionBuilder({
             onChange={(e) => {
               const sessionId = e.target.value;
               setError("");
-              setDraft((old) => ({
-                ...old,
-                sessionId,
-                operationId: crypto.randomUUID(),
-                definition: {
-                  ...old.definition,
-                  policy: newMission().policy,
-                  methodIds: [],
-                },
-              }));
+              setDraft((old) => forSession(old, sessionId));
             }}
           >
             <option value="">Choose a project conversation</option>
@@ -226,7 +254,7 @@ export default function MissionBuilder({
           />
         </label>
         <label>
-          Research question and remit
+          Research question and scope
           <textarea
             rows={5}
             value={d.objective}
@@ -268,7 +296,7 @@ export default function MissionBuilder({
             />
           </label>
           <label>
-            Managed actions
+            Maximum actions
             <input
               type="number"
               min={3}
@@ -337,7 +365,7 @@ export default function MissionBuilder({
             />
           </label>
           <label>
-            Stop after stagnant rounds
+            Stop after this many rounds without progress
             <input
               type="number"
               min={1}
@@ -384,19 +412,18 @@ export default function MissionBuilder({
             <details>
               <summary>Computation and project changes</summary>
               <p className="task-muted">
-                Select the checks and exact captured variants this automation
-                may choose between. Host execution retains its existing
-                authorization and input checks.
+                Choose which checks and saved analysis variants the automation
+                may run. Each keeps its existing permissions and input checks.
               </p>
               {!choices.canHostCompute && (
                 <p className="task-muted">
-                  This task conversation uses its native sandbox for
-                  computation. Select a project conversation without a task
-                  binding to delegate host checks.
+                  This conversation runs code in its task’s restricted working
+                  area. To use configured local checks, choose a project
+                  conversation that is not linked to a task.
                 </p>
               )}
               <fieldset>
-                <legend>Configured host checks</legend>
+                <legend>Configured local checks</legend>
                 {choices.checks.length ? (
                   choices.checks.map((c) => (
                     <label className="mission-check" key={c.id}>
@@ -496,7 +523,7 @@ export default function MissionBuilder({
         </label>
         {!!methods.length && (
           <details>
-            <summary>Retained research methods</summary>
+            <summary>Saved research methods</summary>
             <p className="task-muted">
               Choose methods to reuse. Their evidence and limitations are
               included.
@@ -522,21 +549,21 @@ export default function MissionBuilder({
       {error && (
         <p role="alert" className="task-error">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       <button
         className="task-primary"
-        disabled={
-          busy ||
-          !choices ||
-          !d.name.trim() ||
-          !d.objective.trim() ||
-          !d.criteria.length ||
-          d.criteria.some((c) => !c.trim())
-        }
+        disabled={busy || Boolean(blocked)}
+        aria-describedby={blocked ? blockedId : undefined}
       >
-        {busy ? "Preparing…" : "Prepare research automation →"}
+        {busy ? "Preparing…" : "Preview research automation →"}
       </button>
+      {blocked && (
+        <p id={blockedId} className="task-muted">
+          {blocked}
+        </p>
+      )}
       <p className="task-muted">
         Review the preview before starting. Starting allows the automation to
         run actions within the limits above. Keep Pipeline running and this

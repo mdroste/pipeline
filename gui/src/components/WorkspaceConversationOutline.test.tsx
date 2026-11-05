@@ -32,7 +32,7 @@ it("pages a large outline and searches response bodies beyond the visible page",
   fireEvent.click(screen.getByRole("button", { name: "Next" }));
   expect(nav.getAllByRole("button")).toHaveLength(100);
   fireEvent.change(screen.getByLabelText("Outline message type"), {
-    target: { value: "ChatGPT" },
+    target: { value: "assistant" },
   });
   fireEvent.change(screen.getByLabelText("Search prompts and responses"), {
     target: { value: "DISTINCTIVE" },

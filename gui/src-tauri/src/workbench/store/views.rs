@@ -64,7 +64,7 @@ impl Store {
         let active_binding = load_active_binding(&connection, session_id)?;
         let mut turns_statement = connection
             .prepare(
-                "SELECT t.id, t.binding_id, t.client_submission_id, t.provider_turn_id, t.state, t.error_json, t.created_at, t.updated_at, t.terminal_at FROM turns t JOIN session_bindings b ON b.id = t.binding_id WHERE b.session_id = ?1 AND (t.provider_turn_id IS NULL OR NOT EXISTS (SELECT 1 FROM turns newer JOIN session_bindings nb ON nb.id = newer.binding_id WHERE nb.session_id = b.session_id AND newer.provider_turn_id = t.provider_turn_id AND nb.incarnation > b.incarnation)) ORDER BY (t.terminal_at IS NULL) DESC, t.created_at DESC, t.id DESC LIMIT ?2",
+                "SELECT t.id, t.binding_id, t.client_submission_id, t.provider_turn_id, t.state, t.error_json, t.created_at, t.updated_at, t.terminal_at FROM turns t JOIN session_bindings b ON b.id = t.binding_id WHERE b.session_id = ?1 AND (t.provider_turn_id IS NULL OR NOT EXISTS (SELECT 1 FROM turns newer JOIN session_bindings nb ON nb.id = newer.binding_id WHERE nb.session_id = b.session_id AND nb.provider_thread_id = b.provider_thread_id AND newer.provider_turn_id = t.provider_turn_id AND nb.incarnation > b.incarnation)) ORDER BY (t.terminal_at IS NULL) DESC, t.created_at DESC, t.id DESC LIMIT ?2",
             )
             .map_err(|error| WorkbenchError::storage("Failed to prepare conversation turns", error))?;
         let mut turns = turns_statement

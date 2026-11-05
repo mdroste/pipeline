@@ -1,6 +1,7 @@
 import { memo, useId, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { InputSlot, VarSpec } from "../../lib/types";
+import useDraftText from "../../hooks/useDraftText";
 import useModalDialog from "../../hooks/useModalDialog";
 
 interface CalibrationDraft {
@@ -46,8 +47,8 @@ function CalibrateSection({
       </label>
       <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-2 leading-relaxed">
         Draft an instruction from the issues you've rejected (in the Issues
-        view) so this profile stops flagging them, and append it to the
-        synthesis step.
+        view) so this review stops flagging them, and append it to the synthesis
+        step.
       </p>
       <button
         type="button"
@@ -128,7 +129,7 @@ function CalibrateSection({
               </button>
             </div>
             <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-2">
-              Save the profile to persist the change.
+              Save the review design to keep this change.
             </p>
           </div>
         </div>
@@ -136,6 +137,32 @@ function CalibrateSection({
     </div>
   );
 }
+
+// A comma-separated list keeps its raw text while it is edited, so separators
+// and spaces inside items survive; the parsed list is committed on blur or
+// Enter.
+function CommaListInput({
+  values,
+  parse,
+  onCommit,
+  ...inputProps
+}: {
+  values: string[];
+  parse: (item: string) => string;
+  onCommit: (values: string[]) => void;
+  "aria-label": string;
+  placeholder: string;
+  className: string;
+}) {
+  const draft = useDraftText(values.join(", "), (text) =>
+    onCommit(text.split(",").map(parse).filter(Boolean)),
+  );
+  return <input {...inputProps} {...draft} />;
+}
+
+const trimItem = (item: string) => item.trim();
+const extensionItem = (item: string) =>
+  item.trim().toLowerCase().replace(/^\./, "");
 
 // --- Extra named inputs (profile-level) ---
 //
@@ -173,10 +200,10 @@ function ExtraInputsEditor({
         Extra inputs
       </label>
       <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-2 leading-relaxed">
-        Additional files/folders the Generate report action asks for. A step can
-        select the extracted text, original source, or both; selected text is
-        available as <code className="font-mono">{"{input:key}"}</code>. Useful
-        for a response letter, rubric, or prior report alongside the main input.
+        Additional files/folders Start review asks for. A step can select the
+        extracted text, original source, or both; selected text is available as{" "}
+        <code className="font-mono">{"{input:key}"}</code>. Useful for a
+        response letter, rubric, or prior report alongside the main input.
       </p>
       <div className="space-y-2">
         {slots.map((s, i) => (
@@ -218,19 +245,11 @@ function ExtraInputsEditor({
               />
               required
             </label>
-            <input
+            <CommaListInput
               aria-label={`Allowed extensions for ${s.label || s.key || i + 1}`}
-              value={(s.extensions ?? []).join(", ")}
-              onChange={(e) =>
-                update(i, {
-                  extensions: e.target.value
-                    .split(",")
-                    .map((value) =>
-                      value.trim().toLowerCase().replace(/^\./, ""),
-                    )
-                    .filter(Boolean),
-                })
-              }
+              values={s.extensions ?? []}
+              parse={extensionItem}
+              onCommit={(extensions) => update(i, { extensions })}
               placeholder="extensions: pdf, docx"
               className={`${inputClass} min-w-[10rem] flex-1`}
             />
@@ -317,7 +336,7 @@ function VariablesEditor({
         Variables
       </label>
       <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 mb-2">
-        Values the Generate report action asks for, substituted into prompts as{" "}
+        Values Start review asks for, substituted into prompts as{" "}
         <code className="font-mono">{"{var:key}"}</code>.
       </p>
       <div className="space-y-2">
@@ -385,17 +404,11 @@ function VariablesEditor({
               ✕
             </button>
             {v.kind === "choice" && (
-              <input
+              <CommaListInput
                 aria-label={`Variable ${v.label || v.key || i + 1} choices`}
-                value={(v.choices ?? []).join(", ")}
-                onChange={(e) =>
-                  update(i, {
-                    choices: e.target.value
-                      .split(",")
-                      .map((s) => s.trim())
-                      .filter(Boolean),
-                  })
-                }
+                values={v.choices ?? []}
+                parse={trimItem}
+                onCommit={(choices) => update(i, { choices })}
                 placeholder="choices, comma-separated"
                 className={`${inputClass} w-full`}
               />

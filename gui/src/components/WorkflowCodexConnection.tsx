@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Status {
   epoch: number;
@@ -35,7 +36,9 @@ export default function WorkflowCodexConnection({
           if (live) setError(String(e));
         });
     poll();
-    const timer = window.setInterval(poll, 5000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") poll();
+    }, 5000);
     return () => {
       live = false;
       window.clearInterval(timer);
@@ -68,8 +71,9 @@ export default function WorkflowCodexConnection({
       {!!status?.unresolvedAttempts?.length && (
         <div className="space-y-2 text-xs">
           <p>
-            An earlier attempt has no confirmed result. Check its saved result
-            before allowing a new run. Previous usage still counts.
+            A review call stopped before Pipeline could confirm its result.
+            Check the saved result before new review calls can run. Usage from
+            that call still counts.
           </p>
           {status.unresolvedAttempts.map((attempt) => (
             <div key={attempt.id} className="space-y-1">
@@ -112,7 +116,7 @@ export default function WorkflowCodexConnection({
                     })
                   }
                 >
-                  Acknowledge and allow a new run
+                  Continue without it
                 </button>
               </div>
             </div>
@@ -127,6 +131,7 @@ export default function WorkflowCodexConnection({
       {error && (
         <p role="alert" className="text-xs text-red-600 dark:text-red-400">
           {error}
+          <ReportIssueLink />
         </p>
       )}
     </div>

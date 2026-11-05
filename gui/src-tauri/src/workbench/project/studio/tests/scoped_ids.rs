@@ -1,4 +1,4 @@
-//! Finding 4 (docs/bug-triage-2026-10.md): imported response_/zotero_ record
+//! October 2026 triage finding 4: imported response_/zotero_ record
 //! ids carry the workspace, and the unscoped ids written by builds up to 1.0.2
 //! are still found in their own workspace.
 use super::*;

@@ -11,6 +11,7 @@ import {
 import Builder from "./Builder";
 import Detail from "./Detail";
 import "./discovery.css";
+import ReportIssueLink from "../ReportIssueLink";
 
 export default function SelfDiscovery({
   initialRunId,
@@ -51,18 +52,23 @@ export default function SelfDiscovery({
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     void refresh();
-    const pending = listen("discovery:changed", () => {
+    const queue = () => {
       if (live && !timer)
         timer = setTimeout(() => {
           timer = undefined;
           if (live) void refresh();
         }, 200);
-    });
+    };
+    // A step starting or ending moves the run's revision with only a task event.
+    const pending = [
+      listen("discovery:changed", queue),
+      listen("tasks:changed", queue),
+    ];
     return () => {
       live = false;
       generation.current++;
       if (timer) clearTimeout(timer);
-      void pending.then((f) => f()).catch(() => undefined);
+      for (const p of pending) void p.then((f) => f()).catch(() => undefined);
     };
   }, [refresh]);
   function update(r: DiscoveryRun) {
@@ -75,15 +81,14 @@ export default function SelfDiscovery({
   return (
     <section
       className="research-missions discovery-page"
-      aria-label="Full self-discovery"
+      aria-label="Research discovery"
     >
       <div className="task-section-heading">
         <div>
           <button onClick={onBack}>← Research automations</button>
-          <h2>Full self-discovery</h2>
+          <h2>Research discovery</h2>
           <p className="task-muted">
-            Develop original research across academic fields, from topic to
-            assessed papers.
+            Explore research questions, develop papers, and review the results.
           </p>
         </div>
         <button
@@ -94,18 +99,19 @@ export default function SelfDiscovery({
             setCreating(true);
           }}
         >
-          New self-discovery
+          New research discovery
         </button>
       </div>
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       <div
         className={`tasks-content ${creating || run ? "tasks-content--split" : ""}`}
       >
-        <section className="task-list" aria-label="Self-discovery history">
+        <section className="task-list" aria-label="Research discovery history">
           {rows.map((r) => (
             <button
               className={`task-list-row ${run?.id === r.id ? "is-selected" : ""}`}

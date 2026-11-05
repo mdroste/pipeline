@@ -3,6 +3,64 @@
 use super::*;
 
 #[test]
+fn profile_validation_preserves_first_failure_order() {
+    let mut profile = bundle_profile("ordered", vec![step_with_id("analysis")]).to_profile_data();
+    profile.name.clear();
+    profile.use_orientation = false;
+    profile.steps[0].context.include = vec![ArtifactSelector::Primary { parts: vec![] }];
+    profile.outputs.primary_step = "missing".into();
+    profile.merge.agents = vec!["claude".into(), "codex".into()];
+    profile.extraction.method = "invalid-method".into();
+    profile.variables = vec![VarSpec {
+        key: "bad-key".into(),
+        ..Default::default()
+    }];
+    assert_eq!(
+        validate_profile_data(&profile).unwrap_err(),
+        "Profile name must contain 1–200 characters"
+    );
+
+    profile.name = "Ordered".into();
+    assert_eq!(
+        validate_profile_data(&profile).unwrap_err(),
+        "Every workflow must build an orientation map"
+    );
+
+    profile.use_orientation = true;
+    assert_eq!(
+        validate_profile_data(&profile).unwrap_err(),
+        "Step 'analysis' selects the primary input without selecting any representations"
+    );
+
+    profile.steps[0].context.include.clear();
+    assert_eq!(
+        validate_profile_data(&profile).unwrap_err(),
+        "Published primary report names unknown step 'missing'"
+    );
+
+    profile.outputs.primary_step.clear();
+    assert_eq!(
+        validate_profile_data(&profile).unwrap_err(),
+        "Merge supports at most one selected agent"
+    );
+
+    profile.merge.agents.clear();
+    assert_eq!(
+        validate_profile_data(&profile).unwrap_err(),
+        "Invalid profile extraction method 'invalid-method'"
+    );
+
+    profile.extraction.method.clear();
+    assert_eq!(
+        validate_profile_data(&profile).unwrap_err(),
+        "Invalid variable key 'bad-key'. Use 1–64 ASCII letters, numbers, or underscores."
+    );
+
+    profile.variables.clear();
+    validate_profile_data(&profile).unwrap();
+}
+
+#[test]
 fn unique_step_ids_pass_validation() {
     let steps = vec![step_with_id("a"), step_with_id("b")];
     assert!(validate_unique_step_ids(&steps).is_ok());
@@ -206,7 +264,7 @@ fn step_model_policy_is_provider_and_transport_specific() {
 fn auto_review_profile_is_valid_and_compact() {
     let profile = auto_review_profile();
     validate_profile_data(&profile).unwrap();
-    assert_eq!(profile.name, "Automatic Paper Review (Full)");
+    assert_eq!(profile.name, "Paper Review");
     assert!(profile.context_cache.enabled);
     assert!(profile.orientation_schema.is_some());
     assert_eq!(profile.steps.len(), 5);
@@ -240,7 +298,7 @@ fn auto_review_profile_is_valid_and_compact() {
 fn quick_auto_review_is_bounded_and_omits_contribution() {
     let profile = quick_auto_review_profile();
     validate_profile_data(&profile).unwrap();
-    assert_eq!(profile.name, "Automatic Paper Review (Quick)");
+    assert_eq!(profile.name, "Paper Review (Fast)");
     assert!(profile.context_cache.enabled);
     assert_eq!(profile.steps.len(), 4);
     assert!(!profile
@@ -410,10 +468,10 @@ fn reset_writes_the_stock_definition_even_when_the_file_is_invalid() {
     let mut broken = auto_review_profile();
     broken.steps[0].prompt.push_str("\nSee {var:topic}.");
     assert!(validate_profile_data(&broken).is_err());
-    let path = dir.path().join("auto-review.json");
+    let path = dir.path().join("auto-paper-review.json");
     fs::write(&path, serde_json::to_vec_pretty(&broken).unwrap()).unwrap();
 
-    let reset = reset_defaults_at(dir.path(), "auto-review").unwrap();
+    let reset = reset_defaults_at(dir.path(), "auto-paper-review").unwrap();
     let on_disk: ProfileData = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     assert!(validate_profile_data(&on_disk).is_ok());
     assert_eq!(
@@ -432,4 +490,61 @@ fn reset_writes_the_stock_definition_even_when_the_file_is_invalid() {
     let custom: ProfileData =
         serde_json::from_slice(&fs::read(dir.path().join("mine.json")).unwrap()).unwrap();
     assert_eq!(custom.name, "My review");
+}
+
+#[test]
+fn slide_review_reuses_the_paper_reviewers_with_a_pinned_slide_genre() {
+    let profile = slide_review_profile();
+    validate_profile_data(&profile).unwrap();
+    assert_eq!(profile.name, "Slide Review");
+    assert!(profile.context_cache.enabled);
+    let paper = auto_review_profile();
+    assert_eq!(
+        serde_json::to_value(&profile.steps).unwrap(),
+        serde_json::to_value(&paper.steps).unwrap()
+    );
+    assert_eq!(profile.outputs, paper.outputs);
+    assert_eq!(
+        profile.orientation_prompt,
+        crate::auto_review::slide_orientation_prompt()
+    );
+    assert_eq!(
+        profile.orientation_schema.as_ref().unwrap()["properties"]["review_plan"]["properties"]
+            ["genre"]["enum"],
+        serde_json::json!([crate::auto_review::SLIDE_DECK_GENRE])
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    reset_defaults_at(dir.path(), "slide-review").unwrap();
+    let on_disk: ProfileData =
+        serde_json::from_slice(&fs::read(dir.path().join("slide-review.json")).unwrap()).unwrap();
+    assert_eq!(
+        serde_json::to_value(&on_disk).unwrap(),
+        serde_json::to_value(&profile).unwrap()
+    );
+}
+
+#[test]
+fn settings_default_to_the_paper_review_profile() {
+    assert_eq!(
+        crate::settings::Settings::default().active_profile,
+        PAPER_REVIEW_ID
+    );
+}
+
+#[test]
+fn router_defaults_match_each_adaptive_builtin() {
+    // "Restore router defaults" must return the open built-in's own pair:
+    // Fast keeps its method cap, Slide Review its preamble and genre pin.
+    for (id, profile) in [
+        (PAPER_REVIEW_ID, auto_review_profile()),
+        (PAPER_REVIEW_FAST_ID, quick_auto_review_profile()),
+        (SLIDE_REVIEW_ID, slide_review_profile()),
+        ("custom-copy", auto_review_profile()),
+        ("", auto_review_profile()),
+    ] {
+        let (prompt, schema) = adaptive_orientation_defaults(id);
+        assert_eq!(prompt, profile.orientation_prompt, "{id}");
+        assert_eq!(Some(schema), profile.orientation_schema, "{id}");
+    }
 }

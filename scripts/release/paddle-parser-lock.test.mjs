@@ -28,6 +28,16 @@ test("parser artifact downloads retry CDN rejections without weakening checksums
   assert.equal(result.status, 0, `${result.error?.message ?? ""}\n${result.stdout ?? ""}\n${result.stderr ?? ""}`);
 });
 
+test("the parser sidecar keeps its output contract and page quality rules", () => {
+  const python = resolvePython();
+  const result = spawnSync(
+    python.command,
+    [...python.args, path.join(ROOT, "scripts", "release", "test-paddle-parser-sidecar.py")],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, `${result.error?.message ?? ""}\n${result.stdout ?? ""}\n${result.stderr ?? ""}`);
+});
+
 test("managed Paddle parser inputs are complete checksum locks", () => {
   const runtime = JSON.parse(read("runtime-lock.json"));
   assert.equal(runtime.schemaVersion, 1);

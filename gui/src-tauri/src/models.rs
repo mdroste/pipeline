@@ -368,6 +368,9 @@ pub struct StepOutput {
     /// Source item bound to `{item}` for fan-out outputs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fan_out_item: Option<String>,
+    /// What this step's fan-out limit left unread, when it stopped short.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage_note: Option<String>,
     #[serde(default = "default_phase")]
     pub phase: String,
     #[serde(default)]
@@ -609,6 +612,9 @@ pub struct ReportQuality {
     pub recovered_assets: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extraction_notes: Vec<String>,
+    /// Input a step's fan-out limit left unread.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub coverage_notes: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub completed_steps: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -632,6 +638,10 @@ pub struct ReportQuality {
     pub partially_verified_evidence: u32,
     #[serde(default)]
     pub unverified_evidence: u32,
+    /// Evidence the verifier cannot test, such as an outside source or a
+    /// citation without a quote. It is reported but does not degrade a run.
+    #[serde(default)]
+    pub not_checkable_evidence: u32,
     #[serde(default)]
     pub manual_review_items: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

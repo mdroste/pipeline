@@ -1,14 +1,18 @@
 //! Tests spanning release recipes, handoffs, evaluation, and portability.
 
+use super::recipes::builtin_recipes;
 use super::*;
 use crate::workbench::research::{self, ImportPaperRequest};
 use crate::workbench::store::{
-    CreateSessionRequest, CreateWorkspaceRequest, RegisterWorkspaceRootRequest,
+    CreateSessionRequest, CreateWorkspaceRequest, RegisterWorkspaceRootRequest, Store,
     UpdateSessionRequest,
 };
+use rusqlite::params;
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Read as _;
+use std::path::Path;
 
 fn store() -> (tempfile::TempDir, Store, String, String) {
     let temp = tempfile::tempdir().unwrap();
@@ -604,7 +608,7 @@ fn unsafe_archive_names_are_rejected() {
 #[test]
 fn evaluation_fixture_has_twenty_known_recipe_cases() {
     let fixture: Value = serde_json::from_str(include_str!(
-        "../../../../../docs/workbench/research-evaluation-v1.json"
+        "../../../tests/fixtures/research-evaluation-v1.json"
     ))
     .unwrap();
     assert_eq!(fixture["schemaVersion"], 1);

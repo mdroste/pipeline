@@ -1,4 +1,5 @@
 import { useState } from "react";
+import useReveal from "../../hooks/useReveal";
 import {
   deskClient,
   reference,
@@ -6,8 +7,10 @@ import {
   type PlanStatus,
   type OpenResearchObject,
 } from "../../lib/deskClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { executionClient } from "../../lib/workbench/executionClient";
 import type { AssetSpec, Entry, Publication } from "../../lib/programClient";
+import type { ExecutionProfile } from "../../lib/workbenchTypes";
+import DecimalField from "../DecimalField";
 import {
   button,
   input,
@@ -30,6 +33,12 @@ const empty: AssetSpec = {
   notes: "",
   sampleComparisonRationale: null,
 };
+/** Figures run plot.py with the profile's interpreter, so it must be Python. */
+const runsPython = (profile: ExecutionProfile) =>
+  ["command", "python"].includes(profile.adapter) &&
+  (profile.argv[0]?.split(/[\\/]/).pop() ?? "")
+    .toLowerCase()
+    .startsWith("python");
 export default function Assets(props: DeskProps) {
   const p = useProgram(props, ["publication_asset", "figure_recipe"]);
   const [spec, setSpec] = useState<AssetSpec>(empty),
@@ -41,6 +50,7 @@ export default function Assets(props: DeskProps) {
     [recipe, setRecipe] = useState<string | null>(null),
     [execution, setExecution] = useState("");
   const { workspaceId, onOpen, onError } = props;
+  const assetForm = useReveal<HTMLElement>();
   const records = (p.records.publication_asset ??
     []) as DeskRecord<Publication>[];
   const changeEntry = (i: number, patch: Partial<Entry>) =>
@@ -50,11 +60,11 @@ export default function Assets(props: DeskProps) {
     }));
   return (
     <div className="space-y-5">
-      <section className={card}>
-        <h2 className="font-semibold">Publication assets</h2>
+      <section ref={assetForm.ref} tabIndex={-1} className={card}>
+        <h2 className="font-semibold">Tables & figures</h2>
         <p className={muted}>
-          Build tables and scientific figures from retained numeric results.
-          Values, units, samples, and source revisions travel with every asset.
+          Create tables and figures from saved results. Each keeps its values,
+          units, sample details, and source versions.
         </p>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Asset title">
@@ -94,7 +104,7 @@ export default function Assets(props: DeskProps) {
           }
           filter={(o) =>
             spec.kind === "irf"
-              ? o.reference.kind === "record" && o.title === "series"
+              ? o.recordKind === "series"
               : o.reference.kind === "result"
           }
           onChange={(r) => {
@@ -102,7 +112,7 @@ export default function Assets(props: DeskProps) {
             if (!label)
               setLabel(
                 p.choices?.objects.find((o) => o.reference.id === r?.id)
-                  ?.title ?? "",
+                  ?.label ?? "",
               );
           }}
         />
@@ -154,10 +164,10 @@ export default function Assets(props: DeskProps) {
             </div>
             {spec.kind !== "irf" && (
               <details>
-                <summary className="text-xs">Manual numeric override</summary>
+                <summary className="text-xs">Enter a value manually</summary>
                 <p className={muted}>
-                  An override clears uncertainty and remains visibly manual. The
-                  original estimate is retained.
+                  A manual value has no uncertainty interval and is labeled as
+                  entered by you. Pipeline keeps the original estimate.
                 </p>
                 <label className="text-xs">
                   <input
@@ -176,16 +186,12 @@ export default function Assets(props: DeskProps) {
                 {entry.manual && (
                   <div className="grid grid-cols-2 gap-2">
                     <Field label="Manual value">
-                      <input
+                      <DecimalField
                         className={input}
-                        type="number"
                         value={entry.manual.value}
-                        onChange={(e) =>
+                        onChange={(value) =>
                           changeEntry(i, {
-                            manual: {
-                              ...entry.manual!,
-                              value: Number(e.target.value),
-                            },
+                            manual: { ...entry.manual!, value },
                           })
                         }
                       />
@@ -234,7 +240,7 @@ export default function Assets(props: DeskProps) {
                 }))
               }
             >
-              <option value="ci">Retained confidence interval</option>
+              <option value="ci">Saved confidence interval</option>
               <option value="se">One standard error</option>
               <option value="none">No uncertainty displayed</option>
             </select>
@@ -267,13 +273,11 @@ export default function Assets(props: DeskProps) {
               onChange={(e) => setProfile(e.target.value)}
             >
               <option value="">Choose configured Python toolchain</option>
-              {p.choices?.profiles
-                .filter((pr) => pr.adapter === "command")
-                .map((pr) => (
-                  <option key={pr.id} value={pr.id}>
-                    {pr.name}
-                  </option>
-                ))}
+              {p.choices?.profiles.filter(runsPython).map((pr) => (
+                <option key={pr.id} value={pr.id}>
+                  {pr.name}
+                </option>
+              ))}
             </select>
           </Field>
         )}
@@ -302,8 +306,10 @@ export default function Assets(props: DeskProps) {
                     spec,
                     pythonProfileId: profile,
                     operationId: operation(),
+                    supersedes,
                   },
                 });
+                setSupersedes(null);
                 setRecipe(r.id);
                 setPreview(
                   await deskClient.planStatus(workspaceId, r.body.planId),
@@ -314,7 +320,7 @@ export default function Assets(props: DeskProps) {
         >
           {spec.kind === "table"
             ? "Generate table draft"
-            : "Prepare reproducible figure plan"}
+            : "Preview figure setup"}
         </button>
         {supersedes && (
           <p className={muted}>
@@ -369,7 +375,7 @@ export default function Assets(props: DeskProps) {
               )
             }
           >
-            Authorize exact plotting plan
+            Allow this plotting command to run
           </button>
           <button
             className={button}
@@ -377,7 +383,7 @@ export default function Assets(props: DeskProps) {
             onClick={() =>
               void p.run(async () => {
                 const profile = preview.record.body.profile as { id: string };
-                await workbenchClient.runExecution({
+                await executionClient.runExecution({
                   planId: preview.record.id,
                   profileId: profile.id,
                   sessionId: null,
@@ -387,7 +393,7 @@ export default function Assets(props: DeskProps) {
               })
             }
           >
-            Run plot and retain outputs
+            Create figure and save files
           </button>
           <button className={button} onClick={() => void p.run(p.refresh)}>
             Refresh completed runs
@@ -426,7 +432,7 @@ export default function Assets(props: DeskProps) {
               })
             }
           >
-            Adopt figure as publication asset
+            Save figure to Tables & figures
           </button>
         </section>
       )}
@@ -441,6 +447,7 @@ export default function Assets(props: DeskProps) {
               onClick={() => {
                 setSpec(r.body.spec);
                 setSupersedes(r.id);
+                assetForm.reveal();
               }}
             >
               Edit as new version
@@ -457,7 +464,7 @@ export default function Assets(props: DeskProps) {
             </button>
           ))}
           <button className={button} onClick={() => onOpen(reference(r))}>
-            Inspect provenance
+            View sources and run details
           </button>
           <Artifacts
             workspaceId={workspaceId}
@@ -465,6 +472,7 @@ export default function Assets(props: DeskProps) {
             artifacts={r.body.artifacts}
             choices={p.choices}
             onError={onError}
+            onChanged={props.onChanged}
           />
         </section>
       ))}

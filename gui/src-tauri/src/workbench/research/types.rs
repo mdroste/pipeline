@@ -37,8 +37,12 @@ pub struct EffectiveHarness {
     pub workspace_id: Option<String>,
     pub preset: HarnessPreset,
     pub mode: String,
+    #[serde(default = "default_file_mode")]
+    pub file_mode: String,
     pub web_search: bool,
     pub command_network: bool,
+    #[serde(default)]
+    pub capabilities: crate::workbench::capabilities::ConversationCapabilities,
     pub permission_profile: String,
     pub context_budget_bytes: usize,
     pub enabled_modules: Vec<String>,
@@ -54,6 +58,15 @@ pub struct EffectiveHarness {
     pub module_availability: Vec<ModuleAvailability>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub instruction_sections: Vec<InstructionSection>,
+    /// The working copy this conversation's tools act in. The fingerprint
+    /// already hashes it apart from this field, which only a later comparison
+    /// of access reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_checkpoint_id: Option<String>,
+}
+
+fn default_file_mode() -> String {
+    "review".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

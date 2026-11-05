@@ -1,11 +1,16 @@
 use std::process::Stdio;
 use tokio::io::{AsyncWriteExt, BufReader};
 
-use super::claude::{build_provider_command, normalize_cli_root, LlmOverrides};
+use super::claude::normalize_cli_root;
 use super::cli_process::{
     capture_stderr, emit_stderr_tail, finish_streams, last_stderr_hint, log, track_child_started,
     verbose_log, wait_for_child,
 };
+use crate::agent_runtime::process::build_provider_command;
+use crate::pipeline::providers::LlmOverrides;
+
+mod failure;
+use failure::{codex_failure_detail, codex_failure_hint};
 
 fn codex_effective_cwd(
     needs_write: bool,
@@ -43,8 +48,16 @@ struct CodexForkSpec<'a> {
 const SESSION_UNAVAILABLE_PREFIX: &str = "unavailable:";
 
 fn read_last_message_file(path: &std::path::Path) -> Result<Option<String>, String> {
-    let metadata = std::fs::metadata(path)
-        .map_err(|error| format!("Could not inspect Codex final-message file: {error}"))?;
+    // A failed turn never writes this file, so its absence is not a problem.
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "Could not inspect Codex final-message file: {error}"
+            ))
+        }
+    };
     if metadata.len() > super::claude::MAX_STDOUT_BYTES as u64 {
         return Err(format!(
             "Codex final message exceeded the {} MB safety limit",
@@ -708,6 +721,7 @@ async fn call_codex_inner(
         let mut model_round_trips: u64 = 0;
         let mut tool_calls = crate::models::ToolCallCounts::default();
         let mut thread_id: Option<String> = None;
+        let mut stdout_failure: Option<String> = None;
         let mut overflowed = false;
         let mut stdout_bytes = 0usize;
         if let Some(stdout) = stdout {
@@ -784,19 +798,14 @@ async fn call_codex_inner(
                         }
                         // Codex reports fatal problems (bad config, auth, model)
                         // as an error event on stdout — surface it, always.
-                        Some(t) if t.contains("error") => {
-                            let detail = event
-                                .get("message")
-                                .and_then(|v| v.as_str())
-                                .or_else(|| event.get("error").and_then(|e| e.as_str()))
-                                .or_else(|| {
-                                    event
-                                        .get("error")
-                                        .and_then(|e| e.get("message"))
-                                        .and_then(|v| v.as_str())
-                                })
-                                .unwrap_or(t);
-                            log(&app_stdout, format!("ERROR: [codex] {detail}"));
+                        // A failed turn usually repeats the error before it.
+                        Some(t) if t.contains("error") || t == "turn.failed" => {
+                            let detail =
+                                codex_failure_detail(&event).unwrap_or_else(|| t.to_string());
+                            if stdout_failure.as_deref() != Some(detail.as_str()) {
+                                log(&app_stdout, format!("ERROR: [codex] {detail}"));
+                            }
+                            stdout_failure = Some(detail);
                         }
                         _ => {}
                     }
@@ -822,6 +831,7 @@ async fn call_codex_inner(
             model_round_trips,
             tool_calls,
             thread_id,
+            stdout_failure,
             overflowed,
         )
     }));
@@ -845,6 +855,7 @@ async fn call_codex_inner(
             model_round_trips,
             tool_calls,
             thread_id,
+            stdout_failure,
             stdout_overflowed,
         ),
         stderr_tail,
@@ -903,8 +914,7 @@ async fn call_codex_inner(
             return Err(terminated);
         }
         emit_stderr_tail(app, &stderr_tail);
-        let hint =
-            super::claude::extract_error_hint(&text).or_else(|| last_stderr_hint(&stderr_tail));
+        let hint = codex_failure_hint(stdout_failure.as_deref(), &text, &stderr_tail);
         let msg = if let Some(hint) = hint {
             format!("Codex call failed (exit {exit_code}): {hint}")
         } else {
@@ -1032,6 +1042,15 @@ mod tests {
         assert_eq!(
             read_last_message_file(file.path()).unwrap().as_deref(),
             Some("## Final report\n\nClean.")
+        );
+    }
+
+    #[test]
+    fn a_missing_terminal_message_file_is_not_an_error() {
+        let directory = tempfile::tempdir().unwrap();
+        assert_eq!(
+            read_last_message_file(&directory.path().join("final.txt")),
+            Ok(None)
         );
     }
 

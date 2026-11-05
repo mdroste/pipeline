@@ -1,4 +1,11 @@
+use super::assets::{
+    CORE_CONSISTENCY, CORE_CONTRIBUTION, CORE_EXPOSITION, METHOD_REVIEW_BASE, ORIENTATION_TEMPLATE,
+    SUBJECT_REVIEW_BASE, SYNTHESIS, VALIDATE,
+};
+use super::prompts::MAX_ROUTING_REASON_CHARS;
+use super::prompts::{method_prompt, subject_prompt};
 use super::*;
+use crate::pipeline_config::{ArtifactSelector, Phase, PipelineConfig, StepArtifactPart};
 
 fn configured_auto_review() -> PipelineConfig {
     let mut config = PipelineConfig {
@@ -549,6 +556,57 @@ fn genre_classification_injects_shared_context_into_every_step() {
 }
 
 #[test]
+fn slide_router_pins_the_slide_deck_genre_for_every_step() {
+    assert!(GENRES.iter().any(|genre| genre.id == SLIDE_DECK_GENRE));
+    let schema = slide_orientation_schema();
+    validate_schema_settings(&schema).unwrap();
+    let resolved = resolve_schema_catalogs(&schema).unwrap();
+    assert_eq!(
+        resolved["properties"]["review_plan"]["properties"]["genre"]["enum"],
+        serde_json::json!([SLIDE_DECK_GENRE])
+    );
+    // Panel bounds and catalog-backed specialists match the Full router.
+    let full = orientation_schema();
+    assert_eq!(adaptive_agent_bounds(&schema), adaptive_agent_bounds(&full));
+    let prompt = slide_orientation_prompt();
+    assert!(prompt.starts_with("This document is a slide deck"));
+    assert!(prompt.ends_with(&orientation_prompt()));
+
+    let mut config = configured_auto_review();
+    config.orientation_prompt = prompt;
+    config.orientation_schema = Some(schema);
+    let mut orientation = valid_orientation();
+    orientation["review_plan"]["genre"] = serde_json::json!(SLIDE_DECK_GENRE);
+    let materialized = materialize_config(&config, &orientation).unwrap();
+    for step in materialized.steps.iter().filter(|step| step.enabled) {
+        assert!(
+            step.prompt
+                .contains("classified this manuscript as: Slide Deck"),
+            "{} is missing the slide-deck context",
+            step.id
+        );
+    }
+}
+
+#[test]
+fn a_pinned_genre_must_name_catalog_genres() {
+    let mut schema = orientation_schema();
+    let genre = "/properties/review_plan/properties/genre";
+    *schema.pointer_mut(genre).unwrap() =
+        serde_json::json!({"type": "string", "enum": ["research_article", SLIDE_DECK_GENRE]});
+    validate_schema_settings(&schema).unwrap();
+    *schema.pointer_mut(genre).unwrap() =
+        serde_json::json!({"type": "string", "enum": ["genre_unknown"]});
+    assert!(validate_schema_settings(&schema)
+        .unwrap_err()
+        .contains("unknown genre"));
+    *schema.pointer_mut(genre).unwrap() = serde_json::json!({"type": "string", "enum": []});
+    assert!(validate_schema_settings(&schema).is_err());
+    *schema.pointer_mut(genre).unwrap() = serde_json::json!({"type": "string"});
+    assert!(validate_schema_settings(&schema).is_err());
+}
+
+#[test]
 fn specialists_inherit_core_agent_and_model_configuration() {
     let mut config = configured_auto_review();
     for step in &mut config.steps {
@@ -703,4 +761,90 @@ fn every_discipline_fallback_materializes_and_the_run_stays_bounded() {
             "reproducibility_software",
         ]
     );
+}
+
+#[test]
+fn a_classified_genre_never_gives_a_pipeline_check_a_prompt() {
+    let mut config = configured_auto_review();
+    config.steps.insert(
+        0,
+        crate::pipeline_config::StepConfig {
+            id: "refs".into(),
+            label: "Check References".into(),
+            enabled: true,
+            phase: crate::pipeline_config::Phase::Parallel,
+            kind: crate::pipeline_config::StepKind::Analyzer,
+            analyzer: Some(crate::pipeline_config::AnalyzerSpec {
+                id: "reference_audit".into(),
+                version: 1,
+                options: serde_json::Value::Null,
+            }),
+            ..Default::default()
+        },
+    );
+    // The saved validation step reads the report whose findings it preserves.
+    config
+        .steps
+        .iter_mut()
+        .find(|step| step.id == "auto_validate")
+        .unwrap()
+        .context
+        .include
+        .push(ArtifactSelector::Step {
+            step: "auto_synthesis".into(),
+            parts: vec![crate::pipeline_config::StepArtifactPart::Report],
+            glob: String::new(),
+        });
+    let mut orientation = valid_orientation();
+    orientation["review_plan"]["genre"] = serde_json::json!("genre_survey_review");
+    let materialized = materialize_config(&config, &orientation).unwrap();
+    let check = materialized
+        .steps
+        .iter()
+        .find(|step| step.id == "refs")
+        .unwrap();
+    assert!(check.prompt.is_empty());
+    assert!(materialized
+        .steps
+        .iter()
+        .filter(|step| step.enabled && step.kind.is_model())
+        .all(|step| step.prompt.contains("## Document Genre")));
+    crate::pipeline_config::validate_runtime_config(&materialized).unwrap();
+}
+
+#[test]
+fn specialists_copy_a_reviewer_step_rather_than_a_pipeline_check() {
+    let mut config = configured_auto_review();
+    config.steps.insert(
+        0,
+        crate::pipeline_config::StepConfig {
+            id: "refs".into(),
+            label: "Check References".into(),
+            phase: crate::pipeline_config::Phase::Parallel,
+            kind: crate::pipeline_config::StepKind::Analyzer,
+            analyzer: Some(crate::pipeline_config::AnalyzerSpec {
+                id: "reference_audit".into(),
+                version: 1,
+                options: serde_json::Value::Null,
+            }),
+            ..Default::default()
+        },
+    );
+    let materialized = materialize_config(&config, &valid_orientation()).unwrap();
+    let specialist = materialized
+        .steps
+        .iter()
+        .find(|step| step.id == "formal_proofs")
+        .unwrap();
+    assert!(specialist.kind.is_model());
+    assert!(!specialist.context.include.is_empty());
+    let synthesis = materialized
+        .steps
+        .iter()
+        .find(|step| step.id == "auto_synthesis")
+        .unwrap();
+    assert!(!synthesis
+        .dependency_policy
+        .required
+        .contains(&"refs".to_string()));
 }

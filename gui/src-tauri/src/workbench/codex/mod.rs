@@ -4,6 +4,7 @@ use crate::agent_runtime::codex::compatibility;
 pub mod native_prompts;
 mod probe;
 mod process;
+mod requests;
 mod supervisor;
 use crate::agent_runtime::codex::transport;
 use crate::agent_runtime::codex::wire;
@@ -13,6 +14,7 @@ pub use compatibility::{
     SCHEMA_REFERENCE_CODEX_VERSION, STABLE_SCHEMA_SHA256,
 };
 pub use probe::{run_qualification_probe, QualificationProbeReport};
+pub use requests::{request_details, RequestDetails};
 pub(crate) use supervisor::event_thread_id;
 pub use supervisor::{
     supervisor_manager, AccountState, AccountStatus, AppServerSupervisor, LoginStart, ModelCatalog,

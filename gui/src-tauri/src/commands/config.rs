@@ -78,6 +78,26 @@ fn redact_settings(mut settings: crate::settings::Settings) -> crate::settings::
     settings
 }
 
+/// An exact marker means "keep the saved key". Anything else that contains it
+/// is a corrupted key, which would be stored and sent as the credential.
+fn refuse_embedded_marker(candidate: &crate::settings::Settings) -> Result<(), String> {
+    let corrupted = [
+        &candidate.anthropic_api_key,
+        &candidate.openai_api_key,
+        &candidate.google_api_key,
+        &candidate.local_api_key,
+    ]
+    .into_iter()
+    .any(|secret| secret != STORED_SECRET && secret.contains(STORED_SECRET));
+    if corrupted {
+        return Err(
+            "This API key could not be saved because it includes Pipeline's saved-key placeholder. Enter the key again on its own."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 fn materialize_settings(
     mut candidate: crate::settings::Settings,
     persisted: &crate::settings::Settings,
@@ -129,6 +149,7 @@ pub async fn discard_undecryptable_secret(provider: String) -> Result<(), String
 
 #[tauri::command]
 pub async fn save_settings(settings: crate::settings::Settings) -> Result<(), String> {
+    refuse_embedded_marker(&settings)?;
     let persisted = crate::settings::load_persisted();
     let settings = materialize_settings(settings, &persisted);
     crate::settings::save_preserving_active(&settings)?;
@@ -146,6 +167,9 @@ pub async fn get_model_catalog(
     settings: Option<crate::settings::Settings>,
     refresh: Option<bool>,
 ) -> Result<crate::model_catalog::ModelCatalog, String> {
+    if let Some(candidate) = &settings {
+        refuse_embedded_marker(candidate)?;
+    }
     let persisted = crate::settings::load_persisted();
     let settings = settings
         .map(|candidate| materialize_settings(candidate, &persisted))
@@ -176,6 +200,42 @@ mod settings_response_tests {
         ] {
             assert_eq!(secret, STORED_SECRET);
         }
+    }
+
+    #[test]
+    fn a_key_pasted_after_the_marker_is_refused_on_every_provider() {
+        let pasted = format!("{STORED_SECRET}sk-new-key");
+        let candidates = [
+            crate::settings::Settings {
+                anthropic_api_key: pasted.clone(),
+                ..Default::default()
+            },
+            crate::settings::Settings {
+                openai_api_key: pasted.clone(),
+                ..Default::default()
+            },
+            crate::settings::Settings {
+                google_api_key: pasted.clone(),
+                ..Default::default()
+            },
+            crate::settings::Settings {
+                local_api_key: pasted,
+                ..Default::default()
+            },
+        ];
+        for candidate in candidates {
+            assert!(refuse_embedded_marker(&candidate).is_err());
+        }
+    }
+
+    #[test]
+    fn the_exact_marker_and_new_keys_are_accepted() {
+        let candidate = crate::settings::Settings {
+            anthropic_api_key: STORED_SECRET.into(),
+            openai_api_key: "sk-new-key".into(),
+            ..Default::default()
+        };
+        assert!(refuse_embedded_marker(&candidate).is_ok());
     }
 
     #[test]
@@ -275,8 +335,22 @@ pub struct ExecutionPlanResponse {
     pub input_slots: Vec<crate::pipeline_config::InputSlot>,
     pub readiness: crate::deps::DepsReport,
     pub stages: Vec<executor::ExecutionPlanStage>,
+    /// Every provider this run may call, including PDF extraction, comparison
+    /// with the previous report, and the usage-limit backup.
+    pub providers: Vec<String>,
+    pub orientation_agent: String,
     pub parallel_agents: Vec<String>,
+    pub sequential_agent: String,
     pub merge_agent: Option<String>,
+    /// The usage-limit backup, when it couldn't run right now.
+    pub backup_unavailable: Option<String>,
+    /// Rough preflight range of calls, tokens, and API list-price cost, with
+    /// the Review limits that will apply.
+    pub usage_estimate: executor::budget::UsageEstimate,
+    /// Analyzer steps, with what each reads and any service it contacts.
+    pub host_checks: Vec<crate::pipeline::analyzers::registry::HostCheck>,
+    /// Files in the selected folders that won't fit in the Review's copy.
+    pub input_notices: Vec<String>,
 }
 
 /// Return the canonical scheduler timeline for one immutable active-profile
@@ -319,6 +393,7 @@ pub async fn get_execution_plan(
     let diff = diff.unwrap_or(false);
     let readiness =
         check_snapshot_dependencies(&snapshot, diff, paper_path.as_deref(), &extra_inputs).await?;
+    let backup_unavailable = crate::deps::unavailable_backup(&snapshot.settings, &readiness);
     let profile_config_snapshot_id = snapshot.config_fingerprint.clone();
     let resolved_interpretation = paper_path
         .as_deref()
@@ -369,6 +444,20 @@ pub async fn get_execution_plan(
             .unwrap_or_else(|| snapshot.settings.merge_agent().to_string())
     });
     let mut stages = executor::execution_plan(&planning_config)?;
+    let usage_estimate = executor::budget::preview_estimate(
+        &planning_config,
+        &snapshot.settings,
+        paper_path.as_deref(),
+    )
+    .await;
+    let input_notices = super::reuse_artifacts::folder_capture_notices(
+        &planning_config,
+        &snapshot.settings,
+        paper_path.as_deref(),
+        input_mode == "folder",
+        &extra_inputs,
+    )
+    .await;
     if let Some(stage) = stages.iter_mut().find(|stage| stage.kind == "extracting") {
         stage.label = executor::input_processing_label(&resolved_interpretation).to_string();
     }
@@ -386,8 +475,21 @@ pub async fn get_execution_plan(
         input_slots,
         readiness,
         stages,
+        providers: crate::deps::run_providers(
+            &snapshot.settings,
+            &planning_config,
+            diff,
+            paper_path.as_deref(),
+            Some(&extra_inputs),
+        ),
+        orientation_agent: snapshot.settings.orientation_agent().to_string(),
         parallel_agents: snapshot.settings.parallel_agents(),
+        sequential_agent: snapshot.settings.sequential_agent().to_string(),
         merge_agent,
+        backup_unavailable,
+        usage_estimate,
+        host_checks: crate::pipeline::analyzers::registry::host_checks(&planning_config),
+        input_notices,
     })
 }
 
@@ -434,7 +536,7 @@ pub async fn get_orientation_defaults(name: String) -> Result<OrientationDefault
     Ok(OrientationDefaults { prompt, schema })
 }
 
-/// Compact Automatic Paper Review router template. Runtime expands its catalog
+/// Compact Paper Review router template. Runtime expands its catalog
 /// placeholders from the live manifest catalog.
 #[tauri::command]
 pub async fn get_auto_review_orientation_prompt() -> Result<String, String> {
@@ -450,15 +552,16 @@ pub struct AutoReviewOrientationDefaults {
 
 /// The router template and its compact catalog-backed orientation contract.
 /// The editor restores both together; catalog rows are injected only at run
-/// time and never stored in the profile prompt.
+/// time and never stored in the profile prompt. A built-in adaptive profile
+/// gets its own stock pair; any other or omitted profile gets Paper Review's.
 /// (`get_auto_review_orientation_prompt` above remains for compatibility.)
 #[tauri::command]
-pub async fn get_auto_review_orientation_defaults() -> Result<AutoReviewOrientationDefaults, String>
-{
-    Ok(AutoReviewOrientationDefaults {
-        prompt: crate::auto_review::orientation_prompt(),
-        schema: crate::auto_review::orientation_schema(),
-    })
+pub async fn get_auto_review_orientation_defaults(
+    profile_id: Option<String>,
+) -> Result<AutoReviewOrientationDefaults, String> {
+    let (prompt, schema) =
+        pipeline_config::adaptive_orientation_defaults(profile_id.as_deref().unwrap_or_default());
+    Ok(AutoReviewOrientationDefaults { prompt, schema })
 }
 
 /// The canonical published-findings contract, served from the binary so the
@@ -555,9 +658,13 @@ pub async fn export_item(
 
 #[tauri::command]
 pub async fn import_item(path: String) -> Result<serde_json::Value, String> {
-    let content = read_import_file(&path)?;
-    let envelope = pipeline_config::import_envelope(&content)?;
-    serde_json::to_value(&envelope).map_err(|e| format!("Serialize error: {e}"))
+    tokio::task::spawn_blocking(move || {
+        let content = read_import_file(&path)?;
+        let envelope = pipeline_config::import_envelope(&content)?;
+        serde_json::to_value(&envelope).map_err(|e| format!("Serialize error: {e}"))
+    })
+    .await
+    .map_err(|e| format!("Import failed: {e}"))?
 }
 
 #[tauri::command]
@@ -611,9 +718,13 @@ pub async fn import_profile_from_url(url: String) -> Result<ProfileSummary, Stri
 
 #[tauri::command]
 pub async fn import_profile(path: String) -> Result<ProfileSummary, String> {
-    let content = read_import_file(&path)?;
-    let envelope = pipeline_config::import_envelope(&content)?;
-    import_profile_envelope(envelope)
+    tokio::task::spawn_blocking(move || {
+        let content = read_import_file(&path)?;
+        let envelope = pipeline_config::import_envelope(&content)?;
+        import_profile_envelope(envelope)
+    })
+    .await
+    .map_err(|e| format!("Import failed: {e}"))?
 }
 
 #[tauri::command]
@@ -630,13 +741,63 @@ pub async fn export_bundle(
 
 #[tauri::command]
 pub async fn import_bundle(path: String) -> Result<(), String> {
-    let content = read_import_file(&path)?;
-    pipeline_config::import_bundle(&content)
+    tokio::task::spawn_blocking(move || {
+        let content = read_import_file(&path)?;
+        pipeline_config::import_bundle(&content)
+    })
+    .await
+    .map_err(|e| format!("Import failed: {e}"))?
 }
 
 #[tauri::command]
-pub async fn check_for_update() -> Result<crate::updates::UpdateInfo, String> {
-    crate::updates::check().await
+pub async fn check_for_update(app: AppHandle) -> Result<crate::updates::UpdateInfo, String> {
+    crate::updates::check_now(&crate::emit::from_app(app)).await
+}
+
+/// Saved update preference and last result; sends no request.
+#[tauri::command]
+pub async fn update_status() -> Result<crate::updates::UpdateStatus, String> {
+    tokio::task::spawn_blocking(crate::updates::status)
+        .await
+        .map_err(|e| format!("Update status task failed: {e}"))
+}
+
+#[tauri::command]
+pub async fn update_set_automatic(
+    app: AppHandle,
+    enabled: bool,
+) -> Result<crate::updates::UpdateStatus, String> {
+    let bus = crate::emit::from_app(app);
+    tokio::task::spawn_blocking(move || crate::updates::set_automatic(&bus, enabled))
+        .await
+        .map_err(|e| format!("Update preference task failed: {e}"))?
+}
+
+#[tauri::command]
+pub fn update_install_state() -> crate::updates::InstallState {
+    crate::updates::install_state()
+}
+
+/// Start downloading the newest release; `update-install` events report progress.
+#[tauri::command]
+pub async fn update_install_start(app: AppHandle) -> Result<crate::updates::InstallState, String> {
+    crate::updates::install_start(&app)
+}
+
+#[tauri::command]
+pub fn update_install_cancel(app: AppHandle) -> crate::updates::InstallState {
+    crate::updates::install_cancel(&app)
+}
+
+/// Install the downloaded update and restart. On Windows this ends the process.
+#[tauri::command]
+pub async fn update_install_restart(app: AppHandle) -> Result<(), String> {
+    crate::updates::install_restart(app).await
+}
+
+#[tauri::command]
+pub fn update_running_automations() -> usize {
+    crate::orchestration::running_count()
 }
 
 // --- Managed local engines ---

@@ -10,6 +10,7 @@
 /gui/node_modules/
 /gui/dist/
 /gui/.vite/
+*.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -41,22 +42,26 @@ Thumbs.db
 # Bundled poppler binaries — populated per-platform by CI, not committed
 /gui/src-tauri/resources/poppler/*
 !/gui/src-tauri/resources/poppler/.gitkeep
-!/gui/src-tauri/resources/poppler/README.md
+# Windows llama.cpp Vulkan build — populated by CI, not committed
+/gui/src-tauri/resources/llama-vulkan/
 
 # Package notices are generated before Tauri builds; no complete SBOM is produced.
 /gui/src-tauri/resources/notices/*
 !/gui/src-tauri/resources/notices/.gitkeep
-!/gui/src-tauri/resources/notices/README.md
 
 # Local environment / secrets
 .env
 .env.local
 .env.*.local
 
-# Agent instruction files (local only)
+# Agent instructions, skill links, and app settings (local only)
 CLAUDE.md
 AGENTS.md
-/.claude/settings.local.json
+/.claude/
+/.agents/
 
-# AI-generated reviews, audits, and plans (local only)
+# Agent-written audits, plans, and progress reports stay on the local machine.
+/reports/
+
+# AI-generated reviews, audits, and plans written under AGENTS.md (local only).
 /reviews/

@@ -9,8 +9,36 @@ export interface IssueEvidence {
   artifactPath?: string;
   sourcePath?: string;
   sourceHash?: string;
+  /** Where an outside source can be read. */
+  url?: string;
+  doi?: string;
+  publisher?: string;
+  accessedAt?: string;
   description?: string;
   quote?: string;
+  /** Host-set result of checking the quote against the source. */
+  verificationStatus?: EvidenceVerificationStatus;
+}
+
+export type EvidenceVerificationStatus =
+  | "verified"
+  | "verified_with_normalization"
+  | "partially_verified"
+  | "not_found"
+  | "not_checkable";
+
+const EVIDENCE_VERIFICATION_STATUSES: readonly EvidenceVerificationStatus[] = [
+  "verified",
+  "verified_with_normalization",
+  "partially_verified",
+  "not_found",
+  "not_checkable",
+];
+
+function parseVerificationStatus(
+  value: unknown,
+): EvidenceVerificationStatus | undefined {
+  return EVIDENCE_VERIFICATION_STATUSES.find((status) => status === value);
 }
 
 export interface Issue {
@@ -179,6 +207,15 @@ function boundedString(value: unknown, max = 2_000): string | undefined {
   return text ? text.slice(0, max) : undefined;
 }
 
+/** The resolver link for a DOI, however the model wrote it. */
+export function doiUrl(doi: string): string {
+  const bare = doi
+    .trim()
+    .replace(/^https?:\/\/(dx\.)?doi\.org\//i, "")
+    .replace(/^doi:\s*/i, "");
+  return `https://doi.org/${bare.split("/").map(encodeURIComponent).join("/")}`;
+}
+
 function safeRelativePath(value: string | undefined): string | undefined {
   if (
     !value ||
@@ -240,8 +277,18 @@ function parseEvidence(value: unknown): IssueEvidence[] {
       object.source_hash ?? object.sourceHash,
       1_000,
     );
+    const url = boundedString(object.url);
+    const doi = boundedString(object.doi, 500);
+    const publisher = boundedString(object.publisher, 500);
+    const accessedAt = boundedString(
+      object.accessed_at ?? object.accessedAt,
+      500,
+    );
     const description = boundedString(object.description ?? object.label);
     const quote = boundedString(object.quote);
+    const verificationStatus = parseVerificationStatus(
+      object.verification_status ?? object.verificationStatus,
+    );
     if (
       page ||
       lineStart ||
@@ -251,6 +298,8 @@ function parseEvidence(value: unknown): IssueEvidence[] {
       artifactPath ||
       sourcePath ||
       sourceHash ||
+      url ||
+      doi ||
       description ||
       quote
     ) {
@@ -263,8 +312,13 @@ function parseEvidence(value: unknown): IssueEvidence[] {
         artifactPath,
         sourcePath,
         sourceHash,
+        url,
+        doi,
+        publisher,
+        accessedAt,
         description,
         quote,
+        verificationStatus,
       });
     }
   }
@@ -339,13 +393,23 @@ export function detectReportIssues(report: PipelineReport): Issue[] | null {
   if ((report.products?.schema_version ?? 0) > 0) {
     const published = report.products?.findings?.findings;
     if (!published) return null;
+    const stepLabels = new Map(
+      (report.step_outputs ?? []).map((step) => [
+        step.step_id,
+        step.step_label,
+      ]),
+    );
     return published.map((finding, index) => ({
       id: finding.id || String(index + 1),
       title: finding.title || `Issue ${index + 1}`,
       severity: normalizeSeverity(finding.priority),
       section: finding.category ?? "",
       body: finding.body ?? "",
-      sources: parseSources(finding.sources),
+      // Findings-v2 attributes reviewers through reviewer_ids; only older
+      // findings carry sources.
+      sources: parseSources(
+        finding.reviewer_ids?.length ? finding.reviewer_ids : finding.sources,
+      )?.map((source) => stepLabels.get(source) || source),
       evidence: parseEvidence(finding.evidence ?? []),
     }));
   }
@@ -378,6 +442,10 @@ function specialistCitation(value: unknown): string | null {
   }
   const description = boundedString(object.description);
   if (description) parts.push(description);
+  const url = boundedString(object.url);
+  if (url) parts.push(url);
+  const doi = boundedString(object.doi, 500);
+  if (doi) parts.push(doiUrl(doi));
   const nodeId = boundedString(object.node_id, 500);
   if (nodeId) parts.push(`node ${nodeId}`);
   const assetId = boundedString(object.asset_id, 500);

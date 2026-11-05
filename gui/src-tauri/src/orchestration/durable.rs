@@ -5,7 +5,7 @@ use std::{fs, io::Write, path::Path};
 pub(super) fn sync_directory(path: &Path) -> Result<()> {
     #[cfg(unix)]
     fs::File::open(path)
-        .and_then(|file| file.sync_all())
+        .and_then(|file| crate::safety::sync_file(&file))
         .map_err(err)?;
     #[cfg(not(unix))]
     let _ = path; // Windows publication uses a write-through move below.
@@ -72,7 +72,7 @@ fn publish_with_barrier(
     let mut file = tempfile::NamedTempFile::new_in(parent).map_err(err)?;
     file.write_all(bytes).map_err(err)?;
     file.flush().map_err(err)?;
-    file.as_file().sync_all().map_err(err)?;
+    crate::safety::sync_file(file.as_file()).map_err(err)?;
     rename_file(file.path(), path)?;
     barrier(parent)
 }

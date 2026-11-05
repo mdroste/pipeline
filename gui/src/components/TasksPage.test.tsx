@@ -8,12 +8,18 @@ import {
 } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import TasksPage from "./TasksPage";
-import { template, type TaskRun, type Receipt } from "../lib/taskClient";
+import { template } from "../lib/taskTemplates";
+import { type TaskRun, type Receipt } from "../lib/taskTypes";
 const mocks = vi.hoisted(() => ({
   invoke: vi.fn(),
+  confirmDialog: vi.fn(),
   listeners: new Map<string, (event: { payload: unknown }) => void>(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+vi.mock("./DialogService", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./DialogService")>()),
+  confirmDialog: mocks.confirmDialog,
+}));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(
     async (name: string, callback: (event: { payload: unknown }) => void) => {
@@ -47,6 +53,7 @@ const run: TaskRun = {
 };
 beforeEach(() => {
   mocks.invoke.mockReset();
+  mocks.confirmDialog.mockReset();
   mocks.listeners.clear();
   localStorage.clear();
   mocks.invoke.mockImplementation(
@@ -80,6 +87,38 @@ beforeEach(() => {
     },
   );
 });
+it("still lists automations when the saved run has been removed", async () => {
+  const implementation = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command, args) => {
+    if (command === "task_get")
+      return Promise.reject(new Error("Query returned no rows"));
+    if (command === "task_list")
+      return Promise.resolve([{ ...run, state: "running" }]);
+    return implementation(command, args);
+  });
+  render(<TasksPage initialTaskId="removed" />);
+  expect(
+    await screen.findByRole("button", { name: /Workspace follow-up/ }),
+  ).toBeInTheDocument();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  const asked = () =>
+    mocks.invoke.mock.calls.filter(([command]) => command === "task_get")
+      .length;
+  const before = asked();
+  await act(async () => {
+    mocks.listeners.get("tasks:changed")?.({ payload: null });
+    await new Promise((resolve) => setTimeout(resolve, 220));
+  });
+  expect(asked()).toBe(before);
+});
+it("titles the page without repeating the product name", async () => {
+  render(<TasksPage />);
+  expect(
+    await screen.findByRole("heading", { level: 1, name: "Automations" }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText("PIPELINE")).not.toBeInTheDocument();
+});
+
 it("prepares a concrete scope before starting work", async () => {
   render(<TasksPage initialSessionId="session" />);
   await screen.findByRole("option", { name: "Research idea" });
@@ -87,7 +126,7 @@ it("prepares a concrete scope before starting work", async () => {
   fireEvent.change(screen.getByLabelText("What should happen next?"), {
     target: { value: "Continue the idea" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Prepare automation →" }));
+  fireEvent.click(screen.getByRole("button", { name: "Preview automation →" }));
   await screen.findByRole("button", { name: "Start automation" });
   expect(
     mocks.invoke.mock.calls.some(([command]) => command === "task_control"),
@@ -114,7 +153,7 @@ it("surfaces preparation failures without launching or clearing the request", as
       ? Promise.reject("Conversation changed")
       : implementation(command, ...args),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Prepare automation →" }));
+  fireEvent.click(screen.getByRole("button", { name: "Preview automation →" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Conversation changed",
   );
@@ -125,7 +164,7 @@ it("surfaces preparation failures without launching or clearing the request", as
 });
 it("keeps recurring schedules separate from active occurrences", async () => {
   render(<TasksPage />);
-  await screen.findByText("Give your work a next step.");
+  await screen.findByText("Create your first automation.");
   fireEvent.click(screen.getByRole("tab", { name: "Scheduled" }));
   await screen.findByText("Make time for recurring work.");
   expect(screen.getByRole("tab", { name: "Scheduled" })).toHaveAttribute(
@@ -136,7 +175,7 @@ it("keeps recurring schedules separate from active occurrences", async () => {
 });
 it("handles task errors emitted by the native coordinator", async () => {
   render(<TasksPage />);
-  await screen.findByText("Give your work a next step.");
+  await screen.findByText("Create your first automation.");
   act(() =>
     mocks.listeners.get("tasks:error")?.({
       payload: "Another instance owns task execution",
@@ -230,7 +269,7 @@ it("inspects the retained operation for a prior attempt after retry", async () =
 it("roves tabs without loading until activation and associates every panel", async () => {
   const user = (await import("@testing-library/user-event")).default.setup();
   render(<TasksPage />);
-  await screen.findByText("Give your work a next step.");
+  await screen.findByText("Create your first automation.");
   const active = screen.getByRole("tab", { name: "Active" });
   const scheduled = screen.getByRole("tab", { name: "Scheduled" });
   const calls = mocks.invoke.mock.calls.length;
@@ -301,4 +340,165 @@ it("reloads repeated task links and reports unsaved builder edits", async () => 
     ).toBeGreaterThan(count),
   );
   expect(dirty).toHaveBeenLastCalledWith(false);
+});
+
+it("asks before an in-page action discards an unsaved automation draft", async () => {
+  const summary = {
+    id: "test-run",
+    name: "Workspace follow-up",
+    state: "draft",
+    reason: null,
+    dueAt: null,
+  };
+  const implementation = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command, ...args) =>
+    command === "task_list"
+      ? Promise.resolve([summary])
+      : implementation(command, ...args),
+  );
+  render(<TasksPage initialSessionId="session" />);
+  await screen.findByRole("option", { name: "Research idea" });
+  fireEvent.change(screen.getByLabelText("Idea or instructions"), {
+    target: { value: "Keep this draft" },
+  });
+
+  mocks.confirmDialog.mockResolvedValue(false);
+  fireEvent.click(screen.getByRole("button", { name: "Close new automation" }));
+  await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledTimes(1));
+  fireEvent.click(
+    await screen.findByRole("button", { name: /Workspace follow-up/ }),
+  );
+  await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledTimes(2));
+  fireEvent.click(screen.getByRole("tab", { name: "Research" }));
+  await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledTimes(3));
+  expect(screen.getByLabelText("Idea or instructions")).toHaveValue(
+    "Keep this draft",
+  );
+  expect(mocks.invoke).not.toHaveBeenCalledWith("task_get", expect.anything());
+
+  mocks.confirmDialog.mockResolvedValue(true);
+  fireEvent.click(screen.getByRole("button", { name: /Workspace follow-up/ }));
+  await screen.findByRole("region", { name: "Automation details" });
+  expect(screen.queryByLabelText("Idea or instructions")).toBeNull();
+});
+
+it("offers the full action limit the automation validator accepts", async () => {
+  render(<TasksPage initialSessionId="session" />);
+  await screen.findByRole("option", { name: "Research idea" });
+  const limit = screen.getByRole("spinbutton", { name: "Action limit" });
+  fireEvent.change(limit, { target: { value: "1024" } });
+  fireEvent.blur(limit);
+  expect(limit).toHaveValue(1024);
+  fireEvent.change(limit, { target: { value: "5000" } });
+  fireEvent.blur(limit);
+  expect(limit).toHaveValue(1024);
+});
+it("closes an untouched builder without asking", async () => {
+  render(<TasksPage initialSessionId="session" />);
+  await screen.findByRole("option", { name: "Research idea" });
+  fireEvent.click(screen.getByRole("button", { name: "Close new automation" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("region", { name: "New automation" })).toBeNull(),
+  );
+  expect(mocks.confirmDialog).not.toHaveBeenCalled();
+});
+
+it("brings the automation details into view when picked from the list", async () => {
+  const scrollIntoView = vi.fn();
+  const original = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = scrollIntoView;
+  try {
+    render(<TasksPage initialTaskId={run.id} />);
+    const details = await screen.findByRole("region", {
+      name: "Automation details",
+    });
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+    expect(scrollIntoView.mock.contexts[0]).toBe(details.firstElementChild);
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest" });
+  } finally {
+    Element.prototype.scrollIntoView = original;
+  }
+});
+
+const inputWait = (state: string, deadlineAt: number): TaskRun => ({
+  ...run,
+  state,
+  deadlineAt,
+  progress: {
+    ...run.progress,
+    receipts: {
+      ask: {
+        address: "ask",
+        stepId: "ask",
+        label: "Supply the data",
+        state: "input",
+        operation: "ask-operation",
+        startedAt: 10,
+        finishedAt: null,
+        wakeAt: null,
+        output: null,
+        error: null,
+      },
+    },
+  },
+});
+const showing = (detail: TaskRun) => {
+  mocks.invoke.mockImplementation(
+    async (command: string, args: Record<string, unknown> = {}) => {
+      switch (command) {
+        case "task_get":
+          return detail;
+        case "task_input":
+          return { ...detail, state: "queued", args };
+        case "task_background":
+          return false;
+        default:
+          return [];
+      }
+    },
+  );
+  render(<TasksPage initialTaskId={detail.id} />);
+};
+
+it("takes input past the deadline and says what that does", async () => {
+  showing(inputWait("attention", 600));
+  await screen.findByLabelText("Supply the data");
+  expect(screen.getByText(/new \d+-hour deadline/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Supply the data"), {
+    target: { value: "The data" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Provide input" }));
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "task_input",
+      expect.objectContaining({
+        id: run.id,
+        address: "ask",
+        value: "The data",
+      }),
+    ),
+  );
+});
+
+it("hides the input form when the run cannot take input", async () => {
+  showing(inputWait("cancelled", 600));
+  await screen.findByText("This automation can’t take input right now.");
+  expect(
+    screen.queryByRole("button", { name: "Provide input" }),
+  ).not.toBeInTheDocument();
+});
+
+it("records a finished result as seen", async () => {
+  showing({ ...run, state: "finished" });
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("task_mark_seen", { id: run.id }),
+  );
+});
+
+it("does not record a run in progress as seen", async () => {
+  showing({ ...run, state: "running" });
+  await screen.findByRole("button", { name: "Stop" });
+  expect(mocks.invoke).not.toHaveBeenCalledWith("task_mark_seen", {
+    id: run.id,
+  });
 });

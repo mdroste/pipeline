@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import WaveDiagram from "./WaveDiagram";
 import type { MergeConfig, StepConfig } from "../lib/types";
@@ -52,6 +52,43 @@ describe("WaveDiagram", () => {
     ).toBeInTheDocument();
   });
 
+  it("frames a parallel wave and describes each card's call shape", () => {
+    render(
+      <WaveDiagram
+        steps={[
+          step({
+            id: "technical",
+            label: "Technical",
+            agents: ["claude", "codex"],
+          }),
+          step({ id: "empirical", label: "Empirical" }),
+          step({
+            id: "consolidate",
+            label: "Consolidate",
+            phase: "sequential",
+          }),
+        ]}
+        merge={merge}
+        selectedId={null}
+        onSelect={() => {}}
+        hint="Select any stage to open it."
+      />,
+    );
+    const group = screen.getByRole("group", { name: "Parallel steps" });
+    expect(
+      within(group).getByRole("button", { name: "Technical" }),
+    ).toHaveAccessibleDescription("2 agents");
+    expect(
+      within(group).getByRole("button", { name: "Empirical" }),
+    ).toBeInTheDocument();
+    expect(
+      within(group).queryByRole("button", { name: "Consolidate" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Select any stage to open it."),
+    ).toBeInTheDocument();
+  });
+
   it("keeps the required orient node when merge is disabled", () => {
     render(
       <WaveDiagram
@@ -98,6 +135,27 @@ describe("WaveDiagram", () => {
     expect(screen.getByText(/No enabled review steps/)).toBeInTheDocument();
   });
 
+  it("does not count a Pipeline check as a provider call", () => {
+    render(
+      <WaveDiagram
+        steps={[
+          step({ id: "review" }),
+          step({
+            id: "references",
+            kind: "analyzer",
+            analyzer: { id: "reference_audit", version: 1 },
+          }),
+        ]}
+        merge={merge}
+        selectedId={null}
+        onSelect={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(/up to 1 provider call before retries/),
+    ).toBeInTheDocument();
+  });
+
   it("summarizes execution size and provider calls", () => {
     render(
       <WaveDiagram
@@ -108,7 +166,7 @@ describe("WaveDiagram", () => {
       />,
     );
     expect(
-      screen.getByRole("heading", { name: "Workflow overview" }),
+      screen.getByRole("heading", { name: "Review overview" }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/1 enabled step in 1 execution wave/),

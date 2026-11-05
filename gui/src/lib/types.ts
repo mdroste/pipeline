@@ -71,6 +71,10 @@ export interface StepContext {
 export interface StepConfig {
   id: string;
   label: string;
+  /** "analyzer" steps run a Pipeline check and make no model call. */
+  kind?: "model" | "analyzer";
+  /** Required for analyzer steps. */
+  analyzer?: AnalyzerSpec | null;
   prompt: string;
   /** Literal trusted reviewer instructions; no template expansion. */
   system_prompt?: string;
@@ -87,6 +91,8 @@ export interface StepConfig {
   effort_overrides?: Record<string, string>;
   /** Order-only dependencies. Upstream artifact selectors add dataflow edges automatically. */
   after?: string[];
+  /** Success requirements. Every step named here is also a scheduling edge. */
+  dependency_policy?: DependencyPolicy;
   /** Exact artifacts available to this step. */
   context: StepContext;
   /** Optional guard: skip the step unless this condition holds. */
@@ -95,6 +101,21 @@ export interface StepConfig {
   output_schema?: Record<string, unknown> | null;
   /** Fan-out: run once per matching file or upstream JSON-array item, with {item} bound. */
   for_each?: ForEach | null;
+}
+
+/** What must succeed before a step runs (mirrors DependencyPolicy). */
+export interface DependencyPolicy {
+  required?: string[];
+  quorum?: string[];
+  /** How many `quorum` members must succeed; zero when the quorum is empty. */
+  minimum_successes?: number;
+}
+
+/** A pinned host analyzer and its options (mirrors AnalyzerSpec). */
+export interface AnalyzerSpec {
+  id: string;
+  version: number;
+  options?: Record<string, unknown>;
 }
 
 /** Fan-out (map) config for a step (mirrors ForEach). */
@@ -387,6 +408,7 @@ export interface ReportQuality {
   recovered_blocks: number;
   recovered_assets: number;
   extraction_notes?: string[];
+  coverage_notes?: string[];
   completed_steps?: string[];
   failed_steps?: string[];
   skipped_steps?: string[];
@@ -397,6 +419,7 @@ export interface ReportQuality {
   verified_evidence: number;
   partially_verified_evidence: number;
   unverified_evidence: number;
+  not_checkable_evidence?: number;
   manual_review_items: number;
   limitations?: string[];
   reproducibility_hash: string;
@@ -721,7 +744,13 @@ export interface PipelineResult {
 }
 
 export interface Settings {
+  /** With its access mode, this names the connection of the shared default. */
   preferred_provider: string;
+  /** Empty means Automatic. A local server uses `local_model` instead. */
+  default_model?: string;
+  default_effort?: string;
+  /** New conversations follow the default only once one has been chosen. */
+  default_model_chosen?: boolean;
   /** Providers inherited by Parallel steps whose workflow agent list is empty. */
   default_parallel_agents?: string[];
   default_parallel_model_overrides?: Record<string, ModelSelection>;
@@ -765,6 +794,10 @@ export interface Settings {
   paddle_mtmd_batch_tokens: number;
   /** "auto" | "on" | "off". */
   paddle_flash_attention: string;
+  /** Use the optional Windows graphics-card component when installed. */
+  paddle_use_gpu: boolean;
+  /** Processor cores for layout and built-in recognition: 1, 2, 4, 8, or 16. */
+  paddle_cpu_threads: number;
   /** Maximum generated tokens for one OCR page. */
   paddle_max_output_tokens: number;
   /** Retries for a failed or suspicious OCR page. */
@@ -772,6 +805,8 @@ export interface Settings {
   /** Official full-parser layout and document-restructuring controls. */
   paddle_full_layout_detection: boolean;
   paddle_full_layout_threshold: number;
+  /** Persisted one-time migration from the former 0.5 default. */
+  paddle_full_layout_threshold_version?: number;
   paddle_full_layout_nms: boolean;
   /** "large" | "small" | "union". */
   paddle_full_layout_merge_bboxes_mode: string;
@@ -790,6 +825,10 @@ export interface Settings {
   max_retries: number;
   /** Queued reviews started at the same time (1–4). */
   max_concurrent_reviews: number;
+  /** Per-Review limits; 0 means no limit. */
+  review_max_cost_usd?: number;
+  review_max_calls?: number;
+  review_max_minutes?: number;
   /** Add an LLM revision reconciliation when a matching prior run exists. */
   auto_revision_reconciliation: boolean;
   /** Max past runs to keep on disk; 0 = keep all. */
@@ -850,6 +889,30 @@ export interface UpdateInfo {
   release_url: string;
   release_name: string;
   published_at: string | null;
+  /** This platform's installer, when the release includes one. */
+  download_url: string | null;
+  /** Whether this copy can install the release itself. */
+  can_install: boolean;
+  checked_at: string | null;
+}
+
+/** Progress of an in-app update (`update_install_state`, `update-install`). */
+export interface UpdateInstallState {
+  phase: "idle" | "downloading" | "ready" | "installing" | "failed";
+  version: string | null;
+  downloaded: number;
+  total: number | null;
+  error: string | null;
+}
+
+/** Saved update preference and last result (`update_status`). */
+export interface UpdateStatus {
+  automatic: boolean;
+  /** False for development and source builds, which check only on request. */
+  automatic_available: boolean;
+  last_checked_at: string | null;
+  info: UpdateInfo | null;
+  error: string | null;
 }
 
 export interface ProfileSummary {
@@ -857,6 +920,8 @@ export interface ProfileSummary {
   name: string;
   step_count: number;
   builtin: boolean;
+  /** Why a saved profile can't be run; absent for a usable one. */
+  invalid?: string;
 }
 
 export interface ProfileExport {
@@ -899,10 +964,19 @@ export type ExportEnvelope =
     };
 
 /** Mirrors engines::EngineStatus. */
+export interface EngineDownloadProgress {
+  label: string;
+  received_bytes: number;
+  total_bytes: number | null;
+  bytes_per_second: number;
+  retrying: boolean;
+}
+
 export interface EngineInstallProgress {
   engine_id: string;
   phases: Record<string, string>;
   log_lines: string[];
+  download?: EngineDownloadProgress | null;
 }
 
 export interface EngineStatus {

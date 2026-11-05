@@ -10,6 +10,7 @@ import {
 } from "../../lib/discoveryClient";
 
 import ResearchReaderBoundary from "../ResearchReaderBoundary";
+import ReportIssueLink from "../ReportIssueLink";
 const ReportViewer = lazy(() => import("../ReportViewer"));
 
 export default function Detail({
@@ -31,6 +32,9 @@ export default function Detail({
   const [error, setError] = useState("");
   const operation = useRef(crypto.randomUUID());
   const paperRequest = useRef(0);
+  const paperSection = useRef<HTMLElement>(null);
+  const paperHeading = useRef<HTMLHeadingElement>(null);
+  const paperOpener = useRef<HTMLElement | null>(null);
   const choosing = run.state === "awaitingSelection";
   useEffect(() => {
     setSelected(run.selection?.recommended ?? []);
@@ -60,6 +64,15 @@ export default function Detail({
     },
     [],
   );
+  useEffect(() => {
+    // The reader renders below the lists; bring it into view and focus.
+    if (!paper) return;
+    paperSection.current?.scrollIntoView?.({
+      block: "start",
+      behavior: "smooth",
+    });
+    paperHeading.current?.focus({ preventScroll: true });
+  }, [paper]);
   async function act(work: () => Promise<DiscoveryRun | unknown>) {
     setBusy(true);
     setError("");
@@ -73,6 +86,23 @@ export default function Detail({
       setBusy(false);
     }
   }
+  // The run can move on between events. Pause and Stop mean the same thing on
+  // the newer run, so they go through. Anything else is asked again.
+  function control(action: "pause" | "resume" | "stop" | "retry") {
+    return act(async () => {
+      try {
+        return await discoveryClient.control(run, action);
+      } catch (e) {
+        if (!String(e).includes("reload before continuing")) throw e;
+        const fresh = await discoveryClient.get(run.id);
+        onUpdated(fresh);
+        if (action === "pause" || action === "stop")
+          return await discoveryClient.control(fresh, action);
+        setError("This run just changed. Check it and try again.");
+        return undefined;
+      }
+    });
+  }
   const choices = choosing
     ? candidates.filter((c) => run.selection?.shortlist.includes(c.id))
     : candidates;
@@ -80,11 +110,11 @@ export default function Detail({
   return (
     <section
       className="task-detail discovery-detail"
-      aria-label="Self-discovery progress"
+      aria-label="Research discovery progress"
     >
       <div className="task-section-heading">
         <h2>{discoveryNames[run.definition.mode]}</h2>
-        <button aria-label="Close self-discovery details" onClick={onClose}>
+        <button aria-label="Close research discovery details" onClick={onClose}>
           ×
         </button>
       </div>
@@ -100,31 +130,18 @@ export default function Detail({
       </p>
       <div className="task-actions">
         {run.state === "paused" ? (
-          <button
-            disabled={busy}
-            onClick={() =>
-              void act(() => discoveryClient.control(run, "resume"))
-            }
-          >
+          <button disabled={busy} onClick={() => void control("resume")}>
             Resume
           </button>
         ) : (
           ["running", "awaitingSelection"].includes(run.state) && (
-            <button
-              disabled={busy}
-              onClick={() =>
-                void act(() => discoveryClient.control(run, "pause"))
-              }
-            >
+            <button disabled={busy} onClick={() => void control("pause")}>
               Pause
             </button>
           )
         )}
         {!discoveryTerminal(run.state) && run.state !== "stopping" && (
-          <button
-            disabled={busy}
-            onClick={() => void act(() => discoveryClient.control(run, "stop"))}
-          >
+          <button disabled={busy} onClick={() => void control("stop")}>
             Stop
           </button>
         )}
@@ -151,7 +168,24 @@ export default function Detail({
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
+      )}
+      {run.state === "attention" && (
+        <div className="discovery-attention" role="group" aria-label="Retry">
+          <p>
+            <strong>Retry</strong> repeats this step with the conversation as it
+            is now, within the remaining limits. <strong>Stop</strong> ends the
+            run. Recorded work stays available either way.
+          </p>
+          <button
+            className="task-primary"
+            disabled={busy}
+            onClick={() => void control("retry")}
+          >
+            Retry
+          </button>
+        </div>
       )}
       {run.orientation && (
         <details>
@@ -247,7 +281,7 @@ export default function Detail({
               <p>{c.proposal.question}</p>
               <p>{c.proposal.contribution}</p>
               <details>
-                <summary>Research design and adversarial assessments</summary>
+                <summary>Research design and critical reviews</summary>
                 <p>
                   <strong>Method:</strong> {c.proposal.method}
                 </p>
@@ -262,7 +296,7 @@ export default function Detail({
                 <p>
                   <strong>Related work:</strong>{" "}
                   {c.proposal.relatedWork.join("; ") ||
-                    "Not established from inspected sources"}
+                    "The sources reviewed do not establish this."}
                 </p>
                 <p>
                   <strong>Risks:</strong> {c.proposal.risks.join("; ")}
@@ -337,8 +371,9 @@ export default function Detail({
                   <p>{rank?.reason || p.reason}</p>
                   {rank && <p className="task-muted">{rank.uncertainty}</p>}
                   <button
-                    onClick={() => {
+                    onClick={(e) => {
                       const request = ++paperRequest.current;
+                      paperOpener.current = e.currentTarget;
                       setError("");
                       void discoveryClient
                         .paper(run.id, p.candidateId)
@@ -359,15 +394,22 @@ export default function Detail({
         </section>
       )}
       {paper && (
-        <section className="discovery-paper" aria-label="Paper reader">
+        <section
+          ref={paperSection}
+          className="discovery-paper"
+          aria-label="Paper reader"
+        >
           <div className="task-section-heading">
-            <h3>
+            <h3 ref={paperHeading} tabIndex={-1}>
               {current?.manuscript.title || `Project ${paper.candidateId}`}
             </h3>
             <button
               onClick={() => {
                 paperRequest.current++;
                 setPaper(null);
+                const opener = paperOpener.current;
+                paperOpener.current = null;
+                if (opener?.isConnected) opener.focus();
               }}
               aria-label="Close paper reader"
             >
@@ -381,16 +423,19 @@ export default function Detail({
                 Version {current.version} · {current.hash} ·{" "}
                 {current.reviews.length
                   ? `${current.reviews.length} adversarial reviews`
-                  : "Not adversarially reviewed"}
+                  : "Not yet critically reviewed"}
               </p>
-              <ResearchReaderBoundary>
-                <Suspense fallback={<p>Opening paper…</p>}>
-                  <ReportViewer
-                    markdown={current.manuscript.markdown}
-                    initialContentsOpen={false}
-                  />
-                </Suspense>
-              </ResearchReaderBoundary>
+              <div className="discovery-reader">
+                <ResearchReaderBoundary>
+                  <Suspense fallback={<p>Opening paper…</p>}>
+                    <ReportViewer
+                      key={`${paper.candidateId}:${current.version}`}
+                      markdown={current.manuscript.markdown}
+                      initialContentsOpen={false}
+                    />
+                  </Suspense>
+                </ResearchReaderBoundary>
+              </div>
               <details>
                 <summary>Referee reports and response</summary>
                 {current.reviews.map((r, i) => (

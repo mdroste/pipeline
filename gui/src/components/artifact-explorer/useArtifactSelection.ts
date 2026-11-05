@@ -33,6 +33,9 @@ export default function useArtifactSelection({
   const [content, setContent] = useState<ArtifactContent | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [navigationOpen, setNavigationOpen] = useState(true);
+  // Why the last selection request opened nothing, such as a cited page with
+  // no saved image.
+  const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
   // A selection request is consumed once per key and manifest. Without this
   // every later navigation re-applied it, bouncing the user back to the
   // requested artifact.
@@ -50,6 +53,7 @@ export default function useArtifactSelection({
     setSelectionHistory([]);
     setContent(null);
     setLoadError(null);
+    setSelectionNotice(null);
     const request =
       preload?.runId === runId
         ? preload.manifest.catch(() => artifactClient.manifest(runId))
@@ -130,6 +134,7 @@ export default function useArtifactSelection({
   );
   const selectArtifact = useCallback(
     (next: string) => {
+      setSelectionNotice(null);
       if (!next || next === selected) return;
       if (selected) {
         setSelectionHistory((history) => [...history.slice(-99), selected]);
@@ -173,28 +178,37 @@ export default function useArtifactSelection({
           )?.rel_path ?? "";
       }
     }
-    if (
-      next &&
-      selectionRequest.relPath &&
-      (selectionRequest.line ||
-        selectionRequest.fragment ||
-        next.endsWith(".pdf"))
-    )
-      setFileTab({
-        path: next,
-        line: selectionRequest.line,
-        page: selectionRequest.page,
-        fragment: selectionRequest.fragment,
-      });
-    if (next) {
-      setNavigationOpen(true);
-      selectArtifact(next);
+    if (!next) {
+      setSelectionNotice(
+        selectionRequest.page
+          ? `Page ${selectionRequest.page} has no saved image.`
+          : `${selectionRequest.relPath ?? "This file"} is not saved with this review.`,
+      );
+      return;
     }
+    // Open file tabs cover the preview, so a target they do not show closes
+    // them.
+    setFileTab(
+      selectionRequest.relPath &&
+        (selectionRequest.line ||
+          selectionRequest.fragment ||
+          next.endsWith(".pdf"))
+        ? {
+            path: next,
+            line: selectionRequest.line,
+            page: selectionRequest.page,
+            fragment: selectionRequest.fragment,
+          }
+        : null,
+    );
+    setNavigationOpen(true);
+    selectArtifact(next);
   }, [manifest, selectArtifact, selectionRequest]);
   const goBack = useCallback(() => {
     const previous = selectionHistory[selectionHistory.length - 1];
     if (!previous) return;
     setSelectionHistory((history) => history.slice(0, -1));
+    setSelectionNotice(null);
     setSelected(previous);
   }, [selectionHistory]);
 
@@ -224,6 +238,7 @@ export default function useArtifactSelection({
     retryManifest: () => setManifestAttempt((attempt) => attempt + 1),
     selected,
     selectionHistory,
+    selectionNotice,
     content,
     loadError,
     navigationOpen,

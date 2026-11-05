@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { PROVIDERS } from "../../lib/providers";
+import { PROVIDER_LABELS, PROVIDERS } from "../../lib/providers";
 
 function AgentChips({
   agents,
@@ -48,7 +48,7 @@ function AgentChips({
                   : "bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500"
               }`}
             >
-              {provider.charAt(0).toUpperCase() + provider.slice(1)}
+              {PROVIDER_LABELS[provider]}
             </button>
           );
         })}

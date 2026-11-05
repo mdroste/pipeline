@@ -3,8 +3,44 @@
 // credentials, files, commands, or model calls are used or reachable.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { version as appVersion } from "../package.json";
+
 const now = "2026-09-29T17:20:00Z";
 const params = new URLSearchParams(window.location.search);
+
+const versionControlFixture = {
+  state: params.get("git") === "new" ? "notRepository" : "ready",
+  problem: null,
+  status: {
+    branch: "referee/round-2", head: "4f8fb37c0de", upstream: "origin/referee/round-2", ahead: 1, behind: 0,
+    fetchedAt: "2026-09-29T09:00:00Z", changed: 2, untracked: 2, conflicts: params.get("git") === "conflict" ? 1 : 0, changedPaths: [],
+    remote: { name: "origin", host: "github.com", owner: "mdroste", repo: "minwage", provider: "github", webUrl: "https://github.com/mdroste/minwage" },
+    commits: [], incoming: [],
+  },
+  files: [
+    ...(params.get("git") === "conflict"
+      ? [{ path: "output/table4.tex", oldPath: null, status: "conflicted", staged: false, unstaged: false, isDirectory: false, isSubmodule: false, nestedRepository: false, conflict: "changed on both sides" }]
+      : []),
+    { path: "paper/main.tex", oldPath: null, status: "modified", staged: false, unstaged: true, isDirectory: false, isSubmodule: false, nestedRepository: false, conflict: null },
+    { path: "analysis/event_study.do", oldPath: null, status: "modified", staged: true, unstaged: false, isDirectory: false, isSubmodule: false, nestedRepository: false, conflict: null },
+    { path: "analysis/spillovers.do", oldPath: "analysis/robustness.do", status: "renamed", staged: true, unstaged: false, isDirectory: false, isSubmodule: false, nestedRepository: false, conflict: null },
+    { path: "data/panel.dta", oldPath: null, status: "untracked", staged: false, unstaged: true, isDirectory: false, isSubmodule: false, nestedRepository: false, conflict: null },
+    { path: "notes", oldPath: null, status: "untracked", staged: false, unstaged: true, isDirectory: true, isSubmodule: false, nestedRepository: false, conflict: null },
+  ],
+  filesTruncated: false,
+  largeFiles: params.get("git") === "conflict" ? [] : [{ path: "data/panel.dta", size: 241 * 1024 * 1024 }],
+  branches: [
+    { name: "referee/round-2", current: true, upstream: "origin/referee/round-2", remoteRef: null },
+    { name: "main", current: false, upstream: "origin/main", remoteRef: null },
+    { name: "appendix", current: false, upstream: null, remoteRef: "origin/appendix" },
+  ],
+  operation: params.get("git") === "conflict" ? "merge" : null,
+  operationMessage: params.get("git") === "conflict" ? "Merge branch 'referee/round-2' of github.com:mdroste/minwage" : null,
+  outsideConflicts: 0,
+  identity: { name: "Michael Droste", email: "researcher@example.org" },
+  folderPrefix: "",
+  canUndoCommit: true,
+};
 
 const settings = {
   preferred_provider: "claude",
@@ -296,14 +332,14 @@ const depsReport = {
     depsAttention
       ? { name: "Claude CLI", found: true, version: "2.1.14", path: "/usr/local/bin/claude", required: true, hint: "Claude CLI is installed but not signed in. Run `claude auth login` to authenticate.", authenticated: false, cli_auth_status: "signed_out" }
       : { name: "Claude CLI", found: true, version: "2.1.14", path: "/usr/local/bin/claude", required: true, hint: "", authenticated: true, cli_auth_status: "signed_in" },
-    { name: "Workflow ChatGPT", found: true, version: "0.153.4", path: "/usr/local/bin/codex", required: true, hint: "", authenticated: true },
+    { name: "ChatGPT (reviews)", found: true, version: "0.153.4", path: "/usr/local/bin/codex", required: true, hint: "", authenticated: true },
     depsAttention
       ? { name: "Google API", found: true, version: "direct API", path: "", required: false, hint: "API key configured.", authenticated: true }
       : { name: "Google API", found: false, version: "direct API", path: "", required: false, hint: "Add a Google AI API key in Settings → Providers → Google.", authenticated: false },
     { name: "pdftoppm", found: true, version: "bundled", path: "/Applications/Pipeline.app/Contents/Resources/poppler/pdftoppm", required: true, hint: "" },
     { name: "pdftotext", found: true, version: "bundled", path: "/Applications/Pipeline.app/Contents/Resources/poppler/pdftotext", required: true, hint: "" },
     depsAttention
-      ? { name: "PaddleOCR-VL Full Parser", found: false, version: "", path: "", required: true, hint: "Install from Settings → PDF Extraction, or run `pipeline-cli engines install paddle` from a source build." }
+      ? { name: "PaddleOCR-VL Full Parser", found: false, version: "", path: "", required: true, hint: "Install from Settings → PDF extraction, or run `pipeline-cli engines install paddle` from a source build." }
       : { name: "PaddleOCR-VL Full Parser", found: true, version: "managed 2026.09.2", path: "/Users/mike/Library/Application Support/com.pipeline.app/engines/paddle/run.py", required: true, hint: "Managed PaddleOCR layout client, recognition runtime, and models are installed." },
     { name: "PDF extractor configuration", found: true, version: "paddleocr-vl-full", path: "", required: true, hint: "The selected PDF extraction method is supported." },
     { name: "Local LLM server", found: false, version: "", path: "", required: false, hint: "" },
@@ -328,16 +364,41 @@ const executionPlan = {
     { id: "wave-3", kind: "sequential", label: "Referee report", stepIds: ["referee_report"], stepLabels: ["Referee report"] },
     { id: "wave-4", kind: "sequential", label: "Escalation pass", stepIds: ["second_round"], stepLabels: ["Escalation pass"] },
   ],
+  providers: ["claude", "codex"],
+  orientationAgent: "claude",
   parallelAgents: ["claude", "codex"],
+  sequentialAgent: "claude",
   mergeAgent: "claude",
+  usageEstimate: { documentTokens: 21000, callsLow: 8, callsHigh: 12, inputTokensLow: 190000, inputTokensHigh: 420000, outputTokensLow: 32000, outputTokensHigh: 110000, apiCostLow: 0.86, apiCostHigh: 2.4, unpricedCalls: 0, subscriptionCallsHigh: 6, maxCostUsd: params.get("limits") === "1" ? 2 : null, maxCalls: null, maxMinutes: params.get("limits") === "1" ? 30 : null, exceedsCostLimit: params.get("limits") === "1", exceedsCallLimit: false },
+  hostChecks: params.get("checks") === "1" ? [{ stepId: "reference_check", stepLabel: "Check References", analyzer: "Reference check", reads: ["Extracted document"], networkServices: ["Crossref"], networkPayload: "Each reference's text as written in the bibliography (titles, authors, years, venues, DOIs). No other manuscript text." }] : [],
 };
+const analyzers = [
+  { id: "reference_audit", version: 1, label: "Reference check", description: "Finds the bibliography and, when network lookups are enabled, checks each reference against Crossref: whether it can be found, whether its details match, whether another version exists, and whether it was retracted or corrected.", reads: ["Extracted document", "Bibliography files (.bib) beside a LaTeX source"], networkServices: ["Crossref"], networkPayload: "Each reference's text as written in the bibliography (titles, authors, years, venues, DOIs). No other manuscript text." },
+  { id: "replication_static", version: 1, label: "Replication package check", description: "Checks a replication package folder against common data-editor requirements.", reads: ["Source folder"], networkServices: [], networkPayload: "" },
+];
+
+// `?update=available` shows the update banner and Settings offer; `&install=ready`
+// (or downloading, installing, failed) starts it at that step of an in-app update.
+const updateInfo = params.get("update") === "available" ? { current: appVersion, latest: "9.0.0", update_available: true, release_url: "https://github.com/mdroste/pipeline/releases/tag/v9.0.0", release_name: "Pipeline v9.0.0", published_at: now, download_url: "https://github.com/mdroste/pipeline/releases/download/v9.0.0/Pipeline-9.0.0-macOS-AppleSilicon.dmg", can_install: true, checked_at: now } : null;
+const installPhase = params.get("install") ?? "idle";
+const updateStatus = (automatic = true) => ({ automatic, automatic_available: true, last_checked_at: updateInfo?.checked_at ?? null, info: updateInfo, error: null });
 
 const commandData: Record<string, unknown> = {
   mark_smoke_ready: true,
+  set_sidebar_menu_collapsed: null,
   get_execution_plan: executionPlan,
-  get_settings: settings,
+  list_analyzers: analyzers,
+  get_settings: { settings, warnings: [] },
   save_settings: true,
-  check_for_update: { current: "1.1.0", latest: "1.1.0", update_available: false, release_url: "", release_name: "", published_at: null },
+  check_for_update: { current: appVersion, latest: appVersion, update_available: false, release_url: "", release_name: "", published_at: null, download_url: null, can_install: false, checked_at: null },
+  list_run_queue: { limit: 2, runs: [] },
+  update_status: () => updateStatus(),
+  update_set_automatic: (args: { enabled: boolean }) => updateStatus(args.enabled),
+  update_install_state: { phase: installPhase, version: updateInfo?.latest ?? null, downloaded: 21_000_000, total: 42_000_000, error: installPhase === "failed" ? "Could not download the update. Check your connection and try again." : null },
+  update_install_start: { phase: "downloading", version: updateInfo?.latest ?? null, downloaded: 0, total: null, error: null },
+  update_install_cancel: { phase: "idle", version: null, downloaded: 0, total: null, error: null },
+  update_install_restart: null,
+  update_running_automations: 0,
   get_batch_status: [],
   get_run_setup: { profileId: "auto_paper_review", profileConfigSnapshotId: "snap-1", inputMode: "document", variables: pipelineConfig.variables, inputSlots: [] },
   get_pipeline_config: pipelineConfig,
@@ -360,11 +421,15 @@ const commandData: Record<string, unknown> = {
   workbench_session_snapshot: snapshot,
   workbench_harness_catalog: harnessCatalog,
   workbench_effective_harness: effectiveHarness,
+  chatgpt_account_status: { account: { status: "chatgpt", email: "mike@example.edu", planType: "plus" }, epoch: 1, version: "0.153.4", loginInProgress: false },
   workbench_codex_account_state: { status: "chatgpt", email: "mike@example.edu", planType: "plus", unsupportedAccountType: null, requiresOpenaiAuth: false },
+  workbench_claude_rate_limits: { status: "allowed", resetsAt: Math.floor(Date.now() / 1000) + 3 * 3600, rateLimitType: "five_hour", usedPercent: 41, isUsingOverage: false, observedAt: Date.now() },
   workbench_codex_rate_limits: { source: "perBucket", buckets: [{ limitId: "codex", limitName: null, planType: "plus", primary: { usedPercent: 38, remainingPercent: 62, windowDurationMins: 300, resetsAt: Math.floor(Date.now() / 1000) + 2 * 3600 }, secondary: null }] },
   workbench_codex_pending_requests: [],
+  workbench_active_turn: null,
   workbench_codex_connect: {},
   workbench_codex_model_catalog: workspaceModelCatalog,
+  workbench_claude_model_catalog: { models: [{ id: "sonnet", model: "sonnet", displayName: "Sonnet", description: "Balanced reasoning and writing", isDefault: false, defaultReasoningEffort: "", supportedReasoningEfforts: efforts("low", "medium", "high") }, { id: "haiku", model: "haiku", displayName: "Haiku", description: "Fastest for quick answers", isDefault: false, defaultReasoningEffort: "", supportedReasoningEfforts: [] }] },
   workbench_project_home: projectHome,
   workbench_project_index: [
     {
@@ -453,6 +518,32 @@ const commandData: Record<string, unknown> = {
           ],
           relations: [], complete: true, limitations: [],
         },
+        workbench_version_control_state: versionControlFixture,
+        workbench_version_control_action: { state: versionControlFixture, notice: null, undoneMessage: null },
+        workbench_version_control_cancel: null,
+        workbench_version_control_diff: (args: { request: { path: string } }) =>
+          args.request.path.endsWith(".dta")
+            ? { kind: "binary", text: "" }
+            : args.request.path === "output/table4.tex"
+              ? { kind: "conflict", text: "\\begin{tabular}{lcc}\n<<<<<<< HEAD\nEmployment & -0.042 & (0.018) \\\\\n=======\nEmployment & -0.039 & (0.017) \\\\\n>>>>>>> origin/main\n\\end{tabular}" }
+              : { kind: "diff", text: "diff --git a/paper/main.tex b/paper/main.tex\n--- a/paper/main.tex\n+++ b/paper/main.tex\n@@ -41,6 +41,7 @@ \\section{Identification}\n We compare counties on either side of a state border.\n-The estimate is identified from within-pair variation.\n+The estimate is identified from within-pair variation over time.\n+Standard errors are clustered by commuting zone.\n Results appear in Table 4.\n" },
+        workbench_version_control_history: {
+          hasMore: false,
+          commits: [
+            { sha: "4f8fb37c0de4f8fb37c0de4f8fb37c0de4f8fb37c", author: "Michael Droste", date: "2026-09-29T14:10:00Z", subject: "Re-estimate Table 4 with commuting-zone clusters", isMerge: false, refs: ["main"], unpushed: true },
+            { sha: "46b4ae946b4ae946b4ae946b4ae946b4ae946b4ae", author: "Jane Doe", date: "2026-09-29T08:30:00Z", subject: "Rewrite the identification section", isMerge: false, refs: ["origin/main", "v1.0"], unpushed: false },
+            { sha: "481e17a481e17a481e17a481e17a481e17a481e17", author: "Michael Droste", date: "2026-09-20T12:00:00Z", subject: "Add event-study figure", isMerge: false, refs: [], unpushed: false },
+          ],
+        },
+        workbench_version_control_commit: {
+          sha: "4f8fb37c0de4f8fb37c0de4f8fb37c0de4f8fb37c", author: "Michael Droste", date: "2026-09-29T14:10:00Z",
+          message: "Re-estimate Table 4 with commuting-zone clusters\n\nMatches the specification in the replication package.",
+          files: [
+            { path: "paper/main.tex", oldPath: null, status: "modified" },
+            { path: "output/table4.tex", oldPath: null, status: "modified" },
+          ],
+          filesTruncated: false,
+        },
         workbench_repository_status: {
           branch: "main", head: "4f8fb37c0de", upstream: "origin/main", ahead: 1, behind: 2,
           fetchedAt: "2026-09-29T09:00:00Z", changed: 3, untracked: 1, conflicts: 0,
@@ -494,6 +585,7 @@ let callbackId = 1;
   unregisterCallback: () => {},
   convertFileSrc: (p: string) => p,
   invoke: async (command: string, _args?: unknown) => {
+    if (command === "plugin:app|version") return appVersion;
     if (command.startsWith("plugin:event|")) return callbackId++;
     if (command.startsWith("plugin:")) return null;
     if (command in commandData) {

@@ -1,3 +1,4 @@
+import { moduleName, moduleDescription } from "./harness-editor/harnessCopy";
 import { useState } from "react";
 import type { EffectiveHarness, HarnessCatalog } from "../lib/workbenchTypes";
 
@@ -23,9 +24,9 @@ export default function WorkspaceAssistantPresetForm({
       <summary>Create a customized profile</summary>
       <fieldset disabled={disabled}>
         <label>
-          Supplemental instructions
+          Additional instructions
           <textarea
-            aria-label="Supplemental instructions"
+            aria-label="Additional instructions"
             rows={6}
             value={instructions}
             onChange={(event) => setInstructions(event.target.value)}
@@ -50,11 +51,11 @@ export default function WorkspaceAssistantPresetForm({
                   }
                 />
                 <span>
-                  {module.name}
+                  {moduleName(module)}
                   <small>
                     {availability && !availability.available
                       ? `Unavailable: ${availability.reasons.join("; ")}`
-                      : module.description}
+                      : moduleDescription(module)}
                   </small>
                 </span>
               </label>
@@ -70,9 +71,8 @@ export default function WorkspaceAssistantPresetForm({
           />
         </label>
         <p>
-          Your copy will be used by this conversation. Other conversations keep
-          their profiles. New settings can start a fresh assistant context;
-          earlier messages stay in the transcript.
+          Use this copy for this conversation. Changing its settings may start a
+          new assistant session; earlier messages remain visible here.
         </p>
         <button
           type="button"

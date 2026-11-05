@@ -72,10 +72,12 @@ pub(super) fn save_text(
     if content.len() > 2 * 1024 * 1024 {
         return Err(WorkbenchError::invalid("Text exceeds 2 MiB"));
     }
+    research::jobs::ensure_paths_free(ws, &editor_root(store, ws, checkpoint_id)?, [path])?;
     let current = editor_file(store, ws, checkpoint_id, path)?;
     if current.hash != expected_hash {
         return Err(WorkbenchError::conflict(
-            "This file changed outside the editor. Reload or copy your draft before saving.",
+            "This file changed outside the editor. Compare with the current file to keep your \
+             draft, or reload to discard it.",
         ));
     }
     if current.content == content {
@@ -122,7 +124,9 @@ pub(super) fn stage_text(
     content: &str,
 ) -> WorkbenchResult<()> {
     files::relative(path)?;
-    let safe = files::SafeRoot::open(&session_task_root(store, ws, cp)?)?;
+    let task_root = session_task_root(store, ws, cp)?;
+    research::jobs::ensure_paths_free(ws, &task_root, [path])?;
+    let safe = files::SafeRoot::open(&task_root)?;
     let mode = safe.executable(path)?;
     let claim = id("editor")?;
     safe.replace(path, expected, mode, Some(content.as_bytes()), mode, &claim)?;
@@ -251,10 +255,14 @@ pub struct BuildDiagnostic {
     pub path: Option<String>,
     pub line: Option<u64>,
 }
+const MAX_BUILD_MESSAGES: usize = 500;
+/// Errors come first: a build stops at its fatal error, so in log order hundreds
+/// of warnings could push out the one message that says why.
 pub fn parse_diagnostics(text: &str) -> Vec<BuildDiagnostic> {
     let location =
         regex::Regex::new(r"^(.+?\.(?:tex|bib)):(\d+):\s*(.*)$").expect("diagnostic regex");
-    text.lines()
+    let (mut messages, warnings): (Vec<_>, Vec<_>) = text
+        .lines()
         .filter_map(|line| {
             if let Some(c) = location.captures(line) {
                 return Some(BuildDiagnostic {
@@ -285,8 +293,20 @@ pub fn parse_diagnostics(text: &str) -> Vec<BuildDiagnostic> {
                 None
             }
         })
-        .take(500)
-        .collect()
+        .partition(|message: &BuildDiagnostic| message.severity == "error");
+    messages.extend(warnings);
+    if messages.len() > MAX_BUILD_MESSAGES {
+        let kept = MAX_BUILD_MESSAGES - 1;
+        let left_out = messages.len() - kept;
+        messages.truncate(kept);
+        messages.push(BuildDiagnostic {
+            severity: "warning".into(),
+            message: format!("{left_out} more build messages are not shown."),
+            path: None,
+            line: None,
+        });
+    }
+    messages
 }
 pub(super) fn inspect_build(store: &Store, ws: &str, execution_id: &str) -> WorkbenchResult<Value> {
     let e = execution(store, ws, execution_id)?;
@@ -552,10 +572,10 @@ pub fn editor_external_path(
     path: &str,
 ) -> WorkbenchResult<String> {
     editor_file(store, ws, checkpoint, path)?;
-    Ok(editor_root(store, ws, checkpoint)?
-        .join(path)
-        .to_string_lossy()
-        .into_owned())
+    let root = editor_root(store, ws, checkpoint)?;
+    let program = files::SafeRoot::open(&root)?.marked_as_program(path)?;
+    crate::file_viewer::check_openable(path, program).map_err(WorkbenchError::invalid)?;
+    Ok(root.join(path).to_string_lossy().into_owned())
 }
 
 pub(super) fn inspect_pages(

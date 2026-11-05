@@ -1,143 +1,160 @@
 # Privacy and data flow
 
-Pipeline is a desktop application. The project does not operate a Pipeline
-cloud service, require a Pipeline account, collect analytics, or include
-application telemetry. That does **not** mean every operation is local: the
-Workspace account and permissions, or the provider, extraction engine, and
-tools selected for a Workflow run, determine which data leaves the computer.
+Pipeline stores your research on your computer and sends material to the AI
+providers you choose. There's no Pipeline account, cloud storage, analytics,
+or telemetry. Provider accounts and local model servers have their own data
+policies.
 
-## What stays on the computer
+## What Pipeline stores
 
-Pipeline extracts documents locally before a run and stores application data
-under `~/.pipeline/`. Depending on the orchestration mode and enabled features,
-this can include:
+Your research is stored in `~/.pipeline/` unless you choose another
+[research data folder](docs/settings.md#research-data-folder).
 
-- settings and encrypted API-key values in `settings.json`;
-- the local encryption key in `keyfile`;
-- profiles, prompts, and credential-bound API model-catalog caches
-  (model-selection policy is bundled with the signed application);
-- full input copies or extracted representations, page images, figures,
-  intermediate model responses, final reports, manifests, annotations, and
-  logs under `runs/`;
-- Workspace's private SQLite store, immutable paper/source/artifact blobs,
-  conversation transcripts, drafts, research notes, claims/evidence, execution
-  receipts, recipes, and isolated Codex state under `workbench/`; and
-- optional managed extraction engines, model weights, and package caches.
+| Data | Examples |
+| --- | --- |
+| Reviews | Copies or extracted text of your documents, page images, figures, model responses, reports, annotations, logs, and usage |
+| Projects and conversations | Messages, drafts, imported papers, sources, notes, claims, evidence, and command results |
+| Automations | Definitions, schedules, progress, results, and history |
+| Device settings | Preferences, API keys, provider sign-ins, installed parsers, model files, and caches |
 
-Workspace's managed ChatGPT sign-in is held in its isolated Codex home under
-`~/.pipeline/workbench/`; it is separate from Workflow API keys and CLI state.
-Workspace `.pwrx` archives include the validated research database, referenced
-immutable blobs, and readable/structured transcripts. They exclude the
-isolated Codex home and credentials. An exported archive or transcript is an
-ordinary sensitive file at the path the user selected and is no longer
-protected by Pipeline.
+Reports, documents, conversations, logs, and exports are **not encrypted by
+Pipeline**. Saved API keys are encrypted with AES-GCM, and the encryption key
+is stored separately under the same computer account. Anyone who can read
+both files can recover your keys, so protect that account and its files.
 
-API-key values are encrypted with AES-GCM before settings are written. The
-encryption key is stored separately under the same user account with restrictive
-filesystem permissions where the operating system supports them. This protects
-against casual disclosure of `settings.json`; it is not a substitute for
-protecting the operating-system account and the whole `~/.pipeline/` directory.
+Device settings, sign-ins, installed tools, and caches always stay in
+`~/.pipeline/` on this computer, even if you choose another research data
+folder.
 
-Deleting a Workflow run from History removes that run and its artifacts.
-Archiving a Workspace or conversation is reversible and does not erase its
-records. Uninstalling the application does not necessarily remove
-`~/.pipeline/`. To remove all Pipeline data, first preserve anything needed and
-then delete that directory manually.
+## What reaches an AI provider
 
-## Data sent to an LLM provider
+### Conversations
 
-### Workspace
+A conversation uses the connection you choose: ChatGPT, Claude Code, an
+OpenAI, Anthropic, or Gemini API key, or a local/custom model server. Depending
+on the task and the tools you allow, it can send:
 
-Workspace currently communicates with OpenAI through a Workspace-owned Codex
-App Server process and managed ChatGPT sign-in. Depending on the active harness,
-permissions, and conversation, it can send user messages, effective developer
-instructions, selected notes and evidence, paper/source excerpts or page
-images, tool requests/results, approval or question responses, and operational
-metadata such as model and token usage. Imported research material remains
-local until it is selected as context or returned by an allowed tool.
+- your messages and recent conversation history;
+- assistant instructions and the project notes or evidence you select;
+- document excerpts, page images, and file contents read by an allowed tool;
+- tool requests and results, including output from local commands; and
+- your answers to approval requests and questions.
 
-Configured research execution runs locally, but its receipts, logs, adopted
-artifacts, or structured results can later be returned to the model when an
-enabled tool or context module requests them. Enabling command network access
-can also allow an approved local command to contact third-party services. The
-permission mode and pending approval must be reviewed before authorizing it.
+A paper you import into a project goes to a model only when you select it as
+context or an allowed tool reads it. Output from a local command can reach a
+provider later in the same way, even if the command itself ran offline.
+Switching providers sends recent history with your next message to the newly
+selected provider. Automatic API conversation titles use an additional call
+to the same model, with excerpts from the first exchange.
 
-Workspace does not inherit Workflow provider settings or fall back to another
-provider. Native per-thread web search is currently disabled because the
-required protocol control has not been qualified.
+ChatGPT conversations and ChatGPT reviews share one sign-in, stored in
+`~/.pipeline/providers/chatgpt/`. Claude Code keeps its own sign-in. Pipeline
+checks that you're signed in but never reads or copies your Claude
+credentials.
 
-### Workflows
+### Reviews and extraction
 
-Before a run starts, review the selected provider, transport, profile, steps,
-tools, and input allowlists. A remote-provider run can send the following to
-the selected provider:
+Each review step sends its prompt, the document material assigned to it,
+earlier responses it depends on, and tool results to that step's provider.
+The run preview shows the provider and inputs for each step. A custom
+workflow can use several providers in one run.
 
-- system and step prompts;
-- the document text, selected source, page images, figures, or named inputs
-  allowed for that step;
-- outputs from prior steps explicitly referenced by the step;
-- tool requests and results; and
-- operational metadata such as model name and token usage.
+API connections send requests to the OpenAI, Anthropic, Google, or custom
+endpoint you set up. Subscription connections go through the Codex or Claude
+Code tool on your computer. The advanced legacy Codex connection uses your
+terminal's Codex account instead of Pipeline's sign-in.
 
-In API mode, Pipeline sends this material directly to the configured Anthropic,
-OpenAI, Google, or OpenAI-compatible endpoint. In CLI mode, Pipeline launches
-the installed Claude or Codex CLI; that CLI and its account settings
-control transmission, retention, training, and tool behavior. Google requests
-always use the Gemini API directly; Pipeline does not launch the Antigravity
-CLI. Pipeline cannot
-override a provider's policies. A “local” OpenAI-compatible endpoint is local
-only if the configured URL actually points to a service controlled by the user.
+Poppler and the optional PaddleOCR-VL Full Parser extract PDFs on your
+computer. **Model extraction sends the document to the model connection you
+selected.** A review after local extraction still sends material to your
+review provider.
 
-Do not process confidential, embargoed, personally identifiable, export-
-controlled, or otherwise restricted material until the applicable provider,
-account, institutional policy, and data-processing terms have been reviewed.
+A custom model server receives data at the URL you entered. It runs on your
+computer only if that URL points to your computer.
 
-## Tools and other network requests
+### Automations
 
-When enabled for a step, web-search or other provider tools can transmit search
-queries and receive content from third-party sites. Queries can contain terms
-derived from the document or prompt.
+Automations use the same connections as conversations, reviews, and local
+commands. Starting one lets its steps use the material and tools shown in its
+preview. Scheduled automations can send requests while Pipeline runs in the
+background.
 
-Pipeline can also make these non-document network requests:
+## Other network activity
 
-- check GitHub Releases for a newer Pipeline version;
-- sign in to managed ChatGPT, fetch visible models and rate-limit state, and
-  exchange Workspace messages and tool traffic through the isolated Codex App
-  Server;
-- query the selected provider's CLI or API for its available models and cache
-  that discovery locally; signed, bundled policy metadata supplies role,
-  pricing, and deprecation labels without a remote policy fetch;
-- download the optional managed PaddleOCR-VL runtime and model weights after
-  the user chooses Install;
-- contact a project folder's Git remote when the user chooses Check GitHub (or
-  Check *host*) in that project. This runs `git fetch` with the user's own Git
-  credentials and transfers repository data to the local clone; Pipeline sends
-  no project content and never commits, merges, or pushes. Repository status
-  is otherwise read from the local clone without a network request.
+Pipeline also connects to the internet to:
 
-The basic bundled Poppler extractor does not require a network request.
+- check GitHub for a newer version each time it starts and about once a day
+  while it stays open, which you can turn off
+  in Settings. GitHub receives your network address and app version, and
+  nothing about your research;
+- sign in to providers and fetch available models and account limits;
+- send queries to Bing when **Web search** is enabled in conversations or
+  in review steps using OpenAI API or local/custom servers. Search results
+  and retrieved page text go back to the selected model;
+- run searches enabled on other review connections through the provider's
+  search tools. Subscription conversations may also use native search;
+- read public pages or download files through enabled web tools, and contact
+  sites you open through browser interaction;
+- look up papers on Crossref, when you use literature search or turn on
+  lookups in a reference check. Lookups send the reference text as written in
+  your bibliography. If you add a Crossref contact email in the **Reading
+  inbox**, it's sent with each lookup, as Crossref asks;
+- download data from FRED, DBnomics, or the World Bank when you ask for it;
+- download the optional PDF parser and its model files when you choose
+  Install;
+- download Chromium and its browser tools when you turn on **Browser
+  interaction** or a browser tool is first used;
+- download the sandbox package when an API or local conversation first runs a
+  command, or when you open **Access & inheritance** for one;
+- fetch a workflow from a URL you import;
+- fetch from a project's Git remote when you choose **Check GitHub**, **Check
+  for updates**, or **Pull**; and
+- send commits to that remote when you choose **Push** or **Publish branch**.
 
-## Retention and deletion outside Pipeline
+Search queries can contain terms from your research, including when the model
+runs locally. Conversation browser profiles retain website sign-ins on this
+computer after the browser closes. Enter passwords directly in that window.
 
-Deleting local artifacts does not delete data already sent to an LLM provider,
-CLI service, custom endpoint, search provider, or downloaded-content host.
-Their retention and deletion mechanisms are governed by their own account and
-service terms. Consult those terms before processing sensitive material.
+**Version control** uses your computer's Git sign-in, and it commits, merges,
+and pushes only when you choose those actions. Assistants, reviews, and
+automations don't use it. **Commit**, **Push**, and the merge that finishes
+**Pull** run the repository's own hooks, as they would in a terminal. Local
+commands can contact other services if you allow network access for them.
 
-## Security reports
+## Exports and sharing
 
-Do not put a paper, API key, access token, or other sensitive data in a public
-issue. Follow [SECURITY.md](SECURITY.md) for private vulnerability reporting.
+Exports are ordinary files saved where you choose. Anyone who gets a copy can
+read it. Backups, project packages, and replication capsules never include
+credentials or permission to run commands. Report and transcript exports
+contain what you select, which may include unpublished research.
 
-## Workflow Codex App Server preview
+See [Back up and share](docs/projects.md#back-up-and-share) for what each
+format includes. Check the export preview before you share a file.
 
-When selected, the Workflow App Server backend stores its independent ChatGPT
-credentials and native history in `~/.pipeline/providers/workflows/codex/`.
-Pipeline asks Codex to manage sign-in; it does not copy Workspace or legacy CLI
-credentials. Per-call receipts in the adjacent `attempts/` directory retain
-expanded prompts, reviewer instructions, artifact paths, model settings,
-responses, and usage for recovery. These files may contain unpublished research.
-They remain local and are retained until manually archived; they are not
-included automatically in ordinary report exports. Unix permissions are
-owner-only. See [the implementation record](docs/workflow-codex.md) for storage
-limits and platform qualification status.
+## Retention and deletion
+
+Deleting a review moves it and its files to Trash, where you can restore it.
+Emptying Trash deletes it permanently. Archiving a project or conversation
+hides it without deleting anything. Review cleanup and project storage cleanup
+both show what they'll move to Trash before you confirm.
+
+Uninstalling Pipeline leaves your data in place. To remove all of it, quit
+Pipeline, keep copies of anything you need, and delete `~/.pipeline/` and any
+other research data folder you used. Exports and your own files stay where you
+saved them. Provider tools may keep their own account and session files.
+
+Pipeline keeps a record of each ChatGPT review call in
+`~/.pipeline/providers/workflows/attempts/`, so it can recover results after
+an interruption. These records can contain prompts, responses, file paths,
+and usage. Report exports leave them out. Deleting a run or emptying Trash
+doesn't remove them, so delete this folder when you remove research.
+
+Deleting local files doesn't delete material already sent to a provider,
+search service, or custom server. Use that service's account controls. Before
+you process restricted material, check your institution's rules and your
+provider's terms.
+
+## Reporting a problem
+
+Remove confidential research and credentials from public bug reports. Report
+security problems privately, as described in [Security](.github/SECURITY.md).

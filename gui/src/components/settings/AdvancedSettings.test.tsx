@@ -1,0 +1,215 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import AdvancedSettings from "./AdvancedSettings";
+import { version as appVersion } from "../../../package.json";
+import { makeSettings } from "../../test/settingsFixtures";
+import type { UpdateInfo, UpdateStatus } from "../../lib/types";
+
+const invoke = vi.hoisted(() => vi.fn());
+const openUrl = vi.hoisted(() => vi.fn());
+const listen = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/event", () => ({ listen }));
+vi.mock("@tauri-apps/api/app", () => ({
+  getVersion: () => Promise.resolve(appVersion),
+}));
+vi.mock("@tauri-apps/plugin-shell", () => ({ open: openUrl }));
+vi.mock("../../lib/projectClient", () => ({
+  projectClient: { capabilities: () => Promise.reject(new Error("n/a")) },
+}));
+
+const available: UpdateInfo = {
+  current: appVersion,
+  latest: "9.0.0",
+  update_available: true,
+  can_install: false,
+  release_url: "https://github.com/mdroste/pipeline/releases/tag/v9.0.0",
+  release_name: "Pipeline v9.0.0",
+  published_at: null,
+  download_url:
+    "https://github.com/mdroste/pipeline/releases/download/v9.0.0/Pipeline-9.0.0-Windows.exe",
+  checked_at: "2026-10-28T12:00:00Z",
+};
+
+function status(overrides: Partial<UpdateStatus> = {}): UpdateStatus {
+  return {
+    automatic: true,
+    automatic_available: true,
+    last_checked_at: null,
+    info: null,
+    error: null,
+    ...overrides,
+  };
+}
+
+function respond(
+  handlers: Record<string, (args?: Record<string, unknown>) => unknown>,
+) {
+  invoke.mockImplementation(
+    (command: string, args?: Record<string, unknown>) =>
+      command in handlers
+        ? Promise.resolve().then(() => handlers[command](args))
+        : Promise.reject(new Error(`unexpected ${command}`)),
+  );
+}
+
+let emitStatus: (payload: UpdateStatus) => void = () => {};
+
+function renderSettings() {
+  return render(
+    <AdvancedSettings settings={makeSettings()} setSettings={vi.fn()} />,
+  );
+}
+
+describe("AdvancedSettings updates", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    openUrl.mockReset();
+    openUrl.mockResolvedValue(undefined);
+    listen.mockReset();
+    listen.mockImplementation(
+      (_event: string, handler: (event: { payload: UpdateStatus }) => void) => {
+        emitStatus = (payload) => handler({ payload });
+        return Promise.resolve(vi.fn());
+      },
+    );
+  });
+
+  it("saves the automatic-check preference", async () => {
+    const user = userEvent.setup();
+    respond({
+      update_status: () => status(),
+      update_set_automatic: (args) =>
+        status({ automatic: args?.enabled as boolean }),
+    });
+    renderSettings();
+
+    const toggle = await screen.findByRole("switch", {
+      name: "Check for updates automatically",
+    });
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    await user.click(toggle);
+
+    expect(invoke).toHaveBeenCalledWith("update_set_automatic", {
+      enabled: false,
+    });
+    await waitFor(() =>
+      expect(toggle).toHaveAttribute("aria-checked", "false"),
+    );
+  });
+
+  it("explains that unofficial builds check only on request", async () => {
+    respond({ update_status: () => status({ automatic_available: false }) });
+    renderSettings();
+    expect(
+      await screen.findByText(/not installed from an official release/),
+    ).toBeInTheDocument();
+  });
+
+  it("reports an unreadable preference", async () => {
+    respond({
+      update_status: () => status({ automatic: false, error: "damaged" }),
+    });
+    renderSettings();
+    expect(
+      await screen.findByText(/Could not read your update setting/),
+    ).toBeInTheDocument();
+  });
+
+  it("offers the saved update without a new check", async () => {
+    const user = userEvent.setup();
+    respond({
+      update_status: () =>
+        status({ info: available, last_checked_at: available.checked_at }),
+    });
+    renderSettings();
+
+    expect(
+      await screen.findByText("Version 9.0.0 is available."),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Last checked/)).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Download version 9.0.0" }),
+    );
+    expect(openUrl).toHaveBeenCalledWith(available.download_url);
+    await user.click(
+      screen.getByRole("button", { name: "View release notes" }),
+    );
+    expect(openUrl).toHaveBeenCalledWith(available.release_url);
+    expect(invoke).not.toHaveBeenCalledWith("check_for_update");
+  });
+
+  it("installs in the app when this copy can", async () => {
+    const user = userEvent.setup();
+    respond({
+      update_status: () =>
+        status({
+          info: { ...available, can_install: true },
+          last_checked_at: available.checked_at,
+        }),
+      update_install_start: () => null,
+    });
+    renderSettings();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Install version 9.0.0" }),
+    );
+    expect(invoke).toHaveBeenCalledWith("update_install_start");
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it("follows a change made in the update banner", async () => {
+    respond({ update_status: () => status() });
+    renderSettings();
+    const toggle = await screen.findByRole("switch", {
+      name: "Check for updates automatically",
+    });
+    expect(toggle).toBeChecked();
+    act(() => emitStatus(status({ automatic: false })));
+    expect(toggle).not.toBeChecked();
+  });
+
+  it("describes checks at startup", async () => {
+    respond({ update_status: () => status() });
+    renderSettings();
+    expect(
+      await screen.findByText(/when it starts and once a day/),
+    ).toBeInTheDocument();
+  });
+
+  it("reports an up-to-date manual check", async () => {
+    const user = userEvent.setup();
+    respond({
+      update_status: () => status(),
+      check_for_update: () => ({
+        ...available,
+        latest: appVersion,
+        update_available: false,
+      }),
+    });
+    renderSettings();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Check for updates" }),
+    );
+    expect(await screen.findByText("You’re up to date.")).toBeInTheDocument();
+  });
+
+  it("shows the backend's explanation when a check fails", async () => {
+    const user = userEvent.setup();
+    const message =
+      "GitHub is limiting update checks from your network. Try again in about 40 minutes.";
+    invoke.mockImplementation((command: string) =>
+      command === "update_status"
+        ? Promise.resolve(status())
+        : Promise.reject(message),
+    );
+    renderSettings();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Check for updates" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+  });
+});

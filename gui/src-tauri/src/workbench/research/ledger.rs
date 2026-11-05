@@ -2,6 +2,23 @@
 
 use super::*;
 
+const IMPORTED_MARK: &str = "imported:";
+const MAX_LEDGER_FLAGS: usize = 10_000;
+
+/// The origin or assessor of a record whose status stayed with its sender.
+pub(crate) fn imported_mark(status: &str, original: &str) -> String {
+    format!("{IMPORTED_MARK}{status}:{original}")
+}
+
+/// The sender's status and the original value, from an imported mark.
+pub(crate) fn split_imported_mark(marked: &str) -> Option<(&str, &str)> {
+    marked.strip_prefix(IMPORTED_MARK)?.split_once(':')
+}
+
+pub(super) fn imported_status(marked: &str) -> Option<String> {
+    split_imported_mark(marked).map(|(status, _)| status.to_string())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaimRecord {
@@ -18,6 +35,9 @@ pub struct ClaimRecord {
     pub dependency_hash: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// What a package's sender recorded; not a decision made in this store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -56,6 +76,9 @@ pub struct EvidenceRecord {
     pub stale_reason: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// What a package's sender recorded; not a decision made in this store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub imported_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -89,7 +112,9 @@ pub struct ResearchLedger {
 
 fn claim_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClaimRecord> {
     let locator: Option<String> = row.get(9)?;
+    let origin: String = row.get(8)?;
     Ok(ClaimRecord {
+        imported_status: imported_status(&origin),
         id: row.get(0)?,
         workspace_id: row.get(1)?,
         paper_id: row.get(2)?,
@@ -98,7 +123,7 @@ fn claim_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClaimRecord> {
         version: row.get(5)?,
         claim: row.get(6)?,
         kind: row.get(7)?,
-        origin: row.get(8)?,
+        origin,
         paper_locator: locator.and_then(|value| serde_json::from_str(&value).ok()),
         dependency_hash: row.get(10)?,
         created_at: row.get(11)?,
@@ -108,7 +133,9 @@ fn claim_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ClaimRecord> {
 
 fn evidence_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EvidenceRecord> {
     let locator: Option<String> = row.get(5)?;
+    let assessor: String = row.get(8)?;
     Ok(EvidenceRecord {
+        imported_status: imported_status(&assessor),
         id: row.get(0)?,
         workspace_id: row.get(1)?,
         claim_version_id: row.get(2)?,
@@ -117,7 +144,7 @@ fn evidence_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EvidenceRecord
         locator: locator.and_then(|value| serde_json::from_str(&value).ok()),
         relation: row.get(6)?,
         assessment: row.get(7)?,
-        assessor: row.get(8)?,
+        assessor,
         dependency_hash: row.get(9)?,
         freshness: row.get(10)?,
         stale_reason: row.get(11)?,
@@ -371,6 +398,26 @@ pub(crate) fn evidence(
         .map_err(|error| WorkbenchError::storage("Failed to read evidence link", error))
 }
 
+/// Ids of this project's claims that meet `condition`, newest first. The condition
+/// is one of the fixed strings in `research_ledger`, never caller text.
+fn claim_ids(
+    connection: &Connection,
+    workspace_id: &str,
+    condition: &str,
+) -> WorkbenchResult<Vec<String>> {
+    let mut statement = connection
+        .prepare(&format!(
+            "SELECT c.id FROM claims c WHERE c.workspace_id = ?1 AND c.current_version_id IS NOT NULL AND {condition} ORDER BY c.updated_at DESC LIMIT {MAX_LEDGER_FLAGS}"
+        ))
+        .map_err(|error| WorkbenchError::storage("Failed to prepare claim checks", error))?;
+    let ids = statement
+        .query_map([workspace_id], |row| row.get(0))
+        .map_err(|error| WorkbenchError::storage("Failed to check claims", error))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| WorkbenchError::storage("Failed to decode claim checks", error))?;
+    Ok(ids)
+}
+
 pub fn research_ledger(store: &Store, workspace_id: &str) -> WorkbenchResult<ResearchLedger> {
     validate_id("workspace id", workspace_id)?;
     let connection = open_connection(store)?;
@@ -386,27 +433,10 @@ pub fn research_ledger(store: &Store, workspace_id: &str) -> WorkbenchResult<Res
         .map_err(|error| WorkbenchError::storage("Failed to list evidence", error))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| WorkbenchError::storage("Failed to decode evidence", error))?;
-    let unsupported_accepted_claims = claims
-        .iter()
-        .filter(|claim| {
-            claim.workflow_state == "accepted"
-                && !evidence.iter().any(|item| {
-                    item.claim_version_id == claim.version_id
-                        && item.relation == "supports"
-                        && item.freshness == "current"
-                })
-        })
-        .map(|claim| claim.id.clone())
-        .collect();
-    let stale_claims = claims
-        .iter()
-        .filter(|claim| {
-            evidence
-                .iter()
-                .any(|item| item.claim_version_id == claim.version_id && item.freshness == "stale")
-        })
-        .map(|claim| claim.id.clone())
-        .collect();
+    // Over every claim and link: the lists above stop at their limits, and a
+    // claim's only support can be older than the newest links.
+    let unsupported_accepted_claims = claim_ids(&connection, workspace_id, "c.workflow_state = 'accepted' AND NOT EXISTS (SELECT 1 FROM evidence_links e WHERE e.workspace_id = c.workspace_id AND e.claim_version_id = c.current_version_id AND e.relation = 'supports' AND e.freshness = 'current' AND e.assessment IN ('human_confirmed', 'check_passed'))")?;
+    let stale_claims = claim_ids(&connection, workspace_id, "c.workflow_state <> 'retired' AND EXISTS (SELECT 1 FROM evidence_links e WHERE e.workspace_id = c.workspace_id AND e.claim_version_id = c.current_version_id AND e.freshness = 'stale')")?;
     Ok(ResearchLedger {
         claims,
         evidence,

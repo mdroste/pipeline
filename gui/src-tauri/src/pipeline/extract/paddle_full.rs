@@ -1,14 +1,62 @@
 //! Managed full-parser invocation and lifetime.
 use super::*;
 
+/// Built-in recognition runs on the processor, so the time budget has to grow
+/// with the document. A page took about a minute on a fast laptop. Graphics
+/// card recognition gets the same floor: integrated graphics can be no faster
+/// than the processor, and this limit only exists to end a stuck run.
+const SLOW_RECOGNITION_SECS_PER_PAGE: u64 = 180;
+
+fn extraction_budget_secs(
+    recognition: &crate::engines::PaddleRecognition,
+    pages: usize,
+    configured_secs: u64,
+) -> u64 {
+    match recognition {
+        crate::engines::PaddleRecognition::Llama(engine) if !engine.gpu => configured_secs,
+        crate::engines::PaddleRecognition::Llama(_)
+        | crate::engines::PaddleRecognition::BuiltIn { .. } => {
+            configured_secs.max(pages as u64 * SLOW_RECOGNITION_SECS_PER_PAGE)
+        }
+    }
+}
+
+const GRAPHICS_CARD_HINT: &str = "Your graphics card may not have enough free memory. Close other programs, or turn off Use graphics card in Settings → PDF extraction.";
+
+fn recognition_start_error(engine: &crate::engines::PaddleEnginePaths, error: String) -> String {
+    if engine.gpu && error != "Pipeline cancelled" {
+        format!("{error}. {GRAPHICS_CARD_HINT}")
+    } else {
+        error
+    }
+}
+
+/// A parser failure while a recognition server was reading pages. The parser
+/// sees only a lost connection, so the server's own account goes with it.
+fn recognition_failure(
+    recognition: &crate::engines::PaddleRecognition,
+    reason: Option<String>,
+    error: String,
+) -> String {
+    let crate::engines::PaddleRecognition::Llama(engine) = recognition else {
+        return error;
+    };
+    if error == "Pipeline cancelled" {
+        return error;
+    }
+    let error = recognition_start_error(engine, error);
+    match reason {
+        Some(reason) => format!("{error}\nThe recognition server reported:\n{reason}"),
+        None => error,
+    }
+}
+
 pub(crate) async fn extract_paddle_full(
     app: &crate::emit::EventBus,
     path: &Path,
     hash: &str,
     settings: &crate::settings::Settings,
 ) -> Result<ExtractionResult, String> {
-    let started = std::time::Instant::now();
-    let total_timeout = std::time::Duration::from_secs(settings.pdf_extraction_timeout_secs);
     // The first resolution each session content-hashes the multi-gigabyte
     // managed runtime: announce it, keep it off the async workers, and let
     // cancellation return immediately (the detached hash finishes in the
@@ -17,14 +65,22 @@ pub(crate) async fn extract_paddle_full(
         app,
         "Verifying the PaddleOCR-VL runtime (the first use each session may take a while)…",
     );
+    let use_gpu = settings.paddle_use_gpu;
     let (paths, engine_lease) = crate::commands::await_or_cancel(
-        crate::engines::acquire_waiting_on_detached_gate(
-            crate::engines::paddle_full_parser_lease,
-            std::time::Duration::from_secs(120),
+        crate::engines::acquire_waiting_on_engine_gate(
+            move || crate::engines::paddle_full_parser_lease(use_gpu),
+            || {
+                extraction_log(
+                    app,
+                    "Waiting for the PDF parser to finish another document…",
+                )
+            },
         ),
         None,
     )
     .await??;
+    // A wait for the parser spends none of this document's extraction budget.
+    let started = std::time::Instant::now();
     // Stage the PDF first: the pdftotext baseline and the parser sidecar read
     // the private copy, never the original path — a child reading the
     // original can be silently denied on macOS (TCC).
@@ -58,6 +114,12 @@ pub(crate) async fn extract_paddle_full(
             "PaddleOCR-VL Full Parser is limited to {MAX_RENDERED_PDF_PAGES} pages per PDF"
         ));
     }
+    let budget_secs = extraction_budget_secs(
+        &paths.recognition,
+        baseline.len(),
+        settings.pdf_extraction_timeout_secs,
+    );
+    let total_timeout = std::time::Duration::from_secs(budget_secs);
     let baseline = Some(baseline);
     let root = paddle_full_cache_root(hash)
         .ok_or_else(|| "Could not create PaddleOCR-VL full-parser cache path".to_string())?;
@@ -100,13 +162,41 @@ pub(crate) async fn extract_paddle_full(
             settings.paddle_full_relevel_titles,
         ),
     );
-    extraction_log(
-        app,
-        "PaddleOCR-VL Full Parser: loading the managed Q8 recognition server",
-    );
-    let server = start_paddle_server(&paths.paddle, settings).await?;
+    // The server, when there is one, stays up until extraction returns.
+    let (server, recognition) = match &paths.recognition {
+        crate::engines::PaddleRecognition::Llama(engine) => {
+            extraction_log(
+                app,
+                if engine.gpu {
+                    "PaddleOCR-VL Full Parser: loading the recognition model on your graphics card"
+                } else {
+                    "PaddleOCR-VL Full Parser: loading the managed Q8 recognition server"
+                },
+            );
+            let server = start_paddle_server(engine, settings)
+                .await
+                .map_err(|error| recognition_start_error(engine, error))?;
+            let recognition = SidecarRecognition::Server {
+                base_url: format!("{}/v1", server.base_url),
+                api_key: server.api_key.clone(),
+            };
+            (Some(server), recognition)
+        }
+        crate::engines::PaddleRecognition::BuiltIn { model_dir } => {
+            extraction_log(
+                app,
+                "PaddleOCR-VL Full Parser: reading pages on the processor, which can take a minute or more per page",
+            );
+            (
+                None,
+                SidecarRecognition::BuiltIn {
+                    model_dir: model_dir.clone(),
+                },
+            )
+        }
+    };
     let staging = tempfile::Builder::new()
-        .prefix(".full-parser-staging-")
+        .prefix(crate::engines::PADDLE_FULL_STAGING_PREFIX)
         .tempdir_in(&root)
         .map_err(|error| format!("Failed to stage full-parser output: {error}"))?;
     let staged_structure = staging.path().join(PADDLE_FULL_STRUCTURE_FILE);
@@ -116,19 +206,25 @@ pub(crate) async fn extract_paddle_full(
     let input = staged_pdf.clone();
     let output = staged_structure.clone();
     let assets = staged_assets.clone();
-    let base_url = format!("{}/v1", server.base_url);
-    let api_key = server.api_key.clone();
     let baselines = baseline.clone().unwrap_or_default();
     let timeout = total_timeout
         .checked_sub(started.elapsed())
         .filter(|remaining| !remaining.is_zero())
         .ok_or_else(|| {
             format!(
-                "PaddleOCR-VL Full Parser exceeded the {}s extraction budget while loading",
-                settings.pdf_extraction_timeout_secs
+                "PaddleOCR-VL Full Parser exceeded the {budget_secs}s extraction budget while loading"
             )
         })?;
     let sidecar_lease = engine_lease.clone();
+    extraction_log(
+        app,
+        format!(
+            "PaddleOCR-VL Full Parser: starting the parser for {} page(s)",
+            baselines.len()
+        ),
+    );
+    let progress_app = app.clone();
+    let server_reason = || server.as_ref().and_then(|server| server.log.reason());
     let sidecar = crate::run_scope::spawn_blocking(move || {
         let _lease = sidecar_lease;
         run_paddle_full_sidecar(
@@ -137,14 +233,20 @@ pub(crate) async fn extract_paddle_full(
             &input,
             &output,
             &assets,
-            &base_url,
-            &api_key,
+            &recognition,
             &baselines,
             timeout,
+            &mut |message| {
+                extraction_log(
+                    &progress_app,
+                    format!("PaddleOCR-VL Full Parser: {message}"),
+                );
+            },
         )
     })
     .await
-    .map_err(|error| format!("PaddleOCR-VL full-parser task failed: {error}"))??;
+    .map_err(|error| format!("PaddleOCR-VL full-parser task failed: {error}"))?
+    .map_err(|error| recognition_failure(&paths.recognition, server_reason(), error))?;
     if !sidecar.status.success() {
         let stderr = String::from_utf8_lossy(&sidecar.stderr);
         let diagnostics = paddle_diagnostic_lines(&stderr, 50).join("\n");
@@ -160,9 +262,13 @@ pub(crate) async fn extract_paddle_full(
         } else {
             ""
         };
-        return Err(format!(
-            "PaddleOCR-VL full parser failed: {}{suffix}",
-            diagnostics.trim()
+        return Err(recognition_failure(
+            &paths.recognition,
+            server_reason(),
+            format!(
+                "PaddleOCR-VL full parser failed: {}{suffix}",
+                diagnostics.trim()
+            ),
         ));
     }
     if sidecar.stdout_truncated || sidecar.stderr_truncated {
@@ -188,13 +294,14 @@ pub(crate) async fn extract_paddle_full(
             .map_err(|error| format!("Failed to clean old parser cache backup: {error}"))?;
     }
     if target.exists() {
-        fs::rename(&target, &backup)
+        crate::engines::rename_when_free(&target, &backup)
+            .await
             .map_err(|error| format!("Failed to stage prior parser cache: {error}"))?;
     }
     let staged_path = staging.keep();
-    if let Err(error) = fs::rename(&staged_path, &target) {
+    if let Err(error) = crate::engines::rename_when_free(&staged_path, &target).await {
         if backup.exists() {
-            let _ = fs::rename(&backup, &target);
+            let _ = crate::engines::rename_when_free(&backup, &target).await;
         }
         return Err(format!("Failed to activate full-parser cache: {error}"));
     }
@@ -217,4 +324,90 @@ pub(crate) async fn extract_paddle_full(
         ),
     );
     Ok(extraction)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engines::PaddleRecognition;
+
+    #[test]
+    fn built_in_recognition_scales_the_budget_with_the_document() {
+        let built_in = PaddleRecognition::BuiltIn {
+            model_dir: "model".into(),
+        };
+        assert_eq!(extraction_budget_secs(&built_in, 5, 1800), 1800);
+        assert_eq!(extraction_budget_secs(&built_in, 100, 1800), 18_000);
+        let llama = PaddleRecognition::Llama(crate::engines::PaddleEnginePaths {
+            server: "server".into(),
+            model: "model".into(),
+            mmproj: "projector".into(),
+            integrity_sha256: "fixture".into(),
+            gpu: false,
+        });
+        assert_eq!(extraction_budget_secs(&llama, 100, 1800), 1800);
+    }
+
+    fn llama(gpu: bool) -> PaddleRecognition {
+        PaddleRecognition::Llama(crate::engines::PaddleEnginePaths {
+            server: "server".into(),
+            model: "model".into(),
+            mmproj: "projector".into(),
+            integrity_sha256: "fixture".into(),
+            gpu,
+        })
+    }
+
+    #[test]
+    fn a_graphics_card_failure_mid_run_says_what_the_server_said() {
+        let message = recognition_failure(
+            &llama(true),
+            Some("vk::DeviceLostError".into()),
+            "PaddleOCR-VL full parser failed: Connection refused".into(),
+        );
+        assert!(
+            message.starts_with("PaddleOCR-VL full parser failed"),
+            "{message}"
+        );
+        assert!(message.contains("turn off Use graphics card"), "{message}");
+        assert!(message.ends_with("vk::DeviceLostError"), "{message}");
+    }
+
+    #[test]
+    fn the_graphics_card_hint_stays_on_graphics_card_runs() {
+        let message =
+            recognition_failure(&llama(false), Some("slot failed".into()), "failed".into());
+        assert!(!message.contains("graphics card"), "{message}");
+        assert!(message.ends_with("slot failed"), "{message}");
+        let built_in = PaddleRecognition::BuiltIn {
+            model_dir: "model".into(),
+        };
+        assert_eq!(
+            recognition_failure(&built_in, None, "failed".into()),
+            "failed"
+        );
+    }
+
+    #[test]
+    fn a_stopped_run_is_not_reported_as_a_failure() {
+        let message = recognition_failure(
+            &llama(true),
+            Some("vk::DeviceLostError".into()),
+            "Pipeline cancelled".into(),
+        );
+        assert_eq!(message, "Pipeline cancelled");
+    }
+
+    #[test]
+    fn graphics_card_recognition_scales_the_budget_with_the_document() {
+        let graphics_card = PaddleRecognition::Llama(crate::engines::PaddleEnginePaths {
+            server: "server".into(),
+            model: "model".into(),
+            mmproj: "projector".into(),
+            integrity_sha256: "fixture".into(),
+            gpu: true,
+        });
+        assert_eq!(extraction_budget_secs(&graphics_card, 5, 1800), 1800);
+        assert_eq!(extraction_budget_secs(&graphics_card, 100, 1800), 18_000);
+    }
 }

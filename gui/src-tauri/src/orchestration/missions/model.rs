@@ -123,6 +123,11 @@ pub struct Capability {
     pub parameters: Value,
     pub execution: Value,
     pub timeout_seconds: u64,
+    /// Set before each plan: the step would be refused until the researcher
+    /// approves it again, so the planner must not select it. Also shown to the
+    /// researcher, and raised as a notice when it turns on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unavailable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

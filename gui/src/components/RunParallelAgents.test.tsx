@@ -4,8 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type {
   ModelCatalog,
+  PipelineConfig,
   RunParallelOverrides,
   Settings,
+  StepConfig,
 } from "../lib/types";
 import RunParallelAgents from "./RunParallelAgents";
 
@@ -56,6 +58,35 @@ function catalog(provider: string): ModelCatalog {
   };
 }
 
+function step(id: string, patch: Partial<StepConfig> = {}): StepConfig {
+  return {
+    id,
+    label: id,
+    prompt: "",
+    enabled: true,
+    phase: "parallel",
+    tools: [],
+    agents: [],
+    context: { include: [] },
+    ...patch,
+  };
+}
+
+function mockWorkflow(config: Partial<PipelineConfig>) {
+  invoke.mockImplementation((command: string, args?: { provider?: string }) => {
+    if (command === "get_settings")
+      return Promise.resolve({ settings, warnings: [] });
+    if (command === "get_pipeline_config")
+      return Promise.resolve({
+        merge: { enabled: true, prompt: "", agents: [] },
+        ...config,
+      });
+    if (command === "get_model_catalog")
+      return Promise.resolve(catalog(args?.provider ?? "claude"));
+    return Promise.reject(new Error(`Unexpected command ${command}`));
+  });
+}
+
 function Harness() {
   const [value, setValue] = useState<RunParallelOverrides | null>(null);
   return <RunParallelAgents value={value} onChange={setValue} />;
@@ -64,20 +95,7 @@ function Harness() {
 describe("RunParallelAgents", () => {
   it("inherits Settings, hides an unconfigured local provider, and pins a per-run model", async () => {
     const user = userEvent.setup();
-    invoke.mockImplementation(
-      (command: string, args?: { provider?: string }) => {
-        if (command === "get_settings")
-          return Promise.resolve({ settings, warnings: [] });
-        if (command === "get_pipeline_config") {
-          return Promise.resolve({
-            merge: { enabled: true, prompt: "", agents: [] },
-          });
-        }
-        if (command === "get_model_catalog")
-          return Promise.resolve(catalog(args?.provider ?? "claude"));
-        return Promise.reject(new Error(`Unexpected command ${command}`));
-      },
-    );
+    mockWorkflow({ steps: [step("review")] });
 
     render(<Harness />);
     expect(await screen.findByText(/Claude · Settings default/)).toBeVisible();
@@ -93,7 +111,7 @@ describe("RunParallelAgents", () => {
     await waitFor(() =>
       expect(
         screen.getByRole("option", {
-          name: "GPT Exact · Agents for this report",
+          name: "GPT Exact",
         }),
       ).toBeInTheDocument(),
     );
@@ -113,5 +131,60 @@ describe("RunParallelAgents", () => {
     );
     expect(screen.getByText("Merge · ChatGPT · This report")).toBeVisible();
     expect(screen.getByRole("button", { name: "Reset" })).toBeVisible();
+  });
+
+  it("names the workflow when its parallel steps choose their own providers", async () => {
+    const user = userEvent.setup();
+    mockWorkflow({
+      steps: [step("review", { agents: ["codex", "antigravity"] })],
+    });
+
+    render(<Harness />);
+    expect(
+      await screen.findByText("ChatGPT + Gemini · Workflow"),
+    ).toBeVisible();
+    expect(screen.getByText("Merge · Claude · Settings default")).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Change" }));
+    expect(
+      screen.getByText(/replacing this workflow’s choices for this report/),
+    ).toBeVisible();
+  });
+
+  it("does not offer one list when parallel steps differ", async () => {
+    mockWorkflow({
+      steps: [step("first", { agents: ["codex"] }), step("second")],
+    });
+
+    render(<Harness />);
+    expect(await screen.findByText("Varies by step")).toBeVisible();
+  });
+
+  it("stays out of the way when no step can use the choice", async () => {
+    mockWorkflow({
+      steps: [
+        step("draft", { phase: "sequential" }),
+        step("check", { kind: "analyzer" }),
+        step("off", { enabled: false }),
+      ],
+    });
+
+    const { container } = render(<Harness />);
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("get_pipeline_config"),
+    );
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    expect(screen.queryByText("Parallel agents")).not.toBeInTheDocument();
+  });
+
+  it("stacks its menus so model names stay readable in the sidebar", async () => {
+    const user = userEvent.setup();
+    mockWorkflow({ steps: [step("review", { agents: ["claude"] })] });
+
+    render(<Harness />);
+    await user.click(await screen.findByRole("button", { name: "Change" }));
+    const model = screen.getByLabelText("Agents for this report Claude model");
+    expect(model.parentElement).toHaveClass("grid-cols-1");
+    expect(model.parentElement).not.toHaveClass("grid-cols-2");
   });
 });

@@ -2,12 +2,14 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { PipelineConfig, ProfileSummary } from "../lib/types";
 import {
+  ADAPTIVE_REVIEW_PROFILE_IDS,
   adaptiveAgentCount,
   adaptiveAgentCountLabel,
   adaptiveAgentRange,
   isAutoReview,
 } from "../lib/autoReview";
 import AutoReviewCatalogDialog from "./AutoReviewCatalogDialog";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   disabled: boolean;
@@ -99,6 +101,7 @@ export default function WorkflowPanel({
         >
           Retry
         </button>
+        <ReportIssueLink />
       </div>
     );
   }
@@ -107,7 +110,7 @@ export default function WorkflowPanel({
   const disabledCount = config.steps.length - enabledSteps.length;
   const autoAssembled = isAutoReview(config);
   const autoReview =
-    autoAssembled || ["auto-review", "auto-review-quick"].includes(activeId);
+    autoAssembled || ADAPTIVE_REVIEW_PROFILE_IDS.includes(activeId);
   const configuredAdaptiveCount = adaptiveAgentCount(config);
   const configuredAdaptiveRange = adaptiveAgentRange(config);
 
@@ -128,10 +131,18 @@ export default function WorkflowPanel({
       >
         {profiles.map((p) => (
           <option key={p.id} value={p.id}>
-            {p.name}
+            {p.invalid ? `${p.name} (needs repair)` : p.name}
           </option>
         ))}
       </select>
+      {profiles.find((p) => p.id === activeId)?.invalid && (
+        <p
+          role="alert"
+          className="mt-1 text-[11px] text-amber-800 dark:text-amber-200"
+        >
+          {profiles.find((p) => p.id === activeId)?.invalid}
+        </p>
+      )}
       {switching && (
         <p
           role="status"

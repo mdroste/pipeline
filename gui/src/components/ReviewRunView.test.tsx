@@ -60,8 +60,23 @@ describe("ReviewRunView", () => {
     expect(
       screen.getByText(/keeps running if you leave this page/),
     ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Cancel report" }));
+    await user.click(screen.getByRole("button", { name: "Cancel review" }));
     expect(props.onCancel).toHaveBeenCalledOnce();
+  });
+
+  it("centers progress with auto margins so a tall view stays scrollable from its top", () => {
+    renderView({
+      run: queuedRun("draft", "running"),
+      state: { kind: "extracting" },
+    });
+
+    // Cross-axis centering (items-center) overflows tall content above the
+    // scroll origin; auto margins collapse to zero instead.
+    const content = screen.getByTestId("review-run-content");
+    expect(content).toHaveClass("my-auto");
+    expect(content.parentElement).toHaveClass("min-h-full");
+    expect(content.parentElement).not.toHaveClass("items-center");
+    expect(content.parentElement).not.toHaveClass("h-full");
   });
 
   it("shows a failure known only from the queue without inventing stages", () => {

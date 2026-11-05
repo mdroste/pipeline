@@ -64,6 +64,63 @@ async fn browser_login_holds_one_global_lease_and_requires_matching_cancel_ident
 }
 
 #[tokio::test]
+async fn sign_out_leaves_no_older_sign_in_behind() {
+    use serde_json::{json, Value};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("shared");
+    private_directory(&root).unwrap();
+    private_directory(&root.join("codex")).unwrap();
+    let claims = base64::Engine::encode(
+        &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+        json!({"sub":"fixture-user"}).to_string(),
+    );
+    let sign_in = json!({"tokens":{"access_token":format!("e30.{claims}.fixture"),"account_id":"org","refresh_token":"fixture"}});
+    for (_, _, path) in credentials::legacy_paths(temp.path()) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, sign_in.to_string()).unwrap();
+    }
+    assert!(credentials::migrate(&root, temp.path(), None)
+        .unwrap()
+        .is_empty());
+    assert!(root.join("codex/auth.json").exists());
+
+    let (client_io, server_io) = tokio::io::duplex(4096);
+    let (read, write) = tokio::io::split(client_io);
+    let client = AppServerClient::from_io(9, read, write);
+    let owner = ChatgptAccount {
+        native: Mutex::new(NativeSession::simulated(client)),
+        root,
+        user_home: temp.path().to_path_buf(),
+        activity: Arc::new(RwLock::new(())),
+        serial: Mutex::new(()),
+        clients: Mutex::new(Vec::new()),
+        pending: Mutex::new(None),
+        choices: Mutex::new(Vec::new()),
+        login_error: Mutex::new(None),
+        login_active: std::sync::atomic::AtomicBool::new(false),
+        events: tokio::sync::broadcast::channel(16).0,
+        _lock: std::fs::File::create(temp.path().join("lock")).unwrap(),
+    };
+    let server = tokio::spawn(async move {
+        let (read, mut write) = tokio::io::split(server_io);
+        let mut line = String::new();
+        BufReader::new(read).read_line(&mut line).await.unwrap();
+        let request: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(request["method"], "account/logout");
+        write
+            .write_all(format!("{}\n", json!({"id":request["id"],"result":{}})).as_bytes())
+            .await
+            .unwrap();
+    });
+    owner.logout().await.unwrap();
+    server.await.unwrap();
+    for (_, _, path) in credentials::legacy_paths(temp.path()) {
+        assert!(!path.exists(), "{}", path.display());
+    }
+}
+
+#[tokio::test]
 #[ignore = "no-model probe requires a locally installed compatible Codex runtime"]
 async fn native_shared_account_installs_ephemeral_tokens_and_logs_out_both_runtimes() {
     use base64::Engine;
@@ -106,6 +163,7 @@ async fn native_shared_account_installs_ephemeral_tokens_and_logs_out_both_runti
             7,
             name,
             "No-model account fixture",
+            &[],
         )
         .await
         .unwrap();

@@ -1,3 +1,9 @@
+//! Readiness probes behind the dependency check.
+//!
+//! A provider is required only when the selected workflow uses it. Google Reviews
+//! call the Gemini API under the saved provider ID `antigravity`; that ID stays for
+//! settings compatibility and has no CLI behind it.
+
 use super::*;
 
 struct ProbeResult {
@@ -38,7 +44,9 @@ fn probe(name: &str, version_args: &[&str]) -> ProbeResult {
 /// failing status. Execution or parse failures are unknown, not evidence that
 /// the user signed out.
 pub(super) fn check_claude_auth(command: &ResolvedCommand) -> Option<bool> {
-    let mut process = command.command(["auth", "status"]);
+    let args = crate::agent_runtime::claude::subscription_args(&["auth".into(), "status".into()]);
+    let mut process = command.command(args);
+    crate::agent_runtime::claude::configure_subscription(&mut process);
     configure_probe_command(&mut process);
     let output =
         crate::process::run_bounded(&mut process, PROBE_TIMEOUT, PROBE_OUTPUT_LIMIT).ok()?;
@@ -46,10 +54,12 @@ pub(super) fn check_claude_auth(command: &ResolvedCommand) -> Option<bool> {
         return None;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let logged_in = serde_json::from_str::<serde_json::Value>(stdout.trim())
-        .ok()
-        .and_then(|value| value.get("loggedIn").and_then(|value| value.as_bool()))?;
-    Some(logged_in && output.status.success())
+    let value = serde_json::from_str::<serde_json::Value>(stdout.trim()).ok()?;
+    value.get("loggedIn")?.as_bool()?;
+    Some(
+        crate::agent_runtime::claude::validate_subscription_status(&value, output.status.success())
+            .is_ok(),
+    )
 }
 
 /// Only the explicitly selected legacy subscription backend consults ambient
@@ -105,7 +115,7 @@ pub(super) fn google_dependency(settings: &crate::settings::Settings, required: 
         hint: if configured {
             "API key configured.".into()
         } else {
-            "Add a Google AI API key in Settings → Providers → Google.".into()
+            "Add a Gemini API key in Settings → Connections → Google.".into()
         },
         help_url: None,
         authenticated: Some(configured),
@@ -294,9 +304,6 @@ pub(super) fn required_providers(
 ) -> std::collections::HashSet<String> {
     let mut required = std::collections::HashSet::new();
     let preferred = settings.preferred_provider.clone();
-    if let Some(fallback) = settings.usage_limit_fallback_agent() {
-        required.insert(fallback.to_string());
-    }
     let Some(config) = config else {
         required.insert(preferred);
         return required;
@@ -310,7 +317,10 @@ pub(super) fn required_providers(
         required.insert(preferred.clone());
     }
 
-    let enabled = config.steps.iter().filter(|step| step.enabled);
+    let enabled = config
+        .steps
+        .iter()
+        .filter(|step| step.enabled && step.kind.is_model());
     let mut needs_merge = false;
     for step in enabled {
         if step.agents.is_empty() {
@@ -331,6 +341,32 @@ pub(super) fn required_providers(
         );
     }
     required
+}
+
+/// Providers a run may call, in display order. This is the set readiness
+/// requires plus the usage-limit backup, which isn't needed to start but can
+/// still receive material, so a run preview can't name fewer providers than the
+/// run can reach.
+pub fn run_providers(
+    settings: &crate::settings::Settings,
+    config: &crate::pipeline_config::PipelineConfig,
+    diff: bool,
+    input_path: Option<&str>,
+    extra_inputs: Option<&std::collections::HashMap<String, String>>,
+) -> Vec<String> {
+    const DISPLAY_ORDER: [&str; 4] = ["claude", "codex", "antigravity", "local"];
+    let mut required = required_providers(settings, Some(config), diff, input_path, extra_inputs);
+    if let Some(fallback) = settings.usage_limit_fallback_agent() {
+        required.insert(fallback.to_string());
+    }
+    let mut providers = required.into_iter().collect::<Vec<_>>();
+    providers.sort_by_key(|provider| {
+        DISPLAY_ORDER
+            .iter()
+            .position(|known| known == provider)
+            .unwrap_or(DISPLAY_ORDER.len())
+    });
+    providers
 }
 
 /// Run all dependency checks against one already-loaded settings/profile
@@ -410,7 +446,7 @@ fn check_all_for(
             ("API key configured — CLI not required.".to_string(), None)
         } else if claude_api_mode {
             (
-                "Claude API mode is selected, but no Anthropic API key is configured. Add one in Settings → API Keys or switch to Subscription mode."
+                "Claude API mode is selected, but no Anthropic API key is configured. Add one in Settings → Connections or switch to Subscription mode."
                     .to_string(),
                 None,
             )
@@ -466,7 +502,7 @@ fn check_all_for(
             ("API key configured — CLI not required.".to_string(), None)
         } else if codex_api_mode {
             (
-                "ChatGPT API mode is selected, but no OpenAI API key is configured. Add one in Settings → API Keys or switch to Subscription mode."
+                "ChatGPT API mode is selected, but no OpenAI API key is configured. Add one in Settings → Connections or switch to Subscription mode."
                     .to_string(),
                 None,
             )
@@ -602,7 +638,7 @@ fn check_all_for(
                 "Managed PaddleOCR layout client, recognition runtime, and models are installed."
                     .into()
             } else if pdf_requirements.paddle_full {
-                "Install from Settings → PDF Extraction, or run `pipeline-cli engines install paddle` from a source build."
+                "Install from Settings → PDF extraction, or run `pipeline-cli engines install paddle` from a source build."
                     .into()
             } else {
                 "Install PaddleOCR-VL Full Parser from Settings, or run `pipeline-cli engines install paddle` from a source build."

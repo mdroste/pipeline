@@ -186,7 +186,12 @@ fn walk(
                     if !result.0 {
                         return Ok(result);
                     }
-                    if i + 1 == *max_iterations {
+                    // The condition reads saved outputs, so asking once more
+                    // costs no model call. Only a condition that is plainly
+                    // false shows the loop finished on this pass.
+                    if i + 1 == *max_iterations
+                        && condition.evaluate(&p.outputs, inputs) != Truth::False
+                    {
                         p.limit_reached = true;
                     }
                 }

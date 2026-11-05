@@ -1,15 +1,21 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { Issue, IssueEvidence } from "../lib/issues";
-import { severityRank } from "../lib/issues";
+import { doiUrl, severityRank } from "../lib/issues";
+import { Icon } from "../ui/icons";
 import SafeMarkdownLink from "./SafeMarkdownLink";
+import { EvidenceVerificationBadge } from "./report-workspace/EvidenceVerificationBadge";
+import CompactMarkdown, {
+  InlineMathText,
+} from "./report-viewer/CompactMarkdown";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   issues: Issue[];
   runId: string | null;
   onOpenEvidence?: (evidence: IssueEvidence) => void;
+  /** The run saved no page images, so a page alone opens nothing. */
+  pagesUnavailable?: boolean;
 }
 
 type Verdict = "accept" | "reject" | "done" | "";
@@ -33,11 +39,13 @@ function sevStyle(sev: string): string {
 }
 
 const VERDICT_STYLES: Record<Verdict, string> = {
-  accept: "bg-green-700 text-white",
-  reject: "bg-red-600 text-white",
-  done: "bg-gray-500 text-white",
+  accept: "border-transparent bg-green-700 text-white",
+  reject: "border-transparent bg-red-600 text-white",
+  done: "border-transparent bg-gray-500 text-white",
   "": "",
 };
+
+const VERDICT_LABELS = { accept: "Accept", reject: "Reject", done: "Done" };
 
 function evidenceCitation(item: IssueEvidence): string {
   const references = [
@@ -50,6 +58,10 @@ function evidenceCitation(item: IssueEvidence): string {
     item.artifactPath ? `artifact ${item.artifactPath}` : "",
     item.sourcePath ? `source ${item.sourcePath}` : "",
     item.sourceHash ? `source hash ${item.sourceHash}` : "",
+    item.url ?? "",
+    item.doi ? doiUrl(item.doi) : "",
+    item.publisher ?? "",
+    item.accessedAt ? `accessed ${item.accessedAt}` : "",
   ].filter(Boolean);
   const location = references.join(", ") || item.description || "source";
   const description =
@@ -59,7 +71,24 @@ function evidenceCitation(item: IssueEvidence): string {
   return `${location}${description}${item.quote ? ` (“${item.quote}”)` : ""}`;
 }
 
-export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
+const RATED_SEVERITIES = ["high", "medium", "low"];
+const isUnrated = (severity: string) => !RATED_SEVERITIES.includes(severity);
+
+const issueCount = (count: number) => `${count} issue${count === 1 ? "" : "s"}`;
+
+/** Keeps the researcher's note. Notes are edited and exported on one line, so
+ *  the rationale joins it there. */
+function withRationale(note: string | undefined, rationale: string) {
+  if (!note?.trim()) return rationale;
+  return note.includes(rationale) ? note : `${note} — ${rationale}`;
+}
+
+export default function IssuesTable({
+  issues,
+  runId,
+  onOpenEvidence,
+  pagesUnavailable = false,
+}: Props) {
   const [annotations, setAnnotations] = useState<Annotations>({});
   const [severityFilter, setSeverityFilter] = useState<string>("all");
   const [verdictFilter, setVerdictFilter] = useState<string>("all");
@@ -68,6 +97,7 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
   const [bulkVerdict, setBulkVerdict] =
     useState<Exclude<Verdict, "">>("accept");
   const [bulkRationale, setBulkRationale] = useState("");
+  const [bulkResult, setBulkResult] = useState<string | null>(null);
   const [annotationsLoaded, setAnnotationsLoaded] = useState(!runId);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const annotationsRef = useRef<Annotations>({});
@@ -109,6 +139,7 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
     setSaved(false);
     setAnnotationsLoaded(false);
     setSelected(new Set());
+    setBulkResult(null);
     if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
     setPersistenceError(null);
     if (!runId) {
@@ -231,10 +262,27 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
       ),
     [issues],
   );
+  const hasUnrated = useMemo(
+    () => issues.some((issue) => isUnrated(issue.severity)),
+    [issues],
+  );
+  const severities = [
+    "all",
+    ...RATED_SEVERITIES,
+    ...(hasUnrated ? ["unrated"] : []),
+  ];
+  // The unrated choice goes away with the last issue that needed it.
+  const activeSeverity = severities.includes(severityFilter)
+    ? severityFilter
+    : "all";
   const visible = useMemo(
     () =>
       sorted.filter((issue) => {
-        if (severityFilter !== "all" && issue.severity !== severityFilter)
+        if (
+          activeSeverity === "unrated"
+            ? !isUnrated(issue.severity)
+            : activeSeverity !== "all" && issue.severity !== activeSeverity
+        )
           return false;
         const verdict = annotations[issue.id]?.status ?? "";
         if (verdictFilter === "unreviewed" && verdict) return false;
@@ -254,7 +302,7 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
             .includes(needle)
         );
       }),
-    [annotations, issueSearch, sorted, severityFilter, verdictFilter],
+    [activeSeverity, annotations, issueSearch, sorted, verdictFilter],
   );
 
   const counts = useMemo(() => {
@@ -322,150 +370,143 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
     }
   };
 
-  const severities = ["all", "high", "medium", "low"];
+  // A selection survives a filter change, but a decision only ever reaches the
+  // issues the researcher can see.
+  const selectedVisible = visible.filter((issue) => selected.has(issue.id));
+  const selectedHidden = selected.size - selectedVisible.length;
 
   const applyBulkDecision = () => {
-    if (!annotationsLoaded || selected.size === 0 || !bulkRationale.trim())
+    const rationale = bulkRationale.trim();
+    if (!annotationsLoaded || selectedVisible.length === 0 || !rationale)
       return;
-    if (runId) dirtyRunRef.current = runId;
-    setAnnotations((current) => {
-      const next = { ...current };
-      for (const id of selected) {
-        next[id] = { status: bulkVerdict, note: bulkRationale.trim() };
-      }
-      return next;
-    });
+    const next = { ...annotations };
+    let changed = 0;
+    for (const { id } of selectedVisible) {
+      const previous = annotations[id];
+      const note = withRationale(previous?.note, rationale);
+      if (previous?.status === bulkVerdict && previous.note === note) continue;
+      next[id] = { status: bulkVerdict, note };
+      changed += 1;
+    }
+    if (runId && changed > 0) dirtyRunRef.current = runId;
+    if (changed > 0) setAnnotations(next);
+    setBulkResult(
+      [
+        changed > 0
+          ? `Decision applied to ${issueCount(changed)}.`
+          : "No issues changed.",
+        ...(selectedHidden > 0
+          ? [`${issueCount(selectedHidden)} hidden by filters left unchanged.`]
+          : []),
+      ].join(" "),
+    );
     setSelected(new Set());
     setBulkRationale("");
   };
 
   return (
     <div className="max-w-4xl mx-auto p-6">
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-          Issues ({issues.length})
-        </h2>
-        <div className="flex items-center gap-1 ml-2">
-          {severities.map((s) => (
-            <button
-              key={s}
-              onClick={() => setSeverityFilter(s)}
-              aria-pressed={severityFilter === s}
-              className={`px-2 py-0.5 rounded text-xs capitalize transition-colors ${
-                severityFilter === s
-                  ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
-                  : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
-              }`}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-        <select
-          aria-label="Filter by decision"
-          value={verdictFilter}
-          onChange={(event) => setVerdictFilter(event.target.value)}
-          className="rounded border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
-        >
-          <option value="all">All decisions</option>
-          <option value="unreviewed">Unreviewed ({counts[""]})</option>
-          <option value="accept">Accepted</option>
-          <option value="reject">Rejected</option>
-          <option value="done">Done</option>
-        </select>
-        <input
-          aria-label="Search issues"
-          value={issueSearch}
-          onChange={(event) => setIssueSearch(event.target.value)}
-          placeholder="Search title, text, reviewer…"
-          className="min-w-48 rounded border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
-        />
-        <div className="ml-auto flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-          {counts.accept > 0 && (
-            <span className="text-green-700 dark:text-green-400">
-              {counts.accept} accepted
-            </span>
-          )}
-          {counts.reject > 0 && (
-            <span className="text-red-600 dark:text-red-400">
-              {counts.reject} rejected
-            </span>
-          )}
-          {saved && (
-            <span className="text-gray-500 dark:text-gray-400">saved ✓</span>
-          )}
-          {!annotationsLoaded && <span role="status">Loading decisions…</span>}
-          <button
-            onClick={exportDecisions}
-            disabled={!annotationsLoaded || issues.length === 0}
-            className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Export all decisions
-          </button>
-        </div>
-      </div>
-
-      {selected.size > 0 && (
-        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs dark:border-gray-800 dark:bg-gray-900/60">
-          <span className="font-medium">{selected.size} selected</span>
+      {/* Filters, export and save errors stay in view while the list scrolls. */}
+      <div className="sticky top-0 z-10 -mx-6 mb-2 bg-white/95 px-6 py-2 backdrop-blur dark:bg-gray-950/95">
+        <div className="flex items-center gap-2 flex-wrap">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            Issues ({issues.length})
+          </h2>
+          <div className="flex items-center gap-1 ml-2">
+            {severities.map((s) => (
+              <button
+                key={s}
+                onClick={() => setSeverityFilter(s)}
+                aria-pressed={activeSeverity === s}
+                className={`px-2 py-0.5 rounded text-xs capitalize transition-colors ${
+                  activeSeverity === s
+                    ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
+                    : "text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100"
+                }`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
           <select
-            aria-label="Bulk decision"
-            value={bulkVerdict}
-            onChange={(event) =>
-              setBulkVerdict(event.target.value as Exclude<Verdict, "">)
-            }
-            className="rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
+            aria-label="Filter by decision"
+            value={verdictFilter}
+            onChange={(event) => setVerdictFilter(event.target.value)}
+            className="rounded border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
           >
-            <option value="accept">Accept</option>
-            <option value="reject">Reject</option>
+            <option value="all">All decisions</option>
+            <option value="unreviewed">Unreviewed ({counts[""]})</option>
+            <option value="accept">Accepted</option>
+            <option value="reject">Rejected</option>
             <option value="done">Done</option>
           </select>
-          <textarea
-            rows={2}
-            aria-label="Bulk decision rationale"
-            value={bulkRationale}
-            onChange={(event) => setBulkRationale(event.target.value)}
-            placeholder="Required rationale"
-            className="min-w-56 flex-1 rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
+          <input
+            aria-label="Search issues"
+            value={issueSearch}
+            onChange={(event) => setIssueSearch(event.target.value)}
+            placeholder="Search title, text, reviewer…"
+            className="min-w-48 rounded border border-gray-300 bg-white px-2 py-1 text-xs dark:border-gray-700 dark:bg-gray-900"
           />
-          <button
-            onClick={applyBulkDecision}
-            disabled={!bulkRationale.trim() || !annotationsLoaded}
-            className="rounded bg-gray-900 px-2 py-1 text-white disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900"
-          >
-            Apply decision
-          </button>
-          <button
-            onClick={() => setSelected(new Set())}
-            className="px-2 py-1 text-gray-500"
-          >
-            Clear
-          </button>
-        </div>
-      )}
-
-      {persistenceError && (
-        <div
-          role="alert"
-          className="mb-4 rounded border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3 text-xs text-red-700 dark:text-red-300"
-        >
-          <span className="font-medium">
-            {persistenceError.operation === "export"
-              ? "Decision export failed:"
-              : `Annotation ${persistenceError.operation} failed:`}
-          </span>{" "}
-          {persistenceError.message}
-          {persistenceError.operation !== "export" && (
+          <div className="ml-auto flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+            {counts.accept > 0 && (
+              <span className="text-green-700 dark:text-green-400">
+                {counts.accept} accepted
+              </span>
+            )}
+            {counts.reject > 0 && (
+              <span className="text-red-600 dark:text-red-400">
+                {counts.reject} rejected
+              </span>
+            )}
+            {saved && (
+              <span className="text-gray-500 dark:text-gray-400">saved ✓</span>
+            )}
+            {!annotationsLoaded && (
+              <span role="status">Loading decisions…</span>
+            )}
             <button
-              type="button"
-              onClick={retryPersistence}
-              className="ml-2 rounded border border-red-300 dark:border-red-800 px-2 py-0.5 hover:bg-red-100 dark:hover:bg-red-900/40"
+              onClick={exportDecisions}
+              disabled={!annotationsLoaded || issues.length === 0}
+              className="px-2 py-1 rounded border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Retry
+              Export all decisions
             </button>
-          )}
+          </div>
         </div>
-      )}
+
+        {bulkResult && (
+          <p
+            role="status"
+            className="mt-2 text-xs text-gray-600 dark:text-gray-300"
+          >
+            {bulkResult}
+          </p>
+        )}
+
+        {persistenceError && (
+          <div
+            role="alert"
+            className="mt-2 rounded border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3 text-xs text-red-700 dark:text-red-300"
+          >
+            <span className="font-medium">
+              {persistenceError.operation === "export"
+                ? "Decision export failed:"
+                : `Annotation ${persistenceError.operation} failed:`}
+            </span>{" "}
+            {persistenceError.message}
+            {persistenceError.operation !== "export" && (
+              <button
+                type="button"
+                onClick={retryPersistence}
+                className="ml-2 rounded border border-red-300 dark:border-red-800 px-2 py-0.5 hover:bg-red-100 dark:hover:bg-red-900/40"
+              >
+                Retry
+              </button>
+            )}
+            <ReportIssueLink />
+          </div>
+        )}
+      </div>
 
       <div className="space-y-1.5">
         {visible.map((issue) => {
@@ -482,48 +523,49 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                     : "border-gray-200 dark:border-gray-800"
               }`}
             >
-              <div className="flex items-center gap-3 px-3 py-2">
+              <div className="flex items-start gap-3 px-3 py-2.5">
                 <input
                   type="checkbox"
+                  className="mt-1 shrink-0"
                   aria-label={`Select issue: ${issue.title}`}
                   checked={selected.has(issue.id)}
                   disabled={!annotationsLoaded}
-                  onChange={() =>
+                  onChange={() => {
+                    setBulkResult(null);
                     setSelected((current) => {
                       const next = new Set(current);
                       next.has(issue.id)
                         ? next.delete(issue.id)
                         : next.add(issue.id);
                       return next;
-                    })
-                  }
+                    });
+                  }}
                 />
                 <span
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-medium uppercase shrink-0 ${sevStyle(issue.severity)}`}
+                  className={`mt-0.5 w-14 px-1.5 py-0.5 rounded text-center text-[10px] font-medium uppercase shrink-0 ${sevStyle(issue.severity)}`}
                 >
                   {issue.severity || "—"}
                 </span>
                 <button
                   onClick={() => toggleExpand(issue.id)}
                   aria-expanded={isOpen}
-                  className="flex-1 text-left min-w-0"
+                  className="group flex min-w-0 flex-1 items-start gap-1.5 text-left"
                 >
-                  <span className="text-sm text-gray-900 dark:text-gray-100">
-                    {issue.title}
-                  </span>
-                  {issue.section && (
-                    <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">
-                      §{issue.section}
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-sm font-medium text-gray-900 group-hover:text-gray-950 dark:text-gray-100 dark:group-hover:text-white">
+                      <InlineMathText text={issue.title} />
                     </span>
-                  )}
-                </button>
-                {ann?.status && (
-                  <span
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${VERDICT_STYLES[ann.status]}`}
-                  >
-                    {ann.status}
+                    {issue.section && (
+                      <span className="mt-0.5 block text-xs text-gray-500 dark:text-gray-400">
+                        <InlineMathText text={issue.section} />
+                      </span>
+                    )}
                   </span>
-                )}
+                  <Icon
+                    name="chevron-down"
+                    className={`mt-1 h-3.5 w-3.5 shrink-0 text-gray-400 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                  />
+                </button>
                 <div className="flex items-center gap-1 shrink-0">
                   {(["accept", "reject", "done"] as Verdict[]).map((v) => (
                     <button
@@ -532,27 +574,22 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                       disabled={!annotationsLoaded}
                       aria-label={`${v} issue: ${issue.title}`}
                       aria-pressed={ann?.status === v}
-                      className={`px-1.5 py-0.5 rounded text-[10px] border transition-colors ${
+                      className={`px-2 py-1 rounded text-[11px] border transition-colors ${
                         ann?.status === v
                           ? VERDICT_STYLES[v]
-                          : "border-gray-300 dark:border-gray-600 text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 disabled:cursor-wait disabled:opacity-40"
+                          : "border-gray-300 dark:border-gray-600 text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100 disabled:cursor-wait disabled:opacity-40"
                       }`}
                       title={v}
                     >
-                      {v === "accept" ? "✓" : v === "reject" ? "✕" : "done"}
+                      {VERDICT_LABELS[v as Exclude<Verdict, "">]}
                     </button>
                   ))}
                 </div>
               </div>
               {isOpen && (
                 <div className="px-3 pb-3 border-t border-gray-100 dark:border-gray-800 pt-2">
-                  <div className="report-content !max-w-none !p-0 text-sm">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={{ a: SafeMarkdownLink }}
-                    >
-                      {issue.body}
-                    </ReactMarkdown>
+                  <div className="report-content issue-body !max-w-none !p-0 text-sm">
+                    <CompactMarkdown markdown={issue.body} />
                   </div>
                   {issue.sources && issue.sources.length > 0 && (
                     <p className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
@@ -571,7 +608,8 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                         {issue.evidence.map((evidence, evidenceIndex) => {
                           const canOpen =
                             !!onOpenEvidence &&
-                            (!!evidence.page || !!evidence.artifactPath);
+                            ((!!evidence.page && !pagesUnavailable) ||
+                              !!evidence.artifactPath);
                           const lineLabel = evidence.lineStart
                             ? `:${evidence.lineStart}${evidence.lineEnd && evidence.lineEnd !== evidence.lineStart ? `–${evidence.lineEnd}` : ""}`
                             : "";
@@ -615,9 +653,16 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                                 ) : (
                                   location
                                 )}
+                                <EvidenceVerificationBadge
+                                  status={evidence.verificationStatus}
+                                />
                                 {evidence.description &&
                                   evidence.description !== label && (
-                                    <span>{evidence.description}</span>
+                                    <span>
+                                      <InlineMathText
+                                        text={evidence.description}
+                                      />
+                                    </span>
                                   )}
                                 {evidence.nodeId && (
                                   <span className="font-mono text-[10px] text-gray-400">
@@ -625,9 +670,41 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
                                   </span>
                                 )}
                               </div>
+                              {(evidence.url ||
+                                evidence.doi ||
+                                evidence.publisher ||
+                                evidence.accessedAt) && (
+                                <p className="mt-1 flex flex-wrap gap-x-2 break-all text-[11px]">
+                                  {evidence.url && (
+                                    <SafeMarkdownLink
+                                      href={evidence.url}
+                                      className="underline underline-offset-2"
+                                    >
+                                      {evidence.url}
+                                    </SafeMarkdownLink>
+                                  )}
+                                  {evidence.doi && (
+                                    <SafeMarkdownLink
+                                      href={doiUrl(evidence.doi)}
+                                      className="underline underline-offset-2"
+                                    >
+                                      {doiUrl(evidence.doi)}
+                                    </SafeMarkdownLink>
+                                  )}
+                                  {evidence.publisher && (
+                                    <span>{evidence.publisher}</span>
+                                  )}
+                                  {evidence.accessedAt && (
+                                    <span>Accessed {evidence.accessedAt}</span>
+                                  )}
+                                </p>
+                              )}
                               {evidence.quote && (
                                 <blockquote className="mt-1.5 border-l-2 border-gray-300 pl-2 text-[11px] italic text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                                  {evidence.quote}
+                                  <InlineMathText
+                                    text={evidence.quote}
+                                    verbatim
+                                  />
                                 </blockquote>
                               )}
                             </div>
@@ -651,10 +728,62 @@ export default function IssuesTable({ issues, runId, onOpenEvidence }: Props) {
         })}
         {visible.length === 0 && (
           <p className="text-sm text-gray-500 dark:text-gray-400 px-2">
-            No issues at this severity.
+            No issues match these filters.
           </p>
         )}
       </div>
+
+      {/* Pinned to the bottom so it appears in view wherever the issue was
+          selected, without shifting the rows above it. */}
+      {selected.size > 0 && (
+        <div
+          role="group"
+          aria-label="Decision for selected issues"
+          className="sticky bottom-0 z-10 mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs shadow-md dark:border-gray-800 dark:bg-gray-900"
+        >
+          <span className="font-medium">
+            {selectedVisible.length} selected
+            {selectedHidden > 0 && `, ${selectedHidden} hidden by filters`}
+          </span>
+          <select
+            aria-label="Bulk decision"
+            value={bulkVerdict}
+            onChange={(event) =>
+              setBulkVerdict(event.target.value as Exclude<Verdict, "">)
+            }
+            className="rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
+          >
+            <option value="accept">Accept</option>
+            <option value="reject">Reject</option>
+            <option value="done">Done</option>
+          </select>
+          <textarea
+            rows={2}
+            aria-label="Bulk decision rationale"
+            value={bulkRationale}
+            onChange={(event) => setBulkRationale(event.target.value)}
+            placeholder="Required rationale"
+            className="min-w-56 flex-1 rounded border border-gray-300 bg-white px-2 py-1 dark:border-gray-700 dark:bg-gray-900"
+          />
+          <button
+            onClick={applyBulkDecision}
+            disabled={
+              !bulkRationale.trim() ||
+              !annotationsLoaded ||
+              selectedVisible.length === 0
+            }
+            className="rounded bg-gray-900 px-2 py-1 text-white disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900"
+          >
+            Apply decision
+          </button>
+          <button
+            onClick={() => setSelected(new Set())}
+            className="px-2 py-1 text-gray-500"
+          >
+            Clear
+          </button>
+        </div>
+      )}
       {!runId && (
         <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-4">
           Annotations aren't saved for this view (no saved report).

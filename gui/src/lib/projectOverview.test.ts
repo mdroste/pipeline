@@ -99,7 +99,7 @@ const reviewRun = (patch: Partial<RunSummary> = {}): RunSummary => ({
   profile_id: "review",
   profile_name: "Paper review",
   provider: "claude",
-  status: "complete",
+  status: "done",
   duration_secs: 600,
   input_tokens: 0,
   output_tokens: 0,
@@ -497,6 +497,31 @@ describe("visits", () => {
   });
 });
 
+describe("finished reviews", () => {
+  const since = { since: "2026-08-31T00:00:00Z", baseline: null };
+  const rows = (status: string) =>
+    sinceBlock(
+      home(),
+      signals({
+        runs: [reviewRun({ created: "2026-09-01T10:00:00Z", status })],
+      }),
+      since,
+    )?.rows ?? [];
+
+  it("flags only a review that did not finish", () => {
+    expect(rows("done")[0].attention).toBe(false);
+    expect(rows("degraded")[0]).toMatchObject({
+      attention: false,
+      detail: "Paper review · done",
+    });
+    expect(rows("partial")[0].attention).toBe(true);
+  });
+
+  it("does not call a running review finished", () => {
+    expect(rows("running")).toEqual([]);
+  });
+});
+
 describe("where you left off", () => {
   const session = (
     id: string,
@@ -655,6 +680,26 @@ describe("repository", () => {
     });
   });
 
+  it("names a remote whose address shows no host by its Git name", () => {
+    const block = repositoryBlock(
+      signals({
+        repository: repository({
+          behind: 1,
+          remote: {
+            name: "origin",
+            host: "",
+            owner: "",
+            repo: "",
+            webUrl: null,
+          },
+        }),
+      }),
+      now,
+    );
+    expect(row(block, "identity")).toMatchObject({ text: "Remote origin" });
+    expect(row(block, "incoming")?.text).toContain("on the remote");
+  });
+
   it("reports uncommitted work, coauthor commits, and unpushed commits", () => {
     const block = repositoryBlock(
       signals({
@@ -739,7 +784,7 @@ describe("repository", () => {
     );
     expect(row(block, "identity")?.action.kind).toBe("tab");
     expect(row(block, "incoming")).toMatchObject({
-      text: "1 new commit on git.overleaf.com",
+      text: "1 new commit on Overleaf",
       action: { kind: "fetch" },
     });
   });

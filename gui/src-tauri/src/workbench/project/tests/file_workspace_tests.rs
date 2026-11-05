@@ -169,3 +169,200 @@ fn conversation_file_links_stay_inside_the_session_runtime_root() {
     std::os::unix::fs::symlink(f.root.join("outside.pdf"), root.join("linked.pdf")).unwrap();
     assert!(read_conversation_file(&f.store, &session.id, "linked.pdf").is_err());
 }
+
+#[test]
+fn the_external_editor_refuses_a_program_and_opens_a_source_file() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let f = fixture();
+    for name in ["build.sh", "notes.tex", "marked.tex", "analysis.py"] {
+        fs::write(f.root.join(name), "text\n").unwrap();
+    }
+    fs::set_permissions(f.root.join("marked.tex"), fs::Permissions::from_mode(0o755)).unwrap();
+    let open = |path: &str| editor_external_path(&f.store, &f.ws, None, path);
+    for program in ["build.sh", "marked.tex"] {
+        let error = open(program).unwrap_err();
+        assert!(error.message.contains("Reveal its folder"), "{program}");
+    }
+    assert_eq!(open("analysis.py").is_err(), cfg!(target_os = "macos"));
+    assert!(open("notes.tex").unwrap().ends_with("notes.tex"));
+}
+
+#[test]
+fn conversation_file_links_refuse_programs_and_copy_nothing() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let f = fixture();
+    let session = f
+        .store
+        .create_session(CreateSessionRequest {
+            workspace_id: None,
+            title: "Generated files".into(),
+            operation_id: id("session").unwrap(),
+        })
+        .unwrap()
+        .record;
+    let root = f.store.runtime_root(&session.id).unwrap();
+    for name in ["run.bat", "setup.jar", "install.pkg", "share.url"] {
+        fs::write(root.join(name), "fixture").unwrap();
+    }
+    fs::write(root.join("results"), "#!/bin/sh\n").unwrap();
+    fs::set_permissions(root.join("results"), fs::Permissions::from_mode(0o755)).unwrap();
+    let snapshots = f.store.root_path().join("opened-conversation-files");
+    for name in [
+        "run.bat",
+        "setup.jar",
+        "install.pkg",
+        "share.url",
+        "results",
+    ] {
+        let error = snapshot_conversation_file(&f.store, &session.id, name).unwrap_err();
+        assert!(error.message.contains("Reveal its folder"), "{name}");
+        // The preview in the conversation still works.
+        read_conversation_file(&f.store, &session.id, name).unwrap();
+    }
+    assert!(!snapshots.exists(), "a refused file was copied");
+    fs::write(root.join("table.csv"), "a,b\n").unwrap();
+    snapshot_conversation_file(&f.store, &session.id, "table.csv").unwrap();
+}
+
+/// A snapshot keeps only a plain extension. One that loses it has no extension
+/// at all, and on a drive that marks every file as a program macOS would run it.
+#[test]
+fn a_snapshot_is_judged_by_its_own_name_on_a_volume_with_invented_permissions() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let f = fixture();
+    let session = f
+        .store
+        .create_session(CreateSessionRequest {
+            workspace_id: None,
+            title: "Generated files".into(),
+            operation_id: id("session").unwrap(),
+        })
+        .unwrap()
+        .record;
+    let root = f.store.runtime_root(&session.id).unwrap();
+    let snapshots = f.store.root_path().join("opened-conversation-files");
+    fs::create_dir_all(&snapshots).unwrap();
+    // What a write to such a drive leaves: `snapshot.csv` keeps its extension.
+    let plant = |name: &str, suffix: &str| {
+        fs::write(root.join(name), name).unwrap();
+        let target = snapshots.join(format!("{}{suffix}", hash(name.as_bytes())));
+        fs::write(&target, name).unwrap();
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    let long = format!("notes.{}", "a".repeat(17));
+    for name in ["run.v1-2", "notes.a_b", long.as_str()] {
+        plant(name, "");
+        crate::safety::simulate_invented_permissions(true);
+        let opened = snapshot_conversation_file(&f.store, &session.id, name);
+        crate::safety::simulate_invented_permissions(false);
+        let error = opened.unwrap_err();
+        assert!(error.message.contains("as a program"), "{name}");
+    }
+    plant("snapshot.csv", ".csv");
+    crate::safety::simulate_invented_permissions(true);
+    let opened = snapshot_conversation_file(&f.store, &session.id, "snapshot.csv");
+    crate::safety::simulate_invented_permissions(false);
+    opened.unwrap();
+
+    // The same name, written for real. Set `TMPDIR` to a folder on an exFAT
+    // drive to run this on one.
+    let probe = fs::File::open(&snapshots).unwrap();
+    let keeps = crate::safety::volume_keeps_permissions(&probe);
+    fs::write(root.join("fresh.v1-2"), "fresh").unwrap();
+    assert_eq!(
+        snapshot_conversation_file(&f.store, &session.id, "fresh.v1-2").is_ok(),
+        keeps
+    );
+}
+
+#[test]
+fn opening_a_csv_of_any_size_reads_only_its_head() {
+    let f = fixture();
+    let path = f.root.join("panel.csv");
+    fs::write(&path, "id,name\n1,a\n".repeat(1000)).unwrap();
+    // Sparse, so the test is quick and a read of the whole file would not be.
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(1 << 42)
+        .unwrap();
+    let file = open_workspace_file(
+        &f.store,
+        FileReadRequest {
+            workspace_id: f.ws.clone(),
+            path: "panel.csv".into(),
+            checkpoint_id: None,
+            revision_id: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(file.kind, "table");
+    assert!(file.text.is_none());
+    assert!(!file.editable);
+    assert!(file.stream_token.is_none());
+    assert_eq!(file.hash, file.stamp.unwrap());
+}
+
+#[test]
+fn common_text_files_without_a_source_extension_can_be_edited() {
+    let f = fixture();
+    for path in [
+        ".gitignore",
+        "page.htm",
+        "paper.ltx",
+        "README",
+        "Makefile",
+        "sub/.gitignore",
+    ] {
+        assert!(file_workspace::editable_source(path), "{path}");
+    }
+    assert!(!file_workspace::editable_source("notes.unknown"));
+    assert!(!file_workspace::editable_source("program"));
+    for path in [".gitignore", "page.htm", "paper.ltx", "README"] {
+        fs::write(f.root.join(path), "some text\n").unwrap();
+        let file = read_workspace_file(
+            &f.store,
+            FileReadRequest {
+                workspace_id: f.ws.clone(),
+                path: path.into(),
+                checkpoint_id: None,
+                revision_id: None,
+            },
+        )
+        .unwrap();
+        assert!(file.editable, "{path}");
+    }
+}
+
+#[test]
+fn generated_program_inputs_stay_out_of_the_file_tools() {
+    let f = fixture();
+    let directory = program_directory(&f.store, &f.ws, &"a".repeat(64)).unwrap();
+    write_program_input(&directory, "plot.py", b"print('plot')\n").unwrap();
+    let generated = format!(".pipeline-workbench/generated/{}/plot.py", "a".repeat(64));
+    assert!(f.root.join(&generated).is_file());
+
+    for alias in [
+        generated.clone(),
+        generated.to_ascii_uppercase(),
+        generated.replacen(".pipeline-workbench", ".pipeline-workbench.", 1),
+    ] {
+        assert!(files::relative(&alias).is_err(), "{alias}");
+        assert!(
+            assistant_files::create_file(&f.store, &f.ws, None, &alias, b"changed").is_err(),
+            "{alias}"
+        );
+    }
+    assert_eq!(
+        fs::read(f.root.join(&generated)).unwrap(),
+        b"print('plot')\n"
+    );
+    let inventory = inventory_at(&f.root, &[]).unwrap();
+    assert!(inventory
+        .files
+        .iter()
+        .all(|file| !file.path.starts_with(".pipeline-workbench")));
+    // The program's own writes start below the reserved name.
+    write_program_input(&directory, "figure.json", b"{}").unwrap();
+}

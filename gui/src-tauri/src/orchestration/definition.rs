@@ -240,7 +240,7 @@ pub fn validate(chain: &Chain) -> Result<(), String> {
         || chain.limits.deadline_hours > 8760
         || !(30..=28800).contains(&chain.limits.action_timeout_secs)
     {
-        return Err("Task limits are outside the supported range".into());
+        return Err("Automation limits are outside the supported range".into());
     }
     if serde_json::to_vec(chain).map_err(|e| e.to_string())?.len() > 256 * 1024 {
         return Err("Chain exceeds 256 KiB".into());

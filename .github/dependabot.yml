@@ -1,7 +1,8 @@
 version: 2
 
-# One grouped pull request per ecosystem, once a month. CI is manual-only, so
-# Dependabot cannot trigger paid runners merely by opening or updating a PR.
+# One grouped pull request per ecosystem, once a month. Opening or updating one
+# runs the Tests workflow, so this cadence limits how often Dependabot uses
+# paid runners.
 #
 # Caveat: Dependabot security updates are OFF for this repository, so these
 # scheduled version bumps are the only automatic route for a vulnerability fix

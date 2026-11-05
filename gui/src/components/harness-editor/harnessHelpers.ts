@@ -1,3 +1,4 @@
+import { moduleName } from "./harnessCopy";
 // Pure helpers for the Workspace harness editor: module grouping and
 // capability bundles, preset summaries, access-inheritance rows, and
 // instruction lint. No Tauri access; everything here is unit-testable.
@@ -21,10 +22,10 @@ export const MODULE_KIND_ORDER: ModuleKind[] = [
 ];
 
 export const MODULE_KIND_LABELS: Record<ModuleKind, string> = {
-  instruction_pack: "Instruction packs",
+  instruction_pack: "Research instructions",
   context_provider: "Context",
   tool: "Tools",
-  inspector: "Inspectors",
+  inspector: "Research panels",
   recipe: "Recipes",
 };
 
@@ -65,7 +66,8 @@ const BUNDLE_DEFINITIONS: Array<
   {
     id: "minimal",
     label: "Instructions only",
-    description: "No context, tools, or inspectors.",
+    description:
+      "Use the profile’s instructions without adding project sources or research tools.",
     modules: [],
   },
   {
@@ -76,7 +78,7 @@ const BUNDLE_DEFINITIONS: Array<
   },
   {
     id: "ledger",
-    label: "Paper + ledger",
+    label: "Read papers & record findings",
     description:
       "Lets the assistant suggest notes, claims, and evidence for review.",
     modules: [
@@ -88,7 +90,7 @@ const BUNDLE_DEFINITIONS: Array<
   },
   {
     id: "execution",
-    label: "Paper + ledger + execution",
+    label: "Read papers, record findings & run analyses",
     description: "Adds tested local commands and a panel to view results.",
     modules: [
       "paper_context",
@@ -186,7 +188,7 @@ export function describeModules(
   );
   if (modules.length === 0) {
     return instructions.trim()
-      ? "Preset instructions only; no automatic context, tools, or inspectors."
+      ? "Use the profile’s instructions without adding project sources or research tools."
       : "No research instructions or automatic context; an ordinary conversation.";
   }
   const packs = modules.filter((module) => module.kind === "instruction_pack");
@@ -196,18 +198,20 @@ export function describeModules(
   const tools = modules.filter((module) => module.kind === "tool");
   const inspectors = modules.filter((module) => module.kind === "inspector");
   const parts: string[] = [];
-  if (packs.length) parts.push(plural(packs.length, "instruction pack"));
+  if (packs.length)
+    parts.push(plural(packs.length, "research instruction set"));
   if (context.length)
     parts.push(
-      context.map((module) => module.name.toLowerCase()).join(" and "),
+      context.map((module) => moduleName(module).toLowerCase()).join(" and "),
     );
   if (tools.length)
     parts.push(
       tools.length <= 2
-        ? tools.map((module) => module.name.toLowerCase()).join(" and ")
+        ? tools.map((module) => moduleName(module).toLowerCase()).join(" and ")
         : plural(tools.length, "tool"),
     );
-  if (inspectors.length) parts.push(plural(inspectors.length, "inspector"));
+  if (inspectors.length)
+    parts.push(plural(inspectors.length, "research panel"));
   const sentence = `Adds ${joinList(parts)}.`;
   return instructions.trim() ? sentence : `${sentence} No preset instructions.`;
 }
@@ -240,12 +244,18 @@ export function availabilityFor(
 
 export type AccessScope = "builtIn" | "global" | "workspace" | "conversation";
 export type AccessKey =
-  "mode" | "commandNetwork" | "contextBudgetBytes" | "webSearch";
+  | "mode"
+  | "fileMode"
+  | "commandNetwork"
+  | "commandDomains"
+  | "browser"
+  | "contextBudgetBytes"
+  | "webSearch";
 
 export const ACCESS_SCOPES: Array<{ id: AccessScope; label: string }> = [
   { id: "builtIn", label: "Built-in" },
   { id: "global", label: "Global" },
-  { id: "workspace", label: "Workspace" },
+  { id: "workspace", label: "Project" },
   { id: "conversation", label: "This conversation" },
 ];
 
@@ -254,7 +264,7 @@ export interface AccessRow {
   label: string;
   description: string;
   builtIn: string | number | boolean;
-  kind: "select" | "boolean";
+  kind: "select" | "boolean" | "text";
   options?: Array<{ value: string | number; label: string }>;
   /** When set, no scope may override the value; the text explains why. */
   locked?: string;
@@ -265,7 +275,7 @@ export const ACCESS_ROWS: AccessRow[] = [
     key: "mode",
     label: "Access mode",
     description:
-      "Inspect lets commands read the registered folder. Edit also lets them write to it and enables execution modules.",
+      "Inspect reads project files. Edit allows file changes using the method selected below.",
     builtIn: "inspect",
     kind: "select",
     options: [
@@ -274,17 +284,45 @@ export const ACCESS_ROWS: AccessRow[] = [
     ],
   },
   {
+    key: "fileMode",
+    label: "File changes",
+    description:
+      "Review copy prepares a separate copy automatically; accept or discard changes in Review edits. Direct edits supports configured research jobs and undo; general commands can only read project files. Finish reviewing an existing copy before switching.",
+    builtIn: "review",
+    kind: "select",
+    options: [
+      { value: "review", label: "Review copy" },
+      { value: "direct", label: "Direct edits" },
+    ],
+  },
+  {
     key: "commandNetwork",
-    label: "Command network",
+    label: "Internet access for commands",
     description: "Whether commands the model runs may reach the network.",
     builtIn: false,
     kind: "boolean",
   },
   {
-    key: "contextBudgetBytes",
-    label: "Context budget",
+    key: "commandDomains",
+    label: "Allowed command sites",
     description:
-      "Maximum amount of paper text and notes included with each message.",
+      "With command internet access on: list domains separated by commas (for example, pypi.org, *.pythonhosted.org). ChatGPT and Claude Code treat blank as public internet. API and local server conversations need at least one site, or commands won't run.",
+    builtIn: "",
+    kind: "text",
+  },
+  {
+    key: "browser",
+    label: "Browser interaction",
+    description:
+      "Use a visible browser with a separate profile. Pipeline downloads the browser when needed; sign in directly in its window.",
+    builtIn: false,
+    kind: "boolean",
+  },
+  {
+    key: "contextBudgetBytes",
+    label: "Source text limit",
+    description:
+      "Maximum amount of paper text and notes included with each message. Instructions and sources together stay under 256 KiB, so the largest limits can be shortened.",
     builtIn: 65536,
     kind: "select",
     options: [
@@ -296,11 +334,11 @@ export const ACCESS_ROWS: AccessRow[] = [
   },
   {
     key: "webSearch",
-    label: "Native web search",
-    description: "Provider-side search inside the conversation.",
+    label: "Web search",
+    description:
+      "Search the web, read public pages, and download files when Edit is enabled. Independent of command internet access.",
     builtIn: false,
     kind: "boolean",
-    locked: "Web search is not available in Workspace yet.",
   },
 ];
 
@@ -351,8 +389,14 @@ export function effectiveAccessValue(
   switch (key) {
     case "mode":
       return effective.mode;
+    case "fileMode":
+      return effective.fileMode ?? "review";
     case "commandNetwork":
       return effective.commandNetwork;
+    case "commandDomains":
+      return effective.capabilities?.commandDomains.join(", ") ?? "";
+    case "browser":
+      return effective.capabilities?.browser ?? false;
     case "contextBudgetBytes":
       return effective.contextBudgetBytes;
     case "webSearch":
@@ -363,7 +407,11 @@ export function effectiveAccessValue(
 export function compactAccessSummary(effective: EffectiveHarness): string {
   const budget = ACCESS_ROWS.find((row) => row.key === "contextBudgetBytes")!;
   return [
-    effective.mode === "edit" ? "Edit" : "Inspect",
+    effective.capabilities?.privateFolder
+      ? "Private working folder"
+      : effective.mode === "edit"
+        ? "Edit"
+        : "Inspect",
     effective.commandNetwork ? "command network" : "no command network",
     formatAccessValue(budget, effective.contextBudgetBytes),
   ].join(" · ");

@@ -26,6 +26,7 @@ impl NativeSession {
         epoch: u64,
         name: &str,
         title: &str,
+        quiet: &[&str],
     ) -> Result<Self, String> {
         let mut version_command = resolved.command(["--version"]);
         version_command.current_dir(std::env::temp_dir());
@@ -52,7 +53,7 @@ impl NativeSession {
         let (process, pipes) = OwnedProcess::spawn(command)?;
         let client = AppServerClient::from_io(epoch, pipes.stdout, pipes.stdin);
         let stderr = tokio::spawn(capture_stderr(pipes.stderr));
-        let initialize = match client.initialize_as(name, title).await {
+        let initialize = match client.initialize_as(name, title, quiet).await {
             Ok(value) => value,
             Err(error) => {
                 process.terminate().await;
@@ -182,5 +183,43 @@ pub(crate) fn same_existing_path(left: &Path, right: &Path) -> bool {
     match (left.canonicalize(), right.canonicalize()) {
         (Ok(left), Ok(right)) => left == right,
         _ => false,
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[tokio::test]
+    async fn rejects_old_codex_before_starting_app_server() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("codex");
+        std::fs::write(
+            &executable,
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then\n  echo 'codex-cli 0.147.0'\n  exit 0\nfi\ntouch app-server-started\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let resolved = crate::deps::ResolvedCommand::direct(executable);
+        let result = NativeSession::launch_resolved(
+            &resolved,
+            root.path(),
+            root.path(),
+            1,
+            "pipeline_test",
+            "Pipeline Test",
+            &[],
+        )
+        .await;
+        let error = match result {
+            Ok(session) => {
+                session.shutdown().await;
+                panic!("An unsupported Codex version was admitted");
+            }
+            Err(error) => error,
+        };
+        assert_eq!(error, "Codex 0.147.0 is too old; install 0.165.0 or newer");
+        assert!(!root.path().join("app-server-started").exists());
     }
 }

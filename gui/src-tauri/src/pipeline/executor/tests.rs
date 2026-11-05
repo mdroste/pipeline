@@ -205,7 +205,11 @@ fn out(id: &str, label: &str, text: &str) -> StepOutput {
     }
 }
 
+mod analyzers;
+
 mod artifacts;
+
+mod cancellation;
 
 mod findings;
 
@@ -217,4 +221,8 @@ mod prompts;
 
 mod schedule;
 
+mod unit_files;
+
 mod units;
+
+mod unstarted;

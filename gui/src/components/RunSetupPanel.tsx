@@ -3,11 +3,14 @@ import PaperSelector from "./PaperSelector";
 import SidebarPanel, { SidebarHeader } from "./SidebarPanel";
 import WorkflowPanel from "./WorkflowPanel";
 import RunParallelAgents from "./RunParallelAgents";
+import { isWindows } from "../lib/platform";
 import type {
+  DepsReport,
   PipelineConfig,
   PrimaryInputSelection,
   RunParallelOverrides,
 } from "../lib/types";
+import ReportIssueLink from "./ReportIssueLink";
 
 const PRIVACY_NOTICE_KEY = "pipeline.privacyNoticeAcknowledged.v1";
 
@@ -16,7 +19,13 @@ interface Props {
   configError: string | null;
   configLoading: boolean;
   dependenciesError: string | null;
+  /** What readiness last saw, for labeling providers. */
+  dependencies?: DepsReport | null;
   inputMode: string;
+  /** The primary input App holds; the selector shows it across remounts. */
+  inputSelection: PrimaryInputSelection | null;
+  /** Why the last launch failed. Start review stays available to retry. */
+  launchError?: string | null;
   listenersReady: boolean;
   localLlmActive: boolean;
   paperPath: string | null;
@@ -43,7 +52,10 @@ export default function RunSetupPanel({
   configError,
   configLoading,
   dependenciesError,
+  dependencies,
   inputMode,
+  inputSelection,
+  launchError = null,
   listenersReady,
   localLlmActive,
   paperPath,
@@ -87,6 +99,10 @@ export default function RunSetupPanel({
       onResize={onResize}
       resizeLabel="Resize report setup"
     >
+      {/* This panel reaches the window top, beside the main content's strip. */}
+      {isWindows && (
+        <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-6" />
+      )}
       <SidebarHeader title="New review" heading="h1" />
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-6 pt-1">
         <div className="space-y-5">
@@ -98,6 +114,7 @@ export default function RunSetupPanel({
             <PaperSelector
               key={selectionKey}
               inputMode={inputMode}
+              selection={inputSelection}
               onPathChange={onPaperPathChange}
               onSelectionChange={onInputSelectionChange}
               disabled={configLoading}
@@ -114,6 +131,7 @@ export default function RunSetupPanel({
           <RunParallelAgents
             value={parallelOverrides}
             disabled={configLoading || preparingRun}
+            dependencies={dependencies}
             localLlmActive={localLlmActive}
             refreshKey={configVersion}
             onChange={onParallelOverridesChange}
@@ -135,6 +153,17 @@ export default function RunSetupPanel({
               >
                 Retry workflow
               </button>
+              <ReportIssueLink />
+            </div>
+          )}
+          {launchError && (
+            <div
+              role="alert"
+              className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300"
+            >
+              <p className="font-medium">The review could not be started.</p>
+              <p className="mt-1 break-words">{launchError}</p>
+              <ReportIssueLink />
             </div>
           )}
           {dependenciesError && (
@@ -151,6 +180,7 @@ export default function RunSetupPanel({
               >
                 Retry system check
               </button>
+              <ReportIssueLink />
             </div>
           )}
           {showPrivacyNotice && (
@@ -161,10 +191,10 @@ export default function RunSetupPanel({
                          text-amber-900 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200"
             >
               <p>
-                Your selected source and the context granted to a step may be
-                sent to its configured model provider. WebSearch steps also send
-                queries to an external search service. Report records and
-                artifacts persist locally until removed.
+                Your AI provider may receive the selected source and any
+                material each step can read. Web searches send queries to an
+                external service. Reports and supporting files stay on this
+                computer until deleted.
               </p>
               <div className="mt-2 flex items-center gap-3">
                 <button

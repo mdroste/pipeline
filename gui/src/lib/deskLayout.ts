@@ -63,3 +63,9 @@ export function saveDeskLayout(workspaceId: string, value: DeskLayout) {
     /* Optional layout storage never grants model access. */
   }
 }
+/** Forget the research items left open, keeping the rest of the layout. */
+export function clearDeskObjects(workspaceId: string) {
+  const layout = loadDeskLayout(workspaceId);
+  if (layout.object || layout.comparison)
+    saveDeskLayout(workspaceId, { ...layout, object: null, comparison: null });
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -10,8 +10,11 @@ import {
   type ResponseExport,
 } from "../../lib/studioClient";
 import type { ProjectRecord } from "../../lib/projectClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { researchClient } from "../../lib/workbench/researchClient";
 import type { RunSummary } from "../../lib/types";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import useReopenCount from "../../hooks/useReopenCount";
+import useReveal from "../../hooks/useReveal";
 import {
   button,
   input,
@@ -23,6 +26,7 @@ import {
   Inspect,
   exportText,
   useAction,
+  useDraftGuard,
   type StudioProps,
 } from "./shared";
 const categories = [
@@ -39,10 +43,12 @@ export default function Responses({
   onRefresh,
   onDocument,
   onReviewHandoff,
+  active,
 }: StudioProps) {
   const [records, setRecords] = useState<ProjectRecord<ResponseRecord>[]>([]);
   const [selected, setSelected] = useState("");
   const [decision, setDecision] = useState<ResponseDecision | null>(null);
+  const decisionGuard = useDraftGuard(decision);
   const [checked, setChecked] = useState<string[]>([]);
   const [history, setHistory] = useState<unknown[]>([]);
   const [letter, setLetter] = useState<ResponseExport | null>(null);
@@ -57,11 +63,13 @@ export default function Responses({
   const [findingIds, setFindingIds] = useState<string[]>([]);
   const [report, setReport] = useState("");
   const [comments, setComments] = useState<ReportComment[]>([]);
+  const [splitNotice, setSplitNotice] = useState("");
   const [commentIds, setCommentIds] = useState<number[]>([]);
   const [changedAnchors, setChangedAnchors] = useState<string[]>([]);
   const [dependencies, setDependencies] = useState<string[]>([]);
   const refresh = async () =>
     setRecords(await studioClient.records(workspaceId, "response"));
+  const reopened = useReopenCount(active);
   useEffect(() => {
     let disposed = false;
     void studioClient
@@ -70,13 +78,23 @@ export default function Responses({
         if (!disposed) setRecords(v);
       })
       .catch((e) => {
-        if (!disposed) setError(String(e));
+        if (!disposed) setError(workbenchErrorMessage(e));
       });
     return () => {
       disposed = true;
     };
-  }, [workspaceId, setError]);
+  }, [workspaceId, setError, reopened]);
   const current = records.find((r) => r.id === selected);
+  const decisionForm = useReveal<HTMLDivElement>();
+  // A preview answers for this selection, format and these saved decisions only.
+  const letterInputs = JSON.stringify([
+    format,
+    checked,
+    records.filter((r) => checked.includes(r.id)).map((r) => r.revision),
+  ]);
+  const latestLetterInputs = useRef(letterInputs);
+  latestLetterInputs.current = letterInputs;
+  useEffect(() => setLetter(null), [letterInputs]);
   const set = (
     key: keyof ResponseDecision,
     value: ResponseDecision[keyof ResponseDecision],
@@ -109,7 +127,7 @@ export default function Responses({
                   ],
                 });
                 if (typeof path !== "string") return;
-                const p = await workbenchClient.importPaper({
+                const p = await researchClient.importPaper({
                   workspaceId,
                   paperId: null,
                   title: path.split(/[\\/]/).pop() ?? "Referee report",
@@ -130,6 +148,7 @@ export default function Responses({
             onChange={(v) => {
               setReport(v);
               setComments([]);
+              setSplitNotice("");
             }}
             options={data.papers.flatMap((p) =>
               p.revision
@@ -142,17 +161,23 @@ export default function Responses({
             disabled={!report || busy}
             onClick={() =>
               void run(async () => {
-                const c = await studioClient.report(workspaceId, report);
-                setComments(c);
-                setCommentIds(c.map((_, i) => i));
+                const preview = await studioClient.report(workspaceId, report);
+                setComments(preview.comments);
+                setCommentIds(preview.comments.map((_, i) => i));
+                setSplitNotice(
+                  preview.paragraphs > preview.comments.length
+                    ? `This report has ${preview.paragraphs} paragraphs. An import holds ${preview.comments.length}, so the rest are left out.`
+                    : "",
+                );
               })
             }
           >
             Preview paragraph split
           </button>
           <p className="text-xs text-gray-500">
-            Correct numbering and select the comments to retain. Original text
-            and byte locators stay attached.
+            {splitNotice && `${splitNotice} `}Check the numbering and choose
+            which comments to keep. Each comment keeps its original text and
+            source location.
           </p>
           <div className="max-h-72 space-y-2 overflow-auto">
             {comments.map((c, i) => (
@@ -224,7 +249,7 @@ export default function Responses({
                 }
               }}
             />
-            Enable importing Workflow findings
+            Enable importing review findings
           </label>
           {bridge && (
             <>
@@ -237,10 +262,10 @@ export default function Responses({
                   )
                 }
               >
-                Choose a completed Workflow run
+                Choose a completed review
               </button>
               <Select
-                label="Workflow run"
+                label="Completed review"
                 value={runId}
                 onChange={setRunId}
                 options={runs.map((r) => ({
@@ -344,7 +369,7 @@ export default function Responses({
           )}
           <p className="text-xs text-gray-500">
             Imported findings link to the original reports. Your existing
-            decisions are preserved; edits here do not change the Workflow
+            decisions are preserved; edits here do not change the review
             reports.
           </p>
         </section>
@@ -376,11 +401,15 @@ export default function Responses({
                   <td className="max-w-sm p-2">
                     <button
                       className="text-left underline"
-                      onClick={() => {
-                        setSelected(r.id);
-                        setDecision(r.body.decision);
-                        setHistory([]);
-                      }}
+                      onClick={() =>
+                        decisionGuard.replace("response", () => {
+                          decisionGuard.markSaved(r.body.decision);
+                          setSelected(r.id);
+                          setDecision(r.body.decision);
+                          setHistory([]);
+                          decisionForm.reveal();
+                        })
+                      }
                     >
                       {r.body.decision.number}.{" "}
                       {r.body.source.finding?.title ??
@@ -403,10 +432,14 @@ export default function Responses({
           </table>
         </div>
         {current && decision && (
-          <div className="grid gap-4 lg:grid-cols-2">
+          <div
+            ref={decisionForm.ref}
+            tabIndex={-1}
+            className="grid gap-4 lg:grid-cols-2"
+          >
             <div className={panel}>
               <Text
-                label="Stable comment number"
+                label="Comment number"
                 value={decision.number}
                 onChange={(s) => set("number", s)}
               />
@@ -479,6 +512,7 @@ export default function Responses({
                       expectedRevision: current.revision,
                       response: decision,
                     });
+                    decisionGuard.markSaved(decision);
                     await refresh();
                   })
                 }
@@ -497,7 +531,7 @@ export default function Responses({
                 }))}
               />
               <Select
-                label="Exact manuscript revision"
+                label="Manuscript version"
                 value={decision.manuscriptRevisionId ?? ""}
                 onChange={(s) => set("manuscriptRevisionId", s || null)}
                 options={data.papers.flatMap((p) =>
@@ -610,15 +644,15 @@ export default function Responses({
           className={button}
           disabled={!checked.length || busy}
           onClick={() =>
-            void run(async () =>
-              setLetter(
-                await studioClient.exportResponses(
-                  workspaceId,
-                  checked,
-                  format,
-                ),
-              ),
-            )
+            void run(async () => {
+              const previewed = await studioClient.exportResponses(
+                workspaceId,
+                checked,
+                format,
+              );
+              if (latestLetterInputs.current === letterInputs)
+                setLetter(previewed);
+            })
           }
         >
           Preview selected responses and check links
@@ -626,7 +660,7 @@ export default function Responses({
         {letter && (
           <>
             {letter.warnings.map((w, i) => (
-              <p key={i} role="status" className="text-xs text-amber-700">
+              <p key={i} role="status" className="text-xs text-warning">
                 {w}
               </p>
             ))}
@@ -639,7 +673,7 @@ export default function Responses({
               onClick={() =>
                 void run(() =>
                   exportText(
-                    `${letter.draft ? (letter.format === "latex" ? "% DRAFT: unresolved export flags\n" : "DRAFT — unresolved export flags\n\n") : ""}${letter.text}`,
+                    `${letter.draft ? (letter.format === "latex" ? "% DRAFT: unresolved export flags\n" : "DRAFT — issues to resolve before export\n\n") : ""}${letter.text}`,
                     `response-letter${letter.draft ? "-DRAFT" : ""}.${letter.format === "latex" ? "tex" : "md"}`,
                   ),
                 )
@@ -650,13 +684,12 @@ export default function Responses({
           </>
         )}
       </section>
-      {bridge && onReviewHandoff && (
+      {onReviewHandoff && (
         <section className={panel}>
           <h2 className="font-semibold">Focused re-review</h2>
           <p className="text-xs">
-            Choose changed passages and their dependencies. The coverage
-            manifest goes to the normal Workflow preview; this does not launch a
-            review.
+            Choose the changed passages and supporting passages to review. Next,
+            check the selection in the review preview before starting.
           </p>
           <div className="max-h-48 overflow-auto">
             {data.anchors.map((a) => (
@@ -699,7 +732,7 @@ export default function Responses({
               )
             }
           >
-            Prepare covered passages for Workflow preview
+            Preview review of selected passages
           </button>
         </section>
       )}

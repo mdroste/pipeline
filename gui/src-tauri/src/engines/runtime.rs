@@ -71,6 +71,7 @@ pub(super) fn paddle_paths_at(root: &Path) -> Option<PaddleEnginePaths> {
         model,
         mmproj,
         integrity_sha256,
+        gpu: false,
     })
 }
 
@@ -79,7 +80,7 @@ pub(super) fn paddle_paths_at(root: &Path) -> Option<PaddleEnginePaths> {
 pub fn paddle_engine_paths() -> Result<PaddleEnginePaths, String> {
     let root = paddle_root()?;
     paddle_paths_at(&root).ok_or_else(|| {
-        "The PaddleOCR-VL Full Parser recognition component is missing. Install or repair the Full Parser from Settings → PDF Extraction."
+        "The PaddleOCR-VL Full Parser recognition component is missing. Install or repair the Full Parser from Settings → PDF extraction."
             .to_string()
     })
 }
@@ -154,7 +155,11 @@ pub(super) fn paddle_full_parser_status_at(native_root: &Path) -> Option<PaddleF
     let version_root = parser_root.join("versions").join(PADDLE_PARSER_RELEASE);
     let layout_model = version_root.join("models").join("PP-DocLayoutV3_infer");
     let script = version_root.join("paddle_parser_sidecar.py");
-    if !paddle_install_committed(&native_root.join("paddleocr-vl"))
+    let recognition_committed = match installed_recognition_backend(&version_root) {
+        Some(RecognitionBackend::BuiltIn) => native_model_committed(&version_root),
+        _ => paddle_install_committed(&native_root.join("paddleocr-vl")),
+    };
+    if !recognition_committed
         || !parser_install_committed(&parser_root)
         || !venv_python(&version_root.join("venv")).is_file()
         || !bounded_regular_file(&script, 2 * 1024 * 1024)
@@ -187,9 +192,20 @@ pub fn paddle_full_parser_status() -> Result<PaddleFullParserStatus, String> {
     full_parser_support()?;
     let native_root = pipeline_home()?.join("native");
     paddle_full_parser_status_at(&native_root).ok_or_else(|| {
-        "The managed PaddleOCR-VL Full Parser is incomplete. Install or repair it from Settings → PDF Extraction."
+        "The managed PaddleOCR-VL Full Parser is incomplete. Install or repair it from Settings → PDF extraction."
             .to_string()
     })
+}
+
+/// Read which backend an install recorded, for the fast commit-marker checks.
+/// Full verification reads the same value from its authenticated manifest.
+pub(super) fn installed_recognition_backend(version_root: &Path) -> Option<RecognitionBackend> {
+    let manifest = version_root.join("install.json");
+    if !bounded_regular_file(&manifest, 2 * 1024 * 1024) {
+        return None;
+    }
+    let manifest = serde_json::from_slice(&std::fs::read(manifest).ok()?).ok()?;
+    RecognitionBackend::from_manifest(&manifest)
 }
 
 pub(super) struct VerifiedParserRuntime {
@@ -258,10 +274,7 @@ pub(super) fn verified_parser_runtime_at(root: &Path) -> Option<VerifiedParserRu
             .get("offline_model_runtime")
             .and_then(serde_json::Value::as_bool)
             != Some(true)
-        || manifest
-            .get("recognition_backend")
-            .and_then(serde_json::Value::as_str)
-            != Some("managed llama.cpp")
+        || RecognitionBackend::from_manifest(&manifest).is_none()
         || manifest
             .get("integrity_schema")
             .and_then(serde_json::Value::as_u64)
@@ -343,12 +356,18 @@ pub(super) fn verified_parser_sidecar_at(
 pub(super) fn paddle_full_parser_paths_at(root: &Path) -> Option<PaddleFullParserPaths> {
     let (verified, script, script_digest) = verified_parser_sidecar_at(root)?;
     let version_root = verified.version_root;
+    let recognition = match RecognitionBackend::from_manifest(&verified.manifest)? {
+        RecognitionBackend::ManagedLlama => PaddleRecognition::Llama(paddle_engine_paths().ok()?),
+        RecognitionBackend::BuiltIn => PaddleRecognition::BuiltIn {
+            model_dir: native_model_dir(&version_root),
+        },
+    };
     Some(PaddleFullParserPaths {
         python: venv_python(&version_root.join("venv")),
         script,
         model_cache: version_root.join("cache"),
         layout_model: version_root.join("models").join("PP-DocLayoutV3_infer"),
-        paddle: paddle_engine_paths().ok()?,
+        recognition,
         release: PADDLE_PARSER_RELEASE.to_string(),
         integrity_sha256: verified.integrity_sha256,
         sidecar_sha256: script_digest,
@@ -438,13 +457,15 @@ pub(super) fn refresh_paddle_parser_sidecar_locked(root: &Path) -> Result<Sideca
 
 /// Resolve the managed full parser and the native VLM stack it depends on.
 pub fn paddle_full_parser_paths() -> Result<PaddleFullParserPaths, String> {
-    let (paths, _lease) = paddle_full_parser_lease()?;
+    let (paths, _lease) = paddle_full_parser_lease(true)?;
     Ok(paths)
 }
 
 /// Keep the managed installation fixed through validation and native extraction.
 /// The same cross-process gate protects install, repair, cleanup and uninstall.
-pub(crate) fn paddle_full_parser_lease() -> Result<
+pub(crate) fn paddle_full_parser_lease(
+    use_gpu: bool,
+) -> Result<
     (
         PaddleFullParserPaths,
         std::sync::Arc<super::installer_io::InstallGuard>,
@@ -464,13 +485,17 @@ pub(crate) fn paddle_full_parser_lease() -> Result<
     {
         refresh_paddle_parser_sidecar_locked(&root)?;
     }
-    paddle_full_parser_paths_at(&root)
-        .map(|paths| (paths, lease))
-        .ok_or_else(|| {
-            "PaddleOCR-VL Full Parser is not installed or failed verification. \
-         Install or repair it from Settings → PDF Extraction."
-                .to_string()
-        })
+    let mut paths = paddle_full_parser_paths_at(&root).ok_or_else(|| {
+        "PaddleOCR-VL Full Parser is not installed or failed verification. \
+         Install or repair it from Settings → PDF extraction."
+            .to_string()
+    })?;
+    if use_gpu {
+        if let Some(engine) = resolve_gpu_recognition()? {
+            paths.recognition = PaddleRecognition::Llama(engine);
+        }
+    }
+    Ok((paths, lease))
 }
 
 /// Runtime environment for the private parser process. Model weights and
@@ -481,6 +506,7 @@ pub fn paddle_full_parser_env(paths: &PaddleFullParserPaths) -> Vec<(String, Str
 }
 
 pub(super) fn paddle_full_parser_env_at(model_cache: &Path) -> Vec<(String, String)> {
+    let model_cache = native_path(model_cache);
     let managed_home = model_cache.to_string_lossy().to_string();
     vec![
         // pathlib.Path.home() uses USERPROFILE on Windows and HOME on Unix.
@@ -563,15 +589,16 @@ pub(super) fn dir_size(root: &Path) -> u64 {
 
 // ── Status ──────────────────────────────────────────────────────────
 
-/// Acquire through `acquire`, waiting (up to `deadline`) while the engine gate
-/// is held by a detached runtime verification rather than an install. A
-/// cancelled extraction leaves its verification running until the content
-/// hash finishes; an immediate re-run must wait for that, not fail.
-pub(crate) async fn acquire_waiting_on_detached_gate<T: Send + 'static>(
+/// Acquire through `acquire`, waiting while the engine gate is held by anything
+/// but an install: another extraction, which can take as long as its document,
+/// or a detached runtime verification that a cancelled extraction left running.
+/// `on_wait` runs once, when the first attempt finds the gate busy. Dropping
+/// the future stops the wait, so cancellation works at any point.
+pub(crate) async fn acquire_waiting_on_engine_gate<T: Send + 'static>(
     acquire: impl Fn() -> Result<T, String> + Send + Sync + Clone + 'static,
-    deadline: std::time::Duration,
+    on_wait: impl FnOnce() + Send,
 ) -> Result<T, String> {
-    let started = std::time::Instant::now();
+    let mut on_wait = Some(on_wait);
     loop {
         let attempt = acquire.clone();
         match tokio::task::spawn_blocking(attempt)
@@ -581,9 +608,11 @@ pub(crate) async fn acquire_waiting_on_detached_gate<T: Send + 'static>(
             Ok(value) => return Ok(value),
             Err(error)
                 if error.contains("already running")
-                    && super::installer_io::engine_gate_busy_without_install()
-                    && started.elapsed() < deadline =>
+                    && super::installer_io::engine_gate_busy_without_install() =>
             {
+                if let Some(on_wait) = on_wait.take() {
+                    on_wait();
+                }
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             }
             Err(error) => return Err(error),

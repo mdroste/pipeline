@@ -29,8 +29,6 @@ it("adapts to its container while retaining drafts and restoring the requested s
   render(
     <WorkspaceDesk
       project={<textarea aria-label="Project notes" defaultValue="Notes" />}
-      navigationHidden
-      onNavigation={vi.fn()}
     >
       <textarea aria-label="Message" defaultValue="Draft" />
     </WorkspaceDesk>,
@@ -45,26 +43,23 @@ it("adapts to its container while retaining drafts and restoring the requested s
   expect(message).toHaveFocus();
   expect(notes).not.toBeVisible();
   expect(
-    screen.queryByRole("menuitemradio", { name: "Project + chat" }),
+    screen.queryByRole("menuitemradio", { name: "Project + conversation" }),
   ).not.toBeInTheDocument();
   resize(1000);
   expect(message).toBeVisible();
   expect(notes).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Hide chat" }));
+  fireEvent.click(screen.getByRole("button", { name: "Hide conversation" }));
   expect(message).not.toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Show chat" }));
+  fireEvent.click(screen.getByRole("button", { name: "Show conversation" }));
   expect(screen.getByLabelText("Message")).toBe(message);
   expect(message).toHaveValue("Keep my draft");
 });
 
 it("keeps attention and navigation actions reachable from the focused project", () => {
-  const open = vi.fn();
   const stop = vi.fn();
   const { rerender } = render(
     <WorkspaceDesk
       project={<p>Paper</p>}
-      navigationHidden
-      onNavigation={open}
       attentionCount={2}
       active
       onStop={stop}
@@ -76,17 +71,10 @@ it("keeps attention and navigation actions reachable from the focused project", 
   expect(screen.getByRole("status")).toHaveTextContent(
     "2 requests need attention",
   );
-  fireEvent.click(screen.getByRole("button", { name: "Browse projects" }));
-  expect(open).toHaveBeenCalledOnce();
   fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
   expect(stop).toHaveBeenCalledOnce();
   rerender(
-    <WorkspaceDesk
-      project={<p>Paper</p>}
-      navigationHidden
-      onNavigation={open}
-      assistantRequest={1}
-    >
+    <WorkspaceDesk project={<p>Paper</p>} assistantRequest={1}>
       <textarea aria-label="Message" />
     </WorkspaceDesk>,
   );
@@ -98,13 +86,7 @@ it("clamps the split to actual space and restores each project's saved width and
   localStorage.setItem("pipeline.workspace.assistantWidth.alpha", "560");
   localStorage.setItem("pipeline.workspace.view.beta", "assistant");
   const view = render(
-    <WorkspaceDesk
-      key="alpha"
-      workspaceId="alpha"
-      project={<p>Alpha</p>}
-      navigationHidden={false}
-      onNavigation={vi.fn()}
-    >
+    <WorkspaceDesk key="alpha" workspaceId="alpha" project={<p>Alpha</p>}>
       <p>Chat content</p>
     </WorkspaceDesk>,
   );
@@ -124,8 +106,6 @@ it("clamps the split to actual space and restores each project's saved width and
       projectRequest={3}
       resetRequest={1}
       project={<p>Beta</p>}
-      navigationHidden={false}
-      onNavigation={vi.fn()}
     >
       <p>Chat content</p>
     </WorkspaceDesk>,
@@ -150,8 +130,6 @@ it("opens a conversation-only project on its chat unless a layout was chosen", (
       workspaceId={id}
       conversationFirstRequest={conversationFirstRequest}
       project={<p>Overview</p>}
-      navigationHidden
-      onNavigation={vi.fn()}
     >
       <p>Chat content</p>
     </WorkspaceDesk>
@@ -172,4 +150,55 @@ it("opens a conversation-only project on its chat unless a layout was chosen", (
   resize(1200);
   view.rerender(desk("chosen", 2));
   expect(screen.getByText("Overview")).toBeVisible();
+});
+
+it("says one request needs attention in the singular", () => {
+  render(
+    <WorkspaceDesk project={<p>Paper</p>} attentionCount={1}>
+      <textarea aria-label="Message" />
+    </WorkspaceDesk>,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    /^1 request needs attention$/,
+  );
+});
+
+it("names the assistant pane a conversation in its controls", () => {
+  render(
+    <WorkspaceDesk project={<p>Paper</p>}>
+      <textarea aria-label="Message" />
+    </WorkspaceDesk>,
+  );
+  resize(1000);
+  expect(
+    screen.getByRole("button", { name: "Hide conversation" }),
+  ).toHaveTextContent("Conversation");
+  fireEvent.click(screen.getByRole("button", { name: "Project layout" }));
+  expect(
+    screen.getByRole("menuitemradio", { name: "Conversation only" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("menuitemradio", { name: "Project + conversation" }),
+  ).toBeVisible();
+});
+
+it("shows the conversation's messages at the top only while its pane is hidden", () => {
+  render(
+    <WorkspaceDesk
+      project={<div>Project</div>}
+      assistantFeedback={<p>A response is still running.</p>}
+    >
+      <div>Conversation</div>
+    </WorkspaceDesk>,
+  );
+  resize(1000);
+  expect(screen.queryByText("A response is still running.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Hide conversation" }));
+  expect(screen.getByText("A response is still running.")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Show conversation" }));
+  expect(screen.queryByText("A response is still running.")).toBeNull();
+  // A narrow window that shows only the project hides the conversation too.
+  fireEvent.click(screen.getByRole("button", { name: "Hide conversation" }));
+  resize(700);
+  expect(screen.getByText("A response is still running.")).toBeVisible();
 });

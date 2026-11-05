@@ -1,9 +1,21 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import WorkspaceComposerControls from "./WorkspaceComposerControls";
+import WorkspaceComposerControls, {
+  claudeUsageLine,
+  usageLine,
+} from "./WorkspaceComposerControls";
 import type { WorkspaceModel } from "../lib/workbenchTypes";
 
-vi.mock("../lib/workbenchClient", () => ({ workbenchClient: {} }));
+vi.mock("../lib/workbench/workspaceClient", () => ({ workspaceClient: {} }));
+vi.mock("../lib/workbench/conversationClient", () => ({
+  conversationClient: {},
+}));
+vi.mock("../lib/workbench/harnessClient", () => ({ harnessClient: {} }));
+vi.mock("../lib/workbench/researchClient", () => ({ researchClient: {} }));
+vi.mock("../lib/workbench/executionClient", () => ({ executionClient: {} }));
+vi.mock("../lib/workbench/recipeClient", () => ({ recipeClient: {} }));
+vi.mock("../lib/workbench/releaseClient", () => ({ releaseClient: {} }));
+vi.mock("../lib/workbench/runtimeClient", () => ({ runtimeClient: {} }));
 
 const models: WorkspaceModel[] = [
   {
@@ -34,7 +46,7 @@ it("offers only supported efforts and resets effort when changing model", () => 
     />,
   );
   expect(
-    screen.getByRole("button", { name: "Model and thinking: Auto" }),
+    screen.getByRole("button", { name: "Model and thinking: ChatGPT · Auto" }),
   ).toBeInTheDocument();
   open();
   expect(screen.getByRole("option", { name: /Automatic/ })).toHaveAttribute(
@@ -65,7 +77,7 @@ it("offers only supported efforts and resets effort when changing model", () => 
   expect(screen.getByText("Uses the model's default: Medium.")).toBeVisible();
   expect(
     screen.getByRole("button", {
-      name: "Model and thinking: Example · Medium",
+      name: "Model and thinking: ChatGPT · Example · Medium",
     }),
   ).toBeInTheDocument();
   fireEvent.click(screen.getByRole("radio", { name: "High" }));
@@ -106,7 +118,7 @@ it("shows saved unavailable settings without silently selecting replacements", (
   );
   expect(
     screen.getByRole("button", {
-      name: "Model and thinking: removed-model · Ultra",
+      name: "Model and thinking: ChatGPT · removed-model · Ultra",
     }),
   ).toHaveAttribute("data-warning", "true");
   open();
@@ -181,5 +193,202 @@ it("shows the account and remaining usage once the picker opens", async () => {
   expect(load).not.toHaveBeenCalled();
   open();
   await screen.findByText("researcher@example.edu · Plus");
-  expect(screen.getByText("62% of your usage limit left")).toBeVisible();
+  expect(screen.getByText("62% of your 5-hour limit left")).toBeVisible();
+});
+
+it("offers Claude subscription mode and hides ChatGPT account information", async () => {
+  const change = vi.fn();
+  const load = vi.fn();
+  render(
+    <WorkspaceComposerControls
+      models={[]}
+      model=""
+      effort=""
+      disabled={false}
+      onChange={vi.fn()}
+      runtime="claude"
+      onRuntimeChange={change}
+      loadAccount={load}
+    />,
+  );
+  open();
+  expect(screen.getByRole("radio", { name: "Claude Code" })).toBeChecked();
+  expect(
+    screen.getByText(/Uses your Claude Code subscription sign-in/),
+  ).toBeVisible();
+  expect(load).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("radio", { name: "ChatGPT" }));
+  expect(change).toHaveBeenCalledWith("codex");
+});
+
+it("shows Claude usage once Claude Code has reported it", async () => {
+  const usage = vi.fn().mockResolvedValue({
+    status: "allowed_warning",
+    resetsAt: null,
+    rateLimitType: "five_hour",
+    usedPercent: 82.4,
+    isUsingOverage: false,
+    observedAt: Date.now(),
+  });
+  render(
+    <WorkspaceComposerControls
+      models={[]}
+      model=""
+      effort=""
+      disabled={false}
+      onChange={vi.fn()}
+      runtime="claude"
+      loadClaudeUsage={usage}
+    />,
+  );
+  expect(usage).not.toHaveBeenCalled();
+  open();
+  await screen.findByText("18% of your 5-hour limit left");
+  expect(screen.getByText(/Reported by Claude Code at/)).toBeVisible();
+});
+
+it("explains when Claude has not reported usage yet", async () => {
+  render(
+    <WorkspaceComposerControls
+      models={[]}
+      model=""
+      effort=""
+      disabled={false}
+      onChange={vi.fn()}
+      runtime="claude"
+      loadClaudeUsage={vi.fn().mockResolvedValue(null)}
+    />,
+  );
+  open();
+  await screen.findByText(/It will appear here after Claude's next reply/);
+});
+
+it("summarizes Claude usage reports without inventing percentages", () => {
+  const now = 1_000_000_000_000;
+  const report = {
+    status: "allowed" as const,
+    resetsAt: null,
+    rateLimitType: null,
+    usedPercent: null,
+    isUsingOverage: false,
+    observedAt: now,
+  };
+  expect(claudeUsageLine(null, now)).toBeNull();
+  expect(claudeUsageLine(report, now)).toBe("Within your usage limit");
+  expect(
+    claudeUsageLine(
+      { ...report, status: "allowed_warning", rateLimitType: "seven_day" },
+      now,
+    ),
+  ).toBe("Approaching your weekly usage limit");
+  expect(claudeUsageLine({ ...report, status: "rejected" }, now)).toBe(
+    "Usage limit reached",
+  );
+  expect(claudeUsageLine({ ...report, isUsingOverage: true }, now)).toBe(
+    "Using extra usage",
+  );
+  // A window that has already reset makes the report stale.
+  expect(
+    claudeUsageLine({ ...report, resetsAt: now / 1000 - 60 }, now),
+  ).toBeNull();
+});
+
+it("distinguishes usage windows and never treats an expired report as a fresh balance", () => {
+  const now = 2_000_000_000_000;
+  const summary = usageLine(
+    {
+      source: "perBucket",
+      observedAt: now - 60_000,
+      cached: true,
+      buckets: [
+        {
+          limitId: "codex",
+          limitName: "Codex",
+          planType: null,
+          primary: {
+            usedPercent: 30,
+            remainingPercent: 70,
+            windowDurationMins: 300,
+            resetsAt: now / 1000 - 1,
+          },
+          secondary: {
+            usedPercent: 20,
+            remainingPercent: 80,
+            windowDurationMins: 10080,
+            resetsAt: null,
+          },
+        },
+      ],
+    },
+    now,
+  );
+  expect(summary).toContain("5-hour usage needs a fresh report");
+  expect(summary).toContain("80% of your weekly limit left");
+  expect(summary).not.toContain("70%");
+});
+
+it("shows each Claude window with its own observation time", async () => {
+  const report = {
+    status: "allowed",
+    resetsAt: null,
+    rateLimitType: "five_hour",
+    usedPercent: 40,
+    isUsingOverage: false,
+    observedAt: Date.now(),
+  };
+  const weekly = {
+    ...report,
+    rateLimitType: "seven_day",
+    usedPercent: 10,
+    observedAt: Date.now() - 3600_000,
+  };
+  render(
+    <WorkspaceComposerControls
+      models={[]}
+      model=""
+      effort=""
+      disabled={false}
+      onChange={vi.fn()}
+      runtime="claude"
+      loadClaudeUsage={vi
+        .fn()
+        .mockResolvedValue({ ...report, windows: [report, weekly] })}
+    />,
+  );
+  open();
+  await screen.findByText("60% of your 5-hour limit left");
+  expect(screen.getByText("90% of your weekly limit left")).toBeVisible();
+  expect(screen.getAllByText(/Reported by Claude Code at/)).toHaveLength(2);
+});
+
+it("offers API and custom connections with an editable model ID", () => {
+  const change = vi.fn();
+  const runtimeChange = vi.fn();
+  render(
+    <WorkspaceComposerControls
+      models={[]}
+      model="custom-model"
+      effort=""
+      disabled={false}
+      runtime="local"
+      onChange={change}
+      onRuntimeChange={runtimeChange}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /Model and thinking/ }));
+  for (const name of [
+    "OpenAI API",
+    "Anthropic API",
+    "Gemini API",
+    "Local / custom",
+  ]) {
+    expect(screen.getByRole("radio", { name })).toBeInTheDocument();
+  }
+  fireEvent.click(screen.getByRole("radio", { name: "OpenAI API" }));
+  expect(runtimeChange).toHaveBeenCalledWith("openai-api");
+  fireEvent.change(screen.getByRole("textbox", { name: "Model ID" }), {
+    target: { value: "another-model" },
+  });
+  expect(change).toHaveBeenCalledWith("another-model", "");
+  expect(screen.queryByText(/No longer offered/)).not.toBeInTheDocument();
 });

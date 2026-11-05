@@ -10,6 +10,9 @@ export interface AppEventMap {
   "workspace-destination": { workspaceId: string; tab: string };
   /** Open a project file at a location (from conversation file links). */
   "open-file": { workspaceId: string; location: FileLocation };
+  "open-object": { workspaceId: string; object: OpenResearchObject };
+  /** A conversation was added, renamed, moved, archived, or deleted. */
+  "conversations-changed": Record<string, never>;
   /**
    * Add research objects to the conversation's sources. `whenReady` holds
    * them until the conversation can accept changes, for adds that follow an

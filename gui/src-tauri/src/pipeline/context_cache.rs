@@ -27,6 +27,7 @@ pub struct PreparedContext {
 #[derive(Debug, Default)]
 pub struct PreparedContextPool {
     contexts: std::sync::Mutex<HashMap<String, Arc<PreparedContext>>>,
+    document_index: std::sync::OnceLock<Result<(tempfile::TempDir, String), String>>,
 }
 
 impl std::fmt::Debug for PreparedContext {
@@ -160,6 +161,27 @@ impl PreparedContext {
 }
 
 impl PreparedContextPool {
+    /// The structure index, built once in a folder that lasts as long as the
+    /// run. The bundle cannot change during a run, so every unit shares this
+    /// file, and a failed build is the same failure for each of them.
+    pub fn document_index(
+        &self,
+        build: impl FnOnce(&std::path::Path) -> Result<String, String>,
+    ) -> Result<&str, String> {
+        self.document_index
+            .get_or_init(|| {
+                let folder = tempfile::Builder::new()
+                    .prefix("pipeline_document_index_")
+                    .tempdir()
+                    .map_err(|error| format!("Failed to create document index: {error}"))?;
+                let path = build(folder.path())?;
+                Ok((folder, path))
+            })
+            .as_ref()
+            .map(|(_, path)| path.as_str())
+            .map_err(Clone::clone)
+    }
+
     pub fn prepare(
         &self,
         paper_text: &str,

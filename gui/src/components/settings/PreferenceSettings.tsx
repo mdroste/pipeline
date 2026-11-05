@@ -5,6 +5,7 @@ import {
   type AppPreferences,
 } from "../../lib/appPreferences";
 import type { ThemePreference } from "../../lib/theme";
+import { openGetStarted } from "../../lib/getStarted";
 import { isMac } from "../../lib/platform";
 import { SectionHeader, Toggle, selectClass } from "./controls";
 import { SettingRow, SaveFeedback } from "./SaveState";
@@ -110,7 +111,7 @@ export function AppearanceSettings({
       <SettingRow
         id="report-scale"
         label="Default report text size"
-        description="New reports start at this size. The reader’s controls can adjust an individual view."
+        description="New reports open at this size. You can change it while reading."
       >
         {scale(
           "reportScale",
@@ -148,7 +149,7 @@ export function EditorSettings() {
       <SettingRow
         id="editor-font"
         label="Editor font size"
-        description="Applied immediately to open source editors."
+        description="Text size in the source and manuscript editors."
       >
         <select
           aria-label="Editor font size"
@@ -167,7 +168,7 @@ export function EditorSettings() {
       <div id="editor-wrap" className="settings-anchor">
         <Toggle
           label="Wrap long lines"
-          description="New source editors wrap lines to fit. You can override this in each editor."
+          description="New editors wrap lines to fit. You can change this in each editor."
           checked={p.editorWrap}
           onChange={(value) => update("editorWrap", value)}
         />
@@ -182,11 +183,7 @@ export function StartupSettings() {
   return (
     <>
       <SectionHeader title="Startup" />
-      <SettingRow
-        id="startup-page"
-        label="When Pipeline opens"
-        description="Choose a fresh starting point or return to the last project or conversation."
-      >
+      <SettingRow id="startup-page" label="When Pipeline opens">
         <select
           aria-label="When Pipeline opens"
           className={selectClass}
@@ -200,6 +197,19 @@ export function StartupSettings() {
         </select>
         <SaveFeedback {...feedback} />
       </SettingRow>
+      <SettingRow
+        id="guided-setup"
+        label="Guided setup"
+        description="Check your connections and installed tools, and open an example review."
+      >
+        <button
+          type="button"
+          className="settings-button"
+          onClick={() => openGetStarted("setup")}
+        >
+          Set up Pipeline
+        </button>
+      </SettingRow>
     </>
   );
 }
@@ -212,7 +222,7 @@ export function ConversationBehavior() {
       <SettingRow
         id="send-shortcut"
         label="Send message with"
-        description="Shift+Enter always inserts a new line. The Send button is always available."
+        description="Shift+Enter starts a new line."
       >
         <select
           aria-label="Send message with"

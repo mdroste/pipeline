@@ -1,6 +1,14 @@
 import type { PipelineConfig } from "./types";
 
 export const AUTO_REVIEW_CONTRACT = "auto-review-v2";
+/** Default built-in profile, and the fallback after a deletion. */
+export const DEFAULT_PROFILE_ID = "auto-paper-review";
+/** Built-in profiles that use the adaptive review contract. */
+export const ADAPTIVE_REVIEW_PROFILE_IDS: readonly string[] = [
+  DEFAULT_PROFILE_ID,
+  "auto-paper-review-fast",
+  "slide-review",
+];
 export const ADAPTIVE_AGENT_COUNT_KEY = "x-pipeline-adaptive-agent-count";
 export const MIN_ADAPTIVE_AGENTS = 2;
 export const MAX_ADAPTIVE_AGENTS = 6;

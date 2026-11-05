@@ -56,13 +56,7 @@ pub(crate) async fn chatgpt_model_catalog() -> Result<super::super::ModelCatalog
 #[tauri::command]
 pub(crate) async fn chatgpt_rate_limits() -> Result<super::super::RateLimits, String> {
     let owner = connect().await?;
-    let _lease = owner.activity.try_read().map_err(|_| BUSY)?;
-    owner
-        .client()
-        .await?
-        .rate_limits()
-        .await
-        .map_err(|e| e.to_string())
+    quota::read(&owner).await
 }
 
 fn ensure_event_bridge(app: tauri::AppHandle, owner: &Arc<ChatgptAccount>) {

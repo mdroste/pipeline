@@ -1,3 +1,14 @@
+//! Isolated task copies of a project and their acceptance.
+//!
+//! A task writes only inside its own copy; changes reach the project only through
+//! review and acceptance. The Git backend requires the repository root and refuses
+//! submodules and tracked symlinks. It adds a `--no-checkout` worktree on a new
+//! branch, then writes the captured working bytes (staged, unstaged and untracked),
+//! so filters and hooks never run and the source index and branch stay unchanged.
+//! Discarding reclaims only the copy backend's folder; removing a Git worktree is
+//! left to the researcher, except for one whose capture failed, which no record
+//! will ever refer to.
+
 use super::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,6 +59,9 @@ pub struct Application {
     pub error: Option<String>,
     pub checks_valid: bool,
 }
+/// `Application::direction` of changes accepted from within one file. Unlike a
+/// file-level acceptance, a finished one leaves the rest of its edit open.
+const ACCEPT_CHANGES: &str = "accept_changes";
 
 pub(super) fn create_task(
     store: &Store,
@@ -112,10 +126,130 @@ pub(super) fn discard_copy(store: &Store, ws: &str, checkpoint_id: &str) -> Work
     fs::remove_dir_all(&task_root).map_err(err)?;
     Ok(())
 }
+/// Removes the copy of a settled conversation edit that its conversation has
+/// replaced. Anything that still needs the folder keeps it: another conversation
+/// bound to this edit, a job inside it, an edit left partly accepted, or a file
+/// the researcher never saw. Undo works from the retained blobs.
+pub(super) fn reclaim_replaced_copy(
+    store: &Store,
+    ws: &str,
+    checkpoint_id: &str,
+) -> WorkbenchResult<()> {
+    let c: Checkpoint = decode(&record(store, ws, checkpoint_id, "checkpoint")?)?;
+    if c.backend != "copy" || !["accepted", "rejected"].contains(&c.state.as_str()) {
+        return Ok(());
+    }
+    let task_root = task_root_path(store, ws, checkpoint_id, &c)?;
+    research::jobs::ensure_copy_free(ws, &task_root)?;
+    let bound: bool = store
+        .connection()?
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE workspace_id=?1 AND json_extract(overrides_json,'$.projectCheckpointId')=?2)",
+            params![ws, checkpoint_id],
+            |r| r.get(0),
+        )
+        .map_err(err)?;
+    let unfinished: bool = store
+        .connection()?
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM project_records WHERE workspace_id=?1 AND kind='application' AND json_extract(body_json,'$.checkpointId')=?2 AND json_extract(body_json,'$.state') IN ('applying','recovery_required'))",
+            params![ws, checkpoint_id],
+            |r| r.get(0),
+        )
+        .map_err(err)?;
+    if bound || unfinished {
+        return Ok(());
+    }
+    if holds_only_reviewed_files(&c, &task_root)? {
+        fs::remove_dir_all(&task_root).map_err(err)?;
+    }
+    Ok(())
+}
+/// Whether a settled copy holds nothing beyond what its edit showed. Capture
+/// skips build and cache folders, so this walks everything: a file in one of
+/// those counts only if the edit's base already held the same bytes. Anything
+/// it can't vouch for keeps the folder, since only disk space is at stake.
+fn holds_only_reviewed_files(c: &Checkpoint, task_root: &Path) -> WorkbenchResult<bool> {
+    let reviewed = if c.proposed.is_empty() {
+        &c.base
+    } else {
+        &c.proposed
+    };
+    let reader = files::SafeRoot::for_records(task_root)?;
+    let mut found = BTreeSet::new();
+    let mut visited = 0;
+    let mut pending = vec![(task_root.to_path_buf(), String::new())];
+    while let Some((folder, relative)) = pending.pop() {
+        for entry in fs::read_dir(&folder).map_err(err)? {
+            let entry = entry.map_err(err)?;
+            visited += 1;
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                return Ok(false);
+            };
+            if visited > 20000 {
+                return Ok(false);
+            }
+            let path = if relative.is_empty() {
+                name
+            } else {
+                format!("{relative}/{name}")
+            };
+            let kind = entry.file_type().map_err(err)?;
+            if kind.is_dir() {
+                pending.push((entry.path(), path));
+                continue;
+            }
+            let known = reviewed
+                .get(&path)
+                .or_else(|| c.base.get(&path).filter(|_| ignored(&path, &[])));
+            let (true, Some(known)) = (kind.is_file(), known) else {
+                return Ok(false);
+            };
+            match reader.optional_read(&path) {
+                Ok(Some(bytes)) if Some(hash(&bytes)) == known.hash => found.insert(path),
+                _ => return Ok(false),
+            };
+        }
+    }
+    Ok(reviewed
+        .keys()
+        .all(|path| ignored(path, &[]) || found.contains(path)))
+}
+/// Canonical Windows roots are verbatim (`\\?\C:\…`); Git for Windows takes
+/// the equivalent drive or UNC form as an argument and working directory.
+fn git_path(path: &Path) -> PathBuf {
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{rest}"));
+        }
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
+        }
+    }
+    path.to_path_buf()
+}
+fn direct_git(root: &Path) -> WorkbenchResult<super::version_control::Git> {
+    super::version_control::Git::open(root)
+        .ok_or_else(|| WorkbenchError::invalid("Git is not installed"))
+}
+fn guard(root: &Path) -> WorkbenchResult<std::sync::Arc<super::version_control::ReadGuard>> {
+    direct_git(root)?.guard()
+}
+/// A read with the guard of `Git::read`: nothing the folder's own Git config names
+/// can start. Git runs directly, because a shell's startup output would land in the
+/// output these calls parse.
 pub(super) fn git(root: &Path, args: &[&str]) -> WorkbenchResult<Vec<u8>> {
-    use std::process::{Command, Stdio};
-    // This is a host operation explicitly selected by the user. Paths are argv,
-    // never interpolated into shell code. On this Mac every Git call uses zsh.
+    direct_git(root)?.read(args)
+}
+/// A fetch through the login shell, under the same guard. It alone stays there:
+/// its output is never parsed, and it may need an SSH agent or credential helper
+/// that only the researcher's shell startup sets up. Transports are allowed, and
+/// the folder's own config still applies to nothing.
+pub(super) fn git_fetch(root: &Path, options: &[&str], remote: &str) -> WorkbenchResult<Vec<u8>> {
+    let guard = guard(root)?;
+    use std::process::Command;
+    // Paths are argv, never interpolated into shell code.
     #[cfg(target_os = "macos")]
     let mut command = {
         let mut c = Command::new("/bin/zsh");
@@ -124,17 +258,42 @@ pub(super) fn git(root: &Path, args: &[&str]) -> WorkbenchResult<Vec<u8>> {
     };
     #[cfg(not(target_os = "macos"))]
     let mut command = Command::new("git");
-    command
-        .args([
-            "--no-optional-locks",
-            "-c",
-            "core.hooksPath=/dev/null",
-            "-c",
-            "core.fsmonitor=false",
-        ])
-        .args(args)
-        .current_dir(root)
-        .stdin(Stdio::null());
+    command.args(["-c", "credential.interactive=false"]);
+    guard.fetch(&mut command, options, remote)?;
+    capture_git(command, root, GitLimits::default())
+}
+/// Bytes of standard error, and by default of standard output, a captured Git
+/// process may print.
+const GIT_OUTPUT_LIMIT: u64 = 2 * 1024 * 1024;
+
+/// How long a captured Git process may run, what can stop it early, and how much
+/// it may print.
+pub(super) struct GitLimits<'a> {
+    pub(super) timeout: Duration,
+    pub(super) cancel: Option<&'a std::sync::atomic::AtomicBool>,
+    pub(super) max_output: u64,
+    /// Past `max_output`, stop Git and return the bytes before the limit
+    /// instead of failing.
+    pub(super) keep_prefix: bool,
+}
+impl Default for GitLimits<'_> {
+    fn default() -> Self {
+        Self {
+            timeout: Duration::from_secs(30),
+            cancel: None,
+            max_output: GIT_OUTPUT_LIMIT,
+            keep_prefix: false,
+        }
+    }
+}
+/// Runs a prepared Git command in `root` with bounded, file-backed capture.
+pub(super) fn capture_git(
+    mut command: std::process::Command,
+    root: &Path,
+    limits: GitLimits<'_>,
+) -> WorkbenchResult<Vec<u8>> {
+    use std::process::Stdio;
+    command.current_dir(git_path(root)).stdin(Stdio::null());
     // File-backed capture cannot block behind inherited pipes. Independent owner:
     // Workflow cancellation never receives this PID.
     let out = tempfile::tempfile().map_err(err)?;
@@ -142,27 +301,36 @@ pub(super) fn git(root: &Path, args: &[&str]) -> WorkbenchResult<Vec<u8>> {
     command
         .stdout(out.try_clone().map_err(err)?)
         .stderr(error.try_clone().map_err(err)?);
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
+    crate::process::configure_isolation(&mut command);
     let mut child = command.spawn().map_err(err)?;
     let pid = child.id();
     crate::commands::lifecycle::register_independent_child_pid(pid);
     let started = Instant::now();
+    let mut wait = Duration::from_millis(1);
     let result = loop {
-        if out.metadata().map_err(err)?.len() > 2 * 1024 * 1024
-            || error.metadata().map_err(err)?.len() > 2 * 1024 * 1024
+        let printed = out.metadata().map_err(err)?.len();
+        if error.metadata().map_err(err)?.len() > GIT_OUTPUT_LIMIT
+            || (printed > limits.max_output && !limits.keep_prefix)
         {
             break Err(WorkbenchError::invalid(
                 "Git output exceeded its bounded capture limit",
             ));
         }
+        if printed > limits.max_output {
+            break Ok(None);
+        }
         match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
-            Ok(None) if started.elapsed() < Duration::from_secs(30) => {
-                std::thread::sleep(Duration::from_millis(25))
+            Ok(Some(status)) => break Ok(Some(status)),
+            Ok(None)
+                if limits
+                    .cancel
+                    .is_some_and(|cancel| cancel.load(std::sync::atomic::Ordering::Relaxed)) =>
+            {
+                break Err(WorkbenchError::invalid("Stopped before Git finished."));
+            }
+            Ok(None) if started.elapsed() < limits.timeout => {
+                std::thread::sleep(wait);
+                wait = (wait * 2).min(Duration::from_millis(25));
             }
             Ok(None) => {
                 break Err(WorkbenchError::invalid(
@@ -182,23 +350,33 @@ pub(super) fn git(root: &Path, args: &[&str]) -> WorkbenchResult<Vec<u8>> {
     out.seek(SeekFrom::Start(0)).map_err(err)?;
     error.seek(SeekFrom::Start(0)).map_err(err)?;
     let mut bytes = Vec::new();
-    out.take(2 * 1024 * 1024 + 1)
+    out.take(limits.max_output + 1)
         .read_to_end(&mut bytes)
         .map_err(err)?;
-    if !result?.success() {
-        let mut message = String::new();
-        error.take(8192).read_to_string(&mut message).map_err(err)?;
+    // `None` is Git stopped at `max_output`, which the caller asked for.
+    if result?.is_some_and(|status| !status.success()) {
+        // A hook may print any bytes, and the limit can split a character.
+        let mut raw = Vec::new();
+        error.take(8192).read_to_end(&mut raw).map_err(err)?;
+        let mut message = String::from_utf8_lossy(&raw).into_owned();
+        // Some refusals, such as "nothing to commit", only reach stdout.
+        if message.trim().is_empty() {
+            message = String::from_utf8_lossy(&bytes[..bytes.len().min(8192)]).into_owned();
+        }
         return Err(WorkbenchError::invalid(format!(
             "Git task setup failed: {message}"
         )));
     }
-    if bytes.len() > 2 * 1024 * 1024 {
-        return Err(WorkbenchError::invalid("Git metadata exceeds its limit"));
+    if bytes.len() as u64 > limits.max_output {
+        if !limits.keep_prefix {
+            return Err(WorkbenchError::invalid("Git metadata exceeds its limit"));
+        }
+        bytes.truncate(limits.max_output as usize);
     }
     Ok(bytes)
 }
 fn ensure_no_application(store: &Store, ws: &str, checkpoint_id: &str) -> WorkbenchResult<()> {
-    let exists: bool=store.connection()?.query_row("SELECT EXISTS(SELECT 1 FROM project_records WHERE workspace_id=?1 AND kind='application' AND json_extract(body_json,'$.checkpointId')=?2 AND json_extract(body_json,'$.state') <> 'rolled_back')",params![ws,checkpoint_id],|r|r.get(0)).map_err(err)?;
+    let exists: bool=store.connection()?.query_row("SELECT EXISTS(SELECT 1 FROM project_records WHERE workspace_id=?1 AND kind='application' AND json_extract(body_json,'$.checkpointId')=?2 AND json_extract(body_json,'$.state') <> 'rolled_back' AND NOT (json_extract(body_json,'$.direction')=?3 AND json_extract(body_json,'$.state')='applied'))",params![ws,checkpoint_id,ACCEPT_CHANGES],|r|r.get(0)).map_err(err)?;
     if exists {
         return Err(WorkbenchError::conflict("This task has an acceptance journal. Inspect its recovery/undo history before continuing."));
     }
@@ -217,18 +395,46 @@ fn task_root_path(
         ));
     }
     let expected = current.join(SCRATCH).join(checkpoint_id);
+    let unavailable = || {
+        WorkbenchError::conflict(
+            "Task copy is missing, relocated, or replaced; its saved snapshots remain available",
+        )
+    };
+    let metadata = match fs::symlink_metadata(&expected) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(unavailable()),
+        other => other.map_err(err)?,
+    };
     if expected != Path::new(&checkpoint.task_root)
-        || fs::symlink_metadata(&expected)
-            .map_err(err)?
-            .file_type()
-            .is_symlink()
+        || metadata.file_type().is_symlink()
         || super::super::store::root_identity(&expected)? != checkpoint.task_root_identity
     {
-        return Err(WorkbenchError::conflict(
-            "Task copy is missing, relocated, or replaced; its saved snapshots remain available",
-        ));
+        return Err(unavailable());
     }
     Ok(expected)
+}
+/// A task copy being set up. No record refers to it until the checkpoint is saved,
+/// so a capture that stops early takes its folder, worktree, and branch with it.
+struct UnsavedCopy<'a> {
+    source: &'a Path,
+    task_root: &'a Path,
+    /// The new branch, for a Git worktree.
+    branch: Option<String>,
+    saved: bool,
+}
+impl Drop for UnsavedCopy<'_> {
+    fn drop(&mut self) {
+        if self.saved {
+            return;
+        }
+        if let Some(branch) = &self.branch {
+            let path = git_path(self.task_root).to_string_lossy().into_owned();
+            let _ = git(self.source, &["worktree", "remove", "--force", &path]);
+            let _ = fs::remove_dir_all(self.task_root);
+            let _ = git(self.source, &["branch", "-D", branch]);
+        } else {
+            let _ = fs::remove_dir_all(self.task_root);
+        }
+    }
 }
 pub(super) fn checkpoint(
     store: &Store,
@@ -237,10 +443,10 @@ pub(super) fn checkpoint(
     paths: Vec<String>,
     backend: &str,
 ) -> WorkbenchResult<ProjectRecord> {
-    if !cfg!(unix) {
+    if !files::REPLACEMENT {
         return Err(WorkbenchError::invalid("Task file isolation is unavailable on this platform; safe replacement has not been qualified."));
     }
-    if !["copy", "git"].contains(&backend) || paths.is_empty() || paths.len() > MAX_FILES {
+    if !["copy", "git"].contains(&backend) || paths.len() > MAX_FILES {
         return Err(WorkbenchError::invalid(
             "Select files and either a local copy or Git worktree",
         ));
@@ -303,8 +509,7 @@ pub(super) fn checkpoint(
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&parent, fs::Permissions::from_mode(0o700)).map_err(err)?;
+        crate::safety::restrict_permissions(&parent, 0o700).map_err(err)?;
     }
     // Keep app-owned copies out of the source repository's untracked-file list.
     // This ignore file belongs to the private task directory, not the user's root.
@@ -315,12 +520,18 @@ pub(super) fn checkpoint(
     {
         Ok(mut file) => {
             file.write_all(b"*\n").map_err(err)?;
-            file.sync_all().map_err(err)?;
+            crate::safety::sync_file(&file).map_err(err)?;
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => (),
         Err(error) => return Err(err(error)),
     }
     let task_root = parent.join(&checkpoint_id);
+    let mut copy = UnsavedCopy {
+        source: &source,
+        task_root: &task_root,
+        branch: None,
+        saved: false,
+    };
     let mut git_state = None;
     if backend == "git" {
         let top = git(&source, &["rev-parse", "--show-toplevel"])?;
@@ -345,7 +556,8 @@ pub(super) fn checkpoint(
             &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
         )?;
         let name = format!("codex/{checkpoint_id}");
-        let path = task_root.to_string_lossy().into_owned();
+        let path = git_path(&task_root).to_string_lossy().into_owned();
+        copy.branch = Some(name.clone());
         // No checkout: avoids filters/hooks and copies the selected actual working
         // bytes (including staged/unstaged/untracked edits) rather than HEAD bytes.
         git(
@@ -394,7 +606,9 @@ pub(super) fn checkpoint(
         .transpose()?;
     let specification = json!({"taskId":task_id,"expectedOutputs":task.expected_outputs,"expectedChecks":task.expected_checks,"selection":selection});
     let instruction=format!("{}\nTask specification and selected source material: {}\nAccepted manuscript: {}\nAccepted baseline: {}\nOnly this task copy is writable. Review/accept its captured changes through Pipeline; do not alter the source checkout or Git metadata.",task.objective,specification,settings.manuscript_revision_id.as_deref().unwrap_or("none"),settings.baseline_execution_id.as_deref().unwrap_or("none"));
-    put(store,ws,&checkpoint_id,"checkpoint",0,&Checkpoint{task_id:task_id.into(),backend:backend.into(),root_identity:super::super::store::root_identity(&source)?,task_root:task_root.to_string_lossy().into_owned(),task_root_identity:super::super::store::root_identity(&task_root)?,base,proposed:BTreeMap::new(),state:"isolated".into(),instruction,git:git_state,limitations:vec!["Only selected regular files were captured. Excluded or large datasets are not implicitly readable in the task.".into(),"Checks are valid only for their recorded input identities; partial acceptance needs fresh checks.".into()],checked_execution_ids:Vec::new(),captured_at:now()})
+    let saved=put(store,ws,&checkpoint_id,"checkpoint",0,&Checkpoint{task_id:task_id.into(),backend:backend.into(),root_identity:super::super::store::root_identity(&source)?,task_root:task_root.to_string_lossy().into_owned(),task_root_identity:super::super::store::root_identity(&task_root)?,base,proposed:BTreeMap::new(),state:"isolated".into(),instruction,git:git_state,limitations:vec!["Only selected regular files were captured. Excluded or large datasets are not implicitly readable in the task.".into(),"Checks are valid only for their recorded input identities; partial acceptance needs fresh checks.".into()],checked_execution_ids:Vec::new(),captured_at:now()})?;
+    copy.saved = true;
+    Ok(saved)
 }
 pub(super) fn capture_changes(
     store: &Store,
@@ -409,6 +623,7 @@ pub(super) fn capture_changes(
         ));
     }
     let task_root = task_root_path(store, ws, checkpoint_id, &c)?;
+    research::jobs::ensure_copy_free(ws, &task_root)?;
     let inventory = inventory_at(&task_root, &[])?;
     if !inventory.complete {
         return Err(WorkbenchError::invalid("Task contains unsupported/large files or exceeds capture limits; remove them or narrow the task before review"));
@@ -416,8 +631,14 @@ pub(super) fn capture_changes(
     let reader = files::SafeRoot::open(&task_root)?;
     let mut proposed = BTreeMap::new();
     for mut f in inventory.files {
-        let bytes = reader.read(&f.path)?;
-        f.hash = Some(blob(store, ws, &bytes, checkpoint_id)?);
+        // Base and earlier captures stored their content as blobs already.
+        let stored = [&c.proposed, &c.base]
+            .iter()
+            .any(|known| known.get(&f.path).is_some_and(|k| k.hash == f.hash));
+        if !stored {
+            let bytes = reader.read(&f.path)?;
+            f.hash = Some(blob(store, ws, &bytes, checkpoint_id)?);
+        }
         proposed.insert(f.path.clone(), f);
     }
     // A captured base file that inventory skips (an ignored folder) must
@@ -425,6 +646,12 @@ pub(super) fn capture_changes(
     // the task copy so acceptance cannot unlink the original.
     for (path, entry) in &c.base {
         if proposed.contains_key(path) || !ignored(path, &[]) {
+            continue;
+        }
+        // A copy from an earlier build can list a file in a folder that is now
+        // reserved. Nothing here can read that file, so it stays as it was.
+        if path.split('/').any(files::reserved_component) {
+            proposed.insert(path.clone(), entry.clone());
             continue;
         }
         if let Ok(bytes) = reader.read(path) {
@@ -443,6 +670,10 @@ pub(super) fn capture_changes(
         .collect();
     put(store, ws, checkpoint_id, "checkpoint", r.revision, &c)
 }
+/// The project root for paths from saved edits and their journals, which earlier
+/// builds could write in the generated folder. Those paths stay reachable so that
+/// old edits can still be accepted, undone, and recovered. Capture gives a new
+/// edit no path there, so this reaches nothing a model has written since.
 fn original(store: &Store, ws: &str, identity: &str) -> WorkbenchResult<files::SafeRoot> {
     let p = root(store, ws)?;
     if super::super::store::root_identity(&p)? != identity {
@@ -450,7 +681,7 @@ fn original(store: &Store, ws: &str, identity: &str) -> WorkbenchResult<files::S
             "Project root identity changed; application cannot be replayed",
         ));
     }
-    files::SafeRoot::open(&p)
+    files::SafeRoot::for_records(&p)
 }
 fn changed(c: &Checkpoint) -> BTreeSet<String> {
     c.base
@@ -463,6 +694,31 @@ fn changed(c: &Checkpoint) -> BTreeSet<String> {
         .cloned()
         .collect()
 }
+/// Why a project file no longer matches its edit. An acceptance stopped between
+/// writing the file and updating the edit leaves that file looking changed by
+/// someone else, though the change is its own and its Undo restores both.
+fn external_change(
+    store: &Store,
+    ws: &str,
+    checkpoint_id: &str,
+    path: &str,
+    before: Option<&str>,
+    current: Option<&str>,
+) -> WorkbenchResult<WorkbenchError> {
+    let interrupted: bool = store
+        .connection()?
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM project_records a, json_each(a.body_json,'$.files') f WHERE a.workspace_id=?1 AND a.kind='application' AND json_extract(a.body_json,'$.checkpointId')=?2 AND json_extract(a.body_json,'$.direction')=?3 AND json_extract(a.body_json,'$.state')='applied' AND json_extract(f.value,'$.path')=?4 AND json_extract(f.value,'$.before') IS ?5 AND json_extract(f.value,'$.after') IS ?6)",
+            params![ws, checkpoint_id, ACCEPT_CHANGES, path, before, current],
+            |r| r.get(0),
+        )
+        .map_err(err)?;
+    Ok(WorkbenchError::conflict(if interrupted {
+        format!("An earlier acceptance in {path} was interrupted. Its change is in the project; choose Undo under Accepted edits, then accept again.")
+    } else {
+        format!("External change detected in {path}; no changes applied")
+    }))
+}
 pub(super) fn apply(
     store: &Store,
     ws: &str,
@@ -470,7 +726,7 @@ pub(super) fn apply(
     paths: Vec<String>,
     expected: i64,
 ) -> WorkbenchResult<ProjectRecord> {
-    if !cfg!(unix) {
+    if !files::REPLACEMENT {
         return Err(WorkbenchError::invalid("File acceptance is unavailable on this platform; safe replacement has not been qualified."));
     }
     ensure_no_application(store, ws, checkpoint_id)?;
@@ -500,12 +756,18 @@ pub(super) fn apply(
         let before = c.base.get(path);
         let after = c.proposed.get(path);
         let before_hash = before.and_then(|f| f.hash.clone());
-        if source.optional_read(path)?.as_deref().map(hash) != before_hash
+        let current = source.optional_read(path)?.as_deref().map(hash);
+        if current != before_hash
             || source.executable(path)? != before.is_some_and(|f| f.executable)
         {
-            return Err(WorkbenchError::conflict(format!(
-                "External change detected in {path}; no changes applied"
-            )));
+            return Err(external_change(
+                store,
+                ws,
+                checkpoint_id,
+                path,
+                before_hash.as_deref(),
+                current.as_deref(),
+            )?);
         }
         files.push(AppliedFile {
             path: path.clone(),
@@ -539,6 +801,108 @@ pub(super) fn apply(
     put(store, ws, checkpoint_id, "checkpoint", r.revision, &c)?;
     Ok(result)
 }
+/// Accept part of one file's changes. `content` is the file with the selected
+/// hunks applied. It reaches the project through the same journal as `apply`,
+/// so Undo and recovery work, and it becomes the edit's base for that file: the
+/// remaining diff shrinks, and later acceptances compare against what is now in
+/// the project, which is how an external change is still refused.
+pub(super) fn accept_changes(
+    store: &Store,
+    ws: &str,
+    checkpoint_id: &str,
+    path: &str,
+    content: &str,
+    expected: i64,
+) -> WorkbenchResult<ProjectRecord> {
+    if !files::REPLACEMENT {
+        return Err(WorkbenchError::invalid("File acceptance is unavailable on this platform; safe replacement has not been qualified."));
+    }
+    ensure_no_application(store, ws, checkpoint_id)?;
+    let r = record(store, ws, checkpoint_id, "checkpoint")?;
+    if r.revision != expected {
+        return Err(WorkbenchError::conflict(
+            "Change set changed; refresh before accepting",
+        ));
+    }
+    let mut c: Checkpoint = decode(&r)?;
+    if c.state != "review" {
+        return Err(WorkbenchError::invalid(
+            "Capture task changes before accepting them",
+        ));
+    }
+    let before = match c.base.get(path) {
+        Some(before) if c.proposed.contains_key(path) && changed(&c).contains(path) => {
+            before.clone()
+        }
+        _ => {
+            return Err(WorkbenchError::invalid(
+                "Select a changed file from this review",
+            ))
+        }
+    };
+    let source = original(store, ws, &c.root_identity)?;
+    let current = source.optional_read(path)?.as_deref().map(hash);
+    if current != before.hash || source.executable(path)? != before.executable {
+        return Err(external_change(
+            store,
+            ws,
+            checkpoint_id,
+            path,
+            before.hash.as_deref(),
+            current.as_deref(),
+        )?);
+    }
+    let bytes = content.as_bytes();
+    if before.hash.as_deref() == Some(hash(bytes).as_str()) {
+        return Err(WorkbenchError::invalid("Select a change to accept"));
+    }
+    let after = blob(store, ws, bytes, checkpoint_id)?;
+    let app_id = id("apply")?;
+    let application = Application {
+        checkpoint_id: checkpoint_id.into(),
+        root_identity: c.root_identity.clone(),
+        state: "applying".into(),
+        files: vec![AppliedFile {
+            path: path.into(),
+            before: before.hash.clone(),
+            after: Some(after.clone()),
+            before_executable: before.executable,
+            after_executable: before.executable,
+            claim: format!("{app_id}-0"),
+            state: "pending".into(),
+        }],
+        direction: ACCEPT_CHANGES.into(),
+        error: None,
+        checks_valid: false,
+    };
+    let result = run_application(store, ws, &app_id, application, 0)?;
+    c.base.insert(
+        path.into(),
+        FileEntry {
+            hash: Some(after),
+            size: bytes.len() as u64,
+            ..before
+        },
+    );
+    const LIMITATION: &str =
+        "Only selected changes were accepted. Prior task checks do not certify the assembled project.";
+    if changed(&c).is_empty() {
+        c.state = "accepted".into();
+    } else if !c.limitations.iter().any(|known| known == LIMITATION) {
+        c.limitations.push(LIMITATION.into());
+    }
+    put(store, ws, checkpoint_id, "checkpoint", r.revision, &c)?;
+    Ok(result)
+}
+/// Project files reach or leave the project only here, so this is where an
+/// edit gives way to a job that declared one of them.
+fn ensure_job_free(store: &Store, ws: &str, application: &Application) -> WorkbenchResult<()> {
+    research::jobs::ensure_paths_free(
+        ws,
+        &root(store, ws)?,
+        application.files.iter().map(|f| f.path.as_str()),
+    )
+}
 fn run_application(
     store: &Store,
     ws: &str,
@@ -547,6 +911,7 @@ fn run_application(
     revision: i64,
 ) -> WorkbenchResult<ProjectRecord> {
     let source = original(store, ws, &application.root_identity)?;
+    ensure_job_free(store, ws, &application)?;
     let mut saved = put(store, ws, app_id, "application", revision, &application)?;
     for n in 0..application.files.len() {
         let f = &application.files[n];
@@ -599,6 +964,15 @@ fn run_application(
     }
     Ok(saved)
 }
+/// Undo reopens an edit only while its copy exists to reopen. Once the copy is
+/// gone the edit is over: its project files are back, and nothing can continue.
+fn state_after_undo(store: &Store, ws: &str, checkpoint_id: &str, c: &Checkpoint) -> &'static str {
+    if task_root_path(store, ws, checkpoint_id, c).is_ok() {
+        "review"
+    } else {
+        "undone"
+    }
+}
 pub(super) fn recover(
     store: &Store,
     ws: &str,
@@ -615,6 +989,7 @@ pub(super) fn recover(
         ));
     }
     let source = original(store, ws, &a.root_identity)?;
+    ensure_job_free(store, ws, &a)?;
     for (n, f) in a.files.iter_mut().enumerate().rev() {
         if source.recover_claim(&f.path, &f.claim)? {
             f.state = "restored".into();
@@ -656,7 +1031,21 @@ pub(super) fn recover(
     let result = put(store, ws, application_id, "application", r.revision, &a)?;
     let checkpoint = record(store, ws, &a.checkpoint_id, "checkpoint")?;
     let mut c: Checkpoint = decode(&checkpoint)?;
-    c.state = "review".into();
+    if a.direction == ACCEPT_CHANGES {
+        // Their project files are back, so the edit's base must follow, or the
+        // next acceptance would read them as an external change.
+        for f in &a.files {
+            if let (Some(entry), Some(before)) = (c.base.get_mut(&f.path), &f.before) {
+                entry.size = blob_read(store, ws, before)?.len() as u64;
+                entry.hash = Some(before.clone());
+            }
+        }
+        if c.state == "accepted" && ensure_no_application(store, ws, &a.checkpoint_id).is_ok() {
+            c.state = state_after_undo(store, ws, &a.checkpoint_id, &c).into();
+        }
+    } else {
+        c.state = state_after_undo(store, ws, &a.checkpoint_id, &c).into();
+    }
     put(
         store,
         ws,
@@ -680,6 +1069,7 @@ pub(super) fn undo(
         ));
     }
     let source = original(store, ws, &a.root_identity)?;
+    ensure_job_free(store, ws, &a)?;
     for f in &a.files {
         if source.optional_read(&f.path)?.as_deref().map(hash) != f.after
             || source.executable(&f.path)? != f.after_executable
@@ -707,6 +1097,7 @@ pub(super) fn reject(
             "Accepted changes must be undone explicitly",
         ));
     }
+    research::jobs::ensure_copy_free(ws, Path::new(&c.task_root))?;
     c.state = "rejected".into();
     put(store, ws, checkpoint_id, "checkpoint", r.revision, &c)
 }

@@ -8,12 +8,25 @@ import {
   adaptiveAgentRange as getAdaptiveAgentRange,
   isAutoReview,
 } from "../lib/autoReview";
+import { PROVIDER_LABELS, type Provider } from "../lib/providers";
+import RunUsageEstimate, { SUMMARY_NOTE, SummaryRow } from "./RunUsageEstimate";
+import type { UsageEstimate } from "../lib/usageEstimate";
+import type { HostCheck } from "../lib/analyzers";
 
 export interface RunPreviewPlan {
   profileId: string;
   inputMode: string;
   inputInterpretation: string;
   stages: ExecutionPlanStage[];
+  /** Every provider the run may call, as the readiness check counts them. */
+  providers?: string[];
+  orientationAgent?: string;
+  /** The usage-limit backup, when it couldn't run right now. */
+  backupUnavailable?: string | null;
+  usageEstimate?: UsageEstimate;
+  hostChecks?: HostCheck[];
+  /** Files in the selected folders that won’t fit in the Review’s copy. */
+  inputNotices?: string[];
 }
 
 interface Props {
@@ -32,22 +45,26 @@ function basename(path: string): string {
   return parts[parts.length - 1] || "No input";
 }
 
-function stepProviders(step: StepConfig): string[] {
-  return step.agents.length > 0 ? step.agents : ["default provider"];
+function providerList(providers: string[]): string {
+  const list = providers
+    .map((provider) => PROVIDER_LABELS[provider as Provider] ?? provider)
+    .join(", ");
+  return list.charAt(0).toUpperCase() + list.slice(1);
 }
 
 function selectorLabel(
   selector: StepConfig["context"]["include"][number],
+  stepLabels: Map<string, string>,
 ): string {
   switch (selector.kind) {
     case "primary":
-      return `Primary ${selector.parts.join(", ")}`;
+      return `Document ${selector.parts.join(", ")}`;
     case "survey":
       return "Orientation map";
     case "named_input":
-      return `Named input: ${selector.key}`;
+      return `Input: ${selector.key}`;
     case "step":
-      return `Output: ${selector.step}`;
+      return `${stepLabels.get(selector.step) ?? selector.step} results`;
   }
 }
 
@@ -60,31 +77,44 @@ function declaredUnits(step: StepConfig): { minimum: number; maximum: number } {
   };
 }
 
-type ContextSelector = StepConfig["context"]["include"][number];
-
 interface AccessRow {
   id: string;
   label: string;
   providers: string[];
   unitLabel: string;
-  selectors: ContextSelector[];
+  reads: string[];
   tools: string[];
   conditional?: boolean;
-  adaptive?: boolean;
-  additionalInputs?: string[];
 }
 
-function fixedAccessRow(step: StepConfig): AccessRow {
+function fixedAccessRow(
+  step: StepConfig,
+  stepLabels: Map<string, string>,
+): AccessRow {
+  if (step.kind === "analyzer") {
+    return {
+      id: step.id,
+      label: step.label,
+      providers: ["Pipeline check (no model call)"],
+      unitLabel: "runs on this computer",
+      reads: [],
+      tools: [],
+      conditional: !!step.run_if,
+    };
+  }
   const units = declaredUnits(step);
+  const reads = step.context.include.map((selector) =>
+    selectorLabel(selector, stepLabels),
+  );
   return {
     id: step.id,
     label: step.label,
-    providers: stepProviders(step),
+    providers: step.agents,
     unitLabel:
       units.maximum > units.minimum
-        ? `up to ${units.maximum} units`
-        : `${units.minimum} unit${units.minimum === 1 ? "" : "s"}`,
-    selectors: step.context.include,
+        ? `up to ${units.maximum} calls`
+        : `${units.minimum} call${units.minimum === 1 ? "" : "s"}`,
+    reads: reads.length > 0 ? reads : ["Nothing from the document"],
     tools: step.tools,
     conditional: !!step.run_if,
   };
@@ -109,76 +139,77 @@ export default function RunPreview({
     adaptiveCount,
     adaptiveRange,
   );
-  const adaptiveTimelineStages = useMemo(() => {
-    let inserted = false;
-    return plan.stages.map((stage) => {
-      if (!autoAssembled || inserted || stage.kind !== "dispatching")
-        return stage;
-      inserted = true;
-      return {
-        ...stage,
-        stepLabels: [
-          ...(stage.stepLabels ?? []),
-          `Adaptive agents (${adaptiveCountLabel}, auto-selected)`,
-        ],
-      };
-    });
-  }, [adaptiveCountLabel, autoAssembled, plan.stages]);
   const accessRows = useMemo(() => {
+    const stepLabels = new Map(
+      config.steps.map((step) => [step.id, step.label]),
+    );
     const rows: AccessRow[] = [];
-    const specialistContext =
-      steps.find((step) => step.phase === "parallel")?.context.include ?? [];
+    if (config.use_orientation) {
+      rows.push({
+        id: "orientation",
+        label: "Orientation",
+        providers: plan.orientationAgent ? [plan.orientationAgent] : [],
+        unitLabel: "1 call",
+        reads: ["The document"],
+        tools: [],
+      });
+    }
+    // Specialists copy the first review step's providers and access.
+    const specialistDonor = steps.find(
+      (step) => step.phase === "parallel" && step.kind !== "analyzer",
+    );
     let inserted = false;
     const insertAdaptiveRows = () => {
       if (!autoAssembled || inserted) return;
       inserted = true;
       rows.push({
         id: "auto_adaptive_agents",
-        label: "Adaptive agents",
-        providers: ["default provider"],
-        unitLabel: `${adaptiveCountLabel} units`,
-        selectors: specialistContext,
+        label: "Specialists",
+        providers: specialistDonor?.agents ?? [],
+        unitLabel: `${adaptiveCountLabel} calls`,
+        reads: (specialistDonor?.context.include ?? []).map((selector) =>
+          selectorLabel(selector, stepLabels),
+        ),
         tools: [],
-        adaptive: true,
       });
     };
     for (const step of steps) {
       if (step.id === "auto_synthesis" || step.phase === "sequential")
         insertAdaptiveRows();
-      const row = fixedAccessRow(step);
+      const row = fixedAccessRow(step, stepLabels);
       if (autoAssembled && step.id === "auto_synthesis") {
-        row.additionalInputs = [
-          `Reports: selected adaptive agents (${adaptiveCountLabel})`,
-        ];
+        row.reads.push(`Specialist results (${adaptiveCountLabel})`);
       }
       rows.push(row);
     }
     insertAdaptiveRows();
     return rows;
-  }, [adaptiveCountLabel, autoAssembled, steps]);
+  }, [
+    adaptiveCountLabel,
+    autoAssembled,
+    config.steps,
+    config.use_orientation,
+    plan.orientationAgent,
+    steps,
+  ]);
   const summary = useMemo(() => {
-    const providers = new Set<string>();
-    const tools = new Set<string>();
     let minimumUnits = 0;
     let maximumUnits = 0;
     for (const step of steps) {
-      stepProviders(step).forEach((provider) => providers.add(provider));
-      step.tools.forEach((tool) => tools.add(tool));
+      // Pipeline checks run on this computer and make no provider call.
+      if (step.kind === "analyzer") continue;
       const units = declaredUnits(step);
       minimumUnits += units.minimum;
       maximumUnits += units.maximum;
     }
     if (autoAssembled) {
-      providers.add("default provider");
       minimumUnits += adaptiveCount ?? adaptiveRange.totalMin;
       maximumUnits += adaptiveCount ?? adaptiveRange.totalMax;
     }
-    providers.add("default provider");
     if (config.merge.enabled) {
       for (const step of steps.filter(
         (candidate) => candidate.agents.length > 1,
       )) {
-        providers.add(config.merge.agents[0] || "default provider");
         minimumUnits += step.for_each ? 0 : 1;
         maximumUnits += step.for_each ? Math.max(step.for_each.max, 1) : 1;
       }
@@ -186,8 +217,6 @@ export default function RunPreview({
     const perDocumentMinimum = minimumUnits + 1;
     const perDocumentMaximum = maximumUnits + 1;
     return {
-      providers: [...providers],
-      tools: [...tools],
       minimumUnits: perDocumentMinimum * batchCount,
       maximumUnits: perDocumentMaximum * batchCount,
     };
@@ -197,19 +226,20 @@ export default function RunPreview({
     adaptiveRange.totalMin,
     autoAssembled,
     batchCount,
-    config.merge.agents,
     config.merge.enabled,
     steps,
   ]);
-  const remoteIsPossible =
-    summary.providers.includes("default provider") ||
-    summary.providers.some((provider) => provider !== "local");
   const workLabel =
     summary.minimumUnits === summary.maximumUnits
       ? `${summary.minimumUnits}`
       : `${summary.minimumUnits}–${summary.maximumUnits}`;
   const inputInterpretation =
     plan.inputInterpretation?.trim() || plan.inputMode || "input";
+  const networkChecks = (plan.hostChecks ?? []).filter(
+    (check) => check.networkServices.length > 0,
+  );
+  const stepsLabel = (count: number) =>
+    `${count} step${count === 1 ? "" : "s"}`;
 
   return (
     <div
@@ -222,257 +252,134 @@ export default function RunPreview({
         aria-modal="true"
         aria-labelledby="run-preview-title"
         tabIndex={-1}
-        className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900"
+        className="flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900"
       >
-        <header className="flex items-start gap-4 border-b border-gray-200 px-6 py-5 dark:border-gray-800">
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
-              Report preview
-            </p>
-            <h1
-              id="run-preview-title"
-              className="mt-1 text-xl font-semibold text-gray-950 dark:text-gray-50"
-            >
-              Review the execution plan
-            </h1>
-            <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
-              {batchCount > 1 ? `${batchCount} documents` : basename(inputPath)}{" "}
-              · {inputInterpretation.replaceAll("_", " ")}
-            </p>
-          </div>
-          <button
-            type="button"
-            aria-label="Close report preview"
-            onClick={onCancel}
-            className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-800 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+        <div className="min-h-0 flex-1 overflow-auto px-6 pb-2 pt-6">
+          <h1
+            id="run-preview-title"
+            className="text-xl font-semibold text-gray-950 dark:text-gray-50"
           >
-            ✕
-          </button>
-        </header>
-
-        <div className="min-h-0 flex-1 overflow-auto px-6 py-5">
-          <div className="grid gap-3 sm:grid-cols-4">
-            <SummaryCard label="Documents" value={String(batchCount)} />
-            <SummaryCard
-              label="Enabled steps"
-              value={
-                autoAssembled
-                  ? `${steps.length} fixed`
-                  : conditionalSteps > 0
-                    ? `${steps.length - conditionalSteps} fixed + ${conditionalSteps} conditional`
-                    : String(steps.length)
-              }
-              detail={
-                autoAssembled
-                  ? `+ ${adaptiveCountLabel} adaptive agents per report`
-                  : undefined
-              }
-            />
-            <SummaryCard label="Model work units" value={workLabel} />
-            <SummaryCard
-              label="Providers"
-              value={summary.providers.join(", ") || "None"}
-            />
-          </div>
-
-          <div
-            className={`mt-5 rounded-xl border p-4 ${
-              remoteIsPossible
-                ? "border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/25"
-                : "border-emerald-200 bg-emerald-50 dark:border-emerald-900 dark:bg-emerald-950/25"
-            }`}
-          >
-            <h2
-              className={`text-sm font-semibold ${remoteIsPossible ? "text-amber-900 dark:text-amber-200" : "text-emerald-900 dark:text-emerald-200"}`}
-            >
-              {remoteIsPossible
-                ? "Selected artifacts may leave this computer"
-                : "Selected providers run locally"}
-            </h2>
+            Ready to start
+          </h1>
+          <p className="mt-1 truncate text-sm text-gray-500 dark:text-gray-400">
+            {batchCount > 1 ? `${batchCount} documents` : basename(inputPath)} ·{" "}
+            {inputInterpretation.replaceAll("_", " ")}
+          </p>
+          {plan.inputNotices?.map((notice) => (
             <p
-              className={`mt-1 text-xs leading-5 ${remoteIsPossible ? "text-amber-800 dark:text-amber-300" : "text-emerald-800 dark:text-emerald-300"}`}
+              key={notice}
+              className="mt-2 text-xs leading-5 text-amber-700 dark:text-amber-300"
             >
-              Each step receives only the artifacts listed below. Provider
-              retries and schema-repair attempts are not included in the
-              work-unit estimate.
+              {notice}
             </p>
-          </div>
+          ))}
 
-          <section className="mt-6">
-            <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-              Execution timeline
-            </h2>
-            {autoAssembled && (
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Orientation assembles {adaptiveCountLabel} subject and method
-                specialists from the built-in catalog before execution.
+          <dl className="mt-6 space-y-4">
+            <SummaryRow label="Steps">
+              {autoAssembled
+                ? `${stepsLabel(steps.length)} + ${adaptiveCountLabel} specialists chosen for each document`
+                : conditionalSteps > 0
+                  ? `${stepsLabel(steps.length - conditionalSteps)} + ${conditionalSteps} conditional`
+                  : stepsLabel(steps.length)}
+            </SummaryRow>
+            <SummaryRow label="Providers">
+              {providerList(plan.providers ?? [])}
+              <p className={SUMMARY_NOTE}>
+                See below for what each step can send.
               </p>
+              {plan.backupUnavailable && (
+                <p className="mt-1 text-xs leading-5 text-amber-700 dark:text-amber-300">
+                  Your backup, {providerList([plan.backupUnavailable])}, isn’t
+                  connected. If you reach a usage limit, this review stops.
+                </p>
+              )}
+            </SummaryRow>
+            {plan.usageEstimate ? (
+              <RunUsageEstimate
+                estimate={plan.usageEstimate}
+                batchCount={batchCount}
+              />
+            ) : (
+              <SummaryRow label="Estimated use">
+                {workLabel} model calls
+              </SummaryRow>
             )}
-            <ol className="mt-3 grid gap-2 sm:grid-cols-2">
-              {adaptiveTimelineStages
-                .filter((stage) => stage.kind !== "done")
-                .map((stage, index) => (
-                  <li
-                    key={stage.id}
-                    className="flex items-start gap-3 rounded-xl border border-gray-200 px-3 py-2.5 dark:border-gray-800"
-                  >
-                    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-100 text-[11px] font-semibold text-gray-600 dark:bg-gray-800 dark:text-gray-300">
-                      {index + 1}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs font-medium text-gray-900 dark:text-gray-100">
-                        {stage.label}
-                      </p>
-                      {stage.stepLabels && stage.stepLabels.length > 0 && (
-                        <div className="mt-1.5 flex flex-wrap gap-1">
-                          {stage.stepLabels.map((label, labelIndex) => (
-                            <span
-                              key={`${label}-${labelIndex}`}
-                              className={`rounded-md px-1.5 py-0.5 text-[10px] leading-4 ${
-                                autoAssembled && /specialists/.test(label)
-                                  ? "border border-dashed border-indigo-300 bg-indigo-50 text-indigo-700 dark:border-indigo-800 dark:bg-indigo-950/30 dark:text-indigo-300"
-                                  : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
-                              }`}
-                            >
-                              {label}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+          </dl>
+
+          {networkChecks.length > 0 && (
+            <section
+              aria-label="Pipeline checks that use the network"
+              className="mt-5 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/25"
+            >
+              <h2 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                Lookups outside your AI provider
+              </h2>
+              <ul className="mt-1 space-y-1 text-xs leading-5 text-amber-800 dark:text-amber-300">
+                {networkChecks.map((check) => (
+                  <li key={check.stepId}>
+                    <span className="font-medium">{check.stepLabel}</span>{" "}
+                    contacts {check.networkServices.join(" and ")}. Sends:{" "}
+                    {check.networkPayload}
                   </li>
                 ))}
-            </ol>
-          </section>
+              </ul>
+            </section>
+          )}
 
-          <section className="mt-6">
-            <div className="flex items-baseline gap-3">
-              <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-                Artifact access by step
-              </h2>
-              {summary.tools.length > 0 && (
-                <span className="text-[11px] text-gray-500 dark:text-gray-400">
-                  Tools: {summary.tools.join(", ")}
-                </span>
-              )}
-            </div>
-            <div className="mt-3 overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
-              {accessRows.map((row, index) => (
-                <div
-                  key={row.id}
-                  className={`grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] ${index ? "border-t border-gray-200 dark:border-gray-800" : ""} ${row.adaptive ? "bg-indigo-50/40 dark:bg-indigo-950/10" : ""}`}
-                >
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                        {row.label}
-                      </p>
-                      {row.adaptive && (
-                        <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-200">
-                          Auto-selected
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
-                      {row.providers.join(", ")} · {row.unitLabel}
+          <details className="mt-6 border-t border-gray-200 py-3 dark:border-gray-800">
+            <summary className="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-300">
+              Steps and what each can read
+            </summary>
+            <ul className="mt-2 divide-y divide-gray-100 dark:divide-gray-800">
+              {accessRows.map((row) => (
+                <li key={row.id} className="py-2.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-4">
+                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                      {row.label}
+                    </p>
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      {providerList(row.providers)} · {row.unitLabel}
                       {row.conditional ? " · conditional" : ""}
                     </p>
                   </div>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    {row.selectors.length > 0 ? (
-                      row.selectors.map((selector, selectorIndex) => (
-                        <span
-                          key={`${selector.kind}-${selectorIndex}`}
-                          className="rounded-md bg-gray-100 px-2 py-1 text-[10px] text-gray-600 dark:bg-gray-800 dark:text-gray-300"
-                        >
-                          {selectorLabel(selector)}
-                        </span>
-                      ))
-                    ) : (
-                      <span className="text-[11px] text-gray-400">
-                        No document artifacts
-                      </span>
-                    )}
-                    {row.additionalInputs?.map((input) => (
-                      <span
-                        key={input}
-                        className="rounded-md bg-green-50 px-2 py-1 text-[10px] text-green-700 dark:bg-green-950/30 dark:text-green-300"
-                      >
-                        {input}
-                      </span>
-                    ))}
-                    {row.tools.map((tool) => (
-                      <span
-                        key={tool}
-                        className="rounded-md bg-blue-50 px-2 py-1 text-[10px] text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
-                      >
-                        {tool}
-                      </span>
-                    ))}
-                  </div>
-                </div>
+                  {row.reads.length > 0 && (
+                    <p className={SUMMARY_NOTE}>
+                      Reads: {row.reads.join(" · ")}
+                    </p>
+                  )}
+                  {row.tools.length > 0 && (
+                    <p className={SUMMARY_NOTE}>
+                      Tools: {row.tools.join(", ")}
+                    </p>
+                  )}
+                </li>
               ))}
-            </div>
-          </section>
+            </ul>
+          </details>
         </div>
 
-        <footer className="flex items-center justify-between border-t border-gray-200 px-6 py-4 dark:border-gray-800">
-          <p className="text-[11px] text-gray-500 dark:text-gray-400">
-            Extraction and actual fan-out determine final duration and usage.
-          </p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={onCancel}
-              className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300"
-            >
-              Back
-            </button>
-            <button
-              data-autofocus
-              type="button"
-              onClick={onRun}
-              className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white dark:bg-gray-100 dark:text-gray-900"
-            >
-              {batchCount > 1
-                ? `Queue ${batchCount} reviews`
-                : queued
-                  ? "Add to queue"
-                  : "Generate report"}
-            </button>
-          </div>
+        <footer className="flex justify-end gap-2 px-6 py-4">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm text-gray-700 dark:border-gray-700 dark:text-gray-300"
+          >
+            Back
+          </button>
+          <button
+            data-autofocus
+            type="button"
+            onClick={onRun}
+            className="rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white dark:bg-gray-100 dark:text-gray-900"
+          >
+            {batchCount > 1
+              ? `Queue ${batchCount} reviews`
+              : queued
+                ? "Add to queue"
+                : "Start review"}
+          </button>
         </footer>
       </div>
-    </div>
-  );
-}
-
-function SummaryCard({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string;
-  detail?: string;
-}) {
-  const title = detail ? `${value} ${detail}` : value;
-  return (
-    <div className="rounded-xl border border-gray-200 px-4 py-3 dark:border-gray-800">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
-        {label}
-      </p>
-      <p
-        className="mt-1 break-words text-base font-semibold leading-5 text-gray-950 dark:text-gray-50"
-        title={title}
-      >
-        {value}
-      </p>
-      {detail && (
-        <p className="mt-0.5 text-[11px] leading-4 text-indigo-700 dark:text-indigo-300">
-          {detail}
-        </p>
-      )}
     </div>
   );
 }

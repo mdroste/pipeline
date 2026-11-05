@@ -1,9 +1,8 @@
 import SourceDiff from "../file-workspace/SourceDiff";
 import HighlightedCode from "../file-workspace/HighlightedCode";
 import { fileLanguage } from "../../lib/fileLanguages";
-import { studioClient } from "../../lib/studioClient";
 import ResearchTablePreview from "../ResearchTablePreview";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   changedPaths,
   projectClient,
@@ -14,6 +13,7 @@ import {
 } from "../../lib/projectClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { lineDiff } from "../../lib/diff";
+import { confirmDialog } from "../DialogService";
 import {
   Card,
   button,
@@ -35,41 +35,51 @@ const EDIT_STATES: Record<string, string> = {
   isolated: "In progress",
   review: "Ready to review",
   applied: "Accepted",
+  accepted: "Accepted",
   rejected: "Discarded",
+  imported: "From the sender's computer; nothing changed here",
 };
 const editState = (state: string) =>
   EDIT_STATES[state] ?? state.replaceAll("_", " ");
 
 function ChangePreview({
   workspaceId,
-  checkpoint,
+  record,
   path,
+  canAccept,
   onError,
   onAccepted,
 }: {
   workspaceId: string;
-  checkpoint: Checkpoint;
+  record: ProjectRecord<Checkpoint>;
   path: string;
+  canAccept: boolean;
   onError: (message: string) => void;
   onAccepted: () => Promise<void>;
 }) {
-  const [sides, setSides] = useState<
-    [SnapshotPreview | null, SnapshotPreview | null] | null
-  >(null);
+  const checkpoint = record.body;
+  // Every project refresh delivers a new checkpoint object, so the preview
+  // reloads only when this file's snapshots change. The previous diff stays
+  // on screen meanwhile, keeping hunk choices and the scroll position.
+  const baseHash = checkpoint.base[path]?.hash;
+  const proposedHash = checkpoint.proposed[path]?.hash;
+  const [loaded, setLoaded] = useState<{
+    path: string;
+    sides: [SnapshotPreview | null, SnapshotPreview | null];
+  } | null>(null);
   useEffect(() => {
     let disposed = false;
-    setSides(null);
     void Promise.all(
-      [checkpoint.base[path]?.hash, checkpoint.proposed[path]?.hash].map(
-        (hash) =>
-          hash
-            ? projectClient.preview(workspaceId, hash)
-            : Promise.resolve(null),
+      [baseHash, proposedHash].map((hash) =>
+        hash ? projectClient.preview(workspaceId, hash) : Promise.resolve(null),
       ),
     )
       .then((result) => {
         if (!disposed)
-          setSides(result as [SnapshotPreview | null, SnapshotPreview | null]);
+          setLoaded({
+            path,
+            sides: result as [SnapshotPreview | null, SnapshotPreview | null],
+          });
       })
       .catch((error) => {
         if (!disposed) onError(workbenchErrorMessage(error));
@@ -77,7 +87,11 @@ function ChangePreview({
     return () => {
       disposed = true;
     };
-  }, [checkpoint, onError, path, workspaceId]);
+  }, [baseHash, proposedHash, onError, path, workspaceId]);
+  const sides = loaded?.path === path ? loaded.sides : null;
+  // A diff still on screen from an earlier capture is not what would be saved.
+  const current =
+    sides?.[0]?.hash === baseHash && sides?.[1]?.hash === proposedHash;
   const diff = useMemo(
     () =>
       sides && sides.every((side) => side === null || side.text !== null)
@@ -91,18 +105,22 @@ function ChangePreview({
       <h4 className="mb-3 font-mono text-xs">{path}</h4>
       {diff ? (
         <SourceDiff
+          key={path}
           before={sides[0]?.text ?? ""}
           after={sides[1]?.text ?? ""}
           path={path}
           onAccept={
-            sides[0]?.text != null && sides[1]?.text != null
+            canAccept &&
+            current &&
+            sides[0]?.text != null &&
+            sides[1]?.text != null
               ? async (content) => {
-                  await studioClient.mutate(workspaceId, {
-                    action: "saveText",
-                    checkpointId: null,
+                  await projectClient.mutate(workspaceId, {
+                    action: "acceptChanges",
+                    checkpointId: record.id,
                     path,
-                    expectedHash: sides[0]!.hash,
                     content,
+                    expectedRevision: record.revision,
                   });
                   await onAccepted();
                 }
@@ -141,12 +159,16 @@ function AcceptanceHistory({
   applications: ProjectRecord<Application>[];
   act: SurfaceApi["act"];
 }) {
-  const label = (state: string) =>
+  const label = ({ state, direction }: Application) =>
     ({
-      applied: "Accepted",
+      applied:
+        direction === "accept_changes"
+          ? "Accepted selected changes"
+          : "Accepted",
       undone: "Undone",
       applying: "Interrupted while copying files",
       recovery_required: "Needs recovery",
+      imported: "From the sender's computer; nothing changed here",
     })[state] ?? state.replaceAll("_", " ");
   if (!applications.length) return null;
   return (
@@ -158,7 +180,7 @@ function AcceptanceHistory({
           className="rounded-md border border-gray-200 p-3 text-xs dark:border-neutral-800"
         >
           <p>
-            {label(a.body.state)} · {a.body.files.length} file
+            {label(a.body)} · {a.body.files.length} file
             {a.body.files.length === 1 ? "" : "s"}
           </p>
           {a.body.error && (
@@ -225,9 +247,12 @@ function StartEdit({ api }: { api: SurfaceApi }) {
       </p>
       {!workspace?.root && (
         <p className={notice}>
-          Attach a folder on the Overview tab first.{" "}
-          <button className={linkButton} onClick={() => setTab("overview")}>
-            Go to Overview
+          Attach a folder in Project settings first.{" "}
+          <button
+            className={linkButton}
+            onClick={() => setTab("project-settings")}
+          >
+            Go to Project settings
           </button>
         </p>
       )}
@@ -282,7 +307,7 @@ function StartEdit({ api }: { api: SurfaceApi }) {
               <p className={`p-3 ${muted}`}>
                 {data.inventory
                   ? "No files match."
-                  : "Refresh the file list on the Overview tab to see the folder’s files."}
+                  : "Refresh the file list in Project settings to see the folder’s files."}
               </p>
             )}
             {files.slice(0, 200).map((f) => (
@@ -400,9 +425,9 @@ function StartEdit({ api }: { api: SurfaceApi }) {
           </div>
           {backend === "git" && (
             <p className={muted}>
-              Creates a new branch under codex/ and a worktree for it, then
-              copies your selected files in. Your current branch, index, and
-              uncommitted work are not touched. Nothing is committed or pushed.
+              Copies the selected files to a separate worktree on a new codex/
+              branch. Your existing work stays unchanged. You decide what to
+              commit or push.
             </p>
           )}
         </>
@@ -424,8 +449,17 @@ export default function ProjectEdits(props: Props) {
   );
   const [accepted, setAccepted] = useState<string[]>([]);
   const [preview, setPreview] = useState("");
+  const [finished, setFinished] = useState("");
+  // Any new revision clears the ticks. The open diff stays through a revision
+  // of the same edit, so accepting a few changes shows what is left, until its
+  // file no longer differs.
+  const openEdit = useRef(selected?.id);
   useEffect(() => {
     setAccepted([]);
+    const sameEdit = openEdit.current === selected?.id;
+    openEdit.current = selected?.id;
+    if (sameEdit && (!preview || paths.includes(preview))) return;
+    setFinished(sameEdit ? preview : "");
     setPreview("");
   }, [selected?.id, selected?.revision]);
   const active = selected
@@ -470,7 +504,7 @@ export default function ProjectEdits(props: Props) {
               <p className={`mt-2 ${muted}`}>
                 {selected.body.backend === "git"
                   ? "Working copy on a separate Git branch; your own branch and index are untouched."
-                  : "Working copy made from plain copies of the selected files."}
+                  : "A separate copy of the files you selected."}
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
@@ -500,7 +534,21 @@ export default function ProjectEdits(props: Props) {
                   className={button}
                   disabled={!active}
                   onClick={() =>
-                    void act({ action: "reject", checkpointId: selected.id })
+                    void confirmDialog(
+                      "The assistant's proposed changes won't reach your folder, and this edit can't be reopened. Its separate copy of the files stays on your computer.",
+                      {
+                        title: "Discard this edit?",
+                        confirmLabel: "Discard edit",
+                        cancelLabel: "Keep edit",
+                        destructive: true,
+                      },
+                    ).then((confirmed) => {
+                      if (confirmed)
+                        void act({
+                          action: "reject",
+                          checkpointId: selected.id,
+                        });
+                    })
                   }
                 >
                   Discard this edit
@@ -554,16 +602,22 @@ export default function ProjectEdits(props: Props) {
                   {preview ? (
                     <ChangePreview
                       workspaceId={workspaceId}
-                      checkpoint={selected.body}
+                      record={selected}
                       path={preview}
+                      canAccept={
+                        data.fileAcceptance && selected.body.state === "review"
+                      }
                       onError={reportError}
                       onAccepted={() => props.act({ action: "refresh" })}
                     />
                   ) : (
                     <p
+                      role={finished ? "status" : undefined}
                       className={`rounded-md border border-gray-200 p-5 dark:border-neutral-800 ${muted}`}
                     >
-                      Select a file to see what changed.
+                      {finished
+                        ? `No changes remain in ${finished}.`
+                        : "Select a file to see what changed."}
                     </p>
                   )}
                 </div>
@@ -591,8 +645,8 @@ export default function ProjectEdits(props: Props) {
                     {selected.body.checkedExecutionIds.length
                       ? `${selected.body.checkedExecutionIds.length} completed run${selected.body.checkedExecutionIds.length === 1 ? "" : "s"} recorded for this edit.`
                       : "No runs were recorded for this edit."}{" "}
-                    Accepting copies files; it does not check that the results
-                    are correct. Rebuild or rerun after accepting.
+                    After accepting the files, rebuild the manuscript or rerun
+                    the analysis to check the results.
                   </p>
                   {selected.body.limitations.map((limit, i) => (
                     <p key={i} className={`mt-2 ${muted}`}>

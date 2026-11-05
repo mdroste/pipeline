@@ -2,6 +2,9 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import IssuesTable from "./IssuesTable";
+import { detectReportIssues } from "../lib/issues";
+import type { PipelineReport } from "../lib/types";
+import findingsV2 from "../../tests/fixtures/workflow/findings-v2.json";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -172,6 +175,32 @@ describe("IssuesTable annotation lifecycle", () => {
     );
   });
 
+  it("labels each quote with Pipeline's own check", async () => {
+    const user = userEvent.setup();
+    render(
+      <IssuesTable
+        issues={[
+          {
+            ...issues[0],
+            evidence: [
+              { page: 3, quote: "exists", verificationStatus: "verified" },
+              { page: 4, quote: "invented", verificationStatus: "not_found" },
+              { page: 5, quote: "unchecked" },
+            ],
+          },
+        ]}
+        runId=""
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /^First issue/i }));
+    expect(screen.getByText("Quote found")).toHaveAttribute(
+      "title",
+      expect.stringContaining("not whether the comment is correct"),
+    );
+    expect(screen.getByText("Quote not found")).toBeInTheDocument();
+    expect(screen.queryByText("Not checked")).not.toBeInTheDocument();
+  });
+
   it("opens an evidence-linked page from an expanded issue", async () => {
     const onOpenEvidence = vi.fn();
     const user = userEvent.setup();
@@ -276,5 +305,386 @@ describe("IssuesTable annotation lifecycle", () => {
     ).not.toBeInTheDocument();
     await user.click(button);
     expect(onOpenEvidence).toHaveBeenCalledWith(evidence);
+  });
+});
+
+describe("IssuesTable sticky controls", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+  });
+
+  it("keeps filters and errors on top and the bulk bar below the rows", async () => {
+    invoke.mockImplementation((command: string) =>
+      command === "save_text_file"
+        ? Promise.reject(new Error("disk full"))
+        : Promise.resolve(undefined),
+    );
+    const user = userEvent.setup();
+    const many = Array.from({ length: 30 }, (_, index) => ({
+      ...issues[0],
+      id: `i${index + 1}`,
+      title: `Issue ${index + 1}`,
+    }));
+    render(<IssuesTable issues={many} runId="" />);
+
+    const toolbar = screen
+      .getByRole("heading", { name: "Issues (30)" })
+      .closest(".sticky");
+    expect(toolbar).toHaveClass("top-0");
+    await user.click(
+      screen.getByRole("button", { name: "Export all decisions" }),
+    );
+    expect(toolbar).toContainElement(await screen.findByRole("alert"));
+
+    const row = screen.getByRole("checkbox", {
+      name: "Select issue: Issue 25",
+    });
+    await user.click(row);
+    const bar = screen.getByRole("group", {
+      name: "Decision for selected issues",
+    });
+    expect(bar).toHaveClass("sticky", "bottom-0");
+    expect(bar).toHaveTextContent("1 selected");
+    // Inserted after the list, so no row above it moves.
+    const lastRow = screen.getByRole("checkbox", {
+      name: "Select issue: Issue 30",
+    });
+    expect(
+      lastRow.compareDocumentPosition(bar) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+});
+
+describe("IssuesTable outside-source evidence", () => {
+  const published = detectReportIssues({
+    products: {
+      schema_version: 1,
+      primary_step_id: "synthesis",
+      findings: findingsV2.published,
+    },
+    step_outputs: findingsV2.step_outputs,
+  } as unknown as PipelineReport)!;
+
+  beforeEach(() => {
+    invoke.mockReset();
+  });
+
+  it("links the cited URL and DOI from a real findings-v2 review", async () => {
+    const user = userEvent.setup();
+    render(<IssuesTable issues={published} runId="" />);
+    await user.click(
+      screen.getByRole("button", { name: /^The sample window/ }),
+    );
+    expect(
+      screen.getByRole("link", { name: "https://example.org/series/gdp" }),
+    ).toHaveAttribute("href", "https://example.org/series/gdp");
+    expect(
+      screen.getByRole("link", { name: "https://doi.org/10.1000/xyz123" }),
+    ).toHaveAttribute("href", "https://doi.org/10.1000/xyz123");
+    expect(screen.getByText("Example Statistics Office")).toBeVisible();
+    expect(screen.getByText("Accessed 2026-10-30")).toBeVisible();
+  });
+
+  it("shows reviewers on a real findings-v2 finding and finds them by search", async () => {
+    const user = userEvent.setup();
+    render(<IssuesTable issues={published} runId="" />);
+    await user.type(
+      screen.getByRole("textbox", { name: "Search issues" }),
+      "identification review",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /^The sample window/ }),
+    );
+    expect(
+      screen.getByText("Technical review, Identification review"),
+    ).toBeVisible();
+  });
+
+  it("does not link a URL that is unsafe to open", async () => {
+    const user = userEvent.setup();
+    render(
+      <IssuesTable
+        issues={[
+          {
+            ...issues[0],
+            evidence: [{ url: "javascript:alert(1)", description: "Script" }],
+          },
+        ]}
+        runId=""
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /^First issue/i }));
+    expect(screen.getByText("javascript:alert(1)")).toBeVisible();
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("exports the URL and DOI with each decision", async () => {
+    invoke.mockResolvedValue("/tmp/decisions.md");
+    const user = userEvent.setup();
+    render(<IssuesTable issues={published} runId="" />);
+    await user.click(
+      screen.getByRole("button", { name: "Export all decisions" }),
+    );
+    const { content } = invoke.mock.calls.find(
+      ([command]) => command === "save_text_file",
+    )![1];
+    expect(content).toContain(
+      "https://example.org/series/gdp, Example Statistics Office, accessed 2026-10-30",
+    );
+    expect(content).toContain("https://doi.org/10.1000/xyz123");
+  });
+});
+
+describe("IssuesTable issue bodies", () => {
+  it("renders math in titles and quotes, and nothing else", async () => {
+    invoke.mockImplementation((command: string) =>
+      command === "get_annotations" ? Promise.resolve("{}") : Promise.resolve(),
+    );
+    const { container } = render(
+      <IssuesTable
+        runId="run"
+        issues={[
+          {
+            ...issues[0],
+            title: "SEs for $\\hat\\beta$ in *Table 1*",
+            evidence: [{ page: 2, quote: "where $x_i$ is income" }],
+          },
+        ]}
+      />,
+    );
+
+    const title = await screen.findByRole("button", { name: /^SEs for/ });
+    expect(title.querySelector(".katex")).not.toBeNull();
+    expect(title).toHaveTextContent("in *Table 1*");
+    expect(title).not.toHaveTextContent("$");
+
+    await userEvent.setup().click(title);
+    const quote = container.querySelector("blockquote");
+    expect(quote?.querySelector(".katex")).not.toBeNull();
+    expect(container.querySelector(".katex-error")).toBeNull();
+  });
+
+  it("renders math and cleans the body as the Report tab does", async () => {
+    const user = userEvent.setup();
+    const view = render(
+      <IssuesTable
+        issues={[
+          {
+            ...issues[0],
+            body: "The estimate \\(x^2\\) and $\\hat{\\beta}_{IV}$ differ.",
+          },
+        ]}
+        runId=""
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /^First issue/i }));
+    expect(view.container.querySelectorAll(".katex")).toHaveLength(2);
+    const shown = view.container.querySelector(".issue-body")!.textContent;
+    expect(shown).toContain("differ");
+    expect(shown).not.toContain("$");
+    expect(shown).not.toContain("\\(");
+  });
+});
+
+describe("IssuesTable bulk decisions", () => {
+  const two = [
+    issues[0],
+    { ...issues[0], id: "i2", title: "Second issue", severity: "low" },
+  ];
+  const noted = {
+    i1: { status: "", note: "Check with Ana first" },
+    i2: { status: "", note: "Keep this one" },
+  };
+  const savedAnnotations = () =>
+    JSON.parse(
+      invoke.mock.calls.filter(
+        ([command]) => command === "save_annotations",
+      )[0][1].content,
+    );
+
+  beforeEach(() => {
+    invoke.mockReset();
+    invoke.mockImplementation((command: string) =>
+      command === "get_annotations"
+        ? Promise.resolve(JSON.stringify(noted))
+        : Promise.resolve(),
+    );
+  });
+
+  const select = async (
+    user: ReturnType<typeof userEvent.setup>,
+    title: string,
+  ) => {
+    await user.click(
+      await screen.findByRole("checkbox", { name: `Select issue: ${title}` }),
+    );
+  };
+  const decide = async (
+    user: ReturnType<typeof userEvent.setup>,
+    rationale: string,
+  ) => {
+    await user.type(
+      screen.getByRole("textbox", { name: "Bulk decision rationale" }),
+      rationale,
+    );
+    await user.click(screen.getByRole("button", { name: "Apply decision" }));
+  };
+
+  it("gives unrated issues their own filter", async () => {
+    const user = userEvent.setup();
+    render(
+      <IssuesTable
+        runId={null}
+        issues={[
+          { id: "a", title: "Rated", severity: "high", section: "", body: "" },
+          { id: "b", title: "Blank", severity: "", section: "", body: "" },
+          {
+            id: "c",
+            title: "Custom",
+            severity: "blocker",
+            section: "",
+            body: "",
+          },
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "unrated" }));
+    expect(screen.getByRole("button", { name: /^Blank/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Custom/ })).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /^Rated/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers no unrated filter when every issue has a severity", () => {
+    render(<IssuesTable runId={null} issues={issues} />);
+    expect(
+      screen.queryByRole("button", { name: "unrated" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not blame severity when a search finds nothing", async () => {
+    const user = userEvent.setup();
+    render(<IssuesTable runId={null} issues={issues} />);
+    await user.type(
+      screen.getByRole("textbox", { name: "Search issues" }),
+      "nothing matches",
+    );
+    expect(
+      screen.getByText("No issues match these filters."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps a wide table in a body from widening the card", async () => {
+    const user = userEvent.setup();
+    const view = render(
+      <IssuesTable
+        runId={null}
+        issues={[
+          {
+            id: "a",
+            title: "Wide",
+            severity: "high",
+            section: "",
+            body: "| Addressed | Remaining |\n| --- | --- |\n| one | two |",
+          },
+        ]}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /^Wide/ }));
+    expect(
+      view.container.querySelector("div.overflow-x-auto > table"),
+    ).not.toBeNull();
+  });
+
+  it("adds the rationale after an existing note, and says how many changed", async () => {
+    const user = userEvent.setup();
+    render(<IssuesTable issues={two} runId="run-a" />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("checkbox", { name: "Select issue: First issue" }),
+      ).toBeEnabled(),
+    );
+    await select(user, "First issue");
+    await select(user, "Second issue");
+    await decide(user, "Out of scope");
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Decision applied to 2 issues.",
+    );
+    await waitFor(() => expect(savedAnnotations).not.toThrow(), {
+      timeout: 1500,
+    });
+    expect(savedAnnotations()).toEqual({
+      i1: { status: "accept", note: "Check with Ana first — Out of scope" },
+      i2: { status: "accept", note: "Keep this one — Out of scope" },
+    });
+  });
+
+  it("leaves issues hidden by the filter unchanged", async () => {
+    const user = userEvent.setup();
+    render(<IssuesTable issues={two} runId="run-a" />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("checkbox", { name: "Select issue: First issue" }),
+      ).toBeEnabled(),
+    );
+    await select(user, "First issue");
+    await select(user, "Second issue");
+    await user.click(screen.getByRole("button", { name: "high" }));
+    expect(
+      screen.getByRole("group", { name: "Decision for selected issues" }),
+    ).toHaveTextContent("1 selected, 1 hidden by filters");
+    await decide(user, "Out of scope");
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Decision applied to 1 issue. 1 issue hidden by filters left unchanged.",
+    );
+    await waitFor(() => expect(savedAnnotations).not.toThrow(), {
+      timeout: 1500,
+    });
+    expect(savedAnnotations()).toEqual({
+      i1: { status: "accept", note: "Check with Ana first — Out of scope" },
+      i2: noted.i2,
+    });
+  });
+
+  it("offers nothing to apply when every selected issue is hidden", async () => {
+    const user = userEvent.setup();
+    render(<IssuesTable issues={two} runId="run-a" />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("checkbox", { name: "Select issue: Second issue" }),
+      ).toBeEnabled(),
+    );
+    await select(user, "Second issue");
+    await user.click(screen.getByRole("button", { name: "high" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Bulk decision rationale" }),
+      "Out of scope",
+    );
+    expect(
+      screen.getByRole("button", { name: "Apply decision" }),
+    ).toBeDisabled();
+  });
+
+  it("does not repeat a rationale the note already holds", async () => {
+    invoke.mockImplementation((command: string) =>
+      command === "get_annotations"
+        ? Promise.resolve(
+            JSON.stringify({ i1: { status: "accept", note: "Out of scope" } }),
+          )
+        : Promise.resolve(),
+    );
+    const user = userEvent.setup();
+    render(<IssuesTable issues={[issues[0]]} runId="run-a" />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("checkbox", { name: "Select issue: First issue" }),
+      ).toBeEnabled(),
+    );
+    await select(user, "First issue");
+    await decide(user, "Out of scope");
+    expect(screen.getByRole("status")).toHaveTextContent("No issues changed.");
   });
 });

@@ -1,5 +1,5 @@
+import { artifactClient } from "../../lib/artifactClient";
 import { useMemo, type ReactNode } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { FileNavigationContext } from "./FileNavigation";
 import { artifactFileAdapter } from "../../lib/fileWorkspaceClient";
 import type { FileLocation } from "../../lib/fileLinks";
@@ -16,10 +16,7 @@ export default function RunMarkdown({
 }) {
   const navigation = useMemo(() => {
     const adapter = async () => {
-      const manifest = await invoke<{ artifacts: Array<{ rel_path: string }> }>(
-        "get_run_manifest",
-        { runId },
-      );
+      const manifest = await artifactClient.manifest(runId);
       return artifactFileAdapter(
         runId,
         manifest.artifacts.map((a) => a.rel_path),

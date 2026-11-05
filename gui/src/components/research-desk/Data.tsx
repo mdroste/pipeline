@@ -1,3 +1,4 @@
+import { Fold } from "../../ui";
 import { useCallback, useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
@@ -9,10 +10,23 @@ import {
   type SampleDefinition,
 } from "../../lib/deskClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
+import useReopenCount from "../../hooks/useReopenCount";
+import useReveal from "../../hooks/useReveal";
 import { addContextObject } from "../WorkspaceContextTray";
+import { folderName } from "../project-surface/shared";
+import DataConnectors from "./DataConnectors";
+import DatasetDictionary from "./DatasetDictionary";
 import { button, input, card, muted, type DeskProps } from "./shared";
-export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
+export default function Data({
+  workspaceId,
+  onOpen,
+  onError,
+  onChanged,
+  onActionStart,
+  active,
+}: DeskProps) {
   const [metadata, setMetadata] = useState("");
+  const [metadataTitle, setMetadataTitle] = useState("");
   const [preview, setPreview] = useState<Awaited<
     ReturnType<typeof deskClient.rows>
   > | null>(null);
@@ -30,8 +44,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
   const [weights, setWeights] = useState("");
   const [dateRange, setDateRange] = useState("");
   const [samplePrevious, setSamplePrevious] = useState("");
-  const [series, setSeries] = useState("");
-  const [key, setKey] = useState("");
+  const [sheet, setSheet] = useState("");
   const refresh = useCallback(async () => {
     const [d, s, p] = await Promise.all([
       deskClient.records<DatasetVersion>(workspaceId, "dataset"),
@@ -42,14 +55,18 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
     setSamples(s);
     setPolicy(p);
   }, [workspaceId]);
+  const reopened = useReopenCount(active);
+  const rowPreview = useReveal<HTMLElement>();
   useEffect(() => {
     void refresh().catch((e) => onError(workbenchErrorMessage(e)));
-  }, [refresh, onError]);
+  }, [refresh, onError, reopened]);
   const run = async (fn: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(true);
+    onActionStart?.();
     try {
       await fn();
+      onChanged?.();
       await refresh();
     } catch (e) {
       onError(workbenchErrorMessage(e));
@@ -62,13 +79,16 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
       const path = await open({
         multiple: false,
         filters: [
-          { name: "Delimited data (up to 32 MiB)", extensions: ["csv", "tsv"] },
+          {
+            name: "CSV, TSV, Stata or Excel data",
+            extensions: ["csv", "tsv", "dta", "xlsx"],
+          },
         ],
       });
       if (typeof path !== "string") return;
       await deskClient.importDataset(
         workspaceId,
-        title || path.split("/").pop() || "Dataset",
+        title || folderName(path) || "Dataset",
         path,
         {
           provider: "local import",
@@ -82,12 +102,12 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
           transformation: null,
         },
         supersedes || null,
+        sheet.trim() || null,
       );
     });
   return (
     <div className="space-y-5">
-      <section className={card}>
-        <h2 className="font-semibold">Dataset catalog</h2>
+      <Fold title="Add a dataset" open={!datasets.length}>
         <div className="grid gap-2">
           <input
             aria-label="Dataset title"
@@ -106,7 +126,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
           <input
             aria-label="Data vintage"
             className={input}
-            placeholder="Vintage (YYYY-MM-DD for FRED)"
+            placeholder="Vintage or version (optional)"
             value={vintage}
             onChange={(e) => setVintage(e.target.value)}
           />
@@ -123,20 +143,29 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
               </option>
             ))}
           </select>
+          <input
+            aria-label="Excel sheet"
+            className={input}
+            placeholder="Excel sheet name (optional; first sheet by default)"
+            value={sheet}
+            onChange={(e) => setSheet(e.target.value)}
+          />
         </div>
         <button
           className={button}
           disabled={busy}
           onClick={() => void importData()}
         >
-          Capture CSV / TSV
+          Import data file
         </button>
         <p className={muted}>
-          Save a copy of the data with a row count and detected variable types.
-          Missing values are preserved. For large files or other formats, import
-          metadata from an exporter.
+          Import CSV, TSV, Stata .dta (releases 8 and later) or Excel .xlsx
+          files up to 32 MiB. Pipeline saves a copy with the row count, variable
+          labels, value labels and missing-value codes. Stata files up to 2 GiB
+          are catalogued without keeping a copy, so their rows cannot be
+          previewed. For other formats, import metadata from an exporter.
         </p>
-      </section>
+      </Fold>
       <details className={card}>
         <summary className="font-semibold">Project sharing policy</summary>
         <p className={muted}>
@@ -166,8 +195,10 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
               />
               {
                 {
-                  dictionary: "Dictionary in search and context",
-                  summaries: "Derived diagnostics in search and context",
+                  dictionary:
+                    "Include variable descriptions in search and conversations",
+                  summaries:
+                    "Include data summaries in search and conversations",
                   assistantRows: "Allow the assistant to preview rows",
                   packageData: "Allow raw data in sharing packages",
                 }[k]
@@ -176,14 +207,19 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
           ))}
       </details>
       <details className={card}>
-        <summary className="font-semibold">
-          Import an exporter dictionary
-        </summary>
+        <summary className="font-semibold">Import a data dictionary</summary>
         <p className={muted}>
           Paste DatasetVersion JSON (schemaVersion 1) with a SHA-256 hash and an
           externalReference to the saved data version. This imports metadata
           without reading the data rows.
         </p>
+        <input
+          aria-label="Dictionary dataset title"
+          className={input}
+          placeholder="Dataset title"
+          value={metadataTitle}
+          onChange={(e) => setMetadataTitle(e.target.value)}
+        />
         <textarea
           aria-label="Dataset metadata JSON"
           rows={6}
@@ -194,22 +230,27 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
         />
         <button
           className={button}
-          disabled={busy || !metadata.trim() || !title.trim()}
+          disabled={busy || !metadata.trim() || !metadataTitle.trim()}
           onClick={() =>
             void run(() =>
               deskClient.importMetadata(
                 workspaceId,
-                title,
+                metadataTitle,
                 JSON.parse(metadata) as DatasetVersion,
               ),
             )
           }
         >
-          Import declared metadata
+          Import dataset details
         </button>
+        {(!metadata.trim() || !metadataTitle.trim()) && (
+          <p className={muted}>
+            Enter a dataset title and paste the JSON to import.
+          </p>
+        )}
       </details>
       {preview && (
-        <section className={card}>
+        <section ref={rowPreview.ref} tabIndex={-1} className={card}>
           <p className={muted}>
             {preview.coverage} Total rows: {preview.totalRows}
           </p>
@@ -227,11 +268,16 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
               <tbody>
                 {preview.rows.map((r, i) => (
                   <tr key={i}>
-                    {r.map((v, j) => (
-                      <td key={j} className="px-2">
-                        {v ?? "Missing"}
-                      </td>
-                    ))}
+                    {r.map((v, j) => {
+                      const code = preview.missingCodes?.find(
+                        (m) => m.row === i && m.column === j,
+                      )?.code;
+                      return (
+                        <td key={j} className="px-2">
+                          {v ?? (code ? `Missing (${code})` : "Missing")}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))}
               </tbody>
@@ -242,49 +288,12 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
           </button>
         </section>
       )}
-      <details className={card}>
-        <summary className="font-semibold">FRED / ALFRED vintage</summary>
-        <input
-          aria-label="FRED series ID"
-          className={input}
-          placeholder="Series ID, e.g. GDP"
-          value={series}
-          onChange={(e) => setSeries(e.target.value)}
-        />
-        <input
-          aria-label="FRED API key"
-          type="password"
-          autoComplete="off"
-          className={input}
-          placeholder="API key for this request only"
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-        />
-        <p className={muted}>
-          Uses the exact vintage entered above and original units (lin). Enable
-          project acquisition in Library first. The key is not saved.
-        </p>
-        <button
-          className={button}
-          disabled={busy || !series || !vintage || !key}
-          onClick={() => {
-            const apiKey = key;
-            setKey("");
-            void run(async () => {
-              const receipt = await deskClient.fred(
-                workspaceId,
-                series,
-                vintage,
-                apiKey,
-              );
-              if (receipt.kind === "acquisition")
-                onError(String(receipt.body.error ?? "Acquisition failed"));
-            });
-          }}
-        >
-          Capture series vintage
-        </button>
-      </details>
+      <DataConnectors
+        workspaceId={workspaceId}
+        busy={busy}
+        run={run}
+        onError={onError}
+      />
       {datasets.map((d) => (
         <article key={d.id} className={card}>
           <div className="flex gap-2">
@@ -312,28 +321,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
             columns · {d.body.diagnosticsCoverage} ·{" "}
             {d.body.acquisition.requestedVintage ?? "No vintage declared"}
           </p>
-          <div className="max-h-64 overflow-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr>
-                  <th>Variable</th>
-                  <th>Inferred type</th>
-                  <th>Missing</th>
-                  <th>Units</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.body.columns.map((c) => (
-                  <tr key={c.name}>
-                    <td>{c.name}</td>
-                    <td>{c.inferredType}</td>
-                    <td>{c.missing}</td>
-                    <td>{c.units ?? "Undeclared"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DatasetDictionary version={d.body} />
           <button
             className={button}
             onClick={() => addContextObject(workspaceId, reference(d))}
@@ -344,20 +332,20 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
             className={button}
             disabled={busy || !d.body.artifactId}
             onClick={() =>
-              void run(async () =>
-                setPreview(await deskClient.rows(workspaceId, d.id)),
-              )
+              void run(async () => {
+                setPreview(await deskClient.rows(workspaceId, d.id));
+                rowPreview.reveal();
+              })
             }
           >
             Preview local rows
           </button>
         </article>
       ))}
-      <section className={card}>
-        <h2 className="font-semibold">Declare a sample</h2>
+      <Fold title="Declare a sample">
         <p className={muted}>
-          Select exact datasets above. Rules are researcher declarations; this
-          form does not claim to have executed them.
+          Select the dataset versions above and record your sample rules. Saving
+          these rules does not apply them to the data.
         </p>
         <textarea
           aria-label="Sample inclusion rules"
@@ -388,7 +376,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
           placeholder="Optional date range"
         />
         <select
-          aria-label="Sample supersession"
+          aria-label="Replaces an earlier sample"
           className={input}
           value={samplePrevious}
           onChange={(e) => setSamplePrevious(e.target.value)}
@@ -425,7 +413,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
             )
           }
         >
-          Save new sample identity
+          Save sample definition
         </button>
         {samples.map((s) => (
           <button
@@ -436,7 +424,7 @@ export default function Data({ workspaceId, onOpen, onError }: DeskProps) {
             {s.title} · {s.contentHash.slice(0, 12)}
           </button>
         ))}
-      </section>
+      </Fold>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import {
   useId,
   type ReactNode,
 } from "react";
+import ReportIssueLink from "../ReportIssueLink";
 
 export interface SaveState {
   pending?: boolean;
@@ -51,6 +52,7 @@ export function SaveFeedback({
             </button>
           </>
         )}
+        <ReportIssueLink />
       </p>
     );
   if (!pending && !saved) return null;

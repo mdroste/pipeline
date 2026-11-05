@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 
 import type { PipelineConfig } from "../../lib/types";
+import { DEFAULT_PROFILE_ID } from "../../lib/autoReview";
+import { workflowDraftKey } from "../../lib/workflowDraftRecovery";
 
 import { type WaveSelection } from "../WaveDiagram";
 
@@ -8,7 +10,7 @@ import { conditionUpstreamIds } from "./utils";
 
 type EditingMode = WaveSelection | null;
 const RECOVERY_WARNING =
-  "Draft recovery storage is unavailable. Your edits remain open; save or export this workflow before leaving.";
+  "Draft recovery storage is unavailable. Your edits remain open; save or export this review before leaving.";
 export function useWorkflowEditor(onDirtyChange?: (dirty: boolean) => void) {
   const [config, setConfig] = useState<PipelineConfig | null>(null);
   const [recoveryWarning, setRecoveryWarning] = useState("");
@@ -21,7 +23,8 @@ export function useWorkflowEditor(onDirtyChange?: (dirty: boolean) => void) {
   const [schemaDraftValid, setSchemaDraftValid] = useState(true);
   const [schemaEditorEpoch, setSchemaEditorEpoch] = useState(0);
   const [editing, setEditing] = useState<EditingMode>(null);
-  const [activeProfile, setActiveProfile] = useState<string>("auto-review");
+  const [activeProfile, setActiveProfile] =
+    useState<string>(DEFAULT_PROFILE_ID);
   const [, setHistoryVersion] = useState(0);
   const configRef = useRef<PipelineConfig | null>(config);
   const activeProfileRef = useRef(activeProfile);
@@ -59,7 +62,7 @@ export function useWorkflowEditor(onDirtyChange?: (dirty: boolean) => void) {
     // Loading must inspect recovery storage before any save/discard effect.
     if (!config) return;
     if (recoveryDisabled.current) return;
-    const key = `pipeline.workflowDraft.${activeProfile}`;
+    const key = workflowDraftKey(activeProfile);
     try {
       if (dirty) window.localStorage.setItem(key, JSON.stringify(config));
       else window.localStorage.removeItem(key);
@@ -118,6 +121,8 @@ export function useWorkflowEditor(onDirtyChange?: (dirty: boolean) => void) {
   };
 
   // Loading and switching replace the draft and its history as one transition.
+  // The caller offers any stored draft first: this makes the workflow clean,
+  // and the storage effect removes the copy of a clean workflow.
   const replaceDraft = (
     draft: PipelineConfig,
     saved: PipelineConfig,

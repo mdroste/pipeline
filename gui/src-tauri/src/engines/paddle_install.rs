@@ -21,7 +21,7 @@ pub(super) async fn install_paddle_engine(
     });
     if let Err(error) = download_verified(
         app,
-        &llama_download_url(artifact),
+        &[llama_download_url(artifact)],
         &runtime_archive,
         artifact.sha256,
         MAX_LLAMA_ARCHIVE_BYTES,
@@ -50,12 +50,23 @@ pub(super) async fn install_paddle_engine(
         .ok_or("llama-server disappeared after extraction")?;
     let mut probe = std::process::Command::new(&staged_server);
     probe.arg("--version");
-    let output =
-        crate::process::run_bounded(&mut probe, std::time::Duration::from_secs(15), 256 * 1024)
-            .map_err(|error| format!("llama-server validation failed: {error}"))?;
+    let output = match crate::process::run_bounded(
+        &mut probe,
+        std::time::Duration::from_secs(15),
+        256 * 1024,
+    ) {
+        Ok(output) => output,
+        Err(error) => {
+            emit_phase(app, spec.id, "runtime", "failed");
+            return Err(probe_start_error("llama-server", &error));
+        }
+    };
     if !output.status.success() || output.stdout_truncated || output.stderr_truncated {
         emit_phase(app, spec.id, "runtime", "failed");
-        return Err("The downloaded llama-server failed its validation check".to_string());
+        return Err(probe_exit_error(
+            "The downloaded llama-server",
+            output.status.code(),
+        ));
     }
     emit_phase(app, spec.id, "runtime", "done");
 
@@ -82,7 +93,7 @@ pub(super) async fn install_paddle_engine(
     ] {
         if let Err(error) = download_verified(
             app,
-            &paddle_model_url(filename),
+            &[paddle_model_url(filename)],
             &model_dir.join(filename),
             sha256,
             MAX_PADDLE_MODEL_BYTES,
@@ -133,13 +144,14 @@ pub(super) async fn install_paddle_engine(
             .map_err(|error| format!("Failed to clean an old engine backup: {error}"))?;
     }
     if target.exists() {
-        std::fs::rename(&target, &backup)
+        rename_when_free(&target, &backup)
+            .await
             .map_err(|error| format!("Failed to stage the previous engine version: {error}"))?;
     }
     let staged_path = staging.keep();
-    if let Err(error) = std::fs::rename(&staged_path, &target) {
+    if let Err(error) = rename_when_free(&staged_path, &target).await {
         if backup.exists() {
-            let _ = std::fs::rename(&backup, &target);
+            let _ = rename_when_free(&backup, &target).await;
         }
         return Err(format!("Failed to activate PaddleOCR-VL: {error}"));
     }
@@ -160,35 +172,51 @@ pub(super) async fn install_paddle_full_parser(
 ) -> Result<(), String> {
     full_parser_support()?;
     let python_artifact = python_artifact()?;
+    let backend = new_install_recognition_backend();
 
-    // The parser is an add-on to the native Q8 stack. Installing it is one
-    // user action even on a fresh machine.
-    if paddle_engine_paths().is_err() {
+    // With managed llama.cpp the parser is an add-on to the native Q8 stack.
+    // Installing it is one user action even on a fresh machine.
+    if backend == RecognitionBackend::ManagedLlama && paddle_engine_paths().is_err() {
         let base = engine("paddleocr-vl")?;
         log(
             app,
             "Installing the managed PaddleOCR-VL model and llama.cpp dependency first",
         );
-        install_paddle_engine(app, base).await?;
+        emit_phase(app, spec.id, "recognition", "running");
+        if let Err(error) = install_paddle_engine(app, base).await {
+            emit_phase(app, spec.id, "recognition", "failed");
+            return Err(error);
+        }
     }
+    emit_phase(app, spec.id, "recognition", "done");
 
     let parser_root = paddle_parser_root()?;
     match refresh_paddle_parser_sidecar_locked(&parser_root) {
         Ok(SidecarRefresh::Refreshed | SidecarRefresh::AlreadyCurrent) => {
-            for phase in ["runtime", "packages", "models"] {
-                emit_phase(app, spec.id, phase, "done");
+            match paddle_full_parser_paths_at(&parser_root) {
+                Some(installed) => {
+                    for phase in ["runtime", "packages", "models"] {
+                        emit_phase(app, spec.id, phase, "done");
+                    }
+                    log(
+                        app,
+                        format!(
+                            "{} sidecar updated without reinstalling its managed runtime ({})",
+                            spec.label,
+                            installed.script.display()
+                        ),
+                    );
+                    return Ok(());
+                }
+                // An older Windows runtime whose llama.cpp component is gone
+                // is rebuilt with built-in recognition.
+                None if backend == RecognitionBackend::BuiltIn => {}
+                None => {
+                    return Err(
+                        "The refreshed parser sidecar failed its integrity check".to_string()
+                    )
+                }
             }
-            let installed = paddle_full_parser_paths_at(&parser_root)
-                .ok_or("The refreshed parser sidecar failed its integrity check")?;
-            log(
-                app,
-                format!(
-                    "{} sidecar updated without reinstalling its managed runtime ({})",
-                    spec.label,
-                    installed.script.display()
-                ),
-            );
-            return Ok(());
         }
         Ok(SidecarRefresh::NotReusable) => {}
         Err(error) => log(
@@ -217,7 +245,8 @@ pub(super) async fn install_paddle_full_parser(
             .map_err(|error| format!("Failed to remove an old parser backup: {error}"))?;
     }
     if target.exists() {
-        std::fs::rename(&target, &backup)
+        rename_when_free(&target, &backup)
+            .await
             .map_err(|error| format!("Failed to stage the previous parser version: {error}"))?;
     }
     std::fs::create_dir_all(&target)
@@ -246,7 +275,7 @@ pub(super) async fn install_paddle_full_parser(
         let python_archive = target.join("python.tar.gz");
         download_verified(
             app,
-            &python_download_url(python_artifact),
+            &python_download_urls(python_artifact),
             &python_archive,
             python_artifact.sha256,
             MAX_PYTHON_ARCHIVE_BYTES,
@@ -354,39 +383,30 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
         emit_phase(app, spec.id, "packages", "done");
 
         emit_phase(app, spec.id, "models", "running");
-        let model_archive = target.join("PP-DocLayoutV3_infer.tar");
-        download_verified(
-            app,
-            PADDLE_LAYOUT_MODEL_URL,
-            &model_archive,
-            PADDLE_LAYOUT_MODEL_SHA256,
-            MAX_LAYOUT_MODEL_ARCHIVE_BYTES,
-            "PP-DocLayoutV3 model",
-        )
-        .await?;
-        let models = target.join("models");
-        let archive_for_task = model_archive.clone();
-        let models_for_task = models.clone();
-        let layout_model = tokio::task::spawn_blocking(move || {
-            unpack_layout_model_archive(&archive_for_task, &models_for_task)
-        })
-        .await
-        .map_err(|error| format!("Layout-model extraction task failed: {error}"))??;
-        std::fs::remove_file(&model_archive)
-            .map_err(|error| format!("Failed to remove staged model archive: {error}"))?;
+        let layout_model = install_layout_model(app, &target).await?;
+        let native_model = match backend {
+            RecognitionBackend::BuiltIn => {
+                Some(install_native_recognition_model(app, &target).await?)
+            }
+            RecognitionBackend::ManagedLlama => None,
+        };
 
         // A successful construction proves that the exact local weights can
         // initialize without a first-use download or recognition request.
-        let warm_args = vec![
+        let mut warm_args = vec![
             "-I".to_string(),
             "-B".to_string(),
             script.to_string_lossy().to_string(),
             "--warm-layout".to_string(),
             "--layout-model-dir".to_string(),
-            layout_model.to_string_lossy().to_string(),
+            native_path(&layout_model).to_string_lossy().to_string(),
             "--server-url".to_string(),
             "http://127.0.0.1:9/v1".to_string(),
         ];
+        if let Some(model) = &native_model {
+            warm_args.push("--native-model-dir".to_string());
+            warm_args.push(native_path(model).to_string_lossy().to_string());
+        }
         run_install_step(app, &python, &warm_args, &environment, "layout model validation")
             .await?;
         emit_phase(app, spec.id, "models", "done");
@@ -423,7 +443,8 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
             "layout_model_artifact_sha256": PADDLE_LAYOUT_MODEL_SHA256,
             "layout_ready": true,
             "offline_model_runtime": true,
-            "recognition_backend": "managed llama.cpp",
+            "recognition_backend": backend.manifest_value(),
+            "recognition_model_revision": native_model.is_some().then_some(NATIVE_MODEL_REVISION),
             "integrity_schema": INSTALL_INTEGRITY_SCHEMA,
             "integrity_sha256": integrity_sha256,
         });
@@ -442,9 +463,9 @@ Path(sys.argv[1]).write_text("\n".join(items) + "\n", encoding="utf-8")"#;
     if let Err(error) = provision_result {
         let _ = std::fs::remove_dir_all(&target);
         if backup.exists() {
-            let _ = std::fs::rename(&backup, &target);
+            let _ = rename_when_free(&backup, &target).await;
         }
-        emit_phase(app, spec.id, "packages", "failed");
+        fail_running_phases(app, spec.id);
         return Err(error);
     }
     if backup.exists() {

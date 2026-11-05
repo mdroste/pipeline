@@ -3,7 +3,7 @@ import type { ArtifactEntry, RunManifest } from "../../lib/artifactTypes";
 import ResizeHandle from "../ResizeHandle";
 import usePersistentPanelWidth from "../../hooks/usePersistentPanelWidth";
 import { formatBytes } from "./format";
-import { GROUPS, groupAgentReports } from "./grouping";
+import { GROUPS, groupAgentReports, ungroupedArtifacts } from "./grouping";
 import { PageBrowser } from "./PageNavigator";
 const ArtifactList = memo(function ArtifactList({
   items,
@@ -108,6 +108,10 @@ export default function ArtifactTree({
     176,
     360,
   );
+  const otherArtifacts = useMemo(
+    () => ungroupedArtifacts(artifactsByGroup),
+    [artifactsByGroup],
+  );
   return (
     <>
       {navigationOpen ? (
@@ -123,7 +127,7 @@ export default function ArtifactTree({
               <button
                 type="button"
                 onClick={() => setNavigationOpen(false)}
-                aria-label="Hide artifact browser"
+                aria-label="Hide files"
                 className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-800
                            focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400
                            dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
@@ -183,6 +187,18 @@ export default function ArtifactTree({
                 </div>
               );
             })}
+            {otherArtifacts.length > 0 && (
+              <div>
+                <h4 className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
+                  Other files
+                </h4>
+                <ArtifactList
+                  items={otherArtifacts}
+                  selected={selected}
+                  onSelect={selectArtifact}
+                />
+              </div>
+            )}
           </div>
           <ResizeHandle
             currentWidth={treeWidth}
@@ -197,7 +213,7 @@ export default function ArtifactTree({
         <button
           type="button"
           onClick={() => setNavigationOpen(true)}
-          aria-label="Show artifact browser"
+          aria-label="Show files"
           title="Show artifacts"
           className="flex w-10 shrink-0 items-start justify-center border-r border-gray-200 pt-4 text-gray-500
                      hover:bg-gray-50 hover:text-gray-800 focus-visible:outline-none focus-visible:ring-2

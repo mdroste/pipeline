@@ -8,18 +8,21 @@ import {
   useState,
 } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { taskClient } from "../lib/taskClient";
+import { taskTime } from "../lib/taskPresentation";
 import {
-  taskClient,
-  taskTime,
   type Schedule,
   type TaskRun,
   type TaskSummary,
-} from "../lib/taskClient";
+} from "../lib/taskTypes";
+import { confirmDialog } from "./DialogService";
 import Builder from "./tasks/Builder";
 import Detail from "./tasks/Detail";
 import ScheduleCard from "./tasks/ScheduleCard";
 import { Status } from "./tasks/shared";
+import PageHeader from "../ui/PageHeader";
 import "./TasksPage.css";
+import ReportIssueLink from "./ReportIssueLink";
 const ResearchMissions = lazy(() => import("./ResearchMissions"));
 
 export default function TasksPage({
@@ -46,8 +49,14 @@ export default function TasksPage({
     views,
     view,
     (id) => {
-      setView(id);
-      setOffset(0);
+      // Only the Research view unmounts the builder; other views keep it.
+      void (id === "missions" ? discardDraft() : Promise.resolve(true)).then(
+        (ok) => {
+          if (!ok) return;
+          setView(id);
+          setOffset(0);
+        },
+      );
     },
     "manual",
   );
@@ -58,6 +67,33 @@ export default function TasksPage({
   const [creating, setCreating] = useState(
     Boolean((initialSessionId || initialAutomatePath) && !initialTaskId),
   );
+  const builderDirty = useRef(false);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const handleDirtyChange = useCallback(
+    (dirty: boolean) => {
+      builderDirty.current = dirty;
+      onDirtyChange?.(dirty);
+    },
+    [onDirtyChange],
+  );
+  /** Ask before an in-page action throws away an unsaved builder draft. */
+  const discardDraft = async () => {
+    if (!creating || !builderDirty.current) return true;
+    const discard = await confirmDialog(
+      "This automation has not been previewed or saved. Discard it?",
+      {
+        title: "Discard automation draft?",
+        confirmLabel: "Discard",
+        cancelLabel: "Keep editing",
+        destructive: true,
+      },
+    );
+    if (discard) {
+      setCreating(false);
+      handleDirtyChange(false);
+    }
+    return discard;
+  };
   const [error, setError] = useState("");
   const [background, setBackground] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -72,12 +108,18 @@ export default function TasksPage({
           ? Promise.resolve([])
           : taskClient.list(view, null, offset),
         view === "scheduled" ? taskClient.schedules() : Promise.resolve([]),
-        selectedId ? taskClient.get(selectedId) : Promise.resolve(null),
+        // Cleanup can remove a run a saved route still names; the lists stand.
+        selectedId
+          ? taskClient.get(selectedId).catch(() => null)
+          : Promise.resolve(null),
       ]);
       if (version !== refreshVersion.current) return;
       setRuns(rows);
       setSchedules(planned);
-      if (selectedId === selectedRef.current) setSelected(detail);
+      if (selectedId === selectedRef.current) {
+        if (!detail) selectedRef.current = null;
+        setSelected(detail);
+      }
       setError("");
     } catch (e) {
       if (version === refreshVersion.current) setError(String(e));
@@ -138,32 +180,43 @@ export default function TasksPage({
     setCreating(false);
     void refresh();
   };
+  // The side pane renders at the top of its column (or below the list in the
+  // narrow layout). Bring its heading into view when it opens from a scrolled
+  // list; "nearest" leaves an already visible pane where it is.
+  const paneKey = creating ? "new" : (selected?.id ?? null);
+  useEffect(() => {
+    if (!paneKey) return;
+    const pane = contentRef.current?.querySelector(
+      ":scope > .task-builder, :scope > .task-detail",
+    );
+    pane?.firstElementChild?.scrollIntoView?.({ block: "nearest" });
+  }, [paneKey]);
   return (
-    <main className="tasks-page">
-      <header className="tasks-header">
-        <div>
-          <p className="task-eyebrow">PIPELINE</p>
-          <h1>Automations</h1>
-          <p className="task-muted">
-            Continue project work, reviews, waits, and decisions now or on a
-            schedule.
-          </p>
-        </div>
-        {view !== "missions" && (
-          <button
-            className="task-primary"
-            onClick={() => {
-              setCreating(true);
-              selectedRef.current = null;
-              setSelected(null);
-            }}
-          >
-            + New automation
-          </button>
-        )}
-      </header>
-      <div className="tasks-toolbar">
-        <div className="task-tabs" role="tablist" aria-label="Automations view">
+    <main className="ui-page tasks-page">
+      <PageHeader
+        title="Automations"
+        description="Run project work and reviews now or on a schedule, with pauses for your input."
+        action={
+          view !== "missions" && (
+            <button
+              className="task-primary"
+              onClick={() => {
+                setCreating(true);
+                selectedRef.current = null;
+                setSelected(null);
+              }}
+            >
+              + New automation
+            </button>
+          )
+        }
+      />
+      <div className="ui-page-toolbar">
+        <div
+          className="ui-page-tabs"
+          role="tablist"
+          aria-label="Automations view"
+        >
           {views.map((v) => (
             <button {...tabList.tabProps(v)} key={v}>
               {v === "missions"
@@ -189,6 +242,7 @@ export default function TasksPage({
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       {views
@@ -209,6 +263,7 @@ export default function TasksPage({
               onConversation={onConversation}
               onTask={async (id) => {
                 const run = await taskClient.get(id);
+                if (!(await discardDraft())) return;
                 setView("active");
                 select(run);
               }}
@@ -216,6 +271,7 @@ export default function TasksPage({
           </Suspense>
         ) : (
           <div
+            ref={contentRef}
             className={`tasks-content ${creating || selected ? "tasks-content--split" : ""}`}
           >
             <section className="task-list">
@@ -229,6 +285,12 @@ export default function TasksPage({
                       schedule={s}
                       onUpdated={() => void refresh()}
                       onError={setError}
+                      onOpenRun={async (id) => {
+                        const run = await taskClient.get(id);
+                        if (!(await discardDraft())) return;
+                        setView("active");
+                        select(run);
+                      }}
                     />
                   ))
                 ) : (
@@ -243,7 +305,8 @@ export default function TasksPage({
                     <button
                       className={`task-list-row ${selected?.id === run.id ? "is-selected" : ""}`}
                       key={run.id}
-                      onClick={() => {
+                      onClick={async () => {
+                        if (!(await discardDraft())) return;
                         selectedRef.current = run.id;
                         setCreating(false);
                         void taskClient
@@ -295,7 +358,7 @@ export default function TasksPage({
                       ? "Completed work will appear here."
                       : selected
                         ? "No active automations."
-                        : "Give your work a next step."}
+                        : "Create your first automation."}
                   </h2>
                   <p>
                     Connect project conversations and reviews, pause for input,
@@ -312,11 +375,15 @@ export default function TasksPage({
             {creating ? (
               <Builder
                 key={`${entryRequest}:${initialSessionId ?? ""}:${initialAutomatePath ?? ""}`}
-                onDirtyChange={onDirtyChange}
+                onDirtyChange={handleDirtyChange}
                 initialSessionId={initialSessionId}
                 initialPath={initialAutomatePath}
                 onPrepared={select}
-                onClose={() => setCreating(false)}
+                onClose={() =>
+                  void discardDraft().then((ok) => {
+                    if (ok) setCreating(false);
+                  })
+                }
               />
             ) : (
               selected && (

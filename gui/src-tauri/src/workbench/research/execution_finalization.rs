@@ -35,6 +35,15 @@ pub(super) fn apply(store: &Store, id: &str, v: &Value) -> WorkbenchResult<()> {
     }
     tx.execute("UPDATE research_executions SET outcome=?2,ended_at=?3,exit_status=?4,stdout_text=?5,stderr_text=?6,output_manifest_json=?7,validation_json=?8 WHERE id=?1",params![id,v["outcome"].as_str(),v["endedAt"].as_str(),v["exitStatus"].as_i64(),v["stdout"].as_str(),v["stderr"].as_str(),v["outputs"].to_string(),v["validation"].to_string()])
         .map_err(|e|WorkbenchError::storage("Finalize execution receipt",e))?;
+    // The receipt now holds all of it. Only an unknown outcome can still be
+    // reconciled, so only that keeps the journal.
+    if v["outcome"] != "outcome_unknown" {
+        tx.execute(
+            "UPDATE execution_jobs SET finalization_json=NULL WHERE execution_id=?1",
+            [id],
+        )
+        .map_err(|e| WorkbenchError::storage("Clear finalization journal", e))?;
+    }
     tx.commit()
         .map_err(|e| WorkbenchError::storage("Commit execution finalization", e))
 }

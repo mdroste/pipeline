@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { usePipeline } from "./usePipeline";
+import { router } from "../lib/router";
 import type { QueuedRun } from "../lib/types";
 import { queuedRun } from "../test/queuedRunFixture";
 
@@ -24,6 +25,13 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 const RUN = "run-a";
+
+function showPage(page: "main" | "home") {
+  vi.spyOn(router, "getSnapshot").mockReturnValue({
+    route: { page },
+    revision: 0,
+  });
+}
 
 function emitLog(
   line: string,
@@ -108,6 +116,7 @@ describe("usePipeline run queue", () => {
   });
 
   it("flushes buffered log lines into the tagged run only", async () => {
+    showPage("main");
     const { result, unmount } = await renderReady();
 
     act(() => {
@@ -148,7 +157,28 @@ describe("usePipeline run queue", () => {
     unmount();
   });
 
+  it("holds log lines longer while no page is showing them", async () => {
+    showPage("home");
+    const { result, unmount } = await renderReady();
+    vi.useFakeTimers();
+    try {
+      act(() => emitLog("line one"));
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(result.current.views[RUN]?.logs ?? []).toHaveLength(0);
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(result.current.views[RUN]?.logs).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+    unmount();
+  });
+
   it("prepends a marker line when a run's log history is truncated", async () => {
+    showPage("main");
     const { result, unmount } = await renderReady();
 
     act(() => {

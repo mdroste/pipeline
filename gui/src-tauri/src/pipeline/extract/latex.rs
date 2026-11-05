@@ -11,7 +11,15 @@ pub(super) struct LatexReference {
     alias: Option<String>,
 }
 
-pub(super) fn latex_without_comments(content: &str) -> String {
+/// `\includegraphics` in every form TeX accepts. Staging and the bundle must
+/// agree, or a figure is copied but never attached to its node.
+pub(crate) const TEX_GRAPHICS_PATTERN: &str =
+    r"\\includegraphics\*?(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}";
+
+/// `\input name`, which TeX reads up to the next space.
+const BARE_INPUT_PATTERN: &str = r"\\input\s+([^\s{}%\\]+)";
+
+pub(crate) fn latex_without_comments(content: &str) -> String {
     let mut visible = String::with_capacity(content.len());
     for line in content.split_inclusive('\n') {
         let mut slash_count = 0usize;
@@ -93,7 +101,16 @@ pub(super) fn latex_references(content: &str) -> Vec<LatexReference> {
     collect(
         &mut references,
         &visible,
-        r"\\includegraphics\*?(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}",
+        BARE_INPUT_PATTERN,
+        1,
+        &["tex"],
+        true,
+        false,
+    );
+    collect(
+        &mut references,
+        &visible,
+        TEX_GRAPHICS_PATTERN,
         1,
         &["pdf", "png", "jpg", "jpeg", "webp", "eps", "svg"],
         false,
@@ -111,8 +128,7 @@ pub(super) fn latex_references(content: &str) -> Vec<LatexReference> {
         })
         .filter(|path| !path.is_empty() && !path.contains('#') && !path.contains('\\'))
         .collect::<Vec<_>>();
-    let graphics = Regex::new(r"\\includegraphics\*?(?:\s*\[[^\]]*\])?\s*\{([^}]+)\}")
-        .expect("LaTeX graphics regex is invalid");
+    let graphics = Regex::new(TEX_GRAPHICS_PATTERN).expect("LaTeX graphics regex is invalid");
     for capture in graphics.captures_iter(&visible) {
         let Some(target) = capture.get(1).map(|value| value.as_str().trim()) else {
             continue;
@@ -378,22 +394,43 @@ pub(super) fn stage_latex_project(
         return Err("The selected LaTeX file is outside its project root".to_string());
     }
 
-    let mut pending = VecDeque::from([(main_file.clone(), true)]);
+    // Text the Review reads is staged before figures and other assets, so an
+    // asset can only ever use up what the source text left over.
+    let mut sources = VecDeque::from([main_file.clone()]);
+    let mut assets = VecDeque::new();
+    // TeX reads `<main>.bbl` without any command naming it, and a source that
+    // ships without its `.bib`, as arXiv sources do, has no other bibliography.
+    let compiled_bibliography = main_file.with_extension("bbl");
+    if fs::symlink_metadata(&compiled_bibliography).is_ok_and(|metadata| metadata.is_file()) {
+        assets.push_back(compiled_bibliography);
+    }
     let mut visited = HashSet::new();
     let mut total_bytes = 0u64;
     let mut skipped = Vec::new();
+    let mut over_limit = Vec::new();
     let mut source_map = staged::SourceMap {
         main: main_file.strip_prefix(&project_root).unwrap().into(),
         ..Default::default()
     };
-    while let Some((source, recurse)) = pending.pop_front() {
+    loop {
+        let (source, recurse) = match sources.pop_front() {
+            Some(source) => (source, true),
+            None => match assets.pop_front() {
+                Some(asset) => (asset, false),
+                None => break,
+            },
+        };
         if !visited.insert(source.clone()) {
             continue;
         }
         if visited.len() > MAX_SCOPED_SOURCE_FILES {
-            return Err(format!(
-                "LaTeX source closure exceeds the {MAX_SCOPED_SOURCE_FILES}-file limit"
-            ));
+            if recurse {
+                return Err(format!(
+                    "LaTeX source closure exceeds the {MAX_SCOPED_SOURCE_FILES}-file limit"
+                ));
+            }
+            over_limit.push(source);
+            continue;
         }
         // An oversized referenced file (a scanned figure, a data set) costs
         // that one file, not the whole source view. Only the main file over
@@ -412,6 +449,14 @@ pub(super) fn stage_latex_project(
                 );
                 continue;
             }
+            if !recurse
+                && size.is_some_and(|size| {
+                    total_bytes.saturating_add(size) > MAX_SCOPED_SOURCE_TOTAL_BYTES
+                })
+            {
+                over_limit.push(source);
+                continue;
+            }
         }
         let destination = match source.strip_prefix(&project_root) {
             Ok(relative) => destination_root.join(relative),
@@ -426,8 +471,8 @@ pub(super) fn stage_latex_project(
         if !recurse {
             continue;
         }
-        let content = match read_utf8_capped(&source, MAX_LATEX_SIZE) {
-            Ok(content) => content,
+        let content = match read_latex_capped(&source, MAX_LATEX_SIZE) {
+            Ok((content, _)) => content,
             Err(_) => continue,
         };
         let current_dir = source.parent().unwrap_or(&project_root);
@@ -461,17 +506,46 @@ pub(super) fn stage_latex_project(
                             mapped.strip_prefix(destination_root).unwrap().into(),
                         );
                     }
-                    pending.push_back((path, reference.recursive));
+                    if reference.recursive {
+                        sources.push_back(path);
+                    } else {
+                        assets.push_back(path);
+                    }
                 }
                 None => {}
             }
         }
     }
     source_map.save(destination_root)?;
-    // This stage has no console/quality-note channel, so record skips inside
-    // the staged view itself: the models reading this root (and any user
-    // inspecting it) see why a referenced file is absent. Best-effort — a
-    // project file that already claimed the name wins.
+    if !over_limit.is_empty() {
+        let names = over_limit
+            .iter()
+            .take(MAX_LISTED_OMISSIONS)
+            .map(|path| {
+                path.strip_prefix(&project_root)
+                    .unwrap_or(path)
+                    .display()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let unlisted = over_limit.len().saturating_sub(MAX_LISTED_OMISSIONS);
+        let more = if unlisted > 0 {
+            format!(" and {unlisted} more")
+        } else {
+            String::new()
+        };
+        skipped.push(format!(
+            "Left out {} referenced files over the source limits of {MAX_SCOPED_SOURCE_FILES} files and {} MB, so the Review cannot see them: {names}{more}",
+            over_limit.len(),
+            MAX_SCOPED_SOURCE_TOTAL_BYTES / (1024 * 1024),
+        ));
+    }
+    // This stage has no console channel, so record skips inside the staged
+    // view itself: the models reading this root (and any user inspecting it)
+    // see why a referenced file is absent, and extraction of this root turns
+    // them into quality notes. Best-effort — a project file that already
+    // claimed the name wins.
     if !skipped.is_empty() {
         let _ = fs::write(
             destination_root.join(STAGING_NOTES_FILE),
@@ -483,6 +557,8 @@ pub(super) fn stage_latex_project(
 
 /// Written into the staged source root when referenced files were skipped.
 pub(super) const STAGING_NOTES_FILE: &str = "_pipeline_staging_notes.txt";
+/// Files named in the over-limit note; a thesis can leave out hundreds.
+const MAX_LISTED_OMISSIONS: usize = 20;
 
 /// Map a bounded external source file into the private staged view. The
 /// `_external/up{N}/` prefix encodes which project-root ancestor the path is
@@ -620,7 +696,10 @@ fn extract_latex_inner(
         return Ok(String::new());
     }
 
-    let content = read_utf8_capped(path, MAX_LATEX_SIZE)?;
+    let (content, encoding_note) = read_latex_capped(path, MAX_LATEX_SIZE)?;
+    if let Some(note) = encoding_note {
+        push_warning(warnings, note);
+    }
     // Track the chain of files currently being expanded so a circular
     // include is skipped precisely instead of recursing to the depth limit.
     let opened = path.canonicalize().ok();
@@ -663,7 +742,7 @@ fn expand_latex_includes(
     stack: &mut Vec<PathBuf>,
 ) -> Result<String, String> {
     let parent = path.parent().unwrap_or(Path::new("."));
-    let re = Regex::new(r"\\(?:input|include|subfile)\s*\{([^}]+)\}|\\(?:import|subimport|inputfrom|includefrom)\s*\{([^}]+)\}\s*\{([^}]+)\}").expect("LaTeX include regex is invalid");
+    let re = Regex::new(&format!(r"\\(?:input|include|subfile)\s*\{{([^}}]+)\}}|\\(?:import|subimport|inputfrom|includefrom)\s*\{{([^}}]+)\}}\s*\{{([^}}]+)\}}|{BARE_INPUT_PATTERN}")).expect("LaTeX include regex is invalid");
 
     let mut result = String::new();
     let mut last_end = 0;
@@ -679,7 +758,7 @@ fn expand_latex_includes(
         }
         result.push_str(&content[last_end..full_match.start()]);
 
-        let include_name = if let Some(name) = cap.get(1) {
+        let include_name = if let Some(name) = cap.get(1).or(cap.get(4)) {
             name.as_str().trim().to_string()
         } else {
             format!("{}/{}", cap[2].trim().trim_end_matches('/'), cap[3].trim())
@@ -767,4 +846,42 @@ fn expand_latex_includes(
 
     result.push_str(&content[last_end..]);
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_bare_input_is_expanded_and_staged_like_a_braced_one() {
+        let project = tempfile::tempdir().unwrap();
+        fs::create_dir(project.path().join("tables")).unwrap();
+        fs::write(
+            project.path().join("main.tex"),
+            "Start\n\\input tables/t1\nMiddle\n% \\input stale\n\\input missing.tex\n{\\input t2.tex}\n",
+        )
+        .unwrap();
+        fs::write(project.path().join("tables/t1.tex"), "TABLE ONE\n").unwrap();
+        fs::write(project.path().join("t2.tex"), "TABLE TWO\n").unwrap();
+        fs::write(project.path().join("stale.tex"), "STALE\n").unwrap();
+
+        let mut warnings = Vec::new();
+        let root = project.path().canonicalize().unwrap();
+        let text = extract_latex(&project.path().join("main.tex"), &root, &mut warnings).unwrap();
+        assert!(text.contains("TABLE ONE"), "{text}");
+        assert!(text.contains("TABLE TWO"), "{text}");
+        assert!(!text.contains("STALE"), "{text}");
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("missing.tex") && warning.contains("not found")),
+            "{warnings:?}"
+        );
+
+        let staged = tempfile::tempdir().unwrap();
+        stage_latex_project(&project.path().join("main.tex"), &root, staged.path()).unwrap();
+        assert!(staged.path().join("tables/t1.tex").is_file());
+        assert!(staged.path().join("t2.tex").is_file());
+        assert!(!staged.path().join("stale.tex").exists());
+    }
 }

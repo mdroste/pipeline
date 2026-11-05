@@ -8,10 +8,16 @@ import {
   studioClient,
   type ResearchDirection,
   type TheoryCheck,
+  type TheoryCheckRecord,
   type TheoryNote,
   type TheoryOverview,
+  RECORD_LIST_LIMIT,
 } from "../../lib/studioClient";
+import { importedLabel } from "../research-panel/format";
 import type { ProjectRecord } from "../../lib/projectClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import useReopenCount from "../../hooks/useReopenCount";
+import useReveal from "../../hooks/useReveal";
 import {
   button,
   input,
@@ -23,6 +29,7 @@ import {
   ErrorNotice,
   Inspect,
   useAction,
+  useDraftGuard,
   type StudioProps,
 } from "./shared";
 
@@ -68,6 +75,8 @@ const emptyDirection: ResearchDirection = {
   theoryIds: [],
   dropReason: "",
 };
+// A check's note id follows the note that holds it; it is not typed text.
+const checkText = (check: TheoryCheck) => ({ ...check, theoryId: "" });
 const label = (s: string) => s.replaceAll("_", " ");
 const opts = (values: readonly string[]) =>
   values.map((v) => ({ value: v, label: label(v) }));
@@ -112,11 +121,16 @@ export default function Theory({
   data,
   onRefresh,
   onAnchors,
+  active,
 }: StudioProps) {
   const [overview, setOverview] = useState<TheoryOverview | null>(null);
   const [kindFilter, setKindFilter] = useState("");
   const [noteId, setNoteId] = useState("");
   const [note, setNote] = useState(emptyNote);
+  // Raw list text stays local so typing spaces and new lines is not undone;
+  // it is normalized into lines only when the note is saved.
+  const [assumptionsText, setAssumptionsText] = useState("");
+  const [unresolvedText, setUnresolvedText] = useState("");
   const [checkId, setCheckId] = useState("");
   const [check, setCheck] = useState(emptyCheck(""));
   const [directionId, setDirectionId] = useState("");
@@ -124,11 +138,18 @@ export default function Theory({
   const [task, setTask] = useState("");
   const [path, setPath] = useState("appendix.tex");
   const [afterLine, setAfterLine] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<{
+    section: "note" | "check" | "direction";
+    text: string;
+  } | null>(null);
+  const noteGuard = useDraftGuard([note, assumptionsText, unresolvedText]);
+  const checkGuard = useDraftGuard(checkText(check));
+  const directionGuard = useDraftGuard(direction);
   const { error, busy, run, setError } = useAction();
   const load = useCallback(async () => {
     setOverview(await studioClient.theory(workspaceId));
   }, [workspaceId]);
+  const reopened = useReopenCount(active);
   useEffect(() => {
     let disposed = false;
     void studioClient
@@ -137,12 +158,12 @@ export default function Theory({
         if (!disposed) setOverview(o);
       })
       .catch((e) => {
-        if (!disposed) setError(String(e));
+        if (!disposed) setError(workbenchErrorMessage(e));
       });
     return () => {
       disposed = true;
     };
-  }, [workspaceId, setError]);
+  }, [workspaceId, setError, reopened]);
   const notes = overview?.notes ?? [];
   const current = notes.find((n) => n.id === noteId);
   const currentCheck = overview?.checks.find((c) => c.id === checkId);
@@ -160,12 +181,44 @@ export default function Theory({
   const anchorText = (id: string) =>
     data.anchors.find((a) => a.id === id)?.body.selection.quote.slice(0, 160) ??
     id;
-  const selectNote = (n: ProjectRecord<TheoryNote>) => {
-    setNoteId(n.id);
-    setNote(n.body);
-    setCheckId("");
-    setCheck(emptyCheck(n.id));
+  const editNote = (body: TheoryNote) => {
+    const assumptions = body.assumptions.join("\n");
+    const unresolved = body.unresolvedSteps.join("\n");
+    noteGuard.markSaved([body, assumptions, unresolved]);
+    setNote(body);
+    setAssumptionsText(assumptions);
+    setUnresolvedText(unresolved);
   };
+  const editCheck = (id: string, body: TheoryCheck) => {
+    checkGuard.markSaved(checkText(body));
+    setCheckId(id);
+    setCheck(body);
+  };
+  const editDirection = (id: string, body: ResearchDirection) => {
+    directionGuard.markSaved(body);
+    setDirectionId(id);
+    setDirection(body);
+  };
+  const noteForm = useReveal<HTMLElement>();
+  // Opening another note also replaces the check form beside it.
+  const replaceNote = (id: string, body: TheoryNote) =>
+    noteGuard.replace("theory note", () =>
+      checkGuard.replace("check", () => {
+        setNoteId(id);
+        editNote(body);
+        editCheck("", emptyCheck(id));
+        noteForm.reveal();
+      }),
+    );
+  const replaceCheck = (id: string, body: TheoryCheck) =>
+    checkGuard.replace("check", () => editCheck(id, body));
+  const replaceDirection = (id: string, body: ResearchDirection) =>
+    directionGuard.replace("research direction", () => editDirection(id, body));
+  const sectionNotice = (section: "note" | "check" | "direction") => (
+    <p role="status" className="text-xs">
+      {notice?.section === section ? notice.text : ""}
+    </p>
+  );
   const proofPartner = (n: ProjectRecord<TheoryNote>) =>
     n.body.relatedIds
       .map((id) => notes.find((x) => x.id === id))
@@ -184,6 +237,12 @@ export default function Theory({
           the evidence label is computed from recorded checks. A numerical check
           covers tested instances only and is never a proof.
         </p>
+        {notes.length >= RECORD_LIST_LIMIT && (
+          <p className="text-xs text-gray-500">
+            Showing the {RECORD_LIST_LIMIT} most recently changed notes. Older
+            notes are kept.
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
           <Select
             label="Filter by kind"
@@ -192,15 +251,7 @@ export default function Theory({
             options={opts(THEORY_KINDS)}
             placeholder="All kinds"
           />
-          <button
-            className={button}
-            onClick={() => {
-              setNoteId("");
-              setNote(emptyNote);
-              setCheckId("");
-              setCheck(emptyCheck(""));
-            }}
-          >
+          <button className={button} onClick={() => replaceNote("", emptyNote)}>
             New note
           </button>
         </div>
@@ -227,7 +278,7 @@ export default function Theory({
                         </span>{" "}
                         {n.body.title}
                         {n.body.unresolvedSteps.length > 0 && (
-                          <p className="text-amber-700">
+                          <p className="text-warning">
                             {n.body.unresolvedSteps.length} unresolved step(s)
                           </p>
                         )}
@@ -240,6 +291,11 @@ export default function Theory({
                       <td className="p-2">
                         {n.body.status}
                         {n.body.origin === "proposed" && " · proposed"}
+                        {n.body.importedStatus && (
+                          <p className="text-gray-500">
+                            {importedLabel(n.body.importedStatus)}
+                          </p>
+                        )}
                       </td>
                       <td className="max-w-xs p-2">
                         {overview?.evidence[n.id]?.label}
@@ -247,7 +303,7 @@ export default function Theory({
                       <td className="space-x-1 p-2">
                         <button
                           className={button}
-                          onClick={() => selectNote(n)}
+                          onClick={() => replaceNote(n.id, n.body)}
                         >
                           Edit / checks
                         </button>
@@ -285,7 +341,7 @@ export default function Theory({
         )}
       </section>
       <div className="grid gap-4 lg:grid-cols-2">
-        <section className={panel}>
+        <section ref={noteForm.ref} tabIndex={-1} className={panel}>
           <h2 className="font-semibold">
             {current ? "Edit theory note" : "New theory note"}
           </h2>
@@ -297,7 +353,7 @@ export default function Theory({
               options={opts(THEORY_KINDS)}
             />
             <Select
-              label="Status (your disposition)"
+              label="Your assessment"
               value={note.status}
               onChange={(v) => set("status", v)}
               options={opts(THEORY_STATUSES)}
@@ -314,7 +370,7 @@ export default function Theory({
             onChange={(v) => set("statement", v)}
             multiline
           />
-          <Field label="Derivation or argument (promotable prose)">
+          <Field label="Derivation or argument to add to the manuscript">
             <textarea
               aria-label="Derivation prose"
               className={input}
@@ -328,8 +384,8 @@ export default function Theory({
               aria-label="Assumptions"
               className={input}
               rows={2}
-              value={note.assumptions.join("\n")}
-              onChange={(e) => set("assumptions", lines(e.target.value))}
+              value={assumptionsText}
+              onChange={(e) => setAssumptionsText(e.target.value)}
             />
           </Field>
           <IdPicker
@@ -365,8 +421,8 @@ export default function Theory({
               aria-label="Unresolved steps"
               className={input}
               rows={2}
-              value={note.unresolvedSteps.join("\n")}
-              onChange={(e) => set("unresolvedSteps", lines(e.target.value))}
+              value={unresolvedText}
+              onChange={(e) => setUnresolvedText(e.target.value)}
             />
           </Field>
           {needsReason && (
@@ -382,10 +438,10 @@ export default function Theory({
             value={note.origin}
             onChange={(v) => set("origin", v)}
             options={[
-              { value: "manual", label: "Researcher-authored or reviewed" },
+              { value: "manual", label: "Written or reviewed by you" },
               {
                 value: "proposed",
-                label: "Proposed; awaiting review (stays open)",
+                label: "Suggested by the assistant — awaiting your review",
               },
             ]}
           />
@@ -400,18 +456,23 @@ export default function Theory({
                   action: "saveTheory",
                   id: noteId || null,
                   expectedRevision: current?.revision ?? 0,
-                  note,
+                  note: {
+                    ...note,
+                    assumptions: lines(assumptionsText),
+                    unresolvedSteps: lines(unresolvedText),
+                  },
                 });
                 await load();
                 setNoteId(saved.id);
-                setNote({ ...emptyNote, ...saved.body });
+                editNote({ ...emptyNote, ...saved.body });
                 setCheck((c) => ({ ...c, theoryId: saved.id }));
-                setNotice("Theory note saved.");
+                setNotice({ section: "note", text: "Theory note saved." });
               })
             }
           >
             Save theory note
           </button>
+          {sectionNotice("note")}
           {current && (
             <Inspect label="Promotions and revision" value={current} />
           )}
@@ -437,13 +498,15 @@ export default function Theory({
                       <span className="min-w-0 flex-1">
                         {label(c.body.check.method)} · {c.body.check.outcome} ·{" "}
                         <span className="text-gray-500">{c.body.label}</span>
+                        {c.body.importedStatus && (
+                          <span className="block text-gray-500">
+                            {importedLabel(c.body.importedStatus)}
+                          </span>
+                        )}
                       </span>
                       <button
                         className={button}
-                        onClick={() => {
-                          setCheckId(c.id);
-                          setCheck(c.body.check);
-                        }}
+                        onClick={() => replaceCheck(c.id, c.body.check)}
                       >
                         Edit
                       </button>
@@ -452,10 +515,7 @@ export default function Theory({
               </ul>
               <button
                 className={button}
-                onClick={() => {
-                  setCheckId("");
-                  setCheck(emptyCheck(current.id));
-                }}
+                onClick={() => replaceCheck("", emptyCheck(current.id))}
               >
                 New check
               </button>
@@ -475,7 +535,7 @@ export default function Theory({
                   options={opts(CHECK_METHODS)}
                 />
                 <Select
-                  label="Outcome (did the check's own assertion hold?)"
+                  label="Did the check pass?"
                   value={check.outcome}
                   onChange={(v) => setC("outcome", v)}
                   options={opts(["passed", "failed", "inconclusive"])}
@@ -551,7 +611,7 @@ export default function Theory({
               <label className="flex gap-2 text-xs">
                 <input
                   type="checkbox"
-                  aria-label="Claims generality"
+                  aria-label="Applies to all cases under the stated assumptions"
                   disabled={numericalOnly}
                   checked={check.claimsGenerality}
                   onChange={(e) => setC("claimsGenerality", e.target.checked)}
@@ -569,26 +629,30 @@ export default function Theory({
                 disabled={busy || !check.summary.trim()}
                 onClick={() =>
                   void run(async () => {
-                    await studioClient.mutate(workspaceId, {
+                    const saved = await studioClient.mutate<
+                      ProjectRecord<TheoryCheckRecord>
+                    >(workspaceId, {
                       action: "saveCheck",
                       id: checkId || null,
                       expectedRevision: currentCheck?.revision ?? 0,
                       check,
                     });
+                    // Later saves update this record instead of adding another.
+                    editCheck(saved.id, check);
                     await load();
-                    setNotice("Check recorded.");
+                    setNotice({ section: "check", text: "Check recorded." });
                   })
                 }
               >
                 Record check
               </button>
               <h3 className="pt-4 text-sm font-semibold">
-                Promote derivation prose into the manuscript
+                Add this derivation to the manuscript
               </h3>
               <p className="text-xs">
-                Inserts this note’s derivation text with a comment header that
-                lists its assumptions and unresolved steps. The file is staged
-                in a task copy for review in Changes; nothing else changes.
+                Add the derivation to a working copy, with a comment listing its
+                assumptions and unresolved steps. Review and accept the edit in
+                Review edits.
               </p>
               <Select
                 label="Task change set"
@@ -617,7 +681,12 @@ export default function Theory({
               </div>
               <button
                 className={button}
-                disabled={busy || !task || !current.body.body.trim()}
+                disabled={
+                  busy ||
+                  !task ||
+                  !current.body.body.trim() ||
+                  noteGuard.isDirty()
+                }
                 onClick={() =>
                   void run(async () => {
                     const parsed = afterLine.trim()
@@ -639,28 +708,31 @@ export default function Theory({
                     });
                     await load();
                     await onRefresh();
-                    setNotice(
-                      "Derivation staged. Review and accept its captured task in Changes.",
-                    );
+                    setNotice({
+                      section: "check",
+                      text: "The derivation is ready in the working copy. Review and accept it in Review edits.",
+                    });
                   })
                 }
               >
                 Stage derivation into manuscript
               </button>
+              {noteGuard.isDirty() && (
+                <p className="text-xs">
+                  Save the theory note first. Staging uses the saved version.
+                </p>
+              )}
             </>
           )}
-          <p role="status" className="text-xs">
-            {notice}
-          </p>
+          {sectionNotice("check")}
         </section>
       </div>
       <section className={panel}>
         <h2 className="font-semibold">Research directions</h2>
         <p className="text-xs text-gray-500">
-          A structured idea note: question, mechanism, closest known work,
-          minimal model or data, first discriminating test, likely failure mode
-          and next action. Compare ideas side by side and convert one into a
-          task. There are no generated novelty or tractability scores.
+          Record the question, mechanism, related work, model or data needed,
+          first test, possible obstacles, and next step. Compare ideas side by
+          side and turn one into an action item.
         </p>
         <div className="overflow-auto">
           <table className="w-full text-left text-xs">
@@ -668,8 +740,8 @@ export default function Theory({
               <tr>
                 <th>Question</th>
                 <th>Mechanism</th>
-                <th>First discriminating test</th>
-                <th>Likely failure mode</th>
+                <th>First test that could support or reject the idea</th>
+                <th>What might prevent this from working?</th>
                 <th>Next action</th>
                 <th>Status</th>
                 <th>Action</th>
@@ -682,7 +754,7 @@ export default function Theory({
                   <td className="max-w-xs p-2">{d.body.mechanism}</td>
                   <td className="max-w-xs p-2">
                     {d.body.firstDiscriminatingTest || (
-                      <span className="text-amber-700">not stated</span>
+                      <span className="text-warning">not stated</span>
                     )}
                   </td>
                   <td className="max-w-xs p-2">{d.body.likelyFailureMode}</td>
@@ -700,10 +772,7 @@ export default function Theory({
                   <td className="space-x-1 p-2">
                     <button
                       className={button}
-                      onClick={() => {
-                        setDirectionId(d.id);
-                        setDirection(d.body);
-                      }}
+                      onClick={() => replaceDirection(d.id, d.body)}
                     >
                       Edit
                     </button>
@@ -723,7 +792,10 @@ export default function Theory({
                           });
                           await load();
                           await onRefresh();
-                          setNotice("Direction converted into an open task.");
+                          setNotice({
+                            section: "direction",
+                            text: "Direction converted into an open task.",
+                          });
                         })
                       }
                     >
@@ -737,10 +809,7 @@ export default function Theory({
         </div>
         <button
           className={button}
-          onClick={() => {
-            setDirectionId("");
-            setDirection(emptyDirection);
-          }}
+          onClick={() => replaceDirection("", emptyDirection)}
         >
           New direction
         </button>
@@ -770,13 +839,13 @@ export default function Theory({
             multiline
           />
           <Text
-            label="First discriminating test"
+            label="First test that could support or reject the idea"
             value={direction.firstDiscriminatingTest}
             onChange={(v) => setD("firstDiscriminatingTest", v)}
             multiline
           />
           <Text
-            label="Likely failure mode"
+            label="What might prevent this from working?"
             value={direction.likelyFailureMode}
             onChange={(v) => setD("likelyFailureMode", v)}
             multiline
@@ -824,14 +893,17 @@ export default function Theory({
                 direction,
               });
               await load();
-              setDirectionId(saved.id);
-              setDirection({ ...emptyDirection, ...saved.body });
-              setNotice("Research direction saved.");
+              editDirection(saved.id, { ...emptyDirection, ...saved.body });
+              setNotice({
+                section: "direction",
+                text: "Research direction saved.",
+              });
             })
           }
         >
           Save direction
         </button>
+        {sectionNotice("direction")}
       </section>
     </div>
   );

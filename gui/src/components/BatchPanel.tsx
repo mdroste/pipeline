@@ -3,7 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { BatchJob, InputSlot, VarSpec, DepsReport } from "../lib/types";
+import { inputSlotExtensions } from "../lib/pipelineHelpers";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   onClose: () => void;
@@ -48,6 +50,17 @@ function statusColor(status: string): string {
   }
 }
 
+// A choice list shows only its options, so a value outside them (including
+// no default) starts unselected rather than silently showing the first one.
+function initialVariableValue(spec: VarSpec): string {
+  const value = spec.default ?? "";
+  return spec.kind === "choice" &&
+    spec.choices?.length &&
+    !spec.choices.includes(value)
+    ? ""
+    : value;
+}
+
 function representativeBatchPath(paths: string[]): string | null {
   return (
     paths.find((path) => !/\.(?:tex|docx)$/i.test(path)) ?? paths[0] ?? null
@@ -75,7 +88,7 @@ export default function BatchPanel({
   const [variables, setVariables] = useState<VarSpec[]>(initialSpecs);
   const [variableValues, setVariableValues] = useState<Record<string, string>>(
     Object.fromEntries(
-      initialSpecs.map((spec) => [spec.key, spec.default ?? ""]),
+      initialSpecs.map((spec) => [spec.key, initialVariableValue(spec)]),
     ),
   );
   const [inputSlots, setInputSlots] = useState<InputSlot[]>(
@@ -103,7 +116,9 @@ export default function BatchPanel({
     setInputMode(setup.configuredInputMode || setup.inputMode || "document");
     setVariables(specs);
     setVariableValues(
-      Object.fromEntries(specs.map((spec) => [spec.key, spec.default ?? ""])),
+      Object.fromEntries(
+        specs.map((spec) => [spec.key, initialVariableValue(spec)]),
+      ),
     );
     setInputSlots(setup.inputSlots ?? []);
     setExtraInputs({});
@@ -212,7 +227,7 @@ export default function BatchPanel({
       });
       if ((setup.configuredInputMode || setup.inputMode) === "none") {
         throw new Error(
-          "The active workflow no longer accepts primary inputs. Refresh the setup.",
+          "This review design no longer accepts files or folders. Refresh the setup.",
         );
       }
       if (!setup.readiness.ready) {
@@ -254,7 +269,7 @@ export default function BatchPanel({
               filters: [
                 {
                   name: slot.label || "Input",
-                  extensions: ["pdf", "tex", "docx"],
+                  extensions: inputSlotExtensions(slot),
                 },
               ],
             }),
@@ -407,8 +422,7 @@ export default function BatchPanel({
           Batch reports
         </h2>
         <span className="text-xs text-gray-500 dark:text-gray-400">
-          Generates one report per input, one at a time, using the active
-          workflow.
+          Review each document in turn using the selected review design.
         </span>
         {showClose && (
           <button
@@ -428,7 +442,10 @@ export default function BatchPanel({
             role="alert"
             className="flex items-start gap-3 p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400"
           >
-            <span className="flex-1">{error}</span>
+            <span className="flex-1">
+              {error}
+              <ReportIssueLink />
+            </span>
             {errorCanRetrySetup && (
               <button
                 type="button"
@@ -456,8 +473,8 @@ export default function BatchPanel({
               This workflow does not accept batch inputs.
             </p>
             <p className="mt-1 text-xs leading-5">
-              Switch to a workflow with a document or folder primary input
-              before queuing files.
+              Choose a review design that accepts documents or folders, then add
+              files.
             </p>
           </div>
         )}
@@ -470,7 +487,7 @@ export default function BatchPanel({
                 Shared report options
               </h3>
               <p className="text-xs text-gray-500 dark:text-gray-400">
-                These values are captured once and supplied to every batch job.
+                Use these options for every review in the batch.
               </p>
               {variables.map((spec) => {
                 const id = `batch-variable-${spec.key}`;
@@ -497,6 +514,13 @@ export default function BatchPanel({
                         }
                         className="min-w-0 rounded border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
                       >
+                        {!spec.choices.includes(
+                          variableValues[spec.key] ?? "",
+                        ) && (
+                          <option value="" disabled>
+                            Choose…
+                          </option>
+                        )}
                         {spec.choices.map((choice) => (
                           <option key={choice} value={choice}>
                             {choice}
@@ -595,7 +619,7 @@ export default function BatchPanel({
                     className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-800"
                   >
                     <span className="flex-1 truncate" title={p}>
-                      {p.split("/").pop()}
+                      {p.split(/[\\/]/).pop()}
                     </span>
                     <button
                       type="button"
@@ -621,7 +645,7 @@ export default function BatchPanel({
           <div>
             {batchSnapshot && (
               <p className="mb-2 break-all rounded bg-gray-50 px-3 py-2 text-[11px] text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
-                Captured profile{" "}
+                Saved review design{" "}
                 <span className="font-mono">
                   {batchSnapshot.profile_id || "unknown"}
                 </span>

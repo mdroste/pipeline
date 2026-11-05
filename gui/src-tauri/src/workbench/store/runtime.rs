@@ -18,11 +18,17 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| WorkbenchError::storage("Failed to start session binding", error))?;
         let session = load_session(&transaction, session_id)?;
+        // A new connection reopening the same thread keeps what that thread was
+        // started with, so the next send can still resume it.
+        let mut same_thread = None;
         if let Some(existing) = load_active_binding(&transaction, session_id)? {
             if existing.runtime_namespace == runtime_namespace
                 && existing.provider_thread_id == provider_thread_id
             {
                 return Ok(existing);
+            }
+            if existing.provider_thread_id == provider_thread_id {
+                same_thread = Some(existing.id.clone());
             }
             transaction
                 .execute(
@@ -45,6 +51,14 @@ impl Store {
                 params![id, session_id, runtime_namespace, provider_thread_id, incarnation, timestamp],
             )
             .map_err(|error| map_constraint("Failed to bind Workbench session", error))?;
+        if let Some(previous) = same_thread {
+            transaction
+                .execute(
+                    "UPDATE session_bindings SET (harness_fingerprint, instruction_sources_json) = (SELECT harness_fingerprint, instruction_sources_json FROM session_bindings WHERE id = ?2) WHERE id = ?1",
+                    params![id, previous],
+                )
+                .map_err(|error| WorkbenchError::storage("Failed to carry over the thread's harness", error))?;
+        }
         insert_change(
             &transaction,
             &format!("binding-create-{id}"),
@@ -112,6 +126,21 @@ impl Store {
             .map_err(|error| WorkbenchError::storage("Failed to commit turn reconciliation", error))
     }
 
+    /// Provider turns of this binding with no recorded ending.
+    pub(crate) fn open_provider_turns(&self, binding_id: &str) -> WorkbenchResult<Vec<String>> {
+        validate_id("binding id", binding_id)?;
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare("SELECT provider_turn_id FROM turns WHERE binding_id = ?1 AND terminal_at IS NULL AND provider_turn_id IS NOT NULL ORDER BY created_at")
+            .map_err(|error| WorkbenchError::storage("Failed to prepare open turns", error))?;
+        let turns = statement
+            .query_map([binding_id], |row| row.get(0))
+            .map_err(|error| WorkbenchError::storage("Failed to read open turns", error))?
+            .collect::<Result<_, _>>()
+            .map_err(|error| WorkbenchError::storage("Failed to decode open turns", error))?;
+        Ok(turns)
+    }
+
     pub(crate) fn set_binding_harness(
         &self,
         binding_id: &str,
@@ -173,35 +202,51 @@ impl Store {
     pub(crate) fn project_codex_event(
         &self,
         binding_id: &str,
-        event: &crate::workbench::codex::NormalizedEvent,
+        event: &crate::agent_runtime::events::NormalizedEvent,
     ) -> WorkbenchResult<Option<i64>> {
-        use crate::workbench::codex::NormalizedEvent;
+        use crate::agent_runtime::events::NormalizedEvent;
         validate_id("binding id", binding_id)?;
+        // Scoped by binding: neither epochs nor provider item ids are unique
+        // across threads, and `change_log` keeps every operation id for good.
+        // A replay on this binding is still skipped here. Items and turns upsert
+        // by binding, so rows journaled under older ids can't be written twice.
         let (thread_id, operation_id) = match event {
             NormalizedEvent::TurnStarted {
                 epoch,
                 thread_id,
                 turn_id,
                 ..
-            } => (thread_id, format!("codex-{epoch}-turn-{turn_id}-started")),
+            } => (
+                thread_id,
+                format!("codex-{binding_id}-{epoch}-turn-{turn_id}-started"),
+            ),
             NormalizedEvent::TurnCompleted {
                 epoch,
                 thread_id,
                 turn_id,
                 ..
-            } => (thread_id, format!("codex-{epoch}-turn-{turn_id}-completed")),
+            } => (
+                thread_id,
+                format!("codex-{binding_id}-{epoch}-turn-{turn_id}-completed"),
+            ),
             NormalizedEvent::ItemStarted {
                 epoch,
                 thread_id,
                 item_id,
                 ..
-            } => (thread_id, format!("codex-{epoch}-item-{item_id}-started")),
+            } => (
+                thread_id,
+                format!("codex-{binding_id}-{epoch}-item-{item_id}-started"),
+            ),
             NormalizedEvent::ItemCompleted {
                 epoch,
                 thread_id,
                 item_id,
                 ..
-            } => (thread_id, format!("codex-{epoch}-item-{item_id}-completed")),
+            } => (
+                thread_id,
+                format!("codex-{binding_id}-{epoch}-item-{item_id}-completed"),
+            ),
             _ => return Ok(None),
         };
         let timestamp = now();
@@ -233,7 +278,7 @@ impl Store {
                         // give genuinely new rows strictly increasing times
                         // (random ids cannot order items within one batch).
                         let item_timestamp =
-                            prior_item_created_at(&transaction, &binding.session_id, item_id)?
+                            prior_item_created_at(&transaction, &binding, item_id)?
                                 .unwrap_or_else(|| offset_rfc3339(&timestamp, index));
                         upsert_projected_item(
                             &transaction,
@@ -262,7 +307,7 @@ impl Store {
                 item_kind,
                 item,
                 false,
-                &prior_item_created_at(&transaction, &binding.session_id, item_id)?
+                &prior_item_created_at(&transaction, &binding, item_id)?
                     .unwrap_or_else(|| timestamp.clone()),
             )?,
             NormalizedEvent::ItemCompleted {
@@ -279,7 +324,7 @@ impl Store {
                 item_kind,
                 item,
                 true,
-                &prior_item_created_at(&transaction, &binding.session_id, item_id)?
+                &prior_item_created_at(&transaction, &binding, item_id)?
                     .unwrap_or_else(|| timestamp.clone()),
             )?,
             _ => unreachable!("non-projectable events returned above"),
@@ -303,17 +348,18 @@ impl Store {
     }
 }
 
-/// The ordering time an earlier incarnation already assigned to this
-/// provider item, if any. Same-incarnation upserts keep created_at anyway.
+/// The ordering time an earlier incarnation of this thread already assigned to
+/// this provider item, if any. Same-incarnation upserts keep created_at anyway,
+/// and another thread's item with the same id is a different item.
 fn prior_item_created_at(
     connection: &Connection,
-    session_id: &str,
+    binding: &SessionBinding,
     provider_item_id: &str,
 ) -> WorkbenchResult<Option<String>> {
     connection
         .query_row(
-            "SELECT i.created_at FROM transcript_items i JOIN session_bindings b ON b.id = i.binding_id WHERE b.session_id = ?1 AND i.provider_item_id = ?2 ORDER BY b.incarnation DESC LIMIT 1",
-            params![session_id, provider_item_id],
+            "SELECT i.created_at FROM transcript_items i JOIN session_bindings b ON b.id = i.binding_id WHERE b.session_id = ?1 AND b.provider_thread_id = ?2 AND i.provider_item_id = ?3 ORDER BY b.incarnation DESC LIMIT 1",
+            params![binding.session_id, binding.provider_thread_id, provider_item_id],
             |row| row.get(0),
         )
         .optional()

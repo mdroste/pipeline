@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AboutPage from "./AboutPage";
+import { version as appVersion } from "../../package.json";
 import {
   FLAPPY_HIGH_SCORE_KEY,
   persistFlappyHighScore,
@@ -18,8 +19,33 @@ describe("AboutPage", () => {
   beforeEach(() => {
     localStorage.clear();
     getVersion.mockReset();
-    getVersion.mockResolvedValue("0.9.0");
+    getVersion.mockResolvedValue(appVersion);
     openUrl.mockReset();
+  });
+
+  it("shows the current application version", async () => {
+    render(<AboutPage onClose={() => {}} />);
+    expect(
+      await screen.findByText(`Pipeline v${appVersion}`),
+    ).toBeInTheDocument();
+  });
+
+  it("uses the standard page header, with Help as its only title", async () => {
+    const close = vi.fn();
+    const { container } = render(<AboutPage onClose={close} />);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      /^Help$/,
+    );
+    expect(container.querySelector(".ui-page .ui-page-header")).toBeTruthy();
+    expect(container.querySelector(".ui-page-description")).toHaveTextContent(
+      /what each part of the app does/,
+    );
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Set up" }),
+    ).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(close).toHaveBeenCalledOnce();
+    await screen.findByText(`Pipeline v${appVersion}`);
   });
 
   it("opens the game after the full Konami code and requires a pilot choice", async () => {
@@ -70,7 +96,9 @@ describe("AboutPage", () => {
     ).not.toBeInTheDocument();
 
     fireEvent.keyDown(document, { key: "Enter" });
-    const dialog = screen.getByRole("dialog", { name: "Flappy Pipeline" });
+    const dialog = await screen.findByRole("dialog", {
+      name: "Flappy Pipeline",
+    });
     expect(dialog).toHaveAttribute("aria-modal", "true");
     expect(dialog).toHaveTextContent(/Best\s*12/i);
 
@@ -120,39 +148,73 @@ describe("AboutPage", () => {
     expect(readFlappyHighScore()).toBe(7);
   });
 
-  it("explains both orchestration modes, scoped access, and provider data sharing", () => {
+  it("explains the product areas, built-in reviews, and provider data sharing", () => {
     render(<AboutPage onClose={() => undefined} />);
 
     expect(
-      screen.getByText(/doing and reviewing academic research/i),
+      screen.getByText(/Chat with an AI\s+assistant, keep each paper/i),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Chat with the assistant in an unfiled conversation/i),
+      screen.getByText(/A conversation is a chat with the AI assistant/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Automations" }),
     ).toBeInTheDocument();
     expect(screen.getByText("~/.pipeline/workbench/")).toBeInTheDocument();
-    expect(screen.getByText(/prerequisites finish/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/reads only the material its workflow allows/i),
+      screen.getByText(/don't depend on each other run at the same time/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/sends its prompt and the material it can read/i),
     ).toBeInTheDocument();
     expect(screen.getByText(/plan and data-use terms/i)).toBeInTheDocument();
     expect(screen.getByText("Reviews")).toBeInTheDocument();
-    expect(
-      screen.getByText("Automatic Paper Review (Full)"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Automatic Paper Review (Quick)"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Paper Review")).toBeInTheDocument();
+    expect(screen.getByText("Paper Review (Fast)")).toBeInTheDocument();
+    expect(screen.getByText("Slide Review")).toBeInTheDocument();
     expect(screen.getByText("Grant Proposal Review")).toBeInTheDocument();
+    expect(screen.getByText("Declaude")).toBeInTheDocument();
     expect(screen.queryByText("Codebase Review")).not.toBeInTheDocument();
     expect(
       screen.queryByText("Replication Package Audit"),
     ).not.toBeInTheDocument();
-    // Once in setup (highly recommended) and once under PDF & document handling.
+    // Once in setup (highly recommended) and once under How Pipeline reads documents.
     expect(screen.getAllByText("PaddleOCR-VL Full Parser")).toHaveLength(2);
     expect(screen.getByText("Highly recommended")).toBeInTheDocument();
     expect(screen.queryByText("PaddleOCR-VL Fast")).not.toBeInTheDocument();
-    // The app calls saved workflows "workflows" everywhere now.
+    // Researchers see "review design"; workflow and profile are internal names.
+    expect(screen.queryByText(/workflow/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/profile/i)).not.toBeInTheDocument();
+  });
+
+  it("describes each built-in review by what it does", () => {
+    render(<AboutPage onClose={() => undefined} />);
+
+    expect(
+      screen.getByText(/checks them against the paper/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Finds formulaic prose/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/configured review step/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("says conversations use the chosen provider", () => {
+    render(<AboutPage onClose={() => undefined} initialSection="privacy" />);
+
+    expect(
+      screen.getByText(/to the provider you\s+chose/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/managed ChatGPT/i)).not.toBeInTheDocument();
+  });
+
+  it("lists each report tab with a plain description", () => {
+    render(<AboutPage onClose={() => undefined} />);
+
+    expect(screen.getByText("Report details")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Findings you can accept, reject, or annotate/i),
+    ).toBeInTheDocument();
   });
 
   it("keeps reference sections collapsed by default and opens privacy on request", () => {
@@ -179,15 +241,21 @@ describe("AboutPage", () => {
     render(<AboutPage onClose={() => undefined} onNavigate={onNavigate} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Open Settings" }));
-    fireEvent.click(screen.getByRole("button", { name: "Open Designer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Automations" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open Review designer" }),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Open Gallery" }));
-    fireEvent.click(screen.getByRole("button", { name: "Open History" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open Review history" }),
+    );
     fireEvent.click(
       screen.getByRole("button", { name: "Open review collections" }),
     );
 
     expect(onNavigate.mock.calls.map((call) => call[0])).toEqual([
       "settings",
+      "tasks",
       "pipeline",
       "gallery",
       "history",
@@ -198,7 +266,7 @@ describe("AboutPage", () => {
   it("hides navigation links when no navigator is provided", () => {
     render(<AboutPage onClose={() => undefined} />);
     expect(
-      screen.queryByRole("button", { name: "Open Designer" }),
+      screen.queryByRole("button", { name: "Open Review designer" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Open Settings" }),

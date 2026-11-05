@@ -16,6 +16,10 @@ export interface Artifact {
 export interface ObjectChoice {
   reference: OpenResearchObject;
   title: string;
+  /** What to show a researcher: a passage's quote, a series' variable. */
+  label: string;
+  /** The kind of a project record; null for any other object. */
+  recordKind: string | null;
   provenance: string;
 }
 export interface Choices {

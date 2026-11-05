@@ -185,6 +185,50 @@ describe("PipelinePage", () => {
     expect(invoke).toHaveBeenCalledWith("list_profiles");
   });
 
+  it("uses opaque dark surfaces and a header per section in the navigator", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeConfig());
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findByRole("combobox", { name: "Active review" });
+
+    for (const [label, surface] of [
+      ["Review setup", "dark:bg-gray-800"],
+      ["Parallel", "dark:bg-blue-950"],
+      ["Sequential", "dark:bg-orange-950"],
+    ]) {
+      const header = screen.getByText(label).parentElement!;
+      expect(header).toHaveClass("sticky", surface);
+      expect(header.nextElementSibling).not.toBeNull();
+      // The section's own wrapper is what releases the header.
+      expect(header.parentElement?.children[0]).toBe(header);
+    }
+    const headers = ["Review setup", "Parallel", "Sequential"].map(
+      (label) => screen.getByText(label).parentElement!.parentElement,
+    );
+    expect(new Set(headers).size).toBe(3);
+
+    const reset = screen.getByRole("button", { name: "Reset" });
+    expect(reset).toHaveClass("dark:hover:bg-gray-800");
+    await user.click(screen.getByRole("button", { name: /^Export/ }));
+    const popover = screen.getByRole("button", {
+      name: "Export selected step",
+    }).parentElement;
+    expect(popover).toHaveClass("dark:bg-gray-900");
+  });
+
+  it("uses the app's word for a review in designer dialogs", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeConfig());
+    render(<PipelinePage onClose={() => {}} />);
+    await user.click(await screen.findByRole("button", { name: "New review" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("New review name");
+    expect(screen.getByRole("dialog")).not.toHaveTextContent(/profile/i);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    expect(screen.getByRole("dialog")).toHaveTextContent("Rename review");
+    expect(screen.getByRole("dialog")).not.toHaveTextContent(/profile/i);
+  });
+
   it("opens the workflow gallery from the former URL-import position", async () => {
     const user = userEvent.setup();
     const onOpenGallery = vi.fn();
@@ -203,7 +247,7 @@ describe("PipelinePage", () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
-    await screen.findByRole("combobox", { name: "Active workflow profile" });
+    await screen.findByRole("combobox", { name: "Active review" });
 
     dialogMocks.open.mockRejectedValueOnce(new Error("picker unavailable"));
     await user.click(screen.getByRole("button", { name: "Import" }));
@@ -224,7 +268,7 @@ describe("PipelinePage", () => {
       return Promise.reject(new Error(`unexpected command: ${cmd}`));
     });
     await user.click(screen.getByRole("button", { name: /^Export/ }));
-    await user.click(screen.getByRole("button", { name: /Export profile/ }));
+    await user.click(screen.getByRole("button", { name: /Export review/ }));
     await waitFor(() => {
       expect(notify).toHaveBeenCalledWith(
         "Export failed: save picker unavailable",
@@ -254,7 +298,7 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
 
     const selector = await screen.findByRole("combobox", {
-      name: "Active workflow profile",
+      name: "Active review",
     });
     await user.selectOptions(selector, "quick");
 
@@ -314,8 +358,8 @@ describe("PipelinePage", () => {
     });
     const remaining: ProfileSummary[] = [
       {
-        id: "auto-review",
-        name: "Automatic Paper Review (Full)",
+        id: "auto-paper-review",
+        name: "Paper Review",
         step_count: 5,
         builtin: true,
       },
@@ -341,13 +385,13 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
 
     const selector = await screen.findByRole("combobox", {
-      name: "Active workflow profile",
+      name: "Active review",
     });
     expect(selector).toHaveValue("custom");
     await user.click(screen.getByRole("button", { name: "Delete" }));
 
     expect(selector).toBeDisabled();
-    expect(screen.getByRole("button", { name: "New profile" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New review" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Duplicate" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Rename" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Reset" })).toBeDisabled();
@@ -358,11 +402,11 @@ describe("PipelinePage", () => {
     await act(async () => finishDelete());
     await waitFor(() => {
       expect(selector).toBeEnabled();
-      expect(selector).toHaveValue("auto-review");
+      expect(selector).toHaveValue("auto-paper-review");
     });
     expect(invoke).toHaveBeenCalledWith("delete_profile", { id: "custom" });
     expect(invoke).toHaveBeenCalledWith("switch_profile", {
-      id: "auto-review",
+      id: "auto-paper-review",
     });
   });
 
@@ -428,7 +472,7 @@ describe("PipelinePage", () => {
 
     await user.click(screen.getByRole("button", { name: "+ Add step" }));
     expect(
-      screen.getByRole("dialog", { name: "Add workflow step" }),
+      screen.getByRole("dialog", { name: "Add review step" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Create step" })).toBeDisabled();
     await user.type(
@@ -450,7 +494,7 @@ describe("PipelinePage", () => {
       "Identification audit",
     );
     expect(screen.getByTestId("step-summary")).toHaveTextContent(
-      "Runs after its selected dependencies using the profile’s default provider",
+      "Runs after its selected dependencies using the review’s default provider",
     );
     expect(screen.getByTestId("step-summary")).toHaveTextContent(
       "Produces structured issues JSON",
@@ -556,7 +600,9 @@ describe("PipelinePage", () => {
     await user.click(
       screen.getByRole("button", { name: "Economics — Macroeconomics" }),
     );
-    expect(screen.getByText(/adds an editable snapshot/i)).toBeVisible();
+    expect(
+      screen.getByText(/Add a copy you can edit for this review design/i),
+    ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Copy step" }));
 
     const prompt = await screen.findByRole("textbox", {
@@ -665,7 +711,7 @@ describe("PipelinePage", () => {
     });
   });
 
-  it("preserves step-output access when a step changes phase", async () => {
+  it("removes step-output access when a step becomes parallel", async () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
     render(<PipelinePage onClose={() => {}} />);
@@ -676,6 +722,9 @@ describe("PipelinePage", () => {
       screen.getAllByRole("button", { name: "Consolidate Issues" })[0],
     );
     await user.click(screen.getByRole("tab", { name: "When it runs" }));
+    // Validation rejects parallel steps that read other steps' output, so the
+    // switch asks first and then gives the step the primary input instead.
+    confirmDialog.mockResolvedValueOnce(true);
     await user.click(
       screen.getByRole("button", { name: "Independently (parallel)" }),
     );
@@ -691,7 +740,12 @@ describe("PipelinePage", () => {
       expect(consolidate).toMatchObject({
         phase: "parallel",
         context: {
-          include: [{ kind: "step", step: "technical", parts: ["report"] }],
+          include: [
+            {
+              kind: "primary",
+              parts: ["text", "structure", "visuals", "source"],
+            },
+          ],
         },
       });
     });
@@ -736,7 +790,7 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Technical");
 
     expect(
-      screen.getByRole("combobox", { name: "Active workflow profile" }),
+      screen.getByRole("combobox", { name: "Active review" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Move Technical up" }),
@@ -764,7 +818,7 @@ describe("PipelinePage", () => {
       screen.getByRole("button", { name: "Input & extraction" }),
     );
     expect(
-      screen.getByRole("combobox", { name: "Workflow input mode" }),
+      screen.getByRole("combobox", { name: "Review input mode" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("combobox", { name: "PDF extraction method" }),
@@ -810,7 +864,7 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
-    await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
+    await user.click(screen.getByRole("button", { name: "Review settings" }));
     await user.click(screen.getByRole("button", { name: "Reset to generic" }));
     await user.click(
       screen.getByRole("switch", { name: "Reuse shared input context" }),
@@ -847,7 +901,7 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
-    await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
+    await user.click(screen.getByRole("button", { name: "Review settings" }));
     await user.click(screen.getByRole("button", { name: "Reset to generic" }));
     await waitFor(() => {
       expect(notify).toHaveBeenCalledWith(
@@ -926,26 +980,26 @@ describe("PipelinePage", () => {
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("shows shared context reuse as the Automatic Paper Review default", async () => {
+  it("shows shared context reuse as the Paper Review default", async () => {
     const user = userEvent.setup();
     mockLoad(
       {
         ...makeConfig(),
         context_cache: { enabled: true },
       },
-      { get_active_profile: "auto-review" },
+      { get_active_profile: "auto-paper-review" },
     );
     render(<PipelinePage onClose={() => {}} />);
     await screen.findAllByText("Technical");
 
-    await user.click(screen.getByRole("button", { name: "Pipeline Settings" }));
+    await user.click(screen.getByRole("button", { name: "Review settings" }));
     const toggle = screen.getByRole("switch", {
       name: "Reuse shared input context",
     });
     expect(toggle).toHaveAttribute("aria-checked", "true");
-    expect(screen.getByText("Automatic review default")).toBeInTheDocument();
+    expect(screen.getByText("Built-in default")).toBeInTheDocument();
     expect(
-      screen.getByText(/Automatic Paper Review enables this by default/),
+      screen.getByText(/Paper Review and Slide Review enable this by default/),
     ).toBeInTheDocument();
     await user.click(toggle);
     expect(toggle).toHaveAttribute("aria-checked", "false");
@@ -973,7 +1027,7 @@ describe("PipelinePage", () => {
     expect(orientation).not.toHaveTextContent("Required");
     await user.click(orientation);
 
-    expect(screen.getByText("Runs before every workflow")).toBeInTheDocument();
+    expect(screen.getByText("Runs before every review")).toBeInTheDocument();
     expect(
       screen.queryByRole("switch", { name: "Build orientation map" }),
     ).not.toBeInTheDocument();
@@ -989,18 +1043,18 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Technical");
 
     // No selection: the right pane shows the overview, never an instruction.
-    expect(screen.getByText("Workflow overview")).toBeInTheDocument();
+    expect(screen.getByText("Review overview")).toBeInTheDocument();
     expect(screen.queryByText("Select a step to edit")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Extract" })).toBeInTheDocument();
 
     // Selecting a stage from the overview opens its editor in place.
     await user.click(screen.getAllByText("Technical")[0]);
     expect(await screen.findByLabelText("Step label")).toHaveValue("Technical");
-    expect(screen.queryByText("Workflow overview")).not.toBeInTheDocument();
+    expect(screen.queryByText("Review overview")).not.toBeInTheDocument();
 
     // The navigator's own Overview tab still works.
     await user.click(screen.getByRole("tab", { name: "Overview" }));
-    expect(screen.getByText("Workflow overview")).toBeInTheDocument();
+    expect(screen.getByText("Review overview")).toBeInTheDocument();
   });
 
   it("keeps effective artifact schemas visible in a dedicated low-clutter view", async () => {
@@ -1129,7 +1183,156 @@ describe("PipelinePage", () => {
       screen.queryByRole("textbox", { name: "Output JSON schema" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/Output contracts live in the Schemas tab/),
+      screen.getByText(/Define result formats in the Schemas tab/),
     ).toBeInTheDocument();
+  });
+
+  it("shows and saves the undone schema after Undo in the schema editor", async () => {
+    const user = userEvent.setup();
+    const config = makeConfig();
+    config.steps[0].output_schema = {
+      type: "object",
+      required: ["result"],
+      properties: { result: { type: "string" } },
+    };
+    mockLoad(config);
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+    await useAdvancedEditor(user);
+    await user.click(screen.getByRole("tab", { name: "Schemas" }));
+    await user.click(
+      screen.getByRole("button", { name: "Technical output schema" }),
+    );
+    const editor = screen.getByRole("textbox", {
+      name: "Output JSON schema for Technical",
+    }) as HTMLTextAreaElement;
+    fireEvent.change(editor, {
+      target: {
+        value:
+          '{"type":"object","required":["score"],"properties":{"score":{"type":"number"}}}',
+      },
+    });
+    expect(editor.value).toContain('"score"');
+
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    expect(editor.value).toContain('"result"');
+    expect(editor.value).not.toContain('"score"');
+
+    await user.click(screen.getByRole("button", { name: "Redo" }));
+    expect(editor.value).toContain('"score"');
+    await user.click(screen.getByRole("button", { name: "Undo" }));
+    // Undo leaves nothing to save; make an unrelated edit to enable Save.
+    await user.click(screen.getByRole("tab", { name: "Steps" }));
+    await user.type(screen.getByLabelText("Step label"), " proofs");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      const saveCall = invoke.mock.calls.find(
+        (call) => call[0] === "save_pipeline_config",
+      );
+      expect(saveCall?.[1].config.steps[0].output_schema).toEqual({
+        type: "object",
+        required: ["result"],
+        properties: { result: { type: "string" } },
+      });
+    });
+  });
+
+  it("keeps the last valid schema structure while the draft is invalid", async () => {
+    const user = userEvent.setup();
+    const config = makeConfig();
+    config.steps[0].output_schema = {
+      type: "object",
+      required: ["result"],
+      properties: { result: { type: "string" } },
+    };
+    mockLoad(config);
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+    await useAdvancedEditor(user);
+    await user.click(screen.getByRole("tab", { name: "Schemas" }));
+    await user.click(
+      screen.getByRole("button", { name: "Technical output schema" }),
+    );
+    expect(screen.getByLabelText("Schema structure")).toHaveTextContent(
+      "result",
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Output JSON schema for Technical" }),
+      { target: { value: '{"type":"object","properties":{"result":' } },
+    );
+    expect(screen.getByLabelText("Schema structure")).toHaveTextContent(
+      "result",
+    );
+    expect(
+      screen.getByText("Showing the last valid version"),
+    ).toBeInTheDocument();
+  });
+
+  it("saves a comma-separated list that is still being typed on Cmd+S", async () => {
+    const user = userEvent.setup();
+    const config = makeConfig();
+    config.variables = [
+      { key: "tone", label: "Tone", kind: "choice", default: "" },
+    ];
+    mockLoad(config);
+    render(<PipelinePage onClose={() => {}} />);
+    await screen.findAllByText("Technical");
+    await user.click(screen.getByRole("button", { name: "Review settings" }));
+    const choices = screen.getByRole("textbox", {
+      name: "Variable Tone choices",
+    });
+    await user.type(choices, "Minor revision, Major revision");
+    await user.keyboard("{Meta>}s{/Meta}");
+
+    await waitFor(() => {
+      const saveCall = invoke.mock.calls.find(
+        (call) => call[0] === "save_pipeline_config",
+      );
+      expect(saveCall?.[1].config.variables).toEqual([
+        expect.objectContaining({
+          key: "tone",
+          choices: ["Minor revision", "Major revision"],
+        }),
+      ]);
+    });
+    expect(choices).toHaveFocus();
+  });
+
+  it("leaves Cmd+Z to text fields and open dialogs", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeConfig());
+    render(<PipelinePage onClose={() => {}} />);
+    await user.click((await screen.findAllByText("Technical"))[0]);
+    const label = await screen.findByLabelText("Step label");
+    await user.type(label, "!");
+    expect(label).toHaveValue("Technical!");
+
+    // Inside a text field the browser's own undo runs instead.
+    fireEvent.keyDown(label, { key: "z", metaKey: true });
+    expect(label).toHaveValue("Technical!");
+
+    // A dialog over the editor keeps the workflow unchanged.
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.keyDown(dialog, { key: "z", metaKey: true });
+    fireEvent.keyDown(dialog, { key: "s", metaKey: true });
+    expect(label).toHaveValue("Technical!");
+    expect(
+      invoke.mock.calls.some((call) => call[0] === "save_pipeline_config"),
+    ).toBe(false);
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+
+    // Outside fields and dialogs the shortcut undoes the workflow edit.
+    fireEvent.keyDown(document.body, { key: "z", metaKey: true });
+    expect(label).toHaveValue("Technical");
+    fireEvent.keyDown(document.body, {
+      key: "z",
+      metaKey: true,
+      shiftKey: true,
+    });
+    expect(label).toHaveValue("Technical!");
   });
 });

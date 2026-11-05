@@ -1,9 +1,79 @@
 use crate::document_bundle::DocumentBundle;
 use crate::models::{ExtractionResult, ReportQuality, RunProducts, StepFailure, StepOutput};
+use crate::pipeline::extract::is_informational_extraction_note;
 use crate::pipeline::orient::OrientationSample;
 use crate::pipeline_config::PipelineConfig;
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeSet;
+
+/// The researcher-facing name of a stored run status. `degraded` stays the
+/// stored value, but it also covers a single misquotation or a retry that
+/// succeeded, so only a problem with the reading of the document is announced
+/// as a limitation. reportStatusDisplay in reportPresentation.ts must agree.
+pub fn status_label(quality: &ReportQuality, status: &str) -> String {
+    match status {
+        "done" => "Completed".to_string(),
+        "degraded" if coverage_limited(quality) => "Completed with limitations".to_string(),
+        "degraded" => "Completed".to_string(),
+        other => crate::output::capitalize(other),
+    }
+}
+
+/// What a reader should check in a report with a `degraded` status, if anything.
+pub fn status_notes(quality: &ReportQuality, status: &str) -> Vec<String> {
+    if status != "degraded" {
+        return Vec::new();
+    }
+    let mut notes = Vec::new();
+    if reading_limited(quality) {
+        notes.push("Part of the document may be incomplete.".to_string());
+    }
+    if !quality.coverage_notes.is_empty() {
+        notes.push("Some files or items were not read.".to_string());
+    }
+    let quotes = quality.partially_verified_evidence + quality.unverified_evidence;
+    if quotes > 0 {
+        notes.push(if quotes == 1 {
+            "1 quote needs checking.".to_string()
+        } else {
+            format!("{quotes} quotes need checking.")
+        });
+    }
+    if quality.manual_review_items > 0 {
+        notes.push(if quality.manual_review_items == 1 {
+            "1 comment needs manual review.".to_string()
+        } else {
+            format!(
+                "{} comments need manual review.",
+                quality.manual_review_items
+            )
+        });
+    }
+    notes
+}
+
+/// Whether automations may rely on this review. A misquotation is flagged on its
+/// own comment and a retry that succeeded changes nothing, so neither sends an
+/// automation back for another paid pass. A reading problem, or a comment left
+/// for a person, still does.
+pub fn review_is_complete(quality: &ReportQuality) -> bool {
+    match quality.status.as_str() {
+        "done" => true,
+        "degraded" => !coverage_limited(quality) && quality.manual_review_items == 0,
+        _ => false,
+    }
+}
+
+fn reading_limited(quality: &ReportQuality) -> bool {
+    quality
+        .extraction_notes
+        .iter()
+        .any(|note| !is_informational_extraction_note(note))
+}
+
+fn coverage_limited(quality: &ReportQuality) -> bool {
+    reading_limited(quality) || !quality.coverage_notes.is_empty()
+}
 
 /// Build the provider-independent report quality ledger from durable inputs.
 pub fn build_report_quality(
@@ -73,6 +143,7 @@ pub fn build_report_quality(
     let mut verified_evidence = 0u32;
     let mut partially_verified_evidence = 0u32;
     let mut unverified_evidence = 0u32;
+    let mut not_checkable_evidence = 0u32;
     if let Some(findings) = products.findings.as_ref() {
         for evidence in findings
             .findings
@@ -85,6 +156,9 @@ pub fn build_report_quality(
                 }
                 "partially_verified" | "partial" => {
                     partially_verified_evidence = partially_verified_evidence.saturating_add(1)
+                }
+                "not_checkable" => {
+                    not_checkable_evidence = not_checkable_evidence.saturating_add(1)
                 }
                 _ => unverified_evidence = unverified_evidence.saturating_add(1),
             }
@@ -103,8 +177,10 @@ pub fn build_report_quality(
 
     let mut extraction_notes = extraction.quality_notes.clone();
     if let Some(bundle) = bundle {
+        // Extraction-scoped bundle notes restate `extraction.quality_notes`;
+        // leaving them unprefixed lets the dedup below remove the copies.
         extraction_notes.extend(bundle.quality.iter().map(|note| {
-            if note.scope.trim().is_empty() {
+            if note.scope.trim().is_empty() || note.scope == "extraction" {
                 note.message.clone()
             } else {
                 format!("{}: {}", note.scope, note.message)
@@ -114,6 +190,11 @@ pub fn build_report_quality(
     extraction_notes.sort();
     extraction_notes.dedup();
 
+    let coverage_notes = unique_sorted(
+        outputs
+            .iter()
+            .filter_map(|output| output.coverage_note.clone()),
+    );
     let mut limitations = Vec::new();
     if orientation_sample.omitted_bytes > 0 {
         limitations.push(format!(
@@ -126,6 +207,7 @@ pub fn build_report_quality(
     for note in &extraction_notes {
         limitations.push(format!("Extraction: {note}"));
     }
+    limitations.extend(coverage_notes.iter().cloned());
     if !failed_steps.is_empty() {
         limitations.push(format!(
             "Failed or dependency-blocked steps: {}.",
@@ -148,6 +230,11 @@ pub fn build_report_quality(
             "Evidence requiring caution: {partially_verified_evidence} partially verified and {unverified_evidence} unverified item(s)."
         ));
     }
+    if not_checkable_evidence > 0 {
+        limitations.push(format!(
+            "{not_checkable_evidence} evidence item(s) could not be checked automatically."
+        ));
+    }
     if manual_review_items > 0 {
         limitations.push(format!(
             "{manual_review_items} finding(s) were deferred for manual review or lacked verifiable evidence."
@@ -155,7 +242,10 @@ pub fn build_report_quality(
     }
 
     let status = if failures.is_empty() {
-        if extraction_notes.is_empty()
+        if extraction_notes
+            .iter()
+            .all(|note| is_informational_extraction_note(note))
+            && coverage_notes.is_empty()
             && schema_retry_events == 0
             && partially_verified_evidence == 0
             && unverified_evidence == 0
@@ -190,6 +280,7 @@ pub fn build_report_quality(
         recovered_blocks: bundle.map_or(0, |value| value.nodes.len() as u32),
         recovered_assets: bundle.map_or(0, |value| value.assets.len() as u32),
         extraction_notes,
+        coverage_notes,
         completed_steps,
         failed_steps,
         skipped_steps,
@@ -200,6 +291,7 @@ pub fn build_report_quality(
         verified_evidence,
         partially_verified_evidence,
         unverified_evidence,
+        not_checkable_evidence,
         manual_review_items,
         limitations,
         reproducibility_hash,
@@ -267,6 +359,105 @@ mod tests {
     }
 
     #[test]
+    fn not_checkable_evidence_is_reported_without_degrading_the_run() {
+        let extraction = ExtractionResult {
+            text: "input".into(),
+            method: "test".into(),
+            source_path: "input.md".into(),
+            paper_hash: "abc".into(),
+            quality_notes: Vec::new(),
+        };
+        let sample = crate::pipeline::orient::orientation_sample(&extraction.text);
+        let products = |statuses: &[&str]| RunProducts {
+            schema_version: 2,
+            primary_step_id: "review".into(),
+            findings: Some(crate::models::FindingSet {
+                findings: vec![crate::models::Finding {
+                    evidence: statuses
+                        .iter()
+                        .map(|status| crate::models::FindingEvidence {
+                            verification_status: (*status).into(),
+                            ..Default::default()
+                        })
+                        .collect(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            validation_dispositions: Vec::new(),
+            named: Vec::new(),
+        };
+        let config = crate::pipeline_config::workflow_template().unwrap().config;
+        let quality = |statuses: &[&str]| {
+            build_report_quality(
+                &extraction,
+                None,
+                &sample,
+                &config,
+                &[],
+                &[],
+                &products(statuses),
+            )
+        };
+
+        let checked = quality(&["verified", "not_checkable", "not_checkable"]);
+        assert_eq!(checked.status, "done");
+        assert_eq!(checked.not_checkable_evidence, 2);
+        assert_eq!(checked.unverified_evidence, 0);
+        assert!(checked
+            .limitations
+            .contains(&"2 evidence item(s) could not be checked automatically.".to_string()));
+
+        // A missing quote and a wrong page are still real evidence problems.
+        for status in ["not_found", "partially_verified"] {
+            assert_eq!(quality(&["not_checkable", status]).status, "degraded");
+        }
+    }
+
+    #[test]
+    fn extraction_notes_mirrored_by_the_bundle_are_reported_once() {
+        let note = "Page 45: recovered incomplete layout recognition.";
+        let extraction = ExtractionResult {
+            text: "input".into(),
+            method: "test".into(),
+            source_path: "input.md".into(),
+            paper_hash: "abc".into(),
+            quality_notes: vec![note.into()],
+        };
+        let run = tempfile::tempdir().unwrap();
+        let bundle = crate::document_bundle::build(&extraction, run.path())
+            .unwrap()
+            .bundle;
+        let sample = crate::pipeline::orient::orientation_sample(&extraction.text);
+        let products = RunProducts {
+            schema_version: 2,
+            primary_step_id: "review".into(),
+            findings: None,
+            validation_dispositions: Vec::new(),
+            named: Vec::new(),
+        };
+        let config = crate::pipeline_config::workflow_template().unwrap().config;
+        let quality = build_report_quality(
+            &extraction,
+            Some(&bundle),
+            &sample,
+            &config,
+            &[],
+            &[],
+            &products,
+        );
+        assert_eq!(quality.extraction_notes, vec![note.to_string()]);
+        assert_eq!(
+            quality
+                .limitations
+                .iter()
+                .filter(|limitation| limitation.contains(note))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn multi_call_steps_count_retries_per_call_not_per_step() {
         let extraction = ExtractionResult {
             text: "input".into(),
@@ -323,5 +514,127 @@ mod tests {
             &products,
         );
         assert_eq!(quality.schema_retry_events, 1);
+    }
+
+    #[test]
+    fn withheld_image_text_is_listed_without_degrading_the_run() {
+        let note = "Image text withheld as unverified: 2 image region(s) on page(s) 74 returned the kind of data the recognizer makes up for plots.";
+        let quality = |notes: &[&str]| {
+            let extraction = ExtractionResult {
+                text: "input".into(),
+                method: "test".into(),
+                source_path: "input.md".into(),
+                paper_hash: "abc".into(),
+                quality_notes: notes.iter().map(|note| (*note).to_string()).collect(),
+            };
+            let sample = crate::pipeline::orient::orientation_sample(&extraction.text);
+            let products = RunProducts {
+                schema_version: 2,
+                primary_step_id: "review".into(),
+                findings: None,
+                validation_dispositions: Vec::new(),
+                named: Vec::new(),
+            };
+            let config = crate::pipeline_config::workflow_template().unwrap().config;
+            build_report_quality(&extraction, None, &sample, &config, &[], &[], &products)
+        };
+
+        let withheld = quality(&[note]);
+        assert_eq!(withheld.status, "done");
+        assert_eq!(withheld.extraction_notes, vec![note.to_string()]);
+        assert!(withheld
+            .limitations
+            .contains(&format!("Extraction: {note}")));
+
+        // Any other extraction note still marks the run.
+        let recovered = "Page 45: recovered incomplete layout recognition.";
+        assert_eq!(quality(&[note, recovered]).status, "degraded");
+    }
+
+    #[test]
+    fn automations_rely_on_a_review_despite_a_misquotation_or_a_retry() {
+        let degraded = |overrides: ReportQuality| ReportQuality {
+            status: "degraded".into(),
+            ..overrides
+        };
+
+        assert!(review_is_complete(&ReportQuality {
+            status: "done".into(),
+            ..Default::default()
+        }));
+        assert!(review_is_complete(&degraded(ReportQuality {
+            partially_verified_evidence: 1,
+            unverified_evidence: 2,
+            schema_retry_events: 1,
+            extraction_notes: vec!["Image text withheld as unverified: 1 region.".into()],
+            ..Default::default()
+        })));
+
+        assert!(!review_is_complete(&degraded(ReportQuality {
+            extraction_notes: vec!["Page 45: recovered incomplete layout.".into()],
+            ..Default::default()
+        })));
+        assert!(!review_is_complete(&degraded(ReportQuality {
+            manual_review_items: 1,
+            ..Default::default()
+        })));
+        for status in ["partial", "failed", "cancelled", ""] {
+            assert!(!review_is_complete(&ReportQuality {
+                status: status.into(),
+                ..Default::default()
+            }));
+        }
+    }
+
+    #[test]
+    fn status_wording_separates_reading_problems_from_single_comments() {
+        let quality = |notes: &[&str], partial, unverified, manual| ReportQuality {
+            extraction_notes: notes.iter().map(|note| note.to_string()).collect(),
+            partially_verified_evidence: partial,
+            unverified_evidence: unverified,
+            manual_review_items: manual,
+            ..Default::default()
+        };
+
+        let misquote = quality(&[], 1, 1, 0);
+        assert_eq!(status_label(&misquote, "degraded"), "Completed");
+        assert_eq!(
+            status_notes(&misquote, "degraded"),
+            ["2 quotes need checking."]
+        );
+
+        // A retry that succeeded leaves nothing for the reader to check.
+        let retried = quality(&[], 0, 0, 0);
+        assert_eq!(status_label(&retried, "degraded"), "Completed");
+        assert!(status_notes(&retried, "degraded").is_empty());
+
+        let withheld = quality(
+            &["Image text withheld as unverified: 1 image region(s)."],
+            0,
+            1,
+            1,
+        );
+        assert_eq!(status_label(&withheld, "degraded"), "Completed");
+        assert_eq!(
+            status_notes(&withheld, "degraded"),
+            ["1 quote needs checking.", "1 comment needs manual review."]
+        );
+
+        let unreadable = quality(&["Page 45: recovered incomplete layout."], 0, 1, 0);
+        assert_eq!(
+            status_label(&unreadable, "degraded"),
+            "Completed with limitations"
+        );
+        assert_eq!(
+            status_notes(&unreadable, "degraded"),
+            [
+                "Part of the document may be incomplete.",
+                "1 quote needs checking."
+            ]
+        );
+
+        assert_eq!(status_label(&retried, "done"), "Completed");
+        assert_eq!(status_label(&retried, "partial"), "Partial");
+        assert!(status_notes(&unreadable, "partial").is_empty());
     }
 }

@@ -148,6 +148,11 @@ pub fn parse_bibtex(text: &str) -> WorkbenchResult<Vec<BibEntry>> {
             let name = name.trim().to_ascii_lowercase();
             bounded(&name, 100)?;
             let value = value.trim();
+            if value == "\"" {
+                return Err(WorkbenchError::invalid(format!(
+                    "BibTeX field {name} in {key} has an unclosed quote"
+                )));
+            }
             let value = if value.starts_with('{') && value.ends_with('}')
                 || value.starts_with('"') && value.ends_with('"')
             {
@@ -182,11 +187,10 @@ pub fn parse_bibtex(text: &str) -> WorkbenchResult<Vec<BibEntry>> {
 }
 pub fn preview_bibliography(store: &Store, ws: &str, revision: &str) -> WorkbenchResult<Value> {
     let entries = parse_bibtex(&exact_text(store, ws, revision)?)?;
-    let existing = records(store, ws, "bibliography")?;
-    let duplicates = entries
+    let keys = entries.iter().map(|e| e.key.as_str()).collect::<Vec<_>>();
+    let duplicates = records_with_values(store, ws, "bibliography", "$.entry.key", &keys)?
         .iter()
-        .filter(|e| existing.iter().any(|r| r.body["entry"]["key"] == e.key))
-        .map(|e| e.key.clone())
+        .filter_map(|r| r.body["entry"]["key"].as_str().map(str::to_string))
         .collect::<BTreeSet<_>>();
     Ok(
         json!({"revisionId":revision,"entries":entries,"existingKeys":duplicates,"limitations":"Original directives, unknown fields and macro expressions are retained in the immutable bibliography. Macro expansion is not performed."}),
@@ -211,29 +215,46 @@ pub(super) fn import_bibliography(
             result.push(old);
             continue;
         }
+        let imported = result.len();
+        let attributed = |mut error: WorkbenchError| {
+            error.message = format!(
+                "Citation {}: {}.{}",
+                entry.key,
+                error.message.trim_end_matches('.'),
+                if imported > 0 {
+                    " The entries before it were imported, and importing again keeps them."
+                } else {
+                    ""
+                }
+            );
+            error
+        };
+        // BibTeX leaves `url = {}` in place of a value that was never filled in.
+        let field = |name: &str| {
+            entry
+                .fields
+                .get(name)
+                .filter(|value| !value.trim().is_empty())
+                .cloned()
+        };
         let source = research::import_source(
             store,
             research::ImportSourceRequest {
                 workspace_id: ws.into(),
-                title: entry
-                    .fields
-                    .get("title")
-                    .cloned()
-                    .unwrap_or_else(|| entry.key.clone()),
+                title: field("title").unwrap_or_else(|| entry.key.clone()),
                 citation_key: Some(entry.key.clone()),
-                identifiers: entry
-                    .fields
-                    .get("doi")
+                identifiers: field("doi")
                     .map(|doi| json!({"doi":doi,"bibtexEntryHash":entry.id}))
                     .unwrap_or_else(|| json!({"bibtexEntryHash":entry.id})),
-                version_label: entry.fields.get("year").cloned(),
+                version_label: field("year"),
                 path: None,
-                locator: entry.fields.get("url").cloned(),
+                locator: field("url"),
                 access_state: "metadata".into(),
                 acquired_via: "local_bibtex".into(),
                 operation_id: id("bib_source")?,
             },
-        )?;
+        )
+        .map_err(attributed)?;
         result.push(put(store,ws,&object_id,"bibliography",0,&json!({"origin":"bibtex","revisionId":revision,"entry":entry,"source":source.source,"duplicateCandidates":source.duplicate_candidates,"projectNotesStoredSeparately":true}))?);
     }
     Ok(json!(result))
@@ -322,22 +343,43 @@ pub(super) fn save_literature(
         &json!({"note":n,"source":source,"checklist":{"identity":if n.identity_checked{"researcher_checked"}else{"unknown"},"access":source.as_ref().map(|s|s["access"].clone()).unwrap_or(json!("unavailable")),"passageRelevance":n.support,"assessmentMethod":n.method,"freshness":"exact retained version; later versions require a new assessment"}}),
     )
 }
+const MAX_CITATION_COMMANDS: usize = 2000;
 pub fn citation_navigation(store: &Store, ws: &str, revision: &str) -> WorkbenchResult<Value> {
     let text = exact_text(store, ws, revision)?;
-    let re = regex::Regex::new(r"\\(?:[A-Za-z]*cite[A-Za-z]*)(?:\[[^\]]*\])*\{([^}]+)\}")
+    // Any case and an optional star: \\citep*, \\Citet, \\autocite.
+    let re = regex::Regex::new(r"(?i)\\(?:[a-z]*cite[a-z]*)\*?(?:\[[^\]]*\])*\{([^}]+)\}")
         .expect("citation regex");
-    let bib = records(store, ws, "bibliography")?;
-    let notes = records(store, ws, "literature")?;
+    let captures = re
+        .captures_iter(&text)
+        .take(MAX_CITATION_COMMANDS + 1)
+        .collect::<Vec<_>>();
+    let capped = captures.len() > MAX_CITATION_COMMANDS;
+    let captures = &captures[..captures.len().min(MAX_CITATION_COMMANDS)];
+    let keys = captures
+        .iter()
+        .flat_map(|capture| capture.get(1).expect("citation keys").as_str().split(','))
+        .map(str::trim)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let bib = records_with_values(store, ws, "bibliography", "$.entry.key", &keys)?;
+    let notes = records_with_values(store, ws, "literature", "$.note.citationKey", &keys)?;
     let mut citations = Vec::new();
-    for capture in re.captures_iter(&text).take(2000) {
+    for capture in captures {
         let whole = capture.get(0).expect("whole citation");
         for key in capture[1].split(',').map(str::trim) {
             citations.push(json!({"key":key,"start":whole.start(),"end":whole.end(),"sources":bib.iter().filter(|b|b.body["entry"]["key"]==key).collect::<Vec<_>>(),"notes":notes.iter().filter(|n|n.body["note"]["citationKey"]==key).collect::<Vec<_>>()}));
         }
     }
-    Ok(
-        json!({"revisionId":revision,"citations":citations,"coverage":"Literal TeX citation commands; macros or generated citation keys may require manual lookup"}),
-    )
+    let mut coverage =
+        "Finds citation commands written out in the TeX source. Citations made through your own macros or generated keys need looking up by hand."
+            .to_string();
+    if capped {
+        coverage.push_str(&format!(
+            " Only the first {MAX_CITATION_COMMANDS} commands are listed."
+        ));
+    }
+    Ok(json!({"revisionId":revision,"citations":citations,"coverage":coverage}))
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -472,7 +514,11 @@ pub fn import_zotero(
             store,
             research::ImportSourceRequest {
                 workspace_id: ws.into(),
-                title: item["data"]["title"].as_str().unwrap_or(key).into(),
+                title: item["data"]["title"]
+                    .as_str()
+                    .filter(|title| !title.trim().is_empty())
+                    .unwrap_or(key)
+                    .into(),
                 citation_key: None,
                 identifiers: json!({"zoteroKey":key,"zoteroVersion":version,"serverId":preview.server_id,"library":item["library"],"doi":item["data"]["DOI"]}),
                 version_label: Some(format!("Zotero item version {version}")),
@@ -486,4 +532,22 @@ pub fn import_zotero(
         result.push(put(store,ws,&object_id,"bibliography",0,&json!({"origin":"zotero_local_preview","item":item,"serverId":preview.server_id,"collection":preview.collection,"source":source.source,"access":"metadata","attachmentAcquisition":"not_requested"}))?);
     }
     Ok(json!(result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_lone_quote_as_a_field_value_is_refused_by_name() {
+        let error = parse_bibtex("@article{k, \"=\"}").unwrap_err();
+        assert!(
+            error.message.contains("unclosed quote"),
+            "{}",
+            error.message
+        );
+        assert!(error.message.contains('k'), "{}", error.message);
+        let entries = parse_bibtex("@article{k, title=\"\"}").unwrap();
+        assert_eq!(entries[0].fields["title"], "");
+    }
 }

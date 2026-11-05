@@ -1,17 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { workflowSchemaClient } from "../../lib/workflowSchemaClient";
+import type { ProviderSchemaPreview } from "../../lib/workflowSchemaClient";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AutoReviewCatalog, StepConfig } from "../../lib/types";
 import { AUTO_REVIEW_CONTRACT } from "../../lib/autoReview";
 import { ISSUES_SCHEMA } from "./stepTemplates";
 import { exampleInstance, outputSchemaError } from "./utils";
 import SchemaTreeView from "./SchemaTreeView";
-
-interface ProviderSchemaPreview {
-  projected: Record<string, unknown>;
-  bytes: number;
-  limit: number;
-  openaiStrict: boolean;
-}
+import ReportIssueLink from "../ReportIssueLink";
 
 const DIALECT_KEYWORDS: [string, string][] = [
   [
@@ -29,7 +24,19 @@ const DIALECT_KEYWORDS: [string, string][] = [
   ["title / description", "documentation shown here and sent to providers"],
   [
     "x-pipeline-schema",
-    "root-only reference to a live host contract (findings-v1)",
+    "root-only reference to a live host contract (findings-v1, findings-v2, or findings-v2-validation)",
+  ],
+  [
+    "x-pipeline-findings-version",
+    "root-only: the findings contract version, a non-negative integer",
+  ],
+  [
+    "x-pipeline-findings-taxonomy",
+    "root-only: the categories findings may use, as unique non-empty strings",
+  ],
+  [
+    "x-pipeline-validation-ledger",
+    "root-only: marks a contract that records a decision for every finding",
   ],
   [
     "x-pipeline-preserve-findings-from",
@@ -119,21 +126,49 @@ export default function SchemaEditorPanel({
     unknown
   > | null>(null);
 
-  useEffect(() => {
-    setDraft(configuredSchema ? schemaText(configuredSchema) : "");
-    setError(null);
+  // The schema object this panel last sent to the workflow, or loaded from it.
+  // The owner stores that same object, so identity tells this panel's own
+  // edits apart from outside changes such as undo, redo or a reset.
+  const syncedSchema = useRef<{
+    key: string;
+    schema: Record<string, unknown> | null;
+  } | null>(null);
+  // Bumped whenever the draft changes, so a preview or resolution still in
+  // flight cannot land on a later draft or another step.
+  const draftGeneration = useRef(0);
+  const clearDerivedSchemas = () => {
+    draftGeneration.current += 1;
     setResolvedSchema(null);
     setResolutionError(null);
+    setResolving(false);
     setProviderPreview(null);
     setProviderPreviewError(null);
+    setPreviewingProvider(false);
+  };
+  const emitSchema = (schema: Record<string, unknown> | null) => {
+    syncedSchema.current = { key: draftKey, schema };
+    if (target.kind === "orientation") {
+      onOrientationSchemaChange(schema);
+    } else {
+      onStepSchemaChange(target.step.id, schema);
+    }
+  };
+
+  useEffect(() => {
+    const synced = syncedSchema.current;
+    if (synced?.key === draftKey && synced.schema === configuredSchema) return;
+    // A new target, or an outside change to this one, replaces the draft.
+    // The panel's own valid edits keep their local formatting and caret.
+    syncedSchema.current = { key: draftKey, schema: configuredSchema };
+    setDraft(configuredSchema ? schemaText(configuredSchema) : "");
+    setError(null);
+    clearDerivedSchemas();
     onDraftValidityChange(true);
-    // A target change remounts the editing draft. Successful edits remain
-    // locally formatted without cursor jumps from parent object identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftKey]);
+  }, [draftKey, configuredSchema]);
 
   // The current draft as a valid parsed schema, for the structure and example
-  // views. Invalid drafts simply hide those views; the textarea stays.
+  // views. An invalid draft hides the example; the textarea stays.
   const parsedDraft = useMemo<Record<string, unknown> | null>(() => {
     if (!draft.trim()) return null;
     try {
@@ -149,17 +184,19 @@ export default function SchemaEditorPanel({
       ? (parsedDraft["x-pipeline-schema"] as string)
       : null;
 
-  // A live reference stands in for the whole contract; fetch the resolved
-  // form so the structure view shows what the step actually promises.
+  // A live reference stands in for the whole contract; the backend resolves
+  // it, with any taxonomy beside it, so the structure view shows what the step
+  // actually promises for every reference it knows.
   useEffect(() => {
-    if (liveReference !== "findings-v1") {
+    if (!liveReference || !parsedDraft) {
       setReferencedSchema(null);
       return;
     }
     let live = true;
-    invoke<Record<string, unknown>>("get_findings_output_schema")
-      .then((schema) => {
-        if (live) setReferencedSchema(schema);
+    workflowSchemaClient
+      .preview({ schema: parsedDraft })
+      .then((preview) => {
+        if (live) setReferencedSchema(preview.projected);
       })
       .catch(() => {
         if (live) setReferencedSchema(null);
@@ -167,9 +204,23 @@ export default function SchemaEditorPanel({
     return () => {
       live = false;
     };
-  }, [liveReference]);
+  }, [liveReference, parsedDraft]);
 
   const structureSchema = liveReference ? referencedSchema : parsedDraft;
+
+  // While a draft is momentarily invalid, keep showing the last valid
+  // structure so the view above the textarea does not collapse mid-typing.
+  const [lastStructure, setLastStructure] = useState<{
+    key: string;
+    schema: Record<string, unknown>;
+  } | null>(null);
+  useEffect(() => {
+    if (structureSchema)
+      setLastStructure({ key: draftKey, schema: structureSchema });
+  }, [draftKey, structureSchema]);
+  const shownStructure =
+    structureSchema ??
+    (lastStructure?.key === draftKey ? lastStructure.schema : null);
 
   useEffect(() => () => onDraftValidityChange(true), [onDraftValidityChange]);
 
@@ -182,7 +233,8 @@ export default function SchemaEditorPanel({
       return;
     }
     let live = true;
-    invoke<AutoReviewCatalog>("get_auto_review_catalog")
+    workflowSchemaClient
+      .catalog()
       .then((value) => {
         if (live) setCatalog(value);
       })
@@ -197,12 +249,9 @@ export default function SchemaEditorPanel({
   const applyConfiguredSchema = (schema: Record<string, unknown> | null) => {
     setDraft(schema ? schemaText(schema) : "");
     setError(null);
+    clearDerivedSchemas();
     onDraftValidityChange(true);
-    if (target.kind === "orientation") {
-      onOrientationSchemaChange(schema);
-    } else {
-      onStepSchemaChange(target.step.id, schema);
-    }
+    emitSchema(schema);
   };
 
   // The canonical findings contract is served from the binary so the inserted
@@ -210,9 +259,7 @@ export default function SchemaEditorPanel({
   // machinery.
   const insertFindingsSchema = async () => {
     try {
-      const schema = await invoke<Record<string, unknown>>(
-        "get_findings_output_schema",
-      );
+      const schema = await workflowSchemaClient.findings();
       applyConfiguredSchema(schema);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -222,23 +269,18 @@ export default function SchemaEditorPanel({
 
   const changeDraft = (next: string) => {
     setDraft(next);
-    setResolvedSchema(null);
-    setResolutionError(null);
+    clearDerivedSchemas();
     if (!next.trim()) {
-      if (target.kind === "orientation" && target.autoReview) {
-        setError(
-          "Automatic Paper Review requires its generated orientation schema.",
-        );
-        onDraftValidityChange(false);
-        return;
-      }
-      setError(null);
-      onDraftValidityChange(true);
-      if (target.kind === "orientation") {
-        onOrientationSchemaChange(null);
-      } else {
-        onStepSchemaChange(target.step.id, null);
-      }
+      // Clearing the box is usually the first half of pasting a new schema.
+      // Removing the schema takes the explicit button below.
+      setError(
+        target.kind === "step"
+          ? "Paste a schema or choose Return to Markdown output."
+          : target.autoReview
+            ? "This review requires its generated orientation schema."
+            : "Paste a schema or choose Use Pipeline default.",
+      );
+      onDraftValidityChange(false);
       return;
     }
     try {
@@ -266,19 +308,15 @@ export default function SchemaEditorPanel({
         parsed["x-pipeline-contract"] !== AUTO_REVIEW_CONTRACT
       ) {
         setError(
-          `Automatic Paper Review must retain x-pipeline-contract: "${AUTO_REVIEW_CONTRACT}". ` +
-            "Create a separate custom workflow to replace this host-owned contract.",
+          `This review must retain x-pipeline-contract: "${AUTO_REVIEW_CONTRACT}". ` +
+            "Create a separate custom review to replace this host-owned contract.",
         );
         onDraftValidityChange(false);
         return;
       }
       setError(null);
       onDraftValidityChange(true);
-      if (target.kind === "orientation") {
-        onOrientationSchemaChange(parsed);
-      } else {
-        onStepSchemaChange(target.step.id, parsed);
-      }
+      emitSchema(parsed);
     } catch (parseError) {
       setError(
         parseError instanceof Error ? parseError.message : "invalid JSON",
@@ -301,22 +339,22 @@ export default function SchemaEditorPanel({
       );
       return;
     }
+    const generation = draftGeneration.current;
     setPreviewingProvider(true);
     setProviderPreviewError(null);
     try {
-      const preview = await invoke<ProviderSchemaPreview>(
-        "preview_provider_schema",
-        {
-          schema: parsed,
-        },
-      );
-      setProviderPreview(preview);
+      const preview = await workflowSchemaClient.preview({
+        schema: parsed,
+      });
+      if (draftGeneration.current === generation) setProviderPreview(preview);
     } catch (caught) {
-      setProviderPreviewError(
-        caught instanceof Error ? caught.message : String(caught),
-      );
+      if (draftGeneration.current === generation) {
+        setProviderPreviewError(
+          caught instanceof Error ? caught.message : String(caught),
+        );
+      }
     } finally {
-      setPreviewingProvider(false);
+      if (draftGeneration.current === generation) setPreviewingProvider(false);
     }
   };
 
@@ -334,20 +372,20 @@ export default function SchemaEditorPanel({
       );
       return;
     }
+    const generation = draftGeneration.current;
     setResolving(true);
     setResolutionError(null);
     try {
-      const resolved = await invoke<Record<string, unknown>>(
-        "resolve_orientation_schema_catalogs",
-        { schema: parsed },
-      );
-      setResolvedSchema(resolved);
+      const resolved = await workflowSchemaClient.resolve({ schema: parsed });
+      if (draftGeneration.current === generation) setResolvedSchema(resolved);
     } catch (caught) {
-      setResolutionError(
-        caught instanceof Error ? caught.message : String(caught),
-      );
+      if (draftGeneration.current === generation) {
+        setResolutionError(
+          caught instanceof Error ? caught.message : String(caught),
+        );
+      }
     } finally {
-      setResolving(false);
+      if (draftGeneration.current === generation) setResolving(false);
     }
   };
 
@@ -358,6 +396,27 @@ export default function SchemaEditorPanel({
   const isManagedText = target.kind === "step" && !configuredSchema;
   const isDefaultOrientation =
     target.kind === "orientation" && !configuredSchema;
+
+  if (target.kind === "step" && target.step.kind === "analyzer") {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="border-b border-gray-200 px-5 py-4 dark:border-gray-700">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+              {target.step.label} result
+            </h2>
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+              Pipeline writes this result
+            </span>
+          </div>
+          <p className="mt-1.5 max-w-3xl text-xs leading-relaxed text-gray-500 dark:text-gray-400">
+            This check makes no model call. Pipeline writes its result in a
+            fixed format, so there is no format to choose here.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -376,7 +435,7 @@ export default function SchemaEditorPanel({
             {configuredSchema
               ? target.kind === "orientation" && target.autoReview
                 ? "Adaptive contract"
-                : "Workflow contract"
+                : "Review contract"
               : target.kind === "orientation"
                 ? "Pipeline default"
                 : "Managed Markdown"}
@@ -387,7 +446,7 @@ export default function SchemaEditorPanel({
             </span>
           )}
           {target.kind === "step" && target.publishesFindings && (
-            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700 dark:bg-gray-800 dark:text-gray-300">
               Published findings
             </span>
           )}
@@ -396,10 +455,10 @@ export default function SchemaEditorPanel({
           {isManagedText
             ? "Pipeline constrains the provider response with this envelope, then stores only its content field as the step’s Markdown report."
             : isDefaultOrientation
-              ? "Pipeline requires one JSON object. Add a custom schema when the workflow depends on particular orientation fields."
+              ? "Pipeline requires one JSON object. Add a custom schema when the review depends on particular orientation fields."
               : catalogBacked
                 ? "Pipeline stores this compact contract, resolves its live catalog references into strict enums for the provider call, and validates the result against the same catalog snapshot."
-                : "Pipeline sends this contract through every provider’s native structured-output channel and validates the returned artifact again before saving it."}
+                : "Pipeline asks the provider to return this JSON format and checks the response before saving it."}
         </p>
       </div>
 
@@ -489,7 +548,7 @@ export default function SchemaEditorPanel({
                       Live specialist catalog
                     </h3>
                     <p className="mt-1 max-w-2xl text-xs leading-relaxed text-violet-800/80 dark:text-violet-200/80">
-                      Catalog references keep the saved workflow small. Pipeline
+                      Catalog references keep the saved review small. Pipeline
                       expands them into ordinary enums only for the current
                       provider call.
                     </p>
@@ -540,30 +599,37 @@ export default function SchemaEditorPanel({
                     className="mt-3 text-xs text-red-700 dark:text-red-300"
                   >
                     Could not resolve catalog references: {resolutionError}
+                    <ReportIssueLink />
                   </p>
                 )}
               </section>
             )}
             {liveReference && (
-              <section className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-900 dark:bg-emerald-950/20">
-                <h3 className="text-sm font-medium text-emerald-950 dark:text-emerald-100">
+              <section className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-gray-700 dark:bg-gray-800/40">
+                <h3 className="text-sm font-medium text-emerald-950 dark:text-gray-100">
                   Live contract reference:{" "}
                   <span className="font-mono">{liveReference}</span>
                 </h3>
-                <p className="mt-1 max-w-2xl text-xs leading-relaxed text-emerald-800/80 dark:text-emerald-200/80">
-                  This step follows Pipeline&rsquo;s canonical contract,
-                  resolved fresh at each dispatch. The structure below shows the
-                  current resolved form; replace the reference with a full
-                  schema to customize it.
+                <p className="mt-1 max-w-2xl text-xs leading-relaxed text-emerald-800/80 dark:text-gray-300">
+                  This step uses Pipeline’s standard output format, updated for
+                  each request. The current format appears below. Replace the
+                  reference with a full schema to customize it.
                 </p>
               </section>
             )}
-            {structureSchema && (
+            {shownStructure && (
               <div>
-                <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                  Structure
-                </h3>
-                <SchemaTreeView schema={structureSchema} />
+                <div className="mb-2 flex flex-wrap items-baseline gap-x-2">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    Structure
+                  </h3>
+                  {!structureSchema && (
+                    <span className="text-[11px] text-gray-500 dark:text-gray-400">
+                      Showing the last valid version
+                    </span>
+                  )}
+                </div>
+                <SchemaTreeView schema={shownStructure} />
               </div>
             )}
             <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
@@ -575,8 +641,7 @@ export default function SchemaEditorPanel({
                   Portable JSON Schema
                 </label>
                 <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-                  Invalid drafts stay local and cannot be saved into the
-                  workflow.
+                  Invalid drafts stay local and cannot be saved into the review.
                 </p>
               </div>
               <div className="flex flex-wrap gap-3">
@@ -655,8 +720,9 @@ export default function SchemaEditorPanel({
             )}
             {target.kind === "step" && target.publishesFindings && (
               <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-                This contract powers the published findings product. Returning
-                to Markdown also turns off findings publication for this step.
+                This format lets Pipeline save individual findings. Switching to
+                Markdown stops this step from adding findings to the Issues
+                list.
               </p>
             )}
 
@@ -690,6 +756,7 @@ export default function SchemaEditorPanel({
                   className="mt-3 text-xs text-red-700 dark:text-red-300"
                 >
                   Could not build the provider schema: {providerPreviewError}
+                  <ReportIssueLink />
                 </p>
               )}
               {providerPreview && (
@@ -742,8 +809,8 @@ export default function SchemaEditorPanel({
                   Example response
                 </summary>
                 <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-                  A minimal artifact matching this contract; the model fills
-                  real content.
+                  An example of the required format. The model supplies the
+                  content.
                 </p>
                 <pre className="mt-2 max-h-[20rem] overflow-auto rounded-lg bg-gray-50 p-3 font-mono text-xs leading-relaxed text-gray-800 dark:bg-gray-950 dark:text-gray-200">
                   {JSON.stringify(exampleInstance(structureSchema), null, 2)}
@@ -756,8 +823,8 @@ export default function SchemaEditorPanel({
                 Supported schema keywords
               </summary>
               <p className="mt-1 text-xs leading-relaxed text-gray-500 dark:text-gray-400">
-                Pipeline&rsquo;s portable dialect deliberately rejects anything
-                it cannot enforce on every provider.
+                Pipeline supports only schema rules it can check across all
+                providers.
               </p>
               <dl className="mt-2 space-y-1.5">
                 {DIALECT_KEYWORDS.map(([keyword, note]) => (

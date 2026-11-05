@@ -1,16 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import { appClient } from "../../lib/appClient";
+import { taskClient } from "../../lib/taskClient";
+import { template } from "../../lib/taskTemplates";
 import {
-  taskClient,
-  template,
   type Chain,
   type Json,
   type SessionChoice,
   type TaskRun,
   type Trigger,
-} from "../../lib/taskClient";
+} from "../../lib/taskTypes";
+import { NumberField } from "./NumberField";
 import OutlineEditor from "./OutlineEditor";
 import { Timing } from "./Timing";
+import ReportIssueLink from "../ReportIssueLink";
 
 const LIMITS = { maxActions: 64, deadlineHours: 168, actionTimeoutSecs: 7200 };
 
@@ -135,8 +137,8 @@ export default function Builder({
         <div>
           <h2>New automation</h2>
           <p className="task-muted">
-            Chain assistant work, reviews, waits, and decisions. Start from a
-            template or compose the steps yourself.
+            Combine assistant work, reviews, and pauses for input. Start with a
+            template or add your own steps.
           </p>
         </div>
         <button
@@ -228,16 +230,11 @@ export default function Builder({
                 </label>
                 <label>
                   Maximum reviews
-                  <input
-                    type="number"
+                  <NumberField
                     min={1}
                     max={32}
                     value={rounds}
-                    onChange={(e) =>
-                      setRounds(
-                        Math.min(32, Math.max(1, Number(e.target.value) || 1)),
-                      )
-                    }
+                    onChange={setRounds}
                   />
                 </label>
               </div>
@@ -339,41 +336,32 @@ export default function Builder({
             onChange={(e) => setInputs(e.target.value)}
           />
         </label>
+        {/* Same ranges as validate() in orchestration/definition.rs. */}
         <div className="task-form-row">
           <label>
             Action limit
-            <input
-              type="number"
+            <NumberField
               min={1}
-              max={64}
+              max={1024}
               value={chain.limits.maxActions}
-              onChange={(e) =>
+              onChange={(maxActions) =>
                 setChain({
                   ...chain,
-                  limits: {
-                    ...chain.limits,
-                    maxActions: Math.min(
-                      64,
-                      Math.max(1, Number(e.target.value)),
-                    ),
-                  },
+                  limits: { ...chain.limits, maxActions },
                 })
               }
             />
           </label>
           <label>
             Deadline (hours)
-            <input
-              type="number"
+            <NumberField
               min={1}
+              max={8760}
               value={chain.limits.deadlineHours}
-              onChange={(e) =>
+              onChange={(deadlineHours) =>
                 setChain({
                   ...chain,
-                  limits: {
-                    ...chain.limits,
-                    deadlineHours: Math.max(1, Number(e.target.value)),
-                  },
+                  limits: { ...chain.limits, deadlineHours },
                 })
               }
             />
@@ -390,6 +378,7 @@ export default function Builder({
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       {notice && (
@@ -414,7 +403,7 @@ export default function Builder({
           }
           onClick={() => void prepare()}
         >
-          {busy ? "Preparing…" : "Prepare automation →"}
+          {busy ? "Preparing…" : "Preview automation →"}
         </button>
       </div>
     </section>

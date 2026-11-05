@@ -7,7 +7,7 @@ import {
   useState,
 } from "react";
 import { basicSetup } from "codemirror";
-import { Compartment, EditorState, Text } from "@codemirror/state";
+import { Annotation, Compartment, EditorState, Text } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 import { indentWithTab } from "@codemirror/commands";
 import { StreamLanguage, type StreamParser } from "@codemirror/language";
@@ -23,6 +23,7 @@ import {
   fileLanguage,
   texCompletions,
 } from "../../lib/fileLanguages";
+import { editorHighlight } from "./editorHighlight";
 import "./files.css";
 
 // Stata's macro quoting and line/block comments need a dedicated mode.
@@ -50,11 +51,11 @@ export const stataMode: StreamParser<{ block: boolean }> = {
     if (stream.match(/`[^']*'/) || stream.match(/\$\{?\w+\}?/))
       return "variableName.special";
     if (stream.match(/"(?:[^"\\]|\\.)*"/)) return "string";
-    if (stream.match(/\b(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?\b/i))
+    if (stream.match(/(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?\b/i))
       return "number";
     if (
       stream.match(
-        /\b(?:regress|reg|ivregress|xtreg|reghdfe|gen|generate|replace|egen|summarize|sum|use|save|merge|append|keep|drop|if|else|foreach|forvalues|while|local|global|scalar|matrix|program|end|return|ereturn|capture|quietly|noisily|preserve|restore|import|export|clear|set|do|include|exit|estimates|test|predict|margins|log|display|di|assert|sort|bysort|by|collapse|reshape|tsset|xtset)\b/,
+        /\b(?:regress|reg|ivregress|xtreg|reghdfe|gen|generate|replace|egen|summarize|sum|use|save|merge|append|keep|drop|if|else|foreach|forvalues|while|local|global|scalar|matrix|program|end|return|ereturn|capture|quietly|noisily|preserve|restore|import|export|clear|set|do|include|exit|estimates|test|predict|margins|log|display|di|assert|sort|bysort|by|collapse|reshape|tsset|xtset|tabulate|tab|tabstat|table|label|rename|ren|recode|destring|tostring|encode|decode|describe|des|desc|list|count|duplicates|order|format|correlate|corr|pwcorr|logit|probit|logistic|ologit|oprobit|mlogit|poisson|nbreg|tobit|areg|qreg|ivreg2|xtivreg|xtlogit|xtpoisson|sureg|ttest|lincom|nlcom|testparm|bootstrap|simulate|permute|svy|svyset|stset|stcox|streg|eststo|esttab|estout|outreg2|graph|twoway|scatter|line|histogram|kdensity|binscatter|coefplot|levelsof|contract|expand|joinby|fillin|version|syntax|args|tempvar|tempfile|tempname|mata|continue|cd|ssc|run|using|in|of)\b/,
       )
     )
       return "keyword";
@@ -63,9 +64,42 @@ export const stataMode: StreamParser<{ block: boolean }> = {
     return null;
   },
 };
+/** Marks text the owner handed in, which `onChange` must not report back. */
+const fromOwner = Annotation.define<boolean>();
+const surrogate = (code: number, low: boolean) =>
+  code >= (low ? 0xdc00 : 0xd800) && code <= (low ? 0xdfff : 0xdbff);
+/** The smallest replacement that turns `current` into `next`, or null. */
+function changedSpan(current: string, next: string) {
+  if (current === next) return null;
+  const shorter = Math.min(current.length, next.length);
+  let from = 0;
+  while (from < shorter && current[from] === next[from]) from++;
+  if (from > 0 && surrogate(current.charCodeAt(from - 1), false)) from--;
+  let same = 0;
+  while (
+    same < shorter - from &&
+    current[current.length - 1 - same] === next[next.length - 1 - same]
+  )
+    same++;
+  if (same > 0 && surrogate(current.charCodeAt(current.length - same), true))
+    same--;
+  return {
+    from,
+    to: current.length - same,
+    insert: next.slice(from, next.length - same),
+  };
+}
 export interface SourceEditorHandle {
   goToLine: (line: number) => void;
   focus: () => void;
+}
+/**
+ * A request to reveal a source line. Each new object is applied once, without
+ * moving focus, so keep the same object between renders. An explicit user
+ * action that should focus the editor uses the handle's goToLine instead.
+ */
+export interface SourceLineRequest {
+  line?: number;
 }
 interface Props {
   value: string;
@@ -74,8 +108,10 @@ interface Props {
   readOnly?: boolean;
   label?: string;
   onSave?: () => void;
-  line?: number;
+  reveal?: SourceLineRequest | null;
   completionTexts?: string[];
+  /** Wrap long lines unless the researcher turns it off, for prose. */
+  wrapByDefault?: boolean;
   onSelection?: (selection: {
     text: string;
     start: number;
@@ -100,8 +136,10 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
     const [language, setLanguage] = useState(() => fileLanguage(path));
     const { editorWrap, editorFontSize } = useAppPreferences();
     const [wrapOverride, setWrap] = useState<boolean | null>(null);
-    const wrap = wrapOverride ?? editorWrap;
+    const wrap = wrapOverride ?? (props.wrapByDefault || editorWrap);
     const [languageError, setLanguageError] = useState("");
+    const [cursor, setCursor] = useState({ line: 1, column: 1 });
+    const echoes = useRef<string[]>([]);
     const [configuration] = useState(() => ({
       language: new Compartment(),
       wrap: new Compartment(),
@@ -115,7 +153,7 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
         `${editorFontSize}px`,
       );
     }, [editorFontSize]);
-    const goToLine = (n: number) => {
+    const goToLine = (n: number, { focus = true } = {}) => {
       const editor = view.current;
       if (!editor) return;
       const line = editor.state.doc.line(
@@ -125,10 +163,10 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
         selection: { anchor: line.from },
         effects: EditorView.scrollIntoView(line.from, { y: "center" }),
       });
-      editor.focus();
+      if (focus) editor.focus();
     };
     useImperativeHandle(ref, () => ({
-      goToLine,
+      goToLine: (line) => goToLine(line),
       focus: () => view.current?.focus(),
     }));
     useEffect(() => {
@@ -139,6 +177,7 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
           doc: value,
           extensions: [
             basicSetup,
+            editorHighlight,
             configuration.lineSeparator.of(
               EditorState.lineSeparator.of(
                 value.match(/\r\n|\r|\n/)?.[0] ?? "\n",
@@ -164,10 +203,22 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
             configuration.completion.of([]),
             configuration.readonly.of(EditorState.readOnly.of(readOnly)),
             EditorView.updateListener.of((update) => {
-              if (update.docChanged)
-                current.current.onChange?.(update.state.sliceDoc());
+              if (
+                update.transactions.some(
+                  (edit) => edit.docChanged && !edit.annotation(fromOwner),
+                )
+              ) {
+                const text = update.state.sliceDoc();
+                echoes.current = [...echoes.current.slice(-63), text];
+                current.current.onChange?.(text);
+              }
               if (update.selectionSet) {
                 const s = update.state.selection.main;
+                const line = update.state.doc.lineAt(s.head);
+                setCursor({
+                  line: line.number,
+                  column: s.head - line.from + 1,
+                });
                 current.current.onSelection?.({
                   text: update.state.sliceDoc(s.from, s.to),
                   // Callers consume offsets in the original serialized source.
@@ -218,19 +269,37 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
     }, [path]);
     useEffect(() => {
       const editor = view.current;
-      if (editor && value !== editor.state.sliceDoc())
-        editor.dispatch({
-          changes: {
-            from: 0,
-            to: editor.state.doc.length,
-            insert: Text.of(value.split(/\r\n|\r|\n/)),
-          },
+      if (!editor) return;
+      // The owner hands back each edit after it renders, and typing can outrun
+      // that. An older copy of our own text must not undo the newer keystrokes.
+      const echo = echoes.current.indexOf(value);
+      if (echo >= 0) {
+        echoes.current.splice(0, echo + 1);
+        return;
+      }
+      echoes.current = [];
+      if (value === editor.state.sliceDoc()) return;
+      // Another editor on the same file, a reload or a discarded draft changes
+      // the value. Replace only the differing span so this editor keeps its
+      // scroll position and selection.
+      const change = changedSpan(
+        editor.state.doc.toString(),
+        value.replace(/\r\n?/g, "\n"),
+      );
+      const separator =
+        value.match(/\r\n|\r|\n/)?.[0] ?? editor.state.lineBreak;
+      if (!change && separator === editor.state.lineBreak) return;
+      editor.dispatch({
+        annotations: fromOwner.of(true),
+        ...(change && {
+          changes: { ...change, insert: Text.of(change.insert.split("\n")) },
+        }),
+        ...(separator !== editor.state.lineBreak && {
           effects: configuration.lineSeparator.reconfigure(
-            EditorState.lineSeparator.of(
-              value.match(/\r\n|\r|\n/)?.[0] ?? editor.state.lineBreak,
-            ),
+            EditorState.lineSeparator.of(separator),
           ),
-        });
+        }),
+      });
     }, [value, path]);
     useEffect(() => {
       view.current?.dispatch({
@@ -256,6 +325,7 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
         if (language === "plaintext") return [];
         const names: Record<string, string> = {
           bash: "Shell",
+          cpp: "C++",
           ini: "TOML",
           xml: "HTML",
         };
@@ -311,11 +381,13 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
       });
     }, [completionTexts, language, configuration, path]);
     useEffect(() => {
-      if (props.line) goToLine(props.line);
-    }, [props.line, path]);
+      if (props.reveal?.line) goToLine(props.reveal.line, { focus: false });
+    }, [props.reveal]);
     return (
       <div className="file-source-editor">
-        <div className="file-toolbar">
+        {languageError && <p role="status">{languageError}</p>}
+        <div className="file-editor-host" ref={host} />
+        <div className="file-statusbar">
           <select
             aria-label="Source language"
             value={language}
@@ -335,22 +407,23 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
             />{" "}
             Wrap lines
           </label>
-          <span>{readOnly ? "Read only" : "⌘/Ctrl+S to save"}</span>
-          <label>
-            Line{" "}
+          {readOnly && <span>Read only</span>}
+          <div className="file-statusbar-end">
+            <span>
+              Ln {cursor.line}, Col {cursor.column}
+            </span>
             <input
               aria-label="Go to source line"
               type="number"
               min={1}
+              placeholder="Go to line"
               className="file-line-input"
               onKeyDown={(e) => {
                 if (e.key === "Enter") goToLine(Number(e.currentTarget.value));
               }}
             />
-          </label>
+          </div>
         </div>
-        {languageError && <p role="status">{languageError}</p>}
-        <div className="file-editor-host" ref={host} />
       </div>
     );
   },

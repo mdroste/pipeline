@@ -1,6 +1,7 @@
 //! Claude CLI transport.
 
 use super::*;
+use std::future::Future;
 
 /// Call `claude -p` and return the text output.
 /// Streams stderr and stdout back to the frontend as `pipeline:log` events.
@@ -45,6 +46,29 @@ pub(super) fn fork_failure_uses_fallback(error: &str) -> bool {
     !crate::commands::is_pipeline_cancellation_error(error)
         && !error.contains("timed out after")
         && !crate::pipeline::provider_error::is_usage_limit_error(error)
+}
+
+/// Check the Claude subscription sign-in on a Review run's first Claude call
+/// and reuse that executable for the rest of the run; concurrent first calls
+/// share one check. A failed check is not remembered, so a retry checks again.
+/// Outside a run the shared fallback scope is reused across operations, so
+/// every call checks.
+pub(super) async fn verify_subscription_once_per_run<F, Fut>(
+    verify: F,
+) -> Result<crate::deps::ResolvedCommand, String>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<crate::deps::ResolvedCommand, String>>,
+{
+    let scope = crate::run_scope::current();
+    if scope.is_fallback() {
+        return verify().await;
+    }
+    scope
+        .claude_subscription()
+        .get_or_try_init(verify)
+        .await
+        .cloned()
 }
 
 const SESSION_UNAVAILABLE_PREFIX: &str = "unavailable:";
@@ -167,7 +191,9 @@ pub async fn call_claude(
             )
             .await;
             if let Err(error) = &result {
-                if fork_failure_uses_fallback(error) {
+                if fork_failure_uses_fallback(error)
+                    && crate::pipeline::cli_process::elapsed_call_deadline().is_none()
+                {
                     if is_cli_session_capability_error(error) {
                         // The base session is unusable for forking (for
                         // example, this CLI resolves `--resume` against a
@@ -217,7 +243,9 @@ pub async fn call_claude(
             if crate::commands::is_pipeline_cancellation_error(&error) {
                 return Err(error);
             }
-            if crate::pipeline::provider_error::is_usage_limit_error(&error) {
+            if crate::pipeline::provider_error::is_usage_limit_error(&error)
+                || crate::pipeline::cli_process::elapsed_call_deadline().is_some()
+            {
                 return Err(error);
             }
             log(
@@ -535,7 +563,14 @@ async fn call_claude_inner(
     // auto-approved in the cwd, and the scoped allow/deny rules above keep
     // everything else closed.
     let effective_cwd = workspace.cwd.as_deref();
-    let mut cmd = build_provider_command("claude", effective_cwd, &cmd_args)?;
+    let claude =
+        verify_subscription_once_per_run(crate::agent_runtime::claude::verified_subscription)
+            .await?;
+    let mut cmd = crate::agent_runtime::claude::verified_subscription_command(
+        &claude,
+        &cmd_args,
+        effective_cwd,
+    );
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -772,11 +807,12 @@ fn claude_result_error_detail(value: &serde_json::Value) -> Option<String> {
 }
 
 /// Classify an unsuccessful CLI exit. Returns the cancellation error when
-/// Pipeline itself stopped the call (global cancel or this call's pass), and
-/// a retryable signal-death error when the child was killed by something
-/// else — the OOM killer, a crash, or an external kill. SIGTERM's
-/// conventional 143 exit is grouped with signal deaths because Pipeline's
-/// own kills also surface that way; the cancellation flags distinguish them.
+/// Pipeline itself stopped the call (global cancel or this call's pass), the
+/// timeout error when this call's own deadline did, and a retryable
+/// signal-death error when the child was killed by something else — the OOM
+/// killer, a crash, or an external kill. SIGTERM's conventional 143 exit is
+/// grouped with signal deaths because Pipeline's own kills also surface that
+/// way; the cancellation and deadline flags distinguish them.
 pub fn classify_terminated_exit(
     provider: &str,
     status: &std::process::ExitStatus,
@@ -786,6 +822,9 @@ pub fn classify_terminated_exit(
         .is_some_and(|pass| crate::commands::is_pass_cancelled(&pass));
     if crate::commands::is_cancelled() || pass_cancelled {
         return Some("Pipeline cancelled".to_string());
+    }
+    if let Some(seconds) = crate::pipeline::cli_process::elapsed_call_deadline() {
+        return Some(format!("{provider} call timed out after {seconds}s"));
     }
     if exit_code == 143 || status.code().is_none() {
         return Some(format!(

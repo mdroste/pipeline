@@ -1,6 +1,15 @@
 use super::*;
+mod file_operations;
 mod ignored_paths;
+#[cfg(unix)]
+mod job_queue;
+#[cfg(unix)]
+mod no_hard_links;
+mod reports_and_citations;
 mod scoped_ids;
+mod text_imports;
+#[cfg(unix)]
+mod value_macros;
 static JOB_TEST_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[test]
 fn bibtex_preserves_nested_fields_and_duplicate_keys() {
@@ -234,7 +243,7 @@ fn report_import_is_idempotent_and_preserves_corrected_decisions() {
         "The appendix lacks a derivation.\n\nAdd a robustness analysis.",
     );
     let revision = p.revision.unwrap().id;
-    let mut comments = preview_report(&f.store, &f.ws, &revision).unwrap();
+    let mut comments = preview_report(&f.store, &f.ws, &revision).unwrap().comments;
     comments[0].number = "R1.2".into();
     let imported = import_report(&f.store, &f.ws, &revision, comments.clone()).unwrap();
     let id = imported[0]["id"].as_str().unwrap();
@@ -290,7 +299,7 @@ fn added_analysis_statements_are_flagged_and_tex_export_escapes_source() {
     let f = fixture();
     let p = paper(&f, "report.md", "Check 10% & x_y.");
     let revision = p.revision.unwrap().id;
-    let comments = preview_report(&f.store, &f.ws, &revision).unwrap();
+    let comments = preview_report(&f.store, &f.ws, &revision).unwrap().comments;
     let imported = import_report(&f.store, &f.ws, &revision, comments).unwrap();
     let object_id = imported[0]["id"].as_str().unwrap();
     let old = record(&f.store, &f.ws, object_id, "response").unwrap();
@@ -380,6 +389,8 @@ fn numeric_bindings_check_rounding_sign_units_and_only_their_dependencies() {
         reported_units: "log points".into(),
         origin: "manual".into(),
         confirmed: true,
+        imported_from: None,
+        imported_status: None,
     };
     let saved = bind_number(&f.store, &f.ws, None, 0, b.clone()).unwrap();
     assert_eq!(
@@ -632,7 +643,7 @@ fn failed_build_cannot_adopt_an_older_pdf_as_success() {
 }
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn changed_queued_inputs_do_not_launch_and_conflicting_jobs_are_rejected() {
+async fn changed_queued_inputs_do_not_launch_and_a_second_job_waits_its_turn() {
     let _gate = JOB_TEST_GATE.lock().await;
     let f = fixture();
     fs::write(f.root.join("script.sh"), "printf 'launched' > marker").unwrap();
@@ -650,31 +661,33 @@ async fn changed_queued_inputs_do_not_launch_and_conflicting_jobs_are_rejected()
         None,
     )
     .unwrap();
-    assert!(research::jobs::queue(
+    let waiting = research::jobs::queue(
         &f.store,
         research::RunExecutionRequest {
             plan_id: None,
             profile_id: p.id,
             session_id: None,
             test_only: true,
-            operation_id: id("other").unwrap()
+            operation_id: id("other").unwrap(),
         },
         "detached",
-        None
+        None,
     )
-    .is_err());
+    .unwrap();
     fs::write(f.root.join("script.sh"), "printf 'CHANGED' > marker").unwrap();
     research::jobs::launch_pending();
     for _ in 0..100 {
-        if !research::jobs::execution_active(&q.id) {
+        if !research::jobs::workspace_active(&f.ws) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     assert!(!f.root.join("marker").exists());
-    let finished = execution(&f.store, &f.ws, &q.id).unwrap();
-    assert_eq!(finished.outcome, "failed");
-    assert_eq!(finished.validation["processStarted"], false);
+    for id in [&q.id, &waiting.id] {
+        let finished = execution(&f.store, &f.ws, id).unwrap();
+        assert_eq!(finished.outcome, "failed");
+        assert_eq!(finished.validation["processStarted"], false);
+    }
 }
 #[cfg(target_os = "macos")]
 #[test]
@@ -790,7 +803,7 @@ fn live_studio_result_exporters() {
         let f = fixture();
         fs::copy(
             Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../../docs/workbench/fixtures/research-studio")
+                .join("tests/fixtures/research-studio")
                 .join(filename),
             f.root.join(filename),
         )
@@ -866,6 +879,8 @@ fn theory_note(kind: &str, status: &str) -> TheoryNote {
         rejection_reason: String::new(),
         origin: "manual".into(),
         promotions: vec![],
+        imported_from: None,
+        imported_status: None,
     }
 }
 #[test]

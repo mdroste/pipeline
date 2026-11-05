@@ -37,6 +37,7 @@ import ConversationTitleSettings from "./settings/ConversationTitleSettings";
 import NotificationSettings from "./settings/NotificationSettings";
 import AdvancedSettings from "./settings/AdvancedSettings";
 import ConnectionStatus from "./settings/ConnectionStatus";
+import DefaultModelSettings from "./settings/DefaultModelSettings";
 import {
   SettingsOperations,
   ReviewSaveState,
@@ -48,13 +49,16 @@ import {
   settingsSearchEntries,
   type SettingsSearchEntry,
 } from "./settings/search";
+import { useParserControls } from "./settings/useParserControls";
 import { confirmDialog } from "./DialogService";
 import type { DepsReport, Settings } from "../lib/types";
 import type { ThemePreference } from "../lib/theme";
 import { useAppPreferences } from "../lib/appPreferences";
+import { router } from "../lib/router";
 import StorageSettings from "./StorageSettings";
 import WorkspaceResearchDataSettings from "./WorkspaceResearchDataSettings";
 import "./SettingsPage.css";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   onClose: () => void;
@@ -73,7 +77,7 @@ const STORED_KEY_LABELS: Record<string, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
   google: "Google",
-  local: "local-server",
+  local: "local server",
 };
 
 export default function SettingsPage({
@@ -131,7 +135,11 @@ export default function SettingsPage({
   const [destination, setDestination] = useState<string | undefined>();
   const [focusKey, setFocusKey] = useState(0);
   const [saveScope, setSaveScope] = useState("");
+  const parserControls = useParserControls(query.trim().length > 0);
   const lastFocusedCard = useRef("");
+  const sectionRef = useRef(section);
+  const sectionUnfinishedRef = useRef(false);
+  const leaveSectionRef = useRef(async () => true);
   const setSettings = (next: Settings) => {
     const card = document.activeElement?.closest(".settings-card");
     setSaveScope(card?.id || lastFocusedCard.current);
@@ -149,32 +157,56 @@ export default function SettingsPage({
   }, [onDirtyChange, savePending]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   useEffect(() => {
-    setSection(sectionForTarget(initialSection, targetId));
-    setQuery("");
-    setDestination(
-      targetId ??
-        (
-          {
-            extraction: "workflow-extraction",
-            llm: "workflow-models",
-            workspace: "workspace-provider",
-            "api-keys": "anthropic-provider",
-          } as Partial<Record<SettingsSection, string>>
-        )[initialSection],
-    );
-    setFocusKey((key) => key + 1);
+    const next = sectionForTarget(initialSection, targetId);
+    const open = () => {
+      setSection(next);
+      setQuery("");
+      setDestination(
+        targetId ??
+          (
+            {
+              extraction: "workflow-extraction",
+              llm: "workflow-models",
+              workspace: "workspace-provider",
+              "api-keys": "anthropic-provider",
+            } as Partial<Record<SettingsSection, string>>
+          )[initialSection],
+      );
+      setFocusKey((key) => key + 1);
+    };
+    if (next === sectionRef.current || !sectionUnfinishedRef.current) {
+      open();
+      return;
+    }
+    // A sidebar or shortcut link stays on this page, so the app's leave guard
+    // lets it through; only this section's guard protects what is unfinished.
+    let current = true;
+    void leaveSectionRef.current().then((allowed) => {
+      if (!current) return;
+      if (allowed) open();
+      else
+        void router.navigate({ page: "settings", section: sectionRef.current });
+    });
+    return () => {
+      current = false;
+    };
   }, [initialSection, targetId, navigationKey]);
   useEffect(() => {
     if (loading || !destination) return;
     const frame = requestAnimationFrame(() => focusSettingsTarget(destination));
     return () => cancelAnimationFrame(frame);
   }, [loading, section, destination, focusKey]);
+  const sectionUnfinished =
+    storageSaving || researchDataSaving || operationPending;
   const canLeaveSection = async () =>
-    !(storageSaving || researchDataSaving || operationPending) ||
+    !sectionUnfinished ||
     (await confirmDialog(
       "This section has unfinished changes. Leave this section anyway?",
       { confirmLabel: "Leave section" },
     ));
+  sectionRef.current = section;
+  sectionUnfinishedRef.current = sectionUnfinished;
+  leaveSectionRef.current = canLeaveSection;
   const selectSection = async (next: Section, target?: string) => {
     if (next !== section && !(await canLeaveSection())) return;
     setSection(next);
@@ -208,7 +240,7 @@ export default function SettingsPage({
     );
   const pageInfo = SECTION_INFO[section];
   const results = searchSettings(
-    settingsSearchEntries(settings, preferences, theme),
+    settingsSearchEntries(settings, preferences, theme, parserControls),
     query,
   );
   const openResult = (entry: SettingsSearchEntry) =>
@@ -237,7 +269,7 @@ export default function SettingsPage({
                   <button onClick={retrySave}>Retry</button>
                 </span>
               ) : savePending ? (
-                "Changes pending…"
+                "Saving…"
               ) : (
                 "Preferences save automatically."
               )
@@ -265,7 +297,6 @@ export default function SettingsPage({
                   if (e.key === "Escape") setQuery("");
                 }}
               />
-              <span className="settings-search-hint">Find a preference</span>
             </div>
             {query.trim() ? (
               <div className="settings-page-body settings-search-results">
@@ -341,8 +372,8 @@ export default function SettingsPage({
                     <p key={i}>{warning}</p>
                   ))}
                   <p>
-                    Changing a setting will overwrite the current file with
-                    these values.
+                    If you change a setting, these values replace your settings
+                    file.
                   </p>
                   {undecryptableKeys.map((provider) => (
                     <button
@@ -355,6 +386,7 @@ export default function SettingsPage({
                       key
                     </button>
                   ))}
+                  <ReportIssueLink />
                 </div>
               )}
               <div className="settings-page-body">
@@ -386,6 +418,16 @@ export default function SettingsPage({
                 )}
                 {section === "providers" && (
                   <>
+                    <SettingsCard id="default-model">
+                      <DefaultModelSettings
+                        settings={settings}
+                        setSettings={setSettings}
+                        catalogs={catalogs}
+                        catalogBlocked={catalogBlocked}
+                        dependencies={dependencies}
+                      />
+                      <ReviewSaveFeedback />
+                    </SettingsCard>
                     <ProvidersSection
                       settings={settings}
                       setSettings={setSettings}
@@ -401,17 +443,18 @@ export default function SettingsPage({
                     />
                     <SettingsCard id="local-provider">
                       <ProviderHeader
-                        name="OpenAI-compatible"
-                        description="Ollama, LM Studio, llama.cpp, or another compatible server."
-                      />
-                      <ConnectionStatus
-                        provider="local"
-                        settings={settings}
-                        catalog={catalogs.local}
-                        loading={catalogLoading.local}
-                        blocked={catalogBlocked.local}
-                        onCheck={() => loadCatalog("local", settings, true)}
-                      />
+                        name="Local server"
+                        description="Ollama, LM Studio, llama.cpp, or another OpenAI-compatible server."
+                      >
+                        <ConnectionStatus
+                          provider="local"
+                          settings={settings}
+                          catalog={catalogs.local}
+                          loading={catalogLoading.local}
+                          blocked={catalogBlocked.local}
+                          onCheck={() => loadCatalog("local", settings, true)}
+                        />
+                      </ProviderHeader>
                       <LocalProviderSection
                         settings={settings}
                         setSettings={setSettings}
@@ -432,14 +475,9 @@ export default function SettingsPage({
                         settings={settings}
                         setSettings={setSettings}
                         catalogs={catalogs}
+                        onChangeDefault={() => void selectSection("providers")}
+                        dependencies={dependencies}
                       />
-                      <button
-                        type="button"
-                        className="settings-text-link"
-                        onClick={() => void selectSection("providers")}
-                      >
-                        Manage provider connections →
-                      </button>
                       <ReviewSaveFeedback />
                     </SettingsCard>
                     <SettingsCard id="workflow-execution">
@@ -454,14 +492,15 @@ export default function SettingsPage({
                         settings={settings}
                         setSettings={setSettings}
                         onSystemChange={onSystemChange}
+                        knownControls={parserControls}
                       />
                       <ReviewSaveFeedback />
                     </SettingsCard>
                     <SettingsCard id="review-comparison">
                       <SectionHeader title="Revision comparison" />
                       <Toggle
-                        label="Automatic revision reconciliation"
-                        description="Add an AI comparison of addressed, remaining, and new concerns when a previous report exists. This adds a model call."
+                        label="Compare with the previous report"
+                        description="When a previous report exists, list the concerns that were addressed, remain, or are new. This uses one extra model call."
                         checked={settings.auto_revision_reconciliation}
                         onChange={(value) =>
                           setSettings({
@@ -480,7 +519,7 @@ export default function SettingsPage({
                     <SettingsCard id="workflow-history">
                       <SectionHeader
                         title="Review history"
-                        description="Retention applies to completed Reviews and their artifacts."
+                        description="Limits for completed reviews and their files."
                       />
                       <RunRetention
                         settings={settings}
@@ -491,8 +530,8 @@ export default function SettingsPage({
                     <SettingsCard id="storage-cache">
                       <SectionHeader title="Extraction cache" />
                       <Toggle
-                        label="Reuse verified extraction cache"
-                        description="Reuse exact source-and-settings matches to avoid repeating PDF extraction. Existing research records and reports are unaffected."
+                        label="Reuse earlier PDF extractions"
+                        description="Skip extraction when the same PDF was already read with the same settings."
                         checked={settings.reuse_pdf_extraction_cache}
                         onChange={(value) =>
                           setSettings({

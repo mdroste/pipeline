@@ -121,6 +121,7 @@ describe("scoped file links", () => {
     "%5cfoo",
     ".git/config",
     ".pipeline-tasks/a",
+    ".pipeline-workbench/generated/a/plot.py",
     "x?token=1",
     "#heading",
   ])("rejects external or unscoped target %s", (value) =>

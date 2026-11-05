@@ -1,9 +1,25 @@
+const pdfProps = vi.hoisted(() => ({
+  current: null as null | {
+    initialPage?: number;
+    position?: { page: number };
+    onPosition?: (value: { page: number }) => void;
+  },
+}));
 vi.mock("./file-workspace/PdfReader", () => ({
-  default: ({ fallback }: { fallback: import("react").ReactNode }) => (
-    <>{fallback}</>
-  ),
+  default: (props: {
+    fallback: import("react").ReactNode;
+    position?: { page: number };
+  }) => {
+    pdfProps.current = props;
+    return <>{props.fallback}</>;
+  },
+}));
+const paperSearch = vi.hoisted(() => vi.fn());
+vi.mock("../lib/workbench/researchClient", () => ({
+  researchClient: { paperSearch },
 }));
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -12,7 +28,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceDocumentReader from "./WorkspaceDocumentReader";
-import type { DocumentView } from "../lib/projectClient";
+import type { DocumentSelection, DocumentView } from "../lib/projectClient";
 const read = vi.hoisted(() => vi.fn());
 vi.mock("../lib/projectClient", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/projectClient")>()),
@@ -92,6 +108,40 @@ it("attaches the immutable selection when opening an annotation", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Create action item" }));
   expect(action).toHaveBeenCalledWith(selection, "task");
 });
+it("opens an annotation at its passage instead of the saved scroll position", async () => {
+  localStorage.setItem(
+    "pipeline.reader.workspace.revision",
+    JSON.stringify({ start: 0, mode: "source", scroll: 120 }),
+  );
+  read.mockResolvedValue(view("Original passage"));
+  render(
+    <WorkspaceDocumentReader
+      workspaceId="workspace"
+      revisionId="revision"
+      initialSelection={{
+        revisionId: "revision",
+        revisionHash: "abcdef",
+        start: 0,
+        end: 8,
+        quote: "Original",
+        page: null,
+        region: null,
+      }}
+      annotations={[]}
+      onSelection={vi.fn()}
+      onError={vi.fn()}
+    />,
+  );
+  const scroller = (await screen.findByText("Original passage")).closest(
+    ".overflow-auto",
+  )!;
+  await act(
+    () => new Promise((resolve) => requestAnimationFrame(() => resolve(null))),
+  );
+  // The saved offset (120) belonged to an earlier reading of this segment.
+  expect(scroller.scrollTop).toBe(0);
+  expect(layout()).toMatchObject({ start: 0, scroll: 0 });
+});
 it("ignores a stale reader request after switching to a PDF page", async () => {
   let resolveOld!: (value: DocumentView) => void;
   read.mockResolvedValueOnce({
@@ -153,4 +203,252 @@ it("reads Markdown with highlighting without crashing its parent", async () => {
     ),
   );
   expect(error).not.toHaveBeenCalled();
+});
+
+const pdfView = (page: number | null = null): DocumentView => ({
+  ...view("PDF text"),
+  revision: { ...view("").revision, inputKind: "pdf" },
+  pageCount: 4,
+  page,
+  imageUrl: page ? "data:image/jpeg;base64,AA==" : null,
+});
+const layout = () =>
+  JSON.parse(localStorage.getItem("pipeline.reader.workspace.revision")!);
+
+it("follows the interactive PDF's own page and leaves page controls to it", async () => {
+  read.mockResolvedValue(pdfView());
+  render(
+    <WorkspaceDocumentReader
+      workspaceId="workspace"
+      revisionId="revision"
+      annotations={[]}
+      onSelection={vi.fn()}
+      onError={vi.fn()}
+    />,
+  );
+  await screen.findByText("PDF text");
+  fireEvent.click(screen.getByRole("button", { name: "PDF page" }));
+  await screen.findByRole("button", { name: "Open rendered page images" });
+  expect(screen.queryByLabelText("PDF page")).toBeNull();
+  expect(pdfProps.current?.initialPage).toBeUndefined();
+  expect(pdfProps.current?.position).toEqual({ page: 1 });
+  act(() => pdfProps.current?.onPosition?.({ page: 3 }));
+  expect(pdfProps.current?.position).toEqual({ page: 3 });
+  expect(layout()).toMatchObject({ page: 3, mode: "page" });
+});
+
+it("sanitizes saved and typed page numbers instead of crashing", async () => {
+  localStorage.setItem(
+    "pipeline.reader.workspace.revision",
+    JSON.stringify({ page: 2.5, mode: "page" }),
+  );
+  read.mockImplementation(async (_w, _r, _s, page: number | null) =>
+    pdfView(page),
+  );
+  const error = vi.fn();
+  render(
+    <WorkspaceDocumentReader
+      workspaceId="workspace"
+      revisionId="revision"
+      annotations={[]}
+      onSelection={vi.fn()}
+      onError={error}
+    />,
+  );
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Open rendered page images" }),
+  );
+  expect(pdfProps.current?.position).toEqual({ page: 2 });
+  const box = await screen.findByLabelText("PDF page");
+  expect(box).toHaveValue(2);
+  fireEvent.change(box, { target: { value: "3.7" } });
+  expect(read).not.toHaveBeenLastCalledWith("workspace", "revision", 0, 3);
+  fireEvent.keyDown(box, { key: "Enter" });
+  await screen.findByAltText("Paper, page 3");
+  fireEvent.change(box, { target: { value: "9" } });
+  fireEvent.blur(box);
+  await screen.findByAltText("Paper, page 4");
+  expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+  expect(paperSearch).not.toHaveBeenCalled();
+  expect(error).not.toHaveBeenCalled();
+});
+
+it("restores the saved scroll only for its own segment and opens a new segment at the top", async () => {
+  localStorage.setItem(
+    "pipeline.reader.workspace.revision",
+    JSON.stringify({ start: 0, mode: "source", scroll: 120 }),
+  );
+  read
+    .mockResolvedValueOnce({
+      ...view("First segment"),
+      end: 13,
+      totalBytes: 30,
+    })
+    .mockResolvedValueOnce({
+      ...view("Second segment"),
+      start: 13,
+      end: 27,
+      totalBytes: 30,
+    });
+  render(
+    <WorkspaceDocumentReader
+      workspaceId="workspace"
+      revisionId="revision"
+      annotations={[]}
+      onSelection={vi.fn()}
+      onError={vi.fn()}
+    />,
+  );
+  const scroller = (await screen.findByText("First segment")).closest(
+    ".overflow-auto",
+  )!;
+  await waitFor(() => expect(scroller.scrollTop).toBe(120));
+  scroller.scrollTop = 900;
+  fireEvent.scroll(scroller);
+  await waitFor(() => expect(layout().scroll).toBe(900));
+  fireEvent.click(screen.getByRole("button", { name: "Next text segment" }));
+  await screen.findByText("Second segment");
+  await waitFor(() => expect(scroller.scrollTop).toBe(0));
+  expect(layout()).toMatchObject({ start: 13, scroll: 0 });
+});
+
+const reader = (initialSelection: DocumentSelection) => (
+  <WorkspaceDocumentReader
+    workspaceId="workspace"
+    revisionId="revision"
+    initialSelection={initialSelection}
+    annotations={[]}
+    onSelection={vi.fn()}
+    onError={vi.fn()}
+  />
+);
+const position: DocumentSelection = {
+  revisionId: "revision",
+  revisionHash: "abcdef",
+  start: 40,
+  end: null,
+  quote: "",
+  page: null,
+  region: null,
+};
+it("treats an opened position as a place to read, not a selection", async () => {
+  read.mockResolvedValue(view("Opened passage"));
+  render(reader(position));
+  await screen.findByText("Opened passage");
+  expect(read).toHaveBeenCalledWith("workspace", "revision", 40, null);
+  expect(screen.queryByText("Page null region")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
+  expect(
+    screen.queryByRole("button", { name: "Create action item" }),
+  ).toBeNull();
+});
+it("starts from the saved position when the selection is another document's", async () => {
+  localStorage.setItem(
+    "pipeline.reader.workspace.revision",
+    JSON.stringify({ start: 90 }),
+  );
+  read.mockResolvedValue(view("Saved place"));
+  render(
+    reader({
+      ...position,
+      revisionId: "another",
+      start: 7,
+      end: 12,
+      quote: "Old passage",
+    }),
+  );
+  await screen.findByText("Saved place");
+  expect(read).toHaveBeenCalledWith("workspace", "revision", 90, null);
+  expect(screen.queryByText("Old passage")).toBeNull();
+  expect(screen.queryByRole("button", { name: "Ask" })).toBeNull();
+});
+it("shows an opened passage in the text, whichever view was last used", async () => {
+  localStorage.setItem(
+    "pipeline.reader.workspace.revision",
+    JSON.stringify({ mode: "rendered" }),
+  );
+  read.mockResolvedValue(view("Opened passage"));
+  render(reader(position));
+  await screen.findByText("Opened passage");
+  expect(screen.getByRole("button", { name: "Text / source" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+});
+
+it("stops saying it is opening after a failed read, and can try again", async () => {
+  const onError = vi.fn();
+  read.mockRejectedValueOnce({ message: "Revision is unavailable" });
+  render(
+    <WorkspaceDocumentReader
+      workspaceId="workspace"
+      revisionId="revision"
+      annotations={[]}
+      onSelection={vi.fn()}
+      onError={onError}
+    />,
+  );
+  expect(
+    await screen.findByRole("heading", {
+      name: "This document could not be opened",
+    }),
+  ).toBeInTheDocument();
+  expect(onError).toHaveBeenCalledWith("Revision is unavailable");
+
+  read.mockResolvedValue(view("Recovered passage"));
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await screen.findByText("Recovered passage");
+  expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+});
+
+it("saves the passage on screen from a highlighted file with Windows line endings", async () => {
+  const lines = Array.from(
+    { length: 40 },
+    (_, line) => `\\section{Line ${line}} café text ${line}`,
+  );
+  const text = lines.join("\r\n");
+  const opened = view(text);
+  read.mockResolvedValue({
+    ...opened,
+    revision: { ...opened.revision, entrypoint: "paper.tex" },
+  });
+  const onSelection = vi.fn();
+  render(
+    <WorkspaceDocumentReader
+      workspaceId="workspace"
+      revisionId="revision"
+      annotations={[]}
+      onSelection={onSelection}
+      onError={vi.fn()}
+    />,
+  );
+  await screen.findByText("Paper");
+  const code = await waitFor(() => {
+    const element = document.querySelector("pre code");
+    expect(element).not.toBeNull();
+    return element!;
+  });
+  // The parser has already dropped the carriage returns from this text.
+  expect(code.textContent).not.toContain("\r");
+
+  const wanted = "text 30";
+  const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+  let node: Node | null;
+  while ((node = walker.nextNode()) && !node.textContent!.includes(wanted));
+  const at = node!.textContent!.indexOf(wanted);
+  const range = document.createRange();
+  range.setStart(node!, at);
+  range.setEnd(node!, at + wanted.length);
+  const selected = window.getSelection()!;
+  selected.removeAllRanges();
+  selected.addRange(range);
+  fireEvent.mouseUp(code.parentElement!);
+
+  fireEvent.click(await screen.findByRole("button", { name: "Add note" }));
+  const selection = onSelection.mock.calls[0][0] as DocumentSelection;
+  expect(selection.quote).toBe(wanted);
+  const before = text.slice(0, text.indexOf(`café ${wanted}`) + 5);
+  const start = new TextEncoder().encode(before).length;
+  expect(selection.start).toBe(start);
+  expect(selection.end).toBe(start + wanted.length);
 });

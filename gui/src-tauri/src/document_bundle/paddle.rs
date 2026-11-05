@@ -1,4 +1,15 @@
 use super::*;
+use std::sync::LazyLock;
+
+static MARKDOWN_HEADING: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(#{1,6})\s+").unwrap());
+static CAPTION_START: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^(figure|fig\.?|table)\s+[A-Z]?\d").unwrap());
+static LIST_ITEM: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^\s*(?:[-+*]|\d+[.)])\s+").unwrap());
+static FORMULA_TAG: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\\tag\*?\{([^{}]{1,40})\}$").unwrap());
+static FORMULA_NUMBER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^[a-z0-9]+(?:[.:-][a-z0-9]+)*$").unwrap());
 
 fn paddle_node_kind(block: &crate::pipeline::extract::PaddleStructuredBlock) -> &'static str {
     let label = if block.block_label.is_empty() {
@@ -27,7 +38,7 @@ fn paddle_node_kind(block: &crate::pipeline::extract::PaddleStructuredBlock) -> 
         _ => {
             let markdown = block.markdown.trim();
             let lines: Vec<&str> = markdown.lines().collect();
-            if Regex::new(r"^#{1,6}\s+").unwrap().is_match(markdown) {
+            if MARKDOWN_HEADING.is_match(markdown) {
                 "section"
             } else if markdown.starts_with("```") || markdown.starts_with("~~~") {
                 "code"
@@ -39,15 +50,9 @@ fn paddle_node_kind(block: &crate::pipeline::extract::PaddleStructuredBlock) -> 
             } else if lines.len() >= 2 && lines[0].contains('|') && is_markdown_separator(lines[1])
             {
                 "table"
-            } else if Regex::new(r"(?i)^(figure|fig\.?|table)\s+[A-Z]?\d")
-                .unwrap()
-                .is_match(markdown)
-            {
+            } else if CAPTION_START.is_match(markdown) {
                 "caption"
-            } else if Regex::new(r"(?m)^\s*(?:[-+*]|\d+[.)])\s+")
-                .unwrap()
-                .is_match(markdown)
-            {
+            } else if LIST_ITEM.is_match(markdown) {
                 "list"
             } else {
                 "text_block"
@@ -78,10 +83,7 @@ fn parse_paddle_formula_number(value: &str) -> Option<String> {
     if wrapped_in_math_delimiters && value.len() >= 4 {
         value = value[2..value.len() - 2].trim();
     }
-    if let Some(capture) = Regex::new(r"^\\tag\*?\{([^{}]{1,40})\}$")
-        .unwrap()
-        .captures(value)
-    {
+    if let Some(capture) = FORMULA_TAG.captures(value) {
         value = capture.get(1)?.as_str().trim();
     }
     if ((value.starts_with('(') && value.ends_with(')'))
@@ -90,10 +92,7 @@ fn parse_paddle_formula_number(value: &str) -> Option<String> {
     {
         value = value[1..value.len() - 1].trim();
     }
-    if Regex::new(r"(?i)^[a-z0-9]+(?:[.:-][a-z0-9]+)*$")
-        .unwrap()
-        .is_match(value)
-    {
+    if FORMULA_NUMBER.is_match(value) {
         Some(value.to_string())
     } else {
         None
@@ -359,10 +358,7 @@ fn paddle_node_label(kind: &str, page: u32) -> String {
 }
 
 fn paddle_heading_level(block: &crate::pipeline::extract::PaddleStructuredBlock) -> Option<usize> {
-    if let Some(capture) = Regex::new(r"^(#{1,6})\s+")
-        .unwrap()
-        .captures(block.markdown.trim_start())
-    {
+    if let Some(capture) = MARKDOWN_HEADING.captures(block.markdown.trim_start()) {
         return capture.get(1).map(|marker| marker.as_str().len());
     }
     let label = if block.block_label.is_empty() {

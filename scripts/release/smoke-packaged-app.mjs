@@ -93,8 +93,10 @@ if (invokedDirectly) {
   }
   await smokePackagedApp(executable, args, processStabilityOnly
     ? { requireMarker: false, stabilityMs: 5_000 }
-    : {});
+    : { timeoutMs: 120_000 }); // First launch on a hosted runner can be slow.
   console.log(processStabilityOnly
     ? `Packaged application launched and remained stable: ${executable}`
     : `Packaged application reached frontend readiness: ${executable}`);
+  // An AppImage's child can outlive it and hold these pipes open.
+  process.exit(0);
 }

@@ -1,7 +1,12 @@
-import { Component, ReactNode } from "react";
+import { Component, Fragment, ReactNode } from "react";
+import ReportIssueLink from "./ReportIssueLink";
+import WindowControls from "./WindowControls";
+import { isWindows } from "../lib/platform";
 
 interface Props {
   children: ReactNode;
+  /** Fill the enclosing pane instead of the window (boundaries inside the shell). */
+  nested?: boolean;
   /** Allows focused tests to disable details that are available only in development builds. */
   showTechnicalDetails?: boolean;
 }
@@ -29,8 +34,22 @@ export default class ErrorBoundary extends Component<Props, State> {
       const showTechnicalDetails =
         import.meta.env.DEV && this.props.showTechnicalDetails !== false;
       return (
-        <div className="h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-950 p-8">
-          <div role="alert" className="max-w-md text-center">
+        <div
+          className={`${this.props.nested ? "h-full min-h-0 overflow-auto" : "h-screen"} flex bg-gray-50 dark:bg-gray-950 p-8`}
+        >
+          {/* This screen replaces the app, and Windows has no native title bar
+              to fall back on: keep the window movable and closable. */}
+          {isWindows && !this.props.nested && (
+            <>
+              <div
+                data-tauri-drag-region
+                className="fixed inset-x-0 top-0 h-8"
+              />
+              <WindowControls />
+            </>
+          )}
+          {/* Auto margins center the message without clipping a tall one. */}
+          <div role="alert" className="m-auto max-w-md text-center">
             <h1 className="text-lg font-semibold text-red-600 dark:text-red-400 mb-2">
               Something went wrong
             </h1>
@@ -39,7 +58,8 @@ export default class ErrorBoundary extends Component<Props, State> {
             </p>
             <p className="text-xs text-gray-600 dark:text-gray-400 mb-4">
               Try again to reset the interface. If the problem continues,
-              restart Pipeline and include the message above when reporting it.
+              restart Pipeline.
+              <ReportIssueLink />
             </p>
             {showTechnicalDetails && this.state.error.stack && (
               <details className="mb-4 text-left">
@@ -67,7 +87,8 @@ export default class ErrorBoundary extends Component<Props, State> {
       );
     }
 
-    // Use key to force remount children on retry, clearing corrupted state
-    return <div key={this.state.resetKey}>{this.props.children}</div>;
+    // The key remounts children on retry, clearing corrupted state. A Fragment
+    // adds no layout box, so children keep their parent's height chain.
+    return <Fragment key={this.state.resetKey}>{this.props.children}</Fragment>;
   }
 }

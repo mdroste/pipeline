@@ -5,7 +5,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { beforeEach, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import ResearchMissions from "./ResearchMissions";
 import MissionDetail from "./research-missions/Detail";
 import MissionBuilder from "./research-missions/Builder";
@@ -124,7 +124,7 @@ it("prepares an inspect-only mission and shows its concrete scope before start",
     await screen.findByRole("button", { name: "+ New research automation" }),
   );
   const prepare = await screen.findByRole("button", {
-    name: "Prepare research automation →",
+    name: "Preview research automation →",
   });
   await waitFor(() => expect(prepare).toBeEnabled());
   expect(
@@ -163,14 +163,14 @@ it("keeps a recoverable mission draft after preparation fails", async () => {
   );
   await waitFor(() =>
     expect(
-      screen.getByRole("button", { name: "Prepare research automation →" }),
+      screen.getByRole("button", { name: "Preview research automation →" }),
     ).toBeEnabled(),
   );
   fireEvent.change(screen.getByLabelText("Automation name"), {
     target: { value: "Test the extension" },
   });
   fireEvent.click(
-    screen.getByRole("button", { name: "Prepare research automation →" }),
+    screen.getByRole("button", { name: "Preview research automation →" }),
   );
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Captured inputs changed",
@@ -186,6 +186,86 @@ it("keeps a recoverable mission draft after preparation fails", async () => {
     mocks.invoke.mock.calls.some(([name]) => name === "mission_control"),
   ).toBe(false);
 });
+describe("a saved draft and the conversation the builder opened from", () => {
+  const key = "pipeline.researchMission.draft.v1";
+  const saved = (sessionId: string) => {
+    const definition = newMission();
+    definition.name = "Earlier draft";
+    definition.policy.checkProfileIds = ["other-project-check"];
+    definition.methodIds = ["other-project-method"];
+    localStorage.setItem(
+      key,
+      JSON.stringify({ definition, sessionId, operationId: "earlier" }),
+    );
+  };
+  const open = async (initialSessionId: string | null) => {
+    render(
+      <MissionBuilder
+        initialSessionId={initialSessionId}
+        onPrepared={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    await screen.findByLabelText("Automation name");
+    return JSON.parse(localStorage.getItem(key)!);
+  };
+  it("takes the conversation it opened from, keeping the text but not the other project's tools", async () => {
+    saved("old-conversation");
+    const draft = await open("source");
+    expect(screen.getByLabelText("Source conversation")).toHaveValue("source");
+    expect(screen.getByLabelText("Automation name")).toHaveValue(
+      "Earlier draft",
+    );
+    expect(draft.sessionId).toBe("source");
+    expect(draft.definition.policy.checkProfileIds).toEqual([]);
+    expect(draft.definition.methodIds).toEqual([]);
+    expect(draft.operationId).not.toBe("earlier");
+  });
+  it("keeps a draft for the same conversation exactly as it was", async () => {
+    saved("source");
+    const draft = await open("source");
+    expect(draft.operationId).toBe("earlier");
+    expect(draft.definition.policy.checkProfileIds).toEqual([
+      "other-project-check",
+    ]);
+  });
+  it("keeps the draft's conversation when opened from no conversation", async () => {
+    saved("old-conversation");
+    const draft = await open(null);
+    expect(draft.sessionId).toBe("old-conversation");
+    expect(draft.operationId).toBe("earlier");
+  });
+});
+it("shows which check is waiting for approval until the automation ends", async () => {
+  const capability = {
+    id: "check",
+    kind: "check",
+    name: "Baseline check",
+    fingerprint: "pin",
+    parameters: {},
+    execution: {},
+    timeoutSeconds: 30,
+  };
+  const waiting = {
+    ...mission,
+    state: "running",
+    capabilities: [{ ...capability, unavailable: true }],
+  };
+  const view = render(
+    <MissionDetail mission={waiting} onUpdated={vi.fn()} onClose={vi.fn()} />,
+  );
+  expect(
+    await screen.findByText(/Waiting for your approval/),
+  ).toHaveTextContent("Baseline check");
+  view.rerender(
+    <MissionDetail
+      mission={{ ...waiting, state: "stopped" }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(screen.queryByText(/Waiting for your approval/)).toBeNull();
+});
 it("passes selected computations and monitors as bounded explicit policy", async () => {
   render(
     <MissionBuilder
@@ -196,7 +276,7 @@ it("passes selected computations and monitors as bounded explicit policy", async
   );
   await waitFor(() =>
     expect(
-      screen.getByRole("button", { name: "Prepare research automation →" }),
+      screen.getByRole("button", { name: "Preview research automation →" }),
     ).toBeEnabled(),
   );
   fireEvent.click(screen.getByText("Computation and project changes"));
@@ -204,7 +284,7 @@ it("passes selected computations and monitors as bounded explicit policy", async
   fireEvent.click(screen.getByLabelText(/Elasticity grid/));
   fireEvent.click(screen.getByLabelText("Accepted data"));
   fireEvent.click(
-    screen.getByRole("button", { name: "Prepare research automation →" }),
+    screen.getByRole("button", { name: "Preview research automation →" }),
   );
   await waitFor(() =>
     expect(mocks.invoke).toHaveBeenCalledWith(
@@ -244,7 +324,7 @@ it("does not allow host computations through an isolated task conversation", asy
   );
   await waitFor(() =>
     expect(
-      screen.getByRole("button", { name: "Prepare research automation →" }),
+      screen.getByRole("button", { name: "Preview research automation →" }),
     ).toBeEnabled(),
   );
   fireEvent.click(screen.getByText("Computation and project changes"));
@@ -311,14 +391,18 @@ it("offers reconciliation without automatically retrying an uncertain action", a
     />,
   );
   expect(
-    screen.getByRole("button", { name: "Reconcile recorded results" }),
+    screen.getByRole("button", {
+      name: "Check saved results and update status",
+    }),
   ).toBeEnabled();
   expect(mocks.invoke).not.toHaveBeenCalledWith(
     "mission_control",
     expect.anything(),
   );
   fireEvent.click(
-    screen.getByRole("button", { name: "Reconcile recorded results" }),
+    screen.getByRole("button", {
+      name: "Check saved results and update status",
+    }),
   );
   await waitFor(() =>
     expect(mocks.invoke).toHaveBeenCalledWith("mission_control", {
@@ -327,6 +411,44 @@ it("offers reconciliation without automatically retrying an uncertain action", a
       action: "reconcile",
     }),
   );
+});
+it("lets a stuck action be left behind by reconsidering the agenda", async () => {
+  mocks.invoke.mockResolvedValue({ ...mission, state: "queued" });
+  render(
+    <MissionDetail
+      mission={{ ...mission, state: "attention", activeChild: "child" }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Retry interrupted action" }),
+  ).toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Reconsider the agenda" }),
+  );
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("mission_control", {
+      id: "mission1",
+      revision: 1,
+      action: "reconsider",
+    }),
+  );
+});
+it("offers only Reconsider the agenda when no action is stuck", () => {
+  render(
+    <MissionDetail
+      mission={{ ...mission, state: "attention" }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "Reconsider the agenda" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Retry interrupted action" }),
+  ).toBeNull();
 });
 it("keeps terminal budget outcomes distinct from scientific completion", () => {
   render(
@@ -381,4 +503,132 @@ it("refreshes a selected mission after a native mission change", async () => {
   expect(
     screen.queryByRole("button", { name: "Start research automation" }),
   ).not.toBeInTheDocument();
+});
+it("keeps loaded activity pages and appends new events when the mission updates", async () => {
+  const log = Array.from({ length: 150 }, (_, i) => ({
+    sequence: i + 1,
+    at: 100,
+    kind: "note",
+    detail: `Event ${i + 1}`,
+  }));
+  const handler = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((name, args) =>
+    name === "mission_events"
+      ? Promise.resolve(
+          log.filter((e) => e.sequence > args.after).slice(0, 100),
+        )
+      : handler(name, args),
+  );
+  const running = { ...mission, state: "running" as const };
+  const view = render(
+    <MissionDetail mission={running} onUpdated={vi.fn()} onClose={vi.fn()} />,
+  );
+  fireEvent.click(screen.getByRole("tab", { name: "Activity" }));
+  await screen.findByText("Event 100");
+  fireEvent.click(screen.getByRole("button", { name: "Load more activity" }));
+  await screen.findByText("Event 150");
+  expect(
+    screen.queryByRole("button", { name: "Load more activity" }),
+  ).not.toBeInTheDocument();
+  log.push({ sequence: 151, at: 101, kind: "note", detail: "Event 151" });
+  view.rerender(
+    <MissionDetail
+      mission={{ ...running, revision: 2 }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  await screen.findByText("Event 151");
+  expect(screen.getByText("Event 1")).toBeInTheDocument();
+  expect(screen.getByText("Event 120")).toBeInTheDocument();
+  expect(
+    mocks.invoke.mock.calls
+      .filter(([name]) => name === "mission_events")
+      .map(([, args]) => args.after),
+  ).toEqual([0, 100, 150]);
+});
+it("brings opened evidence into view and returns focus when it closes", async () => {
+  const scroll = vi.fn();
+  const original = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = scroll;
+  try {
+    render(
+      <MissionDetail
+        mission={{
+          ...mission,
+          state: "running",
+          methods: [
+            {
+              id: "method1",
+              missionId: "mission1",
+              workspaceId: "project",
+              round: 1,
+              name: "Residual check",
+              whenToUse: "After calibration",
+              procedure: "Compare residuals",
+              limitations: "Tested grid only",
+              evidenceIds: ["evidence-1"],
+              retained: false,
+            },
+          ],
+        }}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Methods" }));
+    const opener = screen.getByRole("button", { name: "evidence-1" });
+    fireEvent.click(opener);
+    const heading = await screen.findByRole("heading", { name: "evidence-1" });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(scroll).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close evidence" }));
+    expect(opener).toHaveFocus();
+  } finally {
+    Element.prototype.scrollIntoView = original;
+  }
+});
+it("ignores blank criteria lines and says why preview is unavailable", async () => {
+  render(
+    <MissionBuilder
+      initialSessionId="source"
+      onPrepared={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  const preview = screen.getByRole("button", {
+    name: "Preview research automation →",
+  });
+  await waitFor(() => expect(preview).toBeEnabled());
+  fireEvent.change(screen.getByLabelText("Automation name"), {
+    target: { value: " " },
+  });
+  expect(preview).toBeDisabled();
+  expect(preview).toHaveAccessibleDescription("Name the automation.");
+  fireEvent.change(screen.getByLabelText("Automation name"), {
+    target: { value: "Extension" },
+  });
+  fireEvent.change(screen.getByLabelText(/Completion criteria/), {
+    target: { value: "\n" },
+  });
+  expect(preview).toHaveAccessibleDescription(
+    "Add at least one completion criterion.",
+  );
+  fireEvent.change(screen.getByLabelText(/Completion criteria/), {
+    target: { value: "Reproduce the baseline\n\n Explain the gap \n" },
+  });
+  expect(preview).toBeEnabled();
+  fireEvent.click(preview);
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith(
+      "mission_prepare",
+      expect.objectContaining({
+        request: expect.objectContaining({
+          definition: expect.objectContaining({
+            criteria: ["Reproduce the baseline", "Explain the gap"],
+          }),
+        }),
+      }),
+    ),
+  );
 });

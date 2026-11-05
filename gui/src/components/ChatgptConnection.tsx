@@ -1,24 +1,19 @@
+import { chatgptAccountClient } from "../lib/chatgptAccountClient";
+import type { AccountStatus } from "../lib/chatgptAccountClient";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type {
-  WorkspaceAccountState,
   WorkspaceModelCatalog,
   WorkspaceRateLimits,
 } from "../lib/workbenchTypes";
+import ReportIssueLink from "./ReportIssueLink";
 
-interface AccountStatus {
-  account: WorkspaceAccountState;
-  epoch: number;
-  version: string;
-  loginInProgress: boolean;
-  pendingLogin?: { loginId: string; epoch: number } | null;
-  existingAccounts?: Array<{
-    source: string;
-    label: string;
-    email: string | null;
-  }>;
-  error?: string | null;
+/** Names a rate-limit window by its length, such as "7-day limit". */
+function windowLimitLabel(minutes: number | null) {
+  if (!minutes) return "Second limit";
+  if (minutes % 1440 === 0) return `${minutes / 1440}-day limit`;
+  if (minutes % 60 === 0) return `${minutes / 60}-hour limit`;
+  return `${minutes}-minute limit`;
 }
 
 export default function ChatgptConnection({
@@ -32,25 +27,31 @@ export default function ChatgptConnection({
   const [catalog, setCatalog] = useState<WorkspaceModelCatalog | null>(null);
   const [limits, setLimits] = useState<WorkspaceRateLimits | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // A poll reports only the account's state, so its success must not erase what
+  // went wrong with something the researcher asked for.
+  const [pollError, setPollError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const identity = useRef<string | null>(null);
   const readiness = useRef<string | null>(null);
   const mounted = useRef(true);
   const refresh = useCallback(async () => {
-    const next = await invoke<AccountStatus>("chatgpt_account_status");
+    const next = await chatgptAccountClient.status();
     if (mounted.current) {
       setStatus(next);
-      setError(null);
+      setPollError(null);
     }
   }, []);
   useEffect(() => {
     mounted.current = true;
     const poll = () =>
       void refresh().catch((e) => {
-        if (mounted.current) setError(typeof e === "string" ? e : String(e));
+        if (mounted.current)
+          setPollError(typeof e === "string" ? e : String(e));
       });
     poll();
-    const timer = window.setInterval(poll, 5000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") poll();
+    }, 5000);
     let dispose: (() => void) | undefined;
     void listen("chatgpt:account-changed", poll).then((stop) => {
       if (mounted.current) dispose = stop;
@@ -83,31 +84,86 @@ export default function ChatgptConnection({
   }, [status, onAccountChange, onStatusChange]);
   async function act(action: () => Promise<unknown>) {
     setBusy(true);
-    setError(null);
+    setActionError(null);
     try {
       await action();
       await refresh();
     } catch (e) {
-      setError(typeof e === "string" ? e : String(e));
+      setActionError(typeof e === "string" ? e : String(e));
     } finally {
       setBusy(false);
     }
   }
   const signedIn = status?.account.status === "chatgpt";
+  const error = actionError || pollError || status?.error;
   const disabled = busy || !status || status.loginInProgress;
   return (
-    <div
-      role="group"
-      aria-label="ChatGPT account"
-      className="space-y-3 rounded border border-gray-200 p-4 dark:border-neutral-700"
-    >
-      <p className="text-sm">
-        {signedIn
-          ? `Signed in${status.account.email ? ` as ${status.account.email}` : ""}${status.account.planType ? ` (${status.account.planType})` : ""}`
-          : status
-            ? "Not signed in to ChatGPT."
-            : "Checking ChatGPT account…"}
-      </p>
+    <div role="group" aria-label="ChatGPT account" className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+        <p className="text-sm">
+          {signedIn
+            ? `Signed in${status.account.email ? ` as ${status.account.email}` : ""}${status.account.planType ? ` (${status.account.planType})` : ""}`
+            : status
+              ? "Not signed in to ChatGPT."
+              : "Checking ChatGPT account…"}
+        </p>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            className="settings-button"
+            disabled={disabled}
+            onClick={() => void act(() => chatgptAccountClient.loginStart())}
+          >
+            {signedIn ? "Change account" : "Sign in to ChatGPT"}
+          </button>
+          {status?.pendingLogin && (
+            <button
+              className="settings-button"
+              disabled={busy}
+              onClick={() =>
+                void act(() =>
+                  chatgptAccountClient.loginCancel({ ...status.pendingLogin }),
+                )
+              }
+            >
+              Cancel sign-in
+            </button>
+          )}
+          {signedIn && (
+            <button
+              className="settings-button"
+              disabled={disabled}
+              onClick={() => void act(() => chatgptAccountClient.logout())}
+            >
+              Sign out
+            </button>
+          )}
+          <button
+            className="settings-button-quiet"
+            disabled={busy}
+            onClick={() => void act(async () => {})}
+          >
+            Refresh
+          </button>
+          {signedIn && (
+            <button
+              className="settings-button-quiet"
+              disabled={disabled}
+              onClick={() =>
+                void act(async () => {
+                  const [models, usage] = await Promise.all([
+                    chatgptAccountClient.models(),
+                    chatgptAccountClient.limits(),
+                  ]);
+                  setCatalog(models);
+                  setLimits(usage);
+                })
+              }
+            >
+              Models & usage
+            </button>
+          )}
+        </div>
+      </div>
       {!!status?.existingAccounts?.length && (
         <div className="space-y-2 text-sm">
           <p>
@@ -122,7 +178,7 @@ export default function ChatgptConnection({
               disabled={disabled}
               onClick={() =>
                 void act(() =>
-                  invoke("chatgpt_select_existing_account", {
+                  chatgptAccountClient.selectExisting({
                     source: account.source,
                   }),
                 )
@@ -135,67 +191,8 @@ export default function ChatgptConnection({
         </div>
       )}
       {status?.loginInProgress && (
-        <p className="text-sm">
-          Complete ChatGPT sign-in in your browser. Conversations and Reviews
-          can start when sign-in finishes.
-        </p>
+        <p className="text-sm">Finish signing in to ChatGPT in your browser.</p>
       )}
-      <div className="flex flex-wrap gap-2">
-        <button
-          className="settings-button"
-          disabled={disabled}
-          onClick={() => void act(() => invoke("chatgpt_login_start"))}
-        >
-          {signedIn ? "Change account" : "Sign in to ChatGPT"}
-        </button>
-        {status?.pendingLogin && (
-          <button
-            className="settings-button"
-            disabled={busy}
-            onClick={() =>
-              void act(() =>
-                invoke("chatgpt_login_cancel", { ...status.pendingLogin }),
-              )
-            }
-          >
-            Cancel sign-in
-          </button>
-        )}
-        {signedIn && (
-          <button
-            className="settings-button"
-            disabled={disabled}
-            onClick={() => void act(() => invoke("chatgpt_logout"))}
-          >
-            Sign out
-          </button>
-        )}
-        <button
-          className="settings-button"
-          disabled={busy}
-          onClick={() => void act(async () => {})}
-        >
-          Refresh
-        </button>
-        {signedIn && (
-          <button
-            className="settings-button"
-            disabled={disabled}
-            onClick={() =>
-              void act(async () => {
-                const [models, usage] = await Promise.all([
-                  invoke<WorkspaceModelCatalog>("chatgpt_model_catalog"),
-                  invoke<WorkspaceRateLimits>("chatgpt_rate_limits"),
-                ]);
-                setCatalog(models);
-                setLimits(usage);
-              })
-            }
-          >
-            Models & usage
-          </button>
-        )}
-      </div>
       {catalog && (
         <details className="settings-disclosure">
           <summary>
@@ -223,13 +220,14 @@ export default function ChatgptConnection({
             ? `${bucket.primary.remainingPercent}% remaining`
             : "Current usage unavailable"}
           {bucket.secondary
-            ? `; second window ${bucket.secondary.remainingPercent}% remaining`
+            ? `; ${windowLimitLabel(bucket.secondary.windowDurationMins)}: ${bucket.secondary.remainingPercent}% remaining`
             : ""}
         </p>
       ))}
-      {(error || status?.error) && (
+      {error && (
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">
-          {error || status?.error}
+          {error}
+          <ReportIssueLink />
         </p>
       )}
     </div>

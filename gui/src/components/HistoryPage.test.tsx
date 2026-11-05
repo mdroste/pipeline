@@ -1,11 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import HistoryPage from "./HistoryPage";
 import type { RunSummary } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+const listen = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/event", () => ({ listen }));
+const confirmDialog = vi.hoisted(() => vi.fn());
+vi.mock("./DialogService", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./DialogService")>()),
+  confirmDialog,
+}));
 
 function run(overrides: Partial<RunSummary>): RunSummary {
   return {
@@ -36,6 +43,36 @@ function run(overrides: Partial<RunSummary>): RunSummary {
 describe("HistoryPage", () => {
   beforeEach(() => {
     invoke.mockReset();
+    listen.mockReset();
+    listen.mockResolvedValue(() => {});
+  });
+
+  it("lists a run with a misquotation as done, not degraded", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "list_runs")
+        return Promise.resolve([
+          run({ run_id: "one", input_name: "one.pdf", status: "degraded" }),
+          run({ run_id: "two", input_name: "two.pdf", status: "done" }),
+          run({ run_id: "three", input_name: "three.pdf", status: "partial" }),
+        ]);
+      if (command === "runs_disk_usage")
+        return Promise.resolve({ count: 3, bytes: 300 });
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const user = userEvent.setup();
+    render(<HistoryPage onClose={vi.fn()} />);
+
+    await screen.findByText("one.pdf");
+    expect(screen.queryByText("degraded")).not.toBeInTheDocument();
+    const filter = screen.getByRole("combobox", { name: "Filter by status" });
+    expect(
+      within(filter).queryByRole("option", { name: "degraded" }),
+    ).not.toBeInTheDocument();
+
+    await user.selectOptions(filter, "done");
+    expect(screen.getByText("one.pdf")).toBeVisible();
+    expect(screen.getByText("two.pdf")).toBeVisible();
+    expect(screen.queryByText("three.pdf")).not.toBeInTheDocument();
   });
 
   it("decomposes tokens without showing detailed model activity in the run list", async () => {
@@ -186,6 +223,44 @@ describe("HistoryPage", () => {
     });
   });
 
+  it("drops a report moved to Trash from the comparison", async () => {
+    confirmDialog.mockResolvedValue(true);
+    let listed = [
+      run({ run_id: "kept", title: "Kept run" }),
+      run({ run_id: "gone", title: "Gone run" }),
+    ];
+    invoke.mockImplementation((command: string, args: { runId?: string }) => {
+      if (command === "list_runs") return Promise.resolve(listed);
+      if (command === "runs_disk_usage")
+        return Promise.resolve({ count: 2, bytes: 1024 });
+      if (command === "delete_run") {
+        listed = listed.filter((entry) => entry.run_id !== args.runId);
+        return Promise.resolve(null);
+      }
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const user = userEvent.setup();
+    render(<HistoryPage onClose={vi.fn()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Compare" }));
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select Kept run for comparison" }),
+    );
+    await user.click(
+      screen.getByRole("checkbox", { name: "Select Gone run for comparison" }),
+    );
+    expect(screen.getByText("2 of 2 selected")).toBeVisible();
+
+    await user.click(
+      screen.getAllByRole("button", { name: "Move to Trash" })[1],
+    );
+
+    expect(await screen.findByText("1 of 2 selected")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Compare selected" }),
+    ).toBeDisabled();
+  });
+
   it("ignores an older refresh that resolves after a newer one", async () => {
     const listResolvers: Array<(runs: RunSummary[]) => void> = [];
     invoke.mockImplementation((command: string) => {
@@ -257,5 +332,151 @@ describe("HistoryPage", () => {
       name: /^Report \d+$/,
     });
     expect(reportButtons[0]).toHaveTextContent("Report 00");
+  });
+
+  it("marks running reviews and withholds actions the backend rejects", async () => {
+    let listed = [
+      run({
+        run_id: "live_run",
+        title: "Live review",
+        status: "running",
+        resumable: true,
+      }),
+      run({ run_id: "done_run", title: "Finished review" }),
+    ];
+    invoke.mockImplementation((command: string) => {
+      if (command === "list_runs") return Promise.resolve(listed);
+      if (command === "runs_disk_usage")
+        return Promise.resolve({ count: 2, bytes: 1024 });
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const user = userEvent.setup();
+    render(<HistoryPage onClose={vi.fn()} onRerun={vi.fn()} />);
+
+    expect(await screen.findByText("Live review")).toBeVisible();
+    expect(screen.getByText("running", { selector: "span" })).toHaveClass(
+      "bg-blue-100",
+    );
+    expect(
+      screen.queryByRole("button", { name: "Live review" }),
+    ).not.toBeInTheDocument();
+    const [liveOpen, doneOpen] = screen.getAllByRole("button", {
+      name: "Open",
+    });
+    expect(liveOpen).toBeDisabled();
+    expect(doneOpen).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "Resume" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("More actions for Live review"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText("More actions for Finished review"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "running" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Compare" }));
+    expect(
+      screen.getByRole("checkbox", {
+        name: "Select Live review for comparison",
+      }),
+    ).toBeDisabled();
+
+    // When the queue reports the review finished, the list reloads.
+    await waitFor(() => expect(listen).toHaveBeenCalled());
+    const [event, onQueue] = listen.mock.calls[0];
+    expect(event).toBe("runs:queue");
+    listed = listed.map((entry) =>
+      entry.run_id === "live_run" ? { ...entry, status: "done" } : entry,
+    );
+    await act(async () =>
+      onQueue({
+        payload: { limit: 2, runs: [{ runId: "live_run", status: "done" }] },
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Live review" }),
+    ).toBeEnabled();
+  });
+
+  it("starts each page and filter at the top and restores the list after a report", async () => {
+    const runs = Array.from({ length: 27 }, (_, index) =>
+      run({
+        run_id: `run-${index}`,
+        title: `Report ${String(index).padStart(2, "0")}`,
+        created: `2026-08-${String((index % 23) + 1).padStart(2, "0")}T12:00:00Z`,
+      }),
+    );
+    invoke.mockImplementation((command: string) => {
+      if (command === "list_runs") return Promise.resolve(runs);
+      if (command === "runs_disk_usage")
+        return Promise.resolve({ count: runs.length, bytes: 1024 });
+      if (command === "get_run_report")
+        return Promise.resolve({ step_outputs: [], failed_steps: [] });
+      if (command === "read_artifact")
+        return Promise.resolve({ text: "# Saved report" });
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const user = userEvent.setup();
+    render(<HistoryPage onClose={vi.fn()} />);
+    await screen.findByText("Page 1 of 2");
+    const list = () =>
+      screen
+        .getAllByRole("button", { name: "Open" })[0]
+        .closest(".overflow-auto") as HTMLElement;
+
+    list().scrollTop = 900;
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(list().scrollTop).toBe(0);
+
+    list().scrollTop = 300;
+    await user.type(
+      screen.getByRole("textbox", { name: "Filter report history" }),
+      "Report",
+    );
+    expect(list().scrollTop).toBe(0);
+
+    list().scrollTop = 450;
+    await user.click(screen.getAllByRole("button", { name: "Open" })[1]);
+    await user.click(
+      await screen.findByRole("button", { name: "Back to history" }),
+    );
+    await screen.findByText("Page 1 of 2");
+    expect(list().scrollTop).toBe(450);
+  });
+
+  it("follows a cited source supplied after the run route has committed", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "list_runs") return Promise.resolve([run({})]);
+      if (command === "runs_disk_usage")
+        return Promise.resolve({ count: 1, bytes: 1024 });
+      if (command === "get_run_report")
+        return Promise.resolve({ step_outputs: [], failed_steps: [] });
+      if (command === "read_artifact")
+        return Promise.resolve({ text: "# Saved report" });
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    const view = render(
+      <HistoryPage onClose={vi.fn()} initialRunId="abc_run" />,
+    );
+    expect(await screen.findByRole("tab", { name: "Report" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    view.rerender(
+      <HistoryPage
+        onClose={vi.fn()}
+        initialRunId="abc_run"
+        initialSourceSelection={{ page: 12 }}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Sources" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      ),
+    );
   });
 });

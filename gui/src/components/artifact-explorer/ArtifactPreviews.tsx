@@ -1,9 +1,11 @@
 import { useState } from "react";
-import { open as openExternal } from "@tauri-apps/plugin-shell";
+import { invoke } from "@tauri-apps/api/core";
 import { fileLanguage } from "../../lib/fileLanguages";
 import type { ArtifactEntry, ArtifactContent } from "../../lib/artifactTypes";
 import HighlightedCode from "../file-workspace/HighlightedCode";
+import { parseResearchTable } from "../ResearchTablePreview";
 import { ext, formatBytes } from "./format";
+import ReportIssueLink from "../ReportIssueLink";
 const MAX_CSV_ROWS = 200;
 export function CodeView({ text, relPath }: { text: string; relPath: string }) {
   return <HighlightedCode text={text} language={fileLanguage(relPath)} />;
@@ -11,9 +13,18 @@ export function CodeView({ text, relPath }: { text: string; relPath: string }) {
 
 export function CsvView({ text, relPath }: { text: string; relPath: string }) {
   const delim = ext(relPath) === "tsv" ? "\t" : ",";
-  // Naive split — quoted delimiters aren't handled; fine for a preview.
-  const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
-  const rows = lines.slice(0, MAX_CSV_ROWS).map((l) => l.split(delim));
+  const { rows, truncated, error } = parseResearchTable(
+    text,
+    delim,
+    MAX_CSV_ROWS,
+  );
+  if (error)
+    return (
+      <div className="space-y-2">
+        <p className="text-xs text-amber-700 dark:text-amber-300">{error}</p>
+        <CodeView text={text} relPath={relPath} />
+      </div>
+    );
   return (
     <div className="overflow-auto">
       <table className="text-xs border-collapse">
@@ -37,9 +48,9 @@ export function CsvView({ text, relPath }: { text: string; relPath: string }) {
           ))}
         </tbody>
       </table>
-      {lines.length > MAX_CSV_ROWS && (
+      {truncated && (
         <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-          Showing first {MAX_CSV_ROWS} of {lines.length} rows.
+          Showing the first {MAX_CSV_ROWS} rows.
         </p>
       )}
     </div>
@@ -47,9 +58,11 @@ export function CsvView({ text, relPath }: { text: string; relPath: string }) {
 }
 
 export function BinaryCard({
+  runId,
   entry,
   content,
 }: {
+  runId: string;
   entry: ArtifactEntry | null;
   content: ArtifactContent;
 }) {
@@ -63,7 +76,7 @@ export function BinaryCard({
     setOpenError(null);
     setOpening(true);
     try {
-      await openExternal(content.abs_path);
+      await invoke("open_run_artifact", { runId, relPath: entry?.rel_path });
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setOpenError(
@@ -84,8 +97,8 @@ export function BinaryCard({
       </p>
       {executable ? (
         <p className="text-xs text-gray-600 dark:text-gray-300">
-          This file is a program written during the run. Pipeline does not
-          launch it; inspect it from its folder if you need it.
+          The review created this program file. Open its folder to inspect the
+          code. Pipeline will not run it from this preview.
         </p>
       ) : (
         <button
@@ -102,6 +115,7 @@ export function BinaryCard({
       {openError && (
         <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-400">
           {openError}
+          <ReportIssueLink />
         </p>
       )}
     </div>

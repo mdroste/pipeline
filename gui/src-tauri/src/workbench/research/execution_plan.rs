@@ -1,8 +1,9 @@
 //! Captured execution plans. Fresh copies provide input identity, not host containment.
 use super::execution::{
-    get_execution_profile, input_manifest, launch_manifest, safe_relative_path, ExecutionProfile,
-    HostExecutionPreview,
+    get_execution_profile, hash_regular_file, input_manifest, launch_manifest, safe_relative_path,
+    ExecutionProfile, HostExecutionPreview, SNAPSHOT_BUDGET,
 };
+use super::papers::copy_immutable_within;
 use super::*;
 use crate::workbench::desk::{self, DeskRecord};
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,20 +98,25 @@ pub fn capture(store: &Store, r: CapturePlanRequest) -> WorkbenchResult<DeskReco
     // silently rewriting arbitrary shell strings would change their meaning.
     for arg in profile.argv.iter().skip(1) {
         if arg.contains(&profile.cwd) {
-            return Err(WorkbenchError::invalid("Use paths relative to the profile cwd before capture, including inside oldstata commands"));
+            return Err(WorkbenchError::invalid("Use paths relative to the profile cwd before capture, including inside Stata launcher commands"));
         }
     }
     let launch = launch_manifest(&profile)?;
     for file in launch["launchFiles"].as_array().into_iter().flatten() {
         let path = Path::new(file["path"].as_str().unwrap_or(""));
-        let relative = path
-            .strip_prefix(&root)
-            .map_err(|_| WorkbenchError::invalid("Declare launch scripts inside the project cwd"))?
-            .to_string_lossy()
-            .to_string();
-        if !profile.inputs.contains(&relative) {
+        let relative = path.strip_prefix(&root).map_err(|_| {
+            WorkbenchError::invalid("Declare launch scripts inside the project cwd")
+        })?;
+        // By component: Windows writes this path with backslashes, and the
+        // declaration may use either separator.
+        if !profile
+            .inputs
+            .iter()
+            .any(|input| Path::new(input).components().eq(relative.components()))
+        {
             return Err(WorkbenchError::invalid(format!(
-                "Add launch script {relative} to the declared inputs"
+                "Add launch script {} to the declared inputs",
+                relative.display()
             )));
         }
     }
@@ -181,7 +187,7 @@ pub fn capture(store: &Store, r: CapturePlanRequest) -> WorkbenchResult<DeskReco
             .root_path()
             .join("blobs")
             .join(format!("{hash}.capture"));
-        copy_immutable(&source, &dest, hash)?;
+        copy_immutable_within(&source, &dest, hash, SNAPSHOT_BUDGET)?;
         let artifact_id = new_id("capture")?;
         open_connection(store)?.execute("INSERT OR IGNORE INTO artifacts(id,workspace_id,content_hash,media_kind,size_bytes,origin,storage_reference,created_at) VALUES(?1,?2,?3,'capture',?4,'execution_plan',?5,?6)",params![artifact_id,profile.workspace_id,hash,file["sizeBytes"].as_u64().unwrap_or(0) as i64,dest.to_string_lossy(),now()]).map_err(|e|WorkbenchError::storage("Capture artifact",e))?;
         let artifact_id=open_connection(store)?.query_row("SELECT id FROM artifacts WHERE workspace_id=?1 AND content_hash=?2 AND media_kind='capture'",params![profile.workspace_id,hash],|r|r.get(0)).map_err(|e|WorkbenchError::storage("Capture artifact",e))?;
@@ -307,6 +313,7 @@ pub(crate) fn stage(
     for f in &p.captured_files {
         safe_relative_path("Captured input", &f.path)?;
         let source:String=open_connection(store)?.query_row("SELECT storage_reference FROM artifacts WHERE id=?1 AND workspace_id=?2 AND content_hash=?3",params![f.artifact_id,ws,f.hash],|r|r.get(0)).map_err(|e|WorkbenchError::storage("Captured input artifact",e))?;
+        crate::workbench::store::require_available("This saved input", &source)?;
         let source = fs::canonicalize(source)
             .map_err(|e| WorkbenchError::storage("Captured artifact", e))?;
         if !source.starts_with(
@@ -324,7 +331,7 @@ pub(crate) fn stage(
                 .map_err(|e| WorkbenchError::storage("Captured directories", e))?;
         }
         fs::copy(source, &dest).map_err(|e| WorkbenchError::storage("Copy captured bytes", e))?;
-        if hash_file(&dest)?.0 != f.hash {
+        if !hash_regular_file(&dest).is_ok_and(|(hash, _)| hash == f.hash) {
             return Err(WorkbenchError::invalid("Captured input integrity failed"));
         }
         #[cfg(unix)]

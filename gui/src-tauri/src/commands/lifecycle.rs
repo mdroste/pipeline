@@ -365,6 +365,21 @@ pub(crate) fn kill_independent_process(pid: u32) {
     kill_process(pid);
 }
 
+/// Stop every queued and running review and force-stop the child processes of
+/// every run scope, including the shared fallback. The app is exiting, and
+/// process-group children such as `llama-server` outlive it unless they are
+/// signalled here: nothing else runs their drop guards.
+pub(crate) fn stop_all_runs() {
+    super::run_queue::cancel_all();
+    stop_scopes(crate::run_scope::all());
+}
+
+fn stop_scopes(scopes: Vec<std::sync::Arc<crate::run_scope::RunScope>>) {
+    for scope in scopes {
+        scope.cancel();
+    }
+}
+
 /// Cancel one pass: mark it cancelled (so it won't retry) and kill its
 /// subprocesses. Other passes in the wave keep running. `run_key` names the
 /// run; without it the pass is cancelled in the calling run, or, from outside
@@ -448,6 +463,38 @@ pub(crate) fn kill_process(pid: u32) {
 #[cfg(test)]
 mod tests {
     use super::is_pipeline_cancellation_error;
+
+    /// A detached process group, as `llama-server` runs: it has null stdio and
+    /// no drop guard runs at exit, so only the scope can stop it.
+    #[cfg(unix)]
+    #[test]
+    fn stopping_runs_kills_a_detached_child_of_a_running_review() {
+        use std::time::{Duration, Instant};
+        let run = crate::run_scope::ActiveScope::begin("exit-stops-detached-child");
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "sleep 60"]);
+        crate::agent_runtime::process::configure_silent_command(&mut command);
+        let mut child = command.spawn().unwrap();
+        crate::run_scope::enter_blocking(run.scope().clone(), || {
+            super::register_child_pid(child.id());
+        });
+
+        super::stop_scopes(vec![run.scope().clone()]);
+
+        assert!(run.scope().is_cancelled());
+        let started = Instant::now();
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "the child outlived the stop"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(!status.success());
+    }
 
     #[test]
     fn cancellation_errors_use_pipeline_owned_messages_only() {

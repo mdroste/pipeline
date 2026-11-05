@@ -8,6 +8,8 @@ import type {
   BatchJob,
 } from "./types";
 import type { ExecutionPlanStage } from "./pipelineHelpers";
+import type { UsageEstimate } from "./usageEstimate";
+import type { HostCheck } from "./analyzers";
 
 export interface RunProfileSnapshot {
   profileId: string;
@@ -33,8 +35,18 @@ export interface ExecutionPlanEnvelope {
   inputSlots: InputSlot[];
   readiness: DepsReport;
   stages: ExecutionPlanStage[];
+  /** Every provider the run may call, from the readiness check's own set. */
+  providers?: string[];
+  orientationAgent?: string;
   parallelAgents?: string[];
+  sequentialAgent?: string;
   mergeAgent?: string | null;
+  /** The usage-limit backup, when it couldn't run right now. */
+  backupUnavailable?: string | null;
+  usageEstimate?: UsageEstimate;
+  hostChecks?: HostCheck[];
+  /** Files in the selected folders that won’t fit in the Review’s copy. */
+  inputNotices?: string[];
 }
 
 export interface PreparedLaunch {
@@ -52,6 +64,7 @@ export function configForRunPreview(
   agents: string[],
   overrides: RunParallelOverrides | null,
   mergeAgent?: string | null,
+  sequentialAgent?: string,
 ): PipelineConfig {
   return {
     ...config,
@@ -69,7 +82,11 @@ export function configForRunPreview(
             effort_overrides:
               overrides?.effort_overrides ?? step.effort_overrides,
           }
-        : step,
+        : step.phase === "sequential" &&
+            step.agents.length === 0 &&
+            sequentialAgent
+          ? { ...step, agents: [sequentialAgent] }
+          : step,
     ),
   };
 }

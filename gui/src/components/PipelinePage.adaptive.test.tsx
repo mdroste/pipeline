@@ -176,7 +176,7 @@ describe("PipelinePage", () => {
       },
     };
     mockLoad(config, {
-      get_active_profile: "auto-review",
+      get_active_profile: "auto-paper-review",
       get_auto_review_catalog: adaptiveCatalog,
       resolve_orientation_schema_catalogs: resolved,
     });
@@ -220,9 +220,56 @@ describe("PipelinePage", () => {
       target: { value: JSON.stringify(withoutContract) },
     });
     expect(screen.getByRole("alert")).toHaveTextContent(
-      "Automatic Paper Review must retain x-pipeline-contract",
+      "This review must retain x-pipeline-contract",
     );
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("restores the open built-in's own adaptive router", async () => {
+    const user = userEvent.setup();
+    const config = makeConfig();
+    config.orientation_schema = {
+      "x-pipeline-contract": "auto-review-v2",
+      "x-pipeline-adaptive-agent-count": 3,
+    };
+    config.orientation_prompt = "Edited router.";
+    config.steps = [
+      { ...config.steps[0], id: "auto_consistency", label: "Consistency" },
+      { ...config.steps[1], id: "auto_synthesis", label: "Consolidate" },
+    ];
+    mockLoad(config, {
+      get_active_profile: "slide-review",
+      get_auto_review_orientation_defaults: {
+        prompt: "This document is a slide deck.",
+        schema: { "x-pipeline-contract": "auto-review-v2", pinned: true },
+      },
+    });
+    render(<PipelinePage onClose={() => {}} />);
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Orientation & classification",
+      }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Restore adaptive router prompt & schema",
+      }),
+    );
+
+    expect(invoke).toHaveBeenCalledWith(
+      "get_auto_review_orientation_defaults",
+      { profileId: "slide-review" },
+    );
+    await waitFor(() =>
+      expect(
+        (
+          screen.getByRole("textbox", {
+            name: "Orientation map prompt",
+          }) as HTMLTextAreaElement
+        ).value,
+      ).toBe("This document is a slide deck."),
+    );
   });
 
   it("shows compact Auto Review slots and their direct synthesis contract", async () => {
@@ -288,7 +335,7 @@ describe("PipelinePage", () => {
     );
     expect(
       screen.getByText(
-        /Catalog placeholders are populated from the live specialist manifests/,
+        /Pipeline fills the catalog placeholders with the current specialist list/,
       ),
     ).toBeInTheDocument();
 
@@ -301,13 +348,13 @@ describe("PipelinePage", () => {
       screen.getByRole("heading", { name: "Adaptive agents" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Every adaptive-agent report feeds directly/),
+      screen.getByText(/Their reports are consolidated alongside/),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/alongside Contribution & Literature/),
     ).toBeInTheDocument();
     await user.selectOptions(
-      screen.getByRole("combobox", { name: "Number of adaptive agents" }),
+      screen.getByRole("combobox", { name: "Number of agents" }),
       "4",
     );
     expect(
@@ -379,7 +426,7 @@ describe("PipelinePage", () => {
         label: "Consolidate Feedback",
       },
     ];
-    mockLoad(config, { get_active_profile: "auto-review-quick" });
+    mockLoad(config, { get_active_profile: "auto-paper-review-fast" });
     render(<PipelinePage onClose={() => {}} />);
 
     const adaptive = await screen.findByRole("button", {
@@ -388,13 +435,13 @@ describe("PipelinePage", () => {
     await user.click(adaptive);
 
     const count = screen.getByRole("combobox", {
-      name: "Number of adaptive agents",
+      name: "Number of agents",
     });
     expect(
       screen.getByRole("option", { name: "Automatic (2–4)" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "5" })).not.toBeInTheDocument();
-    expect(screen.getByText(/1 to 2 method reviewers/)).toBeInTheDocument();
+    expect(screen.getAllByText("1–2 per paper")).toHaveLength(2);
     expect(
       screen.getByText(
         /alongside Claims & Consistency, Exposition & Architecture/,

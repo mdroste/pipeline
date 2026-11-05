@@ -1,4 +1,6 @@
 use super::*;
+use base64::{engine::general_purpose::STANDARD, Engine};
+use std::io::Write as _;
 
 static READ_DIR_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -26,6 +28,19 @@ fn incomplete_provider_responses_are_identified() {
 }
 
 #[test]
+fn only_a_warm_up_accepts_stopping_at_the_anthropic_output_cap() {
+    assert!(super::loops::anthropic_stop_fails(
+        Some("max_tokens"),
+        false
+    ));
+    assert!(!super::loops::anthropic_stop_fails(
+        Some("max_tokens"),
+        true
+    ));
+    assert!(!super::loops::anthropic_stop_fails(Some("end_turn"), false));
+}
+
+#[test]
 fn blocked_google_candidates_deserialize_without_content_or_parts() {
     // SAFETY/RECITATION-blocked candidates omit `content` entirely.
     let blocked: GoogleResponse = serde_json::from_value(serde_json::json!({
@@ -41,7 +56,15 @@ fn blocked_google_candidates_deserialize_without_content_or_parts() {
         "candidates": [{"content": {"role": "model"}, "finishReason": "MAX_TOKENS"}]
     }))
     .unwrap();
-    assert!(truncated.candidates.unwrap()[0].content.parts.is_empty());
+    let truncated = &truncated.candidates.unwrap()[0];
+    assert!(truncated.content.parts.is_empty());
+
+    // Only a warm-up accepts that cap, and only that reason.
+    let reason = truncated.finish_reason.as_deref();
+    assert!(super::loops::google_stop_fails(reason, false));
+    assert!(!super::loops::google_stop_fails(reason, true));
+    assert!(super::loops::google_stop_fails(Some("SAFETY"), true));
+    assert!(!super::loops::google_stop_fails(Some("STOP"), false));
 }
 
 #[test]
@@ -68,6 +91,49 @@ fn exhausted_api_quota_survives_429_formatting() {
         transient,
         "Anthropic: Rate limited. Wait a moment and try again."
     );
+}
+
+#[test]
+fn real_openai_and_gemini_quota_bodies_are_usage_limits() {
+    let openai = format_api_error(
+        "OpenAI",
+        429,
+        r#"{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","param":null,"code":"insufficient_quota"}}"#,
+    );
+    assert!(super::super::provider_error::is_usage_limit_error(&openai));
+    assert!(openai.contains("Usage limit reached"), "{openai}");
+
+    let google = format_api_error(
+        "Google",
+        429,
+        r#"{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED"}}"#,
+    );
+    assert!(super::super::provider_error::is_usage_limit_error(&google));
+
+    // The code alone is enough when the message does not say so.
+    let coded = format_api_error(
+        "OpenAI",
+        429,
+        r#"{"error":{"message":"Billing issue.","type":"billing_error","code":"insufficient_quota"}}"#,
+    );
+    assert!(super::super::provider_error::is_usage_limit_error(&coded));
+    assert!(
+        coded.contains("insufficient_quota: Billing issue."),
+        "{coded}"
+    );
+}
+
+#[test]
+fn ordinary_rate_limit_bodies_stay_transient() {
+    for body in [
+        r#"{"error":{"message":"Rate limit reached for gpt-5 on tokens per min.","type":"tokens","code":"rate_limit_exceeded"}}"#,
+        r#"{"error":{"code":429,"message":"Resource has been exhausted.","status":"RESOURCE_EXHAUSTED"}}"#,
+    ] {
+        assert_eq!(
+            format_api_error("OpenAI", 429, body),
+            "OpenAI: Rate limited. Wait a moment and try again."
+        );
+    }
 }
 
 #[test]
@@ -642,4 +708,107 @@ fn write_tool_confinement_in_scope() {
 
     // Disabled state rejects everything.
     assert!(write_file_for_tool(&ToolAccess::default(), "steps/report.md", "x").is_err());
+}
+
+#[test]
+fn provider_request_json_preserves_omissions_casing_and_wire_fields() {
+    let anthropic = AnthropicRequest {
+        thinking: None,
+        model: "fixture".into(),
+        max_tokens: 17,
+        system: None,
+        messages: vec![AnthropicMessage {
+            role: "user".into(),
+            content: serde_json::json!([{"type":"text","text":"paper"}]),
+        }],
+        tools: vec![],
+        output_config: None,
+    };
+    assert_eq!(
+        serde_json::to_string(&anthropic).unwrap(),
+        r#"{"model":"fixture","max_tokens":17,"messages":[{"role":"user","content":[{"text":"paper","type":"text"}]}]}"#
+    );
+    let openai = OpenAIRequest {
+        model: "fixture".into(),
+        messages: vec![OpenAIMessage {
+            role: "assistant".into(),
+            content: None,
+            tool_calls: Some(vec![OpenAIToolCall {
+                id: "call-1".into(),
+                call_type: "function".into(),
+                function: OpenAIFunctionCall {
+                    name: "Read".into(),
+                    arguments: "{}".into(),
+                },
+            }]),
+            tool_call_id: None,
+        }],
+        tools: vec![],
+        reasoning_effort: Some("high".into()),
+        max_completion_tokens: Some(17),
+        prompt_cache_key: Some("paper-1".into()),
+        response_format: None,
+    };
+    assert_eq!(
+        serde_json::to_string(&openai).unwrap(),
+        r#"{"model":"fixture","messages":[{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"Read","arguments":"{}"}}]}],"reasoning_effort":"high","max_completion_tokens":17,"prompt_cache_key":"paper-1"}"#
+    );
+    let google = GoogleRequest {
+        contents: vec![GoogleContent {
+            role: "user".into(),
+            parts: vec![serde_json::json!({"text":"paper"})],
+        }],
+        system_instruction: Some(GoogleContent {
+            role: String::new(),
+            parts: vec![serde_json::json!({"text":"instructions"})],
+        }),
+        tools: vec![],
+        tool_config: Some(serde_json::json!({"functionCallingConfig":{"mode":"AUTO"}})),
+        generation_config: Some(serde_json::json!({"maxOutputTokens":17})),
+    };
+    assert_eq!(
+        serde_json::to_string(&google).unwrap(),
+        r#"{"contents":[{"role":"user","parts":[{"text":"paper"}]}],"systemInstruction":{"role":"","parts":[{"text":"instructions"}]},"toolConfig":{"functionCallingConfig":{"mode":"AUTO"}},"generationConfig":{"maxOutputTokens":17}}"#
+    );
+    assert_eq!(
+        serde_json::to_string(&ReadToolDef::default()).unwrap(),
+        r#"{"name":"Read","description":"Read the contents of a file at the given absolute path. Returns the file's text content.","input_schema":{"properties":{"file_path":{"description":"Absolute file path to read","type":"string"}},"required":["file_path"],"type":"object"}}"#
+    );
+}
+
+#[test]
+fn write_quota_is_run_owned_and_failed_reservations_roll_back() {
+    use std::sync::atomic::Ordering;
+    let first = crate::run_scope::ActiveScope::begin("write-quota-first");
+    let second = crate::run_scope::ActiveScope::begin("write-quota-second");
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().to_string_lossy().to_string();
+    let access = ToolAccess::new(&[], Some(&root));
+    first.scope().write_count.store(4, Ordering::SeqCst);
+    first
+        .scope()
+        .write_bytes
+        .store(MAX_WRITE_BYTES_PER_RUN, Ordering::SeqCst);
+    crate::run_scope::enter_blocking(first.scope().clone(), || {
+        assert!(write_file_for_tool(&access, "first.txt", "x")
+            .unwrap_err()
+            .contains("Run artifact quota reached"));
+        assert_eq!(first.scope().write_count.load(Ordering::SeqCst), 4);
+        assert_eq!(
+            first.scope().write_bytes.load(Ordering::SeqCst),
+            MAX_WRITE_BYTES_PER_RUN
+        );
+        assert!(!dir.path().join("first.txt").exists());
+    });
+    crate::run_scope::enter_blocking(second.scope().clone(), || {
+        write_file_for_tool(&access, "second.txt", "second").unwrap();
+        assert_eq!(second.scope().write_count.load(Ordering::SeqCst), 1);
+        assert_eq!(second.scope().write_bytes.load(Ordering::SeqCst), 6);
+    });
+    assert_eq!(first.scope().write_count.load(Ordering::SeqCst), 4);
+    assert_eq!(
+        first.scope().write_bytes.load(Ordering::SeqCst),
+        MAX_WRITE_BYTES_PER_RUN
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
 }

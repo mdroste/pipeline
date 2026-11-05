@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
+import { router } from "../lib/router";
+import type { QueuedRun, RunQueueSnapshot } from "../lib/types";
 import type {
-  PipelineReport,
-  QueuedRun,
-  RunQueueSnapshot,
-  ToolCallCounts,
-} from "../lib/types";
+  LlmRequestDetails,
+  LogEntry,
+  ProviderLimitNotice,
+  ReviewRoutingSummary,
+} from "../lib/reviewRuntimeTypes";
 import {
   appendLogs,
   applyPass,
@@ -24,138 +26,12 @@ import {
   type EnqueueRunRequest,
   type StartBatchRequest,
 } from "../lib/appClient";
+import { workbenchErrorMessage } from "../lib/workbenchError";
 
-export type PassStatus = "pending" | "running" | "done" | "error" | "skipped";
-
-/** Effective settings and prompt material for one provider invocation. Secrets
- *  are never included. Large prompt fields arrive only in the live event and
- *  are not written to the persistent console transcript. */
-export interface LlmRequestDetails {
-  provider: string;
-  provider_label: string;
-  transport: "cli" | "api";
-  model: string;
-  model_policy: string;
-  effort: string;
-  tools: string[];
-  timeout_secs: number;
-  max_output_tokens: number | null;
-  output_format: string;
-  prompt: string;
-  prompt_chars: number;
-  prompt_truncated?: boolean;
-  system_prompt: string | null;
-  system_prompt_chars?: number;
-  system_prompt_truncated?: boolean;
-  shared_context: string | null;
-  shared_context_chars: number;
-  shared_context_truncated?: boolean;
-  pdf_attached: boolean;
-  write_enabled: boolean;
-  working_directory: string | null;
-  read_directories: string[];
-  write_directory: string | null;
-  local_endpoint: string | null;
-}
-
-/** One console line, tagged with the headless session (LLM call) it came from.
- *  `session` is null for orchestration/extraction lines that belong to no
- *  single call; those show only in the master view. */
-export interface LogEntry {
-  line: string;
-  session: number | null;
-  label: string | null;
-  level: string; // info | warn | error | stderr | stdout
-  /** Client arrival time (ms epoch), used for optional console timestamps. */
-  t: number;
-  /** Present on the first line for an LLM session. */
-  request?: LlmRequestDetails;
-}
-
-/** Start/end times (ms epoch) of a single pass, for elapsed-time display. */
-export interface PassTiming {
-  start: number;
-  end?: number;
-}
-
-export type RuntimeStageKind =
-  | "extracting"
-  | "orienting"
-  | "dispatching"
-  | "merging"
-  | "synthesizing"
-  | "done";
-
-export interface RuntimeStage {
-  /** Stable ID emitted by the backend and shared with get_execution_plan. */
-  id: string;
-  kind: RuntimeStageKind;
-  label: string;
-  stepIds: string[];
-  stepLabels?: string[];
-  /** Multi-provider steps that will receive a merge after this dispatch wave. */
-  mergeStepIds?: string[];
-  mergeStepLabels?: string[];
-  passes: Record<string, PassStatus>;
-  status: "active" | "done" | "failed" | "skipped";
-}
-
-export interface ReviewRoutingSummary {
-  primaryDomain: string;
-  subject: string;
-  subjectIds?: string[];
-  subjectLabels?: string[];
-  methodIds?: string[];
-  methodLabels?: string[];
-  specialistIds: string[];
-  specialistLabels: string[];
-}
-
-export interface ProviderLimitNotice {
-  pass_key: string;
-  label: string;
-  provider: string;
-  message: string;
-  status: "fallback_starting" | "recovered" | "fallback_failed" | "exhausted";
-  fallback_provider: string | null;
-  fallback_model: string | null;
-}
-
-export interface TokenTotals {
-  input: number;
-  output: number;
-  cached: number;
-  cacheWrite: number;
-  modelRoundTrips: number;
-  toolCalls: ToolCallCounts;
-}
-
-/** Token usage aggregated over a run: a grand total plus per-session counts.
- *  Every current provider reports usage — Codex, Claude CLI JSON,
- *  and the direct APIs. */
-export interface UsageState {
-  total: TokenTotals;
-  bySession: Record<number, TokenTotals>;
-}
-
-export type PipelineState =
-  | { kind: "idle" }
-  | { kind: "extracting" }
-  | { kind: "orienting" }
-  | { kind: "dispatching"; passes: Record<string, PassStatus> }
-  | { kind: "merging"; passes: Record<string, PassStatus> }
-  | { kind: "synthesizing"; passes: Record<string, PassStatus> }
-  | {
-      kind: "done";
-      markdown: string;
-      report: PipelineReport;
-      extractedText: string;
-      runId: string | null;
-    }
-  | { kind: "error"; message: string; failedAt?: string };
-
-/** Interval (ms) at which buffered log lines are flushed to state. */
-const LOG_FLUSH_INTERVAL = 200;
+/** How long (ms) log lines wait before they are flushed to state. */
+const LOG_FLUSH_DELAY = 200;
+/** Only the review page shows logs. Elsewhere a flush re-renders for nothing. */
+const BACKGROUND_LOG_FLUSH_DELAY = 2000;
 
 export type { RunView };
 
@@ -170,9 +46,10 @@ export function usePipeline() {
   const [listenersReady, setListenersReady] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
   // Buffer incoming log lines per run to avoid O(n) array copies per event.
-  // A periodic timer flushes every buffer into state in a single update.
+  // The first line after a flush arms a timer, which then moves every buffer
+  // into state in a single update.
   const logBuffer = useRef(new Map<string, LogEntry[]>());
-  const flushTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const requestedResults = useRef(new Set<string>());
 
   const updateView = useCallback(
@@ -202,6 +79,22 @@ export function usePipeline() {
 
   useEffect(() => {
     let mounted = true;
+
+    const flushLogs = () => {
+      flushTimer.current = null;
+      if (!mounted || logBuffer.current.size === 0) return;
+      const pending = logBuffer.current;
+      logBuffer.current = new Map();
+      setViews((previous) => {
+        const next = { ...previous };
+        for (const [key, lines] of pending)
+          next[key] = {
+            ...(next[key] ?? emptyRunView()),
+            logs: appendLogs(next[key]?.logs ?? [], lines),
+          };
+        return next;
+      });
+    };
 
     async function setup(): Promise<UnlistenFn[]> {
       // Register all listeners concurrently so there's no window where
@@ -258,6 +151,12 @@ export function usePipeline() {
               : {}),
           });
           logBuffer.current.set(event.payload.runKey, pending);
+          flushTimer.current ??= setTimeout(
+            flushLogs,
+            router.getSnapshot().route.page === "main"
+              ? LOG_FLUSH_DELAY
+              : BACKGROUND_LOG_FLUSH_DELAY,
+          );
         }),
         // Usage events are infrequent (one per LLM call), so update state
         // directly rather than through the log buffer.
@@ -285,26 +184,6 @@ export function usePipeline() {
         throw failed.reason;
       }
 
-      // Periodically flush buffered log lines into React state. Don't start
-      // the timer if the component unmounted while listener registration was
-      // in flight — cleanup has already run and nothing would clear it.
-      if (mounted) {
-        flushTimer.current = setInterval(() => {
-          if (!mounted || logBuffer.current.size === 0) return;
-          const pending = logBuffer.current;
-          logBuffer.current = new Map();
-          setViews((previous) => {
-            const next = { ...previous };
-            for (const [key, lines] of pending)
-              next[key] = {
-                ...(next[key] ?? emptyRunView()),
-                logs: appendLogs(next[key]?.logs ?? [], lines),
-              };
-            return next;
-          });
-        }, LOG_FLUSH_INTERVAL);
-      }
-
       if (mounted) setListenersReady(true);
       // Listeners first, then the snapshot, so a run that starts in between
       // is never missed. Reviews survive a window reload; their progress
@@ -325,7 +204,7 @@ export function usePipeline() {
     // listenersReady) would otherwise stay disabled forever with no feedback.
     setupPromise.catch((e: unknown) => {
       if (!mounted) return;
-      const message = e instanceof Error ? e.message : String(e);
+      const message = workbenchErrorMessage(e);
       console.error("Failed to register Tauri event listeners:", e);
       setSetupError(
         `Failed to register event listeners: ${message}. Reload the window to retry.`,
@@ -334,15 +213,9 @@ export function usePipeline() {
 
     return () => {
       mounted = false;
-      if (flushTimer.current) clearInterval(flushTimer.current);
-      setupPromise
-        .then((fns) => {
-          fns.forEach((fn) => fn());
-          // Belt-and-braces: if setup managed to start the timer despite the
-          // unmount race, clear it now.
-          if (flushTimer.current) clearInterval(flushTimer.current);
-        })
-        .catch(() => {});
+      if (flushTimer.current) clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+      setupPromise.then((fns) => fns.forEach((fn) => fn())).catch(() => {});
     };
   }, [applyQueue, updateView]);
 
@@ -406,12 +279,17 @@ export function usePipeline() {
   const enqueueRerun = useCallback(
     async (
       runId: string,
-      opts?: { fromStep?: string; onlyFailed?: boolean },
+      opts?: {
+        fromStep?: string;
+        onlyFailed?: boolean;
+        variables?: Record<string, string>;
+      },
     ) => {
       const run = await appClient.enqueueRerun(
         runId,
         opts?.onlyFailed ?? false,
         opts?.fromStep,
+        opts?.variables,
       );
       adopt([run]);
       return run;

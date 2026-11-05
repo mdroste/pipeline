@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "kind": "genre",
+  "id": "genre_slide_deck",
+  "label": "Slide Deck",
+  "order": 9,
+  "routing": {
+    "description": "The document is a slide deck for a talk, seminar, or lecture that presents research, rather than a written manuscript.",
+    "exclusions": "a written manuscript or report, even one with slide-style figures or landscape pages."
+  }
+}

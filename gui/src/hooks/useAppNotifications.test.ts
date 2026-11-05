@@ -10,6 +10,8 @@ const handlers = vi.hoisted(
 );
 const deliverNotice = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const off = vi.hoisted(() => vi.fn());
+const invoke = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(
     (name: string, callback: (event: { payload: unknown }) => void) => {
@@ -39,6 +41,21 @@ it("listens at the shell, deduplicates repeated notices, and releases listeners"
   );
   view.unmount();
   await waitFor(() => expect(off).toHaveBeenCalledTimes(7));
+});
+it("asks for missed automation notices once it can hear them", async () => {
+  renderHook(() => useAppNotifications([]));
+  await waitFor(() =>
+    expect(invoke).toHaveBeenCalledWith("task_notices_ready"),
+  );
+  expect(invoke).toHaveBeenCalledTimes(1);
+  for (const source of ["tasks", "missions", "discovery"])
+    expect(handlers.has(`${source}:notice`)).toBe(true);
+});
+it("leaves missed notices for the window that stays open", async () => {
+  const view = renderHook(() => useAppNotifications([]));
+  view.unmount();
+  await waitFor(() => expect(off).toHaveBeenCalled());
+  expect(invoke).not.toHaveBeenCalled();
 });
 it("classifies failed batches as failures and ignores cancelled batches", () => {
   renderHook(() => useAppNotifications([]));

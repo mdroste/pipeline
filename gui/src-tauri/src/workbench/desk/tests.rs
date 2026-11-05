@@ -763,3 +763,25 @@ fn punctuation_only_query_tokens_do_not_empty_the_search() {
     let empty = find(&f, "&");
     assert!(empty.hits.is_empty() && empty.next_cursor.is_none());
 }
+
+#[test]
+fn blob_writer_keeps_good_files_repairs_bad_ones_and_refuses_wrong_bytes() {
+    let temp = tempfile::tempdir().unwrap();
+    let bytes = b"Exact immutable text.";
+    let digest = hash(bytes);
+    let path = temp.path().join(format!("{digest}.txt"));
+    write_blob_atomic(&path, bytes, &digest).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    let stored = fs::metadata(&path).unwrap().modified().unwrap();
+    write_blob_atomic(&path, bytes, &digest).unwrap();
+    assert_eq!(fs::metadata(&path).unwrap().modified().unwrap(), stored);
+    for damaged in [&bytes[..5], b"Exact immutable text! And more bytes."] {
+        fs::write(&path, damaged).unwrap();
+        write_blob_atomic(&path, bytes, &digest).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+    assert!(write_blob_atomic(&path, b"Other bytes", &digest).is_err());
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    let names: Vec<_> = fs::read_dir(temp.path()).unwrap().flatten().collect();
+    assert_eq!(names.len(), 1, "no temporary file is left behind");
+}

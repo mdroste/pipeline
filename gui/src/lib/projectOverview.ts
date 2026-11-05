@@ -20,7 +20,8 @@ import type {
 } from "./studioClient";
 import type { ImpactReport } from "./deskClient";
 import type { CampaignStatus, MonitorState } from "./programClient";
-import type { TaskSummary } from "./taskClient";
+import { listedRunStatus, runFinished } from "./reportPresentation";
+import type { TaskSummary } from "./taskTypes";
 import type { WorkspaceDestination } from "./workspaceNavigation";
 import { remoteLabel, type RepositoryStatus } from "./repositoryClient";
 import { severityRank } from "./issues";
@@ -273,14 +274,14 @@ export function draftBlock(
         text: `Last review: ${last.profile_name}`,
         detail: [
           overviewDay(last.created),
-          last.status,
+          listedRunStatus(last.status),
           last.failed_steps.length
             ? `${plural(last.failed_steps.length, "step")} failed`
             : "",
         ]
           .filter(Boolean)
           .join(" · "),
-        attention: last.status !== "complete",
+        attention: !runFinished(last.status),
         action: { kind: "run", label: "Open report", runId: last.run_id },
       });
   }
@@ -364,7 +365,7 @@ export function syncBlock(
   if (data.ledger.unsupportedAcceptedClaims.length)
     rows.push({
       id: "unsupported-claims",
-      text: `${plural(data.ledger.unsupportedAcceptedClaims.length, "accepted claim")} ${data.ledger.unsupportedAcceptedClaims.length === 1 ? "has" : "have"} no supporting evidence`,
+      text: `${plural(data.ledger.unsupportedAcceptedClaims.length, "accepted claim")} ${data.ledger.unsupportedAcceptedClaims.length === 1 ? "has" : "have"} no confirmed supporting evidence`,
       action: { kind: "tab", label: "Inspect evidence", tab: "evidence" },
     });
 
@@ -490,7 +491,9 @@ export function repositoryBlock(
   rows.push({
     id: "identity",
     text: remote
-      ? `${remote.owner ? `${remote.owner}/` : ""}${remote.repo}`
+      ? remote.repo
+        ? `${remote.owner ? `${remote.owner}/` : ""}${remote.repo}`
+        : `Remote ${remote.name}`
       : "Local Git repository",
     detail: [
       branch ? `branch ${branch}` : "no branch checked out",
@@ -499,7 +502,7 @@ export function repositoryBlock(
         : "no commits yet",
     ].join(" · "),
     action: remote?.webUrl
-      ? { kind: "link", label: "Open on GitHub", url: remote.webUrl }
+      ? { kind: "link", label: `Open on ${host}`, url: remote.webUrl }
       : { kind: "tab", label: "Open files", tab: "files" },
   });
   if (repository.conflicts)
@@ -507,7 +510,7 @@ export function repositoryBlock(
       id: "conflicts",
       text: `${plural(repository.conflicts, "file")} ${repository.conflicts === 1 ? "has" : "have"} merge conflicts`,
       attention: true,
-      action: { kind: "tab", label: "Open files", tab: "files" },
+      action: { kind: "tab", label: "Resolve", tab: "version-control" },
     });
   if (repository.changed || repository.untracked)
     rows.push({
@@ -523,7 +526,7 @@ export function repositoryBlock(
         .filter(Boolean)
         .join(", "),
       detail: clip(repository.changedPaths.join(", "), 110),
-      action: { kind: "tab", label: "Open files", tab: "files" },
+      action: { kind: "tab", label: "Review changes", tab: "version-control" },
     });
   if (repository.behind)
     rows.push({
@@ -532,7 +535,10 @@ export function repositoryBlock(
       detail: incoming[0] ? clip(incoming[0].subject) : undefined,
       attention: true,
       action:
-        remote?.webUrl && repository.head && repository.upstream
+        remote?.webUrl &&
+        remote.host === "github.com" &&
+        repository.head &&
+        repository.upstream
           ? {
               kind: "link",
               label: "View on GitHub",
@@ -723,14 +729,20 @@ export function sinceBlock(
   }
 
   const reviews = (signals.runs ?? [])
-    .filter((run) => time(run.created) + run.duration_secs * 1000 > since)
+    .filter(
+      (run) =>
+        run.status !== "running" &&
+        time(run.created) + run.duration_secs * 1000 > since,
+    )
     .sort((a, b) => time(b.created) - time(a.created));
   for (const run of reviews.slice(0, 3))
     rows.push({
       id: `review-${run.run_id}`,
       text: `Review finished: ${run.title || run.input_name}`,
-      detail: [run.profile_name, run.status].filter(Boolean).join(" · "),
-      attention: run.status !== "complete",
+      detail: [run.profile_name, listedRunStatus(run.status)]
+        .filter(Boolean)
+        .join(" · "),
+      attention: !runFinished(run.status),
       action: { kind: "run", label: "Open report", runId: run.run_id },
     });
 

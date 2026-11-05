@@ -1,14 +1,89 @@
 import type { ModelCatalog, ModelSelection, Settings } from "./types";
 
-export const PROVIDERS = ["claude", "codex", "antigravity", "local"] as const;
-export type Provider = (typeof PROVIDERS)[number];
+import {
+  providerFamilies,
+  connectionDescription,
+  reviewConnectionId,
+  type ConnectionId,
+  type ProviderFamily,
+} from "./connections";
+export const PROVIDERS = providerFamilies.map(({ id }) => id);
+export type Provider = ProviderFamily;
+export const PROVIDER_LABELS = Object.fromEntries(
+  providerFamilies.map(({ id, label }) => [id, label]),
+) as Record<Provider, string>;
 
-export const PROVIDER_LABELS: Record<Provider, string> = {
-  claude: "Claude",
-  codex: "ChatGPT",
-  antigravity: "Gemini",
-  local: "Local",
-};
+/** The connection the shared default points at. */
+export function defaultConnectionId(settings: Settings): ConnectionId {
+  return reviewConnectionId(settings, settings.preferred_provider);
+}
+
+/** A model and thinking level belong to one connection, so changing it clears them. */
+export function withDefaultConnection(
+  settings: Settings,
+  id: ConnectionId,
+): Settings {
+  const { family, access } = connectionDescription(id);
+  return {
+    ...settings,
+    preferred_provider: family,
+    ...(family === "claude" ? { claude_access_mode: access } : {}),
+    ...(family === "codex" ? { codex_access_mode: access } : {}),
+    default_model: "",
+    default_effort: "",
+    default_model_chosen: true,
+  };
+}
+
+/** Changing the default provider's access mode changes the default's connection. */
+export function withAccessMode(
+  settings: Settings,
+  family: "claude" | "codex",
+  mode: Settings["claude_access_mode"],
+): Settings {
+  const key = family === "claude" ? "claude_access_mode" : "codex_access_mode";
+  return {
+    ...settings,
+    [key]: mode,
+    ...(settings.preferred_provider === family && settings[key] !== mode
+      ? { default_model: "", default_effort: "" }
+      : {}),
+  };
+}
+
+function modelName(catalog: ModelCatalog | undefined, id: string): string {
+  return catalog?.models.find((model) => model.id === id)?.display_name || id;
+}
+
+export function defaultModelSummary(
+  settings: Settings,
+  catalogs: Record<string, ModelCatalog>,
+): string {
+  const provider = settings.preferred_provider;
+  const model =
+    provider === "local" ? settings.local_model : settings.default_model;
+  const effort = settings.default_effort;
+  return [
+    connectionDescription(defaultConnectionId(settings)).label,
+    model ? modelName(catalogs[provider], model) : "Automatic",
+    effort ? effort.charAt(0).toUpperCase() + effort.slice(1) : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** What a stage or step runs when it picks a provider but no model. */
+export function inheritedModelLabel(
+  settings: Settings,
+  provider: string,
+  catalog: ModelCatalog | undefined,
+): string {
+  if (provider === "local")
+    return `Provider default · ${settings.local_model || "not selected"}`;
+  return provider === settings.preferred_provider && settings.default_model
+    ? `Default · ${modelName(catalog, settings.default_model)}`
+    : "Provider default";
+}
 
 export function defaultParallelAgents(settings: Settings): string[] {
   return settings.default_parallel_agents?.length
@@ -54,18 +129,10 @@ export function providerTransport(
   settings: Settings,
   provider: string,
 ): "cli" | "api" {
-  if (provider === "local") return "api";
-  if (provider === "codex") {
-    if (settings.codex_access_mode)
-      return settings.codex_access_mode === "api" ? "api" : "cli";
-    return settings.openai_api_key ? "api" : "cli";
-  }
-  // Google subscription dispatch (the agy CLI) is disabled; mirrors
-  // Settings::model_transport in the backend.
-  if (provider === "antigravity") return "api";
-  if (settings.claude_access_mode)
-    return settings.claude_access_mode === "api" ? "api" : "cli";
-  return settings.anthropic_api_key ? "api" : "cli";
+  return connectionDescription(reviewConnectionId(settings, provider))
+    .access === "api"
+    ? "api"
+    : "cli";
 }
 
 export function encodeModelSelection(

@@ -6,7 +6,9 @@
 //! Artifact selection, prompts, findings and checkpoint products have separate
 //! owners within this feature. None share writable Workspace runtime state.
 
+mod analyzer_step;
 mod artifact_context;
+pub mod budget;
 mod checkpoints;
 mod findings;
 mod outputs;
@@ -19,6 +21,7 @@ mod sequential;
 mod step_call;
 mod units;
 
+pub(crate) use parallel::UNIT_STOP_GRACE;
 pub(crate) use paths::step_slug;
 pub use run::{execute_steps, ExecutionResult};
 pub use schedule::{dependents_of, execution_plan, input_processing_label, ExecutionPlanStage};

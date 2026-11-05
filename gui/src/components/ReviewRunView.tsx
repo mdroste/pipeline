@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 import PipelineProgress from "./PipelineProgress";
+import ReportIssueLink from "./ReportIssueLink";
 import { Button, EmptyState, Spinner } from "../ui";
 import type {
   PassTiming,
   PipelineState,
   ReviewRoutingSummary,
   RuntimeStage,
-} from "../hooks/usePipeline";
+} from "../lib/reviewRuntimeTypes";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
 import type { QueuedRun } from "../lib/types";
 import { queuedExplanation } from "../lib/reviewRuns";
@@ -27,10 +28,14 @@ interface Props {
   onOpenHistory: (runId?: string) => void;
 }
 
+/** Centers short content; content taller than the view starts at its top so
+ *  the surrounding scroller can reach all of it. */
 function Centered({ children }: { children: ReactNode }) {
   return (
-    <div className="flex h-full items-center justify-center px-8 py-12">
-      <div className="w-full max-w-sm">{children}</div>
+    <div className="flex min-h-full justify-center px-8 py-12">
+      <div data-testid="review-run-content" className="my-auto w-full max-w-sm">
+        {children}
+      </div>
     </div>
   );
 }
@@ -81,7 +86,7 @@ export default function ReviewRunView({
           </h2>
           <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-neutral-400">
             {queuedExplanation(run, runs, limit)} You can keep working or set up
-            another review; this one appears in the sidebar until it finishes.
+            another review; this one stays in Activity until it finishes.
           </p>
           <p className="mt-1 text-xs text-gray-400 dark:text-neutral-500">
             Workflow: {run.profileName || "Active workflow"}
@@ -152,6 +157,7 @@ export default function ReviewRunView({
             }
           >
             {state.message}
+            {run.status !== "cancelled" && <ReportIssueLink />}
           </div>
           <button
             type="button"
@@ -160,7 +166,7 @@ export default function ReviewRunView({
                      transition-colors hover:bg-white focus-visible:outline-none focus-visible:ring-2
                      focus-visible:ring-gray-400 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900"
           >
-            Start a new report
+            Start a new review
           </button>
         </div>
       ) : (
@@ -168,7 +174,7 @@ export default function ReviewRunView({
           <p className="mt-6 text-center text-xs leading-relaxed text-gray-500 dark:text-neutral-400">
             This may take 15–60 minutes depending on
             <br />
-            paper length, number of agents, and LLM load.
+            paper length, number of reviewers, and provider response times.
             <br />
             It keeps running if you leave this page.
           </p>
@@ -179,7 +185,7 @@ export default function ReviewRunView({
                      hover:bg-red-50 hover:text-red-600 focus-visible:outline-none focus-visible:ring-2
                      focus-visible:ring-red-300 dark:text-neutral-400 dark:hover:bg-red-950/40 dark:hover:text-red-400"
           >
-            Cancel report
+            Cancel review
           </button>
         </>
       )}

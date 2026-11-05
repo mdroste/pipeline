@@ -13,7 +13,7 @@ import type {
   RuntimeStageKind,
   TokenTotals,
   UsageState,
-} from "../hooks/usePipeline";
+} from "./reviewRuntimeTypes";
 import type { PipelineResult, QueuedRun, ToolCallCounts } from "./types";
 
 export interface RunView {

@@ -52,6 +52,12 @@ it("opens as an index and resumes the exact conversation only on request", async
   const user = userEvent.setup();
   render(<ProjectIndexPage {...{ onOpenProject, onResumeConversation }} />);
   await screen.findByRole("button", { name: "Production networks" });
+  expect(
+    screen.getByRole("heading", { level: 1, name: "Projects" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "+ New project" }),
+  ).toBeInTheDocument();
   expect(onOpenProject).not.toHaveBeenCalled();
   expect(onResumeConversation).not.toHaveBeenCalled();
   expect(invoke).toHaveBeenCalledExactlyOnceWith("workbench_project_index");

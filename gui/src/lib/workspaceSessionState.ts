@@ -1,4 +1,4 @@
-import { workbenchClient } from "./workbenchClient";
+import { conversationClient } from "./workbench/conversationClient";
 import type { ConversationSnapshot, SessionSnapshot } from "./workbenchTypes";
 
 // Metadata saves must not replace transcript pages or active-turn state.
@@ -20,6 +20,28 @@ export function mergeSessionSnapshot(
   };
 }
 
+/**
+ * Lands a conversation read on the snapshot it replaces. Only these reads carry
+ * a transcript, so a read's items and turns are always the newest there are. A
+ * session save that lands during the read raises the revision and sequence on
+ * screen, which says only that the session fields are newer: those stay.
+ */
+export function keepNewerSession(
+  current: ConversationSnapshot | null,
+  next: ConversationSnapshot,
+): ConversationSnapshot {
+  if (current?.session.id !== next.session.id) return next;
+  const sequence = Math.max(current.sequence, next.sequence);
+  return current.session.revision > next.session.revision
+    ? {
+        ...next,
+        session: current.session,
+        workspace: current.workspace,
+        sequence,
+      }
+    : { ...next, sequence };
+}
+
 // The caller serializes this write with other session mutations.
 export function newOperation(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -29,10 +51,10 @@ export async function saveWorkspaceDraft(
   selectedSession: string,
   text: string,
 ): Promise<SessionSnapshot> {
-  const latest = await workbenchClient.sessionSnapshot(selectedSession);
+  const latest = await conversationClient.sessionSnapshot(selectedSession);
   let result = latest;
   if (latest.session.draft !== text) {
-    const updated = await workbenchClient.updateSession({
+    const updated = await conversationClient.updateSession({
       sessionId: selectedSession,
       expectedRevision: latest.session.revision,
       operationId: `save-draft-${crypto.randomUUID()}`,

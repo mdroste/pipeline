@@ -1,3 +1,8 @@
+// Project and assistant panes for one project. The split view needs 848 px of
+// working width. Below that, one pane shows at a time and both stay mounted, so
+// drafts survive; widening restores the saved choice. View and assistant width
+// are per-project device preferences and grant no access.
+
 import {
   useEffect,
   useId,
@@ -5,7 +10,6 @@ import {
   useRef,
   useState,
   type ReactNode,
-  type RefObject,
 } from "react";
 import useContainerWidth from "../hooks/useContainerWidth";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
@@ -14,6 +18,7 @@ import WorkspaceMenu from "./WorkspaceMenu";
 import WorkspaceIcon from "./WorkspaceIcon";
 import { MenuItem } from "../ui/Menu";
 import { Icon } from "../ui/icons";
+import { isMac } from "../lib/platform";
 import "./WorkspaceDesk.css";
 
 type DeskView = "project" | "assistant" | "split";
@@ -31,8 +36,6 @@ function loadView(key: string): DeskView | null {
 export default function WorkspaceDesk({
   project,
   children,
-  navigationHidden,
-  onNavigation,
   hidden,
   assistantOnly,
   assistantRequest = 0,
@@ -44,18 +47,15 @@ export default function WorkspaceDesk({
   onStop,
   stopping = false,
   feedback,
-  navigationButtonRef,
+  assistantFeedback,
   workspaceId,
   projectName,
   toolLabel,
   onTools,
   toolsDisabled = false,
-  navigationOpen = false,
 }: {
   project: ReactNode;
   children: ReactNode;
-  navigationHidden: boolean;
-  onNavigation: () => void;
   hidden?: boolean;
   assistantOnly?: boolean;
   assistantRequest?: number;
@@ -69,13 +69,13 @@ export default function WorkspaceDesk({
   onStop?: () => void;
   stopping?: boolean;
   feedback?: ReactNode;
+  /** The conversation's own messages, shown here only while its pane is hidden. */
+  assistantFeedback?: ReactNode;
   workspaceId?: string | null;
-  navigationButtonRef?: RefObject<HTMLButtonElement | null>;
   projectName?: string;
   toolLabel?: string;
   onTools?: () => void;
   toolsDisabled?: boolean;
-  navigationOpen?: boolean;
 }) {
   const [root, width] = useContainerWidth<HTMLDivElement>();
   const preferenceKey = `pipeline.workspace.view.${workspaceId ?? "unfiled"}`;
@@ -197,25 +197,23 @@ export default function WorkspaceDesk({
       className="workspace-desk-area"
       data-workspace-desk
     >
-      <div className="workspace-desk-toolbar" aria-label="Desk views">
-        <button
-          ref={navigationButtonRef}
-          type="button"
-          onClick={onNavigation}
-          aria-label="Browse projects"
-          aria-expanded={navigationOpen || !navigationHidden}
-          className="workspace-desk-button workspace-browse-button"
-        >
-          <WorkspaceIcon name="outline" />
-          <span>{projectName ?? "Unfiled conversations"}</span>
-        </button>
+      {/* On macOS the toolbar's background also drags the window ("deep":
+          its buttons still take their own clicks). */}
+      <div
+        className="workspace-desk-toolbar"
+        aria-label="Desk views"
+        data-tauri-drag-region={isMac ? "deep" : undefined}
+      >
+        <span className="workspace-desk-title">
+          {projectName ?? "Unfiled conversations"}
+        </span>
         {project && onTools && (
           <button
             type="button"
             disabled={toolsDisabled}
             onClick={onTools}
             aria-label="Find a project view"
-            title="Go to a project view (⌘/Ctrl K)"
+            title="Go to a project view"
             className="workspace-desk-button workspace-tool-trigger"
           >
             <span>{toolLabel ?? "Project views"}</span>
@@ -241,7 +239,11 @@ export default function WorkspaceDesk({
               className="workspace-desk-button"
               aria-controls={`${id}-assistant`}
               aria-pressed={effective !== "project"}
-              aria-label={effective === "project" ? "Show chat" : "Hide chat"}
+              aria-label={
+                effective === "project"
+                  ? "Show conversation"
+                  : "Hide conversation"
+              }
               onClick={() => {
                 if (effective === "project") {
                   setLastPane("assistant");
@@ -250,7 +252,7 @@ export default function WorkspaceDesk({
               }}
             >
               <WorkspaceIcon name="message" />
-              Chat
+              Conversation
               {attentionCount > 0
                 ? ` · ${attentionCount}`
                 : active
@@ -268,11 +270,11 @@ export default function WorkspaceDesk({
                 checked={effective === "assistant"}
                 onSelect={() => choose("assistant")}
               >
-                Chat only
+                Conversation only
               </MenuItem>
               {fits && (
                 <MenuItem checked={effective === "split"} onSelect={split}>
-                  Project + chat
+                  Project + conversation
                 </MenuItem>
               )}
               <MenuItem onSelect={reset}>Reset layout</MenuItem>
@@ -291,12 +293,14 @@ export default function WorkspaceDesk({
         )}
         {attentionCount > 0 && (
           <span role="status">
-            {attentionCount} request{attentionCount === 1 ? "" : "s"} need
-            attention
+            {attentionCount === 1
+              ? "1 request needs attention"
+              : `${attentionCount} requests need attention`}
           </span>
         )}
       </div>
       {feedback}
+      {effective === "project" && assistantFeedback}
       <div className="workspace-desk-panes" data-layout={effective}>
         {project && (
           <div

@@ -1,6 +1,7 @@
 //! Provider tool loops for direct API providers.
 
 use super::*;
+use crate::{agent_runtime::api::authorize, connections::ApiProvider};
 
 // Every exit (including a later HTTP/tool failure or cancellation) accounts for
 // the responses already received. Successful callers use the returned totals
@@ -26,7 +27,22 @@ impl Drop for UsageReceipt<'_> {
     }
 }
 
+/// Whether an Anthropic stop reason fails the call. A cache warm-up accepts the
+/// output cap: the provider read the prompt, which was the point of the
+/// request, and adaptive thinking can spend a small cap before any answer.
+pub(crate) fn anthropic_stop_fails(reason: Option<&str>, accept_output_cap: bool) -> bool {
+    anthropic_output_incomplete(reason) && !accept_output_cap
+}
+
+/// Whether a Google finish reason fails the call. Only the output cap can be
+/// accepted, by a warm-up: see [`anthropic_stop_fails`]. A blocked or malformed
+/// response never counts.
+pub(crate) fn google_stop_fails(reason: Option<&str>, accept_output_cap: bool) -> bool {
+    google_output_incomplete(reason) && !(reason == Some("MAX_TOKENS") && accept_output_cap)
+}
+
 /// Run the tool-use loop for Anthropic. Returns (text, usage).
+#[allow(clippy::too_many_arguments)]
 pub async fn anthropic_tool_loop(
     app: &crate::emit::EventBus,
     client: &reqwest::Client,
@@ -34,6 +50,7 @@ pub async fn anthropic_tool_loop(
     mut request: AnthropicRequest,
     timeout_secs: u64,
     label: &str,
+    accept_output_cap: bool,
     access: &ToolAccess,
 ) -> Result<(String, Usage), String> {
     let mut usage = UsageReceipt {
@@ -58,12 +75,13 @@ pub async fn anthropic_tool_loop(
         let request_timeout = timeout_secs - elapsed;
 
         let pass_key = crate::pipeline::logging::current_pass();
-        let request_builder = client
-            .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
-            .timeout(std::time::Duration::from_secs(request_timeout))
-            .json(&request);
+        let request_builder = authorize(
+            ApiProvider::Anthropic,
+            client.post("https://api.anthropic.com/v1/messages"),
+            api_key,
+        )
+        .timeout(std::time::Duration::from_secs(request_timeout))
+        .json(&request);
         let resp = send_with_status_retry(
             app,
             "Anthropic",
@@ -120,7 +138,7 @@ pub async fn anthropic_tool_loop(
 
         if !anthropic_has_tool_use(&body.content) || body.stop_reason.as_deref() != Some("tool_use")
         {
-            if anthropic_output_incomplete(body.stop_reason.as_deref()) {
+            if anthropic_stop_fails(body.stop_reason.as_deref(), accept_output_cap) {
                 return Err(format!(
                     "Anthropic truncated {label} because the output-token limit was reached"
                 ));
@@ -204,8 +222,8 @@ pub async fn anthropic_tool_loop(
 /// (e.g. "https://api.openai.com/v1", "http://localhost:11434/v1").
 /// `provider` names the endpoint in log/error messages.
 /// When `drop_tools_on_400` is set (local servers), a 400 response to a
-/// request that declared tools retries once without tools — many local
-/// models don't support tool calling, and a hard failure would be opaque.
+/// request that declared tools retries once without tools unless web search
+/// was requested. Search must never be silently disabled by that fallback.
 #[allow(clippy::too_many_arguments)]
 pub async fn openai_tool_loop(
     app: &crate::emit::EventBus,
@@ -217,6 +235,7 @@ pub async fn openai_tool_loop(
     timeout_secs: u64,
     label: &str,
     drop_tools_on_400: bool,
+    accept_output_cap: bool,
     access: &ToolAccess,
 ) -> Result<(String, Usage), String> {
     let mut usage = UsageReceipt {
@@ -224,6 +243,7 @@ pub async fn openai_tool_loop(
         usage: Usage::default(),
     };
     let mut tool_budget = ToolBudget::default();
+    let mut web_budget = web::Budget::default();
     let start = std::time::Instant::now();
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     let mut tools_retry_used = false;
@@ -247,9 +267,7 @@ pub async fn openai_tool_loop(
             .post(&url)
             .timeout(std::time::Duration::from_secs(request_timeout))
             .json(&request);
-        if !api_key.is_empty() {
-            req = req.header("Authorization", format!("Bearer {api_key}"));
-        }
+        req = authorize(ApiProvider::OpenAi, req, api_key);
         let pass_key = crate::pipeline::logging::current_pass();
         let resp = send_with_status_retry(app, provider, label, req, pass_key.as_deref()).await?;
 
@@ -278,6 +296,9 @@ pub async fn openai_tool_loop(
                 && status.as_u16() == 400
                 && !request.tools.is_empty()
             {
+                if web::declared(&request.tools, "WebSearch") {
+                    return Err(format!("{provider} rejected a request with Web search enabled. Choose a tool-capable model or turn off Web search for this step. {}", format_api_error(provider, status.as_u16(), &body)));
+                }
                 log(app, format!(
                     "{label}: {provider} rejected the request with tools declared — retrying without tools. \
                      The model won't be able to read files; consider a tool-capable model."
@@ -339,6 +360,28 @@ pub async fn openai_tool_loop(
                 for tc in tool_calls {
                     let result =
                         match serde_json::from_str::<serde_json::Value>(&tc.function.arguments) {
+                            Ok(_) if !web::declared(&request.tools, &tc.function.name) => {
+                                ToolResult::Error(format!(
+                                    "Tool {} is not enabled for this step",
+                                    tc.function.name
+                                ))
+                            }
+                            Ok(input) if web::is_web(&tc.function.name) => {
+                                let remaining = std::time::Duration::from_secs(timeout_secs)
+                                    .saturating_sub(start.elapsed());
+                                web::within_deadline(
+                                    web::execute(
+                                        app,
+                                        &tc.function.name,
+                                        &input,
+                                        label,
+                                        &mut web_budget,
+                                    ),
+                                    remaining,
+                                    pass_key.as_deref(),
+                                )
+                                .await?
+                            }
                             Ok(input) => {
                                 execute_tool(
                                     app,
@@ -377,7 +420,11 @@ pub async fn openai_tool_loop(
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
-        if openai_output_incomplete(choice.finish_reason.as_deref()) {
+        // `accept_output_cap` is a warm-up's: see `anthropic_stop_fails`.
+        let stopped_at_cap = choice.finish_reason.as_deref() == Some("length");
+        if openai_output_incomplete(choice.finish_reason.as_deref())
+            && !(stopped_at_cap && accept_output_cap)
+        {
             return Err(format!(
                 "{provider} did not complete {label} (finish reason: {})",
                 choice.finish_reason.as_deref().unwrap_or("unknown")
@@ -399,6 +446,7 @@ pub struct GoogleToolLoopContext<'a> {
     pub timeout_secs: u64,
     pub label: &'a str,
     pub access: &'a ToolAccess,
+    pub accept_output_cap: bool,
 }
 
 /// Run the tool-use loop for Google. Returns (text, usage).
@@ -414,6 +462,7 @@ pub async fn google_tool_loop(
         timeout_secs,
         label,
         access,
+        accept_output_cap,
     } = context;
     let url = format!(
         "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
@@ -441,9 +490,7 @@ pub async fn google_tool_loop(
         let request_timeout = timeout_secs - elapsed;
 
         let pass_key = crate::pipeline::logging::current_pass();
-        let request_builder = client
-            .post(&url)
-            .header("x-goog-api-key", api_key)
+        let request_builder = authorize(ApiProvider::Google, client.post(&url), api_key)
             .timeout(std::time::Duration::from_secs(request_timeout))
             .json(&request);
         let resp =
@@ -586,7 +633,7 @@ pub async fn google_tool_loop(
             .collect::<Vec<_>>()
             .join("");
 
-        if google_output_incomplete(candidate.finish_reason.as_deref()) {
+        if google_stop_fails(candidate.finish_reason.as_deref(), accept_output_cap) {
             return Err(format!(
                 "Google did not complete {label} (finish reason: {})",
                 candidate.finish_reason.as_deref().unwrap_or("unknown")

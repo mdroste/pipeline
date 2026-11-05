@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { listen } from "@tauri-apps/api/event";
 import { beforeEach, expect, it, vi } from "vitest";
 import Builder from "./Builder";
 import Detail from "./Detail";
@@ -96,15 +97,21 @@ it("starts prompt-only unsupervised research once with the exact name and defaul
   );
   expect(screen.getByLabelText("Mode")).toHaveValue("unsupervised");
   expect(
-    screen.getByRole("option", { name: "Full self-discovery (supervised)" }),
+    screen.getByRole("option", {
+      name: "Research discovery — choose projects yourself",
+    }),
   ).toBeInTheDocument();
   expect(
-    screen.getByRole("option", { name: "Full self-discovery (unsupervised)" }),
+    screen.getByRole("option", {
+      name: "Research discovery — let Pipeline choose projects",
+    }),
   ).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Research topics and questions"), {
     target: { value: "Study source transmission in medieval archives" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Start self-discovery" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Start research discovery" }),
+  );
   await waitFor(() => expect(started).toHaveBeenCalledOnce());
   const starts = mocks.invoke.mock.calls.filter(
     (c) => c[0] === "discovery_start",
@@ -149,14 +156,18 @@ it("retains the operation identity when a Start response is uncertain", async ()
   fireEvent.change(screen.getByLabelText("Research topics and questions"), {
     target: { value: "A theoretical physics question" },
   });
-  fireEvent.click(screen.getByRole("button", { name: "Start self-discovery" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Start research discovery" }),
+  );
   await screen.findByRole("alert");
   await waitFor(() =>
     expect(
-      screen.getByRole("button", { name: "Start self-discovery" }),
+      screen.getByRole("button", { name: "Start research discovery" }),
     ).toBeEnabled(),
   );
-  fireEvent.click(screen.getByRole("button", { name: "Start self-discovery" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Start research discovery" }),
+  );
   await waitFor(() =>
     expect(
       mocks.invoke.mock.calls.filter((c) => c[0] === "discovery_start"),
@@ -206,10 +217,240 @@ it("shows server rejection without losing the research or changing the selected 
   expect(screen.getByRole("checkbox", { name: "1. Project 1" })).toBeChecked();
 });
 
+it("offers Retry on a run that needs attention and labels the state", async () => {
+  const updated = vi.fn();
+  const attention = {
+    ...run,
+    state: "attention",
+    reason: "A research action did not finish",
+  };
+  mocks.invoke.mockImplementation(async (name: string) =>
+    name === "discovery_control" ? { ...attention, state: "running" } : [],
+  );
+  render(<Detail run={attention} onUpdated={updated} onClose={vi.fn()} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Needs attention");
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(updated).toHaveBeenCalledOnce());
+  expect(mocks.invoke).toHaveBeenCalledWith("discovery_control", {
+    id: "portfolio",
+    revision: 3,
+    action: "retry",
+  });
+});
+
+it("refreshes when a task event moves the run", async () => {
+  const handlers = new Map<string, () => void>();
+  vi.mocked(listen).mockImplementation(async (name, handler) => {
+    handlers.set(name, () => handler({ event: name, id: 0, payload: null }));
+    return () => {};
+  });
+  render(<SelfDiscovery initialRunId="portfolio" onBack={vi.fn()} />);
+  await screen.findByText("Choose projects to develop");
+  const reads = () =>
+    mocks.invoke.mock.calls.filter((c) => c[0] === "discovery_get").length;
+  const before = reads();
+  await waitFor(() => expect(handlers.has("tasks:changed")).toBe(true));
+  handlers.get("tasks:changed")!();
+  await waitFor(() => expect(reads()).toBeGreaterThan(before));
+});
+it("carries out Pause and Stop on the newer run when the revision has moved", async () => {
+  const running: DiscoveryRun = { ...run, state: "running" };
+  const newer: DiscoveryRun = { ...running, revision: 9 };
+  const updated = vi.fn();
+  mocks.invoke.mockImplementation(async (name: string, args) => {
+    if (name === "discovery_get") return newer;
+    if (name === "discovery_control") {
+      if (args.revision !== 9)
+        throw "This research discovery changed; reload before continuing";
+      return { ...newer, state: "paused", revision: 10 };
+    }
+    return [];
+  });
+  render(<Detail run={running} onUpdated={updated} onClose={vi.fn()} />);
+  fireEvent.click(await screen.findByRole("button", { name: /^Pause/ }));
+  await waitFor(() =>
+    expect(updated).toHaveBeenCalledWith(
+      expect.objectContaining({ state: "paused", revision: 10 }),
+    ),
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+it("asks again before retrying a run that has moved", async () => {
+  const stuck: DiscoveryRun = { ...run, state: "attention" };
+  const updated = vi.fn();
+  mocks.invoke.mockImplementation(async (name: string) => {
+    if (name === "discovery_get") return { ...stuck, revision: 9 };
+    if (name === "discovery_control")
+      throw "This research discovery changed; reload before continuing";
+    return [];
+  });
+  render(<Detail run={stuck} onUpdated={updated} onClose={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "This run just changed",
+  );
+  expect(updated).toHaveBeenCalledWith(
+    expect.objectContaining({ revision: 9 }),
+  );
+  expect(
+    mocks.invoke.mock.calls.filter((c) => c[0] === "discovery_control"),
+  ).toHaveLength(1);
+});
+it("offers no Retry after a run has stopped for review", () => {
+  render(
+    <Detail
+      run={{ ...run, state: "blocked" }}
+      onUpdated={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent("Stopped: needs review");
+  expect(
+    screen.queryByRole("button", { name: "Retry" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Stop" }),
+  ).not.toBeInTheDocument();
+});
+
 it("opens the exact portfolio selected by a shell notification", async () => {
   render(<SelfDiscovery initialRunId="portfolio" onBack={vi.fn()} />);
   await screen.findByRole("heading", { name: "Choose projects to develop" });
   expect(mocks.invoke).toHaveBeenCalledWith("discovery_get", {
     id: "portfolio",
   });
+});
+
+it("keeps blank lines while typing input files and drops them at Start", async () => {
+  render(
+    <Builder
+      initialMode="unsupervised"
+      initialSessionId="source"
+      onStarted={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("Research topics and questions"), {
+    target: { value: "Study source transmission" },
+  });
+  const files = screen.getByLabelText("Research input files");
+  for (const value of ["data/a.csv\n", "data/a.csv\n\n data/b.csv "]) {
+    fireEvent.change(files, { target: { value } });
+    expect(files).toHaveValue(value);
+  }
+  fireEvent.click(
+    screen.getByRole("button", { name: "Start research discovery" }),
+  );
+  await waitFor(() =>
+    expect(
+      mocks.invoke.mock.calls.find((c) => c[0] === "discovery_start")?.[1]
+        .request.definition.inputPaths,
+    ).toEqual(["data/a.csv", "data/b.csv"]),
+  );
+});
+it("says why Start is unavailable", () => {
+  render(
+    <Builder
+      initialMode="unsupervised"
+      onStarted={vi.fn()}
+      onClose={vi.fn()}
+    />,
+  );
+  const start = screen.getByRole("button", {
+    name: "Start research discovery",
+  });
+  expect(start).toBeDisabled();
+  expect(start).toHaveAccessibleDescription(
+    "Describe the topics or questions to research.",
+  );
+  fireEvent.change(screen.getByLabelText("Research topics and questions"), {
+    target: { value: "Study source transmission" },
+  });
+  fireEvent.change(screen.getByLabelText("Shortlisted projects"), {
+    target: { value: "3" },
+  });
+  expect(start).toBeDisabled();
+  expect(start).toHaveAccessibleDescription(
+    "Choose 1–9 papers, no more than the shortlist size.",
+  );
+});
+it("opens a paper in a bounded reader and focuses it", async () => {
+  const scroll = vi.fn();
+  const original = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = scroll;
+  const manuscript = {
+    title: "Transmission paper",
+    abstractText: "Abstract",
+    markdown: "# Transmission paper",
+    latex: "",
+    bibliography: "",
+    evidenceIds: [],
+    limitations: [],
+    responseToReview: [],
+    files: [],
+  };
+  mocks.invoke.mockImplementation(async (name: string) =>
+    name === "discovery_paper"
+      ? {
+          candidateId: 1,
+          state: "completed",
+          reason: "",
+          rounds: [],
+          challenges: [],
+          evidence: {},
+          assessment: null,
+          versions: [
+            {
+              version: 2,
+              hash: "h",
+              manuscript,
+              artifacts: {},
+              reviews: [],
+              externalReview: null,
+            },
+          ],
+        }
+      : null,
+  );
+  try {
+    render(
+      <Detail
+        run={{
+          ...run,
+          state: "completed",
+          papers: [
+            {
+              candidateId: 1,
+              title: "Transmission paper",
+              state: "completed",
+              reason: "",
+              rounds: 2,
+              versions: 2,
+              reviewCount: 0,
+              hash: "h",
+              assessment: null,
+            },
+          ],
+        }}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const opener = screen.getByRole("button", {
+      name: "Read paper and reviews",
+    });
+    fireEvent.click(opener);
+    const heading = await screen.findByRole("heading", {
+      name: "Transmission paper",
+      level: 3,
+    });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(scroll).toHaveBeenCalled();
+    const viewer = await screen.findByText("# Transmission paper");
+    expect(viewer.closest(".discovery-reader")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Close paper reader" }));
+    expect(opener).toHaveFocus();
+  } finally {
+    Element.prototype.scrollIntoView = original;
+  }
 });

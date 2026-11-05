@@ -1,7 +1,15 @@
 //! Cross-domain tests for the modular research harness.
 
+use super::config::find_preset;
 use super::*;
 use crate::workbench::store::{CreateSessionRequest, CreateWorkspaceRequest, UpdateSessionRequest};
+
+#[path = "tests/automation_identity.rs"]
+mod automation_identity;
+#[path = "tests/paper_imports.rs"]
+mod paper_imports;
+#[path = "tests/session_moves.rs"]
+mod session_moves;
 
 struct Fixture {
     _temporary: tempfile::TempDir,
@@ -317,7 +325,7 @@ fn source_tree_identity_tracks_included_files_without_following_symlinks() {
 
 #[cfg(unix)] // Unix tools or journalled project writes
 #[test]
-fn execution_profiles_require_oldstata_and_tests_before_runs() {
+fn execution_profiles_validate_stata_batch_shape_and_require_tests_before_runs() {
     let fixture = fixture();
     let direct = save_execution_profile(
         &fixture.store,
@@ -336,7 +344,7 @@ fn execution_profiles_require_oldstata_and_tests_before_runs() {
             operation_id: "bad-stata".into(),
         },
     );
-    assert!(direct.unwrap_err().message.contains("oldstata"));
+    assert!(direct.unwrap_err().message.contains("batch mode"));
     let profile = save_execution_profile(
         &fixture.store,
         SaveExecutionProfileRequest {
@@ -882,7 +890,7 @@ fn schema_13_custom_profiles_migrate_to_inheriting_the_native_default() {
     let connection = fixture.store.connection().unwrap();
     connection
         .execute_batch(
-            "DROP TABLE discovery_roles; ALTER TABLE presets DROP COLUMN base_instructions; PRAGMA user_version = 13;",
+            "DROP INDEX transcript_items_page; DROP TABLE conversation_tool_receipts; DROP TABLE discovery_roles; ALTER TABLE presets DROP COLUMN base_instructions; PRAGMA user_version = 13;",
         )
         .unwrap();
     drop(connection);
@@ -1017,7 +1025,7 @@ fn a_source_conversation_draft_does_not_block_a_discovery_run() {
 
 #[test]
 fn retry_readopts_a_cursor_moved_by_a_steering_message() {
-    use crate::workbench::codex::NormalizedEvent;
+    use crate::agent_runtime::events::NormalizedEvent;
     use crate::workbench::missions::{readopt_scope, refresh_scope, refresh_source_scope};
 
     let fixture = fixture();

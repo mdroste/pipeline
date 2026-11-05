@@ -23,16 +23,20 @@ describe("PromptEditor", () => {
     ).toBeInTheDocument();
   });
 
-  it("hides the chip row for parallel step prompts (no placeholders)", () => {
+  it("offers and accepts what a parallel step prompt substitutes", () => {
     render(
       <PromptEditor
-        value=""
+        value="{var:audience} {input:letter} {item} {orientation}"
         onChange={() => {}}
         context={{ kind: "parallel" }}
         ariaLabel="Parallel prompt"
       />,
     );
-    expect(screen.queryByText("Insert:")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "{orientation}" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "{item}" })).toBeInTheDocument();
+    expect(screen.queryByText(/unknown placeholder/)).not.toBeInTheDocument();
   });
 
   it("inserts a token at the cursor when a chip is clicked", async () => {

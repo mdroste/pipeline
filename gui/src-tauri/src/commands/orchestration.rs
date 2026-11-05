@@ -3,7 +3,9 @@ use super::*;
 mod pins;
 #[cfg(test)]
 mod tests;
-pub use pins::{reconcile_failed_pins, release_abandoned_pin};
+#[cfg(test)]
+pub(crate) use pins::release_in;
+pub use pins::{is_pinned, reconcile_failed_pins, release_abandoned_pin};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::sync::{Mutex, OnceLock};
@@ -182,6 +184,7 @@ pub async fn execute(
         workflow_fingerprint: document.fingerprint,
         workflow_json: document.canonical_json,
         specialist_catalog_revision: pinned.catalog_revision,
+        agent_overrides: None,
     };
     let vars = variables.into_iter().collect();
     let extra = std::collections::HashMap::new();

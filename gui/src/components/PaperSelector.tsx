@@ -1,8 +1,27 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { appClient } from "../lib/appClient";
+import { onFileDrop } from "../lib/fileDrop";
 import type { InputInterpretation, PrimaryInputSelection } from "../lib/types";
+import ReportIssueLink from "./ReportIssueLink";
 
 const RECENT_INPUTS_KEY = "pipeline.recentInputs.v1";
+const DOCUMENT_EXTENSIONS = ["pdf", "tex", "docx"];
+
+const isDocumentPath = (path: string) => {
+  const name = path.split(/[/\\]/).pop() ?? "";
+  const dot = name.lastIndexOf(".");
+  return (
+    dot > 0 && DOCUMENT_EXTENSIONS.includes(name.slice(dot + 1).toLowerCase())
+  );
+};
+
+// Listing a folder's documents fails for anything that is not a folder.
+const isFolder = (path: string) =>
+  appClient.inputFiles(path).then(
+    () => true,
+    () => false,
+  );
 
 function loadRecentInputs(): PrimaryInputSelection[] {
   try {
@@ -29,6 +48,9 @@ function loadRecentInputs(): PrimaryInputSelection[] {
 }
 
 interface Props {
+  /** The selection the caller holds. When given, the selector is controlled
+   *  and survives remounts; otherwise it keeps its own selection. */
+  selection?: PrimaryInputSelection | null;
   onPathChange: (path: string | null) => void;
   onSelectionChange?: (selection: PrimaryInputSelection | null) => void;
   disabled: boolean;
@@ -36,14 +58,19 @@ interface Props {
 }
 
 export default function PaperSelector({
+  selection: heldSelection,
   onPathChange,
   onSelectionChange,
   disabled,
   inputMode = "document",
 }: Props) {
-  const [selection, setSelection] = useState<PrimaryInputSelection | null>(
-    null,
-  );
+  const [ownSelection, setOwnSelection] =
+    useState<PrimaryInputSelection | null>(null);
+  const controlled = heldSelection !== undefined;
+  const selection = controlled ? heldSelection : ownSelection;
+  const setSelection = (next: PrimaryInputSelection | null) => {
+    if (!controlled) setOwnSelection(next);
+  };
   const [pickerError, setPickerError] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [recentInputs, setRecentInputs] =
@@ -83,7 +110,7 @@ export default function PaperSelector({
     try {
       const path = await openDialog({
         multiple: true,
-        filters: [{ name: "Papers", extensions: ["pdf", "tex", "docx"] }],
+        filters: [{ name: "Papers", extensions: DOCUMENT_EXTENSIONS }],
       });
       if (path) {
         const paths = (Array.isArray(path) ? path : [path]) as string[];
@@ -137,28 +164,60 @@ export default function PaperSelector({
   const selectedPath = selection?.paths[0] ?? null;
   const selectedName = selectedPath?.split(/[/\\]/).pop();
 
-  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    if (disabled) return;
-    const paths = Array.from(event.dataTransfer.files)
-      .map((file) => (file as File & { path?: string }).path)
-      .filter((path): path is string => Boolean(path));
-    if (paths.length === 0) {
+  // The desktop shell reports dropped files with their real paths; the
+  // browser's own drop event does not.
+  const receiveDrop = async (paths: string[]) => {
+    if (disabled || picking) return;
+    setPickerError(null);
+    if (inputMode === "folder") {
+      const folder = paths.length === 1 ? paths[0] : null;
+      if (!folder || !(await isFolder(folder))) {
+        setPickerError("Drop one folder, or use Select folder.");
+        return;
+      }
+      applySelection({
+        paths: [folder],
+        interpretation: "source_tree",
+        selectionKind: "folder",
+      });
+      return;
+    }
+    const files = paths.filter(isDocumentPath);
+    if (files.length === 0) {
       setPickerError(
-        "This drag did not provide local file paths. Use Select files instead.",
+        "Only PDF, LaTeX, and Word files can be dropped here. To use a folder, choose it with the folder button.",
       );
       return;
     }
-    setPickerError(null);
     applySelection({
-      paths,
-      interpretation: paths.length > 1 ? "batch" : "document",
+      paths: files,
+      interpretation: files.length > 1 ? "batch" : "document",
       selectionKind: "file",
     });
   };
+  const rootRef = useRef<HTMLDivElement>(null);
+  const dropRef = useRef(receiveDrop);
+  dropRef.current = receiveDrop;
+  useEffect(() => {
+    let disposed = false;
+    let unsubscribe: (() => void) | null = null;
+    void onFileDrop((event) => {
+      if (disposed || event.type !== "drop" || event.paths.length === 0) return;
+      const root = rootRef.current;
+      const hit = document.elementFromPoint?.(event.x, event.y);
+      if (root && hit && root.contains(hit)) void dropRef.current(event.paths);
+    }).then((stop) => {
+      if (disposed) stop();
+      else unsubscribe = stop;
+    });
+    return () => {
+      disposed = true;
+      unsubscribe?.();
+    };
+  }, []);
 
   return (
-    <div onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
+    <div ref={rootRef}>
       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
         Inputs
       </label>
@@ -211,7 +270,9 @@ export default function PaperSelector({
         </button>
       </div>
       <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
-        Drop local files here, or use the file and folder pickers.
+        {inputMode === "folder"
+          ? "Drop a folder here, or use the folder picker."
+          : "Drop local files here, or use the file and folder pickers."}
       </p>
       {!selection && recentInputs.length > 0 && (
         <label className="mt-2 block text-xs text-gray-600 dark:text-gray-300">
@@ -298,9 +359,9 @@ export default function PaperSelector({
           </label>
           <p className="text-[11px] leading-4 text-gray-500 dark:text-gray-400">
             {selection?.interpretation === "latex_project"
-              ? "Pipeline finds the project’s top-level main TeX file and resolves its local includes."
+              ? "Pipeline finds the main TeX file and reads the local files it includes."
               : selection?.interpretation === "source_tree"
-                ? "The workflow receives an inventory and may read files inside this folder on demand."
+                ? "The review can browse and read files in this folder as needed."
                 : selection?.interpretation === "batch"
                   ? selection.selectionKind === "folder"
                     ? "Each supported document directly inside this folder becomes an independent report."
@@ -315,6 +376,7 @@ export default function PaperSelector({
           className="mt-1.5 text-xs text-red-700 dark:text-red-400"
         >
           {pickerError}
+          <ReportIssueLink />
         </p>
       )}
     </div>

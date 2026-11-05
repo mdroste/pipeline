@@ -1,15 +1,47 @@
-//! Descriptor-relative reads and journalled, no-clobber replacement on Unix.
+//! Descriptor-relative reads and journalled, no-clobber replacement on Unix
+//! and Windows.
 use super::*;
+mod entries;
+pub(super) use entries::{EntryKind, EntryStat};
+#[cfg(unix)]
+mod placement;
 #[cfg(windows)]
 mod windows;
 
+/// Whether task copies and accepted edits can use journalled replacement here.
+pub(super) const REPLACEMENT: bool = cfg!(any(unix, windows));
+
+fn folded(component: &str) -> String {
+    component.trim_end_matches(['.', ' ']).to_ascii_lowercase()
+}
+
 /// Apply the same conservative policy on case-sensitive and insensitive volumes.
 pub(super) fn reserved_component(component: &str) -> bool {
-    let name = component.trim_end_matches(['.', ' ']).to_ascii_lowercase();
-    name == ".git" || name == SCRATCH || name.starts_with(".pipeline-apply-")
+    let name = folded(component);
+    name == ".git" || name == SCRATCH || name == GENERATED || name.starts_with(".pipeline-apply-")
+}
+
+/// Pipeline's generated inputs. Reserved, but earlier builds treated this folder
+/// as project content, so saved records and Git history can name files in it.
+pub(super) fn generated_component(component: &str) -> bool {
+    folded(component) == GENERATED
 }
 
 pub(super) fn relative(value: &str) -> WorkbenchResult<()> {
+    well_formed(value, reserved_component)
+}
+
+/// `relative`, for a path read from a saved record rather than asked for now.
+/// Only the journal and its read-only checks use this, through
+/// `SafeRoot::for_records`: nothing new can reach the generated folder this way,
+/// because no new record can name it.
+pub(super) fn recorded(value: &str) -> WorkbenchResult<()> {
+    well_formed(value, |part| {
+        reserved_component(part) && !generated_component(part)
+    })
+}
+
+fn well_formed(value: &str, refused: impl Fn(&str) -> bool) -> WorkbenchResult<()> {
     let p = Path::new(value);
     if value.is_empty()
         || value.len() > 4096
@@ -23,7 +55,7 @@ pub(super) fn relative(value: &str) -> WorkbenchResult<()> {
         })
         || p.is_absolute()
         || p.components().any(|c| !matches!(c, Component::Normal(_)))
-        || value.split('/').any(reserved_component)
+        || value.split('/').any(refused)
     {
         return Err(WorkbenchError::invalid(
             "Choose a normalized relative file path outside Git/task metadata",
@@ -45,8 +77,24 @@ pub(super) fn executable(metadata: &fs::Metadata) -> bool {
 }
 pub(super) struct SafeRoot {
     directory: fs::File,
+    /// Whether paths come from saved records. See `recorded`.
+    records: bool,
 }
 impl SafeRoot {
+    /// A root for the paths in saved records. The file tools use `open`.
+    pub(super) fn for_records(root: &Path) -> WorkbenchResult<Self> {
+        Ok(Self {
+            records: true,
+            ..Self::open(root)?
+        })
+    }
+    fn checked(&self, path: &str) -> WorkbenchResult<()> {
+        if self.records {
+            recorded(path)
+        } else {
+            relative(path)
+        }
+    }
     pub(super) fn open(root: &Path) -> WorkbenchResult<Self> {
         #[cfg(unix)]
         {
@@ -56,12 +104,16 @@ impl SafeRoot {
                 .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
                 .open(root)
                 .map_err(err)?;
-            Ok(Self { directory })
+            Ok(Self {
+                directory,
+                records: false,
+            })
         }
         #[cfg(windows)]
         {
             Ok(Self {
                 directory: windows::open_root(root).map_err(err)?,
+                records: false,
             })
         }
         #[cfg(not(any(unix, windows)))]
@@ -75,7 +127,7 @@ impl SafeRoot {
     #[cfg(unix)]
     fn parent(&self, path: &str, create: bool) -> WorkbenchResult<(fs::File, std::ffi::CString)> {
         use std::os::fd::{AsRawFd, FromRawFd};
-        relative(path)?;
+        self.checked(path)?;
         let mut directory = self.directory.try_clone().map_err(err)?;
         let mut parts = path.split('/').peekable();
         while let Some(part) = parts.next() {
@@ -155,8 +207,8 @@ impl SafeRoot {
         }
         #[cfg(windows)]
         {
-            relative(path)?;
-            let mut f = match windows::open_relative(&self.directory, path) {
+            self.checked(path)?;
+            let mut f = match windows::open_relative(&self.directory, path, self.records) {
                 Ok(file) => file,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
                 Err(e) => return Err(err(e)),
@@ -298,7 +350,7 @@ impl SafeRoot {
                 if result != 0 {
                     return Err(err(std::io::Error::last_os_error()));
                 }
-                directory.sync_all().map_err(err)?;
+                crate::safety::sync_landed(&directory);
                 if Self::read_name(&directory, &claim_name)?
                     .as_deref()
                     .map(hash)
@@ -335,26 +387,71 @@ impl SafeRoot {
                 }
                 let mut file = unsafe { fs::File::from_raw_fd(fd) };
                 file.write_all(bytes).map_err(err)?;
-                file.sync_all().map_err(err)?;
-                let placed = unsafe {
-                    libc::linkat(
-                        directory.as_raw_fd(),
-                        temporary.as_ptr(),
-                        directory.as_raw_fd(),
-                        name.as_ptr(),
-                        0,
-                    )
-                };
-                let placement_error = std::io::Error::last_os_error();
+                crate::safety::sync_file(&file).map_err(err)?;
+                let placed = placement::move_no_clobber(&directory, &temporary, &name);
                 unsafe { libc::unlinkat(directory.as_raw_fd(), temporary.as_ptr(), 0) };
-                if placed != 0 {
+                match placed {
+                    Ok(()) => (),
+                    Err(error) if placement::unsupported(&error) => {
+                        return Err(WorkbenchError::conflict(format!("The drive holding this project cannot place {path} without risking an overwrite: {error}. Nothing was overwritten. Move the project to another drive, then recover this change.")));
+                    }
+                    Err(error) => {
+                        return Err(WorkbenchError::conflict(format!("Could not place {path} without overwriting another edit: {error}. Recover this application.")));
+                    }
+                }
+            }
+            crate::safety::sync_landed(&directory);
+            Ok(())
+        }
+        #[cfg(windows)]
+        {
+            valid_id(claim)?;
+            let (directory, name) = self.windows_parent(path, bytes.is_some())?;
+            let claim_name = format!(".pipeline-apply-{claim}");
+            if windows::exists(&directory, &claim_name).map_err(err)? {
+                return Err(WorkbenchError::conflict(
+                    "This application has an existing recovery file; recover it first",
+                ));
+            }
+            // Windows files carry no executable bit, so a recorded one cannot match.
+            if expected_executable {
+                return Err(WorkbenchError::conflict(
+                    "File permissions changed during the task",
+                ));
+            }
+            let _ = is_executable;
+            if let Some(expected) = expected {
+                // The exclusive handle admits no writer from this check through
+                // the rename, so the claimed bytes are the verified bytes.
+                let external =
+                    || WorkbenchError::conflict(format!("External change detected: {path}"));
+                let mut original = self
+                    .windows_open(&directory, name, false)?
+                    .ok_or_else(external)?;
+                if hash(&Self::windows_bytes(&mut original)?) != expected {
+                    return Err(external());
+                }
+                windows::rename_new(&original, &claim_name).map_err(err)?;
+            } else if windows::exists(&directory, name).map_err(err)? {
+                return Err(WorkbenchError::conflict(format!(
+                    "A new file already exists: {path}"
+                )));
+            }
+            if let Some(bytes) = bytes {
+                let temporary = format!(".pipeline-apply-{}", id("write")?);
+                let mut file = windows::create_new(&directory, &temporary).map_err(err)?;
+                let placed = file
+                    .write_all(bytes)
+                    .and_then(|()| crate::safety::sync_file(&file))
+                    .and_then(|()| windows::rename_new(&file, name));
+                if let Err(placement_error) = placed {
+                    let _ = windows::delete(&file);
                     return Err(WorkbenchError::conflict(format!("Could not place {path} without overwriting another edit: {placement_error}. Recover this application.")));
                 }
             }
-            directory.sync_all().map_err(err)?;
             Ok(())
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = (
                 path,
@@ -369,29 +466,70 @@ impl SafeRoot {
             ))
         }
     }
+    #[cfg(windows)]
+    fn windows_parent<'a>(
+        &self,
+        path: &'a str,
+        create: bool,
+    ) -> WorkbenchResult<(fs::File, &'a str)> {
+        self.checked(path)?;
+        windows::open_parent(&self.directory, path, create, self.records).map_err(|e| {
+            let missing = e.kind() == std::io::ErrorKind::NotFound;
+            let mut error = err(&e);
+            if missing {
+                error.code = "file_missing".into();
+            }
+            error
+        })
+    }
+    #[cfg(windows)]
+    fn windows_open(
+        &self,
+        directory: &fs::File,
+        name: &str,
+        internal: bool,
+    ) -> WorkbenchResult<Option<fs::File>> {
+        use windows_sys::Win32::Foundation::{ERROR_LOCK_VIOLATION, ERROR_SHARING_VIOLATION};
+        match windows::open_exclusive(directory, name, internal, self.records) {
+            Ok(file) => Ok(Some(file)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e)
+                if e.raw_os_error().is_some_and(|code| {
+                    [ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION].contains(&(code as u32))
+                }) =>
+            {
+                Err(WorkbenchError::conflict(
+                    "A file in this change is open in another program; close it and try again",
+                ))
+            }
+            Err(e) => Err(err(e)),
+        }
+    }
+    #[cfg(windows)]
+    fn windows_bytes(file: &mut fs::File) -> WorkbenchResult<Vec<u8>> {
+        let mut bytes = Vec::new();
+        Read::by_ref(file)
+            .take(MAX_FILE + 1)
+            .read_to_end(&mut bytes)
+            .map_err(err)?;
+        if bytes.len() as u64 > MAX_FILE {
+            return Err(WorkbenchError::invalid("File exceeds capture limit"));
+        }
+        Ok(bytes)
+    }
     #[cfg(unix)]
     fn restore_claim(
         directory: &fs::File,
         name: &std::ffi::CStr,
         claim: &std::ffi::CStr,
     ) -> WorkbenchResult<()> {
-        use std::os::fd::AsRawFd;
-        if unsafe {
-            libc::linkat(
-                directory.as_raw_fd(),
-                claim.as_ptr(),
-                directory.as_raw_fd(),
-                name.as_ptr(),
-                0,
-            )
-        } != 0
-        {
-            return Err(WorkbenchError::conflict(
+        placement::move_no_clobber(directory, claim, name).map_err(|_| {
+            WorkbenchError::conflict(
                 "An external file prevents recovery; original remains in the recovery file",
-            ));
-        }
-        unsafe { libc::unlinkat(directory.as_raw_fd(), claim.as_ptr(), 0) };
-        directory.sync_all().map_err(err)
+            )
+        })?;
+        crate::safety::sync_landed(directory);
+        Ok(())
     }
     pub(super) fn recover_claim(&self, path: &str, claim: &str) -> WorkbenchResult<bool> {
         #[cfg(unix)]
@@ -411,7 +549,29 @@ impl SafeRoot {
             }
             Ok(false)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            valid_id(claim)?;
+            let (directory, name) = match self.windows_parent(path, false) {
+                Ok(pair) => pair,
+                Err(e) if e.code == "file_missing" => return Ok(false),
+                Err(e) => return Err(e),
+            };
+            let claim = format!(".pipeline-apply-{claim}");
+            let Some(recovery) = self.windows_open(&directory, &claim, true)? else {
+                return Ok(false);
+            };
+            if windows::exists(&directory, name).map_err(err)? {
+                return Ok(false);
+            }
+            windows::rename_new(&recovery, name).map_err(|_| {
+                WorkbenchError::conflict(
+                    "An external file prevents recovery; original remains in the recovery file",
+                )
+            })?;
+            Ok(true)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = (path, claim);
             Ok(false)
@@ -433,9 +593,24 @@ impl SafeRoot {
             {
                 return Err(err(std::io::Error::last_os_error()));
             }
-            directory.sync_all().map_err(err)
+            crate::safety::sync_landed(&directory);
+            Ok(())
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            valid_id(claim)?;
+            let (directory, _) = match self.windows_parent(path, false) {
+                Ok(pair) => pair,
+                Err(e) if e.code == "file_missing" => return Ok(()),
+                Err(e) => return Err(e),
+            };
+            let claim = format!(".pipeline-apply-{claim}");
+            if let Some(file) = self.windows_open(&directory, &claim, true)? {
+                windows::delete(&file).map_err(err)?;
+            }
+            Ok(())
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = (path, claim);
             Ok(())

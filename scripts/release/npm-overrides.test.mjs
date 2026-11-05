@@ -66,28 +66,26 @@ test("WebdriverIO CLI and project configuration remain loadable", async () => {
   assert.ok(config.services.flat(Infinity).includes("@wdio/tauri-service"));
 });
 
-test("audited override versions stay locked", () => {
+test("patched transitive dependencies stay locked without vulnerable ZIP extraction", () => {
   const lock = JSON.parse(fs.readFileSync(path.join(GUI, "package-lock.json"), "utf8"));
-  const expected = {
-    "node_modules/vitest": "4.1.11",
-    "node_modules/@vitest/mocker": "4.1.11",
-    "node_modules/jsdom/node_modules/undici": "8.10.2",
-    "node_modules/brace-expansion": "5.0.12",
-    "node_modules/diff": "8.0.4",
-    "node_modules/esbuild": "0.28.1",
-    "node_modules/ip-address": "10.7.3",
-    "node_modules/js-yaml": "4.3.2",
-    "node_modules/minimatch": "10.2.6",
-    "node_modules/mocha": "11.7.6",
-    "node_modules/nanoid": "3.3.18",
-    "node_modules/serialize-javascript": "7.0.7",
-    "node_modules/undici": "7.29.1",
-    "node_modules/@wdio/cli/node_modules/undici": "6.28.1",
-    "node_modules/@wdio/runner/node_modules/undici": "6.28.1",
-    "node_modules/webdriver/node_modules/undici": "6.28.1",
-  };
-
-  for (const [packagePath, version] of Object.entries(expected)) {
-    assert.equal(lock.packages[packagePath]?.version, version, `${packagePath} must remain audited`);
+  const versions = (name) => Object.entries(lock.packages)
+    .filter(([location]) => location.endsWith(`node_modules/${name}`))
+    .map(([, entry]) => entry.version);
+  for (const [name, version] of Object.entries({
+    vitest: "4.1.12",
+    "@vitest/mocker": "4.1.12",
+    "@puppeteer/browsers": "3.2.6",
+    "serialize-javascript": "7.1.4",
+  })) {
+    assert.ok(versions(name).length > 0, `${name} must be installed`);
+    assert.ok(versions(name).every((actual) => actual === version), `${name} must remain patched`);
+  }
+  assert.deepEqual(versions("extract-zip"), [], "browser downloads must not use extract-zip");
+  assert.deepEqual(versions("katex"), [lock.packages["node_modules/katex"].version]);
+  assert.match(versions("katex")[0], /^0\.18\.(?:[2-9]|[1-9]\d+)$/);
+  const undici = { 6: "6.29.1", 7: "7.30.1", 8: "8.12.3" };
+  assert.ok(versions("undici").length > 0);
+  for (const version of versions("undici")) {
+    assert.equal(version, undici[version.split(".")[0]], "every undici copy must be patched");
   }
 });

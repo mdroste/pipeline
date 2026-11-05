@@ -86,7 +86,14 @@ export default function ResearchTablePreview({
   return (
     <div className="overflow-auto">
       {table.error ? (
-        <p className="text-xs text-amber-700">{table.error}</p>
+        <>
+          <p className="text-xs text-amber-700 dark:text-amber-300">
+            {table.error}
+          </p>
+          <pre className="mt-2 whitespace-pre-wrap break-words text-xs">
+            {text}
+          </pre>
+        </>
       ) : (
         <table
           aria-label="Research data preview"

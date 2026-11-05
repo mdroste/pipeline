@@ -12,21 +12,29 @@ try {
   await app.$('[data-testid="app-shell"]').waitForDisplayed({ timeout: 30000 });
   const dismiss = await app.$('[data-testid="dependencies-dismiss"]');
   if (await dismiss.isExisting()) await dismiss.click();
-  await app.$("button=Tasks").click();
-  await app.$("h1=Tasks").waitForDisplayed();
-  await app.$("button=+ New task").click();
-  await app.$("button=Edit definition").click();
+  await app.$("button=Automations").click();
+  await app.$("h1=Automations").waitForDisplayed();
+  await app.$("button=+ New automation").click();
+  await app.$("summary=Definition (advanced)").click();
   const chain = { schemaVersion: 1, name: title, description: "Native timer and input integration check", steps: [
     { id: "timer", label: "Wait briefly", kind: "delay", seconds: 0 },
     { id: "answer", label: "Wait for the paper", kind: "input", prompt: "Supply the test paper" },
     { id: "paper", label: "Save the supplied paper", kind: "snapshot", input: { kind: "output", step: "answer" }, filename: "paper.md" },
   ] };
-  await app.$("textarea.task-code").setValue(JSON.stringify(chain));
-  await app.$("button=Prepare task chain →").click();
-  await app.$("button=Start task chain").waitForDisplayed();
+  // The definition view is read-only, so load the chain through Import automation.
+  await app.execute(json => {
+    const input = document.querySelector('.task-import input[type="file"]');
+    const files = new DataTransfer();
+    files.items.add(new File([json], "automation.json", { type: "application/json" }));
+    input.files = files.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }, JSON.stringify(chain));
+  await app.$(`pre*=${title}`).waitForDisplayed();
+  await app.$("button=Preview automation →").click();
+  await app.$("button=Start automation").waitForDisplayed();
   const draft = (await invoke("task_list", { view: "active" })).find(run => run.name === title);
   assert.equal(draft.state, "draft");
-  await app.$("button=Start task chain").click();
+  await app.$("button=Start automation").click();
   await app.$("button=Provide input").waitForDisplayed({ timeout: 15000 });
   await app.$(".task-activity textarea").setValue("A deterministic native smoke-test paper.");
   await app.$("button=Provide input").click();
@@ -54,7 +62,7 @@ try {
   await app.waitUntil(async () => await invoke("task_background"), { timeout: 5000 });
   await background.click();
   await app.waitUntil(async () => !(await invoke("task_background")), { timeout: 5000 });
-  console.log(JSON.stringify({ status: "passed", taskId: draft.id, checks: ["native task page", "prepare before start", "durable timer", "input wait and delivery", "artifact receipt", "completion", "schedule creation and pause", "native background tray setting"] }));
+  console.log(JSON.stringify({ status: "passed", taskId: draft.id, checks: ["native automations page", "prepare before start", "durable timer", "input wait and delivery", "artifact receipt", "completion", "schedule creation and pause", "native background tray setting"] }));
 } finally {
   await app.deleteSession();
 }

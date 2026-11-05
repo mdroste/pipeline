@@ -24,6 +24,8 @@ export default function HomePage({
   onNewReview,
   onContinueReview,
   onNavigate,
+  onSetUp,
+  onExampleReview,
 }: {
   projects: RecentProject[];
   projectsLoading: boolean;
@@ -37,22 +39,26 @@ export default function HomePage({
   onNewReview: () => void;
   onContinueReview: () => void;
   onNavigate: (page: AppPage) => void;
+  /** Reopen the Get started guide. */
+  onSetUp?: () => void;
+  /** Open the bundled Example Review (no model call). */
+  onExampleReview?: () => void;
 }) {
   const actions = [
     {
-      title: "Work with the assistant",
+      title: "Conversation",
       description:
-        "Develop an argument, revise prose, or investigate results in a project.",
-      label: "Open assistant",
+        "Ask questions or get help with a draft, without setting up a project.",
+      label: "New conversation",
       icon: "assistant" as const,
       accent:
         "from-blue-500/15 via-blue-500/5 to-transparent text-blue-700 dark:text-blue-300",
       onClick: onAssistant,
     },
     {
-      title: "Review a paper",
+      title: "Review",
       description:
-        "Run a structured, reproducible review with evidence and durable outputs.",
+        "Review a paper and save the findings, supporting evidence, and report.",
       // Reviews run side by side, so this always sets up a new one; the
       // banner above returns to running reviews.
       label: "New review",
@@ -62,13 +68,12 @@ export default function HomePage({
       onClick: onNewReview,
     },
     {
-      title: "Automate research",
-      description:
-        "Continue research, reviews, waits, and decisions on a schedule or over several rounds.",
+      title: "Automate",
+      description: "Chain tasks together in sequence or on a schedule.",
       label: "Open automations",
       icon: "tasks" as const,
       accent:
-        "from-emerald-500/15 via-emerald-500/5 to-transparent text-emerald-700 dark:text-emerald-300",
+        "from-emerald-500/15 via-emerald-500/5 to-transparent text-emerald-700 dark:from-neutral-400/15 dark:via-neutral-400/5 dark:text-neutral-300",
       onClick: () => onNavigate("tasks"),
     },
   ];
@@ -95,8 +100,8 @@ export default function HomePage({
               </span>
               <span className="mt-0.5 block text-xs text-gray-500 dark:text-neutral-400">
                 {runningReviews > 1
-                  ? "Open the earliest; the sidebar lists the rest"
-                  : "Open the current review"}
+                  ? "Open the earliest; Activity lists the rest"
+                  : "Open review"}
               </span>
             </span>
             <Icon
@@ -146,19 +151,37 @@ export default function HomePage({
               </button>
             ))}
           </div>
+          {(onSetUp || onExampleReview) && (
+            <p className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500 dark:text-neutral-400">
+              <span>New to Pipeline?</span>
+              {onSetUp && (
+                <button
+                  type="button"
+                  onClick={onSetUp}
+                  className="font-semibold text-gray-700 underline decoration-gray-300 underline-offset-2 hover:text-gray-950 hover:decoration-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-neutral-200 dark:decoration-neutral-600 dark:hover:text-neutral-50"
+                >
+                  Set up Pipeline
+                </button>
+              )}
+              {onExampleReview && (
+                <button
+                  type="button"
+                  onClick={onExampleReview}
+                  className="font-semibold text-gray-700 underline decoration-gray-300 underline-offset-2 hover:text-gray-950 hover:decoration-current focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-neutral-200 dark:decoration-neutral-600 dark:hover:text-neutral-50"
+                >
+                  See an example review
+                </button>
+              )}
+            </p>
+          )}
         </section>
 
         <div className="mt-12 max-w-3xl">
           <section aria-labelledby="projects-heading">
             <div className="flex items-center justify-between gap-4">
-              <div>
-                <h2 id="projects-heading" className="text-base font-semibold">
-                  Continue working
-                </h2>
-                <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">
-                  Your recently updated research projects.
-                </p>
-              </div>
+              <h2 id="projects-heading" className="text-base font-semibold">
+                Recent projects
+              </h2>
               <button
                 type="button"
                 onClick={() => onNavigate("project-index")}

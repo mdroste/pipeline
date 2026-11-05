@@ -1,15 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AppPage, RecentProject } from "../components/NavRail";
+
+const REFRESH_PAGES: AppPage[] = ["home", "workspace", "project-index"];
 
 export default function useRecentProjects(page: AppPage) {
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const [projectsLoading, setProjectsLoading] = useState(true);
+  const loaded = useRef(false);
   useEffect(() => {
-    if (!["home", "workspace", "project-index"].includes(page)) return;
+    // The sidebar lists these on every page, so the first page always loads.
+    if (loaded.current && !REFRESH_PAGES.includes(page)) return;
+    loaded.current = true;
     let live = true;
     setProjectsLoading(true);
-    void import("../lib/workbenchClient")
-      .then(({ workbenchClient }) => workbenchClient.listWorkspaces(false))
+    void import("../lib/workbench/workspaceClient")
+      .then(({ workspaceClient }) => workspaceClient.listWorkspaces(false))
       .then(({ workspaces }) => {
         if (live)
           setRecentProjects(

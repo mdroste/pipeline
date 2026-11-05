@@ -2,26 +2,46 @@ import { useAppAppearance } from "./hooks/useAppAppearance";
 import { useAppNotifications } from "./hooks/useAppNotifications";
 import { useAppController } from "./hooks/useAppController";
 import ProviderLimitBanner from "./components/ProviderLimitBanner";
-import { lazy, Suspense, useMemo } from "react";
-import ReviewRunView from "./components/ReviewRunView";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import DepsCheck from "./components/DepsCheck";
 import Console from "./components/Console";
 import VariablePrompt from "./components/VariablePrompt";
 import RunPreview from "./components/RunPreview";
 import UpdateBanner from "./components/UpdateBanner";
-import NavRail from "./components/NavRail";
+import WorkspaceBackgroundTurnNotice from "./components/WorkspaceBackgroundTurnNotice";
+import NavRail, { CollapsedNavBar } from "./components/NavRail";
+import { NavRailSlotProvider } from "./components/nav-rail/navRailSlot";
 import RunSetupPanel from "./components/RunSetupPanel";
-import RunPlanPreview from "./components/RunPlanPreview";
 import ErrorBoundary from "./components/ErrorBoundary";
-import { isMac } from "./lib/platform";
-import { router } from "./lib/router";
+import GetStartedHost from "./components/get-started/GetStartedHost";
+import { openGetStarted } from "./lib/getStarted";
+import { HistoryRunOpener } from "./hooks/app/historyRunOpener";
+import WindowControls from "./components/WindowControls";
+import { isMac, isWindows } from "./lib/platform";
+import { router, type AppPage } from "./lib/router";
+import { confirmUpdateRestart } from "./lib/updateRestart";
 import { confirmDialog, notify } from "./components/DialogService";
+import { appEvents } from "./lib/appEvents";
 import type { QueuedRun } from "./lib/types";
+import ReportIssueLink from "./components/ReportIssueLink";
+import { workbenchErrorMessage } from "./lib/workbenchError";
 
+const ReviewRunView = lazy(() => import("./components/ReviewRunView"));
+const RunPlanPreview = lazy(() => import("./components/RunPlanPreview"));
 const SettingsPage = lazy(() => import("./components/SettingsPage"));
 const HomePage = lazy(() => import("./components/HomePage"));
 const TasksPage = lazy(() => import("./components/TasksPage"));
 const ProjectIndexPage = lazy(() => import("./components/ProjectIndexPage"));
+const ConversationsPage = lazy(() => import("./components/ConversationsPage"));
+const AppSearch = lazy(() => import("./components/AppSearch"));
 const WorkspacePage = lazy(() => import("./components/WorkspacePage"));
 const PipelinePage = lazy(() => import("./components/PipelinePage"));
 const ResearchActivity = lazy(() => import("./components/ResearchActivity"));
@@ -31,110 +51,144 @@ const ProjectsPage = lazy(() => import("./components/ProjectsPage"));
 const WorkflowGalleryPage = lazy(
   () => import("./components/WorkflowGalleryPage"),
 );
+// Pages that start on the plain surface rather than the shell behind it. The
+// Windows title strip takes the same color so it reads as part of the page.
+const SURFACE_TOP_PAGES: ReadonlySet<AppPage> = new Set([
+  "batch",
+  "history",
+  "home",
+  "projects",
+  "workspace",
+]);
+
 const loadBatchPanel = () => import("./components/BatchPanel");
 const BatchPanel = lazy(loadBatchPanel);
 const ReportWorkspace = lazy(() => import("./components/ReportWorkspace"));
 
-function App() {
+function AppShell() {
   useAppAppearance();
   const {
-    showDeps,
-    depsReport,
-    setShowDeps,
-    pendingRun,
-    setPendingRun,
-    launch,
-    runPreview,
-    setRunPreview,
-    startPreparedLaunch,
-    closeProtectionUnavailable,
-    setCloseProtectionUnavailable,
-    researchNotice,
-    inspectResearchAttention,
-    setResearchNotice,
+    navigation,
+    setup,
+    reviewLaunch,
+    attention,
+    appearance,
+    projects,
+    reviewView,
+    closePipeline,
+    openActivityReview,
+  } = useAppController();
+  const {
     openWorkspaceSession,
+    startConversation,
     openActivityProject,
     openActivityTask,
-    openActivityReview,
-    tasksAttention,
     page,
-    hasCurrentRun,
-    isRunning,
-    workspaceActive,
-    workspaceAttention,
-    depsLoading,
-    depsError,
-    navRailWidth,
-    setNavRailWidth,
-    handleNewRun,
     handleNavigate,
-    recentProjects,
-    projectsLoading,
     openWorkspaceProject,
     openWorkspace,
-    checkDependencies,
-    showRunSetup,
-    configVersion,
-    runConfigError,
-    setRunConfigError,
-    runConfigLoading,
-    inputMode,
-    listenersReady,
-    paperPath,
-    preparingRun,
-    parallelOverrides,
-    selectionKey,
-    runSetupWidth,
-    setPaperPath,
-    setInputSelection,
     openHelp,
-    setParallelOverrides,
-    handleProfileChange,
-    handleGenerate,
-    loadRunSetup,
-    setRunSetupWidth,
-    providerLimitNotices,
-    batchActive,
     createWorkspaceProject,
     setPage,
     workspaceEntry,
     newProjectRequest,
     setNewProjectRequest,
     openTask,
-    openWorkspaceSettings,
-    handleWorkspaceReviewHandoff,
     taskSessionId,
     taskId,
     discoveryId,
     automatePath,
     taskEntryRequest,
-    closePipeline,
     setTasksDirty,
     setWorkflowDirty,
     openPaddleInstallSettings,
     helpInitialSection,
     setSettingsDirty,
-    theme,
-    handleThemeChange,
-    setConfigVersion,
     settingsInitialSection,
     settingsTargetId,
     settingsNavigationKey,
     historyRunId,
+    route,
     historySourceSelection,
-    setHistorySourceSelection,
     openHistoryRun,
     registerProjectSave,
     registerWorkspaceSave,
     setProjectsDirty,
+  } = navigation;
+  const {
+    showDeps,
+    depsReport,
+    setShowDeps,
+    pendingRun,
+    setPendingRun,
+    depsLoading,
+    depsError,
+    checkDependencies,
+    configVersion,
+    runConfigError,
+    setRunConfigError,
+    runConfigLoading,
+    inputMode,
+    inputSelection,
+    paperPath,
+    parallelOverrides,
+    selectionKey,
+    setPaperPath,
+    setInputSelection,
+    setParallelOverrides,
+    handleProfileChange,
+    loadRunSetup,
+    setConfigVersion,
+  } = setup;
+  const {
+    launch,
+    runPreview,
+    setRunPreview,
+    launchError,
+    launchRetry,
+    clearLaunchError,
+    startPreparedLaunch,
+    handleNewRun,
+    preparingRun,
+    handleGenerate,
+    handleWorkspaceReviewHandoff,
+    openRun,
+    rerunReview,
+  } = reviewLaunch;
+  const {
+    tasksAttention,
+    workspaceActive,
+    workspaceAttention,
+    workspaceTurn,
+    waitingSession,
+  } = attention;
+  const {
+    closeProtectionUnavailable,
+    setCloseProtectionUnavailable,
+    navRailWidth,
+    setNavRailWidth,
+    navRailCollapsed,
+    toggleNavRail,
+    navRailToggleRef,
+    runSetupWidth,
+    setRunSetupWidth,
+    theme,
+    handleThemeChange,
+  } = appearance;
+  const { recentProjects, projectsLoading } = projects;
+  const {
+    hasCurrentRun,
+    isRunning,
+    showRunSetup,
+    listenersReady,
+    providerLimitNotices,
+    batchActive,
     state,
     runQueue,
     selectedRun,
     seenRuns,
     runningReviews,
     continueRunKey,
-    openRun,
-    rerunReview,
     dismissRuns,
     cancelRun,
     activeRunPlan,
@@ -144,8 +198,37 @@ function App() {
     reviewRouting,
     logs,
     usage,
-  } = useAppController();
+  } = reviewView;
   useAppNotifications(runQueue.runs);
+  const [searchOpen, setSearchOpen] = useState(false);
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if (
+        !(event.metaKey || event.ctrlKey) ||
+        event.altKey ||
+        event.key.toLowerCase() !== "k"
+      )
+        return;
+      // Another modal owns its keyboard.
+      if (
+        !searchOpen &&
+        document.querySelector('[aria-modal="true"], dialog[open]')
+      )
+        return;
+      event.preventDefault();
+      setSearchOpen((open) => !open);
+    };
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, [searchOpen]);
+  // Every destination shares the content scroller below, so open each new
+  // page, review, or saved run at the top. A layout effect runs before pages'
+  // passive effects, so a page that restores its own offset still wins.
+  const contentRef = useRef<HTMLDivElement>(null);
+  const routeRunKey = route.page === "main" ? (route.runKey ?? null) : null;
+  useLayoutEffect(() => {
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+  }, [page, routeRunKey, historyRunId]);
   // Finished reviews not opened since they finished get a marker in the rail.
   const unseenRuns = useMemo(
     () =>
@@ -183,26 +266,55 @@ function App() {
       return;
     await cancelRun(run.key).catch((error: unknown) =>
       notify(
-        `The review could not be cancelled: ${error instanceof Error ? error.message : String(error)}`,
+        `The review could not be cancelled: ${workbenchErrorMessage(error)}`,
       ),
     );
   };
   const dismissReviews = (key?: string) => {
     void dismissRuns(key).catch((error: unknown) =>
+      notify(`The list could not be updated: ${workbenchErrorMessage(error)}`),
+    );
+  };
+  // A listed conversation can be gone by the time it is clicked.
+  const openConversation = (id: string) => {
+    void openWorkspaceSession(id).catch((error: unknown) => {
       notify(
-        `The list could not be updated: ${error instanceof Error ? error.message : String(error)}`,
+        `The conversation could not be opened: ${workbenchErrorMessage(error)}`,
+      );
+      appEvents.emit("conversations-changed", {});
+    });
+  };
+  const newConversation = () => {
+    void startConversation().catch((error: unknown) =>
+      notify(
+        `The conversation could not be started: ${workbenchErrorMessage(error)}`,
       ),
     );
   };
 
+  // The window itself never scrolls. Relative and clip contain visually hidden
+  // elements that sit outside a page's scroller, so neither focus nor the
+  // scroll wheel can move the shell and leave blank space below it.
   return (
     <div
       data-testid="app-shell"
-      className="flex h-screen flex-col overflow-hidden bg-gray-50 dark:bg-[#101010]"
+      className="relative flex h-screen flex-col overflow-clip bg-gray-50 dark:bg-[#101010]"
     >
-      {showDeps && depsReport && (
+      {searchOpen && (
+        <Suspense fallback={null}>
+          <AppSearch
+            onClose={() => setSearchOpen(false)}
+            onOpenConversation={openConversation}
+            onOpenRun={(id) => void openHistoryRun(id, null)}
+          />
+        </Suspense>
+      )}
+      {showDeps && (
         <DepsCheck
           report={depsReport}
+          checking={depsLoading}
+          error={depsError}
+          onRetry={() => void checkDependencies()}
           onDismiss={() => setShowDeps(false)}
           onOpenPdfSettings={() =>
             void router
@@ -218,10 +330,21 @@ function App() {
         />
       )}
 
+      <GetStartedHost
+        dependencies={depsReport}
+        dependenciesLoading={depsLoading}
+        onCheckDependencies={() => void checkDependencies()}
+        onNewReview={() => void handleNewRun()}
+        onNewProject={() => void createWorkspaceProject()}
+      />
+
       {pendingRun && (
         <VariablePrompt
           variables={pendingRun.variables}
           inputSlots={pendingRun.inputSlots}
+          initialValues={launchRetry?.values}
+          initialInputs={launchRetry?.inputs}
+          error={launchRetry?.message}
           onCancel={() => setPendingRun(null)}
           onSubmit={(values, inputs) => {
             const snapshot = pendingRun;
@@ -244,24 +367,28 @@ function App() {
       )}
 
       {/* Invisible window-wide drag strip along the very top edge (macOS).
-          Thin (16px) so it stays above the content panels' own controls,
-          which start at 8px padding — grab the top edge anywhere to drag. */}
+          Only 6px tall, so it clears the controls in top bars and banners;
+          those bars' backgrounds drag the window as well ("deep" regions,
+          where buttons and other controls still take their own clicks). */}
       {isMac && (
         <div
           data-tauri-drag-region
-          className="fixed inset-x-0 top-0 z-30 h-4"
+          className="fixed inset-x-0 top-0 z-30 h-1.5"
         />
       )}
+      {isWindows && <WindowControls />}
 
       {closeProtectionUnavailable && (
         <div
           role="alert"
-          className="flex shrink-0 items-center gap-3 border-b border-amber-300 bg-amber-50 px-5 py-2 text-xs text-amber-900
-                     dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-200"
+          data-tauri-drag-region={isMac || isWindows ? "deep" : undefined}
+          className={`flex shrink-0 items-center gap-3 border-b border-amber-300 bg-amber-50 py-2 pl-5 text-xs text-amber-900
+                     dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-200 ${isWindows ? "pr-[150px]" : "pr-5"}`}
         >
           <span className="flex-1">
-            Window-close protection is unavailable. Save workflow and settings
-            changes before quitting.
+            Pipeline cannot warn you about unsaved changes when you quit. Save
+            your review designs and settings first.
+            <ReportIssueLink />
           </span>
           <button
             type="button"
@@ -273,28 +400,19 @@ function App() {
         </div>
       )}
 
-      {researchNotice && (
-        <div
-          role="status"
-          className="absolute bottom-5 right-5 z-50 max-w-sm space-y-2 rounded-lg border border-amber-300 bg-white p-4 shadow-lg dark:bg-neutral-950"
-        >
-          <p className="text-sm">A tracked research state changed.</p>
-          <button
-            className="rounded border px-3 py-1 text-xs"
-            onClick={() => void inspectResearchAttention()}
-          >
-            Inspect research attention
-          </button>
-          <button
-            className="px-3 py-1 text-xs"
-            onClick={() => setResearchNotice(null)}
-          >
-            Dismiss notification
-          </button>
-        </div>
+      {navRailCollapsed && (
+        <CollapsedNavBar
+          isMac={isMac}
+          isWindows={isWindows}
+          onExpand={toggleNavRail}
+          toggleRef={navRailToggleRef}
+        />
       )}
       <div className="flex min-h-0 flex-1">
         <NavRail
+          collapsed={navRailCollapsed}
+          onToggleCollapsed={toggleNavRail}
+          toggleRef={navRailToggleRef}
           onActivity={() => void handleNavigate("activity")}
           tasksAttention={tasksAttention}
           activePage={page}
@@ -306,6 +424,15 @@ function App() {
           onOpenRun={(key) => void openRun(key)}
           onCancelRun={(run) => void cancelReview(run)}
           onDismissRuns={dismissReviews}
+          onSearch={() => setSearchOpen(true)}
+          onNewConversation={newConversation}
+          onNewProject={() => void createWorkspaceProject()}
+          onOpenConversation={openConversation}
+          onOpenConversations={() =>
+            waitingSession
+              ? openConversation(waitingSession)
+              : void openWorkspace("chat")
+          }
           onConfigureRuns={() =>
             void router.navigate({
               page: "settings",
@@ -316,6 +443,7 @@ function App() {
           workspaceActive={workspaceActive}
           workspaceAttention={workspaceAttention}
           isMac={isMac}
+          isWindows={isWindows}
           dependenciesReady={depsReport?.ready ?? null}
           dependenciesLoading={depsLoading}
           dependenciesError={depsError}
@@ -330,9 +458,8 @@ function App() {
           recentProjectsLoading={projectsLoading}
           onOpenProject={openWorkspaceProject}
           onDependencies={() => {
-            void checkDependencies().then((report) => {
-              if (report) setShowDeps(true);
-            });
+            setShowDeps(true);
+            void checkDependencies();
           }}
         />
 
@@ -342,7 +469,10 @@ function App() {
             configError={runConfigError}
             configLoading={runConfigLoading}
             dependenciesError={depsError}
+            dependencies={depsReport}
             inputMode={inputMode}
+            inputSelection={inputSelection}
+            launchError={launchError}
             listenersReady={listenersReady}
             localLlmActive={
               depsReport?.deps.some(
@@ -365,6 +495,7 @@ function App() {
             onInputSelectionChange={(selection) => {
               setInputSelection(selection);
               setPaperPath(selection?.paths[0] ?? null);
+              clearLaunchError();
               if (selection) setRunConfigError(null);
             }}
             onPrivacyDetails={() => {
@@ -379,7 +510,52 @@ function App() {
         )}
 
         <main className="flex min-w-0 flex-1 flex-col">
-          <UpdateBanner />
+          {/* The Windows title bar: the window controls float over its right
+              end. The collapsed sidebar's bar does this job when it is shown. */}
+          {isWindows && !navRailCollapsed && (
+            <div
+              data-testid="window-drag-strip"
+              data-tauri-drag-region
+              className={`h-8 shrink-0 ${
+                SURFACE_TOP_PAGES.has(page) ||
+                (page === "main" && state.kind === "done")
+                  ? "bg-surface"
+                  : ""
+              }`}
+            />
+          )}
+          <UpdateBanner
+            confirmRestart={() => {
+              const unsaved = navigation.unsavedRef.current;
+              return confirmUpdateRestart({
+                unsavedChanges:
+                  unsaved.workflowDirty ||
+                  unsaved.settingsDirty ||
+                  unsaved.projectsDirty ||
+                  unsaved.tasksDirty,
+                reviews: isRunning,
+                conversations: workspaceActive,
+              });
+            }}
+          />
+          {/* The Workspace page shows its own notice and the approval itself. */}
+          {page !== "workspace" && workspaceAttention && (
+            <div className="px-4 pt-3">
+              <WorkspaceBackgroundTurnNotice
+                title={
+                  workspaceTurn?.sessionId === waitingSession
+                    ? (workspaceTurn?.title ?? null)
+                    : null
+                }
+                waiting={1}
+                onOpen={() =>
+                  waitingSession
+                    ? openConversation(waitingSession)
+                    : void openWorkspace("chat")
+                }
+              />
+            </div>
+          )}
           {page === "main" && providerLimitNotices.length > 0 && (
             <ProviderLimitBanner
               notices={providerLimitNotices}
@@ -393,6 +569,8 @@ function App() {
             />
           )}
           <div
+            ref={contentRef}
+            data-testid="app-content"
             className={`min-h-0 flex-1 ${page === "settings" ? "overflow-hidden" : "overflow-auto"}`}
           >
             <Suspense
@@ -409,7 +587,7 @@ function App() {
                   hasCurrentReview={continueRunKey !== null || batchActive}
                   reviewRunning={isRunning}
                   runningReviews={runningReviews}
-                  onAssistant={() => void openWorkspace("chat")}
+                  onAssistant={newConversation}
                   onNewProject={() => void createWorkspaceProject()}
                   onOpenProject={(id) => void openWorkspaceProject(id)}
                   onNewReview={() => void handleNewRun()}
@@ -419,27 +597,38 @@ function App() {
                       : setPage(batchActive ? "batch" : "main")
                   }
                   onNavigate={(next) => void handleNavigate(next)}
+                  onSetUp={() => openGetStarted("setup")}
+                  onExampleReview={() => openGetStarted("example")}
                 />
               ) : page === "project-index" ? (
                 <ProjectIndexPage
                   onOpenProject={openWorkspaceProject}
                   onResumeConversation={openWorkspaceSession}
                 />
-              ) : page === "workspace" ? (
-                <WorkspacePage
-                  onAllProjects={() => void handleNavigate("project-index")}
-                  onSaveHandlerChange={registerWorkspaceSave}
-                  entryTarget={workspaceEntry.target}
-                  entryRequest={workspaceEntry.request}
-                  entrySurface={workspaceEntry.surface}
-                  newProjectRequest={newProjectRequest}
-                  onNewProjectRequestHandled={() => setNewProjectRequest(0)}
-                  onTasks={(session, id) => void openTask(session, id)}
-                  onOpenSettings={() => void openWorkspaceSettings()}
-                  onReviewHandoff={(handoff) =>
-                    void handleWorkspaceReviewHandoff(handoff)
-                  }
+              ) : page === "conversations" ? (
+                <ConversationsPage
+                  onOpen={openWorkspaceSession}
+                  onNew={newConversation}
                 />
+              ) : page === "workspace" ? (
+                // A project's Reviews open saved runs (and cited sources)
+                // through the shell, like the other review entry points.
+                <HistoryRunOpener.Provider value={openHistoryRun}>
+                  <WorkspacePage
+                    onOpenConversation={openConversation}
+                    onAllProjects={() => void handleNavigate("project-index")}
+                    onSaveHandlerChange={registerWorkspaceSave}
+                    entryTarget={workspaceEntry.target}
+                    entryRequest={workspaceEntry.request}
+                    entrySurface={workspaceEntry.surface}
+                    newProjectRequest={newProjectRequest}
+                    onNewProjectRequestHandled={() => setNewProjectRequest(0)}
+                    onTasks={(session, id) => void openTask(session, id)}
+                    onReviewHandoff={(handoff) =>
+                      void handleWorkspaceReviewHandoff(handoff)
+                    }
+                  />
+                </HistoryRunOpener.Provider>
               ) : page === "tasks" ? (
                 <TasksPage
                   key={
@@ -511,7 +700,7 @@ function App() {
                 <ResearchActivity
                   asPage
                   onClose={() => setPage("home")}
-                  onSession={(id) => void openWorkspaceSession(id)}
+                  onSession={openConversation}
                   onProject={(id) => void openActivityProject(id)}
                   onTasks={(id) => void openActivityTask(id)}
                   onReview={(id) => void openActivityReview(id)}
@@ -520,15 +709,12 @@ function App() {
                 <BatchPanel
                   onClose={() => setPage("main")}
                   showClose={false}
-                  onOpenRun={(runId) => {
-                    setHistorySourceSelection(null);
-                    void router.navigate({ page: "history", runId });
-                  }}
+                  onOpenRun={(runId) => void openHistoryRun(runId, null)}
                 />
               ) : state.kind === "done" ? (
                 // A rendering defect in the finished-run view must not take
                 // down the whole app shell with it.
-                <ErrorBoundary>
+                <ErrorBoundary key={state.runId} nested>
                   <ReportWorkspace
                     runId={state.runId}
                     markdown={state.markdown}
@@ -581,6 +767,15 @@ function App() {
         </main>
       </div>
     </div>
+  );
+}
+
+/** The sidebar and the Workspace page are siblings joined by this slot. */
+function App() {
+  return (
+    <NavRailSlotProvider>
+      <AppShell />
+    </NavRailSlotProvider>
   );
 }
 

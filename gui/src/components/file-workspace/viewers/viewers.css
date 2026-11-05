@@ -1,0 +1,187 @@
+.file-image,
+.file-table,
+.file-html,
+.file-document {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.file-image-facts {
+  margin-left: auto;
+  color: var(--ui-muted);
+}
+.file-image-frame {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  cursor: grab;
+  background-color: var(--ui-page-soft);
+  background-image:
+    linear-gradient(
+      45deg,
+      var(--ui-sunken) 25%,
+      transparent 25%,
+      transparent 75%,
+      var(--ui-sunken) 75%
+    ),
+    linear-gradient(
+      45deg,
+      var(--ui-sunken) 25%,
+      transparent 25%,
+      transparent 75%,
+      var(--ui-sunken) 75%
+    );
+  background-position:
+    0 0,
+    8px 8px;
+  background-size: 16px 16px;
+}
+.file-image-frame:active {
+  cursor: grabbing;
+}
+.file-image-stage {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  margin: auto;
+}
+.file-image-stage img {
+  flex-shrink: 0;
+  max-width: none;
+  user-select: none;
+}
+.file-media {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.file-media video {
+  max-width: 100%;
+  max-height: 100%;
+}
+.file-media audio {
+  width: min(560px, 100%);
+}
+.file-table-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.file-table table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+.file-table th,
+.file-table td {
+  max-width: 320px;
+  padding: 5px 12px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--ui-border);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-table thead th {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  background: var(--ui-page-soft);
+  color: var(--ui-muted);
+  font-weight: 550;
+  text-align: left;
+}
+.file-table tbody th {
+  position: sticky;
+  z-index: 1;
+  left: 0;
+  background: var(--ui-surface);
+  color: var(--ui-muted);
+  font-weight: 400;
+  text-align: right;
+}
+.file-table tbody tr:hover td {
+  background: var(--ui-page-soft);
+}
+.file-table td[data-missing="true"] {
+  color: var(--ui-muted);
+}
+.file-table-clipped {
+  margin-right: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-muted);
+  font-size: 10px;
+  font-weight: 400;
+}
+.file-table-note {
+  margin-left: 8px;
+}
+.file-notebook {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px;
+}
+.file-notebook-cell {
+  position: relative;
+  margin-bottom: 14px;
+}
+.file-notebook-count {
+  display: block;
+  color: var(--ui-muted);
+  font:
+    11px ui-monospace,
+    monospace;
+}
+.file-notebook-output {
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px solid var(--ui-border);
+}
+.file-notebook-output pre,
+.file-notebook pre {
+  overflow: auto;
+  font:
+    12px/1.5 ui-monospace,
+    monospace;
+  white-space: pre-wrap;
+}
+.file-notebook-image {
+  max-width: 100%;
+  background: white;
+}
+.file-notebook-error {
+  color: var(--ui-danger);
+}
+.file-notebook-more,
+.file-load-more {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--ui-border);
+  border-radius: 5px;
+  font-size: 12px;
+}
+.file-html iframe {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  background: white;
+}
+.file-document article {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 24px 32px;
+  font-size: 14px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}

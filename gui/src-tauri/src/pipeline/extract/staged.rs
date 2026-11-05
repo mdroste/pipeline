@@ -52,6 +52,16 @@ pub(super) fn main_file(root: &Path) -> Option<Option<PathBuf>> {
     load(root).map(|map| map.ok().and_then(|map| resolve(root, &map.main)))
 }
 
+/// What staging left out of a captured project, as extraction quality notes.
+pub(super) fn notes(root: &Path) -> Vec<String> {
+    if !root.join(MANIFEST).exists() {
+        return Vec::new();
+    }
+    read_utf8_capped(&root.join(latex::STAGING_NOTES_FILE), MAX_LATEX_SIZE)
+        .map(|notes| notes.lines().map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
 /// Some(None) means a captured project has no such reference: never fall back
 /// to live paths, even when an absolute or parent-relative path still exists.
 pub(crate) fn reference(root: &Path, directory: &Path, target: &str) -> Option<Option<PathBuf>> {

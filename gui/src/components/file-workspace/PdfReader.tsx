@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   getDocument,
   GlobalWorkerOptions,
+  PDFDataRangeTransport,
   type PDFDocumentProxy,
 } from "pdfjs-dist/legacy/build/pdf.mjs";
 import {
@@ -15,8 +16,11 @@ import {
 import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import { safeExternalHref } from "../SafeMarkdownLink";
+import useDraftText from "../../hooks/useDraftText";
+import { fetchRange } from "../../lib/fileWorkspaceClient";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "./pdf.css";
+import ReportIssueLink from "../ReportIssueLink";
 GlobalWorkerOptions.workerSrc = workerUrl;
 
 export interface PdfSelection {
@@ -32,7 +36,9 @@ export interface PdfPosition {
 interface Props {
   documentKey: string;
   title: string;
-  load: () => Promise<string>;
+  load: () => Promise<string | Uint8Array>;
+  /** Read pages on demand from a stream URL instead of calling `load`. */
+  stream?: { url: string; size: number };
   initialPage?: number;
   fallback?: ReactNode;
   highlight?: PdfSelection | null;
@@ -40,12 +46,54 @@ interface Props {
   onSource?: (point: { page: number; x: number; y: number }) => void;
   position?: PdfPosition;
   onPosition?: (value: PdfPosition) => void;
+  /** For a narrow panel: page and zoom controls, with Find on request. */
+  compact?: boolean;
 }
 type OutlineEntry = {
   title: string;
   dest: string | unknown[] | null;
   depth: number;
 };
+// Zoom values PDF.js derives from the container size.
+const FITTED_SCALES = new Set([
+  "page-width",
+  "page-fit",
+  "page-height",
+  "auto",
+]);
+/** A whole page number within 1..count, or null for a value that is not a number. */
+function pageWithin(value: unknown, count: number): number | null {
+  const n = Math.round(Number(value));
+  return Number.isFinite(n) ? Math.max(1, Math.min(count, n)) : null;
+}
+/** Serves PDF.js's byte requests from a stream URL, so a large file opens at once. */
+function rangeTransport(
+  size: number,
+  latestUrl: () => string,
+  signal: AbortSignal,
+  onError: (error: unknown) => void,
+) {
+  class StreamTransport extends PDFDataRangeTransport {
+    // A touched file keeps its document but gets a new URL, and the old one
+    // stops working, so each request takes the newest.
+    requestDataRange(begin: number, end: number) {
+      const attempt = (url: string): void => {
+        fetchRange(url, begin, end, signal).then(
+          (bytes) => this.onDataRange(begin, bytes),
+          (error) => {
+            if (signal.aborted) return;
+            if (latestUrl() !== url) attempt(latestUrl());
+            else onError(error);
+          },
+        );
+      };
+      attempt(latestUrl());
+    }
+  }
+  return new StreamTransport(size, null);
+}
+export const pdfBytes = (pdf: string | Uint8Array) =>
+  typeof pdf === "string" ? decodePdf(pdf) : pdf;
 export function decodePdf(base64: string): Uint8Array {
   const value = atob(base64);
   return Uint8Array.from(value, (c) => c.charCodeAt(0));
@@ -120,6 +168,7 @@ export default function PdfReader(props: Props) {
   const [sidebar, setSidebar] = useState<"none" | "outline" | "pages">("none");
   const [thumbStart, setThumbStart] = useState(1);
   const searchInput = useRef<HTMLInputElement>(null);
+  const [finding, setFinding] = useState(!props.compact);
   const [renderEpoch, setRenderEpoch] = useState(0);
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState({ current: 0, total: 0 });
@@ -133,12 +182,18 @@ export default function PdfReader(props: Props) {
   const drag = useRef<{ page: number; x: number; y: number } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const go = (number: number) => {
-    if (instance.current && pdf)
-      instance.current.viewer.currentPageNumber = Math.max(
-        1,
-        Math.min(pdf.numPages, number),
-      );
+    const target = pdf && pageWithin(number, pdf.numPages);
+    if (instance.current && target)
+      instance.current.viewer.currentPageNumber = target;
   };
+  const pageInput = useDraftText(
+    pageLabels[page - 1] ?? String(page),
+    (text) => {
+      const labelIndex = pageLabels.indexOf(text.trim());
+      const n = labelIndex >= 0 ? labelIndex + 1 : Number(text);
+      if (Number.isInteger(n) && n > 0) go(n);
+    },
+  );
   useEffect(() => {
     if (fallbackMode || !container.current || !pages.current) return;
     let live = true;
@@ -148,6 +203,11 @@ export default function PdfReader(props: Props) {
     setOutline([]);
     setPageLabels([]);
     setSelectionRect(null);
+    setThumbStart(1);
+    setQuery("");
+    setMatches({ current: 0, total: 0 });
+    setRegionMode(false);
+    setSelectionNotice("");
     const bus = new EventBus();
     const links = new PDFLinkService({ eventBus: bus, externalLinkTarget: 0 });
     const find = new PDFFindController({ eventBus: bus, linkService: links });
@@ -178,19 +238,47 @@ export default function PdfReader(props: Props) {
     } catch {
       /* Optional layout. */
     }
-    bus.on("pagesinit", () => {
-      if (!live) return;
+    const scrollArea = container.current;
+    const applyInitialView = () => {
       viewer.currentScaleValue =
         callbacks.current.position?.scale ?? saved?.scale ?? "page-width";
       viewer.pagesRotation =
         callbacks.current.position?.rotation ?? saved?.rotation ?? 0;
-      viewer.currentPageNumber = Math.min(
-        viewer.pagesCount,
-        Math.max(
-          1,
-          callbacks.current.position?.page ?? initialPage ?? saved?.page ?? 1,
-        ),
-      );
+      viewer.currentPageNumber =
+        pageWithin(
+          callbacks.current.position?.page ??
+            callbacks.current.initialPage ??
+            saved?.page,
+          viewer.pagesCount,
+        ) ?? 1;
+    };
+    // PDF.js computes fitted zoom from the container size only when a zoom
+    // value is assigned. A reader inside a hidden pane has no size, so wait
+    // until it is shown, and refit whenever the reading area changes size.
+    let initialView: (() => void) | null = null;
+    let frame = 0;
+    const resize =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(([entry]) => {
+            if (!entry?.contentRect.width || !entry.contentRect.height) return;
+            cancelAnimationFrame(frame);
+            frame = requestAnimationFrame(() => {
+              if (!live) return;
+              if (initialView) {
+                const apply = initialView;
+                initialView = null;
+                apply();
+              } else if (FITTED_SCALES.has(viewer.currentScaleValue))
+                viewer.currentScaleValue = viewer.currentScaleValue;
+            });
+          });
+    resize?.observe(scrollArea);
+    bus.on("pagesinit", () => {
+      if (!live) return;
+      if (resize && scrollArea.clientWidth === 0)
+        initialView = applyInitialView;
+      else applyInitialView();
     });
     const positionChanged = () => {
       if (!live) return;
@@ -229,13 +317,29 @@ export default function PdfReader(props: Props) {
       if (live && event.error) setError(String(event.error));
       else if (live) setRenderEpoch((n) => n + 1);
     });
-    void callbacks.current
-      .load()
-      .then(async (encoded) => {
+    const stream = callbacks.current.stream;
+    const source = stream
+      ? Promise.resolve({
+          range: rangeTransport(
+            stream.size,
+            () => callbacks.current.stream?.url ?? stream.url,
+            lifetime.signal,
+            (e) => {
+              if (live) setError(String(e));
+            },
+          ),
+          disableAutoFetch: true,
+          disableStream: true,
+        })
+      : callbacks.current.load().then((loaded) => ({
+          data: pdfBytes(loaded),
+        }));
+    void source
+      .then(async (bytes) => {
         if (!live) return;
         loading = getDocument({
           ...pdfAssetOptions,
-          data: decodePdf(encoded),
+          ...bytes,
           useSystemFonts: true,
           isOffscreenCanvasSupported: false,
         });
@@ -271,6 +375,8 @@ export default function PdfReader(props: Props) {
       });
     return () => {
       live = false;
+      resize?.disconnect();
+      cancelAnimationFrame(frame);
       instance.current = null;
       lifetime.abort();
       viewer.cleanup();
@@ -291,11 +397,9 @@ export default function PdfReader(props: Props) {
     const viewer = instance.current?.viewer;
     if (!viewer || !pdf || !props.position) return;
     const position = props.position;
-    if (position.page !== viewer.currentPageNumber)
-      viewer.currentPageNumber = Math.max(
-        1,
-        Math.min(pdf.numPages, position.page),
-      );
+    const target = pageWithin(position.page, pdf.numPages);
+    if (target && target !== viewer.currentPageNumber)
+      viewer.currentPageNumber = target;
     if (position.scale && position.scale !== viewer.currentScaleValue)
       viewer.currentScaleValue = position.scale;
     if (
@@ -457,143 +561,161 @@ export default function PdfReader(props: Props) {
         ) {
           event.preventDefault();
           event.stopPropagation();
-          searchInput.current?.focus();
-          searchInput.current?.select();
+          setFinding(true);
+          requestAnimationFrame(() => {
+            searchInput.current?.focus();
+            searchInput.current?.select();
+          });
         }
       }}
     >
-      <div className="file-toolbar">
-        <button
-          onClick={() => setSidebar(sidebar === "pages" ? "none" : "pages")}
-        >
-          Thumbnails
-        </button>
-        <button
-          onClick={() => setSidebar(sidebar === "outline" ? "none" : "outline")}
-        >
-          Outline
-        </button>
-        <button
-          disabled={!pdf || page <= 1}
-          onClick={() => go(page - 1)}
-          aria-label="Previous PDF page"
-        >
-          Previous
-        </button>
-        <label>
-          Page{" "}
-          <input
-            aria-label="PDF page number"
-            className="file-line-input"
-            value={pageLabels[page - 1] ?? page}
-            onChange={(e) => {
-              const labelIndex = pageLabels.indexOf(e.target.value);
-              const n =
-                labelIndex >= 0 ? labelIndex + 1 : Number(e.target.value);
-              if (n > 0) go(n);
-            }}
-          />
-        </label>
-        <span>of {pdf?.numPages ?? "…"}</span>
-        <button
-          disabled={!pdf || page >= pdf.numPages}
-          onClick={() => go(page + 1)}
-          aria-label="Next PDF page"
-        >
-          Next
-        </button>
-        <button
-          aria-label="Zoom out"
-          onClick={() => {
-            const v = instance.current?.viewer;
-            if (v) v.currentScale = Math.max(0.25, v.currentScale / 1.2);
-          }}
-        >
-          −
-        </button>
-        <button
-          aria-label="Zoom in"
-          onClick={() => {
-            const v = instance.current?.viewer;
-            if (v) v.currentScale = Math.min(4, v.currentScale * 1.2);
-          }}
-        >
-          +
-        </button>
-        <button
-          onClick={() => {
-            if (instance.current)
-              instance.current.viewer.currentScaleValue = "page-width";
-          }}
-        >
-          Fit width
-        </button>
-        <button
-          onClick={() => {
-            if (instance.current)
-              instance.current.viewer.currentScaleValue = "page-fit";
-          }}
-        >
-          Fit page
-        </button>
-        <button
-          onClick={() => {
-            const v = instance.current?.viewer;
-            if (v) {
-              setSelectionRect(null);
-              v.pagesRotation = (v.pagesRotation + 90) % 360;
-            }
-          }}
-        >
-          Rotate
-        </button>
-        {props.onSelection && (
+      <div className="pdf-toolbars">
+        <div className="file-toolbar">
+          {!props.compact && (
+            <>
+              <button
+                onClick={() =>
+                  setSidebar(sidebar === "pages" ? "none" : "pages")
+                }
+              >
+                Thumbnails
+              </button>
+              <button
+                onClick={() =>
+                  setSidebar(sidebar === "outline" ? "none" : "outline")
+                }
+              >
+                Outline
+              </button>
+            </>
+          )}
           <button
-            aria-pressed={regionMode}
-            onClick={() => setRegionMode(!regionMode)}
+            disabled={!pdf || page <= 1}
+            onClick={() => go(page - 1)}
+            aria-label="Previous PDF page"
           >
-            {regionMode ? "Select text" : "Select region"}
+            Previous
           </button>
-        )}
-        {fallback && (
-          <button onClick={() => setFallbackMode(true)}>
-            Page image fallback
+          <label>
+            Page{" "}
+            <input
+              aria-label="PDF page number"
+              className="file-line-input"
+              {...pageInput}
+            />
+          </label>
+          <span>of {pdf?.numPages ?? "…"}</span>
+          <button
+            disabled={!pdf || page >= pdf.numPages}
+            onClick={() => go(page + 1)}
+            aria-label="Next PDF page"
+          >
+            Next
           </button>
+          <button
+            aria-label="Zoom out"
+            onClick={() => {
+              const v = instance.current?.viewer;
+              if (v) v.currentScale = Math.max(0.25, v.currentScale / 1.2);
+            }}
+          >
+            −
+          </button>
+          <button
+            aria-label="Zoom in"
+            onClick={() => {
+              const v = instance.current?.viewer;
+              if (v) v.currentScale = Math.min(4, v.currentScale * 1.2);
+            }}
+          >
+            +
+          </button>
+          <button
+            onClick={() => {
+              if (instance.current)
+                instance.current.viewer.currentScaleValue = "page-width";
+            }}
+          >
+            Fit width
+          </button>
+          {!props.compact && (
+            <>
+              <button
+                onClick={() => {
+                  if (instance.current)
+                    instance.current.viewer.currentScaleValue = "page-fit";
+                }}
+              >
+                Fit page
+              </button>
+              <button
+                onClick={() => {
+                  const v = instance.current?.viewer;
+                  if (v) {
+                    setSelectionRect(null);
+                    v.pagesRotation = (v.pagesRotation + 90) % 360;
+                  }
+                }}
+              >
+                Rotate
+              </button>
+            </>
+          )}
+          {props.onSelection && (
+            <button
+              aria-pressed={regionMode}
+              onClick={() => setRegionMode(!regionMode)}
+            >
+              {regionMode ? "Select text" : "Select region"}
+            </button>
+          )}
+          {fallback && (
+            <button onClick={() => setFallbackMode(true)}>
+              Page image fallback
+            </button>
+          )}
+          {props.compact && (
+            <button aria-pressed={finding} onClick={() => setFinding(!finding)}>
+              Find text
+            </button>
+          )}
+        </div>
+        {finding && (
+          <form
+            className="file-toolbar"
+            onSubmit={(e) => {
+              e.preventDefault();
+              search();
+            }}
+          >
+            <input
+              ref={searchInput}
+              aria-label="Find in PDF"
+              value={query}
+              placeholder="Find text in PDF"
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <button disabled={!query || !pdf}>Find</button>
+            <button
+              type="button"
+              disabled={!query}
+              onClick={() => search(true, true)}
+            >
+              Previous match
+            </button>
+            <button
+              type="button"
+              disabled={!query}
+              onClick={() => search(false, true)}
+            >
+              Next match
+            </button>
+            <span role="status">
+              {matches.current} / {matches.total} matches
+            </span>
+          </form>
         )}
       </div>
-      <form
-        className="file-toolbar"
-        onSubmit={(e) => {
-          e.preventDefault();
-          search();
-        }}
-      >
-        <input
-          ref={searchInput}
-          aria-label="Find in PDF"
-          value={query}
-          placeholder="Find text in PDF"
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <button disabled={!query || !pdf}>Find</button>
-        <button
-          type="button"
-          disabled={!query}
-          onClick={() => search(true, true)}
-        >
-          Previous match
-        </button>
-        <button
-          type="button"
-          disabled={!query}
-          onClick={() => search(false, true)}
-        >
-          Next match
-        </button>
-        <span role="status">
-          {matches.current} / {matches.total} matches
-        </span>
-      </form>
       {error && (
         <div role="alert" className="file-error">
           {error}{" "}
@@ -603,6 +725,7 @@ export default function PdfReader(props: Props) {
               Use page images
             </button>
           )}
+          <ReportIssueLink />
         </div>
       )}
       {!pdf && !error && <p className="file-status">Opening PDF…</p>}

@@ -1,8 +1,13 @@
+import {
+  providerName,
+  type ConversationProvider,
+} from "../../lib/workspaceProviders";
+import { presetDescription } from "./harnessCopy";
 // Detail panel for one harness preset: editable header with a generated
 // summary, ownership badges, use/clone/restore/save actions, and Instructions
 // and Modules tabs. Built-ins render read-only; clones own their copy.
 
-import { memo, useState, type KeyboardEvent } from "react";
+import { useState, type KeyboardEvent } from "react";
 import type {
   EffectiveHarness,
   HarnessCatalog,
@@ -26,6 +31,7 @@ export interface PresetDraft {
 }
 
 interface Props {
+  runtime?: ConversationProvider;
   preset: HarnessPreset;
   sourcePreset: HarnessPreset | null;
   catalog: HarnessCatalog;
@@ -57,6 +63,7 @@ const inputClass =
   "w-full rounded border border-gray-300 bg-white px-2 py-1 text-sm dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100";
 
 function HarnessPresetPanel({
+  runtime = "codex",
   preset,
   sourcePreset,
   catalog,
@@ -116,7 +123,9 @@ function HarnessPresetPanel({
         <div className="flex flex-wrap items-center gap-2">
           {readOnly ? (
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-              {preset.name}
+              {runtime !== "codex" && preset.id === "plain"
+                ? `${providerName(runtime)} default`
+                : preset.name}
             </h2>
           ) : (
             <input
@@ -158,14 +167,16 @@ function HarnessPresetPanel({
           <p className="text-[11px] text-gray-500">
             {preset.workspaceId
               ? "Available in this project."
-              : "Available in all Workspaces."}{" "}
+              : "Available in all conversations."}{" "}
             Saving changes affects future turns in every conversation using this
             profile. Duplicate it to customize only this conversation.
           </p>
         )}
         {readOnly ? (
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            {preset.description}
+            {runtime !== "codex" && preset.id === "plain"
+              ? `${providerName(runtime)} with Pipeline instructions and scoped project tools.`
+              : presetDescription(preset)}
           </p>
         ) : (
           <input
@@ -273,6 +284,7 @@ function HarnessPresetPanel({
         className="min-h-0 flex-1 overflow-auto p-4"
       >
         <HarnessInstructionsEditor
+          runtime={runtime}
           value={draft.instructions}
           baseInstructions={draft.baseInstructions}
           onBaseChange={(baseInstructions) => onDraft({ baseInstructions })}
@@ -293,12 +305,12 @@ function HarnessPresetPanel({
         className="min-h-0 flex-1 overflow-auto p-4"
       >
         <p className="mb-3 rounded border border-gray-200 p-3 text-xs text-gray-600 dark:border-gray-700 dark:text-gray-300">
-          Codex’s native command and file tools follow this conversation’s
-          access settings:{" "}
+          The assistant’s enabled tools follow this conversation’s access
+          settings:{" "}
           {effective.mode === "inspect" ? "read only" : "edits allowed"},
           command network {effective.commandNetwork ? "allowed" : "blocked"}.
           Use Access &amp; inheritance to change those permissions. The choices
-          below control additional Workspace capabilities.
+          below control additional project capabilities.
         </p>
         <HarnessModulesEditor
           catalog={catalog.modules}
@@ -315,4 +327,4 @@ function HarnessPresetPanel({
   );
 }
 
-export default memo(HarnessPresetPanel);
+export default HarnessPresetPanel;

@@ -2,7 +2,7 @@
 // conversation. Shared by the attach menu and by files dropped on the
 // composer, so both follow one import path.
 
-import { workbenchClient } from "./workbenchClient";
+import { researchClient } from "./workbench/researchClient";
 import { workbenchErrorMessage } from "./workbenchError";
 import type { ContextItem, OpenResearchObject } from "./deskClient";
 import type { PaperWithRevision } from "./workbenchTypes";
@@ -37,7 +37,7 @@ export async function importResearchFiles(
   for (const path of paths) {
     const name = fileName(path);
     try {
-      const item = await workbenchClient.importPaper({
+      const item = await researchClient.importPaper({
         workspaceId,
         paperId: null,
         title: name,
@@ -55,7 +55,7 @@ export async function importResearchFiles(
 }
 
 export const isReadable = (item: PaperWithRevision) =>
-  item.revision?.extraction.status === "complete";
+  ["complete", "partial"].includes(String(item.revision?.extraction.status));
 
 /** The exact captured revision, as the conversation's source list refers to it. */
 export const paperSource = (

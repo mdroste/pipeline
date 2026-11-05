@@ -14,11 +14,11 @@
 /gui/src-tauri/Cargo.lock @mdroste
 /gui/src-tauri/tauri.conf.json @mdroste
 /CHANGELOG.md @mdroste
-/CONTRIBUTING.md @mdroste
+/.github/CONTRIBUTING.md @mdroste
 /LICENSE @mdroste
 /README.md @mdroste
-/SECURITY.md @mdroste
-/SUPPORT.md @mdroste
+/.github/SECURITY.md @mdroste
+/.github/SUPPORT.md @mdroste
 /PRIVACY.md @mdroste
-/RELEASING.md @mdroste
+/docs/releasing.md @mdroste
 /THIRD_PARTY_LICENSES.md @mdroste

@@ -74,17 +74,33 @@ fn format_http_error(provider: &str, e: &reqwest::Error) -> String {
     }
 }
 
+/// Providers name quota exhaustion in structured fields, not always in the
+/// message, so OpenAI's `code` and `type` and Google's `status` stay beside it.
+/// A plain request-rate `code` must not read as exhaustion.
+fn api_error_detail(body: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+        return body.chars().take(200).collect();
+    };
+    let error = value.get("error");
+    let Some(message) = error
+        .and_then(|e| e.get("message").or(Some(e)))
+        .or_else(|| value.get("message"))
+    else {
+        return body.chars().take(200).collect();
+    };
+    let message = message.to_string().trim_matches('"').to_string();
+    let quota_code = ["code", "type", "status"]
+        .iter()
+        .filter_map(|field| error?.get(field)?.as_str())
+        .find(|code| crate::pipeline::provider_error::is_usage_limit_error(code));
+    match quota_code {
+        Some(code) if !message.contains(code) => format!("{code}: {message}"),
+        _ => message,
+    }
+}
+
 pub(super) fn format_api_error(provider: &str, status: u16, body: &str) -> String {
-    // Try to extract a message from JSON error body
-    let detail = serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|v| {
-            v.get("error")
-                .and_then(|e| e.get("message").or(Some(e)))
-                .or_else(|| v.get("message"))
-                .map(|m| m.to_string().trim_matches('"').to_string())
-        })
-        .unwrap_or_else(|| body.chars().take(200).collect());
+    let detail = api_error_detail(body);
 
     match status {
         401 => format!("{provider}: Invalid API key. Check your key in Settings."),

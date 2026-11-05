@@ -11,7 +11,7 @@ export const FILE_LANGUAGES = [
   {
     id: "latex",
     label: "LaTeX / BibTeX",
-    extensions: ["tex", "bib", "sty", "cls"],
+    extensions: ["tex", "ltx", "bib", "sty", "cls"],
     aliases: ["tex", "stex", "bibtex"],
   },
   {
@@ -82,7 +82,7 @@ export const FILE_LANGUAGES = [
   {
     id: "xml",
     label: "HTML / XML",
-    extensions: ["html", "xml", "svg"],
+    extensions: ["html", "htm", "xml", "svg"],
     aliases: ["html"],
   },
   {

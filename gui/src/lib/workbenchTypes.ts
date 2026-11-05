@@ -1,5 +1,7 @@
 /** App-owned Workbench DTOs. Raw Codex protocol payloads never cross this boundary. */
 
+import type { ExecutionAdapter } from "./workbench/toolchains";
+
 export interface WorkbenchError {
   code: string;
   message: string;
@@ -44,9 +46,17 @@ export interface WorkspaceList {
   sequence: number;
 }
 
+/** The last conversation of a page, which is where the next page starts. */
+export interface SessionCursor {
+  updatedAt: string;
+  id: string;
+}
+
 export interface SessionList {
   sessions: WorkbenchSession[];
   sequence: number;
+  /** Set while older conversations remain. */
+  nextCursor?: SessionCursor | null;
 }
 
 export interface SessionSnapshot {
@@ -175,8 +185,23 @@ export interface RateLimitBucket {
 }
 
 export interface WorkspaceRateLimits {
+  observedAt?: number;
+  cached?: boolean;
   source: "perBucket" | "legacy";
   buckets: RateLimitBucket[];
+}
+
+/** Account-scoped observations reported by Claude Code; never a live balance. */
+export interface ClaudeRateLimit {
+  windows?: ClaudeRateLimit[];
+  status: "allowed" | "allowed_warning" | "rejected";
+  /** Unix seconds. */
+  resetsAt: number | null;
+  rateLimitType: string | null;
+  usedPercent: number | null;
+  isUsingOverage: boolean;
+  /** Unix milliseconds when Pipeline received the report. */
+  observedAt: number;
 }
 
 export interface SendTurnRequest {
@@ -194,9 +219,73 @@ export interface SendTurnResult {
   draftCleared: boolean;
 }
 
+/** The app's one running turn, as the host reports it. */
+export interface ActiveTurn {
+  sessionId: string;
+  title: string | null;
+  threadId: string | null;
+  turnId: string | null;
+  epoch: number | null;
+  /** Still being prepared. With no turnId, the runtime has not acknowledged it. */
+  setup: boolean;
+  runtime: string;
+  /** Belongs to an Automation, which owns stopping it. */
+  automated: boolean;
+  /** Sent from the composer, so its text is the session draft until acknowledged. */
+  composer: boolean;
+}
+
+/** What an approval would allow. Pipeline's own record of the request. */
+export interface ApprovalDetails {
+  type: "command" | "fileChange";
+  reason: string | null;
+  command: string | null;
+  cwd: string | null;
+  /** For example "example.org over HTTPS". */
+  network: string | null;
+  /** Permissions Allow once would add, as readable JSON. */
+  extraPermissions: string | null;
+  suggestedRule: string[];
+  suggestedNetworkRules: string[];
+  grantRoot: string | null;
+  /** Allow once would grant something Pipeline can't describe. */
+  unknownGrant: boolean;
+  allowOffered: boolean;
+  /** The decision that answers Decline. */
+  declineDecision: string;
+}
+
+export interface PermissionDetails {
+  type: "permission";
+  reason: string | null;
+  cwd: string | null;
+  /** What is granted, returned unchanged when the researcher allows it. */
+  permissions: Record<string, unknown> | null;
+}
+
+export interface RequestQuestion {
+  id: string;
+  header: string | null;
+  question: string;
+  options: Array<{ label: string; description: string | null }>;
+  allowsOther: boolean;
+  secret: boolean;
+}
+
+export interface QuestionDetails {
+  type: "question";
+  questions: RequestQuestion[];
+}
+
+export type RequestDetails =
+  ApprovalDetails | PermissionDetails | QuestionDetails;
+
 export interface WorkbenchEvent {
   kind: string;
   epoch: number;
+  /** The conversation behind a server request, or a failed `activeTurnChanged`. */
+  sessionId?: string | null;
+  sendError?: { code: string; message: string } | null;
   threadId?: string;
   turnId?: string;
   itemId?: string;
@@ -205,6 +294,8 @@ export interface WorkbenchEvent {
   requestId?: string | number;
   method?: string;
   params?: Record<string, unknown>;
+  /** What a server request's card shows. */
+  details?: RequestDetails | null;
   status?: string;
   success?: boolean;
   error?: string | null;
@@ -347,8 +438,15 @@ export interface EffectiveHarness {
   workspaceId: string | null;
   preset: HarnessPreset;
   mode: "inspect" | "edit";
+  fileMode?: "review" | "direct";
   webSearch: boolean;
   commandNetwork: boolean;
+  capabilities?: {
+    commandDomains: string[];
+    browser: boolean;
+    shellWrite: boolean;
+    privateFolder?: boolean;
+  };
   permissionProfile: string;
   contextBudgetBytes: number;
   enabledModules: string[];
@@ -405,6 +503,7 @@ export interface ResearchNote {
   revision: number;
   createdAt: string;
   updatedAt: string;
+  importedStatus?: string | null;
 }
 
 export interface PaperRevision {
@@ -488,6 +587,7 @@ export interface ClaimRecord {
   dependencyHash: string | null;
   createdAt: string;
   updatedAt: string;
+  importedStatus?: string | null;
 }
 
 export interface EvidenceRecord {
@@ -510,6 +610,7 @@ export interface EvidenceRecord {
   staleReason: string | null;
   createdAt: string;
   updatedAt: string;
+  importedStatus?: string | null;
 }
 
 export interface ResearchLedger {
@@ -523,7 +624,7 @@ export interface ExecutionProfile {
   id: string;
   workspaceId: string;
   name: string;
-  adapter: "latex" | "stata" | "command";
+  adapter: ExecutionAdapter;
   argv: string[];
   cwd: string;
   environment: Record<string, string>;
@@ -681,6 +782,13 @@ export interface ResearchArchiveReport {
   bytes: number;
   nativeBindingsRetired: number;
   portabilityNote: string;
+  /** Records whose files the backup left out, by the names researchers use. */
+  omittedFiles: string[];
+}
+
+export interface MissingBackupFile {
+  description: string;
+  reference: string;
 }
 
 export interface ExchangeSelection {
@@ -784,6 +892,7 @@ export interface StorageCategory {
   entries: number;
   disposable: boolean;
   note: string;
+  partial?: boolean;
 }
 export interface TrashEntry {
   id: string;
@@ -823,6 +932,7 @@ export interface ResearchArchiveInspection {
   storeSchemaVersion: number;
   workspaceRoots: string[];
   portabilityNote: string;
+  omittedFileCount: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

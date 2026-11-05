@@ -137,6 +137,9 @@ export default function WorkspaceToolPicker({
             setIndex(0);
           }}
           onKeyDown={(event) => {
+            // WebKit reports the Enter that confirms an IME composition with
+            // keyCode 229 and isComposing already false.
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
             if (event.key === "ArrowDown" || event.key === "ArrowUp") {
               event.preventDefault();
               setIndex((value) =>

@@ -1,3 +1,4 @@
+pub mod analyzers;
 pub mod api_anthropic;
 pub mod api_common;
 pub mod api_google;
@@ -17,6 +18,8 @@ pub mod merge;
 pub mod orient;
 mod provenance;
 pub(crate) mod provider_error;
+pub mod providers;
 pub mod reconcile;
 pub(crate) mod response_journal;
 pub mod structured;
+pub(crate) mod unit_files;

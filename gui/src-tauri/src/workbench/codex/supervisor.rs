@@ -52,6 +52,8 @@ pub struct StartThreadRequest {
     pub effort: Option<String>,
     #[serde(default)]
     pub dynamic_tools: Vec<Value>,
+    #[serde(skip_deserializing)]
+    pub(crate) config: Option<Value>,
 }
 
 /// One host-owned side call: an ephemeral thread without dynamic tools or
@@ -137,6 +139,7 @@ impl AppServerSupervisor {
             epoch,
             "pipeline_workbench",
             "Pipeline Workbench",
+            UNREAD_NOTIFICATIONS,
         )
         .await
         .map_err(RequestError::unavailable)?;
@@ -151,7 +154,11 @@ impl AppServerSupervisor {
     }
 
     #[cfg(test)]
-    fn from_test_client(epoch: u64, client: AppServerClient, initialize: InitializeResult) -> Self {
+    pub(crate) fn from_test_client(
+        epoch: u64,
+        client: AppServerClient,
+        initialize: InitializeResult,
+    ) -> Self {
         let mut native = NativeSession::simulated(client);
         native.initialize = initialize;
         Self {
@@ -179,6 +186,11 @@ impl AppServerSupervisor {
 
     pub fn subscribe(&self) -> broadcast::Receiver<NormalizedEvent> {
         self.native.client.subscribe()
+    }
+
+    /// Server requests on this connection, kept through event-queue lag.
+    pub fn request_sink(&self) -> crate::agent_runtime::codex::ServerRequestSink {
+        self.native.client.connection_request_sink()
     }
 
     pub async fn account_state(&self, refresh_token: bool) -> Result<AccountState, RequestError> {
@@ -298,7 +310,7 @@ impl AppServerSupervisor {
                 reasoning_effort: request.effort.as_deref(),
                 ephemeral,
                 service_name: "pipeline_workbench",
-                config: None,
+                config: request.config,
             })
             .await?;
         let connection = parse_thread_connection(result)?;
@@ -371,6 +383,7 @@ impl AppServerSupervisor {
                     model: request.model.clone(),
                     effort: request.effort.clone(),
                     dynamic_tools: Vec::new(),
+                    config: Some(json!({"web_search":"disabled"})),
                 },
                 true,
             )
@@ -506,19 +519,27 @@ impl AppServerSupervisor {
         }
     }
 
+    /// Reopens a bound thread at the project's current folder. `None` means
+    /// the thread can't continue here, so the caller must move to a successor:
+    /// Codex kept it at another folder, as it does for a thread it already has
+    /// loaded, or holds no history for it, as after a first send that never
+    /// became a turn. A folder or history problem is settled before anything
+    /// is sent, so moving on can't repeat a message.
     pub async fn resume_thread(
         &self,
         workbench_session_id: &str,
         thread_id: &str,
         permissions: &str,
+        cwd: &str,
         runtime_workspace_roots: Vec<String>,
-    ) -> Result<ThreadConnection, RequestError> {
+        config: Option<Value>,
+    ) -> Result<Option<ThreadConnection>, RequestError> {
         validate_identifier("Workbench session id", workbench_session_id)?;
         validate_identifier("thread id", thread_id)?;
         validate_identifier("permissions profile", permissions)?;
-        validate_roots(&runtime_workspace_roots)?;
+        validate_cwd(cwd, &runtime_workspace_roots)?;
         let expected_roots = runtime_workspace_roots.clone();
-        let result = self
+        let result = match self
             .native
             .client
             .request(
@@ -526,14 +547,28 @@ impl AppServerSupervisor {
                 json!({
                     "threadId": thread_id,
                     "permissions": permissions,
+                    "cwd": cwd,
                     "runtimeWorkspaceRoots": runtime_workspace_roots,
-                    "modelProvider": "openai"
+                    "modelProvider": "openai",
+                    // Only thread metadata is read here. History is paged
+                    // separately so its size never reaches the frame limit.
+                    "excludeTurns": true,
+                    "config": config
                 }),
                 DEFAULT_REQUEST_TIMEOUT,
             )
-            .await?;
+            .await
+        {
+            Err(error) if has_no_history(&error) => return Ok(None),
+            result => result?,
+        };
         let mut connection = parse_thread_connection(result)?;
-        validate_thread_contract(&connection, None, &expected_roots, permissions, None)?;
+        if !same_path(Path::new(&connection.cwd), Path::new(cwd))
+            || !same_roots(&connection, &expected_roots)
+        {
+            return Ok(None);
+        }
+        validate_thread_contract(&connection, Some(cwd), &expected_roots, permissions, None)?;
         if self.projection_enabled {
             let binding = bind_session_projection(
                 workbench_session_id.to_string(),
@@ -545,7 +580,7 @@ impl AppServerSupervisor {
             self.attach_projection(connection.thread_id.clone(), binding.id)
                 .await;
         }
-        Ok(connection)
+        Ok(Some(connection))
     }
 
     pub async fn read_thread(&self, thread_id: &str) -> Result<Value, RequestError> {
@@ -560,32 +595,40 @@ impl AppServerSupervisor {
             .await
     }
 
+    /// The newest turns of a thread with their status but no items.
+    pub async fn recent_turns(&self, thread_id: &str) -> Result<Value, RequestError> {
+        validate_identifier("thread id", thread_id)?;
+        turns::recent(&self.native.client, thread_id).await
+    }
+
     pub async fn reconcile_thread(
         &self,
         workbench_binding_id: &str,
         thread_id: &str,
     ) -> Result<(), RequestError> {
         validate_identifier("Workbench binding id", workbench_binding_id)?;
-        let snapshot = self.read_thread(thread_id).await?;
-        let binding_id = workbench_binding_id.to_string();
-        let thread_id = thread_id.to_string();
-        let epoch = self.epoch;
-        crate::workbench::commands::run_store(move |store| {
-            reconcile_snapshot(&store, &binding_id, &thread_id, epoch, snapshot)
-        })
-        .await
-        .map_err(|error| RequestError::unavailable(error.message))
+        validate_identifier("thread id", thread_id)?;
+        turns::reconcile(
+            &self.native.client,
+            self.epoch,
+            workbench_binding_id,
+            thread_id,
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn start_turn(&self, request: StartTurnRequest) -> Result<String, RequestError> {
-        self.start_turn_with_acceptance(request, |_| {}).await
+        self.validate_turn(&request).await?;
+        self.dispatch_turn(request, |_| {}).await
     }
 
-    pub(crate) async fn start_turn_with_acceptance(
+    /// Checks a turn without sending it. At most the model catalog is read,
+    /// so a failure here proves App Server never received the message.
+    pub(crate) async fn validate_turn(
         &self,
-        request: StartTurnRequest,
-        accepted: impl FnOnce(&str),
-    ) -> Result<String, RequestError> {
+        request: &StartTurnRequest,
+    ) -> Result<(), RequestError> {
         validate_identifier("Workbench binding id", &request.workbench_binding_id)?;
         validate_identifier("thread id", &request.thread_id)?;
         validate_identifier("client user message id", &request.client_user_message_id)?;
@@ -598,6 +641,16 @@ impl AppServerSupervisor {
             self.validate_model_selection(model, request.effort.as_deref())
                 .await?;
         }
+        Ok(())
+    }
+
+    /// Sends a turn that `validate_turn` accepted. Once this starts, a
+    /// failure without a turn id leaves delivery uncertain.
+    pub(crate) async fn dispatch_turn(
+        &self,
+        request: StartTurnRequest,
+        accepted: impl FnOnce(&str),
+    ) -> Result<String, RequestError> {
         let result = self
             .native
             .client
@@ -649,6 +702,18 @@ impl AppServerSupervisor {
             .await
     }
 
+    /// See [`crate::agent_runtime::codex::AppServerClient::respond_to_tool_call`].
+    pub async fn respond_to_tool_call(
+        &self,
+        request_id: Value,
+        response: Value,
+    ) -> Result<bool, RequestError> {
+        self.native
+            .client
+            .respond_to_tool_call(request_id, response)
+            .await
+    }
+
     pub async fn shutdown(&self) {
         for (_, task) in self.projection_tasks.lock().await.drain() {
             task.abort();
@@ -665,6 +730,9 @@ impl AppServerSupervisor {
         let client = self.native.client.clone();
         let projected_thread_id = thread_id.clone();
         let task = tokio::spawn(async move {
+            // Turns that lost events while running, to a lag or a failed
+            // write. Each is re-read once when it ends.
+            let mut gaps = HashSet::new();
             loop {
                 match events.recv().await {
                     Ok(event) => {
@@ -674,52 +742,61 @@ impl AppServerSupervisor {
                             }
                             continue;
                         }
+                        // Only turn and item events are projected, so token
+                        // deltas never reach the store.
+                        let Some(turn_id) = turns::event_turn_id(&event).map(str::to_string) else {
+                            continue;
+                        };
+                        let ended = matches!(event, NormalizedEvent::TurnCompleted { .. });
                         let event_binding_id = binding_id.clone();
                         let result = crate::workbench::commands::run_store(move |store| {
                             store.project_codex_event(&event_binding_id, &event)
                         })
                         .await;
                         match result {
-                            Ok(_) => {}
-                            Err(error) => client.warn(format!(
-                                "Workbench could not persist a Codex event: {}",
-                                error.message
-                            )),
+                            Ok(_) => {
+                                if !(ended && gaps.remove(&turn_id)) {
+                                    continue;
+                                }
+                                if let Err(error) = turns::repair(
+                                    &client,
+                                    client.epoch(),
+                                    &binding_id,
+                                    &projected_thread_id,
+                                    &turn_id,
+                                )
+                                .await
+                                {
+                                    client.warn(format!(
+                                        "Workbench could not repair a turn's transcript: {}",
+                                        error.message
+                                    ));
+                                }
+                            }
+                            Err(error) => {
+                                client.warn(format!(
+                                    "Workbench could not persist a Codex event: {}",
+                                    error.message
+                                ));
+                                gaps.insert(turn_id);
+                            }
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
                         client.warn(format!(
-                            "Workbench projection lagged by {skipped} events; reconciling from thread/read"
+                            "Workbench projection lagged by {skipped} events; reconciling from thread/turns/list"
                         ));
-                        match client
-                            .request(
-                                "thread/read",
-                                json!({"threadId":projected_thread_id,"includeTurns":true}),
-                                DEFAULT_REQUEST_TIMEOUT,
-                            )
-                            .await
+                        match turns::reconcile(
+                            &client,
+                            client.epoch(),
+                            &binding_id,
+                            &projected_thread_id,
+                        )
+                        .await
                         {
-                            Ok(snapshot) => {
-                                let snapshot_binding_id = binding_id.clone();
-                                let snapshot_thread_id = projected_thread_id.clone();
-                                let epoch = client.epoch();
-                                let result = crate::workbench::commands::run_store(move |store| {
-                                    reconcile_snapshot(
-                                        &store,
-                                        &snapshot_binding_id,
-                                        &snapshot_thread_id,
-                                        epoch,
-                                        snapshot,
-                                    )
-                                })
-                                .await;
-                                if result.is_err() {
-                                    client
-                                        .warn("Workbench thread projection reconciliation failed");
-                                }
-                            }
+                            Ok(running) => gaps.extend(running),
                             Err(error) => client.warn(format!(
-                                "Workbench could not reload a lagged thread: {}",
+                                "Workbench could not reconcile a lagged thread: {}",
                                 error.message
                             )),
                         }
@@ -733,6 +810,22 @@ impl AppServerSupervisor {
         }
     }
 }
+
+/// Frequent notifications nothing here reads. Each would otherwise cross the pipe
+/// and be parsed, and `turn/diff/updated` repeats the turn's whole diff. Finished
+/// work still arrives in `item/completed`, which is what the transcript keeps.
+const UNREAD_NOTIFICATIONS: &[&str] = &[
+    "item/commandExecution/outputDelta",
+    "item/fileChange/outputDelta",
+    "item/mcpToolCall/progress",
+    "item/plan/delta",
+    "item/reasoning/summaryPartAdded",
+    "item/reasoning/summaryTextDelta",
+    "item/reasoning/textDelta",
+    "thread/tokenUsage/updated",
+    "turn/diff/updated",
+    "turn/plan/updated",
+];
 
 pub struct SupervisorManager {
     next_epoch: AtomicU64,
@@ -775,6 +868,11 @@ impl SupervisorManager {
         self.current.lock().await.clone()
     }
 
+    #[cfg(test)]
+    pub(crate) async fn install(&self, supervisor: Arc<AppServerSupervisor>) {
+        *self.current.lock().await = Some(supervisor);
+    }
+
     pub async fn shutdown(&self) {
         if let Some(supervisor) = self.current.lock().await.take() {
             supervisor.shutdown().await;
@@ -798,15 +896,18 @@ fn validate_thread_request(request: &StartThreadRequest) -> Result<(), RequestEr
         }
     }
     validate_identifier("permissions profile", &request.permissions)?;
-    let cwd = Path::new(&request.cwd);
+    validate_cwd(&request.cwd, &request.runtime_workspace_roots)
+}
+
+fn validate_cwd(cwd: &str, runtime_workspace_roots: &[String]) -> Result<(), RequestError> {
+    let cwd = Path::new(cwd);
     if !cwd.is_absolute() || !cwd.is_dir() {
         return Err(RequestError::invalid(
             "Thread cwd must be an existing absolute directory",
         ));
     }
-    validate_roots(&request.runtime_workspace_roots)?;
-    if !request
-        .runtime_workspace_roots
+    validate_roots(runtime_workspace_roots)?;
+    if !runtime_workspace_roots
         .iter()
         .any(|root| same_path(Path::new(root), cwd))
     {
@@ -888,6 +989,22 @@ fn approval_policy(permissions: &str) -> &'static str {
     }
 }
 
+/// Codex's definite answer that it holds nothing to resume. A timeout or a
+/// dropped connection says nothing about the thread and stays an error.
+fn has_no_history(error: &RequestError) -> bool {
+    error.rpc_code == Some(-32600) && error.message.contains("no rollout found")
+}
+
+fn same_roots(connection: &ThreadConnection, expected_roots: &[String]) -> bool {
+    connection.runtime_workspace_roots.len() == expected_roots.len()
+        && expected_roots.iter().all(|expected| {
+            connection
+                .runtime_workspace_roots
+                .iter()
+                .any(|actual| same_path(Path::new(actual), Path::new(expected)))
+        })
+}
+
 fn validate_thread_contract(
     connection: &ThreadConnection,
     expected_cwd: Option<&str>,
@@ -912,14 +1029,7 @@ fn validate_thread_contract(
             "Codex App Server did not honor the requested Workspace working directory",
         ));
     }
-    if connection.runtime_workspace_roots.len() != expected_roots.len()
-        || !expected_roots.iter().all(|expected| {
-            connection
-                .runtime_workspace_roots
-                .iter()
-                .any(|actual| same_path(Path::new(actual), Path::new(expected)))
-        })
-    {
+    if !same_roots(connection, expected_roots) {
         return Err(RequestError::unavailable(
             "Codex App Server did not honor the requested Workspace filesystem roots",
         ));
@@ -1027,52 +1137,6 @@ pub(crate) fn event_thread_id(event: &NormalizedEvent) -> Option<&str> {
     }
 }
 
-fn reconcile_snapshot(
-    store: &crate::workbench::store::Store,
-    binding_id: &str,
-    thread_id: &str,
-    epoch: u64,
-    snapshot: Value,
-) -> crate::workbench::store::WorkbenchResult<()> {
-    let turns = snapshot
-        .get("thread")
-        .and_then(|thread| thread.get("turns"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| crate::workbench::store::WorkbenchError {
-            code: "storage_error".to_string(),
-            message: "thread/read reconciliation response omitted thread.turns".to_string(),
-            retryable: true,
-            recovery: Some("Retry the Workbench session reload.".to_string()),
-        })?;
-    for turn in turns {
-        let Some(turn_id) = turn.get("id").and_then(Value::as_str) else {
-            continue;
-        };
-        let status = turn
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("inProgress");
-        let event = if matches!(status, "completed" | "failed" | "interrupted") {
-            NormalizedEvent::TurnCompleted {
-                epoch,
-                thread_id: thread_id.to_string(),
-                turn_id: turn_id.to_string(),
-                status: status.to_string(),
-                turn: turn.clone(),
-            }
-        } else {
-            NormalizedEvent::TurnStarted {
-                epoch,
-                thread_id: thread_id.to_string(),
-                turn_id: turn_id.to_string(),
-                turn: turn.clone(),
-            }
-        };
-        store.project_codex_event(binding_id, &event)?;
-    }
-    Ok(())
-}
-
 fn required_string(value: &Value, path: &[&str], context: &str) -> Result<String, RequestError> {
     let mut cursor = value;
     for key in path {
@@ -1106,6 +1170,7 @@ fn string_array(value: &Value, key: &str) -> Result<Vec<String>, RequestError> {
 
 #[cfg(test)]
 mod tests;
+mod turns;
 
 /// On dropped/failed background calls, stop the native connection before releasing
 /// the shared account lease. An unconfirmed turn must not outlive its account.

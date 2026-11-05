@@ -110,6 +110,46 @@ pub(super) fn estimate_cost(
     )
 }
 
+/// API list-price estimate of an output's direct-API calls, and the number of
+/// those calls whose model has no known price. Subscription calls are not
+/// metered per token and contribute nothing.
+pub fn api_cost_of(output: &crate::models::StepOutput, settings: &Settings) -> (f64, u32) {
+    let mut cost = 0f64;
+    let mut unpriced = 0u32;
+    if output.calls.is_empty() {
+        if output.skipped || !provider_in_api_mode(settings, &output.provider) {
+            return (0.0, 0);
+        }
+        match estimate_cost(
+            &output.model,
+            output.input_tokens,
+            output.output_tokens,
+            output.cached_input_tokens,
+            output.cache_write_input_tokens,
+        ) {
+            Some(value) => cost += value,
+            None => unpriced += 1,
+        }
+        return (cost, unpriced);
+    }
+    for call in &output.calls {
+        if call.model_transport != "api" {
+            continue;
+        }
+        match estimate_cost(
+            &call.model,
+            call.input_tokens,
+            call.output_tokens,
+            call.cached_input_tokens,
+            call.cache_write_input_tokens,
+        ) {
+            Some(value) => cost += value,
+            None => unpriced += 1,
+        }
+    }
+    (cost, unpriced)
+}
+
 pub(super) fn format_cost(cost: f64) -> String {
     if cost >= 1.0 {
         format!("${cost:.2}")

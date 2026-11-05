@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { proseForDiff, resultRef, studioClient } from "./studioClient";
+import { resultRef, studioClient } from "./studioClient";
 import type { ResearchResultV1 } from "./workbenchTypes";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -14,7 +14,7 @@ it("never replays an uncertain file mutation", async () => {
       expectedHash: "old",
       content: "new",
     }),
-  ).rejects.toThrow("unknown");
+  ).rejects.toThrow("could not confirm whether this finished");
   expect(invoke).toHaveBeenCalledTimes(1);
 });
 it("keeps result identities scoped to the execution", () => {
@@ -24,14 +24,6 @@ it("keeps result identities scoped to the execution", () => {
       resultId: "coefficient",
     } as ResearchResultV1),
   ).toEqual({ executionId: "alternative", resultId: "coefficient" });
-});
-it("labels the prose transformation as an aid while retaining equations", () => {
-  expect(
-    proseForDiff(
-      "\\section{Finding}\nThe result $a=b$ holds. \\cite{x}\n% hidden\nNext.",
-    ),
-  ).toContain("$a=b$");
-  expect(proseForDiff("\\textbf{Text} \\label{x}% hidden")).toBe("Text");
 });
 it("requests bounded logs with an explicit cursor and project scope", async () => {
   invoke.mockResolvedValue({ text: "chunk", nextOffset: 15, truncated: false });

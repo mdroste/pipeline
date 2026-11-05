@@ -1,3 +1,14 @@
+//! Scheduled checks that run while Pipeline is open.
+//!
+//! The program worker runs them; there is no daemon, so quit, restart and sleep
+//! pause them and missed intervals coalesce. The first success is a quiet
+//! baseline; later changes, including a return to an earlier state, create
+//! attention. The record's revision identifies one occurrence, so a retried
+//! result can't count twice and results from before a pause are discarded.
+//! Repeated failures create attention once, with backoff. Remote metadata queries
+//! need project acquisition permission and per-check consent, and run outside the
+//! database gate. A whole-store restore disables checks.
+
 use super::*;
 use crate::workbench::{acquisition, project, research};
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,7 +197,7 @@ pub fn list(store: &Store, ws: &str) -> WorkbenchResult<Value> {
     let mut q=c.prepare("SELECT id,body_json,created_at,acknowledged_at FROM research_attention WHERE workspace_id=?1 ORDER BY created_at DESC LIMIT 200").map_err(err)?;
     let attention=q.query_map([ws],|r|Ok(json!({"id":r.get::<_,String>(0)?,"body":serde_json::from_str::<Value>(&r.get::<_,String>(1)?).unwrap_or(Value::Null),"createdAt":r.get::<_,String>(2)?,"acknowledgedAt":r.get::<_,Option<String>>(3)?}))).map_err(err)?.collect::<Result<Vec<_>,_>>().map_err(err)?;
     Ok(
-        json!({"checks":checks,"attention":attention,"lifecycle":"Checks run while the desktop process is alive. Close-to-tray is optional in Tasks. Quit stops checks; missed checks coalesce on next launch."}),
+        json!({"checks":checks,"attention":attention,"lifecycle":"Checks run while the desktop process is alive. Close-to-tray is optional on the Automations page. Quit stops checks; missed checks coalesce on next launch."}),
     )
 }
 pub fn control(

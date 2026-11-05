@@ -1,6 +1,6 @@
 // ── Encryption helpers ─────────────────────────────────────────────
 
-use super::*;
+use std::fs;
 
 use aes_gcm::{
     aead::{Aead, KeyInit},

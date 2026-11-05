@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { workbenchClient } from "../lib/workbenchClient";
+import { conversationClient } from "../lib/workbench/conversationClient";
+import { executionClient } from "../lib/workbench/executionClient";
+import { recipeClient } from "../lib/workbench/recipeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
+import { promptDialog } from "./DialogService";
 import type {
   ConversationSnapshot,
+  SessionSnapshot,
   RecipeInputCheck,
   RecipeRun,
   ResearchExecution,
@@ -22,7 +26,7 @@ function lines(value: string) {
 
 interface WorkspaceRecipesPanelProps {
   snapshot: ConversationSnapshot;
-  onSnapshot: (snapshot: ConversationSnapshot) => void;
+  onSnapshot: (snapshot: SessionSnapshot) => void;
   onError: (message: string) => void;
 }
 
@@ -40,6 +44,9 @@ export default function WorkspaceRecipesPanel({
   const [recordedChecks, setRecordedChecks] = useState<
     Record<string, string[]>
   >({});
+  const [unresolvedIssues, setUnresolvedIssues] = useState<
+    Record<string, string>
+  >({});
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -51,9 +58,9 @@ export default function WorkspaceRecipesPanel({
       return;
     }
     const [nextRecipes, nextRuns, nextExecutions] = await Promise.all([
-      workbenchClient.listRecipes(workspaceId),
-      workbenchClient.listRecipeRuns(snapshot.session.id),
-      workbenchClient.listExecutions(workspaceId),
+      recipeClient.listRecipes(workspaceId),
+      recipeClient.listRecipeRuns(snapshot.session.id),
+      executionClient.listExecutions(workspaceId),
     ]);
     setRecipes(nextRecipes);
     setRuns(nextRuns);
@@ -79,7 +86,7 @@ export default function WorkspaceRecipesPanel({
       setChecks([]);
       return;
     }
-    void workbenchClient
+    void recipeClient
       .checkRecipeInputs(snapshot.session.id, selectedId)
       .then(setChecks)
       .catch((cause) => onError(workbenchErrorMessage(cause)));
@@ -98,10 +105,10 @@ export default function WorkspaceRecipesPanel({
   };
 
   const patchSession = async (overrides: Record<string, unknown>) => {
-    const latest = await workbenchClient.conversationSnapshot(
+    const latest = await conversationClient.sessionSnapshot(
       snapshot.session.id,
     );
-    const updated = await workbenchClient.updateSession({
+    const updated = await conversationClient.updateSession({
       sessionId: latest.session.id,
       expectedRevision: latest.session.revision,
       operationId: operation("recipe-session"),
@@ -118,7 +125,7 @@ export default function WorkspaceRecipesPanel({
 
   if (!workspaceId) {
     return (
-      <p className="text-xs text-amber-700">
+      <p className="text-xs text-warning">
         Move this conversation to a project to use research recipes.
       </p>
     );
@@ -162,7 +169,7 @@ export default function WorkspaceRecipesPanel({
         {checks.map((check) => (
           <div
             key={check.input}
-            className={`rounded border p-2 text-xs ${check.available ? "border-emerald-200 text-emerald-700" : "border-amber-200 text-amber-700"}`}
+            className={`rounded border p-2 text-xs ${check.available ? "border-emerald-200 text-emerald-700 dark:border-neutral-700 dark:text-emerald-300" : "border-amber-200 text-warning dark:border-neutral-700"}`}
           >
             <span className="font-medium">
               {check.available ? "Ready" : "Missing"}:{" "}
@@ -179,7 +186,7 @@ export default function WorkspaceRecipesPanel({
           disabled={!selected || busy}
           onClick={() =>
             void act(async () => {
-              const nextChecks = await workbenchClient.checkRecipeInputs(
+              const nextChecks = await recipeClient.checkRecipeInputs(
                 snapshot.session.id,
                 selected!.id,
               );
@@ -189,7 +196,7 @@ export default function WorkspaceRecipesPanel({
                 recipeId: selected!.id,
                 mode: selected!.suggestedPermissionMode,
               });
-              await workbenchClient.startRecipe({
+              await recipeClient.startRecipe({
                 sessionId: snapshot.session.id,
                 recipeId: selected!.id,
                 operationId: operation("recipe-run"),
@@ -205,11 +212,19 @@ export default function WorkspaceRecipesPanel({
           disabled={!selected || busy}
           onClick={() =>
             void act(async () => {
-              const name = window
-                .prompt("Name for recipe copy", `${selected!.name} copy`)
-                ?.trim();
+              const name = (
+                await promptDialog(
+                  "The copy is saved as a custom recipe you can edit.",
+                  {
+                    title: "Copy recipe",
+                    label: "Name for the copy",
+                    defaultValue: `${selected!.name} copy`,
+                    confirmLabel: "Create copy",
+                  },
+                )
+              )?.trim();
               if (!name) return;
-              const created = await workbenchClient.cloneRecipe({
+              const created = await recipeClient.cloneRecipe({
                 workspaceId,
                 sourceRecipeId: selected!.id,
                 name,
@@ -243,12 +258,15 @@ export default function WorkspaceRecipesPanel({
             Edit custom recipe
           </summary>
           <form
+            // Remount per recipe and revision so uncontrolled fields never
+            // carry another recipe's values into this save.
+            key={`${selected.id}:${selected.revision}`}
             className="mt-2 space-y-2"
             onSubmit={(event) => {
               event.preventDefault();
               const data = new FormData(event.currentTarget);
               void act(async () => {
-                await workbenchClient.updateRecipe({
+                await recipeClient.updateRecipe({
                   recipeId: selected.id,
                   expectedRevision: selected.revision,
                   name: String(data.get("name")),
@@ -326,7 +344,7 @@ export default function WorkspaceRecipesPanel({
               <div className="flex items-center gap-2">
                 <span className="font-medium">{run.recipe.name}</span>
                 <span
-                  className={`text-[11px] ${run.status === "completed" ? "text-emerald-600" : run.status === "incomplete" ? "text-amber-600" : "text-blue-600"}`}
+                  className={`text-[11px] ${run.status === "completed" ? "text-emerald-600 dark:text-emerald-400" : run.status === "incomplete" ? "text-amber-600 dark:text-amber-400" : "text-blue-600 dark:text-blue-400"}`}
                 >
                   {run.status}
                 </span>
@@ -359,20 +377,32 @@ export default function WorkspaceRecipesPanel({
                       {check.replaceAll("_", " ")} actually checked
                     </label>
                   ))}
+                  <label className="block text-[11px]">
+                    Unresolved issues, one per line
+                    <textarea
+                      rows={3}
+                      value={unresolvedIssues[run.id] ?? ""}
+                      onChange={(event) =>
+                        setUnresolvedIssues((current) => ({
+                          ...current,
+                          [run.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="Leave empty if nothing is unresolved."
+                      className="mt-1 w-full rounded border bg-white p-2 text-xs dark:bg-neutral-950"
+                    />
+                  </label>
                   <button
                     type="button"
                     disabled={busy}
                     onClick={() =>
                       void act(async () => {
                         const unresolved = lines(
-                          window.prompt(
-                            "Unresolved issues, one per line",
-                            "",
-                          ) ?? "",
+                          unresolvedIssues[run.id] ?? "",
                         );
                         const completed = new Set(recordedChecks[run.id] ?? []);
                         const currentInputs =
-                          await workbenchClient.checkRecipeInputs(
+                          await recipeClient.checkRecipeInputs(
                             snapshot.session.id,
                             run.recipe.id,
                           );
@@ -395,7 +425,7 @@ export default function WorkspaceRecipesPanel({
                                 `Check not recorded: ${name.replaceAll("_", " ")}`,
                             ),
                         ];
-                        await workbenchClient.completeRecipe({
+                        await recipeClient.completeRecipe({
                           recipeRunId: run.id,
                           artifacts: executions
                             .filter(
@@ -411,6 +441,9 @@ export default function WorkspaceRecipesPanel({
                           unresolvedIssues: unresolved,
                           missingEvidence,
                         });
+                        setUnresolvedIssues(
+                          ({ [run.id]: _recorded, ...current }) => current,
+                        );
                       })
                     }
                     className="rounded border px-2 py-1 text-[11px]"
@@ -421,7 +454,7 @@ export default function WorkspaceRecipesPanel({
               )}
               {(run.unresolvedIssues.length > 0 ||
                 run.missingEvidence.length > 0) && (
-                <ul className="mt-2 list-disc pl-4 text-[11px] text-amber-700">
+                <ul className="mt-2 list-disc pl-4 text-[11px] text-warning">
                   {[...run.unresolvedIssues, ...run.missingEvidence].map(
                     (item, index) => (
                       <li key={`${item}-${index}`}>{item}</li>

@@ -136,3 +136,33 @@ it("shows the active-work explanation when account switching is blocked", async 
     "Wait for active Conversations and Reviews to finish",
   );
 });
+
+it("keeps a failed action's error through background polls until the next action", async () => {
+  const original = mocked.getMockImplementation()!;
+  mocked.mockImplementation((command, args) =>
+    command === "chatgpt_login_start"
+      ? Promise.reject("Browser sign-in could not start.")
+      : original(command, args),
+  );
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    render(<ChatgptConnection />);
+    const login = await screen.findByRole("button", {
+      name: "Sign in to ChatGPT",
+    });
+    await waitFor(() => expect(login).toBeEnabled());
+    fireEvent.click(login);
+    await screen.findByText("Browser sign-in could not start.");
+    await act(() => vi.advanceTimersByTimeAsync(10_000));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Browser sign-in could not start.",
+    );
+    mocked.mockImplementation(original);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+    );
+  } finally {
+    vi.useRealTimers();
+  }
+});

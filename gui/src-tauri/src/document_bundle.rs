@@ -4,6 +4,12 @@
 //! profiles. `DocumentBundle` is the durable source of truth for new runs: it
 //! preserves page images, semantic blocks, equations, tables, figures, and
 //! provenance without forcing every source format through Markdown.
+//!
+//! Validation accepts only the current schema version. Add optional fields with
+//! Serde defaults and keep the version. A breaking change needs a new major
+//! version and a migrator, and readers reject a major they don't know. Asset
+//! paths stay run-relative; absolute paths appear only in origin and provenance.
+//! New extractors produce or enrich this bundle, so consumers never branch on engine.
 
 use crate::models::{ExtractionResult, OrientationMap};
 use regex::Regex;
@@ -50,6 +56,10 @@ pub struct DocumentOrigin {
     pub kind: String,
     pub path: String,
     pub role: String,
+    /// First 16 hex chars of the SHA-256 of a Word file's bytes. A Word
+    /// `paper_hash` covers extracted text, which moves with the extractor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -597,6 +607,7 @@ fn add_markdown_nodes(bundle: &mut DocumentBundle, text: &str, method: &str) {
 
 mod adapters;
 mod bundle;
+mod docx_symbols;
 mod docx_xml;
 mod paddle;
 
@@ -608,9 +619,12 @@ use paddle::add_paddle_structured_nodes;
 
 pub use adapters::{companion_pdf, extract_docx_text};
 pub use bundle::build;
+pub(crate) use docx_xml::inline_character;
 
 #[cfg(test)]
 use adapters::{copy_docx_media_with_limits, read_docx_entry_limited};
 
+#[cfg(test)]
+mod docx_tests;
 #[cfg(test)]
 mod tests;

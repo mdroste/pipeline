@@ -1,5 +1,5 @@
 name: Feature request
-description: Propose a focused improvement to Pipeline
+description: Suggest an improvement to Pipeline
 title: "[Feature]: "
 labels:
   - enhancement
@@ -7,36 +7,37 @@ body:
   - type: markdown
     attributes:
       value: |
-        Describe the workflow problem before prescribing an implementation. Do not include confidential papers, prompts, credentials, or run artifacts.
+        Tell us what you want to do and what would make it easier. Use examples you can share publicly.
   - type: textarea
     id: problem
     attributes:
       label: Problem
-      description: What task is difficult today, and who encounters it?
+      description: What are you trying to do, and what makes it difficult?
     validations:
       required: true
   - type: textarea
     id: outcome
     attributes:
       label: Desired outcome
-      description: Describe the observable result and a representative synthetic example.
+      description: What would you like Pipeline to do? An example helps.
     validations:
       required: true
   - type: textarea
     id: alternatives
     attributes:
       label: Alternatives considered
-      description: Note current workarounds or narrower solutions.
+      description: How do you handle this now?
   - type: dropdown
     id: area
     attributes:
       label: Area
       options:
-        - Workflow engine
+        - Reviews
+        - Projects and conversations
         - Providers and models
         - Document extraction
         - Reports and history
-        - Accessibility and UX
+        - Interface and accessibility
         - CLI and automation
         - Packaging and release
         - Documentation
@@ -46,9 +47,7 @@ body:
   - type: checkboxes
     id: scope
     attributes:
-      label: Scope checks
+      label: Before submitting
       options:
-        - label: This request does not require sending confidential user data to a new service without explicit consent.
-          required: true
-        - label: I checked the roadmap and existing issues for a similar request.
+        - label: I checked existing issues for a similar request.
           required: true

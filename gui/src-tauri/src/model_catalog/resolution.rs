@@ -147,12 +147,17 @@ pub async fn discover(
     settings: &Settings,
     refresh: bool,
 ) -> Result<ModelCatalog, String> {
-    let provider = if provider.is_empty() {
-        "claude"
-    } else {
-        provider
-    };
-    let transport = settings.model_transport(provider);
+    let connection = crate::connections::ConnectionId::for_review(provider, settings)?;
+    discover_connection(connection, settings, refresh).await
+}
+
+pub async fn discover_connection(
+    connection: crate::connections::ConnectionId,
+    settings: &Settings,
+    refresh: bool,
+) -> Result<ModelCatalog, String> {
+    let provider = connection.catalog_provider();
+    let transport = connection.legacy_transport();
     // API credentials have a stable, non-secret fingerprint. CLI account
     // identity does not, so never reuse an installed-CLI catalog across calls:
     // the user may have switched accounts since it was written.
@@ -175,26 +180,28 @@ pub async fn discover(
         }
     }
     let key = discovery_key(provider, transport, settings);
-    let provider = provider.to_string();
     let settings = settings.clone();
     single_flight_discovery(key, move || async move {
-        discover_uncached(&provider, &settings).await
+        discover_uncached(connection, &settings).await
     })
     .await
 }
 
-async fn discover_uncached(provider: &str, settings: &Settings) -> Result<ModelCatalog, String> {
-    let transport = settings.model_transport(provider);
+async fn discover_uncached(
+    connection: crate::connections::ConnectionId,
+    settings: &Settings,
+) -> Result<ModelCatalog, String> {
+    let provider = connection.catalog_provider();
+    let transport = connection.legacy_transport();
     let cacheable = provider != "local" && transport == "api";
     let policy = bundled_policy();
-    let live =
-        if provider == "codex" && transport == "cli" && settings.codex_backend == "app_server" {
-            crate::pipeline::codex_server::catalog().await
-        } else if transport == "cli" {
-            cli_catalog(provider).await
-        } else {
-            api_catalog(provider, settings).await
-        };
+    let live = if connection.transport(settings) == crate::connections::Transport::CodexAppServer {
+        super::chatgpt::chatgpt_catalog().await
+    } else if transport == "cli" {
+        cli_catalog(provider).await
+    } else {
+        api_catalog(provider, settings).await
+    };
     match live {
         Ok(mut catalog) => {
             apply_policy(&mut catalog, &policy);
@@ -217,7 +224,7 @@ async fn discover_uncached(provider: &str, settings: &Settings) -> Result<ModelC
                 if let Some(mut cache) = read_cache(provider, transport, settings) {
                     cache.catalog.stale = true;
                     cache.catalog.warning = Some(format!(
-                        "Live discovery failed; using the last known catalog. {error}"
+                        "Could not refresh the model list, so Pipeline is using the last saved one. {error}"
                     ));
                     return Ok(cache.catalog);
                 }
@@ -225,7 +232,7 @@ async fn discover_uncached(provider: &str, settings: &Settings) -> Result<ModelC
             let mut catalog = base_catalog(provider, transport, "bundled_policy");
             catalog.stale = true;
             catalog.warning = Some(format!(
-                "Live discovery failed. Automatic still uses the provider default. {error}"
+                "Could not load the model list. Provider default still works. {error}"
             ));
             if let Some(transport_policy) = policy_for(&policy, provider, transport) {
                 catalog.models = transport_policy
@@ -269,9 +276,9 @@ pub async fn resolve(
         if !key_present {
             // Antigravity has no subscription alternative to point at.
             let remedy = if provider == "antigravity" {
-                "Add the key in Settings → API Keys."
+                "Add the key in Settings → Connections."
             } else {
-                "Add the key in Settings → API Keys or switch to Subscription mode."
+                "Add the key in Settings → Connections or switch to Subscription mode."
             };
             return Err(format!(
                 "{provider} API mode is selected, but its API key is missing. {remedy}"

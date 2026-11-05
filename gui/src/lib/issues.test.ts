@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
+import findingsV2 from "../../tests/fixtures/workflow/findings-v2.json";
 import {
+  doiUrl,
   parseIssues,
   extractJson,
   severityRank,
@@ -102,6 +104,30 @@ describe("issues parsing", () => {
     ]);
   });
 
+  it("keeps only host evidence verification statuses", () => {
+    const issues = parseIssues(
+      JSON.stringify({
+        issues: [
+          {
+            title: "Checked issue",
+            evidence: [
+              { page: 2, quote: "a", verification_status: "verified" },
+              { page: 3, quote: "b", verification_status: "not_found" },
+              { page: 4, quote: "c", verification_status: "trust me" },
+              { page: 5, quote: "d", verification_status: "unverified" },
+            ],
+          },
+        ],
+      }),
+    )!;
+    expect(issues[0].evidence?.map((item) => item.verificationStatus)).toEqual([
+      "verified",
+      "not_found",
+      undefined,
+      undefined,
+    ]);
+  });
+
   it("continues past valid non-issue JSON to a later issue candidate", () => {
     const issues = parseIssues(
       'metadata: {"model":"x"}\nresult: {"issues":[{"title":"Actual issue","severity":"major"}]}',
@@ -201,6 +227,60 @@ describe("issues parsing", () => {
     expect(issues[0].title).toBe("X");
   });
 
+  describe("a real findings-v2 product", () => {
+    const report = {
+      products: {
+        schema_version: 1,
+        primary_step_id: "synthesis",
+        findings: findingsV2.published,
+      },
+      step_outputs: findingsV2.step_outputs,
+    } as unknown as PipelineReport;
+
+    it("attributes a finding through reviewer_ids", () => {
+      expect(findingsV2.published.findings[0]).not.toHaveProperty("sources");
+      expect(detectReportIssues(report)?.[0].sources).toEqual([
+        "Technical review",
+        "Identification review",
+      ]);
+    });
+
+    it("keeps outside-source locators and the cited line", () => {
+      const [web, paper, source] = detectReportIssues(report)![0].evidence!;
+      expect(web).toMatchObject({
+        url: "https://example.org/series/gdp",
+        publisher: "Example Statistics Office",
+        accessedAt: "2026-10-30",
+      });
+      expect(paper.doi).toBe("10.1000/xyz123");
+      expect(source).toMatchObject({
+        artifactPath: "context/source-evidence/analysis/main.do",
+        lineStart: 120,
+        lineEnd: 135,
+      });
+    });
+  });
+
+  it("keeps a bare URL as evidence", () => {
+    const issues = parseIssues(
+      JSON.stringify({
+        issues: [{ title: "X", evidence: [{ url: "https://example.org/a" }] }],
+      }),
+    );
+    expect(issues?.[0].evidence).toEqual([
+      expect.objectContaining({ url: "https://example.org/a" }),
+    ]);
+  });
+
+  it.each([
+    ["10.1000/xyz123", "https://doi.org/10.1000/xyz123"],
+    ["doi:10.1000/xyz123", "https://doi.org/10.1000/xyz123"],
+    ["https://doi.org/10.1000/xyz123", "https://doi.org/10.1000/xyz123"],
+    ["http://dx.doi.org/10.1000/a b", "https://doi.org/10.1000/a%20b"],
+  ])("links the DOI %s", (doi, url) => {
+    expect(doiUrl(doi)).toBe(url);
+  });
+
   it("uses the canonical published findings product", () => {
     const report = {
       products: {
@@ -244,6 +324,42 @@ describe("issues parsing", () => {
         sources: ["technical", "econometrics"],
         evidence: [{ sourcePath: "chapters/model.tex", lineStart: 42 }],
       },
+    ]);
+  });
+
+  it("names reviewers by their step labels", () => {
+    const report = {
+      products: {
+        schema_version: 1,
+        primary_step_id: "validate",
+        findings: {
+          schema_version: 1,
+          source_step_id: "validate",
+          source_step_label: "Validate",
+          findings: [
+            {
+              id: "one",
+              title: "One",
+              body: "Body",
+              sources: ["causal_identification", "retired_step"],
+            },
+          ],
+        },
+      },
+      step_outputs: [
+        {
+          step_id: "causal_identification",
+          step_label: "Method — Causal Identification",
+          phase: "parallel",
+          agent: "",
+          raw_text: "",
+        },
+      ],
+    } as unknown as PipelineReport;
+
+    expect(detectReportIssues(report)?.[0].sources).toEqual([
+      "Method — Causal Identification",
+      "retired_step",
     ]);
   });
 
@@ -292,6 +408,30 @@ describe("renderSpecialistMarkdown", () => {
     expect(markdown).toContain("**#1. Sign error**");
     expect(markdown).toContain("- **The problem:** Analysis");
     expect(markdown).toContain("p. 12 · “the sign flips”");
+  });
+
+  it("keeps the URL and DOI of an external source", () => {
+    const markdown = renderSpecialistMarkdown(
+      JSON.stringify({
+        findings: [
+          {
+            title: "Prior result",
+            problem: "Analysis",
+            what_would_help: "Fix",
+            evidence: [
+              {
+                description: "Prior paper",
+                url: "https://example.org/paper",
+                doi: "doi:10.1000/xyz",
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(markdown).toContain(
+      "Prior paper · https://example.org/paper · https://doi.org/10.1000/xyz",
+    );
   });
 
   it("renders an empty specialist report as the sentinel sentence", () => {

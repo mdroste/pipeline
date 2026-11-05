@@ -128,7 +128,14 @@ pub async fn workbench_data_policy(
 pub async fn workbench_import_dataset(
     request: crate::workbench::data::ImportDataset,
 ) -> WorkbenchResult<crate::workbench::desk::DeskRecord> {
-    run_store(move |s| crate::workbench::data::import(&s, request)).await
+    let ws = request.workspace_id.clone();
+    run_store(move |s| s.workspace(&ws).map(|_| ())).await?;
+    // Reading and profiling a file (up to 2 GiB for Stata) never holds a database worker.
+    let prepared =
+        tokio::task::spawn_blocking(move || crate::workbench::data::prepare_local(request))
+            .await
+            .map_err(|e| WorkbenchError::worker(format!("Dataset reader stopped: {e}"), true))??;
+    run_store(move |s| crate::workbench::data::commit(&s, prepared)).await
 }
 #[tauri::command]
 pub async fn workbench_save_sample(
@@ -176,7 +183,9 @@ pub async fn workbench_crossref_lookup(
     operation_id: String,
 ) -> WorkbenchResult<crate::workbench::desk::DeskRecord> {
     acquisition_allowed(workspace_id.clone()).await?;
-    let result = crate::workbench::acquisition::crossref(&query).await;
+    let contact = run_store(|s| crate::workbench::acquisition::crossref_contact(&s)).await?;
+    let result =
+        crate::workbench::acquisition::crossref_with_contact(&query, contact.as_deref()).await;
     run_store(move |s| {
         crate::workbench::acquisition::record_lookup(
             &s,
@@ -231,15 +240,48 @@ pub async fn workbench_acquire_pdf(
 }
 #[tauri::command]
 pub async fn workbench_acquire_fred(
-    request: crate::workbench::acquisition::FredRequest,
+    request: crate::workbench::data::connectors::FredRequest,
 ) -> WorkbenchResult<crate::workbench::desk::DeskRecord> {
     acquisition_allowed(request.workspace_id.clone()).await?;
-    let result = crate::workbench::acquisition::fred(&request).await;
+    let result = crate::workbench::data::connectors::fetch(&request).await;
     let ws = request.workspace_id;
     let series = request.series_id;
     let vintage = request.vintage;
     let operation = request.operation_id;
-    run_store(move|s|match result{Ok((bytes,provenance))=>crate::workbench::data::import_bytes(&s,&ws,&format!("{series} · {vintage}"),&bytes,"csv",provenance,None,&operation),Err(e)=>crate::workbench::desk::insert(&s,&ws,"acquisition",&series,json!({"provider":"FRED/ALFRED","seriesId":series,"requestedVintage":vintage,"retrievedAt":crate::workbench::desk::now(),"state":"failed","error":e.message}),None,&operation)}).await
+    run_store(move|s|match result{Ok(capture)=>crate::workbench::data::import_capture(&s,&ws,capture,&operation),Err(e)=>crate::workbench::desk::insert(&s,&ws,"acquisition",&series,json!({"provider":"FRED/ALFRED","seriesId":series,"requestedVintage":vintage,"retrievedAt":crate::workbench::desk::now(),"state":"failed","error":e.message}),None,&operation)}).await
+}
+/// Keyless DBnomics and World Bank captures under the project's acquisition permission.
+#[tauri::command]
+pub async fn workbench_acquire_series(
+    request: crate::workbench::data::connectors::SeriesRequest,
+) -> WorkbenchResult<crate::workbench::desk::DeskRecord> {
+    acquisition_allowed(request.workspace_id.clone()).await?;
+    let result = crate::workbench::data::connectors::acquire_series(&request.query).await;
+    run_store(move |s| {
+        crate::workbench::data::connectors::record_series(
+            &s,
+            &request.workspace_id,
+            &request.query,
+            result,
+            &request.operation_id,
+        )
+    })
+    .await
+}
+/// Read (`save` false) or replace the researcher's optional Crossref contact email.
+#[tauri::command]
+pub async fn workbench_crossref_contact(
+    email: Option<String>,
+    save: bool,
+) -> WorkbenchResult<Option<String>> {
+    run_store(move |s| {
+        if save {
+            crate::workbench::acquisition::set_crossref_contact(&s, email.as_deref())
+        } else {
+            crate::workbench::acquisition::crossref_contact(&s)
+        }
+    })
+    .await
 }
 
 pub(crate) fn task_pending_request(thread: &str, turn: &str) -> Option<String> {
@@ -248,8 +290,10 @@ pub(crate) fn task_pending_request(thread: &str, turn: &str) -> Option<String> {
         .unwrap_or_else(|e| e.into_inner())
         .values()
         .find_map(|event| {
-            if let crate::workbench::codex::NormalizedEvent::ServerRequest {
-                method, params, ..
+            if let crate::agent_runtime::events::NormalizedEvent::ServerRequest {
+                method,
+                params,
+                ..
             } = event
             {
                 if params.get("threadId").and_then(Value::as_str) == Some(thread)
@@ -346,7 +390,7 @@ pub(crate) async fn deliver_task(
         .try_acquire_owned()
         .map_err(|_| "task_busy: Workspace is running another turn".to_string())?;
     run_store(move |store| {
-        crate::workbench::tasks::validate_binding(&store, &binding)?;
+        crate::workbench::tasks::validate_context(&store, &binding)?;
         let mut result =
             crate::workbench::tasks::deliver(&store, &binding.session_id, &operation, value)?;
         let next = crate::workbench::tasks::binding(&store, &binding.session_id)?;
@@ -363,11 +407,8 @@ pub async fn workbench_file_reveal(
     request: crate::workbench::project::FileReadRequest,
 ) -> WorkbenchResult<()> {
     run_store(move |store| {
-        let file = crate::workbench::project::read_workspace_file(&store, request)?;
-        let path = file.external_path.ok_or_else(|| {
-            WorkbenchError::invalid("Captured documents have no writable external file")
-        })?;
-        crate::file_viewer::reveal(std::path::Path::new(&path)).map_err(WorkbenchError::invalid)
+        let path = crate::workbench::project::reveal_target(&store, &request)?;
+        crate::file_viewer::reveal(&path).map_err(WorkbenchError::invalid)
     })
     .await
 }

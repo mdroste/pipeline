@@ -74,9 +74,69 @@ fn page_byte_limit_and_successor_deduplication_remain_bounded() {
             .len(),
         1
     );
-    c.execute("INSERT INTO session_bindings(id,session_id,runtime_namespace,provider_thread_id,incarnation,created_at) VALUES('successor',?1,'audit','successor-thread',2,'now')",[&id]).unwrap();
+    c.execute("INSERT INTO session_bindings(id,session_id,runtime_namespace,provider_thread_id,incarnation,created_at) VALUES('successor',?1,'later-connection','native',2,'now')",[&id]).unwrap();
     c.execute("INSERT INTO transcript_items(id,binding_id,provider_item_id,item_kind,payload_json,is_final,created_at,updated_at) VALUES('replacement','successor','item-2','agentMessage','{}',1,'now','now')",[]).unwrap();
     let page = s.transcript_page(&id, None).unwrap();
     assert!(!page.items.iter().any(|i| i.id == "item-2"));
     assert!(page.items.iter().any(|i| i.id == "replacement"));
+    // The same id on another thread is another item, not a newer copy.
+    c.execute("INSERT INTO session_bindings(id,session_id,runtime_namespace,provider_thread_id,incarnation,created_at) VALUES('other',?1,'later-connection','other-thread',3,'now')",[&id]).unwrap();
+    c.execute("INSERT INTO transcript_items(id,binding_id,provider_item_id,item_kind,payload_json,is_final,created_at,updated_at) VALUES('other-item','other','item-2','agentMessage','{}',1,'now','now')",[]).unwrap();
+    let page = s.transcript_page(&id, None).unwrap();
+    assert!(page.items.iter().any(|i| i.id == "replacement"));
+    assert!(page.items.iter().any(|i| i.id == "other-item"));
+}
+
+#[test]
+fn a_page_is_chosen_without_reading_payloads() {
+    let (_t, s, id) = fixture();
+    let c = s.connection().unwrap();
+    let plan = c
+        .prepare(&format!("EXPLAIN QUERY PLAN {}", page_query("<", "DESC")))
+        .unwrap()
+        .query_map(params![id, None::<String>, None::<String>, 10], |row| {
+            row.get::<_, String>(3)
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(
+        plan.iter()
+            .any(|row| row.contains("COVERING INDEX transcript_items_page")),
+        "{plan:?}"
+    );
+}
+
+#[test]
+fn the_message_walk_reads_no_tool_payloads_and_chooses_pages_from_the_index() {
+    let (_t, s, id) = fixture();
+    let c = s.connection().unwrap();
+    let plan = c
+        .prepare(&format!("EXPLAIN QUERY PLAN {}", message_page_query()))
+        .unwrap()
+        .query_map(params![id, None::<String>, None::<String>, 10], |row| {
+            row.get::<_, String>(3)
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(
+        plan.iter()
+            .any(|row| row.contains("COVERING INDEX transcript_items_page")),
+        "{plan:?}"
+    );
+    for (item, kind, is_final) in [
+        ("tool", "toolCall", 1),
+        ("streaming", "agentMessage", 0),
+        ("final", "agentMessage", 1),
+    ] {
+        c.execute("INSERT INTO transcript_items(id,binding_id,provider_item_id,item_kind,payload_json,is_final,created_at,updated_at) VALUES(?1,'binding',?1,?2,'{}',?3,'now','now')",params![item,kind,is_final]).unwrap();
+    }
+    let mut visited = Vec::new();
+    s.visit_messages_newest_first(&id, |kind, payload| {
+        visited.push((kind.to_owned(), payload.to_owned()));
+        true
+    })
+    .unwrap();
+    assert_eq!(visited, [("agentMessage".to_owned(), "{}".to_owned())]);
 }

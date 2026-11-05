@@ -3,11 +3,15 @@ use super::paths::step_slug;
 use super::schedule::base_id;
 use crate::models::StepOutput;
 use crate::pipeline::claude::normalize_cli_root;
+use crate::pipeline::unit_files;
 use crate::pipeline_config::{
     ArtifactSelector, NamedInputArtifactPart, Phase, PrimaryArtifactPart, StepArtifactPart,
     StepConfig,
 };
 use std::sync::Arc;
+
+/// Most files one step can select from one producer unit by glob.
+const MAX_SELECTED_FILES: usize = 500;
 
 /// Runtime inventory from which a step's private, selector-filtered artifact
 /// view is constructed.
@@ -20,6 +24,7 @@ pub(super) struct ArtifactRuntime<'a> {
     pub(super) extra_input_sources: &'a std::collections::HashMap<String, String>,
     pub(super) outputs: &'a [StepOutput],
     pub(super) run_artifact_dir: Option<&'a str>,
+    pub(super) context_pool: &'a crate::pipeline::context_cache::PreparedContextPool,
 }
 
 /// Concrete, call-owned view of a step's selected artifacts. App-controlled
@@ -39,9 +44,17 @@ pub(super) struct ResolvedArtifactContext {
     pub(super) has_visuals: bool,
     pub(super) includes_primary_text: bool,
     pub(super) includes_survey: bool,
+    /// Limits this view hit. The manifest tells the model; these go to the log.
+    pub(super) warnings: Vec<String>,
 }
 
 impl ResolvedArtifactContext {
+    pub(super) fn log_warnings(&self, app: &crate::emit::EventBus) {
+        for warning in &self.warnings {
+            crate::pipeline::logging::emit(app, format!("WARNING: {warning}"));
+        }
+    }
+
     pub(super) fn stage_current_item(&mut self, source: &str) -> Result<String, String> {
         let name = std::path::Path::new(source)
             .file_name()
@@ -146,6 +159,7 @@ pub(super) fn resolve_artifact_context(
         .map_err(|error| format!("Failed to create context view for '{}': {error}", step.id))?;
     let mut read_dirs = Vec::new();
     let mut manifest_lines = vec![format!("ARTIFACT CONTEXT FOR STEP '{}':", step.label)];
+    let mut warnings = Vec::new();
     let primary_parts = selected_primary_parts(step);
 
     let paper_text_path = if primary_parts.contains(&PrimaryArtifactPart::Text)
@@ -165,9 +179,14 @@ pub(super) fn resolve_artifact_context(
     let document_bundle_path = if primary_parts.contains(&PrimaryArtifactPart::Structure)
         && !runtime.document_bundle_path.is_empty()
     {
-        let path = stage_document_index(
+        let index = runtime.context_pool.document_index(|folder| {
+            let name = std::path::Path::new("document_index.json");
+            stage_document_index(folder, runtime.document_bundle_path, name)?;
+            Ok(folder.join(name).to_string_lossy().into_owned())
+        })?;
+        let path = stage_artifact_file(
             view.path(),
-            runtime.document_bundle_path,
+            index,
             std::path::Path::new("input/main/document_index.json"),
         )?;
         manifest_lines.push(format!(
@@ -348,8 +367,8 @@ pub(super) fn resolve_artifact_context(
                 .flatten()
                 .filter_map(|instance| {
                     let files = instance.path().join("files");
-                    files
-                        .is_dir()
+                    // A unit without an accepted response passes nothing on.
+                    (files.is_dir() && !unit_files::call_is_open(&instance.path()))
                         .then(|| (instance.file_name().to_string_lossy().into_owned(), files))
                 })
                 .collect();
@@ -368,7 +387,7 @@ pub(super) fn resolve_artifact_context(
                         normalized_path(files)
                     ));
                 } else {
-                    let expanded = crate::pipeline::glob::expand(files, glob, 500);
+                    let expanded = crate::pipeline::glob::expand(files, glob, MAX_SELECTED_FILES);
                     if expanded
                         .limited_by
                         .is_some_and(|reason| reason != "match limit")
@@ -378,6 +397,13 @@ pub(super) fn resolve_artifact_context(
                             producer,
                             expanded.limited_by.unwrap_or("unknown limit")
                         ));
+                    }
+                    if expanded.limited_by.is_some() {
+                        let notice = format!(
+                            "Supporting files from '{producer}' are incomplete: '{glob}' matched more than {MAX_SELECTED_FILES} files, so only the first {MAX_SELECTED_FILES} are listed here."
+                        );
+                        manifest_lines.push(format!("- {notice}"));
+                        warnings.push(format!("Step '{}': {notice}", step.label));
                     }
                     for matched in expanded.matches {
                         let source = std::path::Path::new(&matched);
@@ -422,6 +448,7 @@ pub(super) fn resolve_artifact_context(
         has_visuals,
         includes_primary_text: primary_parts.contains(&PrimaryArtifactPart::Text),
         includes_survey,
+        warnings,
     })
 }
 

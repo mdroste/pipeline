@@ -1,0 +1,125 @@
+/* The standard app page, used with ui/PageHeader: a title, one line on what the
+   page is for, an optional toolbar over a hairline, then flat rows or cards.
+   Its colors are the --ui-page-* tokens in App.css. */
+.ui-page {
+  width: 100%;
+  max-width: 1480px;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 42px 44px 80px;
+  overflow: auto;
+  color: var(--ui-page-text);
+}
+.ui-page button:focus-visible,
+.ui-page summary:focus-visible,
+.ui-page input:focus-visible,
+.ui-page select:focus-visible,
+.ui-page textarea:focus-visible {
+  outline: 2px solid var(--ui-page-accent);
+  outline-offset: 3px;
+}
+.ui-page-header,
+.ui-page-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+.ui-page-header {
+  margin-bottom: 46px;
+}
+.ui-page-header > div {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.ui-page-header h1 {
+  margin: 0;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -1px;
+  overflow-wrap: anywhere;
+}
+.ui-page-header .ui-page-description {
+  margin: 13px 0 0;
+  color: var(--ui-page-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.ui-page-toolbar {
+  margin-bottom: 24px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--ui-page-line);
+}
+.ui-page-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ui-page .ui-page-tabs button {
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-size: 12px;
+  color: var(--ui-page-muted);
+  background: transparent;
+  transition: background 0.15s;
+}
+.ui-page .ui-page-tabs button:hover,
+.ui-page .ui-page-tabs [aria-selected="true"],
+.ui-page .ui-page-tabs [aria-pressed="true"] {
+  background: var(--ui-page-soft);
+}
+.ui-page .ui-page-tabs [aria-selected="true"],
+.ui-page .ui-page-tabs [aria-pressed="true"] {
+  color: inherit;
+}
+.ui-page-button {
+  border: 1px solid var(--ui-page-line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  background: transparent;
+  color: inherit;
+  transition: background 0.15s;
+}
+.ui-page-button:hover {
+  background: var(--ui-page-soft);
+}
+.ui-page-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ui-page-button.primary {
+  background: var(--ui-page-accent);
+  color: var(--ui-page-on-accent);
+  border-color: var(--ui-page-accent);
+}
+.ui-page .ui-page-label {
+  padding: 0 12px 6px;
+  color: var(--ui-page-muted);
+  font-size: 12px;
+  font-weight: 550;
+}
+.ui-page-row {
+  padding: 20px 12px;
+  border-bottom: 1px solid var(--ui-page-line);
+}
+.ui-page-row h3 {
+  font-size: 14px;
+  font-weight: 550;
+}
+.ui-page-card {
+  min-width: 0;
+  padding: 24px;
+  border: 1px solid var(--ui-page-line);
+  border-radius: 16px;
+}
+@media (max-width: 1050px) {
+  .ui-page {
+    padding: 28px 22px;
+  }
+  .ui-page-toolbar {
+    align-items: flex-start;
+  }
+}

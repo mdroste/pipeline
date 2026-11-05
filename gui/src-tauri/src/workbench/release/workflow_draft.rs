@@ -16,6 +16,9 @@ const MAX_STEPS: usize = 12;
 fn err(e: impl std::fmt::Display) -> WorkbenchError {
     WorkbenchError::storage("Workflow draft failed", e)
 }
+const MAX_SLUG_CHARS: usize = 60;
+const MAX_LABEL_CHARS: usize = 200;
+
 fn slug(text: &str, fallback: &str) -> String {
     let s: String = text
         .to_ascii_lowercase()
@@ -30,8 +33,16 @@ fn slug(text: &str, fallback: &str) -> String {
     if s.is_empty() {
         fallback.into()
     } else {
-        s
+        // Step ids stop at 64 characters, and `unique` may add a suffix.
+        s[..s.len().min(MAX_SLUG_CHARS)]
+            .trim_end_matches('_')
+            .to_string()
     }
+}
+
+/// A title can be longer than a Workflow step label.
+fn step_label(title: &str) -> String {
+    title.chars().take(MAX_LABEL_CHARS).collect()
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -148,10 +159,11 @@ pub fn draft_workflow(
                 recorded.join(", ")
             ));
         }
-        steps.push(json!({"id":id,"label":run.recipe.name,"prompt":prompt,"enabled":true,"phase":"parallel","agents":[],"context":{"include":[{"kind":"primary","parts":["text"]}]}}));
+        let label = step_label(&run.recipe.name);
+        steps.push(json!({"id":id,"label":label,"prompt":prompt,"enabled":true,"phase":"parallel","agents":[],"context":{"include":[{"kind":"primary","parts":["text"]}]}}));
         drafted.push(DraftStep {
             id: id.clone(),
-            label: run.recipe.name.clone(),
+            label,
             source: format!("recipe run {run_id}"),
         });
     }
@@ -233,10 +245,11 @@ pub fn draft_workflow(
             ));
         }
         prompt.push_str("\nDistinguish analytical arguments from numerical checks on specific instances; a numerical check never establishes the general statement. Report exact locators.");
-        steps.push(json!({"id":id,"label":note.title,"prompt":prompt,"enabled":true,"phase":"parallel","agents":[],"context":{"include":[{"kind":"primary","parts":["text"]}]}}));
+        let label = step_label(&note.title);
+        steps.push(json!({"id":id,"label":label,"prompt":prompt,"enabled":true,"phase":"parallel","agents":[],"context":{"include":[{"kind":"primary","parts":["text"]}]}}));
         drafted.push(DraftStep {
             id,
-            label: note.title.clone(),
+            label,
             source: format!("theory note {theory_id}"),
         });
     }
@@ -249,11 +262,12 @@ pub fn draft_workflow(
         .iter()
         .map(|s| json!({"kind":"step","step":s["id"],"parts":["report"]}))
         .collect();
-    steps.push(json!({"id":"synthesis","label":"Consolidate findings","prompt":"Consolidate the independent analyses into one prioritized list of issues. Merge duplicates, keep exact locators, and preserve disagreements explicitly.\n\n{prior_outputs}","enabled":true,"phase":"sequential","agents":[],"context":{"include":include}}));
+    let synthesis = unique("synthesis".to_string());
+    steps.push(json!({"id":synthesis,"label":"Consolidate findings","prompt":"Consolidate the independent analyses into one prioritized list of issues. Merge duplicates, keep exact locators, and preserve disagreements explicitly.\n\n{prior_outputs}","enabled":true,"phase":"sequential","agents":[],"context":{"include":include}}));
     let profile: ProfileData = serde_json::from_value(json!({
         "name": name,
         "steps": steps,
-        "outputs": {"primary_step": "synthesis"}
+        "outputs": {"primary_step": synthesis}
     }))
     .map_err(|e| WorkbenchError::invalid(format!("Draft is not a valid profile: {e}")))?;
     let document = WorkflowDocument::from_profile_data(profile)
@@ -367,5 +381,64 @@ mod tests {
             }
         )
         .is_err());
+    }
+
+    #[test]
+    fn selected_titles_never_break_the_fixed_final_step() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open_at(temp.path()).unwrap();
+        let ws = store
+            .create_workspace(CreateWorkspaceRequest {
+                name: "Draft".into(),
+                root: None,
+                operation_id: "create".into(),
+            })
+            .unwrap()
+            .record
+            .id;
+        let note = |title: &str, operation: &str| {
+            let saved = project::studio_mutate(
+                &store,
+                project::StudioMutation {
+                    workspace_id: ws.clone(),
+                    operation_id: operation.into(),
+                    action: project::StudioAction::SaveTheory {
+                        id: None,
+                        expected_revision: 0,
+                        note: serde_json::from_value(json!({
+                            "kind":"derivation","title":title,"statement":"A statement.",
+                            "body":"An argument.","assumptions":[],"assumptionIds":[],
+                            "anchorIds":[],"relatedIds":[],"unresolvedSteps":[],"status":"open",
+                            "rejectionReason":"","origin":"manual","promotions":[]
+                        }))
+                        .unwrap(),
+                    },
+                },
+            )
+            .unwrap();
+            saved["id"].as_str().unwrap().to_string()
+        };
+        let long_words = format!("{} {}", "a".repeat(40), "b".repeat(40));
+        let draft = draft_workflow(
+            &store,
+            DraftWorkflowRequest {
+                workspace_id: ws.clone(),
+                name: "Theory draft".into(),
+                recipe_run_ids: vec![],
+                task_ids: vec![],
+                theory_ids: vec![
+                    note("Synthesis", "synthesis"),
+                    note(&"long title ".repeat(25), "long"),
+                    note(&long_words, "long-words"),
+                ],
+            },
+        )
+        .unwrap();
+        assert_eq!(draft.steps[0].id, "synthesis");
+        assert_eq!(draft.steps[1].label.chars().count(), 200);
+        assert!(draft.steps[2].id.len() <= 64);
+        let parsed: Value = serde_json::from_str(&draft.canonical_json).unwrap();
+        assert_eq!(parsed["outputs"]["primary_step"], "synthesis_2");
+        crate::pipeline_config::parse_workflow_document_strict(&draft.canonical_json).unwrap();
     }
 }

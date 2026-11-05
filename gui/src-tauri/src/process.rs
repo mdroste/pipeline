@@ -29,6 +29,21 @@ pub(crate) fn configure_isolation(command: &mut Command) {
     }
 }
 
+/// Make a child that Windows refuses to load exit with its status instead of
+/// waiting behind a system dialog. Children inherit this process error mode.
+pub fn suppress_windows_error_dialogs() {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Diagnostics::Debug::{
+            SetErrorMode, SEM_FAILCRITICALERRORS,
+        };
+        // SAFETY: SetErrorMode takes a plain flag value and has no preconditions.
+        unsafe {
+            SetErrorMode(SEM_FAILCRITICALERRORS);
+        }
+    }
+}
+
 fn drain_capped<R: std::io::Read>(mut reader: R, limit: usize) -> (Vec<u8>, bool) {
     let mut kept = Vec::with_capacity(limit.min(16 * 1024));
     let mut truncated = false;
@@ -54,6 +69,24 @@ pub fn run_bounded(
     timeout: Duration,
     output_limit: usize,
 ) -> Result<BoundedOutput, String> {
+    run_bounded_owned(command, timeout, output_limit, false)
+}
+
+/// Account/runtime probes must not be cancelled by the Reviews PID registry.
+pub(crate) fn run_bounded_independent(
+    command: &mut Command,
+    timeout: Duration,
+    output_limit: usize,
+) -> Result<BoundedOutput, String> {
+    run_bounded_owned(command, timeout, output_limit, true)
+}
+
+fn run_bounded_owned(
+    command: &mut Command,
+    timeout: Duration,
+    output_limit: usize,
+    independent: bool,
+) -> Result<BoundedOutput, String> {
     configure_isolation(command);
     command
         .stdin(Stdio::null())
@@ -64,7 +97,11 @@ pub fn run_bounded(
         .map_err(|e| format!("Failed to start subprocess: {e}"))?;
     let pid = child.id();
     if pid > 0 {
-        crate::commands::register_child_pid(pid);
+        if independent {
+            crate::commands::lifecycle::register_independent_child_pid(pid);
+        } else {
+            crate::commands::register_child_pid(pid);
+        }
     }
 
     let stdout = child.stdout.take();
@@ -85,6 +122,7 @@ pub fn run_bounded(
     });
 
     let started = Instant::now();
+    let mut wait = Duration::from_millis(1);
     let result = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
@@ -96,7 +134,10 @@ pub fn run_bounded(
                 let _ = child.wait();
                 break Err(format!("Subprocess timed out after {}s", timeout.as_secs()));
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+            Ok(None) => {
+                std::thread::sleep(wait);
+                wait = (wait * 2).min(Duration::from_millis(25));
+            }
             Err(e) => {
                 if pid > 0 {
                     crate::commands::kill_process(pid);
@@ -128,7 +169,11 @@ pub fn run_bounded(
         }
     }
     if pid > 0 {
-        crate::commands::unregister_child_pid(pid);
+        if independent {
+            crate::commands::lifecycle::unregister_independent_child_pid(pid);
+        } else {
+            crate::commands::unregister_child_pid(pid);
+        }
     }
     if stdout_result.is_some() {
         let _ = stdout_thread.join();

@@ -2,7 +2,13 @@
 // scope. The winning cell is highlighted; "Inherit" removes an override rather
 // than copying the parent's value.
 
-import { memo } from "react";
+import { memo, useEffect, useState } from "react";
+import ShellSetup from "./ShellSetup";
+import {
+  conversationProvider,
+  isApiProvider,
+} from "../../lib/workspaceProviders";
+import BrowserSetup from "./BrowserSetup";
 import type { EffectiveHarness } from "../../lib/workbenchTypes";
 import {
   ACCESS_ROWS,
@@ -34,6 +40,37 @@ interface Props {
 
 const controlClass =
   "rounded border border-gray-300 bg-white px-1.5 py-0.5 text-xs dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200";
+
+function DomainInput({
+  value,
+  label,
+  disabled,
+  save,
+}: {
+  value: string;
+  label: string;
+  disabled: boolean;
+  save: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <input
+      className={controlClass}
+      aria-label={label}
+      value={draft}
+      disabled={disabled}
+      placeholder="All public sites"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft !== value) save(draft);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+    />
+  );
+}
 
 function Cell({
   row,
@@ -90,7 +127,14 @@ function Cell({
       );
     }
     const control =
-      row.kind === "boolean" ? (
+      row.kind === "text" ? (
+        <DomainInput
+          value={String(value)}
+          label={`${row.label} (${scopeLabel})`}
+          disabled={busy}
+          save={(value) => onSet(scope, row.key, value)}
+        />
+      ) : row.kind === "boolean" ? (
         <label className="inline-flex items-center gap-1 text-xs">
           <input
             type="checkbox"
@@ -128,7 +172,7 @@ function Cell({
           type="button"
           disabled={busy}
           aria-label={`Inherit ${row.label} for ${scopeLabel}`}
-          title="Remove this override and inherit from the scope to the left"
+          title="Use the setting shown to the left."
           onClick={() => onSet(scope, row.key, undefined)}
           className="rounded px-1 text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800"
         >
@@ -235,11 +279,15 @@ function HarnessAccessTable({
           </tbody>
         </table>
       </div>
+      {effective.capabilities?.browser && <BrowserSetup disabled={busy} />}
+      {isApiProvider(conversationProvider(conversationOverrides.runtime)) && (
+        <ShellSetup disabled={busy} />
+      )}
       <p className="text-[11px] text-gray-500 dark:text-gray-400">
         Access changes apply to your next message. Current permissions:{" "}
         <span className="font-mono">{effective.permissionProfile}</span>.
         {successor &&
-          " The assistant will start fresh with the new settings and saved project context. Earlier messages remain in the transcript."}
+          " Your next message starts a new assistant session with these settings and the saved project context. Earlier messages remain visible here."}
       </p>
     </div>
   );

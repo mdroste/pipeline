@@ -318,3 +318,29 @@ fn claude_sdk_models_are_account_aware_and_skip_default_sentinel() {
         ["low", "medium", "high", "xhigh", "max"]
     );
 }
+
+#[tokio::test]
+async fn a_reply_that_trickles_in_cannot_outlast_the_discovery_limit() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut request = [0; 1024];
+        let _ = stream.read(&mut request).await;
+        let head =
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100000\r\n\r\n";
+        let _ = stream.write_all(head.as_bytes()).await;
+        // Never silent for long, and never finished.
+        while stream.write_all(b" ").await.is_ok() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    });
+    let settings = Settings {
+        local_base_url: format!("http://127.0.0.1:{port}/v1"),
+        ..Settings::default()
+    };
+    let started = std::time::Instant::now();
+    let outcome = api_catalog_within(Duration::from_millis(300), "local", &settings).await;
+    assert_eq!(outcome.unwrap_err(), "Model discovery timed out.");
+    assert!(started.elapsed() < Duration::from_secs(5));
+}

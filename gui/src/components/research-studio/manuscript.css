@@ -1,0 +1,162 @@
+/* The Manuscript page fills its pane: one bar, the source, and an optional side
+   panel for the build's PDF and results. Colors are the --ui-* tokens. */
+.manuscript {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  color: var(--ui-text);
+  font-size: var(--ui-text-label);
+}
+.manuscript-bar {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-height: 42px;
+  padding: 5px 8px 5px 14px;
+  border-bottom: 1px solid var(--ui-border);
+}
+.manuscript-file {
+  max-width: 240px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--ui-radius-sm);
+  background: transparent;
+  color: var(--ui-text);
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+select.manuscript-file:hover {
+  background: var(--ui-sunken);
+}
+.manuscript-status {
+  flex: 1;
+  min-width: 40px;
+  overflow: hidden;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.manuscript-body {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: minmax(0, 1fr);
+  min-height: 0;
+}
+.manuscript-body[data-side="true"] {
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+}
+.manuscript-source,
+.manuscript-side {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.manuscript-side {
+  border-left: 1px solid var(--ui-border);
+  background: var(--ui-page-soft);
+}
+.manuscript-editor {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.manuscript-editor[hidden] {
+  display: none;
+}
+.manuscript-changes {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 14px;
+  overflow: auto;
+}
+.manuscript-changes > * + * {
+  margin-top: 10px;
+}
+.manuscript-side-tabs {
+  display: flex;
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--ui-border);
+}
+.manuscript-pdf {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.manuscript-builds {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 14px 20px;
+  overflow: auto;
+}
+.manuscript-builds > * + * {
+  margin-top: 12px;
+}
+.manuscript-build-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.manuscript-build-list button {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  padding: 5px 8px;
+  border-radius: var(--ui-radius-sm);
+  font-size: var(--ui-text-meta);
+}
+.manuscript-build-list button:hover {
+  background: var(--ui-sunken);
+}
+.manuscript-build-list button[aria-current] {
+  background: var(--ui-sunken);
+  font-weight: 550;
+}
+.manuscript-build-list span:last-child {
+  color: var(--ui-muted);
+  font-family: ui-monospace, monospace;
+  font-weight: 400;
+}
+.manuscript-messages {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--ui-text-meta);
+}
+.manuscript-messages li {
+  padding: 6px 0;
+  border-top: 1px solid var(--ui-border);
+}
+.manuscript-messages strong {
+  margin-right: 6px;
+  color: var(--ui-muted);
+  font-weight: 550;
+}
+.manuscript-messages li[data-severity="error"] strong {
+  color: var(--ui-danger);
+}
+.manuscript-messages button {
+  color: var(--ui-page-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.manuscript-sheet {
+  flex: 1;
+  min-height: 0;
+  padding: 16px;
+  overflow: auto;
+}
+.manuscript-sheet > * + * {
+  margin-top: 12px;
+}

@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import usePersistentPanelWidth from "../../hooks/usePersistentPanelWidth";
 import type { HostExecutionPreview } from "../../lib/projectClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { conversationClient } from "../../lib/workbench/conversationClient";
+import { harnessClient } from "../../lib/workbench/harnessClient";
+import { researchClient } from "../../lib/workbench/researchClient";
+import { executionClient } from "../../lib/workbench/executionClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type {
   ConversationSnapshot,
+  SessionSnapshot,
   EffectiveHarness,
   ExecutionProfile,
   HarnessCatalog,
@@ -16,7 +20,7 @@ import type {
   SourceRecord,
   Workspace,
 } from "../../lib/workbenchTypes";
-import type { ResearchTab } from "../WorkspaceResearchPanel";
+import type { ResearchTab } from "./types";
 
 export function operation(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -31,6 +35,8 @@ export function useResearchPanelController({
   active,
   onBusy,
   beforeChange,
+  onChanged,
+  onActionStart,
 }: {
   snapshot: ConversationSnapshot | null;
   workspace?: Workspace | null;
@@ -38,7 +44,9 @@ export function useResearchPanelController({
   active: boolean;
   onBusy?: (busy: boolean) => void;
   beforeChange?: () => Promise<void>;
-  onSnapshot: (snapshot: ConversationSnapshot) => void;
+  onChanged?: () => void;
+  onActionStart?: () => void;
+  onSnapshot: (snapshot: SessionSnapshot) => void;
   onError: (message: string) => void;
 }) {
   const [width, setWidth] = usePersistentPanelWidth(
@@ -78,9 +86,9 @@ export function useResearchPanelController({
     let disposed = false,
       pending = false;
     const timer = setInterval(() => {
-      if (pending) return;
+      if (pending || document.visibilityState === "hidden") return;
       pending = true;
-      void workbenchClient
+      void executionClient
         .listExecutions(workspaceId)
         .then((value) => {
           if (!disposed) setExecutions(value);
@@ -110,8 +118,8 @@ export function useResearchPanelController({
   const loadBase = useCallback(async () => {
     if (!snapshot || tab !== "setup") return;
     const base = await Promise.all([
-      workbenchClient.harnessCatalog(workspaceId),
-      workbenchClient.effectiveHarness(snapshot.session.id),
+      harnessClient.harnessCatalog(workspaceId),
+      harnessClient.effectiveHarness(snapshot.session.id),
     ]);
     setCatalog(base[0]);
     setEffective(base[1]);
@@ -129,24 +137,24 @@ export function useResearchPanelController({
     }
     if (tab === "documents") {
       const [nextPapers, nextSources] = await Promise.all([
-        workbenchClient.listPapers(workspaceId),
-        workbenchClient.listSources(workspaceId),
+        researchClient.listPapers(workspaceId),
+        researchClient.listSources(workspaceId),
       ]);
       setPapers(nextPapers);
       setSources(nextSources);
     } else if (tab === "memory") {
-      setNotes(await workbenchClient.listNotes(workspaceId, true));
+      setNotes(await researchClient.listNotes(workspaceId, true));
     } else if (tab === "evidence") {
-      setLedger(await workbenchClient.researchLedger(workspaceId));
+      setLedger(await researchClient.researchLedger(workspaceId));
     } else if (tab === "results") {
       const [nextProfiles, nextExecutions] = await Promise.all([
-        workbenchClient.listExecutionProfiles(workspaceId),
-        workbenchClient.listExecutions(workspaceId),
+        executionClient.listExecutionProfiles(workspaceId),
+        executionClient.listExecutions(workspaceId),
       ]);
       setProfiles(nextProfiles);
       setExecutions(nextExecutions);
     } else if (tab === "release") {
-      setPapers(await workbenchClient.listPapers(workspaceId));
+      setPapers(await researchClient.listPapers(workspaceId));
     }
   }, [tab, workspaceId]);
 
@@ -162,9 +170,11 @@ export function useResearchPanelController({
   const act = async (fn: () => Promise<void>) => {
     setBusy(true);
     onBusy?.(true);
+    onActionStart?.();
     try {
       await beforeChange?.();
       await fn();
+      onChanged?.();
       await Promise.all([loadBase(), loadTab()]);
     } catch (cause) {
       onError(workbenchErrorMessage(cause));
@@ -182,10 +192,10 @@ export function useResearchPanelController({
     }>,
   ) => {
     if (!snapshot) return;
-    const latest = await workbenchClient.conversationSnapshot(
+    const latest = await conversationClient.sessionSnapshot(
       snapshot.session.id,
     );
-    const updated = await workbenchClient.updateSession({
+    const updated = await conversationClient.updateSession({
       sessionId: latest.session.id,
       expectedRevision: latest.session.revision,
       operationId: operation("research-session"),
@@ -207,6 +217,9 @@ export function useResearchPanelController({
     papers.find(
       (item) => item.paper.id === (projectPaperId ?? snapshot?.session.paperId),
     ) ?? null;
+  // Search hits belong to the version they were found in.
+  const searchedRevision = selectedPaper?.revision?.id;
+  useEffect(() => setHits([]), [searchedRevision]);
   const successor = Boolean(
     snapshot?.activeBinding?.harnessFingerprint &&
     effective &&

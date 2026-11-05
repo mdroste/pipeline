@@ -1,76 +1,6 @@
 use super::super::store::{CreateSessionRequest, CreateWorkspaceRequest};
+use super::test_support::*;
 use super::*;
-struct Fixture {
-    _temp: tempfile::TempDir,
-    store: Store,
-    root: PathBuf,
-    ws: String,
-}
-fn fixture() -> Fixture {
-    let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().join("research");
-    fs::create_dir(&root).unwrap();
-    let store = Store::open_at(&temp.path().join("store")).unwrap();
-    let ws = store
-        .create_workspace(CreateWorkspaceRequest {
-            name: "Research".into(),
-            root: Some(root.to_string_lossy().into_owned()),
-            operation_id: "create".into(),
-        })
-        .unwrap()
-        .record
-        .id;
-    Fixture {
-        _temp: temp,
-        store,
-        root,
-        ws,
-    }
-}
-fn mutation(f: &Fixture, action: ProjectAction) -> ProjectRecord {
-    serde_json::from_value(
-        mutate(
-            &f.store,
-            ProjectMutation {
-                workspace_id: f.ws.clone(),
-                operation_id: id("test").unwrap(),
-                action,
-            },
-        )
-        .unwrap(),
-    )
-    .unwrap()
-}
-fn task(f: &Fixture) -> ProjectRecord {
-    mutation(
-        f,
-        ProjectAction::CreateTask {
-            objective: "Check the main result".into(),
-            anchor_id: None,
-            expected_outputs: vec!["Revised manuscript".into()],
-            expected_checks: vec!["Inspect changes".into()],
-        },
-    )
-}
-fn copy(f: &Fixture, paths: &[&str]) -> ProjectRecord {
-    let task = task(f);
-    mutation(
-        f,
-        ProjectAction::Checkpoint {
-            task_id: task.id,
-            paths: paths.iter().map(|p| p.to_string()).collect(),
-            backend: "copy".into(),
-        },
-    )
-}
-fn capture(f: &Fixture, c: &ProjectRecord) -> ProjectRecord {
-    mutation(
-        f,
-        ProjectAction::CaptureChanges {
-            checkpoint_id: c.id.clone(),
-        },
-    )
-}
 fn import(f: &Fixture, text: &str) -> research::PaperRevision {
     fs::write(f.root.join("main.md"), text).unwrap();
     research::import_paper(
@@ -107,7 +37,12 @@ fn mutations_have_scoped_identity_and_replay_protection() {
     assert_eq!(mutate(&f.store, request.clone()).unwrap(), first);
     assert_eq!(records(&f.store, &f.ws, "task").unwrap().len(), 1);
     let mut changed = request;
-    changed.action = ProjectAction::Refresh;
+    changed.action = ProjectAction::CreateTask {
+        objective: "Changed objective".into(),
+        anchor_id: None,
+        expected_outputs: vec![],
+        expected_checks: vec![],
+    };
     assert!(mutate(&f.store, changed).is_err());
     let other = f
         .store
@@ -251,130 +186,67 @@ fn inventory_bounds_scope_and_detects_external_changes() {
 }
 #[test]
 #[cfg(unix)]
-fn task_copy_acceptance_and_undo_preserve_unrelated_work() {
+fn background_checks_trust_size_and_time_and_refresh_reads_everything() {
+    use std::time::{Duration, UNIX_EPOCH};
     let f = fixture();
-    fs::write(f.root.join("main.tex"), "dirty initial text").unwrap();
-    fs::write(f.root.join("other.md"), "unrelated edit").unwrap();
-    let c = copy(&f, &["main.tex"]);
-    let body: Checkpoint = decode(&c).unwrap();
-    let task = Path::new(&body.task_root);
-    fs::write(task.join("main.tex"), "proposal").unwrap();
-    fs::write(task.join("new.md"), "new artifact").unwrap();
-    assert_eq!(
-        fs::read_to_string(f.root.join("main.tex")).unwrap(),
-        "dirty initial text"
-    );
-    let c = capture(&f, &c);
-    let applied = mutation(
-        &f,
-        ProjectAction::Apply {
-            checkpoint_id: c.id.clone(),
-            paths: vec!["main.tex".into(), "new.md".into()],
-            expected_revision: c.revision,
-        },
-    );
-    assert_eq!(
-        fs::read_to_string(f.root.join("main.tex")).unwrap(),
-        "proposal"
-    );
-    assert_eq!(
-        fs::read_to_string(f.root.join("other.md")).unwrap(),
-        "unrelated edit"
-    );
-    mutation(
-        &f,
-        ProjectAction::Undo {
-            application_id: applied.id,
-        },
-    );
-    assert_eq!(
-        fs::read_to_string(f.root.join("main.tex")).unwrap(),
-        "dirty initial text"
-    );
-    assert!(!f.root.join("new.md").exists());
-}
-#[test]
-#[cfg(unix)]
-fn partial_acceptance_invalidates_checks_and_external_changes_block_overwrite() {
-    let f = fixture();
-    for name in ["a.md", "b.md"] {
-        fs::write(f.root.join(name), "original").unwrap();
-    }
-    let c = copy(&f, &["a.md", "b.md"]);
-    let body: Checkpoint = decode(&c).unwrap();
-    for name in ["a.md", "b.md"] {
-        fs::write(Path::new(&body.task_root).join(name), "proposal").unwrap();
-    }
-    let c = capture(&f, &c);
-    fs::write(f.root.join("b.md"), "external").unwrap();
-    let result = tasks::apply(
-        &f.store,
-        &f.ws,
-        &c.id,
-        vec!["a.md".into(), "b.md".into()],
-        c.revision,
-    );
-    assert!(result.is_err());
-    assert_eq!(fs::read_to_string(f.root.join("a.md")).unwrap(), "original");
-    let applied = mutation(
-        &f,
-        ProjectAction::Apply {
-            checkpoint_id: c.id.clone(),
-            paths: vec!["a.md".into()],
-            expected_revision: c.revision,
-        },
-    );
-    assert!(!decode::<Application>(&applied).unwrap().checks_valid);
-    assert_eq!(fs::read_to_string(f.root.join("b.md")).unwrap(), "external");
-    fs::write(f.root.join("a.md"), "later edit").unwrap();
-    assert!(tasks::undo(&f.store, &f.ws, &applied.id).is_err());
-    assert_eq!(
-        fs::read_to_string(f.root.join("a.md")).unwrap(),
-        "later edit"
-    );
-}
-#[test]
-#[cfg(unix)]
-fn recovery_reconciles_crash_between_file_replacement_and_db_update() {
-    let f = fixture();
-    fs::write(f.root.join("a.md"), "original").unwrap();
-    let c = copy(&f, &["a.md"]);
-    let body: Checkpoint = decode(&c).unwrap();
-    let before = body.base["a.md"].hash.clone();
-    let after = blob(&f.store, &f.ws, b"proposal", "test").unwrap();
-    let a = Application {
-        checkpoint_id: c.id.clone(),
-        root_identity: body.root_identity.clone(),
-        state: "applying".into(),
-        files: vec![AppliedFile {
-            path: "a.md".into(),
-            before: before.clone(),
-            after: Some(after),
-            before_executable: false,
-            after_executable: false,
-            claim: "crashed-0".into(),
-            state: "pending".into(),
-        }],
-        direction: "accept".into(),
-        error: None,
-        checks_valid: false,
+    let path = f.root.join("a.md");
+    let moment = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let write = |text: &str| {
+        fs::write(&path, text).unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(moment)
+            .unwrap();
     };
-    put(&f.store, &f.ws, "crashed", "application", 0, &a).unwrap();
-    files::SafeRoot::open(&f.root)
+    let status = |action| {
+        let inventory: Inventory = decode(&mutation(&f, action)).unwrap();
+        inventory.files[0].status.clone()
+    };
+    write("first");
+    mutation(&f, ProjectAction::Refresh);
+    // The same size and time: a background check takes this for unchanged.
+    write("other");
+    assert_eq!(status(ProjectAction::CheckForChanges), "current");
+    assert_eq!(status(ProjectAction::Refresh), "changed");
+    // A new size is noticed without reading anything else.
+    write("much longer");
+    assert_eq!(status(ProjectAction::CheckForChanges), "changed");
+}
+#[test]
+fn checks_for_changes_keep_no_operation_rows_and_task_inventories_keep_no_times() {
+    let f = fixture();
+    fs::write(f.root.join("a.md"), "A").unwrap();
+    mutation(&f, ProjectAction::CheckForChanges);
+    let rows: i64 = f
+        .store
+        .connection()
         .unwrap()
-        .replace(
-            "a.md",
-            before.as_deref(),
-            false,
-            Some(b"proposal"),
-            false,
-            "crashed-0",
-        )
+        .query_row("SELECT COUNT(*) FROM project_operations", [], |r| r.get(0))
         .unwrap();
-    let reopened = Store::open_at(f.store.root_path()).unwrap();
-    let result = tasks::recover(&reopened, &f.ws, "crashed").unwrap();
-    assert_eq!(decode::<Application>(&result).unwrap().state, "rolled_back");
-    assert_eq!(fs::read_to_string(f.root.join("a.md")).unwrap(), "original");
+    assert_eq!(rows, 0);
+    assert!(inventory_at(&f.root, &[]).unwrap().modified_ms.is_empty());
+}
+#[test]
+fn refreshes_leave_no_operation_rows() {
+    let f = fixture();
+    fs::write(f.root.join("a.md"), "A").unwrap();
+    let before: i64 = f
+        .store
+        .connection()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM project_operations", [], |r| r.get(0))
+        .unwrap();
+    mutation(&f, ProjectAction::Refresh);
+    mutation(&f, ProjectAction::Refresh);
+    let after: i64 = f
+        .store
+        .connection()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM project_operations", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(after, before);
 }
 #[test]
 #[cfg(unix)]
@@ -573,6 +445,55 @@ fn live_git_worktree_preserves_index_dirty_and_untracked_files() {
     );
 }
 
+#[test]
+#[cfg(unix)]
+fn a_git_task_copy_starts_no_hook_the_folder_names() {
+    let f = fixture();
+    tasks::git(&f.root, &["init"]).unwrap();
+    tasks::git(
+        &f.root,
+        &["config", "user.email", "fixture@example.invalid"],
+    )
+    .unwrap();
+    tasks::git(&f.root, &["config", "user.name", "Pipeline fixture"]).unwrap();
+    tasks::git(&f.root, &["config", "commit.gpgsign", "false"]).unwrap();
+    fs::write(f.root.join("a.md"), "committed").unwrap();
+    tasks::git(&f.root, &["add", "a.md"]).unwrap();
+    tasks::git(&f.root, &["commit", "-m", "fixture"]).unwrap();
+    let scratch = tempfile::tempdir().unwrap();
+    let marker = scratch.path().join("hook-ran");
+    let command = format!("touch '{}'", marker.display());
+    tasks::git(
+        &f.root,
+        &["config", "hook.evil.event", "reference-transaction"],
+    )
+    .unwrap();
+    tasks::git(&f.root, &["config", "hook.evil.command", &command]).unwrap();
+    // Git alone starts it for the kind of branch a task copy creates.
+    std::process::Command::new("git")
+        .args(["branch", "git-alone"])
+        .current_dir(&f.root)
+        .output()
+        .unwrap();
+    assert!(marker.exists(), "Git alone did not start the hook");
+    fs::remove_file(&marker).unwrap();
+    let task = task(&f);
+    let c = mutation(
+        &f,
+        ProjectAction::Checkpoint {
+            task_id: task.id,
+            paths: vec!["a.md".into()],
+            backend: "git".into(),
+        },
+    );
+    let body: Checkpoint = decode(&c).unwrap();
+    assert_eq!(
+        fs::read_to_string(Path::new(&body.task_root).join("a.md")).unwrap(),
+        "committed"
+    );
+    assert!(!marker.exists(), "the task copy started the folder's hook");
+}
+
 fn live_profile(
     f: &Fixture,
     adapter: &str,
@@ -617,7 +538,7 @@ fn qualify_run(f: &Fixture, profile: &research::ExecutionProfile) -> research::R
 }
 fn qualification_file(f: &Fixture, name: &str) {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/workbench/fixtures/project-surface")
+        .join("tests/fixtures/project-surface")
         .join(name);
     fs::copy(fixture, f.root.join(name)).unwrap();
 }
@@ -796,6 +717,70 @@ fn mode_only_changes_are_reviewed_and_undone() {
         .unwrap()
         .executable("a.py")
         .unwrap());
+}
+#[test]
+fn unchanged_outputs_pass_only_when_nothing_a_real_change_could_rewrite_changed() {
+    let f = fixture();
+    fs::write(f.root.join("input.md"), "one").unwrap();
+    // Like latexmk, this rewrites its output only when it decides it must.
+    let profile = live_profile(
+        &f,
+        "command",
+        vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            "[ -e frozen ] || cp input.md output.txt".into(),
+        ],
+        vec!["input.md".into()],
+        vec!["output.txt".into()],
+        5,
+    );
+    let built = qualify_run(&f, &profile);
+    assert_eq!(built.outcome, "completed");
+    assert_eq!(built.validation["upToDateOutputs"], json!([]));
+
+    fs::write(f.root.join("frozen"), "").unwrap();
+    let rebuilt = qualify_run(&f, &profile);
+    assert_eq!(rebuilt.outcome, "completed", "{:?}", rebuilt.validation);
+    assert_eq!(rebuilt.validation["unchangedPreexistingOutputs"], json!([]));
+    assert_eq!(rebuilt.validation["upToDateOutputs"], json!(["output.txt"]));
+    assert_eq!(
+        rebuilt.output_manifest["artifacts"][0]["path"], "output.txt",
+        "the output stays attached to the run"
+    );
+    assert_eq!(qualify_run(&f, &profile).outcome, "completed");
+
+    // A real change that leaves the output alone is still caught.
+    fs::write(f.root.join("input.md"), "two").unwrap();
+    let stale = qualify_run(&f, &profile);
+    assert_eq!(stale.outcome, "failed");
+    assert_eq!(
+        stale.validation["unchangedPreexistingOutputs"],
+        json!(["output.txt"])
+    );
+    assert_eq!(stale.validation["upToDateOutputs"], json!([]));
+    assert_eq!(
+        fs::read_to_string(f.root.join("output.txt")).unwrap(),
+        "one"
+    );
+
+    // Going back to the earlier input works: the output is what it produced.
+    fs::write(f.root.join("input.md"), "one").unwrap();
+    assert_eq!(qualify_run(&f, &profile).outcome, "completed");
+
+    // Different bytes with the same modified time are not the same output.
+    let times = fs::metadata(f.root.join("output.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    fs::write(f.root.join("output.txt"), "tampered").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(f.root.join("output.txt"))
+        .unwrap()
+        .set_modified(times)
+        .unwrap();
+    assert_eq!(qualify_run(&f, &profile).outcome, "failed");
 }
 #[test]
 fn unproduced_outputs_cannot_pass_and_latest_runs_do_not_move_the_baseline() {
@@ -1016,7 +1001,7 @@ fn completed_host_launchers_do_not_leave_capture_pipes_waiting_for_descendants()
 fn source_tree_capture_excludes_git_and_task_metadata() {
     let f = fixture();
     fs::write(f.root.join("paper.tex"), "Research source").unwrap();
-    for directory in [".git", ".pipeline-tasks"] {
+    for directory in [".git", ".pipeline-tasks", ".pipeline-workbench"] {
         fs::create_dir(f.root.join(directory)).unwrap();
         fs::write(
             f.root.join(directory).join("private.txt"),
@@ -1041,4 +1026,5 @@ fn source_tree_capture_excludes_git_and_task_metadata() {
     assert_eq!(manifest["files"][0]["path"], "paper.tex");
 }
 
+mod capture_tests;
 mod file_workspace_tests;

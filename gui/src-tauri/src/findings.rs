@@ -329,10 +329,12 @@ pub fn build_run_products(config: &PipelineConfig, outputs: &[StepOutput]) -> Ru
     };
 
     let findings_output = if config.outputs.findings_step.trim().is_empty() {
+        // Like the primary step, an undeclared findings product never comes
+        // from one parallel reviewer's output.
         outputs
             .iter()
             .rev()
-            .filter(|output| usable(output))
+            .filter(|output| usable(output) && output.phase == "sequential")
             .find(|output| parse_structured_output(output).is_some())
     } else {
         declared_output(outputs, &config.outputs.findings_step)
@@ -457,12 +459,14 @@ fn declared_output<'a>(outputs: &'a [StepOutput], step_id: &str) -> Option<&'a S
         .find(|output| usable(output) && base_step_id(&output.step_id) == step_id)
 }
 
+/// Only a sequential step can be the inferred primary. With none, the primary
+/// stays empty so `final_output` can apply its failed-report guard, which also
+/// keeps the last output of a workflow that has only parallel steps.
 fn inferred_primary_output(outputs: &[StepOutput]) -> Option<&StepOutput> {
     outputs
         .iter()
         .rev()
         .find(|output| usable(output) && output.phase == "sequential")
-        .or_else(|| outputs.iter().rev().find(|output| usable(output)))
 }
 
 fn usable(output: &StepOutput) -> bool {

@@ -4,7 +4,7 @@
 //! pricing, and deprecation policy is bundled with the signed application so
 //! mutable remote content cannot change model selection behavior.
 
-use crate::pipeline::claude::build_provider_command;
+use crate::agent_runtime::process::build_provider_command;
 use crate::settings::{ModelSelection, Settings};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -19,10 +19,11 @@ const CACHE_SCHEMA_VERSION: u32 = 3;
 const MAX_CATALOG_BYTES: usize = 4 * 1024 * 1024;
 const MAX_DISCOVERY_VERSION_BYTES: usize = 64 * 1024;
 const MAX_DISCOVERY_LINE_BYTES: usize = 1024 * 1024;
-const BUNDLED_POLICY: &str = include_str!("../../../model-policy.json");
+const BUNDLED_POLICY: &str = include_str!("../model-policy.json");
 
 const MAX_DISCOVERY_FLIGHTS: usize = 64;
 const DISCOVERY_FLIGHT_TTL: Duration = Duration::from_secs(15 * 60);
+const API_DISCOVERY_LIMIT: Duration = Duration::from_secs(15);
 
 /// A non-secret identity for one discovery context. Credentials and endpoints
 /// are reduced to one-way fingerprints before they can reach this process-wide
@@ -521,12 +522,24 @@ fn is_openai_chat_model(id: &str) -> bool {
     general_family && !specialty.iter().any(|word| id.contains(word))
 }
 
+/// A slow provider can't hold discovery open: the shared client limits only
+/// silence, so a reply that trickles in needs this limit on the whole request.
 async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog, String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| format!("Failed to create model catalog client: {e}"))?;
+    api_catalog_within(API_DISCOVERY_LIMIT, provider, settings).await
+}
+
+async fn api_catalog_within(
+    limit: Duration,
+    provider: &str,
+    settings: &Settings,
+) -> Result<ModelCatalog, String> {
+    tokio::time::timeout(limit, request_api_catalog(provider, settings))
+        .await
+        .map_err(|_| "Model discovery timed out.".to_string())?
+}
+
+async fn request_api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog, String> {
+    let client = crate::agent_runtime::api::http::client(false, Some(API_DISCOVERY_LIMIT))?;
     let mut catalog = base_catalog(provider, "api", "provider_api");
     match provider {
         "claude" => {
@@ -541,8 +554,8 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
                 .map_err(|e| format!("Anthropic model discovery failed: {e}"))?;
             let value = response_json_limited(response, "Anthropic").await?;
             for item in value["data"].as_array().into_iter().flatten() {
-                if let Some(id) = item["id"].as_str() {
-                    catalog.models.push(entry(id));
+                if item["id"].is_string() {
+                    catalog.models.push(effort::anthropic(item));
                 }
             }
         }
@@ -560,7 +573,16 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
             for item in value["data"].as_array().into_iter().flatten() {
                 if let Some(id) = item["id"].as_str() {
                     if is_openai_chat_model(id) {
-                        discovered.push((item["created"].as_u64().unwrap_or(0), entry(id)));
+                        let mut model = entry(id);
+                        if !id.contains("pro")
+                            && (id.starts_with("gpt-5")
+                                || id.starts_with("o3")
+                                || id.starts_with("o4-mini"))
+                        {
+                            model.supported_efforts =
+                                ["low", "medium", "high"].map(str::to_owned).to_vec();
+                        }
+                        discovered.push((item["created"].as_u64().unwrap_or(0), model));
                     }
                 }
             }
@@ -591,6 +613,7 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
                         let mut model = entry(id);
                         model.display_name = item["displayName"].as_str().unwrap_or(id).to_string();
                         model.description = item["description"].as_str().unwrap_or("").to_string();
+                        model.supported_efforts = crate::connections::thinking::google_efforts(id);
                         catalog.models.push(model);
                     }
                 }
@@ -600,7 +623,7 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
             crate::settings::validate_local_base_url(&settings.local_base_url)?;
             let url = format!("{}/models", settings.local_base_url.trim_end_matches('/'));
             let mut request =
-                crate::pipeline::api_common::custom_endpoint_client(&settings.local_base_url)
+                crate::agent_runtime::api::http::custom_endpoint_client(&settings.local_base_url)
                     .get(url)
                     .timeout(Duration::from_secs(15));
             if !settings.local_api_key.trim().is_empty() {
@@ -619,7 +642,14 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
             let value = response_json_limited(response, "Local").await?;
             for item in value["data"].as_array().into_iter().flatten() {
                 if let Some(id) = item["id"].as_str() {
-                    catalog.models.push(entry(id));
+                    let mut model = entry(id);
+                    model.supported_efforts = item["supported_efforts"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|e| e.as_str().map(str::to_owned))
+                        .collect();
+                    catalog.models.push(model);
                 }
             }
             // Ollama's native endpoint is a common fallback.
@@ -637,12 +667,14 @@ async fn api_catalog(provider: &str, settings: &Settings) -> Result<ModelCatalog
     Ok(catalog)
 }
 
+mod chatgpt;
 mod discovery;
+pub(crate) mod effort;
 mod resolution;
 
 use discovery::cli_catalog;
 pub(crate) use discovery::rpc_exchange;
-pub use resolution::{discover, price_for_model, resolve};
+pub use resolution::{discover, discover_connection, price_for_model, resolve};
 
 #[cfg(test)]
 use discovery::{populate_claude_models, provider_discovery_error, read_discovery_output};

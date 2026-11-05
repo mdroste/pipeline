@@ -16,13 +16,13 @@
       "reviewTrigger": "dependency updates"
     },
     {
-      "path": "docs/workbench/protocol/0.147.0/stable.schemas.json",
+      "path": "gui/src-tauri/codex-protocol/0.147.0/stable.schemas.json",
       "owner": "Codex protocol compatibility",
       "reason": "Checksum-pinned vendor reference; retain exact bytes",
       "reviewTrigger": "protocol reference generation changes"
     },
     {
-      "path": "docs/workbench/protocol/0.147.0/experimental.schemas.json",
+      "path": "gui/src-tauri/codex-protocol/0.147.0/experimental.schemas.json",
       "owner": "Codex protocol compatibility",
       "reason": "Checksum-pinned vendor reference; retain exact bytes",
       "reviewTrigger": "protocol reference generation changes"

@@ -6,9 +6,12 @@ import type {
   RunSummary,
   TrashedProject,
 } from "../lib/types";
+import { listedRunStatus } from "../lib/reportPresentation";
+import { router } from "../lib/router";
 import ProjectIssueLedgerPanel from "./ProjectIssueLedgerPanel";
 import { confirmDialog, notify } from "./DialogService";
 import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   onDirtyChange?: (dirty: boolean) => void;
@@ -44,7 +47,11 @@ export default function ProjectsPage({
   const [projects, setProjects] = useState<Project[]>([]);
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // A link can name a collection; one that no longer exists falls to the first.
+  const [selectedId, setSelectedId] = useState<string | null>(() => {
+    const { route } = router.getSnapshot();
+    return route.page === "projects" ? (route.collectionId ?? null) : null;
+  });
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +60,7 @@ export default function ProjectsPage({
   const [createDescription, setCreateDescription] = useState("");
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const details = useRef<HTMLElement>(null);
   const draftProjectId = useRef<string | null>(null);
   const saveInFlight = useRef<Promise<boolean> | null>(null);
   const selectionSequence = useRef(0);
@@ -110,6 +118,10 @@ export default function ProjectsPage({
   useEffect(() => {
     if (trashOpen) void refreshTrash();
   }, [trashOpen]);
+
+  useEffect(() => {
+    if (details.current) details.current.scrollTop = 0;
+  }, [selectedId]);
 
   const selected =
     projects.find((project) => project.id === selectedId) ?? null;
@@ -522,7 +534,7 @@ export default function ProjectsPage({
           {trashOpen && (
             <div
               id="project-trash"
-              className="mt-1 space-y-1"
+              className="mt-1 max-h-64 space-y-1 overflow-y-auto"
               aria-label="Review collection Trash"
             >
               {trashLoading ? (
@@ -571,13 +583,14 @@ export default function ProjectsPage({
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 overflow-auto">
+      <main ref={details} className="min-w-0 flex-1 overflow-auto">
         {error && (
           <div
             role="alert"
             className="m-6 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
           >
             {error}
+            <ReportIssueLink />
           </div>
         )}
         {warnings.length > 0 && (
@@ -735,7 +748,7 @@ export default function ProjectsPage({
                       </p>
                       <p className="mt-0.5 truncate text-xs text-gray-500 dark:text-gray-400">
                         {run
-                          ? `${run.profile_name} · ${formatDate(run.created)} · ${run.status}`
+                          ? `${run.profile_name} · ${formatDate(run.created)} · ${listedRunStatus(run.status)}`
                           : "Report no longer exists"}
                       </p>
                     </div>

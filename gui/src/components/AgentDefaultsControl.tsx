@@ -1,9 +1,16 @@
 import type { ReactNode } from "react";
-import type { ModelCatalog, ModelSelection, Settings } from "../lib/types";
+import { providerAvailability } from "../lib/connections";
+import type {
+  DepsReport,
+  ModelCatalog,
+  ModelSelection,
+  Settings,
+} from "../lib/types";
 import {
   decodeModelSelection,
   effortOptions,
   encodeModelSelection,
+  inheritedModelLabel,
   PROVIDER_LABELS,
   providerTransport,
   type Provider,
@@ -17,6 +24,12 @@ interface Props {
   catalogs: Record<string, ModelCatalog>;
   providers: readonly Provider[];
   multi?: boolean;
+  /** One column for narrow panels, where side-by-side menus can't show a name. */
+  stacked?: boolean;
+  /** What readiness last saw; undefined leaves providers unlabeled. */
+  dependencies?: DepsReport | null;
+  /** Set when this stage can follow the default instead of its own choice. */
+  inherit?: { active: boolean; label: string; onSelect: () => void };
   label: string;
   help?: ReactNode;
   disabled?: boolean;
@@ -27,10 +40,14 @@ interface Props {
   }) => void;
 }
 
-function inheritedModelLabel(settings: Settings, provider: Provider): string {
-  if (provider === "local") return settings.local_model || "not selected";
-  return "automatic";
-}
+const chipClass =
+  "rounded-full border px-2.5 py-1 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
+const chipOn =
+  "border-gray-900 bg-gray-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-950";
+const chipMissing =
+  "border-dashed border-gray-300 bg-transparent text-gray-400 hover:border-gray-500 dark:border-neutral-700 dark:text-neutral-500 dark:hover:border-neutral-500";
+const chipOff =
+  "border-gray-300 bg-white text-gray-600 hover:border-gray-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400 dark:hover:border-neutral-500";
 
 export default function AgentDefaultsControl({
   agents,
@@ -40,19 +57,28 @@ export default function AgentDefaultsControl({
   catalogs,
   providers,
   multi = false,
+  stacked = false,
+  dependencies,
+  inherit,
   label,
   help,
   disabled = false,
   onChange,
 }: Props) {
+  const inheriting = inherit?.active ?? false;
+  const notConnected = (provider: string) =>
+    providerAvailability(provider, settings, dependencies) === "missing";
   const updateAgents = (provider: Provider) => {
     const active = agents.includes(provider);
     let next: string[];
     if (multi) {
-      if (active && agents.length === 1) return;
-      next = active
-        ? agents.filter((agent) => agent !== provider)
-        : [...agents, provider];
+      if (!inheriting && active && agents.length === 1) return;
+      // Leaving the default keeps its provider unless that one was chosen.
+      if (inheriting) next = active ? [provider] : [...agents, provider];
+      else
+        next = active
+          ? agents.filter((agent) => agent !== provider)
+          : [...agents, provider];
     } else {
       next = [provider];
     }
@@ -99,20 +125,29 @@ export default function AgentDefaultsControl({
         aria-label={`${label} providers`}
         className="flex flex-wrap gap-1.5"
       >
+        {inherit && (
+          <button
+            type="button"
+            aria-pressed={inheriting}
+            disabled={disabled}
+            onClick={inherit.onSelect}
+            className={`${chipClass} ${inheriting ? chipOn : chipOff}`}
+          >
+            {inherit.label}
+          </button>
+        )}
         {providers.map((provider) => {
-          const active = agents.includes(provider);
+          const active = !inheriting && agents.includes(provider);
+          const missing = notConnected(provider);
           return (
             <button
               key={provider}
               type="button"
               aria-pressed={active}
               disabled={disabled}
+              title={missing ? "Not connected" : undefined}
               onClick={() => updateAgents(provider)}
-              className={`rounded-full border px-2.5 py-1 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                active
-                  ? "border-gray-900 bg-gray-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-950"
-                  : "border-gray-300 bg-white text-gray-600 hover:border-gray-500 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-400 dark:hover:border-neutral-500"
-              }`}
+              className={`${chipClass} ${active ? chipOn : missing ? chipMissing : chipOff}`}
             >
               {PROVIDER_LABELS[provider]}
             </button>
@@ -120,7 +155,7 @@ export default function AgentDefaultsControl({
         })}
       </div>
       <div className="space-y-2">
-        {agents.map((providerName) => {
+        {(inheriting ? [] : agents).map((providerName) => {
           const provider = providerName as Provider;
           const transport = providerTransport(settings, provider);
           const key = `${provider}:${transport}`;
@@ -133,6 +168,11 @@ export default function AgentDefaultsControl({
           const known =
             value === "inherit" ||
             catalog?.models.some((model) => value === `pinned:${model.id}`);
+          // Roles aren't offered here, but a saved one must keep its real name.
+          const savedRole =
+            selection?.mode === "role"
+              ? catalog?.roles.find((role) => role.id === selection.role)
+              : undefined;
           const efforts =
             provider === "claude"
               ? effortOptions(catalog, selection, [
@@ -147,13 +187,13 @@ export default function AgentDefaultsControl({
           return (
             <div
               key={provider}
-              className="grid grid-cols-[minmax(64px,0.7fr)_minmax(120px,1.8fr)] items-center gap-2 rounded-md border border-gray-200 px-2.5 py-2 dark:border-neutral-800"
+              className={`grid ${stacked ? "grid-cols-1" : "grid-cols-[minmax(64px,0.7fr)_minmax(120px,1.8fr)]"} items-center gap-2 rounded-md border border-gray-200 px-2.5 py-2 dark:border-neutral-800`}
             >
               <span className="truncate text-[13px] font-medium text-gray-700 dark:text-neutral-300">
                 {PROVIDER_LABELS[provider]}
               </span>
               <div
-                className={`grid gap-1.5 ${efforts.length ? "grid-cols-2" : "grid-cols-1"}`}
+                className={`grid gap-1.5 ${efforts.length && !stacked ? "grid-cols-2" : "grid-cols-1"}`}
               >
                 <select
                   aria-label={`${label} ${PROVIDER_LABELS[provider]} model`}
@@ -165,7 +205,7 @@ export default function AgentDefaultsControl({
                   className="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[13px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
                 >
                   <option value="inherit">
-                    Provider default · {inheritedModelLabel(settings, provider)}
+                    {inheritedModelLabel(settings, provider, catalog)}
                   </option>
                   {!!catalog?.models.length && (
                     <optgroup label="Exact model">
@@ -175,18 +215,16 @@ export default function AgentDefaultsControl({
                           value={`pinned:${model.id}`}
                           disabled={model.deprecated}
                         >
-                          {model.display_name || model.id} · {label}
+                          {model.display_name || model.id}
                         </option>
                       ))}
                     </optgroup>
                   )}
                   {!known && (
                     <option value={value}>
-                      Saved model:{" "}
-                      {selection?.mode === "pinned"
-                        ? selection.model
-                        : "automatic"}{" "}
-                      (not currently listed)
+                      {savedRole
+                        ? `${savedRole.label} · ${savedRole.model}`
+                        : `${selection?.mode === "pinned" ? selection.model : selection?.mode === "role" ? selection.role : "automatic"} (saved, not available)`}
                     </option>
                   )}
                 </select>
@@ -202,7 +240,7 @@ export default function AgentDefaultsControl({
                     }
                     className="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[13px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
                   >
-                    <option value="">Provider default thinking</option>
+                    <option value="">Default thinking</option>
                     {efforts.map((effort) => (
                       <option key={effort} value={effort}>
                         {effort.charAt(0).toUpperCase() + effort.slice(1)}
@@ -211,6 +249,11 @@ export default function AgentDefaultsControl({
                   </select>
                 )}
               </div>
+              {notConnected(provider) && (
+                <p className="col-span-full text-xs text-amber-700 dark:text-amber-300">
+                  Not connected. Connect it in Settings → Connections.
+                </p>
+              )}
             </div>
           );
         })}

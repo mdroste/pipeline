@@ -30,30 +30,7 @@ pub struct LoginStart {
     pub auth_url: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ReasoningEffortOption {
-    pub reasoning_effort: String,
-    pub description: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceModel {
-    pub id: String,
-    pub model: String,
-    pub display_name: String,
-    pub description: String,
-    pub is_default: bool,
-    pub default_reasoning_effort: String,
-    pub supported_reasoning_efforts: Vec<ReasoningEffortOption>,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelCatalog {
-    pub models: Vec<WorkspaceModel>,
-}
+pub use crate::connections::models::{ModelCatalog, ReasoningEffortOption, WorkspaceModel};
 
 impl ModelCatalog {
     pub fn validate_exact(
@@ -87,7 +64,7 @@ impl ModelCatalog {
     }
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RateLimitWindow {
     pub used_percent: i32,
@@ -96,7 +73,7 @@ pub struct RateLimitWindow {
     pub resets_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RateLimitBucket {
     pub limit_id: Option<String>,
@@ -106,16 +83,20 @@ pub struct RateLimitBucket {
     pub secondary: Option<RateLimitWindow>,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum RateLimitSource {
     PerBucket,
     Legacy,
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RateLimits {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_at: Option<i64>,
+    #[serde(default)]
+    pub cached: bool,
     pub source: RateLimitSource,
     pub buckets: Vec<RateLimitBucket>,
 }
@@ -350,11 +331,15 @@ pub(crate) fn parse_rate_limits(value: Value) -> Result<RateLimits, RequestError
             .collect();
         buckets.sort_by(|left, right| left.limit_id.cmp(&right.limit_id));
         return Ok(RateLimits {
+            observed_at: None,
+            cached: false,
             source: RateLimitSource::PerBucket,
             buckets,
         });
     }
     Ok(RateLimits {
+        observed_at: None,
+        cached: false,
         source: RateLimitSource::Legacy,
         buckets: vec![wire.rate_limits.into()],
     })

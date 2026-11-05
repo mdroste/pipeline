@@ -1,7 +1,10 @@
+import { reviewConnectionLabel } from "../../lib/connections";
 import { memo, useState } from "react";
 import type { ModelCatalog, Settings, StepConfig } from "../../lib/types";
 import {
   decodeModelSelection,
+  defaultParallelAgents,
+  defaultSequentialAgent,
   effortOptions,
   encodeModelSelection,
   providerTransport,
@@ -25,12 +28,17 @@ function ModelOverrides({
     Object.keys(step.effort_overrides ?? {}).length
   );
   const [open, setOpen] = useState(hasOverride);
+  // A step without its own agents runs on the Settings default for its phase.
+  const defaultAgents = !settings
+    ? ["claude"]
+    : step.phase === "parallel"
+      ? defaultParallelAgents(settings)
+      : [defaultSequentialAgent(settings)];
   const providers = Array.from(
     new Set(
-      (step.agents?.length
-        ? step.agents
-        : [settings?.preferred_provider || "claude"]
-      ).map((provider) => provider || "claude"),
+      (step.agents?.length ? step.agents : defaultAgents).map(
+        (provider) => provider || "claude",
+      ),
     ),
   );
 
@@ -79,8 +87,7 @@ function ModelOverrides({
       {open && (
         <div className="mt-2 space-y-2 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
           <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-relaxed">
-            A missing override follows the active provider's current default.
-            You can instead use a stable role or pin an exact discovered model.
+            Choose Automatic, a model role, or a model by name.
           </p>
           {providers.map((provider) => {
             const key = `${provider}:${transportFor(provider)}`;
@@ -109,7 +116,7 @@ function ModelOverrides({
             return (
               <div key={key} className="space-y-1.5">
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-                  {provider} · {transportFor(provider)}
+                  {reviewConnectionLabel(provider, transportFor(provider))}
                 </div>
                 <select
                   aria-label={`${provider} ${transportFor(provider)} model override`}
@@ -117,7 +124,7 @@ function ModelOverrides({
                   onChange={(event) => updateModel(key, event.target.value)}
                   className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
                 >
-                  <option value="inherit">Provider default (automatic)</option>
+                  <option value="inherit">Automatic</option>
                   {!!catalog?.roles.length && (
                     <optgroup label="Stable roles">
                       {catalog.roles.map((role) => (
@@ -153,7 +160,7 @@ function ModelOverrides({
                     onChange={(event) => updateEffort(key, event.target.value)}
                     className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
                   >
-                    <option value="">Provider default thinking</option>
+                    <option value="">Default thinking</option>
                     {efforts.map((effort) => (
                       <option key={effort} value={effort}>
                         {effort.charAt(0).toUpperCase() + effort.slice(1)}

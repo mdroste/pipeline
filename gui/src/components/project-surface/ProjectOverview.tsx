@@ -9,9 +9,10 @@ import type {
   TranscriptItem,
   WorkbenchSession,
 } from "../../lib/workbenchTypes";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { researchClient } from "../../lib/workbench/researchClient";
 import { projectDate } from "../../lib/projectIndex";
 import { router } from "../../lib/router";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import type { ContextItem } from "../../lib/deskClient";
 import {
@@ -33,9 +34,10 @@ import {
   type Visit,
 } from "../../lib/projectOverview";
 import useProjectSignals from "../../hooks/useProjectSignals";
-import { payloadText } from "../WorkspaceConversationView";
+import { payloadText } from "../../lib/workspaceTranscript";
 import { isOpenTask, noteKindLabel, op, type SurfaceApi } from "./shared";
 import ProjectNotes from "./ProjectNotes";
+import "../../ui/page.css";
 import "./ProjectHome.css";
 
 interface Props extends SurfaceApi {
@@ -196,15 +198,15 @@ export default function ProjectOverview(props: Props) {
         .then(() => openExternal(action.url))
         .catch(() => props.reportError("The link could not be opened."));
     else
-      void checkRemote().catch((cause: Error) =>
-        props.reportError(cause.message),
+      void checkRemote().catch((cause: unknown) =>
+        props.reportError(workbenchErrorMessage(cause)),
       );
   };
   const saveQuestion = async () => {
     if (!question.trim() || saving) return;
     setSaving(true);
     await run(async () => {
-      await workbenchClient.createNote({
+      await researchClient.createNote({
         workspaceId,
         paperId: null,
         kind: "question",
@@ -330,14 +332,14 @@ export default function ProjectOverview(props: Props) {
               </label>
               <div className="flex gap-3">
                 <button
-                  className="project-home-button primary"
+                  className="ui-page-button primary"
                   disabled={saving || !question.trim()}
                 >
                   {saving ? "Saving…" : "Save question"}
                 </button>
                 <button
                   type="button"
-                  className="project-home-button"
+                  className="ui-page-button"
                   disabled={saving}
                   onClick={() => setEditingQuestion(false)}
                 >
@@ -399,7 +401,7 @@ export default function ProjectOverview(props: Props) {
           </div>
           <button
             type="button"
-            className="project-home-button primary"
+            className="ui-page-button primary"
             onClick={() =>
               resume ? onResume(resume.session.id) : onStartConversation()
             }

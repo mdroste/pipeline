@@ -1,9 +1,10 @@
+import { settingsClient } from "../../lib/settingsClient";
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
 
 import type { Settings } from "../../lib/types";
 
 import { useProviderCatalogs } from "./useProviderCatalogs";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 const AUTOSAVE_DELAY_MS = 400;
 export function useSettingsDraft(onSystemChange?: () => void) {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -35,11 +36,8 @@ export function useSettingsDraft(onSystemChange?: () => void) {
   }, [saved]);
 
   const load = () =>
-    invoke<{
-      settings: Settings;
-      warnings: string[];
-      undecryptable_keys?: string[];
-    }>("get_settings")
+    settingsClient
+      .load()
       .then((resp) => {
         providerCatalogs.initialize(resp.settings);
         setSettings(resp.settings);
@@ -52,7 +50,7 @@ export function useSettingsDraft(onSystemChange?: () => void) {
       })
       .catch((e) => {
         console.error("Failed to load settings:", e);
-        setLoadError(e instanceof Error ? e.message : String(e));
+        setLoadError(workbenchErrorMessage(e));
         setLoading(false);
       });
   useEffect(() => {
@@ -69,18 +67,15 @@ export function useSettingsDraft(onSystemChange?: () => void) {
       const operation = saveChainRef.current
         .catch(() => undefined)
         .then(async () => {
-          await invoke("discard_undecryptable_secret", { provider });
-          const response = await invoke<{
-            warnings: string[];
-            undecryptable_keys?: string[];
-          }>("get_settings");
+          await settingsClient.discardSecret({ provider });
+          const response = await settingsClient.load();
           setWarnings(response.warnings);
           setUndecryptableKeys(response.undecryptable_keys ?? []);
         });
       saveChainRef.current = operation.catch(() => undefined);
       await operation;
     } catch (cause) {
-      setSaveError(cause instanceof Error ? cause.message : String(cause));
+      setSaveError(workbenchErrorMessage(cause));
     }
   };
 
@@ -100,7 +95,7 @@ export function useSettingsDraft(onSystemChange?: () => void) {
       .catch(() => undefined)
       .then(async () => {
         try {
-          await invoke("save_settings", { settings: settingsToSave });
+          await settingsClient.save({ settings: settingsToSave });
           setSavedSettingsSnapshot(savedSnapshot);
           setWarnings([]);
           setSaved(JSON.stringify(settingsRef.current) === savedSnapshot);
@@ -109,7 +104,10 @@ export function useSettingsDraft(onSystemChange?: () => void) {
         } catch (e) {
           console.error("Failed to save settings:", e);
           if (latestSaveSequenceRef.current === saveSequence) {
-            setSaveError(e instanceof Error ? e.message : String(e));
+            // This value never reached disk, so it no longer counts as queued:
+            // reverting and making the same edit again must save it.
+            latestQueuedSnapshotRef.current = null;
+            setSaveError(workbenchErrorMessage(e));
           }
         } finally {
           if (latestSaveSequenceRef.current === saveSequence) {

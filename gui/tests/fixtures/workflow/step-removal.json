@@ -1,0 +1,1899 @@
+{
+ "grant-review": {
+  "source": {
+   "steps": [
+    {
+     "id": "grant_aims",
+     "enabled": true,
+     "context": {
+      "include": [
+       {
+        "kind": "primary",
+        "parts": [
+         "text",
+         "structure",
+         "visuals",
+         "source"
+        ]
+       },
+       {
+        "kind": "survey"
+       }
+      ]
+     }
+    },
+    {
+     "id": "grant_feasibility",
+     "enabled": true,
+     "context": {
+      "include": [
+       {
+        "kind": "primary",
+        "parts": [
+         "text",
+         "structure",
+         "visuals",
+         "source"
+        ]
+       },
+       {
+        "kind": "survey"
+       }
+      ]
+     }
+    },
+    {
+     "id": "grant_clarity",
+     "enabled": true,
+     "context": {
+      "include": [
+       {
+        "kind": "primary",
+        "parts": [
+         "text",
+         "structure",
+         "visuals",
+         "source"
+        ]
+       },
+       {
+        "kind": "survey"
+       }
+      ]
+     }
+    },
+    {
+     "id": "grant_consistency",
+     "enabled": true,
+     "context": {
+      "include": [
+       {
+        "kind": "primary",
+        "parts": [
+         "text",
+         "structure",
+         "visuals",
+         "source"
+        ]
+       },
+       {
+        "kind": "survey"
+       }
+      ]
+     }
+    },
+    {
+     "id": "grant_synthesis",
+     "enabled": true,
+     "context": {
+      "include": [
+       {
+        "kind": "survey"
+       },
+       {
+        "kind": "step",
+        "parts": [
+         "report"
+        ],
+        "step": "grant_aims"
+       },
+       {
+        "kind": "step",
+        "parts": [
+         "report"
+        ],
+        "step": "grant_feasibility"
+       },
+       {
+        "kind": "step",
+        "parts": [
+         "report"
+        ],
+        "step": "grant_clarity"
+       },
+       {
+        "kind": "step",
+        "parts": [
+         "report"
+        ],
+        "step": "grant_consistency"
+       }
+      ]
+     },
+     "dependency_policy": {
+      "required": [
+       "grant_aims",
+       "grant_feasibility",
+       "grant_clarity",
+       "grant_consistency"
+      ]
+     }
+    },
+    {
+     "id": "grant_validate",
+     "enabled": true,
+     "context": {
+      "include": [
+       {
+        "kind": "primary",
+        "parts": [
+         "text",
+         "structure",
+         "visuals",
+         "source"
+        ]
+       },
+       {
+        "kind": "survey"
+       },
+       {
+        "kind": "step",
+        "parts": [
+         "report"
+        ],
+        "step": "grant_synthesis"
+       }
+      ]
+     },
+     "dependency_policy": {
+      "required": [
+       "grant_synthesis"
+      ]
+     },
+     "output_schema": {
+      "x-pipeline-preserve-findings-from": "grant_synthesis"
+     }
+    }
+   ],
+   "outputs": {
+    "findings_step": "grant_validate",
+    "primary_step": "grant_validate"
+   }
+  },
+  "cases": [
+   {
+    "step": "grant_aims",
+    "disabled": {
+     "steps": [
+      {
+       "id": "grant_aims",
+       "enabled": false,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       }
+      },
+      {
+       "id": "grant_feasibility",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "grant_clarity",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "grant_consistency",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "grant_synthesis",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "survey"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "grant_feasibility"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "grant_clarity"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "grant_consistency"
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [
+         "grant_feasibility",
+         "grant_clarity",
+         "grant_consistency"
+        ],
+        "quorum": [],
+        "minimum_successes": 0
+       },
+       "after": []
+      },
+      {
+       "id": "grant_validate",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "grant_synthesis"
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [
+         "grant_synthesis"
+        ],
+        "quorum": [],
+        "minimum_successes": 0
+       },
+       "output_schema": {
+        "x-pipeline-preserve-findings-from": "grant_synthesis"
+       },
+       "after": []
+      }
+     ],
+     "outputs": {
+      "findings_step": "grant_validate",
+      "primary_step": "grant_validate"
+     }
+    },
+    "removed": {
+     "steps": [
+      {
+       "id": "grant_feasibility",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "grant_clarity",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "grant_consistency",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "grant_synthesis",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "survey"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "grant_feasibility"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "grant_clarity"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "grant_consistency"
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [
+         "grant_feasibility",
+         "grant_clarity",
+         "grant_consistency"
+        ],
+        "quorum": [],
+        "minimum_successes": 0
+       },
+       "after": []
+      },
+      {
+       "id": "grant_validate",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "grant_synthesis"
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [
+         "grant_synthesis"
+        ],
+        "quorum": [],
+        "minimum_successes": 0
+       },
+       "output_schema": {
+        "x-pipeline-preserve-findings-from": "grant_synthesis"
+       },
+       "after": []
+      }
+     ],
+     "outputs": {
+      "findings_step": "grant_validate",
+      "primary_step": "grant_validate"
+     }
+    }
+   },
+   {
+    "step": "grant_synthesis",
+    "disabled": {
+     "steps": [
+      {
+       "id": "grant_aims",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "grant_feasibility",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "grant_clarity",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "grant_consistency",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "grant_synthesis",
+       "enabled": false,
+       "context": {
+        "include": [
+         {
+          "kind": "survey"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "grant_aims"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "grant_feasibility"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "grant_clarity"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "grant_consistency"
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [
+         "grant_aims",
+         "grant_feasibility",
+         "grant_clarity",
+         "grant_consistency"
+        ]
+       }
+      },
+      {
+       "id": "grant_validate",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [],
+        "quorum": [],
+        "minimum_successes": 0
+       },
+       "output_schema": {},
+       "after": []
+      }
+     ],
+     "outputs": {
+      "findings_step": "grant_validate",
+      "primary_step": "grant_validate"
+     }
+    },
+    "removed": {
+     "steps": [
+      {
+       "id": "grant_aims",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "grant_feasibility",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "grant_clarity",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "grant_consistency",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "grant_validate",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [],
+        "quorum": [],
+        "minimum_successes": 0
+       },
+       "output_schema": {},
+       "after": []
+      }
+     ],
+     "outputs": {
+      "findings_step": "grant_validate",
+      "primary_step": "grant_validate"
+     }
+    }
+   }
+  ]
+ },
+ "declaude": {
+  "source": {
+   "steps": [
+    {
+     "id": "declaude_referee_1",
+     "enabled": true,
+     "context": {
+      "include": [
+       {
+        "kind": "primary",
+        "parts": [
+         "text",
+         "structure",
+         "visuals",
+         "source"
+        ]
+       },
+       {
+        "kind": "survey"
+       }
+      ]
+     }
+    },
+    {
+     "id": "declaude_referee_2",
+     "enabled": true,
+     "context": {
+      "include": [
+       {
+        "kind": "primary",
+        "parts": [
+         "text",
+         "structure",
+         "visuals",
+         "source"
+        ]
+       },
+       {
+        "kind": "survey"
+       }
+      ]
+     },
+     "run_if": {
+      "exists": true,
+      "kind": "survey_path",
+      "pointer": "/referees/1"
+     }
+    },
+    {
+     "id": "declaude_referee_3",
+     "enabled": true,
+     "context": {
+      "include": [
+       {
+        "kind": "primary",
+        "parts": [
+         "text",
+         "structure",
+         "visuals",
+         "source"
+        ]
+       },
+       {
+        "kind": "survey"
+       }
+      ]
+     },
+     "run_if": {
+      "exists": true,
+      "kind": "survey_path",
+      "pointer": "/referees/2"
+     }
+    },
+    {
+     "id": "declaude_editor",
+     "enabled": true,
+     "context": {
+      "include": [
+       {
+        "kind": "primary",
+        "parts": [
+         "text",
+         "structure",
+         "visuals",
+         "source"
+        ]
+       },
+       {
+        "kind": "survey"
+       },
+       {
+        "kind": "step",
+        "parts": [
+         "report"
+        ],
+        "step": "declaude_referee_1"
+       },
+       {
+        "kind": "step",
+        "parts": [
+         "report"
+        ],
+        "step": "declaude_referee_2"
+       },
+       {
+        "kind": "step",
+        "parts": [
+         "report"
+        ],
+        "step": "declaude_referee_3"
+       }
+      ]
+     },
+     "dependency_policy": {
+      "required": [
+       "declaude_referee_1"
+      ]
+     }
+    },
+    {
+     "id": "declaude_report",
+     "enabled": true,
+     "context": {
+      "include": [
+       {
+        "kind": "primary",
+        "parts": [
+         "text",
+         "structure",
+         "visuals",
+         "source"
+        ]
+       },
+       {
+        "kind": "survey"
+       },
+       {
+        "kind": "step",
+        "parts": [
+         "report"
+        ],
+        "step": "declaude_referee_1"
+       },
+       {
+        "kind": "step",
+        "parts": [
+         "report"
+        ],
+        "step": "declaude_referee_2"
+       },
+       {
+        "kind": "step",
+        "parts": [
+         "report"
+        ],
+        "step": "declaude_referee_3"
+       },
+       {
+        "kind": "step",
+        "parts": [
+         "report"
+        ],
+        "step": "declaude_editor"
+       }
+      ]
+     },
+     "dependency_policy": {
+      "required": [
+       "declaude_referee_1",
+       "declaude_editor"
+      ]
+     }
+    }
+   ],
+   "outputs": {
+    "primary_step": "declaude_report"
+   }
+  },
+  "cases": [
+   {
+    "step": "declaude_referee_1",
+    "disabled": {
+     "steps": [
+      {
+       "id": "declaude_referee_1",
+       "enabled": false,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       }
+      },
+      {
+       "id": "declaude_referee_2",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "run_if": {
+        "exists": true,
+        "kind": "survey_path",
+        "pointer": "/referees/1"
+       },
+       "after": []
+      },
+      {
+       "id": "declaude_referee_3",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "run_if": {
+        "exists": true,
+        "kind": "survey_path",
+        "pointer": "/referees/2"
+       },
+       "after": []
+      },
+      {
+       "id": "declaude_editor",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_2"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_3"
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [],
+        "quorum": [],
+        "minimum_successes": 0
+       },
+       "after": []
+      },
+      {
+       "id": "declaude_report",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_2"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_3"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_editor"
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [
+         "declaude_editor"
+        ],
+        "quorum": [],
+        "minimum_successes": 0
+       },
+       "after": []
+      }
+     ],
+     "outputs": {
+      "primary_step": "declaude_report"
+     }
+    },
+    "removed": {
+     "steps": [
+      {
+       "id": "declaude_referee_2",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "run_if": {
+        "exists": true,
+        "kind": "survey_path",
+        "pointer": "/referees/1"
+       },
+       "after": []
+      },
+      {
+       "id": "declaude_referee_3",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "run_if": {
+        "exists": true,
+        "kind": "survey_path",
+        "pointer": "/referees/2"
+       },
+       "after": []
+      },
+      {
+       "id": "declaude_editor",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_2"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_3"
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [],
+        "quorum": [],
+        "minimum_successes": 0
+       },
+       "after": []
+      },
+      {
+       "id": "declaude_report",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_2"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_3"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_editor"
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [
+         "declaude_editor"
+        ],
+        "quorum": [],
+        "minimum_successes": 0
+       },
+       "after": []
+      }
+     ],
+     "outputs": {
+      "primary_step": "declaude_report"
+     }
+    }
+   },
+   {
+    "step": "declaude_editor",
+    "disabled": {
+     "steps": [
+      {
+       "id": "declaude_referee_1",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "declaude_referee_2",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "run_if": {
+        "exists": true,
+        "kind": "survey_path",
+        "pointer": "/referees/1"
+       },
+       "after": []
+      },
+      {
+       "id": "declaude_referee_3",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "run_if": {
+        "exists": true,
+        "kind": "survey_path",
+        "pointer": "/referees/2"
+       },
+       "after": []
+      },
+      {
+       "id": "declaude_editor",
+       "enabled": false,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_1"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_2"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_3"
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [
+         "declaude_referee_1"
+        ]
+       }
+      },
+      {
+       "id": "declaude_report",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_1"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_2"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_3"
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [
+         "declaude_referee_1"
+        ],
+        "quorum": [],
+        "minimum_successes": 0
+       },
+       "after": []
+      }
+     ],
+     "outputs": {
+      "primary_step": "declaude_report"
+     }
+    },
+    "removed": {
+     "steps": [
+      {
+       "id": "declaude_referee_1",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "after": []
+      },
+      {
+       "id": "declaude_referee_2",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "run_if": {
+        "exists": true,
+        "kind": "survey_path",
+        "pointer": "/referees/1"
+       },
+       "after": []
+      },
+      {
+       "id": "declaude_referee_3",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         }
+        ]
+       },
+       "run_if": {
+        "exists": true,
+        "kind": "survey_path",
+        "pointer": "/referees/2"
+       },
+       "after": []
+      },
+      {
+       "id": "declaude_report",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "primary",
+          "parts": [
+           "text",
+           "structure",
+           "visuals",
+           "source"
+          ]
+         },
+         {
+          "kind": "survey"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_1"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_2"
+         },
+         {
+          "kind": "step",
+          "parts": [
+           "report"
+          ],
+          "step": "declaude_referee_3"
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [
+         "declaude_referee_1"
+        ],
+        "quorum": [],
+        "minimum_successes": 0
+       },
+       "after": []
+      }
+     ],
+     "outputs": {
+      "primary_step": "declaude_report"
+     }
+    }
+   }
+  ]
+ },
+ "quorum": {
+  "source": {
+   "steps": [
+    {
+     "id": "first",
+     "enabled": true,
+     "context": {
+      "include": []
+     }
+    },
+    {
+     "id": "second",
+     "enabled": true,
+     "context": {
+      "include": []
+     }
+    },
+    {
+     "id": "third",
+     "enabled": true,
+     "context": {
+      "include": []
+     }
+    },
+    {
+     "id": "report",
+     "enabled": true,
+     "context": {
+      "include": [
+       {
+        "kind": "step",
+        "step": "first",
+        "parts": [
+         "report"
+        ]
+       }
+      ]
+     },
+     "dependency_policy": {
+      "required": [
+       "first"
+      ],
+      "quorum": [
+       "second",
+       "third"
+      ],
+      "minimum_successes": 2
+     }
+    }
+   ],
+   "outputs": {
+    "primary_step": "report",
+    "named": [
+     {
+      "key": "second_notes",
+      "step": "second"
+     },
+     {
+      "key": "third_notes",
+      "step": "third"
+     }
+    ]
+   }
+  },
+  "cases": [
+   {
+    "step": "second",
+    "disabled": {
+     "steps": [
+      {
+       "id": "first",
+       "enabled": true,
+       "context": {
+        "include": []
+       },
+       "after": []
+      },
+      {
+       "id": "second",
+       "enabled": false,
+       "context": {
+        "include": []
+       }
+      },
+      {
+       "id": "third",
+       "enabled": true,
+       "context": {
+        "include": []
+       },
+       "after": []
+      },
+      {
+       "id": "report",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "step",
+          "step": "first",
+          "parts": [
+           "report"
+          ]
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [
+         "first"
+        ],
+        "quorum": [
+         "third"
+        ],
+        "minimum_successes": 1
+       },
+       "after": []
+      }
+     ],
+     "outputs": {
+      "primary_step": "report",
+      "named": [
+       {
+        "key": "third_notes",
+        "step": "third"
+       }
+      ]
+     }
+    },
+    "removed": {
+     "steps": [
+      {
+       "id": "first",
+       "enabled": true,
+       "context": {
+        "include": []
+       },
+       "after": []
+      },
+      {
+       "id": "third",
+       "enabled": true,
+       "context": {
+        "include": []
+       },
+       "after": []
+      },
+      {
+       "id": "report",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "step",
+          "step": "first",
+          "parts": [
+           "report"
+          ]
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [
+         "first"
+        ],
+        "quorum": [
+         "third"
+        ],
+        "minimum_successes": 1
+       },
+       "after": []
+      }
+     ],
+     "outputs": {
+      "primary_step": "report",
+      "named": [
+       {
+        "key": "third_notes",
+        "step": "third"
+       }
+      ]
+     }
+    }
+   },
+   {
+    "step": "third",
+    "disabled": {
+     "steps": [
+      {
+       "id": "first",
+       "enabled": true,
+       "context": {
+        "include": []
+       },
+       "after": []
+      },
+      {
+       "id": "second",
+       "enabled": true,
+       "context": {
+        "include": []
+       },
+       "after": []
+      },
+      {
+       "id": "third",
+       "enabled": false,
+       "context": {
+        "include": []
+       }
+      },
+      {
+       "id": "report",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "step",
+          "step": "first",
+          "parts": [
+           "report"
+          ]
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [
+         "first"
+        ],
+        "quorum": [
+         "second"
+        ],
+        "minimum_successes": 1
+       },
+       "after": []
+      }
+     ],
+     "outputs": {
+      "primary_step": "report",
+      "named": [
+       {
+        "key": "second_notes",
+        "step": "second"
+       }
+      ]
+     }
+    },
+    "removed": {
+     "steps": [
+      {
+       "id": "first",
+       "enabled": true,
+       "context": {
+        "include": []
+       },
+       "after": []
+      },
+      {
+       "id": "second",
+       "enabled": true,
+       "context": {
+        "include": []
+       },
+       "after": []
+      },
+      {
+       "id": "report",
+       "enabled": true,
+       "context": {
+        "include": [
+         {
+          "kind": "step",
+          "step": "first",
+          "parts": [
+           "report"
+          ]
+         }
+        ]
+       },
+       "dependency_policy": {
+        "required": [
+         "first"
+        ],
+        "quorum": [
+         "second"
+        ],
+        "minimum_successes": 1
+       },
+       "after": []
+      }
+     ],
+     "outputs": {
+      "primary_step": "report",
+      "named": [
+       {
+        "key": "second_notes",
+        "step": "second"
+       }
+      ]
+     }
+    }
+   }
+  ]
+ }
+}

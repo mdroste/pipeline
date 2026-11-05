@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { PROVIDER_LABELS, type Provider } from "../../lib/providers";
 import type { StepConfig } from "../../lib/types";
 
 function StepRow({
@@ -27,9 +28,7 @@ function StepRow({
   const badges: string[] = [];
   if (step.tools?.includes("WebSearch")) badges.push("web search");
   if (step.agents?.length) {
-    badges.push(
-      ...step.agents.map((a) => a.charAt(0).toUpperCase() + a.slice(1)),
-    );
+    badges.push(...step.agents.map((a) => PROVIDER_LABELS[a as Provider] ?? a));
   }
   if (step.model) badges.push(`model: ${step.model}`);
   if (step.effort) badges.push(`effort: ${step.effort}`);
@@ -84,11 +83,13 @@ function StepRow({
           aria-checked={step.enabled}
           onClick={onToggle}
           className={`relative h-4 w-7 shrink-0 rounded-full transition-colors ${
-            step.enabled ? "bg-green-600" : "bg-gray-300 dark:bg-gray-600"
+            step.enabled
+              ? "bg-green-600 dark:bg-neutral-200"
+              : "bg-gray-300 dark:bg-gray-600"
           }`}
         >
           <div
-            className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform ${
+            className={`absolute top-0.5 h-3 w-3 rounded-full bg-white shadow transition-transform dark:bg-neutral-900 ${
               step.enabled ? "translate-x-3.5" : "translate-x-0.5"
             }`}
           />
@@ -102,12 +103,14 @@ function StepRow({
           <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">
             {step.label}
           </span>
-          <span
-            className="mt-0.5 block truncate text-[11px] font-normal text-gray-500 dark:text-gray-400"
-            title={summary}
-          >
-            {summary}
-          </span>
+          {summary && (
+            <span
+              className="mt-0.5 block truncate text-[11px] font-normal text-gray-500 dark:text-gray-400"
+              title={summary}
+            >
+              {summary}
+            </span>
+          )}
         </button>
         <button
           type="button"

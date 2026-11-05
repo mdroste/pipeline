@@ -1,0 +1,467 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import SettingsPageComponent, { type SettingsSection } from "./SettingsPage";
+import { useSyncExternalStore, type ComponentProps } from "react";
+import { readAppPreferences } from "../lib/appPreferences";
+import { router } from "../lib/router";
+import { parserControls, settingsSearchEntries } from "./settings/search";
+import type { Section } from "./settings/navigation";
+// Existing Review behavior tests enter Reviews explicitly after the navigation redesign.
+const SettingsPage = (props: ComponentProps<typeof SettingsPageComponent>) => (
+  <SettingsPageComponent initialSection="workflow" {...props} />
+);
+import { makeSettings, paddleEngine } from "../test/settingsFixtures";
+import type { EngineStatus, Settings } from "../lib/types";
+
+const invoke = vi.hoisted(() => vi.fn());
+const openUrl = vi.hoisted(() => vi.fn());
+const confirmDialog = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/plugin-shell", () => ({ open: openUrl }));
+vi.mock("./DialogService", () => ({ confirmDialog, notify: vi.fn() }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn(() => Promise.resolve(() => {})),
+}));
+
+import { mockSettingsLoad } from "../test/settingsPageFixtures";
+
+const mockLoad = (
+  settings: Settings,
+  warnings: string[] = [],
+  engines: EngineStatus[] = [],
+) => mockSettingsLoad(invoke, settings, warnings, engines);
+
+describe("SettingsPage navigation", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    invoke.mockReset();
+    confirmDialog.mockReset();
+    openUrl.mockReset();
+    openUrl.mockResolvedValue(undefined);
+  });
+
+  it("consolidates workflow settings while keeping connections on Providers", async () => {
+    mockLoad(makeSettings());
+    render(
+      <SettingsPage
+        onClose={() => {}}
+        theme="light"
+        onThemeChange={() => {}}
+      />,
+    );
+    expect(await screen.findByText("Model defaults")).toBeInTheDocument();
+    for (const label of [
+      "Input assessment",
+      "Parallel review",
+      "Combine results",
+      "Sequential steps",
+    ])
+      await userEvent.click(screen.getAllByText(label)[0]);
+    expect(
+      screen.getByRole("button", { name: "Change default model" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("combobox", { name: "Default provider" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Provider configuration"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Claude API Key")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Model calls at once")).toBeVisible();
+    expect(
+      screen.getByText(
+        "Choose one or more models for steps that run at the same time.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Choose one model for steps that run one at a time."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Choose one model to combine results when a parallel step uses more than one provider.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "Reads the inputs and selects the specialist reviewers.",
+      ),
+    ).toBeVisible();
+    const orientationDefaults = screen.getByRole("group", {
+      name: "Input assessment providers",
+    });
+    const parallelDefaults = screen.getByRole("group", {
+      name: "Parallel review providers",
+    });
+    expect(
+      orientationDefaults.compareDocumentPosition(parallelDefaults) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    const navigation = screen.getByRole("navigation", {
+      name: "Settings categories",
+    });
+    expect(within(navigation).getAllByRole("button")).toHaveLength(7);
+    expect(
+      within(navigation).getByRole("button", { name: "Connections" }),
+    ).toBeVisible();
+    expect(
+      within(navigation).getByRole("button", { name: "Reviews" }),
+    ).toHaveAttribute("aria-current", "page");
+    expect(
+      screen.queryByLabelText("Maximum saved reports"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("radio", { name: /^Selected model/ }),
+    ).toBeVisible();
+    expect(invoke).toHaveBeenCalledWith("get_settings");
+  });
+
+  it("preserves pending edits while moving between providers and workflow defaults", async () => {
+    const user = userEvent.setup();
+    mockLoad(makeSettings());
+    render(
+      <SettingsPage
+        onClose={() => {}}
+        theme="light"
+        onThemeChange={() => {}}
+      />,
+    );
+    await user.selectOptions(
+      await screen.findByLabelText("Step time limit"),
+      "1800",
+    );
+    await user.click(screen.getByRole("button", { name: "Connections" }));
+    await user.type(screen.getByLabelText("Local API Key"), "test-token");
+    await user.click(
+      screen.getByRole("button", { name: "Save Local API Key" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Reviews" }));
+    expect(screen.getByLabelText("Step time limit")).toHaveValue("1800");
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("save_settings", {
+        settings: {
+          ...makeSettings(),
+          step_timeout_secs: 1800,
+          local_api_key: "test-token",
+        },
+      }),
+    );
+  });
+
+  it("opens directly to a requested settings section", async () => {
+    mockLoad(makeSettings());
+    const view = render(
+      <SettingsPage
+        onClose={() => {}}
+        theme="light"
+        onThemeChange={() => {}}
+        initialSection="llm"
+      />,
+    );
+    expect(await screen.findByText("Model defaults")).toBeVisible();
+
+    view.rerender(
+      <SettingsPage
+        onClose={() => {}}
+        theme="light"
+        onThemeChange={() => {}}
+        initialSection="extraction"
+      />,
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "PDF extraction" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("radio", { name: /^Selected model\b/ }),
+    ).toBeVisible();
+  });
+
+  it("focuses and scrolls to a requested settings target", async () => {
+    const originalScrollIntoView = Object.getOwnPropertyDescriptor(
+      HTMLElement.prototype,
+      "scrollIntoView",
+    );
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    try {
+      mockLoad(makeSettings());
+      render(
+        <SettingsPage
+          onClose={() => {}}
+          theme="light"
+          onThemeChange={() => {}}
+          initialSection="extraction"
+          targetId="paddleocr-local-engine"
+          navigationKey={1}
+        />,
+      );
+
+      const target = await waitFor(() => {
+        const element = document.getElementById("paddleocr-local-engine");
+        expect(element).not.toBeNull();
+        return element as HTMLElement;
+      });
+      await waitFor(() => {
+        expect(scrollIntoView).toHaveBeenCalledWith({ block: "center" });
+        expect(target.contains(document.activeElement)).toBe(true);
+      });
+    } finally {
+      if (originalScrollIntoView) {
+        Object.defineProperty(
+          HTMLElement.prototype,
+          "scrollIntoView",
+          originalScrollIntoView,
+        );
+      } else {
+        delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+      }
+    }
+  });
+
+  it.each(["subscription", "api"] as const)(
+    "offers only search results that exist with OpenAI on %s access",
+    async (mode) => {
+      const settings = { ...makeSettings(), codex_access_mode: mode };
+      mockLoad(settings);
+      render(
+        <SettingsPage
+          onClose={() => {}}
+          theme="light"
+          onThemeChange={() => {}}
+          initialSection="providers"
+        />,
+      );
+      await screen.findByRole("heading", { level: 1 });
+      const targets = settingsSearchEntries(
+        settings,
+        readAppPreferences(),
+        "light",
+      )
+        .filter((entry) => entry.section === "providers")
+        .map((entry) => entry.target);
+      expect(targets.includes("Reviews Codex backend")).toBe(mode !== "api");
+      for (const target of targets)
+        expect(
+          document.getElementById(target) ??
+            document.querySelector(`[aria-label="${target}"]`),
+          target,
+        ).not.toBeNull();
+    },
+  );
+
+  describe("every search result", () => {
+    const sections: Section[] = [
+      "general",
+      "providers",
+      "conversations",
+      "workflow",
+      "storage",
+      "notifications",
+      "advanced",
+    ];
+    const graphics = [
+      paddleEngine({ installed: true }),
+      paddleEngine({ id: "paddleocr-vl-gpu", installed: true }),
+    ];
+    it.each([
+      ["no graphics engine", []],
+      ["the graphics engine", graphics],
+    ])("lands on a control with %s", async (_name, engines) => {
+      for (const section of sections) {
+        const settings = makeSettings();
+        mockLoad(settings, [], engines);
+        const { unmount } = render(
+          <SettingsPage
+            onClose={() => {}}
+            theme="light"
+            onThemeChange={() => {}}
+            initialSection={section}
+          />,
+        );
+        await screen.findByRole("heading", { level: 1 });
+        const targets = settingsSearchEntries(
+          settings,
+          readAppPreferences(),
+          "light",
+          parserControls(engines),
+        )
+          .filter((entry) => entry.section === section)
+          .map((entry) => entry.target);
+        for (const target of targets)
+          await waitFor(() =>
+            expect(
+              document.getElementById(target) ??
+                document.querySelector(`[aria-label="${target}"]`),
+              `${section}: ${target}`,
+            ).not.toBeNull(),
+          );
+        unmount();
+      }
+    });
+
+    const search = async (engines: EngineStatus[], text: string) => {
+      mockLoad(makeSettings(), [], engines);
+      render(
+        <SettingsPage
+          onClose={() => {}}
+          theme="light"
+          onThemeChange={() => {}}
+          initialSection="general"
+        />,
+      );
+      await userEvent.type(
+        await screen.findByRole("searchbox", { name: "Search settings" }),
+        text,
+      );
+    };
+
+    it("leaves out controls this machine does not have", async () => {
+      await search([paddleEngine({ installed: true })], "graphics");
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("list_engines"));
+      await act(async () => {});
+      expect(
+        screen.queryByRole("button", { name: /Use graphics card/ }),
+      ).not.toBeInTheDocument();
+      await userEvent.clear(screen.getByRole("searchbox"));
+      await userEvent.type(screen.getByRole("searchbox"), "processor cores");
+      await act(async () => {});
+      expect(
+        screen.queryByRole("button", { name: /Processor cores/ }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("reaches the graphics control from another section", async () => {
+      await search(graphics, "graphics");
+      await userEvent.click(
+        await screen.findByRole("button", { name: /Use graphics card/ }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("switch", { name: "Use graphics card" }),
+        ).toHaveFocus(),
+      );
+    });
+
+    it("reaches the processor control from another section", async () => {
+      await search(
+        [paddleEngine({ id: "paddleocr-vl-gpu", installed: false })],
+        "processor cores",
+      );
+      await userEvent.click(
+        await screen.findByRole("button", { name: /Processor cores/ }),
+      );
+      await waitFor(() =>
+        expect(
+          screen.getByRole("combobox", {
+            name: "PaddleOCR-VL processor cores",
+          }),
+        ).toHaveFocus(),
+      );
+    });
+  });
+
+  describe("a route that changes section while a key is being typed", () => {
+    function Routed() {
+      const { route, revision } = useSyncExternalStore(
+        router.subscribe,
+        router.getSnapshot,
+      );
+      return (
+        <SettingsPageComponent
+          onClose={() => {}}
+          theme="light"
+          onThemeChange={() => {}}
+          initialSection={
+            ((route.page === "settings" && route.section) ||
+              "general") as SettingsSection
+          }
+          navigationKey={revision}
+        />
+      );
+    }
+    async function typeKey() {
+      mockLoad(makeSettings());
+      router.init({ page: "settings", section: "providers" });
+      render(<Routed />);
+      const key = await screen.findByLabelText("Gemini API Key");
+      await userEvent.type(key, "sk-unsaved");
+      await waitFor(() => expect(key).toHaveValue("sk-unsaved"));
+      return key;
+    }
+
+    it("stays and restores the route when leaving is declined", async () => {
+      confirmDialog.mockResolvedValue(false);
+      const key = await typeKey();
+      await act(async () => {
+        await router.navigate({ page: "settings" });
+      });
+      await waitFor(() =>
+        expect(confirmDialog).toHaveBeenCalledWith(
+          "This section has unfinished changes. Leave this section anyway?",
+          { confirmLabel: "Leave section" },
+        ),
+      );
+      await waitFor(() =>
+        expect(router.route).toEqual({
+          page: "settings",
+          section: "providers",
+        }),
+      );
+      expect(screen.getByLabelText("Gemini API Key")).toBe(key);
+      expect(key).toHaveValue("sk-unsaved");
+      expect(confirmDialog).toHaveBeenCalledOnce();
+    });
+
+    it("moves on when leaving is accepted", async () => {
+      confirmDialog.mockResolvedValue(true);
+      await typeKey();
+      await act(async () => {
+        await router.navigate({ page: "settings", section: "storage" });
+      });
+      await waitFor(() =>
+        expect(screen.queryByLabelText("Gemini API Key")).toBeNull(),
+      );
+      expect(router.route).toEqual({ page: "settings", section: "storage" });
+    });
+  });
+
+  it("shows essential explanations beside their controls", async () => {
+    mockLoad(makeSettings());
+    render(
+      <SettingsPage
+        onClose={() => {}}
+        theme="light"
+        onThemeChange={() => {}}
+      />,
+    );
+    expect(
+      await screen.findByText(/How many model calls a review can run/),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", {
+        name: "More information about Model calls at once",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers system, light, and dark appearance choices", async () => {
+    mockLoad(makeSettings());
+    const onThemeChange = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SettingsPage
+        onClose={() => {}}
+        theme="system"
+        onThemeChange={onThemeChange}
+        initialSection="general"
+      />,
+    );
+    expect(await screen.findByRole("radio", { name: "System" })).toBeChecked();
+    await user.click(screen.getByRole("radio", { name: "Dark" }));
+    expect(onThemeChange).toHaveBeenCalledWith("dark");
+  });
+});

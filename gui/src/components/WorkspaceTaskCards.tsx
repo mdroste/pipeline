@@ -1,12 +1,11 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import {
-  taskClient,
-  stateLabel,
-  type TaskProposal,
-  type TaskSummary,
-} from "../lib/taskClient";
+import { taskClient } from "../lib/taskClient";
+import { stateLabel } from "../lib/taskPresentation";
+import { type TaskProposal, type TaskSummary } from "../lib/taskTypes";
 import "./TasksPage.css";
+import ReportIssueLink from "./ReportIssueLink";
+import { workbenchErrorMessage } from "../lib/workbenchError";
 export default function WorkspaceTaskCards({
   sessionId,
   onOpen,
@@ -56,8 +55,13 @@ export default function WorkspaceTaskCards({
     };
   }, [sessionId]);
   return tasks.length || proposals.length || error ? (
-    <div className="workspace-task-cards" aria-label="Conversation task chains">
-      {error && <p role="alert">{error}</p>}
+    <div className="workspace-task-cards" aria-label="Conversation automations">
+      {error && (
+        <p role="alert">
+          {error}
+          <ReportIssueLink />
+        </p>
+      )}
       {proposals.map((p) => (
         <button
           key={p.id}
@@ -66,7 +70,7 @@ export default function WorkspaceTaskCards({
             void taskClient
               .prepareProposal(sessionId, p.id)
               .then((run) => onOpen(run.id))
-              .catch((e) => setError(String(e)));
+              .catch((e) => setError(workbenchErrorMessage(e)));
           }}
         >
           <strong>{p.chain.name}</strong>

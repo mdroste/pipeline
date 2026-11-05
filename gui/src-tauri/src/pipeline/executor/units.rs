@@ -25,6 +25,27 @@ pub(super) struct Unit {
     pub(super) merge_agents: bool,
 }
 
+/// The units a step dispatches, and what its fan-out limit left out.
+#[derive(Default)]
+pub(super) struct UnitPlan {
+    pub(super) units: Vec<Unit>,
+    pub(super) coverage_note: Option<String>,
+}
+
+/// The report's statement of a fan-out that stopped at its limit. The run still
+/// succeeds, so this is the only sign that part of the input went unread.
+fn coverage_note(label: &str, ran: usize, total: usize, noun: &str) -> Option<String> {
+    let left = total.checked_sub(ran).filter(|left| *left > 0)?;
+    let unread = if left == 1 {
+        "1 was not read".to_string()
+    } else {
+        format!("{left} were not read")
+    };
+    Some(format!(
+        "Step '{label}' ran on {ran} of {total} {noun}. It stops at {ran}, so {unread}."
+    ))
+}
+
 /// The directory a fan-out glob is resolved against: the input folder itself,
 /// or the parent directory of a single-file input.
 pub(super) fn fan_out_root(source_path: &str) -> std::path::PathBuf {
@@ -48,7 +69,7 @@ pub(super) fn build_units(
     source_path: &str,
     artifact_source: Option<&str>,
     app: &crate::emit::EventBus,
-) -> Result<Vec<Unit>, String> {
+) -> Result<UnitPlan, String> {
     let agents: Vec<String> = if step.agents.is_empty() {
         vec![settings.preferred_provider.clone()]
     } else {
@@ -56,6 +77,7 @@ pub(super) fn build_units(
     };
     let multi = agents.len() > 1;
 
+    let mut note = None;
     let units = if let Some(fe) = &step.for_each {
         if let Some(source) = &fe.artifact {
             return build_artifact_units(step, source, fe, artifact_source, agents, multi, app);
@@ -70,10 +92,11 @@ pub(super) fn build_units(
                     "WARNING: fan-out step '{}' has no source root to scan; treating glob '{}' as matching no files", step.label, fe.glob
                 )}),
             );
-            return Ok(Vec::new());
+            return Ok(UnitPlan::default());
         }
         let root = fan_out_root(source_path);
         let expansion = crate::pipeline::glob::expand(&root, &fe.glob, fe.max.max(1) as usize);
+        let total_matches = expansion.total_matches;
         let items = expansion.matches;
         if let Some(reason) = expansion.limited_by {
             if reason != "match limit" {
@@ -92,6 +115,7 @@ pub(super) fn build_units(
                     "Fan-out step '{}' was bounded by {reason} at {} files (glob '{}')", step.label, items.len(), fe.glob
                 )}),
             );
+            note = coverage_note(&step.label, items.len(), total_matches, "matching files");
         }
         if items.is_empty() {
             let _ = app.emit_event(
@@ -100,7 +124,7 @@ pub(super) fn build_units(
                     "WARNING: fan-out step '{}' matched no files for glob '{}'", step.label, fe.glob
                 )}),
             );
-            return Ok(Vec::new());
+            return Ok(UnitPlan::default());
         }
         let mut used = std::collections::HashSet::new();
         items
@@ -147,7 +171,10 @@ pub(super) fn build_units(
             })
             .collect::<Vec<_>>()
     };
-    Ok(units)
+    Ok(UnitPlan {
+        units,
+        coverage_note: note,
+    })
 }
 
 /// Deterministic composite-key suffix for the Nth artifact fan-out element.
@@ -166,8 +193,8 @@ pub(super) fn build_artifact_units(
     agents: Vec<String>,
     multi: bool,
     app: &crate::emit::EventBus,
-) -> Result<Vec<Unit>, String> {
-    let elements = artifact_fan_out_elements(step, source, fe, artifact_source, app)?;
+) -> Result<UnitPlan, String> {
+    let (elements, total) = artifact_fan_out_elements(step, source, fe, artifact_source, app)?;
     // Per-element lineage applies when this step's own contract preserves the
     // findings of exactly the step it fans out over.
     let preserves_source = effective_output_schema(step)?
@@ -218,17 +245,26 @@ pub(super) fn build_artifact_units(
             });
         }
     }
-    Ok(units)
+    Ok(UnitPlan {
+        units,
+        coverage_note: coverage_note(
+            &step.label,
+            elements.len(),
+            total,
+            &format!("items from '{}'", source.step),
+        ),
+    })
 }
 
-/// The bounded dispatch list. Reassembly must instead read the complete source list.
+/// The bounded dispatch list and the full count of the source list. Reassembly
+/// must instead read the complete source list.
 pub(super) fn artifact_fan_out_elements(
     step: &StepConfig,
     source: &crate::pipeline_config::ForEachArtifact,
     fe: &crate::pipeline_config::ForEach,
     artifact_source: Option<&str>,
     app: &crate::emit::EventBus,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Result<(Vec<serde_json::Value>, usize), String> {
     let Some(text) = artifact_source else {
         let _ = app.emit_event(
             "pipeline:log",
@@ -237,7 +273,7 @@ pub(super) fn artifact_fan_out_elements(
                 step.label, source.step
             )}),
         );
-        return Ok(Vec::new());
+        return Ok((Vec::new(), 0));
     };
     let value = serde_json::from_str::<serde_json::Value>(text.trim()).map_err(|error| {
         format!(
@@ -272,5 +308,5 @@ pub(super) fn artifact_fan_out_elements(
             )}),
         );
     }
-    Ok(elements.iter().take(max).cloned().collect())
+    Ok((elements.iter().take(max).cloned().collect(), elements.len()))
 }

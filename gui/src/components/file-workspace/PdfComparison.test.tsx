@@ -10,12 +10,11 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
   getDocument: mocks.getDocument,
 }));
 vi.mock("../../lib/fileWorkspaceClient", () => ({
-  workspaceFileAdapter: ({ revisionId }: { revisionId: string }) => ({
-    read: async () => ({ base64: revisionId }),
-  }),
+  workspaceFileAdapter: ({ revisionId }: { revisionId: string }) => revisionId,
+  readCapturedPdf: async (revisionId: string) => revisionId,
 }));
 vi.mock("./PdfReader", () => ({
-  decodePdf: (value: string) => value,
+  pdfBytes: (value: string) => value,
   default: ({
     title,
     position,

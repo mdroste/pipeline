@@ -184,6 +184,25 @@ pub async fn workbench_list_execution_profiles(
     .await
 }
 
+/// Read-only: looks in standard install folders, PATH and the project folder.
+/// Version probes run outside the database gate.
+#[tauri::command]
+pub async fn workbench_detect_toolchains(
+    workspace_id: Option<String>,
+) -> WorkbenchResult<crate::workbench::research::ToolchainReport> {
+    let root = match workspace_id {
+        Some(workspace_id) => {
+            run_store(move |store| Ok(store.workspace(&workspace_id)?.root)).await?
+        }
+        None => None,
+    };
+    tokio::task::spawn_blocking(move || {
+        crate::workbench::research::detect_toolchains(root.as_deref().map(std::path::Path::new))
+    })
+    .await
+    .map_err(|error| WorkbenchError::worker(format!("Toolchain detection stopped: {error}"), true))
+}
+
 #[tauri::command]
 pub async fn workbench_run_execution(
     request: crate::workbench::research::RunExecutionRequest,
@@ -346,8 +365,15 @@ pub async fn workbench_link_review_handoff(
 }
 
 #[tauri::command]
+pub async fn workbench_missing_backup_files(
+) -> WorkbenchResult<Vec<crate::workbench::release::MissingBackupFile>> {
+    run_store(move |store| crate::workbench::release::missing_backup_files(&store)).await
+}
+
+#[tauri::command]
 pub async fn workbench_export_research_archive(
     request: crate::workbench::release::ExportArchiveRequest,
+    omitted_references: Option<Vec<String>>,
 ) -> WorkbenchResult<crate::workbench::release::ArchiveReport> {
     run_storage_maintenance(move |store| {
         if crate::workbench::research::jobs::has_active() {
@@ -356,7 +382,11 @@ pub async fn workbench_export_research_archive(
             ));
         }
         crate::workbench::release::refresh_retained_blobs(&store)?;
-        crate::workbench::release::export_archive(&store, request)
+        crate::workbench::release::export_archive_without(
+            &store,
+            request,
+            &omitted_references.unwrap_or_default(),
+        )
     })
     .await
 }
@@ -506,11 +536,7 @@ pub async fn workbench_export_conversation(
             let Some(text) = transcript_text(&item.payload) else {
                 return Ok(());
             };
-            let role = if item.item_kind.to_ascii_lowercase().contains("user") {
-                "You"
-            } else {
-                "ChatGPT"
-            };
+            let role = crate::workbench::release::transcript_role(&item.item_kind);
             if markdown.len() + text.len() + 32 > 64 * 1024 * 1024 {
                 return Err(WorkbenchError::invalid(
                     "Conversation export exceeds 64 MiB",
@@ -522,11 +548,9 @@ pub async fn workbench_export_conversation(
         std::fs::write(&target, markdown).map_err(|error| {
             WorkbenchError::storage("Failed to write conversation export", error)
         })?;
-        std::fs::File::open(&target)
-            .and_then(|file| file.sync_all())
-            .map_err(|error| {
-                WorkbenchError::storage("Failed to sync conversation export", error)
-            })?;
+        if let Ok(file) = std::fs::File::open(&target) {
+            crate::safety::sync_landed(&file);
+        }
         Ok(())
     })
     .await

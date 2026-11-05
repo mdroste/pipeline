@@ -1,66 +1,44 @@
 import { useAppPreferences, shouldSendMessage } from "../lib/appPreferences";
 import { isMac } from "../lib/platform";
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import {
+  payloadText,
+  roleFor,
+  TRANSCRIPT_WINDOW,
+} from "../lib/workspaceTranscript";
+import {
+  Fragment,
+  useCallback,
+  useDeferredValue,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import { FileNavigationContext } from "./file-workspace/FileNavigation";
 import { workspaceFileAdapter } from "../lib/fileWorkspaceClient";
 import { appEvents } from "../lib/appEvents";
-import { workbenchClient } from "../lib/workbenchClient";
-import type { ReactNode, RefObject } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkMath from "remark-math";
-import remarkGfm from "remark-gfm";
-import {
-  fileMarkdownComponents,
-  fileMarkdownUrlTransform,
-} from "./file-workspace/markdownComponents";
-import rehypeKatex from "rehype-katex";
-import WorkspaceMessageActions from "./WorkspaceMessageActions";
+import { conversationClient } from "../lib/workbench/conversationClient";
+import { turnFailures } from "../lib/workspaceTurnLabels";
+import type { MutableRefObject, ReactNode, RefObject } from "react";
+import TranscriptMessage, {
+  TranscriptMarkdown,
+} from "./WorkspaceTranscriptMessage";
+import useTranscriptFollow from "../hooks/workspace/useTranscriptFollow";
+import type { StreamStore } from "../hooks/workspace/streamStore";
 import WorkspaceIcon from "./WorkspaceIcon";
 import Tooltip from "../ui/Tooltip";
 import { Icon } from "../ui/icons";
 import type { FileDropState } from "../hooks/useComposerFileDrop";
 import "./WorkspaceTranscript.css";
 import "./WorkspaceComposer.css";
+import "../ui/page.css";
 import type {
   ConversationSnapshot,
   TranscriptItem,
 } from "../lib/workbenchTypes";
-export function payloadText(item: TranscriptItem): string {
-  const payload = item.payload;
-  if (!payload) return "";
-  for (const key of ["text", "message", "content"]) {
-    const value = payload[key];
-    if (typeof value === "string") return value;
-    if (Array.isArray(value)) {
-      const joined = value
-        .map((part) => {
-          if (typeof part === "string") return part;
-          if (
-            part &&
-            typeof part === "object" &&
-            "text" in part &&
-            typeof part.text === "string"
-          )
-            return part.text;
-          return "";
-        })
-        .filter(Boolean)
-        .join("\n");
-      if (joined) return joined;
-    }
-  }
-  return "";
-}
-
-export function isMessage(item: TranscriptItem) {
-  return item.itemKind.toLowerCase().includes("message");
-}
-
-export function roleFor(item: TranscriptItem) {
-  return item.itemKind.toLowerCase().includes("user") ? "You" : "ChatGPT";
-}
-
+import ReportIssueLink from "./ReportIssueLink";
 interface Props {
+  assistantName?: string;
   taskCards?: ReactNode;
   inspector?: ReactNode;
   inspectorOpen?: boolean;
@@ -78,13 +56,17 @@ interface Props {
   hasEarlier?: boolean;
   loadingEarlier?: boolean;
   pendingUser: string | null;
-  stream: string;
+  streamStore: StreamStore;
   selectedMessage: string | null;
   transcriptStart: number;
   transcriptEnd: number;
   transcriptRef: RefObject<HTMLDivElement | null>;
   messageRef: RefObject<HTMLTextAreaElement | null>;
   error: string | null;
+  /** A neutral update, such as a response the researcher stopped. */
+  notice?: string | null;
+  /** Something the researcher should check, though the response may have finished. */
+  warnings?: string[];
   draft: string;
   disabled: boolean;
   active: boolean;
@@ -94,12 +76,52 @@ interface Props {
   onSend: () => void;
   onStop: () => void;
   stopping?: boolean;
+  /** Set only while no conversation is selected, when the composer cannot open. */
+  onNewConversation?: () => void;
   onLatest: () => void;
   onEarlier: () => void;
   onNewer: () => void;
-  onFollow: (follow: boolean) => void;
+  /** Shared with the controller: whether the latest message stays in view. */
+  followLatestRef: MutableRefObject<boolean>;
+}
+/** Why a turn did not finish. Saved with the turn, so it stays in the transcript. */
+function TurnFailure({ text }: { text: string }) {
+  return <p className="my-2 text-sm text-red-700 dark:text-red-300">{text}</p>;
+}
+/** The answer as it arrives. Flushes re-render this message and nothing else. */
+function LiveMessage({
+  store,
+  assistantName,
+  active,
+}: {
+  store: StreamStore;
+  assistantName: string;
+  active: boolean;
+}) {
+  const stream = useSyncExternalStore(store.subscribe, store.get);
+  // Streamed Markdown may lag a frame behind so typing stays responsive.
+  const deferredStream = useDeferredValue(stream);
+  if (!stream) return null;
+  return (
+    <article className="workspace-message workspace-message--assistant">
+      <div className="workspace-message-author">
+        <span className="workspace-assistant-mark">
+          <WorkspaceIcon name="message" size={14} />
+        </span>
+        {assistantName}
+        {/* A finished answer stays here until the transcript reloads. */}
+        {active && (
+          <span className="ml-1 h-1.5 w-1.5 rounded-full bg-current motion-safe:animate-pulse" />
+        )}
+      </div>
+      <div className="workspace-message-body">
+        <TranscriptMarkdown text={deferredStream} />
+      </div>
+    </article>
+  );
 }
 export default function WorkspaceConversationView({
+  assistantName = "ChatGPT",
   taskCards,
   inspector,
   inspectorOpen = Boolean(inspector),
@@ -116,13 +138,15 @@ export default function WorkspaceConversationView({
   hasEarlier = false,
   loadingEarlier = false,
   pendingUser,
-  stream,
+  streamStore,
   selectedMessage,
   transcriptStart,
   transcriptEnd,
   transcriptRef,
   messageRef,
   error,
+  notice = null,
+  warnings = [],
   draft,
   disabled,
   active,
@@ -132,24 +156,55 @@ export default function WorkspaceConversationView({
   onSend,
   onStop,
   stopping = false,
+  onNewConversation,
   onLatest,
   onEarlier,
   onNewer,
-  onFollow,
+  followLatestRef,
 }: Props) {
-  const [following, setFollowing] = useState(true);
-  useEffect(() => setFollowing(true), [snapshot?.session.id]);
+  const streaming = useSyncExternalStore(streamStore.subscribe, () =>
+    Boolean(streamStore.get()),
+  );
+  const { following, follow, beforePaging, scrollHandlers } =
+    useTranscriptFollow({
+      transcriptRef,
+      followLatestRef,
+      sessionId: snapshot?.session.id,
+      streaming,
+      pendingUser,
+      items: renderedItems,
+      start: transcriptStart,
+      end: transcriptEnd,
+      total: totalItems,
+      loadingEarlier,
+    });
+  const failures = useMemo(
+    () => turnFailures(snapshot?.turns ?? [], renderedItems),
+    [snapshot?.turns, renderedItems],
+  );
+  // WebKit ends an input-method composition before the Enter keydown that
+  // confirms it, so that keydown alone does not report isComposing.
+  const composing = useRef(false);
   const fileNavigation = useMemo(() => {
     const sessionId = snapshot?.session.id;
     if (!sessionId) return null;
     const workspaceId = snapshot?.workspace?.id;
-    const adapter = workspaceId ? workspaceFileAdapter({ workspaceId }) : null;
+    const checkpointId = snapshot.session.overrides?.projectCheckpointId;
+    const adapter = workspaceId
+      ? workspaceFileAdapter({
+          workspaceId,
+          checkpointId: typeof checkpointId === "string" ? checkpointId : null,
+        })
+      : null;
     return {
       path: "conversation.md",
       root: snapshot.workspace?.root ?? undefined,
       open: (location: import("../lib/fileLinks").FileLocation) => {
-        if (!workspaceId || !snapshot.workspace?.root)
-          return workbenchClient.openConversationFile(sessionId, location.path);
+        if (!workspaceId || !snapshot.workspace?.root || checkpointId)
+          return conversationClient.openConversationFile(
+            sessionId,
+            location.path,
+          );
         sessionStorage.setItem(
           `pipeline.openFile.${workspaceId}`,
           JSON.stringify(location),
@@ -157,11 +212,11 @@ export default function WorkspaceConversationView({
         appEvents.emit("open-file", { workspaceId, location });
       },
       openAbsolute: (path: string) =>
-        workbenchClient.openConversationFile(sessionId, path),
+        conversationClient.openConversationFile(sessionId, path),
       image: async (path: string) => {
         const file = adapter
           ? await adapter.read(path)
-          : await workbenchClient.readConversationFile(sessionId, path);
+          : await conversationClient.readConversationFile(sessionId, path);
         if (!file.base64 || !file.mime.startsWith("image/"))
           throw new Error("Image unavailable");
         return `data:${file.mime};base64,${file.base64}`;
@@ -171,33 +226,58 @@ export default function WorkspaceConversationView({
     snapshot?.session.id,
     snapshot?.workspace?.id,
     snapshot?.workspace?.root,
+    snapshot?.session.overrides?.projectCheckpointId,
   ]);
   const { sendShortcut } = useAppPreferences();
   const shortcut =
     sendShortcut === "enter" ? "Enter" : `${isMac ? "⌘" : "Ctrl+"}Enter`;
   // The field grows with its content; CSS caps the height and scrolls past it.
-  useLayoutEffect(() => {
+  const fitComposer = useCallback(() => {
     const field = messageRef.current;
     if (!field) return;
-    const fit = () => {
-      field.style.height = "auto";
-      // A hidden pane measures zero; leave the stylesheet's minimum in charge.
-      field.style.height = field.scrollHeight ? `${field.scrollHeight}px` : "";
-    };
-    fit();
-    if (typeof ResizeObserver === "undefined") return;
+    // Collapsing the field to measure it lets the transcript grow for a
+    // moment, which can clamp its scroll position; put the position back so
+    // the change does not read as the researcher scrolling up.
+    const transcript = transcriptRef.current;
+    const top = transcript?.scrollTop;
+    field.style.height = "auto";
+    // A hidden pane measures zero; leave the stylesheet's minimum in charge.
+    field.style.height = field.scrollHeight ? `${field.scrollHeight}px` : "";
+    if (transcript && top !== undefined) transcript.scrollTop = top;
+  }, [messageRef, transcriptRef]);
+  useLayoutEffect(fitComposer, [draft, fitComposer]);
+  useLayoutEffect(() => {
+    const field = messageRef.current;
+    if (!field || typeof ResizeObserver === "undefined") return;
     let width = field.clientWidth;
     const observer = new ResizeObserver(() => {
       if (field.clientWidth === width) return;
       width = field.clientWidth;
-      fit();
+      fitComposer();
     });
     observer.observe(field);
     return () => observer.disconnect();
-  }, [draft, messageRef]);
+  }, [fitComposer, messageRef]);
   return (
     <FileNavigationContext.Provider value={fileNavigation}>
       {header}
+      {snapshot?.session.overrides?.automaticWorkingCopy === true &&
+        snapshot.workspace && (
+          <div className="border-b border-line px-4 py-2 text-ui-meta">
+            Changes stay in a separate copy until you accept them.{" "}
+            <button
+              className="underline"
+              onClick={() =>
+                appEvents.emit("workspace-destination", {
+                  workspaceId: snapshot.workspace!.id,
+                  tab: "edits",
+                })
+              }
+            >
+              Review edits
+            </button>
+          </div>
+        )}
       {inspector && (
         <div hidden={!inspectorOpen} className="workspace-assistant-inspector">
           {inspector}
@@ -206,31 +286,12 @@ export default function WorkspaceConversationView({
       <div
         hidden={inspectorOpen}
         ref={transcriptRef}
-        onScroll={(event) => {
-          const node = event.currentTarget;
-          const follow =
-            node.scrollHeight - node.scrollTop - node.clientHeight < 80;
-          setFollowing(follow);
-          onFollow(follow);
-        }}
+        {...scrollHandlers}
         className="workspace-transcript min-h-0 flex-1 overflow-auto"
       >
-        {(!following || transcriptEnd < totalItems) && (
-          <div className="workspace-latest-control">
-            <button
-              type="button"
-              onClick={() => {
-                setFollowing(true);
-                onLatest();
-              }}
-              className="rounded-lg px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-neutral-800"
-            >
-              ↓ Latest
-            </button>
-          </div>
-        )}
         <div className="workspace-transcript-content">
-          {(!snapshot || (!totalItems && !pendingUser && !stream)) && (
+          {(!snapshot ||
+            (!totalItems && !hasEarlier && !pendingUser && !streaming)) && (
             <div className="workspace-chat-empty">
               <WorkspaceIcon
                 name="message"
@@ -247,17 +308,26 @@ export default function WorkspaceConversationView({
                   ? "Ask a question, explore an idea, or add files to work from."
                   : "Start a conversation to explore an idea or work through your research."}
               </p>
+              {onNewConversation && (
+                <button
+                  type="button"
+                  className="ui-page-button primary"
+                  onClick={onNewConversation}
+                >
+                  New conversation
+                </button>
+              )}
             </div>
           )}
           {(transcriptStart > 0 || hasEarlier) && (
             <button
               type="button"
               onClick={() => {
-                onFollow(false);
+                beforePaging("earlier");
                 onEarlier();
               }}
               disabled={loadingEarlier}
-              className="mx-auto block rounded border px-3 py-2 text-xs text-gray-600"
+              className="mx-auto block rounded border px-3 py-2 text-xs text-ink-muted"
             >
               {loadingEarlier
                 ? "Loading earlier messages…"
@@ -266,40 +336,24 @@ export default function WorkspaceConversationView({
           )}
           {renderedItems.map((item) => {
             const text = payloadText(item);
-            const user = roleFor(item) === "You";
-            return text ? (
-              <article
-                key={item.id}
-                id={`workspace-message-${item.id}`}
-                tabIndex={-1}
-                aria-label={`${roleFor(item)} message`}
-                className={`workspace-message workspace-message--${user ? "user" : "assistant"}${selectedMessage === item.id ? " ring-2 ring-blue-300 ring-offset-4 dark:ring-offset-neutral-950" : ""}`}
-              >
-                <div className="workspace-message-author">
-                  {!user && (
-                    <span className="workspace-assistant-mark">
-                      <WorkspaceIcon name="message" size={14} />
-                    </span>
-                  )}
-                  {roleFor(item)}
-                </div>
-                <div className="workspace-message-body">
-                  <ReactMarkdown
-                    urlTransform={fileMarkdownUrlTransform}
-                    remarkPlugins={[remarkGfm, remarkMath]}
-                    rehypePlugins={[rehypeKatex]}
-                    components={fileMarkdownComponents}
-                  >
-                    {text}
-                  </ReactMarkdown>
-                </div>
-                <WorkspaceMessageActions
-                  text={text}
-                  label={user ? "prompt" : "response"}
-                />
-              </article>
-            ) : null;
+            const failure = failures.afterItem.get(item.id);
+            return (
+              <Fragment key={item.id}>
+                {text && (
+                  <TranscriptMessage
+                    id={item.id}
+                    text={text}
+                    role={roleFor(item)}
+                    selected={selectedMessage === item.id}
+                  />
+                )}
+                {failure && <TurnFailure text={failure} />}
+              </Fragment>
+            );
           })}
+          {failures.atEnd && transcriptEnd >= totalItems && (
+            <TurnFailure text={failures.atEnd} />
+          )}
           {pendingUser && (
             <article className="workspace-message workspace-message--user">
               <div className="workspace-message-author">You</div>
@@ -308,47 +362,67 @@ export default function WorkspaceConversationView({
               </div>
             </article>
           )}
-          {stream && (
-            <article className="workspace-message workspace-message--assistant">
-              <div className="workspace-message-author">
-                <span className="workspace-assistant-mark">
-                  <WorkspaceIcon name="message" size={14} />
-                </span>
-                ChatGPT
-                <span className="ml-1 h-1.5 w-1.5 rounded-full bg-current motion-safe:animate-pulse" />
-              </div>
-              <div className="workspace-message-body">
-                <ReactMarkdown
-                  urlTransform={fileMarkdownUrlTransform}
-                  remarkPlugins={[remarkGfm, remarkMath]}
-                  rehypePlugins={[rehypeKatex]}
-                  components={fileMarkdownComponents}
-                >
-                  {stream}
-                </ReactMarkdown>
-              </div>
-            </article>
-          )}
+          <LiveMessage
+            store={streamStore}
+            assistantName={assistantName}
+            active={active}
+          />
           {taskCards}
           {transcriptEnd < totalItems && (
             <button
               type="button"
-              onClick={() => onNewer()}
-              className="mx-auto block rounded border px-3 py-2 text-xs text-gray-600"
+              onClick={() => {
+                beforePaging("newer");
+                onNewer();
+              }}
+              className="mx-auto block rounded border px-3 py-2 text-xs text-ink-muted"
             >
-              Show 200 newer messages
+              Show {TRANSCRIPT_WINDOW} newer messages
             </button>
           )}
         </div>
+        {(!following || transcriptEnd < totalItems) && (
+          // Out of flow at the end, so showing it never moves the text.
+          <div className="workspace-latest-control">
+            <button
+              type="button"
+              onClick={() => {
+                follow(true);
+                onLatest();
+              }}
+              className="rounded-lg px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 dark:hover:bg-neutral-800"
+            >
+              ↓ Latest
+            </button>
+          </div>
+        )}
       </div>
       <div className="workspace-conversation-notices">
         {requests}
+        {notice && (
+          <div
+            role="status"
+            className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-gray-300"
+          >
+            {notice}
+          </div>
+        )}
+        {warnings.map((warning) => (
+          <div
+            key={warning}
+            role="status"
+            className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-100"
+          >
+            {warning}
+          </div>
+        ))}
         {error && (
           <div
             role="alert"
             className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
           >
             {error}
+            <ReportIssueLink />
           </div>
         )}
       </div>
@@ -371,8 +445,19 @@ export default function WorkspaceConversationView({
               ref={messageRef}
               aria-label="Message"
               value={draft}
-              disabled={disabled}
+              // Read-only during a response keeps keyboard focus here, where a
+              // disabled field would drop it.
+              disabled={Boolean(onNewConversation)}
+              readOnly={disabled}
               onChange={(event) => onDraft(event.target.value)}
+              onCompositionStart={() => {
+                composing.current = true;
+              }}
+              onCompositionEnd={() => {
+                window.setTimeout(() => {
+                  composing.current = false;
+                });
+              }}
               onKeyDown={(event) => {
                 if (
                   !disabled &&
@@ -386,7 +471,10 @@ export default function WorkspaceConversationView({
                       metaKey: event.metaKey,
                       ctrlKey: event.ctrlKey,
                       altKey: event.altKey,
-                      isComposing: event.nativeEvent.isComposing,
+                      isComposing:
+                        event.nativeEvent.isComposing ||
+                        event.keyCode === 229 ||
+                        composing.current,
                     },
                     sendShortcut,
                   )
@@ -395,7 +483,7 @@ export default function WorkspaceConversationView({
                   onSend();
                 }
               }}
-              placeholder={`Ask ChatGPT… ${shortcut} to send`}
+              placeholder={`Ask ${assistantName}… ${shortcut} to send`}
               rows={1}
               className="workspace-composer-input"
             />

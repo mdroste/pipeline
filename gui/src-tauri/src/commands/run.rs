@@ -1,5 +1,11 @@
 use super::*;
 
+mod document;
+mod inputs;
+mod orientation;
+mod report;
+mod visuals;
+
 // This orchestration boundary carries the immutable launch snapshot together
 // with the user-supplied input maps and cancellation generation.
 #[allow(clippy::too_many_arguments)]
@@ -37,6 +43,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         workflow_fingerprint,
         workflow_json,
         specialist_catalog_revision,
+        agent_overrides,
         ..
     } = snapshot;
     pipeline_config::apply_agent_defaults(&mut config, &settings);
@@ -70,7 +77,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         && crate::auto_review::uses_auto_review_contract(&config)
     {
         return Err(
-            "Automatic Paper Review reviews a document, not a browsable source tree. Select the \
+            "This review reads a single document, not a browsable source tree. Select the \
              folder as a LaTeX project (if it contains the paper's TeX source), pick the paper \
              file directly, or switch to a folder-oriented workflow."
                 .to_string(),
@@ -96,7 +103,19 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         .tempdir()
         .map_err(|e| format!("Failed to create run input directory: {e}"))?;
     let staged = extract::stage_selected_source(paper, input_mode, run_input_dir.path())?;
-    let scoped_source = super::reuse_artifacts::snapshot_source(&staged, run_input_dir.path())?;
+    let folder_files = super::reuse_artifacts::folder_file_limit(
+        &config,
+        &settings,
+        input_mode == "folder",
+        &provided_inputs,
+    );
+    let scoped_source = super::reuse_artifacts::capture_source(
+        staged,
+        input_mode,
+        run_input_dir.path(),
+        folder_files,
+    )
+    .await?;
     let captured_path = scoped_source.source_path.as_deref().unwrap_or(paper);
     let captured_path_text = captured_path.to_string_lossy();
     let captured_visual_pdf = if captured_path
@@ -203,6 +222,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             &workflow_json,
         )
         .map_err(|error| format!("Could not save the workflow snapshot: {error}"))?;
+        super::rerun::save_agent_overrides(w, agent_overrides.as_ref())?;
         w.add_text(
             crate::runs::DOCUMENT_TEXT_PATH,
             "Readable document",
@@ -245,196 +265,21 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         }
     }
 
-    // Render page images for PDF inputs, and for LaTeX projects that have a
-    // compiled companion PDF. The semantic LaTeX source remains primary, but
-    // the page renders preserve the visual evidence needed to inspect figures,
-    // tables, equation layout, and extraction quality.
-    let visual_pdf = captured_visual_pdf;
-    if input_mode == "document" {
-        if let (Some(pdf), Some(w)) = (visual_pdf, run_writer.as_mut()) {
-            let out_dir = w.dir().join("artifacts").join("pages");
-            let rendered = crate::run_scope::spawn_blocking(move || {
-                crate::pipeline::extract::render_pdf_pages(
-                    &pdf,
-                    &out_dir,
-                    crate::pipeline::extract::MAX_RENDERED_PDF_PAGES,
-                )
-            })
-            .await;
-            match rendered {
-                Ok(Ok(rendered)) => {
-                    let names = rendered.names;
-                    let count = names.len();
-                    for name in &names {
-                        let page_num = std::path::Path::new(name)
-                            .file_stem()
-                            .and_then(|stem| stem.to_str())
-                            .unwrap_or(name)
-                            .rsplit('-')
-                            .next()
-                            .and_then(|n| n.parse::<u32>().ok());
-                        let label = match page_num {
-                            Some(n) => format!("Page {n}"),
-                            None => name.clone(),
-                        };
-                        if let Err(e) =
-                            w.register_existing(&format!("artifacts/pages/{name}"), &label, "pages")
-                        {
-                            let _ = app.emit_event(
-                                "pipeline:log",
-                                serde_json::json!({
-                                    "line": format!("WARNING: {e}")
-                                }),
-                            );
-                        }
-                    }
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({
-                            "line": format!("Rendered {count} page images into the run artifacts")
-                        }),
-                    );
-                    if rendered.truncated {
-                        let _ = app.emit_event(
-                            "pipeline:log",
-                            serde_json::json!({
-                                "line": format!(
-                                    "WARNING: page image rendering reached the {}-page cap; a longer PDF is truncated in the artifact view",
-                                    crate::pipeline::extract::MAX_RENDERED_PDF_PAGES
-                                )
-                            }),
-                        );
-                    }
-                }
-                Ok(Err(e)) => {
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({
-                            "line": format!("WARNING: page image rendering skipped: {e}")
-                        }),
-                    );
-                }
-                Err(e) => {
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({
-                            "line": format!("WARNING: page image rendering task failed: {e}")
-                        }),
-                    );
-                }
-            }
-        }
-    }
+    visuals::collect_visual_artifacts(
+        app,
+        input_mode,
+        captured_visual_pdf,
+        &extraction,
+        &mut run_writer,
+    )
+    .await;
 
-    if extraction.method == "paddleocr-vl-full" {
-        if let Some(w) = run_writer.as_mut() {
-            let inventory =
-                match crate::pipeline::extract::paddle_full_image_inventory(&extraction.paper_hash)
-                {
-                    Ok(inventory) => inventory,
-                    Err(error) => {
-                        let _ = app.emit_event(
-                            "pipeline:log",
-                            serde_json::json!({
-                                "line": format!(
-                                    "WARNING: full-parser image discovery stopped: {error}"
-                                )
-                            }),
-                        );
-                        Default::default()
-                    }
-                };
-            if !inventory.artifacts.is_empty() {
-                let figures_dir = w.dir().join("artifacts").join("figures");
-                if let Err(error) = std::fs::create_dir_all(&figures_dir) {
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({
-                            "line": format!(
-                                "WARNING: could not create full-parser figures directory: {error}"
-                            )
-                        }),
-                    );
-                } else {
-                    let mut copied = 0usize;
-                    for artifact in &inventory.artifacts {
-                        let Some(name) = artifact
-                            .source_path
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                        else {
-                            continue;
-                        };
-                        if std::fs::copy(&artifact.source_path, figures_dir.join(name)).is_ok()
-                            && w.register_existing(
-                                &format!("artifacts/figures/{name}"),
-                                &artifact.display_name,
-                                "figures",
-                            )
-                            .is_ok()
-                        {
-                            copied += 1;
-                        }
-                    }
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({
-                            "line": format!(
-                                "Collected {copied} image artifact(s) from PaddleOCR-VL Full Parser{}",
-                                if inventory.disambiguated_labels == 0 {
-                                    String::new()
-                                } else {
-                                    format!(
-                                        " (disambiguated {} repeated figure/table label(s))",
-                                        inventory.disambiguated_labels
-                                    )
-                                }
-                            )
-                        }),
-                    );
-                }
-            }
-        }
-    }
     if is_cancelled() {
         return Err("Pipeline cancelled".into());
     }
 
-    // Build the durable, source-neutral document model after visual artifacts
-    // have been collected. It will be enriched with orientation metadata and
-    // persisted after the orientation stage below.
-    let mut document_bundle = None;
-    if let Some(w) = run_writer.as_mut() {
-        match super::reuse_artifacts::build_bundle(
-            &extraction,
-            Some(&captured_document_path),
-            w.dir(),
-        ) {
-            Ok(build) => {
-                for (rel_path, label, group) in &build.added_artifacts {
-                    if let Err(error) = w.register_existing(rel_path, label, group) {
-                        let _ = app.emit_event(
-                            "pipeline:log",
-                            serde_json::json!({
-                                "line": format!("WARNING: {error}")
-                            }),
-                        );
-                    }
-                }
-                document_bundle = Some(build.bundle);
-            }
-            Err(error) => {
-                let _ = app.emit_event(
-                    "pipeline:log",
-                    serde_json::json!({
-                        "line": format!(
-                            "WARNING: could not build the structured document bundle: {error}"
-                        )
-                    }),
-                );
-            }
-        }
-    }
+    let mut document_bundle =
+        document::build_document_bundle(app, &extraction, &captured_document_path, &mut run_writer);
 
     if let Some(writer) = run_writer.as_mut() {
         super::reuse_artifacts::retain_source(&scoped_source, writer)?;
@@ -448,93 +293,31 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         .read_root
         .as_deref()
         .and_then(|path| crate::pipeline::claude::normalize_cli_root(&path.to_string_lossy()));
-    // Every workflow builds an orientation map before its steps run.
-    let orientation_label = if crate::auto_review::uses_auto_review_contract(&config) {
-        "Creating orientation map & review plan"
-    } else {
-        "Creating orientation map"
-    };
-    app.emit_event(
-        "pipeline:stage",
-        serde_json::json!({
-            "stage": "orienting",
-            "id": "orienting",
-            "label": orientation_label,
-            "stepIds": [],
-            "stepLabels": [],
-        }),
-    )
-    .ok();
-    let orient_start = std::time::Instant::now();
-    let survey_template = orient::resolve_survey_template(&config.orientation_prompt, input_mode);
-    let survey_schema = orient::resolve_survey_schema(
-        &config.orientation_prompt,
-        config.orientation_schema.as_ref(),
-        input_mode,
-    );
-    let orientation = orient::build_orientation_map(
+    let usage_before_orientation = crate::pipeline::logging::run_usage();
+    let orientation::OrientedDocument {
+        orientation,
+        orientation_path,
+        orientation_sampling,
+        _orient_tmp,
+    } = orientation::prepare_orientation(
         app,
+        &config,
+        input_mode,
         &extraction,
-        survey_template.as_deref(),
-        survey_schema.as_ref(),
-        scoped_source_read_root.as_deref(),
+        &scoped_source_read_root,
+        &run_input_dir,
+        &mut run_writer,
     )
     .await?;
-    let orient_secs = orient_start.elapsed().as_secs();
-    app.emit_event(
-        "pipeline:log",
-        serde_json::json!({
-            "line": format!("Orientation map built ({}s)", orient_secs)
-        }),
+    // Review limits count document preparation and orientation too.
+    let budget_start = executor::budget::BudgetStart::after_orientation(
+        pipeline_start,
+        &usage_before_orientation,
+        &settings,
     )
-    .ok();
-    if is_cancelled() {
-        return Err("Pipeline cancelled".into());
-    }
+    .await;
 
-    let orientation_json = serde_json::to_string(&orientation)
-        .map_err(|e| format!("Failed to serialize orientation map: {e}"))?;
-    let (orient_file, orientation_path) = write_run_input_file(
-        run_input_dir.path(),
-        "pipeline_orient_",
-        ".json",
-        &orientation_json,
-        "orientation",
-    )?;
-    run_writer
-        .as_mut()
-        .ok_or_else(|| "Durable run workspace disappeared before orientation".to_string())?
-        .add_text(
-            "context/orientation.json",
-            "Orientation map",
-            "context",
-            &orientation_json,
-        )
-        .map_err(|error| format!("Could not save the orientation map: {error}"))?;
-    let orientation_sampling = orient::orientation_sample(&extraction.text);
-    let sampling_json = serde_json::to_string_pretty(&orientation_sampling)
-        .map_err(|error| format!("Could not serialize orientation coverage: {error}"))?;
-    run_writer
-        .as_mut()
-        .ok_or_else(|| "Durable run workspace disappeared before orientation".to_string())?
-        .add_text(
-            "context/orientation_sampling.json",
-            "Orientation sampling coverage",
-            "context",
-            &sampling_json,
-        )
-        .map_err(|error| format!("Could not save orientation sampling coverage: {error}"))?;
-    let orient_bytes = orientation_json.len();
-    app.emit_event(
-        "pipeline:log",
-        serde_json::json!({
-            "line": format!("Orientation map written to temp file ({orient_bytes} bytes)")
-        }),
-    )
-    .ok();
-    let _orient_tmp = orient_file; // hold tempfile alive through step execution
-
-    // Automatic Paper Review stores only its stable Full/Quick skeleton. Once the
+    // Adaptive reviews store only their stable core skeleton. Once the
     // validated router has selected allowlisted IDs, assemble this run's
     // small concrete workflow before any step scheduling or budget checks.
     let mut execution_config = crate::auto_review::materialize_config(&config, &orientation)?;
@@ -542,63 +325,13 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     crate::pipeline_config::validate_runtime_config(&execution_config)?;
     crate::safety::validate_run_budget(&execution_config, &settings)?;
 
-    // Orientation supplies semantic labels and page references that are useful
-    // additions to the deterministic extraction. Persist the structured JSON
-    // and streaming JSONL views. The enriched Markdown projection remains a
-    // model-facing transient; `context/document.md` stays the exact extraction.
-    let mut bundle_json = None;
-    let mut bundle_markdown = None;
-    if let Some(bundle) = document_bundle.as_mut() {
-        bundle.enrich_from_orientation(&orientation);
-        if let Err(error) = bundle.validate() {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({
-                    "line": format!("WARNING: document bundle validation failed: {error}")
-                }),
-            );
-        } else {
-            let markdown = bundle.to_markdown_with_text(&extraction.text);
-            bundle_markdown = Some(markdown);
-            match bundle
-                .to_json_pretty()
-                .and_then(|json| bundle.to_jsonl().map(|jsonl| (json, jsonl)))
-            {
-                Ok((json, jsonl)) => {
-                    let writer = run_writer.as_mut().ok_or_else(|| {
-                        "Durable run workspace disappeared before document bundling".to_string()
-                    })?;
-                    writer
-                        .add_text(
-                            "context/document_bundle.json",
-                            "Document bundle",
-                            "document",
-                            &json,
-                        )
-                        .map_err(|error| format!("Could not save the document bundle: {error}"))?;
-                    writer
-                        .add_text(
-                            "context/blocks.jsonl",
-                            "Document blocks",
-                            "document",
-                            &jsonl,
-                        )
-                        .map_err(|error| format!("Could not save document blocks: {error}"))?;
-                    bundle_json = Some(json);
-                }
-                Err(error) => {
-                    let _ = app.emit_event(
-                        "pipeline:log",
-                        serde_json::json!({
-                            "line": format!(
-                                "WARNING: structured document context was omitted: {error}"
-                            )
-                        }),
-                    );
-                }
-            }
-        }
-    }
+    let (bundle_json, bundle_markdown) = document::persist_oriented_bundle(
+        app,
+        &mut document_bundle,
+        &orientation,
+        &extraction,
+        &mut run_writer,
+    )?;
 
     // New steps receive the readable bundle projection. Runs where bundle
     // construction was unavailable receive the exact canonical document.
@@ -631,115 +364,44 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         .unwrap_or_default();
     let survey_hint = crate::models::survey_hint(&orientation);
 
-    // Extra named inputs (1.2.4): extract each declared slot's file through the
-    // same cascade, write the text to a temp file, and expose its path to
-    // prompts as {input:key}. Temp files are held alive until the run finishes.
-    let mut resolved_inputs: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-    let mut persisted_inputs: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-    let mut extra_tmps: Vec<tempfile::NamedTempFile> = Vec::new();
-    let mut runtime_extra_sources: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-    let mut extra_sources: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-    for (input_index, slot) in config.extraction.extra_inputs.iter().enumerate() {
-        let provided = provided_inputs
-            .get(&slot.key)
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty());
-        let path = match provided {
-            Some(p) => p,
-            None => {
-                if slot.required {
-                    let name = if slot.label.is_empty() {
-                        &slot.key
-                    } else {
-                        &slot.label
-                    };
-                    return Err(format!("Missing required input '{name}'"));
-                }
-                continue;
-            }
-        };
-        extra_sources.insert(slot.key.clone(), path.to_string());
-        run_writer
-            .as_mut()
-            .ok_or_else(|| "Durable run workspace disappeared before named inputs".to_string())?
-            .record_extra_input_source(&slot.key, path)
-            .map_err(|error| format!("Could not record named input '{}': {error}", slot.key))?;
-        let private = run_input_dir
-            .path()
-            .join("named")
-            .join(executor::step_slug(&slot.key));
-        let staged =
-            extract::stage_selected_source(std::path::Path::new(path), &slot.mode, &private)?;
-        let captured = super::reuse_artifacts::snapshot_source(&staged, &private)?;
-        let captured_path = captured
-            .source_path
-            .as_ref()
-            .ok_or("Named input has no captured source")?
-            .to_string_lossy()
-            .into_owned();
-        super::reuse_artifacts::retain_named_source(
-            &slot.key,
-            &captured,
-            run_writer.as_mut().ok_or("Missing durable run workspace")?,
-        )?;
-        runtime_extra_sources.insert(slot.key.clone(), captured_path.clone());
-        let ex = match slot.mode.as_str() {
-            "folder" => extract::ingest_folder_async(&captured_path).await?,
-            _ => extract::extract(app, &captured_path, &config.extraction).await?,
-        };
-        let rel_path = extra_input_artifact_path(input_index, &slot.key);
-        let label = if slot.label.is_empty() {
-            &slot.key
-        } else {
-            &slot.label
-        };
-        let writer = run_writer
-            .as_mut()
-            .ok_or_else(|| "Durable run workspace disappeared before named inputs".to_string())?;
-        writer
-            .add_text(&rel_path, label, "context", &ex.text)
-            .map_err(|error| format!("Could not save named input '{}': {error}", slot.key))?;
-        writer
-            .record_extra_input(&slot.key, &rel_path)
-            .map_err(|error| format!("Could not index named input '{}': {error}", slot.key))?;
-        persisted_inputs.insert(slot.key.clone(), rel_path);
-        let (tf, p) = write_run_input_file(
-            run_input_dir.path(),
-            "pipeline_input_",
-            ".txt",
-            &ex.text,
-            &format!("input '{}'", slot.key),
-        )?;
-        resolved_inputs.insert(slot.key.clone(), p);
-        extra_tmps.push(tf);
-        app.emit_event("pipeline:log", serde_json::json!({
-            "line": format!("Extra input '{}' extracted via {} ({} chars)", slot.key, ex.method, ex.text.len())
-        })).ok();
-    }
+    let inputs::NamedInputs {
+        resolved_inputs,
+        persisted_inputs,
+        extra_tmps,
+        runtime_extra_sources,
+        extra_sources,
+    } = inputs::capture_named_inputs(
+        app,
+        &config,
+        &provided_inputs,
+        folder_files,
+        &run_input_dir,
+        &mut run_writer,
+    )
+    .await?;
     if is_cancelled() {
         return Err("Pipeline cancelled".into());
     }
 
-    let result = executor::execute_steps(
-        app,
-        &execution_config,
-        &orientation_path,
-        &orientation,
-        &paper_text_path,
-        &document_bundle_path,
-        &scoped_source_path,
-        &paper_type,
-        &survey_hint,
-        &variables,
-        &resolved_inputs,
-        &runtime_extra_sources,
-        &std::collections::HashMap::new(), // no preloaded steps for a fresh run
-        artifact_write_dir.as_deref(),
-        &settings,
+    let result = executor::budget::counted_from(
+        budget_start,
+        executor::execute_steps(
+            app,
+            &execution_config,
+            &orientation_path,
+            &orientation,
+            &paper_text_path,
+            &document_bundle_path,
+            &scoped_source_path,
+            &paper_type,
+            &survey_hint,
+            &variables,
+            &resolved_inputs,
+            &runtime_extra_sources,
+            &std::collections::HashMap::new(), // no preloaded steps for a fresh run
+            artifact_write_dir.as_deref(),
+            &settings,
+        ),
     )
     .await?;
     drop(extra_tmps); // keep temp files alive until steps have run
@@ -750,49 +412,23 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         return Err("Pipeline cancelled".into());
     }
 
-    let mut products = crate::findings::build_run_products(&execution_config, &result.outputs);
-    if let Some(writer) = run_writer.as_mut() {
-        for warning in
-            writer.capture_source_evidence(&mut products, std::path::Path::new(&scoped_source_path))
-        {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({ "line": format!("WARNING: {warning}") }),
-            );
-        }
-    }
-    let quality = output::build_report_quality(
-        &extraction,
-        document_bundle.as_ref(),
-        &orientation_sampling,
+    let mut report = report::assemble_report(
+        app,
+        &mut run_writer,
         &execution_config,
-        &result.outputs,
-        &result.failed_steps,
-        &products,
-    );
-    let report = PipelineReport {
+        result,
+        &extraction,
+        &document_bundle,
+        &orientation_sampling,
         orientation,
-        step_outputs: result.outputs,
-        failed_steps: result.failed_steps,
-        products,
-        quality,
-        referee_reports: vec![],
-        editor: None,
-        report_date: chrono::Local::now().date_naive(),
-        paper_hash: extraction.paper_hash.clone(),
-    };
+        &scoped_source_path,
+    );
 
-    // Optional diff
-    let mut diff_text = None;
-    if diff || settings.auto_revision_reconciliation {
-        if let Ok(Some(prior)) =
-            crate::runs::load_latest_report_for_input(paper_path, &extraction.paper_hash)
-        {
-            if let Ok(dt) = reconcile::reconcile(app, &prior, &report).await {
-                diff_text = Some(dt);
-            }
-        }
-    }
+    let diff_text = if diff || settings.auto_revision_reconciliation {
+        revision_diff(app, paper_path, &extraction.paper_hash, &mut report).await
+    } else {
+        None
+    };
     let elapsed = pipeline_start.elapsed();
     let markdown = output::render_markdown(&report, diff_text.as_deref(), elapsed, &settings);
 
@@ -819,4 +455,97 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             parent_run_id: None,
         },
     )
+}
+
+/// The comparison with this paper's previous Review. When one was asked for
+/// and cannot be made, the report says so: a missing section must not read as
+/// a paper with nothing to compare.
+async fn revision_diff(
+    app: &crate::emit::EventBus,
+    paper_path: &str,
+    paper_hash: &str,
+    report: &mut crate::models::PipelineReport,
+) -> Option<String> {
+    let compared = match crate::runs::load_latest_report_for_input(paper_path, paper_hash) {
+        Ok(None) => return None,
+        Ok(Some(prior)) => reconcile::reconcile(app, &prior, report).await,
+        Err(error) => Err(error),
+    };
+    match compared {
+        Ok(diff) => Some(diff),
+        Err(error) => {
+            record_failed_revision_diff(app, report, &error);
+            None
+        }
+    }
+}
+
+fn record_failed_revision_diff(
+    app: &crate::emit::EventBus,
+    report: &mut crate::models::PipelineReport,
+    error: &str,
+) {
+    crate::pipeline::logging::emit(app, format!("WARNING: revision diff failed: {error}"));
+    report.quality.limitations.push(
+        "The comparison with the previous Review of this paper could not be completed, so this report has no revision diff."
+            .to_string(),
+    );
+}
+
+#[cfg(test)]
+mod revision_diff_tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct Lines(std::sync::Mutex<Vec<String>>);
+
+    impl crate::emit::Events for Lines {
+        fn emit_event(
+            &self,
+            event: &str,
+            payload: serde_json::Value,
+        ) -> Result<(), crate::emit::EmitError> {
+            if event == "pipeline:log" {
+                self.0.lock().unwrap().push(payload.to_string());
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_failed_revision_diff_is_named_in_the_report_and_the_log() {
+        let lines = std::sync::Arc::new(Lines::default());
+        let app: crate::emit::EventBus = lines.clone();
+        let mut report = crate::models::PipelineReport {
+            orientation: serde_json::Value::Null,
+            step_outputs: Vec::new(),
+            failed_steps: Vec::new(),
+            products: Default::default(),
+            quality: crate::models::ReportQuality {
+                schema_version: 2,
+                status: "done".into(),
+                ..Default::default()
+            },
+            referee_reports: Vec::new(),
+            editor: None,
+            report_date: chrono::Local::now().date_naive(),
+            paper_hash: "test".into(),
+        };
+
+        record_failed_revision_diff(&app, &mut report, "You've hit your limit");
+
+        let markdown = crate::output::render_markdown(
+            &report,
+            None,
+            std::time::Duration::from_secs(1),
+            &crate::settings::Settings::default(),
+        );
+        assert!(markdown.contains("no revision diff"), "{markdown}");
+        assert!(lines
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|line| line.contains("revision diff failed: You've hit your limit")));
+    }
 }

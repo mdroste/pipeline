@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ExportControls from "./ExportControls";
 import type { PipelineReport } from "../lib/types";
@@ -81,10 +81,12 @@ describe("ExportControls", () => {
     await openMenu();
     expect(
       screen.getByRole("menuitem", { name: /Shareable report/ }),
-    ).toHaveTextContent("No source or raw responses");
+    ).toHaveTextContent(
+      "Excludes unverified findings, source documents, and raw model responses",
+    );
     expect(
-      screen.getByRole("menuitem", { name: /Forensic archive/ }),
-    ).toHaveTextContent("Sensitive");
+      screen.getByRole("menuitem", { name: /Complete review archive/ }),
+    ).toHaveTextContent("Includes private material");
     expect(
       screen.getByRole("menuitem", { name: "Custom selection…" }),
     ).toBeVisible();
@@ -131,7 +133,7 @@ describe("ExportControls", () => {
     await openMenu();
     await userEvent
       .setup()
-      .click(screen.getByRole("menuitem", { name: /Forensic archive/ }));
+      .click(screen.getByRole("menuitem", { name: /Complete review archive/ }));
     expect(confirmDialog.mock.calls[0][0]).toMatch(
       /source documents, raw model responses, logs/i,
     );
@@ -151,11 +153,32 @@ describe("ExportControls", () => {
       .click(
         screen.getByRole("checkbox", { name: "Source documents · Sensitive" }),
       );
-    expect(screen.getByText(/selection is sensitive/i)).toBeVisible();
+    expect(
+      screen.getByText(/selection includes private material/i),
+    ).toBeVisible();
     await userEvent
       .setup()
       .click(screen.getByRole("button", { name: "Export selected items…" }));
     expect(confirmDialog).toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("confirms a custom package that holds the full report", async () => {
+    confirmDialog.mockResolvedValueOnce(false);
+    render(<ExportControls runId="saved-run" markdown="# report" />);
+    await openMenu();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("menuitem", { name: "Custom selection…" }));
+    expect(
+      screen.getByRole("checkbox", {
+        name: "Full report · Includes unverified findings",
+      }),
+    ).toBeChecked();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Export selected items…" }));
+    expect(confirmDialog.mock.calls[0][0]).toMatch(/unverified findings/);
     expect(invoke).not.toHaveBeenCalled();
   });
 
@@ -184,6 +207,75 @@ describe("ExportControls", () => {
     });
   });
 
+  it("closes the menu on Escape, on an outside press, and moves with arrows", async () => {
+    const user = userEvent.setup();
+    render(<ExportControls markdown="# report" />);
+    const trigger = screen.getByRole("button", { name: /Export/ });
+    await user.click(trigger);
+    expect(
+      screen.getByRole("menuitem", { name: "Save Markdown…" }),
+    ).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(
+      screen.getByRole("menuitem", { name: "Print / save as PDF…" }),
+    ).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("closes the custom selection on Escape and on an outside press", async () => {
+    const user = userEvent.setup();
+    render(<ExportControls runId="saved-run" markdown="# report" />);
+    const open = async () => {
+      await openMenu();
+      await user.click(
+        screen.getByRole("menuitem", { name: "Custom selection…" }),
+      );
+      return screen.getByRole("dialog", { name: "Custom export selection" });
+    };
+    await open();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await open();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("floats the package result over the report and lets it be dismissed", async () => {
+    openDialog.mockResolvedValueOnce("/tmp/exports");
+    invoke.mockResolvedValueOnce({
+      exportedPath: "/tmp/exports/package",
+      fileCount: 1,
+      bytes: 10,
+      checksum: "abc",
+      mode: "forensic",
+      sensitivity: "sensitive",
+    });
+    confirmDialog.mockResolvedValueOnce(true);
+    render(<ExportControls runId="saved-run" markdown="# report" />);
+    await openMenu();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("menuitem", { name: /Complete review archive/ }));
+    const card = await screen.findByText(/Complete archive ready/);
+    expect(card.closest("[aria-live]")).toHaveClass("absolute");
+    expect(notify).toHaveBeenCalledWith(
+      "Complete archive exported.",
+      "success",
+    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Dismiss export result" }));
+    expect(
+      screen.queryByText(/Complete archive ready/),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps an unsaved core package inside the same menu", async () => {
     openDialog.mockResolvedValueOnce("/tmp/core");
     invoke.mockResolvedValueOnce(undefined);
@@ -198,7 +290,7 @@ describe("ExportControls", () => {
     await userEvent
       .setup()
       .click(
-        screen.getByRole("menuitem", { name: "Export unsaved core package…" }),
+        screen.getByRole("menuitem", { name: "Export current report files…" }),
       );
     expect(invoke).toHaveBeenCalledWith("save_all_artifacts", {
       dir: "/tmp/core",

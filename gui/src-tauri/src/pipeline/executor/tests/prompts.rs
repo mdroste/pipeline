@@ -3,6 +3,49 @@
 use super::*;
 
 #[test]
+fn declaude_prompts_distinguish_missing_selected_reports_from_skipped_slots() {
+    let prior = vec![
+        StepOutput {
+            step_id: "declaude_referee_1".into(),
+            raw_text: "Source quotes {step:declaude_referee_2}".into(),
+            ..Default::default()
+        },
+        StepOutput {
+            step_id: "declaude_referee_3".into(),
+            raw_text: "_(skipped: run_if condition not met)_".into(),
+            skipped: true,
+            ..Default::default()
+        },
+    ];
+    for template in [
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/prompts/declaude/consolidate.md"
+        )),
+        include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/prompts/declaude/verify.md"
+        )),
+    ] {
+        let prompt = expand_template(
+            template,
+            "/orientation.json",
+            "",
+            &prior,
+            "/document.md",
+            "",
+            "",
+        )
+        .unwrap();
+        assert!(prompt.contains("TOPIC REFEREE 1\nSource quotes {step:declaude_referee_2}"));
+        assert!(prompt.contains("TOPIC REFEREE 3\n_(skipped: run_if condition not met)_"));
+        assert!(!prompt.contains("TOPIC REFEREE 2\n{step:"));
+        assert!(prompt.contains("no output"));
+        assert!(prompt.contains("/orientation.json"));
+    }
+}
+
+#[test]
 fn build_parallel_prompt_pdf() {
     let step = make_step("test", Phase::Parallel);
     let template = "{paper_type}\n{orientation}\n{step_prompt}\n{paper_path}\n{figure_hint}";

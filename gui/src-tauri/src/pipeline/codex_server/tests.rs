@@ -3,7 +3,7 @@ use super::{
     invocation::run_connected,
 };
 use crate::agent_runtime::codex::AppServerClient;
-use crate::pipeline::claude::LlmOverrides;
+use crate::pipeline::providers::LlmOverrides;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;

@@ -47,6 +47,25 @@ fn scoped_record(
     deny_unknown_fields
 )]
 pub enum StudioAction {
+    CreateFolder {
+        path: String,
+    },
+    MoveEntry {
+        from: String,
+        to: String,
+    },
+    TrashEntry {
+        path: String,
+    },
+    ImportFile {
+        directory: String,
+        source: String,
+    },
+    CreateFile {
+        checkpoint_id: Option<String>,
+        path: String,
+        base64: String,
+    },
     SaveText {
         checkpoint_id: Option<String>,
         path: String,
@@ -172,6 +191,30 @@ pub fn studio_mutate(store: &Store, request: StudioMutation) -> WorkbenchResult<
     store.connection()?.execute("INSERT INTO project_operations VALUES(?1,?2,?3,?4)",params![request.operation_id,digest,json!({"outcome":"unknown","recovery":"Refresh and inspect records; no automatic retry"}).to_string(),now()]).map_err(err)?;
     let ws = &request.workspace_id;
     let value = match request.action {
+        StudioAction::CreateFolder { path } => {
+            super::file_browser::create_folder(store, ws, &path)?
+        }
+        StudioAction::MoveEntry { from, to } => {
+            super::file_browser::move_entry(store, ws, &from, &to)?
+        }
+        StudioAction::TrashEntry { path } => super::file_browser::trash_entry(store, ws, &path)?,
+        StudioAction::ImportFile { directory, source } => {
+            super::file_browser::import_file(store, ws, &directory, &source)?
+        }
+        StudioAction::CreateFile {
+            checkpoint_id,
+            path,
+            base64,
+        } => {
+            use base64::Engine as _;
+            if base64.len() > (MAX_FILE as usize).div_ceil(3) * 4 {
+                return Err(WorkbenchError::invalid("New files are limited to 32 MiB"));
+            }
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(base64)
+                .map_err(err)?;
+            super::assistant_files::create_file(store, ws, checkpoint_id.as_deref(), &path, &bytes)?
+        }
         StudioAction::SaveText {
             checkpoint_id,
             path,
@@ -404,6 +447,7 @@ fn artifact_bytes(
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .map_err(err)?;
+    crate::workbench::store::require_available("This saved file", &path)?;
     let path = fs::canonicalize(path).map_err(err)?;
     if !path.starts_with(fs::canonicalize(store.root_path().join("blobs")).map_err(err)?) {
         return Err(WorkbenchError::invalid("Artifact escaped private storage"));
@@ -432,6 +476,7 @@ fn new_or_id(object_id: Option<&str>) -> WorkbenchResult<String> {
     }
 }
 fn exact_text(store: &Store, ws: &str, revision: &str) -> WorkbenchResult<String> {
+    documents::require_text(store, ws, revision)?;
     let view = read_document(store, ws, revision, 0, None)?;
     if view.total_bytes > 2 * 1024 * 1024 {
         return Err(WorkbenchError::invalid(
@@ -447,6 +492,12 @@ fn exact_text(store: &Store, ws: &str, revision: &str) -> WorkbenchResult<String
         }
         offset = part.end;
         text.push_str(&part.text);
+    }
+    // A scanned PDF extracts successfully, as nothing but page breaks.
+    if text.trim().is_empty() {
+        return Err(WorkbenchError::invalid(
+            "This document has no readable text. A scanned PDF needs a version with a text layer.",
+        ));
     }
     Ok(text)
 }
@@ -481,7 +532,10 @@ pub fn stage_publication_files(
             "Staged publication exceeds its file or byte limit",
         ));
     }
-    let root = files::SafeRoot::open(&session_task_root(store, ws, checkpoint)?)?;
+    let task_root = session_task_root(store, ws, checkpoint)?;
+    // Capture below refuses a copy with a job in it, so refuse before writing.
+    research::jobs::ensure_copy_free(ws, &task_root)?;
+    let root = files::SafeRoot::open(&task_root)?;
     for (path, expected, bytes) in &files_to_write {
         files::relative(path)?;
         if bytes.len() > 8 * 1024 * 1024 {
@@ -496,7 +550,7 @@ pub fn stage_publication_files(
                 "Destination {path} changed; refresh the task copy before staging"
             )));
         }
-        if root.executable(path)? {
+        if root.marked_as_program(path)? {
             return Err(WorkbenchError::invalid(
                 "Publication files cannot overwrite an executable file",
             ));
@@ -506,14 +560,10 @@ pub fn stage_publication_files(
     for (path, expected, bytes) in files_to_write {
         if root.optional_read(&path)?.as_deref() != Some(bytes.as_slice()) {
             let claim = id("publication")?;
-            root.replace(
-                &path,
-                expected.as_deref(),
-                false,
-                Some(&bytes),
-                false,
-                &claim,
-            )?;
+            // Not a program by the check above, though a volume with invented
+            // permissions shows the bit on every file.
+            let mode = root.executable(&path)?;
+            root.replace(&path, expected.as_deref(), mode, Some(&bytes), mode, &claim)?;
             root.clear_claim(&path, &claim)?;
         }
         staged.push(json!({"path":path,"hash":hash(&bytes)}));

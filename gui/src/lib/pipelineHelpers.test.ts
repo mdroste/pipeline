@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   computeWaves,
   findUnknownPlaceholders,
+  inputSlotExtensions,
   lintCrossStepReferences,
   placeholdersFor,
+  type PromptContext,
 } from "./pipelineHelpers";
 import type { StepConfig } from "./types";
 
@@ -137,6 +139,57 @@ describe("findUnknownPlaceholders", () => {
   });
 });
 
+describe("findUnknownPlaceholders for run values", () => {
+  it("accepts the placeholders a parallel step prompt substitutes", () => {
+    expect(
+      findUnknownPlaceholders(
+        "{var:x} {input:y} {item} {orientation} {input_path} {document_bundle}",
+        { kind: "parallel" },
+      ),
+    ).toEqual([]);
+  });
+
+  it("accepts run values in the sequential prompt and the template", () => {
+    const text = "{var:audience} {input:letter}";
+    expect(
+      findUnknownPlaceholders(text, { kind: "sequential", otherStepIds: [] }),
+    ).toEqual([]);
+    expect(
+      findUnknownPlaceholders(`${text} {item}`, { kind: "parallel_template" }),
+    ).toEqual([]);
+  });
+
+  it("still warns where the executor leaves a token unchanged", () => {
+    const tokens = (text: string, ctx: PromptContext) =>
+      findUnknownPlaceholders(text, ctx).map((hit) => hit.match);
+    expect(tokens("{item}", { kind: "sequential", otherStepIds: [] })).toEqual([
+      "{item}",
+    ]);
+    expect(tokens("{var:x}", { kind: "merge" })).toEqual(["{var:x}"]);
+    expect(tokens("{input:y}", { kind: "orientation" })).toEqual(["{input:y}"]);
+    expect(tokens("{prior_outputs} {step:a}", { kind: "parallel" })).toEqual([
+      "{prior_outputs}",
+      "{step:a}",
+    ]);
+  });
+});
+
+describe("inputSlotExtensions", () => {
+  it("uses the slot's own types, or every document type a run accepts", () => {
+    expect(inputSlotExtensions({ key: "rubric", extensions: ["md"] })).toEqual([
+      "md",
+    ]);
+    expect(inputSlotExtensions({ key: "rubric", extensions: [] })).toEqual([
+      "pdf",
+      "tex",
+      "docx",
+      "md",
+      "markdown",
+      "txt",
+    ]);
+  });
+});
+
 describe("placeholdersFor", () => {
   it("offers {input_path} with {paper_path} kept as a legacy alias", () => {
     const seq = placeholdersFor({ kind: "sequential", otherStepIds: [] }).map(
@@ -151,8 +204,17 @@ describe("placeholdersFor", () => {
     expect(tmpl).toContain("{paper_path}");
   });
 
-  it("returns no placeholders for parallel step prompts", () => {
-    expect(placeholdersFor({ kind: "parallel" })).toEqual([]);
+  it("offers a parallel step everything the executor substitutes in it", () => {
+    expect(placeholdersFor({ kind: "parallel" }).map((p) => p.token)).toEqual([
+      "{orientation}",
+      "{input_path}",
+      "{document_bundle}",
+      "{paper_type}",
+      "{figure_hint}",
+      "{output_format}",
+      "{paper_path}",
+      "{item}",
+    ]);
   });
 
   it("offers runtime catalog placeholders for Auto Review orientation prompts", () => {
@@ -273,5 +335,25 @@ describe("lintCrossStepReferences", () => {
     expect(warnings.some((w) => w.message.includes("canonical JSON"))).toBe(
       true,
     );
+  });
+
+  it("accepts analyzer steps as fan-out sources but flags Markdown steps", () => {
+    const fanOut = (step: string) => ({
+      glob: "",
+      max: 10,
+      artifact: { step, pointer: "/items" },
+    });
+    const config = baseConfig([
+      { id: "check", kind: "analyzer" },
+      { id: "notes" },
+      { id: "per_check", for_each: fanOut("check") },
+      { id: "per_note", for_each: fanOut("notes") },
+    ]);
+    const warnings = lintCrossStepReferences(config).filter((w) =>
+      w.message.includes("fans out over"),
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].stepId).toBe("per_note");
+    expect(warnings[0].message).toContain("returns Markdown");
   });
 });

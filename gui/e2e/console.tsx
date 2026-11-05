@@ -7,7 +7,7 @@ import type {
   LogEntry,
   TokenTotals,
   UsageState,
-} from "../src/hooks/usePipeline";
+} from "../src/lib/reviewRuntimeTypes";
 import "../src/App.css";
 
 const params = new URLSearchParams(window.location.search);

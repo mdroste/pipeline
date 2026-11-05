@@ -8,8 +8,8 @@
 //! └── native/    native runtimes + GGUF models
 //! ```
 //!
-//! Installs stream progress to the frontend via `engines:phase` /
-//! `engines:log` events.
+//! Installs stream progress to the frontend via `engines:phase`,
+//! `engines:download`, and `engines:log` events.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -243,11 +243,16 @@ fn uv_artifact_name(artifact: &UvArtifact) -> String {
     }
 }
 
-fn uv_download_url(artifact: &UvArtifact) -> String {
-    format!(
-        "https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/{}",
+/// GitHub first, then Astral's mirror of the same release assets.
+fn uv_download_urls(artifact: &UvArtifact) -> Vec<String> {
+    let path = format!(
+        "uv/releases/download/{UV_VERSION}/{}",
         uv_artifact_name(artifact)
-    )
+    );
+    vec![
+        format!("https://github.com/astral-sh/{path}"),
+        format!("https://releases.astral.sh/github/{path}"),
+    ]
 }
 
 fn python_artifact_for(os: &str, arch: &str) -> Option<&'static PythonArtifact> {
@@ -266,11 +271,16 @@ fn python_artifact() -> Result<&'static PythonArtifact, String> {
     })
 }
 
-fn python_download_url(artifact: &PythonArtifact) -> String {
-    format!(
-        "https://releases.astral.sh/github/python-build-standalone/releases/download/{PYTHON_BUILD_RELEASE}/cpython-{PYTHON_VERSION}%2B{PYTHON_BUILD_RELEASE}-{}-install_only_stripped.tar.gz",
+/// Astral's mirror first, then the same release assets on GitHub.
+fn python_download_urls(artifact: &PythonArtifact) -> Vec<String> {
+    let path = format!(
+        "python-build-standalone/releases/download/{PYTHON_BUILD_RELEASE}/cpython-{PYTHON_VERSION}%2B{PYTHON_BUILD_RELEASE}-{}-install_only_stripped.tar.gz",
         artifact.target
-    )
+    );
+    vec![
+        format!("https://releases.astral.sh/github/{path}"),
+        format!("https://github.com/astral-sh/{path}"),
+    ]
 }
 
 fn standalone_python(root: &Path) -> PathBuf {
@@ -283,19 +293,14 @@ fn standalone_python(root: &Path) -> PathBuf {
 
 fn full_parser_support_for(os: &str, arch: &str) -> Result<(), String> {
     if os == "macos" && arch == "x86_64" {
-        return Err(
-            "The official PaddlePaddle 3.2.1 runtime has no Intel macOS wheel, so PaddleOCR-VL Full Parser is unavailable on this Mac."
-                .to_string(),
-        );
+        return Err("PaddleOCR-VL Full Parser doesn't run on Intel Macs.".to_string());
     }
     match (os, arch) {
         ("macos", "aarch64")
         | ("windows", "x86_64")
         | ("linux", "x86_64")
         | ("linux", "aarch64") => Ok(()),
-        _ => Err(format!(
-            "The full PaddleOCR-VL parser is not packaged for {os}/{arch}"
-        )),
+        _ => Err("PaddleOCR-VL Full Parser isn't available for this computer.".to_string()),
     }
 }
 
@@ -322,22 +327,29 @@ const PADDLE_RECOGNITION_COMPONENT: EngineSpec = EngineSpec {
     est_disk_mb: 2300,
 };
 
-pub const ENGINES: &[EngineSpec] = &[EngineSpec {
-    id: "paddleocr-vl-parser",
-    label: "PaddleOCR-VL 1.6 Full Parser",
-    description: "Includes the official PaddleOCR layout client, PP-DocLayoutV3, structured \
-                      reading order, title hierarchy, formula metadata, and cross-page table \
-                      reconstruction, plus the managed Q8 model and llama.cpp server; no \
-                      system Python, pip, Conda, or Docker is required.",
-    est_download_mb: 2900,
-    est_disk_mb: 3800,
-}];
+pub const ENGINES: &[EngineSpec] = &[
+    EngineSpec {
+        id: "paddleocr-vl-parser",
+        label: "PaddleOCR-VL 1.6 Full Parser",
+        description: "Reads PDFs on this computer. Pipeline installs everything it needs.",
+        est_download_mb: 2900,
+        est_disk_mb: 3800,
+    },
+    EngineSpec {
+        id: GPU_RECOGNITION_ID,
+        label: "Graphics card recognition",
+        description: "Reads pages with your graphics card instead of the processor. Works with NVIDIA, AMD, and Intel graphics.",
+        est_download_mb: 1900,
+        est_disk_mb: 1900,
+    },
+];
 
 const PADDLE_BASE_INSTALLED_MB: u64 = 2300;
 const PADDLE_PARSER_ADDON_INSTALLED_MB: u64 = 1500;
 const PADDLE_BASE_STAGING_HEADROOM_MB: u64 = 600;
 const PADDLE_PARSER_STAGING_HEADROOM_MB: u64 = 700;
 const PADDLE_SIDECAR_REFRESH_HEADROOM_MB: u64 = 16;
+const GPU_RECOGNITION_INSTALLED_MB: u64 = 1900;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum InstallSpacePlan {
@@ -346,6 +358,7 @@ enum InstallSpacePlan {
     ParserAddOn,
     ParserRepairOrUpgrade,
     ParserSidecarRefresh,
+    GpuRecognition,
 }
 
 impl InstallSpacePlan {
@@ -356,6 +369,7 @@ impl InstallSpacePlan {
             Self::ParserAddOn => "full-parser add-on",
             Self::ParserRepairOrUpgrade => "full-parser repair or upgrade",
             Self::ParserSidecarRefresh => "full-parser sidecar refresh",
+            Self::GpuRecognition => "graphics card recognition",
         }
     }
 }
@@ -388,6 +402,10 @@ fn install_space_requirement(
         "paddleocr-vl-parser" => Ok((
             InstallSpacePlan::ParserAddOn,
             PADDLE_PARSER_ADDON_INSTALLED_MB + PADDLE_PARSER_STAGING_HEADROOM_MB,
+        )),
+        GPU_RECOGNITION_ID => Ok((
+            InstallSpacePlan::GpuRecognition,
+            GPU_RECOGNITION_INSTALLED_MB + PADDLE_BASE_STAGING_HEADROOM_MB,
         )),
         _ => Err(format!("Unknown engine '{engine_id}'")),
     }
@@ -444,6 +462,18 @@ pub struct PaddleEnginePaths {
     /// Digest of the verified immutable runtime closure. Cache identities use
     /// this release-bound value rather than mutable path metadata.
     pub integrity_sha256: String,
+    /// The server is the Windows Vulkan build, so a load failure usually means
+    /// the graphics card, not the install.
+    pub gpu: bool,
+}
+
+/// How an installed parser reads page regions. Recorded in its manifest when
+/// the runtime is installed. On Windows, the optional graphics-card component
+/// replaces built-in recognition with a managed server.
+#[derive(Debug, Clone)]
+pub enum PaddleRecognition {
+    Llama(PaddleEnginePaths),
+    BuiltIn { model_dir: PathBuf },
 }
 
 #[derive(Debug, Clone)]
@@ -452,7 +482,7 @@ pub struct PaddleFullParserPaths {
     pub script: PathBuf,
     pub model_cache: PathBuf,
     pub layout_model: PathBuf,
-    pub paddle: PaddleEnginePaths,
+    pub recognition: PaddleRecognition,
     pub release: String,
     pub integrity_sha256: String,
     pub sidecar_sha256: String,
@@ -509,20 +539,33 @@ fn find_file_named(root: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
+mod download;
+mod gpu_recognition;
 mod installer_io;
 mod integrity;
+mod layout_model;
+mod native_paths;
+mod native_recognition;
 mod operations;
 mod paddle_install;
 mod process;
+mod rename;
 mod runtime;
 mod storage;
 
 pub use installer_io::*;
+pub(crate) use native_paths::native_path;
 pub use operations::*;
+pub(crate) use rename::rename_when_free;
 pub use runtime::*;
 pub use storage::*;
 
+use download::*;
+use gpu_recognition::*;
 use integrity::*;
+use layout_model::*;
+use native_paths::ensure_native_path;
+use native_recognition::*;
 use paddle_install::*;
 use process::*;
 

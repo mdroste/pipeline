@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import useDraftText from "../../hooks/useDraftText";
 import {
   remoteLabel,
+  remoteSummary,
   repositoryClient,
   type RepositoryStatus,
 } from "../../lib/repositoryClient";
@@ -19,6 +21,12 @@ import {
   formatDate,
   type SurfaceApi,
 } from "./shared";
+
+// A date input reports a complete value for every digit typed into the year
+// (2 becomes 0002), so only a four-digit year is ever saved.
+const isTargetDate = (text: string) =>
+  /^\d{4}-\d{2}-\d{2}$/.test(text) && Number(text.slice(0, 4)) >= 1000;
+
 export default function ProjectSettings({
   data,
   workspace,
@@ -50,6 +58,23 @@ export default function ProjectSettings({
   const [targetLabel, setTargetLabel] = useState(
     () => data.settings.body.targetLabel ?? "",
   );
+  // Saved on blur, Enter, or a short pause on a complete date, so a two-digit
+  // month or day is never saved half-typed.
+  const savedDate = data.settings.body.targetDate ?? "";
+  const partialDate = useRef(false);
+  const commitDate = (text: string) => {
+    if (text === savedDate) return;
+    // Empty with some segments still filled is unfinished, not a clear.
+    if (text ? isTargetDate(text) : !partialDate.current)
+      void saveSettings({ targetDate: text || null });
+  };
+  const targetDate = useDraftText(savedDate, commitDate);
+  useEffect(() => {
+    if (targetDate.value === savedDate || !isTargetDate(targetDate.value))
+      return;
+    const timer = setTimeout(() => commitDate(targetDate.value), 800);
+    return () => clearTimeout(timer);
+  }, [targetDate.value, savedDate, saveSettings]);
   // Local Git state of the attached folder; null when it is not a repository.
   const [repository, setRepository] = useState<RepositoryStatus | null>(null);
   const [checking, setChecking] = useState(false);
@@ -128,9 +153,8 @@ export default function ProjectSettings({
               </select>
             </label>
             <p className={muted}>
-              Notes, action items, and comparisons refer to this version.
-              Importing a newer file does not change the choice until you make
-              it here.
+              Notes, action items, and comparisons use this version. Importing a
+              newer file doesn’t change it.
             </p>
             <label className="block text-xs">
               Reference results
@@ -157,14 +181,14 @@ export default function ProjectSettings({
               </select>
             </label>
             <p className={muted}>
-              The run that new results are compared against. Runs appear here
-              after an experiment completes in Research tools.
+              Choose the completed experiment to use as the baseline for new
+              results.
             </p>
             {data.ledger.staleClaims.length > 0 && (
               <p className="text-xs text-amber-700 dark:text-amber-300">
                 {data.ledger.staleClaims.length === 1
-                  ? "One claim rests on evidence that is out of date."
-                  : `${data.ledger.staleClaims.length} claims rest on evidence that is out of date.`}
+                  ? "One claim uses out-of-date evidence."
+                  : `${data.ledger.staleClaims.length} claims use out-of-date evidence.`}
               </p>
             )}
           </Card>
@@ -188,31 +212,31 @@ export default function ProjectSettings({
             >
               <p className="text-sm">
                 {repository.remote
-                  ? `${repository.remote.owner ? `${repository.remote.owner}/` : ""}${repository.remote.repo} on ${remoteLabel(repository.remote)}`
+                  ? remoteSummary(repository.remote)
                   : "Local Git repository with no remote"}
                 {repository.branch ? ` · branch ${repository.branch}` : ""}
               </p>
               <p className={muted}>
                 {repository.upstream
-                  ? `${repository.ahead} to push, ${repository.behind} to pull, as of ${repository.fetchedAt ? formatDate(repository.fetchedAt) : "a check that has not happened yet"}.`
+                  ? repository.fetchedAt
+                    ? `${repository.ahead} to push, ${repository.behind} to pull, as of ${formatDate(repository.fetchedAt)}.`
+                    : `${repository.ahead} to push and ${repository.behind} to pull. Not checked against the remote yet.`
                   : "This branch does not track a remote branch."}{" "}
                 {repository.changed + repository.untracked > 0 &&
                   `${repository.changed} uncommitted and ${repository.untracked} untracked files.`}
               </p>
               <p className={muted}>
-                The overview reads this from the folder&rsquo;s own Git data.
-                Checking the remote runs <code>git fetch</code> with your Git
-                credentials and happens only when you ask; nothing is committed,
-                pushed, or merged.
+                This comes from the folder&rsquo;s Git data. The Check button
+                runs <code>git fetch</code> with your Git credentials. It
+                doesn&rsquo;t commit, push, or merge.
               </p>
             </Card>
           )}
 
           <Card title="Target date">
             <p className={muted}>
-              One optional date to keep in view, such as a submission or
-              resubmission deadline. It appears at the top of the project
-              overview.
+              Shows at the top of the project overview. Use it for a deadline,
+              such as a submission or resubmission.
             </p>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block text-xs">
@@ -221,10 +245,11 @@ export default function ProjectSettings({
                   type="date"
                   aria-label="Target date"
                   className={`${input} mt-1`}
-                  value={data.settings.body.targetDate ?? ""}
-                  onChange={(e) =>
-                    void saveSettings({ targetDate: e.target.value || null })
-                  }
+                  {...targetDate}
+                  onChange={(e) => {
+                    partialDate.current = e.target.validity.badInput;
+                    targetDate.onChange(e);
+                  }}
                 />
               </label>
               <label className="block text-xs">
@@ -258,9 +283,9 @@ export default function ProjectSettings({
               <p className="break-all font-mono text-xs">{workspace.root}</p>
             ) : (
               <p className={muted}>
-                No folder attached. Attach the folder that holds the paper and
-                its code to list its files and let the assistant propose edits
-                in a separate working copy.
+                No folder attached. Attach the folder with your paper and code
+                so the assistant can see the files and suggest edits in a
+                separate copy.
               </p>
             )}
             {workspace?.missingRootAt && (

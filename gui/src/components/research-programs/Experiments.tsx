@@ -7,6 +7,8 @@ import type {
   GridStatus,
 } from "../../lib/programClient";
 import { studioClient } from "../../lib/studioClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import { confirmDialog } from "../DialogService";
 import Jobs from "../research-studio/Jobs";
 import {
   button,
@@ -19,7 +21,19 @@ import {
   useProgram,
   type DeskProps,
 } from "./shared";
-export default function Experiments(props: DeskProps & { active?: boolean }) {
+/** What each grid state can do next, with the label for each control. */
+const GRID_CONTROLS: Record<string, [control: string, label: string][]> = {
+  running: [
+    ["pause", "Pause grid"],
+    ["cancel", "Cancel grid"],
+  ],
+  attention: [
+    ["reconcile", "Reconcile"],
+    ["cancel", "Cancel grid"],
+  ],
+  paused: [["cancel", "Cancel grid"]],
+};
+export default function Experiments(props: DeskProps) {
   const { workspaceId, onError } = props;
   const p = useProgram(props, ["experiment_plan"]);
   const [title, setTitle] = useState("Specification comparison"),
@@ -43,6 +57,7 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
       return;
     let alive = true;
     const timer = setInterval(() => {
+      if (document.visibilityState === "hidden") return;
       void p
         .call<GridStatus>({ action: "experimentStatus", id: preview.record.id })
         .then((v) => {
@@ -99,10 +114,9 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
       <section className={card}>
         <h2 className="font-semibold">Specification grids</h2>
         <p className={muted}>
-          Enumerate the complete comparison before launch. Each specification
-          gets a fresh copy of the captured inputs; runs proceed serially.
-          Parameters are available to the script through
-          PIPELINE_PARAMETERS_FILE.
+          Choose all specifications before starting. Pipeline runs them one at a
+          time, each with a new copy of the saved inputs. Scripts read
+          parameters from PIPELINE_PARAMETERS_FILE.
         </p>
         <Field label="Experiment title">
           <input
@@ -118,13 +132,13 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
             onChange={(e) => setQuestion(e.target.value)}
           />
         </Field>
-        <Field label="Captured baseline plan">
+        <Field label="Saved baseline plan">
           <select
             className={input}
             value={base}
             onChange={(e) => setBase(e.target.value)}
           >
-            <option value="">Choose captured execution</option>
+            <option value="">Choose a saved analysis plan</option>
             {p.choices?.plans.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.title} · {c.contentHash.slice(0, 8)}
@@ -160,6 +174,13 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
                 }
               />
             </Field>
+            <button
+              className={`${button} col-span-2 justify-self-start`}
+              aria-label={`Remove factor ${i + 1}`}
+              onClick={() => setFactors((old) => old.filter((_, j) => j !== i))}
+            >
+              Remove factor
+            </button>
           </div>
         ))}
         <button
@@ -203,7 +224,7 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
               onChange={(e) => setMaxRuns(Number(e.target.value))}
             />
           </Field>
-          <Field label="Total timeout budget (seconds)">
+          <Field label="Total time limit (seconds)">
             <input
               className={input}
               type="number"
@@ -254,9 +275,9 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
             captured inputs before per-run copies
           </p>
           <p className={muted}>
-            Every enumerated command has host access. Toolchain availability and
-            license limits still apply. This plan does not change the accepted
-            baseline.
+            Each command runs with your computer’s permissions and requires the
+            listed software and licenses. These runs keep the current baseline
+            unchanged.
           </p>
           <Inspect
             value={preview.basePlan.body}
@@ -285,28 +306,72 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
                 {preview.run.state === "paused" ? "resume" : "start"}
               </button>
             )}
-            {["running", "attention", "paused"].includes(preview.run.state) &&
-              ["pause", "cancel", "reconcile"].map((control) => (
+            {GRID_CONTROLS[preview.run.state]?.map(([control, label]) => (
+              <button
+                className={button}
+                key={control}
+                disabled={p.busy}
+                onClick={() =>
+                  void p.run(async () => {
+                    if (
+                      control === "cancel" &&
+                      !(await confirmDialog(
+                        "This stops any running command and ends the grid. A cancelled grid can't be resumed. Finished specifications and their results are kept.",
+                        {
+                          title: "Cancel this grid?",
+                          confirmLabel: "Cancel grid",
+                          cancelLabel: "Keep running",
+                          destructive: true,
+                        },
+                      ))
+                    )
+                      return;
+                    setPreview(
+                      await p.call<GridStatus>({
+                        action: "experimentControl",
+                        id: preview.record.id,
+                        control,
+                        fingerprint: preview.record.contentHash,
+                      }),
+                    );
+                  })
+                }
+              >
+                {label}
+              </button>
+            ))}
+            {preview.run.state === "attention" &&
+              preview.run.activeExecutionId && (
                 <button
                   className={button}
-                  key={control}
                   disabled={p.busy}
                   onClick={() =>
-                    void p.run(async () =>
+                    void p.run(async () => {
+                      if (
+                        !(await confirmDialog(
+                          "Pipeline can't tell whether this run finished. It stays in the list with an unknown outcome, and the grid pauses at the next specification. Any files the run wrote are left as they are.",
+                          {
+                            title: "Continue without this run?",
+                            confirmLabel: "Continue without this run",
+                            cancelLabel: "Go back",
+                          },
+                        ))
+                      )
+                        return;
                       setPreview(
                         await p.call<GridStatus>({
                           action: "experimentControl",
                           id: preview.record.id,
-                          control,
+                          control: "continue_unknown",
                           fingerprint: preview.record.contentHash,
                         }),
-                      ),
-                    )
+                      );
+                    })
                   }
                 >
-                  {control}
+                  Continue without this run
                 </button>
-              ))}
+              )}
             <button
               className={button}
               onClick={() =>
@@ -327,7 +392,7 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
                 })
               }
             >
-              Export full attempted set
+              Export all run attempts
             </button>
           </div>
           <Field label="Sort specifications">
@@ -405,16 +470,18 @@ export default function Experiments(props: DeskProps & { active?: boolean }) {
             </table>
           </div>
           <p className={muted}>
-            Use Publication assets to compare imported estimates or overlay
-            numeric IRFs. Failed, missing, timed-out, and excluded rows remain
-            here.
+            Compare estimates and impulse responses in Tables & figures. This
+            list also keeps failed, missing, timed-out, and excluded
+            specifications.
           </p>
         </section>
       )}
       <Jobs
         workspaceId={workspaceId}
+        visible={props.active !== false}
         onCompleted={() => {
-          void p.refresh().catch(onError);
+          props.onChanged?.();
+          void p.refresh().catch((e) => onError(workbenchErrorMessage(e)));
         }}
       />
     </div>

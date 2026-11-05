@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { conversationClient } from "../../lib/workbench/conversationClient";
+import { runtimeClient } from "../../lib/workbench/runtimeClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type {
   TitlePreferences,
   WorkspaceModelCatalog,
@@ -20,18 +22,18 @@ export default function ConversationTitleSettings() {
   });
   useEffect(() => {
     let live = true;
-    workbenchClient
+    conversationClient
       .titlePreferences()
       .then((v) => {
         if (live) setTitles(v);
       })
       .catch((e) => {
-        if (live) setTitlesError(String(e));
+        if (live) setTitlesError(workbenchErrorMessage(e));
       });
-    workbenchClient
+    runtimeClient
       .accountState(false)
       .then((account) =>
-        account.status === "chatgpt" ? workbenchClient.modelCatalog() : null,
+        account.status === "chatgpt" ? runtimeClient.modelCatalog() : null,
       )
       .then((value) => {
         if (live) setCatalog(value);
@@ -51,14 +53,16 @@ export default function ConversationTitleSettings() {
       .catch(() => {})
       .then(async () => {
         try {
-          const result = await workbenchClient.saveTitlePreferences(next);
+          const result = await conversationClient.saveTitlePreferences(next);
           if (request === sequence.current) {
             setTitles(result);
             setSaved(true);
           }
         } catch (e) {
           if (request === sequence.current)
-            setTitlesError(`Could not save conversation titles: ${String(e)}`);
+            setTitlesError(
+              `Could not save conversation titles: ${workbenchErrorMessage(e)}`,
+            );
         } finally {
           if (request === sequence.current) setSaving(false);
         }
@@ -69,9 +73,10 @@ export default function ConversationTitleSettings() {
       <section className="space-y-3 text-sm">
         <h2 className="font-semibold">Conversation titles</h2>
         <p className="text-gray-500 dark:text-neutral-400">
-          Generate a short title after the first reply. This uses an additional
-          model call, with the cheapest available model by default. Rename or
-          regenerate titles from the conversation list.
+          Pipeline titles each conversation after the first reply. This uses one
+          extra model call. The settings below apply to ChatGPT conversations.
+          Claude Code conversations use the cheapest Claude model. To rename or
+          regenerate a title, use the conversation list.
         </p>
         {titles ? (
           <>
@@ -112,15 +117,15 @@ export default function ConversationTitleSettings() {
                       (model) => model.model === titles.model,
                     ) && (
                       <option value={titles.model}>
-                        {titles.model} (not currently available)
+                        {titles.model} (saved, not available)
                       </option>
                     )}
                 </select>
               </label>
               <label className="block text-xs font-medium">
-                Reasoning effort
+                Thinking level
                 <select
-                  aria-label="Title reasoning effort"
+                  aria-label="Title thinking level"
                   value={titles.effort ?? ""}
                   disabled={!titles.enabled}
                   onChange={(event) =>
@@ -142,7 +147,7 @@ export default function ConversationTitleSettings() {
             </div>
             {(!catalog || catalog.models.length === 0) && (
               <p className="text-xs text-gray-500">
-                Model choices appear after signing in.
+                Sign in to ChatGPT to choose a model.
               </p>
             )}
           </>

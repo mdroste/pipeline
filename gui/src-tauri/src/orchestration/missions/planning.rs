@@ -1,0 +1,115 @@
+//! Validated plan application and question lineage.
+use super::{
+    model::{Disposition, Goal, Mission, Phase, Plan, Question, QuestionSpec, Round},
+    validate,
+};
+use crate::orchestration::store::{self, now, Result};
+use std::collections::BTreeMap;
+
+const WAITING_FOR_INPUT: &str = "Waiting for your research input";
+const WAITING_FOR_CHANGE: &str = "Waiting for a tracked project change";
+
+pub(super) fn merge_questions(m: &mut Mission, questions: Vec<QuestionSpec>) -> Result<()> {
+    for spec in questions {
+        if let Some(existing) = m.questions.iter().find(|q| q.spec.id == spec.id) {
+            if store::hash(&existing.spec)? != store::hash(&spec)? {
+                return Err("An existing research question cannot be silently redefined".into());
+            }
+        } else {
+            m.questions.push(Question { spec, answer: None });
+        }
+    }
+    if m.questions.len() > 64 {
+        return Err("Research automation question limit reached".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn apply_plan(m: &mut Mission, p: Plan, child: &str) -> Result<()> {
+    validate::plan(m, &p)?;
+    for spec in &p.new_goals {
+        m.goals.push(Goal {
+            spec: spec.clone(),
+            state: "open".into(),
+            assessment: String::new(),
+            resolved_round: None,
+        });
+    }
+    merge_questions(m, p.questions.clone())?;
+    let selected = p
+        .candidates
+        .iter()
+        .find(|c| Some(&c.id) == p.selected_id.as_ref())
+        .cloned();
+    let disposition = p.disposition;
+    m.rounds.push(Round {
+        number: m.rounds.len() as u32 + 1,
+        change_cursor: m.watch_epoch,
+        plan: p,
+        selected,
+        finding: None,
+        evidence: BTreeMap::new(),
+        review: None,
+        challenge: None,
+        child_ids: vec![child.into()],
+        result_fingerprint: None,
+    });
+    m.state = "queued".into();
+    m.due_at = Some(now());
+    match disposition {
+        Disposition::Investigate => {
+            m.phase = Phase::Investigate;
+            m.reason = "Investigation selected within the automation's scope".into();
+        }
+        Disposition::AssessCompletion => {
+            m.phase = Phase::Challenge;
+            m.reason = "Checking the original completion criteria".into();
+        }
+        Disposition::WaitForInput | Disposition::WaitForChange => {
+            m.state = "waiting".into();
+            m.phase = Phase::Plan;
+            m.reason = if disposition == Disposition::WaitForInput {
+                WAITING_FOR_INPUT
+            } else {
+                WAITING_FOR_CHANGE
+            }
+            .into();
+            if disposition == Disposition::WaitForInput
+                && !m.questions.iter().any(|q| q.answer.is_none())
+            {
+                return Err("The proposed input wait has no unanswered question".into());
+            }
+            m.due_at = wait_due(m).map(|due| due + 60);
+        }
+    }
+    Ok(())
+}
+
+/// Only tracked project changes can end a wait on their own.
+pub(super) fn wait_due(m: &Mission) -> Option<i64> {
+    (!m.definition.policy.monitor_ids.is_empty()).then(now)
+}
+
+/// The reason for the wait the last plan asked for, if nothing has ended it. Any
+/// answer ends a wait for input, as any tracked change ends a wait for one, and
+/// the plan then needs another look.
+pub(super) fn open_wait(m: &Mission) -> Option<&'static str> {
+    let round = m.rounds.last().filter(|_| m.phase == Phase::Plan)?;
+    let unanswered = |id: &str| {
+        m.questions
+            .iter()
+            .any(|q| q.spec.id == id && q.answer.is_none())
+    };
+    match round.plan.disposition {
+        Disposition::WaitForInput
+            if m.questions.iter().any(|q| q.answer.is_none())
+                && round.plan.questions.iter().all(|q| unanswered(&q.id)) =>
+        {
+            Some(WAITING_FOR_INPUT)
+        }
+        Disposition::WaitForChange if m.watch_epoch == round.change_cursor => {
+            Some(WAITING_FOR_CHANGE)
+        }
+        _ => None,
+    }
+}

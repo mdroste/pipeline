@@ -1,3 +1,9 @@
+// Typed client and helpers for the Projects index (`workbench_project_index`).
+// The backend reads bounded metadata only and never loads transcripts,
+// artifacts or model runtimes, so the index stays fast with many projects.
+// Pins are a device preference in localStorage; they change no research record
+// or permission.
+
 import { invoke } from "@tauri-apps/api/core";
 
 export interface ProjectIndexEntry {

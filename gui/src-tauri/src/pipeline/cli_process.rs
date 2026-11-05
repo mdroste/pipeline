@@ -5,7 +5,10 @@
 //! timeout/termination behavior so those safety rules cannot drift apart.
 
 use std::collections::VecDeque;
+use std::future::Future;
 use std::process::ExitStatus;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::BufReader;
 use tokio::process::{Child, ChildStderr, ChildStdout};
@@ -13,6 +16,31 @@ use tokio::task::JoinHandle;
 
 pub const MAX_STDOUT_BYTES: usize = 50_000_000;
 const STDERR_TAIL_LINES: usize = 50;
+
+tokio::task_local! {
+    // Seconds of the call deadline once it has fired, zero before then. The
+    // call supervisor sets it before killing the call's children, so their
+    // signal exit is read as Pipeline's own timeout.
+    static CALL_DEADLINE: Arc<AtomicU64>;
+}
+
+/// Run one provider call whose deadline reports through `deadline`.
+pub(super) async fn with_call_deadline<F: Future>(deadline: Arc<AtomicU64>, fut: F) -> F::Output {
+    CALL_DEADLINE.scope(deadline, fut).await
+}
+
+/// Record that this call's deadline fired, before anything is killed.
+pub(super) fn mark_call_deadline(deadline: &AtomicU64, timeout_secs: u64) {
+    deadline.store(timeout_secs.max(1), Ordering::SeqCst);
+}
+
+/// The deadline in seconds, when the call running on this task has passed it.
+pub fn elapsed_call_deadline() -> Option<u64> {
+    CALL_DEADLINE
+        .try_with(|deadline| deadline.load(Ordering::SeqCst))
+        .ok()
+        .filter(|seconds| *seconds > 0)
+}
 
 pub fn log(app: &crate::emit::EventBus, line: impl Into<String>) {
     super::logging::emit(app, line.into());

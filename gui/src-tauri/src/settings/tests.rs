@@ -1,4 +1,103 @@
+use super::crypto::{decrypt_string, encrypt_string, ENC_PREFIX, KEY_SIZE};
+use super::extraction::resolve_pdf_extractor_for_paddle_availability;
+use super::persistence::{
+    load_raw_settings_required, prepare_secret_for_save, read_settings_file, save_raw_unlocked,
+    MAX_SETTINGS_BYTES,
+};
+use super::quarantine::quarantine_corrupt_file;
+use super::recovery::discard_undecryptable_secret_at;
 use super::*;
+use std::fs;
+
+#[test]
+fn validation_preserves_first_failure_order() {
+    let mut settings = Settings {
+        codex_backend: "unknown".into(),
+        preferred_provider: "unknown".into(),
+        max_workers: 0,
+        ..Default::default()
+    };
+    assert_eq!(
+        settings.validate().unwrap_err(),
+        "Unsupported Workflow Codex backend"
+    );
+    settings.codex_backend = "app_server".into();
+    assert_eq!(
+        settings.validate().unwrap_err(),
+        "Invalid preferred provider 'unknown'"
+    );
+    settings.preferred_provider = "claude".into();
+    assert_eq!(
+        settings.validate().unwrap_err(),
+        "Maximum workers must be between 1 and 20"
+    );
+}
+
+#[test]
+fn frozen_settings_remain_scoped_across_spawned_work() {
+    let first = crate::run_scope::ActiveScope::begin("settings-frozen-first");
+    let second = crate::run_scope::ActiveScope::begin("settings-frozen-second");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(crate::run_scope::scoped(first.scope().clone(), async {
+        let first_guard = freeze_for_run(Settings {
+            max_workers: 1,
+            ..Default::default()
+        });
+        assert_eq!(load().max_workers, 1);
+        assert_eq!(
+            crate::run_scope::spawn(async { load().max_workers })
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            crate::run_scope::spawn_blocking(|| load().max_workers)
+                .await
+                .unwrap(),
+            1
+        );
+        crate::run_scope::scoped(second.scope().clone(), async {
+            let second_guard = freeze_for_run(Settings {
+                max_workers: 2,
+                ..Default::default()
+            });
+            assert_eq!(load().max_workers, 2);
+            assert_eq!(first.scope().frozen_settings().unwrap().max_workers, 1);
+            drop(second_guard);
+            assert!(second.scope().frozen_settings().is_none());
+        })
+        .await;
+        assert_eq!(load().max_workers, 1);
+        drop(first_guard);
+        assert!(first.scope().frozen_settings().is_none());
+    }));
+}
+
+#[test]
+fn stale_frozen_guard_does_not_release_replacement() {
+    let run = crate::run_scope::ActiveScope::begin("settings-frozen-replacement");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(crate::run_scope::scoped(run.scope().clone(), async {
+        let old_guard = freeze_for_run(Settings {
+            max_workers: 1,
+            ..Default::default()
+        });
+        let current_guard = freeze_for_run(Settings {
+            max_workers: 2,
+            ..Default::default()
+        });
+        drop(old_guard);
+        assert_eq!(load().max_workers, 2);
+        drop(current_guard);
+        assert!(run.scope().frozen_settings().is_none());
+    }));
+}
 
 #[test]
 fn revision_reconciliation_is_opt_in_for_new_and_existing_settings() {
@@ -96,10 +195,12 @@ fn paddle_tuning_defaults_are_automatic_and_bounded() {
     assert_eq!(defaults.paddle_page_concurrency, 0);
     assert_eq!(defaults.paddle_mtmd_batch_tokens, 0);
     assert_eq!(defaults.paddle_flash_attention, "auto");
+    assert_eq!(defaults.paddle_cpu_threads, 4);
     assert_eq!(defaults.paddle_max_output_tokens, 4096);
     assert_eq!(defaults.paddle_page_retries, 1);
     assert!(defaults.paddle_full_layout_detection);
-    assert_eq!(defaults.paddle_full_layout_threshold, 0.5);
+    assert_eq!(defaults.paddle_full_layout_threshold, 0.3);
+    assert_eq!(defaults.paddle_full_layout_threshold_version, 1);
     assert!(defaults.paddle_full_layout_nms);
     assert_eq!(defaults.paddle_full_layout_merge_bboxes_mode, "large");
     assert!(defaults.paddle_full_merge_layout_blocks);
@@ -117,10 +218,11 @@ fn paddle_tuning_defaults_are_automatic_and_bounded() {
     assert_eq!(legacy.paddle_page_concurrency, 0);
     assert_eq!(legacy.paddle_mtmd_batch_tokens, 0);
     assert_eq!(legacy.paddle_flash_attention, "auto");
+    assert_eq!(legacy.paddle_cpu_threads, 4);
     assert_eq!(legacy.paddle_max_output_tokens, 4096);
     assert_eq!(legacy.paddle_page_retries, 1);
     assert!(legacy.paddle_full_layout_detection);
-    assert_eq!(legacy.paddle_full_layout_threshold, 0.5);
+    assert_eq!(legacy.paddle_full_layout_threshold, 0.3);
     assert!(legacy.paddle_full_layout_nms);
     assert_eq!(legacy.paddle_full_layout_merge_bboxes_mode, "large");
     assert!(legacy.paddle_full_merge_layout_blocks);
@@ -295,6 +397,12 @@ fn settings_validation_rejects_unsafe_or_out_of_range_values() {
 
     invalid = Settings {
         paddle_flash_attention: "sometimes".into(),
+        ..Default::default()
+    };
+    assert!(invalid.validate().is_err());
+
+    invalid = Settings {
+        paddle_cpu_threads: 3,
         ..Default::default()
     };
     assert!(invalid.validate().is_err());
@@ -669,6 +777,34 @@ fn old_codex_defaults_migrate_once_and_advanced_legacy_choice_survives_reload() 
 }
 
 #[test]
+fn the_former_paddle_layout_threshold_default_moves_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let temp = directory.path().join("settings.json");
+    for (saved, expected) in [
+        (Some(0.5), 0.3),
+        (Some(0.3), 0.3),
+        (Some(0.7), 0.7),
+        (None, 0.3),
+    ] {
+        let mut raw = serde_json::json!({});
+        if let Some(saved) = saved {
+            raw["paddle_full_layout_threshold"] = serde_json::json!(saved);
+        }
+        std::fs::write(&temp, serde_json::to_vec(&raw).unwrap()).unwrap();
+        let mut settings = load_raw_settings_required(&temp).unwrap();
+        assert_eq!(settings.paddle_full_layout_threshold, expected as f32);
+        assert_eq!(settings.paddle_full_layout_threshold_version, 1);
+
+        // A choice made after the move stays, even at the former default.
+        settings.paddle_full_layout_threshold = 0.5;
+        save_raw_unlocked(&temp, &settings).unwrap();
+        let reloaded = load_raw_settings_required(&temp).unwrap().normalized();
+        assert_eq!(reloaded.paddle_full_layout_threshold, 0.5);
+        assert_eq!(reloaded.paddle_full_layout_threshold_version, 1);
+    }
+}
+
+#[test]
 fn quarantine_never_overwrites_a_backup_or_a_concurrent_repair() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.json");
@@ -699,6 +835,30 @@ fn imported_bundle_settings_are_normalized_before_validation() {
 }
 
 #[test]
+fn imported_settings_move_the_former_paddle_layout_threshold_default_once() {
+    let earlier_build = Settings {
+        paddle_full_layout_threshold: 0.5,
+        paddle_full_layout_threshold_version: 0,
+        ..Default::default()
+    };
+    assert_eq!(
+        earlier_build
+            .normalized_for_import()
+            .paddle_full_layout_threshold,
+        0.3
+    );
+
+    let chosen = Settings {
+        paddle_full_layout_threshold: 0.5,
+        ..Default::default()
+    };
+    assert_eq!(
+        chosen.normalized_for_import().paddle_full_layout_threshold,
+        0.5
+    );
+}
+
+#[test]
 fn an_undecryptable_stored_key_can_be_discarded_but_a_readable_one_cannot() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("settings.json");
@@ -725,4 +885,121 @@ fn an_undecryptable_stored_key_can_be_discarded_but_a_readable_one_cannot() {
     assert!(discard_undecryptable_secret_at(&path, &key_b, "gemini").is_err());
     let untouched: Settings = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(untouched.google_api_key, stored.google_api_key);
+}
+
+#[test]
+fn fresh_stages_follow_the_preferred_provider() {
+    let settings = Settings {
+        preferred_provider: "codex".into(),
+        ..Default::default()
+    };
+    assert_eq!(settings.parallel_agents(), ["codex"]);
+    assert_eq!(settings.sequential_agent(), "codex");
+    assert_eq!(settings.merge_agent(), "codex");
+    assert_eq!(settings.orientation_agent(), "codex");
+}
+
+#[test]
+fn saved_copies_of_the_preferred_provider_are_released_once() {
+    let mut settings: Settings = serde_json::from_value(serde_json::json!({
+        "preferred_provider": "claude",
+        "default_parallel_agents": ["claude"],
+        "default_merge_agent": "claude",
+        "default_sequential_agent": "claude",
+        "default_orientation_agent": "claude",
+    }))
+    .unwrap();
+    settings.normalize_access_modes();
+    assert_eq!(settings.model_defaults_version, 1);
+    assert!(settings.default_parallel_agents.is_empty());
+    assert!(settings.default_merge_agent.is_empty());
+    assert!(settings.default_sequential_agent.is_empty());
+    assert!(settings.default_orientation_agent.is_empty());
+
+    // A later choice that happens to match stays a choice.
+    settings.default_sequential_agent = "claude".into();
+    settings.normalize_access_modes();
+    assert_eq!(settings.default_sequential_agent, "claude");
+}
+
+#[test]
+fn releasing_stages_never_changes_what_they_resolve_to() {
+    let pinned = |model: &str| ModelSelection::Pinned {
+        model: model.into(),
+    };
+    let mut settings = Settings {
+        model_defaults_version: 0,
+        preferred_provider: "claude".into(),
+        default_parallel_agents: vec!["claude".into(), "codex".into()],
+        default_merge_agent: "claude".into(),
+        default_sequential_agent: "claude".into(),
+        default_sequential_model_overrides: [("claude:cli".to_string(), pinned("opus"))].into(),
+        default_orientation_agent: "codex".into(),
+        ..Default::default()
+    };
+    let merge_model = settings.merge_model_selection("claude");
+    settings.normalize_access_modes();
+
+    // Two reviewers, a different provider, and a stage's own model all stay.
+    assert_eq!(settings.parallel_agents(), ["claude", "codex"]);
+    assert_eq!(settings.orientation_agent(), "codex");
+    assert_eq!(settings.default_sequential_agent, "claude");
+    // Clearing Merge here would hand it Sequential's pinned model.
+    assert_eq!(settings.default_merge_agent, "claude");
+    assert_eq!(settings.merge_model_selection("claude"), merge_model);
+}
+
+#[test]
+fn the_default_model_applies_only_to_its_own_provider() {
+    let settings = Settings {
+        preferred_provider: "claude".into(),
+        default_model: "opus".into(),
+        default_effort: "high".into(),
+        default_merge_agent: "claude".into(),
+        default_orientation_effort_overrides: [("claude:cli".to_string(), "low".to_string())]
+            .into(),
+        ..Default::default()
+    };
+    assert_eq!(settings.model_selection("claude").label(), "opus");
+    assert_eq!(settings.model_selection("codex").label(), "Automatic");
+    assert_eq!(settings.model_effort("claude"), "high");
+    assert_eq!(settings.model_effort("codex"), "");
+    assert_eq!(settings.sequential_effort("claude"), "high");
+    assert_eq!(settings.merge_effort("claude"), "high");
+    assert_eq!(settings.merge_effort("codex"), "");
+    // A stage's own thinking level still wins.
+    assert_eq!(settings.orientation_effort("claude"), "low");
+}
+
+#[test]
+fn inherited_merge_prefers_sequential_thinking_over_the_default() {
+    let settings = Settings {
+        preferred_provider: "claude".into(),
+        default_effort: "high".into(),
+        default_sequential_effort_overrides: [("claude:cli".to_string(), "low".to_string())].into(),
+        ..Default::default()
+    };
+    assert_eq!(settings.merge_effort("claude"), "low");
+}
+
+#[test]
+fn the_default_model_stays_out_of_legacy_provider_fields() {
+    let mut settings = Settings {
+        preferred_provider: "claude".into(),
+        default_model: "opus".into(),
+        ..Default::default()
+    };
+    settings.sync_legacy_model_fields();
+    assert_eq!(settings.claude_model, "");
+}
+
+#[test]
+fn unsafe_default_models_are_rejected() {
+    for default_model in [" opus", "opus\n--flag"] {
+        let settings = Settings {
+            default_model: default_model.into(),
+            ..Default::default()
+        };
+        assert!(settings.validate().is_err(), "{default_model:?}");
+    }
 }

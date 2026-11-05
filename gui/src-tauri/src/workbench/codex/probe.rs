@@ -1,3 +1,8 @@
+//! Development-only, no-model probe (`cargo run --locked --example workbench_probe`).
+//! It uses a temporary Codex home and never signs in or starts a turn. Read and
+//! resume use history from `thread/inject_items`, because `thread/start` alone
+//! creates no readable rollout. Rerun after transport, sandbox or permission changes.
+
 use super::compatibility::{
     detected_version, DetectedCodexVersion, EXPERIMENTAL_SCHEMA_SHA256, STABLE_SCHEMA_SHA256,
 };
@@ -9,8 +14,10 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 
+mod capabilities;
 mod config;
 mod discovery;
+mod history;
 use config::write_probe_config;
 
 const PROBE_SCHEMA_VERSION: u32 = 1;
@@ -52,7 +59,10 @@ pub struct QualificationProbeReport {
     pub experimental_thread_lifecycle_verified: bool,
     pub dynamic_tool_declaration_accepted: bool,
     pub read_only_sandbox_verified: bool,
+    pub conversation_capabilities_accepted: bool,
+    pub command_domain_policy_verified: Option<bool>,
     pub discovery_permissions_verified: bool,
+    pub paged_turn_history_verified: bool,
     pub runtime_workspace_roots_verified: bool,
     pub instruction_sources_empty: bool,
     pub allowed_fixture_read_verified: bool,
@@ -116,7 +126,7 @@ pub(super) async fn installed_version(
     resolved: &crate::deps::ResolvedCommand,
 ) -> Result<DetectedCodexVersion, String> {
     let mut command = resolved.command(["--version"]);
-    crate::pipeline::claude::configure_silent_command(&mut command);
+    crate::agent_runtime::process::configure_silent_command(&mut command);
     command
         .current_dir(std::env::temp_dir())
         .stdin(Stdio::null())
@@ -654,7 +664,7 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
 
     let args = ["app-server", "--listen", "stdio://", "--strict-config"];
     let mut command = resolved.canonical_command(args)?;
-    crate::pipeline::claude::configure_silent_command(&mut command);
+    crate::agent_runtime::process::configure_silent_command(&mut command);
     command
         .current_dir(&fixture_root)
         .env("CODEX_HOME", &codex_home)
@@ -783,11 +793,14 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
                     "modelProvider": "openai",
                     "permissions": PROBE_PERMISSION_PROFILE,
                     "runtimeWorkspaceRoots": [fixture_root],
+                    "excludeTurns": true,
                 }
             }),
         )
         .await?;
         let resumed = response_for(&mut reader, &resume_id).await?;
+        history::verify(&mut stdin, &mut reader, &provider_thread_id, &resumed).await?;
+        capabilities::verify(&mut stdin, &mut reader, &fixture_root).await?;
 
         let allowed_read_id = json!(8);
         send(
@@ -1199,7 +1212,10 @@ pub async fn run_qualification_probe() -> Result<QualificationProbeReport, Strin
         // requires an authenticated opt-in model turn.
         dynamic_tool_declaration_accepted: true,
         read_only_sandbox_verified,
+        conversation_capabilities_accepted: true,
+        command_domain_policy_verified: std::env::var_os("PIPELINE_PROBE_NETWORK").map(|_| true),
         discovery_permissions_verified: true,
+        paged_turn_history_verified: true,
         runtime_workspace_roots_verified,
         instruction_sources_empty,
         allowed_fixture_read_verified,

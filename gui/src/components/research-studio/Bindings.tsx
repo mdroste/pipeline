@@ -1,3 +1,4 @@
+import { Fold } from "../../ui";
 import { useEffect, useState } from "react";
 import {
   studioClient,
@@ -5,8 +6,11 @@ import {
   type BindingCoverage,
   type NumericBinding,
 } from "../../lib/studioClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import type { ProjectRecord } from "../../lib/projectClient";
+import { executionClient } from "../../lib/workbench/executionClient";
 import type { ResearchResultV1 } from "../../lib/workbenchTypes";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import useReopenCount from "../../hooks/useReopenCount";
 import {
   button,
   input,
@@ -35,6 +39,8 @@ export default function Bindings({
   data,
   onRefresh,
   onDocument,
+  onAnchors,
+  active,
 }: StudioProps) {
   const [coverage, setCoverage] = useState<BindingCoverage[]>([]);
   const [results, setResults] = useState<ResearchResultV1[]>([]);
@@ -45,11 +51,12 @@ export default function Bindings({
   const [file, setFile] = useState("pipeline_values.tex");
   const [notice, setNotice] = useState("");
   const { error, busy, run, setError } = useAction();
+  const reopened = useReopenCount(active);
   useEffect(() => {
     let disposed = false;
     void Promise.all([
       studioClient.coverage(workspaceId),
-      workbenchClient.listStructuredResults(workspaceId),
+      executionClient.listStructuredResults(workspaceId),
     ])
       .then(([c, r]) => {
         if (!disposed) {
@@ -58,12 +65,12 @@ export default function Bindings({
         }
       })
       .catch((e) => {
-        if (!disposed) setError(String(e));
+        if (!disposed) setError(workbenchErrorMessage(e));
       });
     return () => {
       disposed = true;
     };
-  }, [workspaceId, setError]);
+  }, [workspaceId, setError, reopened]);
   const current = coverage.find((c) => c.record.id === selected);
   const set = (
     key: keyof NumericBinding,
@@ -75,17 +82,22 @@ export default function Bindings({
       <section className={panel}>
         <h2 className="font-semibold">Headline-result coverage</h2>
         <p className="text-xs text-gray-500">
-          Links retain exact manuscript passages and historical output
-          identities. Freshness checks only declared dependencies. An unlinked
-          claim has unknown result coverage.
+          Link manuscript passages to saved results. Pipeline checks for changes
+          in the inputs you list. Claims without links have no tracked
+          supporting result.
         </p>
         <button
           className={button}
           disabled={busy}
           onClick={() =>
-            void run(async () =>
-              setCoverage(await studioClient.coverage(workspaceId)),
-            )
+            void run(async () => {
+              const [c, r] = await Promise.all([
+                studioClient.coverage(workspaceId),
+                executionClient.listStructuredResults(workspaceId),
+              ]);
+              setCoverage(c);
+              setResults(r);
+            })
           }
         >
           Refresh dependent results and passages
@@ -104,7 +116,8 @@ export default function Bindings({
               {coverage.map((c) => (
                 <tr className="border-t" key={c.record.id}>
                   <td className="max-w-lg p-2">
-                    {c.anchor.selection.quote.slice(0, 220)}
+                    {c.anchor?.selection.quote.slice(0, 220) ??
+                      "Passage no longer available"}
                     <p>
                       {c.record.body.role} · {c.record.body.origin}
                     </p>
@@ -131,7 +144,12 @@ export default function Bindings({
                     </button>
                     <button
                       className={button}
-                      onClick={() => onDocument(c.anchor.selection.revisionId)}
+                      disabled={!c.anchor}
+                      onClick={() => {
+                        if (!c.anchor) return;
+                        if (onAnchors) onAnchors(c.record.body.anchorId, null);
+                        else onDocument(c.anchor.selection.revisionId);
+                      }}
                     >
                       Open exact passage
                     </button>
@@ -143,14 +161,13 @@ export default function Bindings({
         </div>
         {!coverage.length && (
           <p className="text-sm">
-            No numeric bindings yet. Select a manuscript passage in Documents,
-            then bind its reported value below.
+            No values are linked yet. Select a passage in Documents, then link
+            its reported value to a result below.
           </p>
         )}
       </section>
       <div className="grid gap-4 lg:grid-cols-2">
-        <section className={panel}>
-          <h2 className="font-semibold">Bind a reported number</h2>
+        <Fold title="Bind a reported number">
           <button
             className={button}
             onClick={() => {
@@ -249,20 +266,23 @@ export default function Bindings({
               checked={binding.confirmed}
               onChange={(e) => set("confirmed", e.target.checked)}
             />
-            I confirm this quantity belongs to this exact, unambiguous printed
-            occurrence
+            This value corresponds to the selected number in the manuscript.
           </label>
           <button
             className={button}
             disabled={busy || !binding.anchorId || !binding.result.resultId}
             onClick={() =>
               void run(async () => {
-                await studioClient.mutate(workspaceId, {
+                const saved = await studioClient.mutate<
+                  ProjectRecord<NumericBinding>
+                >(workspaceId, {
                   action: "bindNumber",
                   id: selected || null,
                   expectedRevision: current?.record.revision ?? 0,
                   binding,
                 });
+                // Later saves update this binding instead of adding another.
+                setSelected(saved.id);
                 setCoverage(await studioClient.coverage(workspaceId));
                 await onRefresh();
               })
@@ -270,7 +290,7 @@ export default function Bindings({
           >
             Save numeric binding
           </button>
-        </section>
+        </Fold>
         <section className={panel}>
           <h2 className="font-semibold">Evidence and dependencies</h2>
           {current ? (
@@ -301,16 +321,16 @@ export default function Bindings({
             </>
           ) : (
             <p className="text-sm text-gray-500">
-              Choose a coverage item to trace its result, execution and declared
-              dependencies.
+              Choose a linked claim to see its result, analysis run, and listed
+              inputs.
             </p>
           )}
           <h3 className="pt-4 text-sm font-semibold">
-            Generate a reviewed TeX value macro
+            Create a TeX macro from this value
           </h3>
           <p className="text-xs">
-            Uses the selected result’s estimate. The file is staged in a task
-            copy for review in Changes.
+            Uses the selected result’s estimate. The file is added to the edit’s
+            working copy. Check it in Review edits.
           </p>
           <Select
             label="Task change set"
@@ -349,7 +369,7 @@ export default function Bindings({
                   ],
                 });
                 setNotice(
-                  "Macro staged. Review and accept its captured task in Changes.",
+                  `\\${macro} is in ${file} in the working copy, with any other values already there. Review and accept it in Review edits.`,
                 );
                 await onRefresh();
               })

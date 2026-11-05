@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { taskClient, type SessionChoice } from "../../lib/taskClient";
+import { taskClient } from "../../lib/taskClient";
+import { type SessionChoice } from "../../lib/taskTypes";
 import {
   discoveryClient,
   discoveryError,
@@ -10,6 +11,7 @@ import {
   type DiscoveryDefinition,
   type DiscoveryRun,
 } from "../../lib/discoveryClient";
+import ReportIssueLink from "../ReportIssueLink";
 
 export default function Builder({
   initialMode,
@@ -33,6 +35,7 @@ export default function Builder({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const mounted = useRef(true);
+  const blockedId = useId();
   useEffect(() => {
     mounted.current = true;
     let live = true;
@@ -58,8 +61,8 @@ export default function Builder({
     setDefinition((d) => ({ ...d, ...update }));
     setOperation(crypto.randomUUID());
   }
+  const invalid = discoveryError(definition);
   async function start() {
-    const invalid = discoveryError(definition);
     if (invalid) {
       setError(invalid);
       return;
@@ -68,7 +71,12 @@ export default function Builder({
     setError("");
     try {
       const result = await discoveryClient.start(
-        definition,
+        {
+          ...definition,
+          inputPaths: definition.inputPaths
+            .map((p) => p.trim())
+            .filter(Boolean),
+        },
         session || null,
         operation,
       );
@@ -100,7 +108,7 @@ export default function Builder({
   return (
     <form
       className="task-detail discovery-builder"
-      aria-label="New self-discovery automation"
+      aria-label="New research discovery automation"
       onSubmit={(e) => {
         e.preventDefault();
         void start();
@@ -110,7 +118,7 @@ export default function Builder({
         <h2>Discover and develop research</h2>
         <button
           type="button"
-          aria-label="Close self-discovery builder"
+          aria-label="Close research discovery builder"
           onClick={onClose}
         >
           ×
@@ -184,7 +192,12 @@ export default function Builder({
             {number("paperReviewers", "Paper reviewers per round", 0, 4)}
             {number("revisionPasses", "Revision passes", 0, 5)}
             {number("researchRounds", "Investigation rounds per paper", 1, 16)}
-            {number("maxReplacements", "Unsupervised replacement limit", 0, 5)}
+            {number(
+              "maxReplacements",
+              "Maximum projects Pipeline can replace automatically",
+              0,
+              5,
+            )}
           </div>
           <label className="mission-check">
             <input
@@ -214,12 +227,9 @@ export default function Builder({
               disabled={!session}
               value={definition.inputPaths.join("\n")}
               placeholder="One file path per line, relative to the selected project folder"
+              // Raw lines round-trip while typing; blank lines are dropped at Start.
               onChange={(e) =>
-                patch({
-                  inputPaths: e.target.value
-                    .split("\n")
-                    .filter((p) => p.trim()),
-                })
+                patch({ inputPaths: e.target.value.split("\n") })
               }
             />
           </label>
@@ -237,9 +247,9 @@ export default function Builder({
             Search public literature records and available abstracts
           </label>
           <p className="task-muted">
-            Enables literature acquisition for a new project. Existing projects
-            require Library acquisition to be enabled. Bibliographic metadata
-            does not establish full-text access.
+            Allow literature searches for a new project. For an existing
+            project, enable this in Library first. Search results may include
+            citation details and abstracts without the full paper.
           </p>
           <label>
             Additional structured Review
@@ -249,7 +259,9 @@ export default function Builder({
                 patch({ reviewProfileId: e.target.value || null })
               }
             >
-              <option value="">Built-in field-adaptive referees only</option>
+              <option value="">
+                Use built-in reviewers selected for the research field
+              </option>
               {profiles.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
@@ -286,10 +298,10 @@ export default function Builder({
         <details>
           <summary>Resource limits</summary>
           <div className="mission-budget-grid">
-            {number("maxActions", "Managed actions", 20, 2000)}
-            {number("deadlineHours", "Elapsed deadline (hours)", 1, 720)}
+            {number("maxActions", "Maximum actions", 20, 2000)}
+            {number("deadlineHours", "Finish within (hours)", 1, 720)}
             <label>
-              Active execution hours
+              Maximum time spent running (hours)
               <input
                 type="number"
                 min={1}
@@ -323,20 +335,28 @@ export default function Builder({
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       <button
         className="task-primary"
-        disabled={busy || Boolean(discoveryError(definition))}
+        disabled={busy || Boolean(invalid)}
+        aria-describedby={invalid ? blockedId : undefined}
       >
-        {busy ? "Starting…" : "Start self-discovery"}
+        {busy ? "Starting…" : "Start research discovery"}
       </button>
+      {invalid && (
+        <p id={blockedId} className="task-muted">
+          {invalid}
+        </p>
+      )}
       <p className="task-muted">
         {definition.mode === "supervised"
           ? "The automation pauses for your project selection, then continues through the papers."
           : "The automation makes research decisions without follow-up questions."}{" "}
-        Keep Pipeline running and the computer awake. Paper count is a target;
-        unavailable evidence and incomplete research remain explicit.
+        Keep Pipeline open and the computer awake. Pipeline may finish fewer
+        papers than requested and will report missing evidence and unfinished
+        work.
       </p>
     </form>
   );

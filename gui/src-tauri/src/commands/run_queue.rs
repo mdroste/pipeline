@@ -79,6 +79,8 @@ enum Launch {
         run_id: String,
         from_step: Option<String>,
         only_failed: bool,
+        /// Secrets entered again for this re-run. Held only until it starts.
+        secret_variables: std::collections::HashMap<String, String>,
     },
 }
 
@@ -376,7 +378,11 @@ pub(crate) fn pump() {
                         run_id,
                         from_step,
                         only_failed,
-                    } => rerun_run_inner(&bus, &run_id, from_step, only_failed).await,
+                        secret_variables,
+                    } => {
+                        rerun_run_inner(&bus, &run_id, from_step, only_failed, secret_variables)
+                            .await
+                    }
                 }
             })
             .join()
@@ -578,12 +584,11 @@ pub async fn enqueue_rerun(
     run_id: String,
     from_step: Option<String>,
     only_failed: bool,
+    variables: Option<std::collections::HashMap<String, String>>,
 ) -> Result<QueuedRun, String> {
-    crate::runs::recover_resumable_runs()?;
+    let _ = crate::runs::recover_resumable_runs();
     let parent = crate::runs::load_manifest(&run_id)?;
-    let profile_name = load_run_snapshot()
-        .map(|snapshot| snapshot.profile_name)
-        .unwrap_or_default();
+    let profile_name = parent.profile_name.clone();
     let title = if parent.title.trim().is_empty() {
         label_for(&parent.input_path, &profile_name)
     } else {
@@ -599,6 +604,7 @@ pub async fn enqueue_rerun(
             run_id,
             from_step,
             only_failed,
+            secret_variables: variables.unwrap_or_default(),
         },
     ))
 }

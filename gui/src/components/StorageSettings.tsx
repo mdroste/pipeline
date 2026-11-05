@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface StorageLocation {
   activeDirectory: string | null;
@@ -75,9 +76,9 @@ export default function StorageSettings({
         <span className="settings-status-badge ml-2">Requires restart</span>
       </h2>
       <p className="mt-1 text-sm text-gray-500 dark:text-neutral-400">
-        Save project conversations and documents, reviews, automations, and
-        activity records here. Sign-ins, app preferences, installed tools, and
-        caches stay on this computer.
+        Pipeline saves your projects, reviews, automations, and activity in this
+        folder. Sign-ins, preferences, installed tools, and caches stay on this
+        computer.
       </p>
       {location ? (
         <div className="mt-5 space-y-3">
@@ -153,21 +154,21 @@ export default function StorageSettings({
       {(error || location?.error) && (
         <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">
           {error || location?.error}
+          <ReportIssueLink />
         </p>
       )}
       <p className="mt-4 text-xs leading-5 text-gray-500 dark:text-neutral-400">
-        Changes take effect after restarting Pipeline. Existing data stays in
-        its original folder; an empty folder starts a separate research library.
-        Select a previous folder to reopen its data.
+        Pipeline doesn’t move your data when you change folders. An empty folder
+        starts a new library. To return to earlier data, choose its folder
+        again.
       </p>
       <details className="mt-3 text-xs leading-5 text-gray-500 dark:text-neutral-400">
         <summary className="cursor-pointer">
           Using Dropbox or another sync service
         </summary>
         <p className="mt-2">
-          This setting does not provide cross-device synchronization. The folder
-          contains live databases; keep cloud syncing paused while Pipeline is
-          running, and do not use the same data on two devices at once.
+          Pause syncing while Pipeline is open, and use this folder on one
+          computer at a time. Pipeline doesn’t sync between computers.
         </p>
       </details>
     </section>

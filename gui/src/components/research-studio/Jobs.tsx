@@ -4,12 +4,28 @@ import {
   type HostExecutionPreview,
 } from "../../lib/projectClient";
 import { studioClient, type JobStatus } from "../../lib/studioClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { executionClient } from "../../lib/workbench/executionClient";
+import {
+  STATA_CLEANUP_NOTICE,
+  stataUsesLauncher,
+} from "../../lib/workbench/toolchains";
 import type {
   ExecutionProfile,
   ResearchExecution,
 } from "../../lib/workbenchTypes";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
+import { plainLabel } from "../research-panel/format";
 import { button, panel, ErrorNotice, Inspect, useAction } from "./shared";
+import JobLog, { ACTIVE_JOB_STATES } from "./JobLog";
+
+const ACTIVE_POLL_MS = 1500;
+const RUNNING_POLL_MS = 5000;
+const IDLE_POLL_MS = 10_000;
+const OWNER_LABELS: Record<JobStatus["owner"], string> = {
+  turn: "Conversation",
+  detached: "Background job",
+  unknown: "Unknown source",
+};
 export function JobLauncher({
   profile,
   onQueued,
@@ -53,8 +69,8 @@ export function JobLauncher({
             label="Declared inputs, launcher and expected outputs"
           />
           <p className="text-xs">
-            This detached job continues if a research turn stops. Use Stop job
-            below to cancel it. Quitting Pipeline stops all local jobs.
+            This job keeps running if you stop the assistant. Use Stop job to
+            cancel it. Quitting Pipeline stops all local jobs.
           </p>
           <button
             className={button}
@@ -65,7 +81,7 @@ export function JobLauncher({
                   profile.id,
                   preview.fingerprint,
                 );
-                const e = await workbenchClient.runExecution({
+                const e = await executionClient.runExecution({
                   profileId: profile.id,
                   sessionId: null,
                   testOnly: profile.testStatus !== "passed",
@@ -84,93 +100,92 @@ export function JobLauncher({
     </div>
   );
 }
+/** Outputs a run left alone although they can't be shown to be current. */
+function staleOutputs(job: JobStatus): string[] {
+  const outputs = job.execution.validation.unchangedPreexistingOutputs;
+  return Array.isArray(outputs) ? outputs.map(String) : [];
+}
 export default function Jobs({
   workspaceId,
   onCompleted,
   visible = true,
+  quiet = false,
 }: {
   workspaceId: string;
   onCompleted: () => void;
   visible?: boolean;
+  /** Stay out of the way unless a job is running or needs a look. */
+  quiet?: boolean;
 }) {
   const [jobs, setJobs] = useState<JobStatus[]>([]);
   const [selected, setSelected] = useState("");
-  const [stream, setStream] = useState("stdout");
-  const [log, setLog] = useState("");
-  const [truncated, setTruncated] = useState(false);
+  const [open, setOpen] = useState(false);
   const { error, run, setError } = useAction();
-  const completed = useRef<string | null>(null);
+  // Survives hiding, so a job that ended meanwhile still triggers a refresh.
+  const completed = useRef<{ workspaceId: string; key: string } | null>(null);
   const callback = useRef(onCompleted);
   callback.current = onCompleted;
   useEffect(() => {
     if (!visible) return;
-    completed.current = null;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
+    let running = false;
     const refresh = async () => {
+      if (document.visibilityState === "hidden") {
+        timer = setTimeout(() => void refresh(), IDLE_POLL_MS);
+        return;
+      }
       try {
         const next = await studioClient.jobs(workspaceId);
         if (disposed) return;
         setJobs(next);
+        running = next.some((j) => ACTIVE_JOB_STATES.includes(j.state));
         const key = next.map((j) => `${j.execution.id}:${j.state}`).join("|");
-        if (completed.current !== null && key !== completed.current) {
+        const previous = completed.current;
+        if (previous?.workspaceId === workspaceId && key !== previous.key) {
           callback.current();
         }
-        completed.current = key;
+        completed.current = { workspaceId, key };
       } catch (e) {
-        if (!disposed) setError(String(e));
+        if (!disposed) setError(workbenchErrorMessage(e));
       }
-      if (!disposed) timer = setTimeout(() => void refresh(), 1500);
+      // Collapsed, check less often: enough to notice a job ending or a
+      // newly queued one.
+      const delay = open
+        ? ACTIVE_POLL_MS
+        : running
+          ? RUNNING_POLL_MS
+          : IDLE_POLL_MS;
+      if (!disposed) timer = setTimeout(() => void refresh(), delay);
     };
     void refresh();
     return () => {
       disposed = true;
       clearTimeout(timer);
     };
-  }, [visible, workspaceId, setError]);
-  useEffect(() => {
-    let disposed = false;
-    let timer: ReturnType<typeof setTimeout>;
-    let offset = 0;
-    setLog("");
-    setTruncated(false);
-    if (!selected || !visible) return;
-    const read = async () => {
-      try {
-        const page = await studioClient.log(
-          workspaceId,
-          selected,
-          stream,
-          offset,
-        );
-        if (disposed) return;
-        offset = page.nextOffset;
-        setLog((old) => (old + page.text).slice(-200000));
-        setTruncated((old) => old || page.truncated || offset > 200000);
-      } catch (e) {
-        if (!disposed) setError(String(e));
-      }
-      if (!disposed) timer = setTimeout(() => void read(), 750);
-    };
-    void read();
-    return () => {
-      disposed = true;
-      clearTimeout(timer);
-    };
-  }, [visible, workspaceId, selected, stream, setError]);
-  const active = jobs.filter((j) =>
-    ["queued", "running", "cancelling"].includes(j.state),
-  );
+  }, [visible, open, workspaceId, setError]);
+  const active = jobs.filter((j) => ACTIVE_JOB_STATES.includes(j.state));
+  // Jobs are newest first, so an older failure stops mattering once repaired.
+  const settled =
+    quiet &&
+    !active.length &&
+    jobs[0]?.execution.outcome === "completed" &&
+    !jobs.some((j) => j.canReconcile);
+  if ((settled || !jobs.length) && !error) return null;
   return (
-    <details className={`${panel} bg-gray-50/60 dark:bg-neutral-900/30`}>
-      <summary className="cursor-pointer text-sm font-semibold">
+    <details
+      className="project-jobs"
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="cursor-pointer text-ink-muted">
         Local jobs · {active.length} active · {jobs.length} retained
       </summary>
       <ErrorNotice error={error} />
       <p className="text-xs text-gray-500">
-        Up to two jobs can run at once. Jobs that would write to the same
-        project cannot run together. Keep Pipeline open; interrupted jobs do not
-        restart automatically.
+        Up to two jobs can run at once. Jobs in the same project wait and run
+        one at a time, and files a waiting or running job uses stay locked until
+        it ends. Keep Pipeline open; interrupted jobs do not restart
+        automatically.
       </p>
       <div className="max-h-64 space-y-2 overflow-auto">
         {jobs.map((j) => (
@@ -185,14 +200,15 @@ export default function Jobs({
               {j.execution.command.join(" ")}
             </button>
             <span>
-              {j.state} · {j.owner} · {j.durationSeconds ?? 0}s
+              {plainLabel(j.state)} · {OWNER_LABELS[j.owner]} ·{" "}
+              {j.durationSeconds ?? 0}s
             </span>
             {["queued", "running"].includes(j.state) && (
               <button
                 className={button}
                 onClick={() =>
                   void run(() =>
-                    workbenchClient.cancelExecution(j.execution.id),
+                    executionClient.cancelExecution(j.execution.id),
                   )
                 }
               >
@@ -201,8 +217,9 @@ export default function Jobs({
             )}
             {j.state === "cancelling" && (
               <span>
-                {j.execution.adapter === "stata"
-                  ? "Allowing oldstata cleanup (up to 30s)"
+                {j.execution.adapter === "stata" &&
+                stataUsesLauncher(j.execution.command)
+                  ? "Allowing the Stata launcher to exit (up to 30s)"
                   : "Stopping descendants…"}
               </span>
             )}
@@ -222,7 +239,8 @@ export default function Jobs({
               "captured_inputs_verified" && (
               <div className="w-full space-y-1 text-gray-600 dark:text-gray-400">
                 <p>
-                  Verified captured inputs · declared dependencies · host access
+                  Saved inputs checked · listed dependencies · runs with your
+                  computer’s permissions
                 </p>
                 <Inspect
                   label="Run details and saved inputs"
@@ -237,9 +255,17 @@ export default function Jobs({
                 />
               </div>
             )}
+            {staleOutputs(j).length > 0 && (
+              <p className="w-full text-amber-700 dark:text-amber-400">
+                The command finished without rewriting{" "}
+                {staleOutputs(j).join(", ")}, so Pipeline can’t confirm{" "}
+                {staleOutputs(j).length > 1 ? "they match" : "it matches"} the
+                current inputs. Delete the old output and run this again.
+              </p>
+            )}
             {j.execution.validation.stataCleanupRequired === true && (
-              <p role="alert" className="w-full text-red-700">
-                Verify that Legacy Time Off has completed before continuing.
+              <p role="alert" className="w-full text-danger">
+                {STATA_CLEANUP_NOTICE}
               </p>
             )}
           </div>
@@ -247,29 +273,13 @@ export default function Jobs({
       </div>
       {selected && (
         <>
-          <div className="flex gap-2">
-            {["stdout", "stderr"].map((s) => (
-              <button
-                className={button}
-                key={s}
-                aria-pressed={stream === s}
-                onClick={() => setStream(s)}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-          <pre
-            aria-label="Job log"
-            className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-neutral-950 p-3 text-xs text-neutral-100"
-          >
-            {log || "No output yet."}
-          </pre>
-          {truncated && (
-            <p className="text-xs">
-              Log limit reached. Up to 4 MiB is saved for each output stream.
-            </p>
-          )}
+          <JobLog
+            workspaceId={workspaceId}
+            executionId={selected}
+            job={jobs.find((j) => j.execution.id === selected)}
+            live={visible && open}
+            onError={setError}
+          />
           <Inspect
             value={jobs.find((j) => j.execution.id === selected)}
             label="Run details"

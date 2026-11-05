@@ -1,4 +1,4 @@
-/* Project navigation: sidebar controls, the drawer, and the view picker. */
+/* Panel header controls, the view picker, and app search. */
 .workspace-sidebar-icon-button {
   display: flex;
   align-items: center;
@@ -15,135 +15,10 @@
   background: var(--ui-sunken);
   color: var(--ui-text);
 }
-.workspace-sidebar-icon-button:disabled,
-.workspace-sidebar-text-button:disabled {
+.workspace-sidebar-icon-button:disabled {
   opacity: 0.4;
 }
-.workspace-sidebar-text-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 6px;
-  border-radius: var(--ui-radius-sm);
-  color: var(--ui-muted);
-  font-size: var(--ui-text-meta);
-  font-weight: 500;
-  transition:
-    background-color 0.15s,
-    color 0.15s;
-}
-.workspace-sidebar-text-button:hover {
-  background: var(--ui-sunken);
-  color: var(--ui-text);
-}
-.workspace-sidebar-primary {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border-radius: var(--ui-radius-sm);
-  background: var(--ui-inverse);
-  color: var(--ui-on-inverse);
-  font-size: var(--ui-text-body);
-  font-weight: 500;
-  transition: opacity 0.15s;
-}
-.workspace-sidebar-primary:hover:not(:disabled) {
-  opacity: 0.85;
-}
-.workspace-sidebar-primary:disabled {
-  cursor: not-allowed;
-  opacity: 0.35;
-}
-
-.workspace-project-navigation {
-  padding: 0 12px 14px;
-}
-.workspace-project-navigation nav {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.workspace-project-navigation nav button {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
-  border-radius: var(--ui-radius-sm);
-  color: var(--ui-muted);
-  font-size: var(--ui-text-label);
-  text-align: left;
-}
-.workspace-project-navigation nav button span {
-  color: inherit;
-  font-weight: 600;
-}
-.workspace-project-navigation nav button small {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ui-muted);
-  font-size: var(--ui-text-meta);
-  font-weight: 400;
-}
-.workspace-project-navigation nav button:hover,
-.workspace-project-navigation nav button[aria-current="page"] {
-  background: var(--ui-sunken);
-  color: var(--ui-text);
-}
-.workspace-conversations > summary {
-  cursor: pointer;
-  padding: 10px 20px;
-  border-top: 1px solid var(--ui-border);
-  color: var(--ui-muted);
-  font-size: var(--ui-text-meta);
-}
-
-/* Progressive disclosure: navigation opens as a bounded drawer. */
-.workspace-navigation-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-}
-.workspace-navigation-overlay[hidden] {
-  display: none !important;
-}
-.workspace-navigation-backdrop {
-  position: absolute;
-  inset: 0;
-  background: var(--ui-scrim);
-}
-.workspace-navigation-overlay > .workspace-navigation-drawer {
-  position: relative;
-  z-index: 1;
-  flex: 0 0 auto;
-  width: min(320px, 100%);
-  height: 100%;
-  border-right: 1px solid var(--ui-border);
-  box-shadow: var(--ui-shadow-3);
-}
-.workspace-navigation-drawer > header {
-  padding: 14px 20px;
-}
-.workspace-navigation-drawer > header h2 {
-  font-size: var(--ui-text-title);
-}
-.workspace-pin-navigation {
-  margin: 8px 16px 12px;
-  padding: 8px;
-  border-radius: var(--ui-radius-sm);
-  color: var(--ui-muted);
-  font-size: var(--ui-text-meta);
-}
-.workspace-pin-navigation:hover {
-  background: var(--ui-sunken);
-  color: var(--ui-text);
-}
-
-/* View picker (Command/Ctrl K). */
+/* View picker and app search. */
 .workspace-picker-backdrop {
   position: fixed;
   inset: 0;

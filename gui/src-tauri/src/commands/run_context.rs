@@ -1,5 +1,8 @@
 use super::*;
 
+/// What a manifest keeps in place of a secret variable's value.
+const REDACTED_SECRET: &str = "[redacted secret; re-enter to rerun]";
+
 #[derive(Clone)]
 pub(super) struct RunSnapshot {
     pub(super) settings: crate::settings::Settings,
@@ -11,12 +14,15 @@ pub(super) struct RunSnapshot {
     pub(super) workflow_fingerprint: String,
     pub(super) workflow_json: String,
     pub(super) specialist_catalog_revision: String,
+    /// The one-report agent choice folded into `settings` and `config`, saved
+    /// with the run so Resume and Regenerate can use it again.
+    pub(super) agent_overrides: Option<RunParallelOverrides>,
 }
 
 /// One-report override for Parallel steps and, when selected, their Merge
 /// calls. `None` at the command boundary means use Settings and workflow
 /// choices unchanged; a present value is fingerprinted into the immutable
-/// launch snapshot and never persisted.
+/// launch snapshot, saved with the run, and never written to Settings.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct RunParallelOverrides {
     pub agents: Vec<String>,
@@ -175,6 +181,7 @@ pub(super) fn load_run_snapshot_for_workflow(
         workflow_fingerprint: document.fingerprint,
         workflow_json: document.canonical_json,
         specialist_catalog_revision,
+        agent_overrides: None,
     })
 }
 
@@ -229,7 +236,7 @@ pub(super) fn validate_runtime_bindings(
         if require_required && spec.required && value.trim().is_empty() {
             return Err(format!("Missing required variable '{label}'"));
         }
-        if require_required && spec.secret && value == "[redacted secret; re-enter to rerun]" {
+        if require_required && spec.secret && value == REDACTED_SECRET {
             return Err(format!(
                 "Secret variable '{label}' must be entered again before this run"
             ));
@@ -304,11 +311,55 @@ pub(super) fn durable_variables(
             (
                 key.clone(),
                 if secret {
-                    "[redacted secret; re-enter to rerun]".to_string()
+                    REDACTED_SECRET.to_string()
                 } else {
                     value.clone()
                 },
             )
+        })
+        .collect()
+}
+
+/// A re-run's variables are built like a fresh run's: declared defaults, then
+/// the parent's retained values, then secrets entered again for this re-run.
+pub(super) fn rerun_variables(
+    config: &PipelineConfig,
+    parent_variables: &std::collections::HashMap<String, String>,
+    entered_secrets: std::collections::HashMap<String, String>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let mut variables: std::collections::HashMap<String, String> = config
+        .variables
+        .iter()
+        .map(|spec| (spec.key.clone(), spec.default.clone()))
+        .collect();
+    variables.extend(parent_variables.clone());
+    for (key, value) in entered_secrets {
+        if !config
+            .variables
+            .iter()
+            .any(|spec| spec.key == key && spec.secret)
+        {
+            return Err(format!(
+                "Re-run supplied '{key}', which is not a secret variable of this review"
+            ));
+        }
+        variables.insert(key, value);
+    }
+    Ok(variables)
+}
+
+/// Secret variables a re-run cannot fill from what the run retained.
+pub(super) fn secrets_to_reenter<'a>(
+    config: &'a PipelineConfig,
+    parent_variables: &std::collections::HashMap<String, String>,
+) -> Vec<&'a crate::pipeline_config::VarSpec> {
+    config
+        .variables
+        .iter()
+        .filter(|spec| spec.secret)
+        .filter(|spec| match parent_variables.get(&spec.key) {
+            Some(value) => value == REDACTED_SECRET,
+            None => spec.required && spec.default.trim().is_empty(),
         })
         .collect()
 }
@@ -320,14 +371,26 @@ pub(super) fn bind_parallel_overrides(
     let Some(overrides) = overrides else {
         return Ok(snapshot);
     };
+    apply_parallel_overrides(&mut snapshot.settings, &mut snapshot.config, overrides)?;
+    snapshot.agent_overrides = Some(overrides.clone());
+    snapshot.fingerprint = stable_snapshot_fingerprint(&(snapshot.fingerprint.as_str(), overrides))
+        .map_err(|error| format!("Could not fingerprint Parallel agent options: {error}"))?;
+    Ok(snapshot)
+}
+
+/// Folds a one-report agent choice into a run's settings and workflow.
+pub(super) fn apply_parallel_overrides(
+    settings: &mut crate::settings::Settings,
+    config: &mut PipelineConfig,
+    overrides: &RunParallelOverrides,
+) -> Result<(), String> {
     if overrides.agents.is_empty() {
         return Err("Select at least one Parallel agent".to_string());
     }
-    snapshot.settings.default_parallel_agents = overrides.agents.clone();
-    snapshot.settings.default_parallel_model_overrides = overrides.model_overrides.clone();
-    snapshot.settings.default_parallel_effort_overrides = overrides.effort_overrides.clone();
-    for step in snapshot
-        .config
+    settings.default_parallel_agents = overrides.agents.clone();
+    settings.default_parallel_model_overrides = overrides.model_overrides.clone();
+    settings.default_parallel_effort_overrides = overrides.effort_overrides.clone();
+    for step in config
         .steps
         .iter_mut()
         .filter(|step| step.phase == crate::pipeline_config::Phase::Parallel)
@@ -342,21 +405,57 @@ pub(super) fn bind_parallel_overrides(
         if merge_agent.trim().is_empty() {
             return Err("Select a Merge agent".to_string());
         }
-        snapshot.settings.default_merge_agent = merge_agent.to_string();
-        snapshot.settings.default_merge_model_overrides = overrides.merge_model_overrides.clone();
-        snapshot.settings.default_merge_effort_overrides = overrides.merge_effort_overrides.clone();
+        settings.default_merge_agent = merge_agent.to_string();
+        settings.default_merge_model_overrides = overrides.merge_model_overrides.clone();
+        settings.default_merge_effort_overrides = overrides.merge_effort_overrides.clone();
         // An explicit workflow Merge provider would otherwise bypass the
         // transient Settings policies above. Clearing it makes this one-run
         // selection the inherited, fully configured Merge default.
-        snapshot.config.merge.agents.clear();
+        config.merge.agents.clear();
     } else if !overrides.merge_model_overrides.is_empty()
         || !overrides.merge_effort_overrides.is_empty()
     {
         return Err("Merge model or thinking overrides require a Merge agent".to_string());
     }
-    snapshot.settings.validate()?;
-    snapshot.fingerprint = stable_snapshot_fingerprint(&(snapshot.fingerprint.as_str(), overrides))
-        .map_err(|error| format!("Could not fingerprint Parallel agent options: {error}"))?;
+    settings.validate()
+}
+
+/// One-run Review limits from the command line. `None` fields keep the
+/// Settings value; a present value is fingerprinted and never persisted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Serialize)]
+pub struct ReviewLimitOverrides {
+    pub max_cost_usd: Option<f64>,
+    pub max_calls: Option<u32>,
+    pub max_minutes: Option<u32>,
+}
+
+impl ReviewLimitOverrides {
+    pub fn is_empty(&self) -> bool {
+        self.max_cost_usd.is_none() && self.max_calls.is_none() && self.max_minutes.is_none()
+    }
+}
+
+pub(super) fn bind_review_limits(
+    mut snapshot: RunSnapshot,
+    limits: &ReviewLimitOverrides,
+) -> Result<RunSnapshot, String> {
+    if limits.is_empty() {
+        return Ok(snapshot);
+    }
+    if let Some(cost) = limits.max_cost_usd {
+        if !cost.is_finite() || cost < 0.0 {
+            return Err("The cost limit must be zero or a positive number".to_string());
+        }
+        snapshot.settings.review_max_cost_usd = cost;
+    }
+    if let Some(calls) = limits.max_calls {
+        snapshot.settings.review_max_calls = calls;
+    }
+    if let Some(minutes) = limits.max_minutes {
+        snapshot.settings.review_max_minutes = minutes;
+    }
+    snapshot.fingerprint = stable_snapshot_fingerprint(&(snapshot.fingerprint.as_str(), limits))
+        .map_err(|error| format!("Could not fingerprint Review limits: {error}"))?;
     Ok(snapshot)
 }
 
@@ -412,7 +511,7 @@ pub(super) fn apply_workflow_codex_status(
 ) {
     use crate::agent_runtime::codex::AccountStatus;
 
-    codex.name = "Workflow ChatGPT".into();
+    codex.name = "ChatGPT (reviews)".into();
     // This account belongs to the managed Workflow connection. Ambient CLI
     // authentication (and Workspace's separate account) cannot establish it.
     codex.cli_auth_status = None;
@@ -429,11 +528,11 @@ pub(super) fn apply_workflow_codex_status(
             );
             codex.version = status.version;
             codex.hint = if !status.unresolved_attempts.is_empty() {
-                "Review the unresolved Workflow ChatGPT attempt in Settings → Providers → ChatGPT before another run.".into()
+                "Review the unresolved ChatGPT attempt in Settings → Connections → OpenAI before another run.".into()
             } else if status.login_in_progress {
-                "Complete Workflow ChatGPT sign-in in your browser, or cancel it in Settings → Providers → ChatGPT.".into()
+                "Complete ChatGPT sign-in in your browser, or cancel it in Settings → Connections → OpenAI.".into()
             } else if status.account.status != AccountStatus::Chatgpt {
-                "Sign in with a ChatGPT account in Settings → Providers → ChatGPT. Workspace and the legacy Codex CLI keep separate sign-ins.".into()
+                "Sign in with a ChatGPT account in Settings → Connections → OpenAI. The legacy Codex CLI keeps its own sign-in.".into()
             } else {
                 String::new()
             };
@@ -578,7 +677,7 @@ pub(super) fn validate_primary_input_selection(
             // names and every reviewer would read the inventory as the paper.
             if crate::auto_review::uses_auto_review_contract(config) {
                 return Err(
-                    "Automatic Paper Review reviews a document, not a browsable source tree. \
+                    "This review reads a single document, not a browsable source tree. \
                      Select the folder as a LaTeX project (if it contains the paper's TeX \
                      source), pick the paper file directly, or switch to a folder-oriented \
                      workflow."

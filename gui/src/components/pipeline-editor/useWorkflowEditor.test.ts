@@ -2,14 +2,14 @@ import { renderHook, act } from "@testing-library/react";
 import { it, expect, vi } from "vitest";
 import { useWorkflowEditor } from "./useWorkflowEditor";
 
-it("retains an auto-review recovery draft until profile loading inspects it", () => {
+it("retains a default-profile recovery draft until profile loading inspects it", () => {
   localStorage.clear();
   localStorage.setItem(
-    "pipeline.workflowDraft.auto-review",
+    "pipeline.workflowDraft.auto-paper-review",
     '{"unsaved":"precious work"}',
   );
   renderHook(() => useWorkflowEditor());
-  expect(localStorage.getItem("pipeline.workflowDraft.auto-review")).toBe(
+  expect(localStorage.getItem("pipeline.workflowDraft.auto-paper-review")).toBe(
     '{"unsaved":"precious work"}',
   );
 });

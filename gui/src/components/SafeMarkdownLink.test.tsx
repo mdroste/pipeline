@@ -145,4 +145,22 @@ describe("SafeMarkdownLink", () => {
     expect(safeExternalHref("java\nscript:alert(1)")).toBeNull();
     expect(safeExternalHref(undefined)).toBeNull();
   });
+
+  it("reports a structured open failure by its message", async () => {
+    const navigation = {
+      path: "notes/index.md",
+      root: "/project",
+      open: vi.fn().mockRejectedValue({ message: "Missing" }),
+      image: vi.fn(),
+    };
+    render(
+      <FileNavigationScope value={navigation}>
+        <SafeMarkdownLink href="draft.md">Draft</SafeMarkdownLink>
+      </FileNavigationScope>,
+    );
+    fireEvent.click(screen.getByRole("link", { name: "Draft" }));
+    await waitFor(() =>
+      expect(notify).toHaveBeenCalledWith("Could not open this file: Missing"),
+    );
+  });
 });

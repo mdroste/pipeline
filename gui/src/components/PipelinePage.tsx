@@ -25,12 +25,13 @@ import {
 
 import SchemaEditorPanel from "./pipeline-editor/SchemaEditorPanel";
 import WaveDiagram from "./WaveDiagram";
+import type { PipelineConfig } from "../lib/types";
 
 interface Props {
   onClose: () => void;
   onDirtyChange?: (dirty: boolean) => void;
   onOpenGallery?: () => void;
-  onProfileChange?: () => void;
+  onProfileChange?: (config?: PipelineConfig) => void;
   showBack?: boolean;
 }
 
@@ -103,10 +104,10 @@ export default function PipelinePage({
       <div className="flex items-center justify-center h-full p-8">
         <div className="max-w-md text-center space-y-4">
           <h2 className="text-base font-semibold text-gray-800 dark:text-gray-100">
-            Pipeline editor could not be loaded
+            Review designer could not be loaded
           </h2>
           <p className="text-sm text-red-600 dark:text-red-400 break-words">
-            {loadError ?? "The profile configuration was unavailable."}
+            {loadError ?? "This review’s setup was unavailable."}
           </p>
           <div className="flex justify-center gap-2">
             <button
@@ -184,7 +185,7 @@ export default function PipelinePage({
         showBack={showBack}
       />
       {/* Right panel — independently memoizable editors */}
-      <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex-1 flex flex-col min-h-0 min-w-0">
         {navigatorView === "schemas" ? (
           <SchemaEditorPanel
             scopeKey={`${activeProfile}:${schemaEditorEpoch}`}
@@ -227,6 +228,7 @@ export default function PipelinePage({
             schema={config.orientation_schema}
             inputMode={config.extraction?.input_mode ?? "document"}
             autoReview={autoReview}
+            profileId={activeProfile}
             onPromptChange={(orientation_prompt) => {
               setConfig((current) =>
                 current ? { ...current, orientation_prompt } : current,
@@ -309,11 +311,8 @@ export default function PipelinePage({
                 adaptiveAgentRange={adaptiveAgentRange}
                 selectedId={editing}
                 onSelect={(id) => setEditing(id)}
+                hint="Select any stage to edit its prompt, inputs, conditions, and models."
               />
-              <p className="mt-4 text-center text-xs text-gray-500 dark:text-gray-400">
-                Select any stage to edit its prompt, inputs, conditions, and
-                models.
-              </p>
             </div>
           </div>
         )}

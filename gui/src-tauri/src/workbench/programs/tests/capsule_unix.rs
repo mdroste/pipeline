@@ -332,3 +332,78 @@ fn older_capsule_inputs_default_to_nonexecutable() {
     .unwrap();
     assert!(!input.executable);
 }
+
+#[test]
+fn a_plan_captures_a_launch_script_declared_in_a_subfolder() {
+    let f = fixture(true);
+    fs::create_dir(f.root.join("scripts")).unwrap();
+    fs::write(f.root.join("scripts/run.py"), "print('fixture')").unwrap();
+    let p = research::save_execution_profile(
+        &f.store,
+        research::SaveExecutionProfileRequest {
+            profile_id: None,
+            workspace_id: f.ws.clone(),
+            name: "Script in a subfolder".into(),
+            adapter: "command".into(),
+            argv: vec![python(), "scripts/run.py".into()],
+            cwd: f.root.to_string_lossy().into_owned(),
+            environment: json!({}),
+            inputs: vec!["scripts/run.py".into()],
+            timeout_seconds: 10,
+            outputs: vec!["results.json".into()],
+            expected_revision: None,
+            operation_id: "subfolder-profile".into(),
+        },
+    )
+    .unwrap();
+    assert!(capture(&f, &p).body["launch"]["launchFiles"][0]["path"]
+        .as_str()
+        .unwrap()
+        .ends_with("run.py"));
+}
+
+#[test]
+fn branching_a_rejected_approach_reopens_it_as_a_conjecture() {
+    let f = fixture(false);
+    let saved = project::studio_mutate(
+        &f.store,
+        project::StudioMutation {
+            workspace_id: f.ws.clone(),
+            operation_id: "rejected-note".into(),
+            action: project::StudioAction::SaveTheory {
+                id: None,
+                expected_revision: 0,
+                note: serde_json::from_value(json!({
+                    "kind":"rejected_approach","title":"Fixed point by contraction",
+                    "statement":"The map contracts.","body":"The modulus exceeds one.",
+                    "assumptions":["Bounded utility"],"assumptionIds":[],"anchorIds":[],
+                    "relatedIds":[],"unresolvedSteps":[],"status":"abandoned",
+                    "rejectionReason":"The modulus exceeds one","origin":"manual","promotions":[]
+                }))
+                .unwrap(),
+            },
+        },
+    )
+    .unwrap();
+    let branched = theory::branch(
+        &f.store,
+        theory::Branch {
+            workspace_id: f.ws.clone(),
+            source: ResearchObjectRef {
+                kind: "record".into(),
+                id: saved["id"].as_str().unwrap().into(),
+                revision: saved["revision"].to_string(),
+                start: None,
+                end: None,
+            },
+            title: "Contraction under discounting".into(),
+            assumptions: vec!["Discounting below one".into()],
+            question: "Does discounting restore the contraction?".into(),
+            operation_id: "branch-rejected".into(),
+        },
+    )
+    .unwrap();
+    let note = &branched.body["note"]["body"];
+    assert_eq!(note["kind"], "conjecture");
+    assert_eq!(note["status"], "open");
+}

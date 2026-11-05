@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -7,79 +8,30 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceProjectSurface from "./WorkspaceProjectSurface";
-import type { ProjectHome } from "../lib/projectClient";
+import { appEvents } from "../lib/appEvents";
+import { makeProjectHome as home } from "../test/projectSurfaceFixtures";
 import type { WorkbenchSession } from "../lib/workbenchTypes";
 const mocks = vi.hoisted(() => ({
   home: vi.fn(),
   mutate: vi.fn(),
   getWorkspace: vi.fn(),
+  read: vi.fn(),
 }));
+vi.mock("../lib/deskClient", async (original) => {
+  const module = await original<typeof import("../lib/deskClient")>();
+  return {
+    ...module,
+    deskClient: { ...module.deskClient, read: mocks.read },
+  };
+});
 vi.mock("../lib/projectClient", async (original) => ({
   ...(await original<typeof import("../lib/projectClient")>()),
   projectClient: mocks,
 }));
-vi.mock("../lib/workbenchClient", () => ({
-  workbenchClient: { getWorkspace: mocks.getWorkspace },
+vi.mock("../lib/workbench/workspaceClient", () => ({
+  workspaceClient: { getWorkspace: mocks.getWorkspace },
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
-function home(): ProjectHome {
-  return {
-    settings: {
-      id: "home",
-      workspaceId: "workspace",
-      kind: "home",
-      revision: 4,
-      updatedAt: "now",
-      body: {
-        manuscriptRevisionId: null,
-        baselineExecutionId: null,
-        briefNoteIds: [],
-        excludedNoteIds: [],
-        ignoredPaths: [],
-        layout: "reading",
-      },
-    },
-    notes: [],
-    noteHistory: [],
-    tasks: [],
-    anchors: [],
-    papers: [],
-    executions: [],
-    ledger: {
-      claims: [],
-      evidence: [],
-      staleClaims: [],
-      unsupportedAcceptedClaims: [],
-    },
-    inventory: {
-      id: "inventory",
-      workspaceId: "workspace",
-      kind: "inventory",
-      revision: 1,
-      updatedAt: "now",
-      body: {
-        rootIdentity: "root",
-        capturedAt: "now",
-        complete: true,
-        warnings: [],
-        files: [
-          {
-            path: "paper.tex",
-            hash: "hash",
-            size: 20,
-            executable: false,
-            status: "current",
-          },
-        ],
-      },
-    },
-    changes: [],
-    applications: [],
-    workingCopyStatus: "Refresh files",
-    fileAcceptance: true,
-    contextPreview: "Reference results run: not selected.",
-  };
-}
 const openTask = {
   id: "task",
   workspaceId: "workspace",
@@ -220,9 +172,15 @@ it("explains that a folder is needed before an edit can start", async () => {
     target: { value: "edits" },
   });
   expect(
-    screen.getByText(/Attach a folder on the Overview tab first/),
+    screen.getByText(/Attach a folder in Project settings first/),
   ).toBeInTheDocument();
   expect(screen.queryByLabelText("Action item for this edit")).toBeNull();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Go to Project settings" }),
+  );
+  expect(
+    await screen.findByRole("heading", { name: "Project settings" }),
+  ).toBeInTheDocument();
 });
 it("opens a research conversation only when explicitly requested", async () => {
   const conversation = vi.fn().mockResolvedValue(undefined);
@@ -392,4 +350,49 @@ it("asks for the conversation first only when a project has nothing but conversa
   expect(brief).toHaveBeenLastCalledWith(
     "Do minimum wages reduce teen employment?",
   );
+});
+
+it("offers another try when a project fails to open", async () => {
+  mocks.home.mockRejectedValueOnce({ message: "The project store is busy." });
+  render(
+    <WorkspaceProjectSurface
+      workspaceId="workspace"
+      onConversation={vi.fn()}
+      onWorkspaceChanged={vi.fn()}
+    />,
+  );
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "The project store is busy.",
+  );
+  expect(screen.queryByText("Opening project…")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+  await screen.findByRole("heading", { name: "Local research" });
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("leaves a saved research item when told to go to a destination", async () => {
+  localStorage.setItem(
+    "pipeline.desk.workspace",
+    JSON.stringify({
+      tab: "tasks",
+      object: { kind: "source", id: "s", revision: "r" },
+    }),
+  );
+  mocks.read.mockResolvedValue({ title: "Saved source", text: "" });
+  render(
+    <WorkspaceProjectSurface
+      workspaceId="workspace"
+      destination="tasks"
+      onConversation={vi.fn()}
+      onWorkspaceChanged={vi.fn()}
+    />,
+  );
+  await screen.findByRole("region", { name: "Research item" });
+  act(() =>
+    appEvents.emit("workspace-destination", {
+      workspaceId: "workspace",
+      tab: "tasks",
+    }),
+  );
+  expect(screen.queryByRole("region", { name: "Research item" })).toBeNull();
 });

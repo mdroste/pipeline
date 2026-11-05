@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
+import { stateLabel, taskTime } from "../../lib/taskPresentation";
+import { taskClient } from "../../lib/taskClient";
 import {
-  stateLabel,
-  taskClient,
-  taskTime,
   type Json,
   type Receipt,
   type TaskEvent,
   type TaskRun,
-} from "../../lib/taskClient";
+} from "../../lib/taskTypes";
 import { Outline, Status } from "./shared";
+import ReportIssueLink from "../ReportIssueLink";
 
 function Output({
   receipt,
@@ -71,6 +71,23 @@ function Output({
     </>
   );
 }
+const UNRESOLVED = ["unknown", "failed"];
+/** Past its deadline a wait still takes input, and that starts a new deadline. */
+function lateInput(run: TaskRun) {
+  return (
+    run.state === "attention" &&
+    run.deadlineAt <= Date.now() / 1000 &&
+    !Object.values(run.progress.receipts).some((r) =>
+      UNRESOLVED.includes(r.state),
+    )
+  );
+}
+function acceptsInput(run: TaskRun) {
+  return (
+    ["waiting", "paused", "running", "queued"].includes(run.state) ||
+    lateInput(run)
+  );
+}
 function InputForm({
   run,
   receipt,
@@ -111,6 +128,12 @@ function InputForm({
       {receipt.wakeAt && (
         <p className="task-muted">Timeout: {taskTime(receipt.wakeAt)}</p>
       )}
+      {lateInput(run) && (
+        <p className="task-muted">
+          The deadline has passed. Providing input continues this automation
+          with a new {run.chain.limits.deadlineHours}-hour deadline.
+        </p>
+      )}
     </form>
   );
 }
@@ -129,6 +152,11 @@ export default function Detail({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const terminal = ["finished", "cancelled", "failed"].includes(run.state);
+  useEffect(() => {
+    // History cleanup never removes a result nobody has opened.
+    if (terminal) void taskClient.markSeen(run.id).catch(() => undefined);
+  }, [run.id, terminal]);
   useEffect(() => {
     let alive = true;
     void taskClient
@@ -154,7 +182,6 @@ export default function Detail({
       setBusy(false);
     }
   }
-  const terminal = ["finished", "cancelled", "failed"].includes(run.state);
   const receipts = Object.values(run.progress.receipts).sort(
     (a, b) =>
       (a.sequence ?? 0) - (b.sequence ?? 0) ||
@@ -185,7 +212,7 @@ export default function Detail({
             <dt>Conversation</dt>
             <dd>{run.scope.sessionId ?? "No conversation steps"}</dd>
             <dt>Folder</dt>
-            <dd>{run.scope.runtimeRoot ?? "Automation artifacts"}</dd>
+            <dd>{run.scope.runtimeRoot ?? "Automation files and results"}</dd>
             <dt>Review profiles</dt>
             <dd>
               {Object.values(run.scope.profiles)
@@ -203,9 +230,9 @@ export default function Detail({
             <dd>{taskTime(run.dueAt)}</dd>
           </dl>
           <p className="task-muted">
-            Conversation steps use this project’s tools and folder permissions.
-            Scheduled occurrences get their own conversation. Reviews use the
-            saved review profile and their own provider credentials.
+            Assistant steps use this project’s tools and file permissions. Each
+            scheduled run starts a separate conversation. Review steps use their
+            saved design and configured provider account.
           </p>
         </div>
       )}
@@ -263,12 +290,12 @@ export default function Detail({
       {!run.missionId && run.state === "attention" && (
         <div className="task-attention">
           <p>
-            Inspect any completed work before retrying an interrupted action. A
-            retry can repeat effects that were not recorded.
+            Check the completed work before retrying. The interrupted action may
+            already have made changes that Pipeline could not record.
           </p>
           <div className="task-actions">
             <button disabled={busy} onClick={() => void control("reconcile")}>
-              Reconcile recorded results
+              Check saved results and update status
             </button>
             <button
               disabled={busy}
@@ -277,7 +304,7 @@ export default function Detail({
               Use current conversation context
             </button>
             <button disabled={busy} onClick={() => void control("retry")}>
-              Retry unresolved actions
+              Retry unfinished actions
             </button>
           </div>
         </div>
@@ -285,12 +312,13 @@ export default function Detail({
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       {run.progress.limitReached && (
         <p className="task-attention">
-          The iteration limit was reached. The final artifact is the last
-          reviewed version; unresolved findings remain available below.
+          The review limit was reached. The final file is the last version
+          reviewed. Unresolved findings appear below.
         </p>
       )}
       {receipts.length ? (
@@ -306,14 +334,25 @@ export default function Detail({
                 </div>
                 <Status state={r.state === "timer" ? "waiting" : r.state} />
               </div>
-              {r.error && <p className="task-error">{r.error}</p>}
+              {r.error && (
+                <p className="task-error">
+                  {r.error}
+                  <ReportIssueLink />
+                </p>
+              )}
               {r.state === "input" ? (
-                <InputForm
-                  run={run}
-                  receipt={r}
-                  onUpdated={onUpdated}
-                  onError={setError}
-                />
+                acceptsInput(run) ? (
+                  <InputForm
+                    run={run}
+                    receipt={r}
+                    onUpdated={onUpdated}
+                    onError={setError}
+                  />
+                ) : (
+                  <p className="task-muted">
+                    This automation can&rsquo;t take input right now.
+                  </p>
+                )
               ) : r.state === "timer" ? (
                 <p className="task-muted">Resumes {taskTime(r.wakeAt)}</p>
               ) : (
@@ -328,7 +367,7 @@ export default function Detail({
         <Outline steps={run.chain.steps} />
       )}
       <details>
-        <summary>Chain and limits</summary>
+        <summary>Steps and limits</summary>
         <Outline steps={run.chain.steps} />
         <pre className="task-result">{JSON.stringify(run.chain, null, 2)}</pre>
         <div className="task-actions">
@@ -340,7 +379,9 @@ export default function Detail({
                 .catch((e) => setError(String(e)));
             }}
           >
-            {saved ? "Saved to your chains" : "Save reusable chain"}
+            {saved
+              ? "Saved to your automation templates"
+              : "Save as an automation template"}
           </button>
           <button
             onClick={() => {

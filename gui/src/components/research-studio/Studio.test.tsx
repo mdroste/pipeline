@@ -20,13 +20,17 @@ const mocks = vi.hoisted(() => ({
   runExecution: vi.fn(),
   invoke: vi.fn(),
   listExecutionProfiles: vi.fn(),
+  confirmDialog: vi.fn(),
 }));
 vi.mock("../../lib/studioClient", async (original) => ({
   ...(await original<typeof import("../../lib/studioClient")>()),
   studioClient: mocks,
 }));
 vi.mock("../../lib/projectClient", () => ({ projectClient: mocks }));
-vi.mock("../../lib/workbenchClient", () => ({ workbenchClient: mocks }));
+vi.mock("../DialogService", () => ({ confirmDialog: mocks.confirmDialog }));
+vi.mock("../../lib/workbench/executionClient", () => ({
+  executionClient: mocks,
+}));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: vi.fn() }));
 // The save/conflict integration is independent of the editor's DOM implementation.
@@ -79,7 +83,6 @@ it("keeps a draft after a save conflict and sends the original hash", async () =
       onDocument={vi.fn()}
     />,
   );
-  fireEvent.click(screen.getByText("Load / refresh file"));
   await screen.findByLabelText("Manuscript source editor");
   fireEvent.change(screen.getByLabelText("Manuscript source editor"), {
     target: { value: "My draft" },
@@ -106,13 +109,16 @@ it("does not discard a dirty draft when another file is loaded", async () => {
       onDocument={vi.fn()}
     />,
   );
-  fireEvent.click(screen.getByText("Load / refresh file"));
   await screen.findByLabelText("Manuscript source editor");
   fireEvent.change(screen.getByLabelText("Manuscript source editor"), {
     target: { value: "Draft" },
   });
-  fireEvent.click(screen.getByText("Load / refresh file"));
-  await screen.findByRole("alert");
+  fireEvent.click(
+    screen.getByRole("button", { name: "More manuscript actions" }),
+  );
+  mocks.confirmDialog.mockResolvedValue(false);
+  fireEvent.click(screen.getByRole("menuitem", { name: "Reload file" }));
+  await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalled());
   expect(mocks.editor).toHaveBeenCalledTimes(1);
   expect(screen.getByLabelText("Manuscript source editor")).toHaveValue(
     "Draft",
@@ -127,6 +133,8 @@ it("retains a trailing newline while editing build dependencies", async () => {
       onDocument={vi.fn()}
     />,
   );
+  await screen.findByLabelText("Manuscript source editor");
+  fireEvent.click(screen.getByRole("button", { name: "Build" }));
   const dependencies = screen.getByLabelText(
     "Declared inputs (one per line, relative to build directory)",
   );
@@ -158,16 +166,28 @@ it("restores the original draft hash and does not resurrect a discarded draft", 
       onDocument={vi.fn()}
     />,
   );
-  fireEvent.click(screen.getByText("Load / refresh file"));
   await waitFor(() =>
     expect(screen.getByLabelText("Manuscript source editor")).toHaveValue(
       "Retained draft",
     ),
   );
+  mocks.confirmDialog.mockResolvedValue(true);
   fireEvent.click(screen.getByText("Discard unsaved draft"));
-  expect(localStorage.getItem("pipeline.manuscriptDraft.ws")).toBeNull();
-  fireEvent.click(screen.getByText("Load / refresh file"));
-  await waitFor(() => expect(mocks.editor).toHaveBeenCalledTimes(2));
+  await waitFor(() =>
+    expect(localStorage.getItem("pipeline.manuscriptDraft.ws")).toBeNull(),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("Draft discarded"),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "More manuscript actions" }),
+  );
+  fireEvent.click(screen.getByRole("menuitem", { name: "Reload file" }));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Reloaded from the project",
+    ),
+  );
   expect(screen.getByLabelText("Manuscript source editor")).toHaveValue(
     "Old text",
   );
@@ -183,10 +203,10 @@ it("reads no Workflow state until the bridge and run selection are requested", a
   );
   await waitFor(() => expect(mocks.records).toHaveBeenCalled());
   expect(mocks.invoke).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByLabelText("Enable importing Workflow findings"));
+  fireEvent.click(screen.getByLabelText("Enable importing review findings"));
   expect(mocks.invoke).not.toHaveBeenCalled();
   mocks.invoke.mockResolvedValue([]);
-  fireEvent.click(screen.getByText("Choose a completed Workflow run"));
+  fireEvent.click(screen.getByText("Choose a completed review"));
   await waitFor(() => expect(mocks.invoke).toHaveBeenCalledWith("list_runs"));
 });
 it("requires review and exact host authorization before a detached job starts", async () => {

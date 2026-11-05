@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { workbenchClient } from "../lib/workbenchClient";
+import { conversationClient } from "../lib/workbench/conversationClient";
+import { harnessClient } from "../lib/workbench/harnessClient";
+import { researchClient } from "../lib/workbench/researchClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import {
   importResearchFiles,
@@ -13,9 +15,11 @@ import Button from "../ui/Button";
 import Skeleton from "../ui/Skeleton";
 import type {
   ConversationSnapshot,
+  SessionSnapshot,
   EffectiveHarness,
   PaperWithRevision,
 } from "../lib/workbenchTypes";
+import ReportIssueLink from "./ReportIssueLink";
 
 /**
  * The two ways to bring a document into a conversation. "import" adds files
@@ -32,7 +36,7 @@ export default function WorkspaceAttachmentsPanel({
 }: {
   mode: "import" | "documents";
   snapshot: ConversationSnapshot;
-  onSnapshot: (next: ConversationSnapshot) => void;
+  onSnapshot: (next: SessionSnapshot) => void;
   onBusy: (busy: boolean) => void;
   onClose: () => void;
 }) {
@@ -48,9 +52,9 @@ export default function WorkspaceAttachmentsPanel({
     if (workspaceId)
       void Promise.all([
         mode === "documents"
-          ? workbenchClient.listPapers(workspaceId)
+          ? researchClient.listPapers(workspaceId)
           : Promise.resolve([]),
-        workbenchClient.effectiveHarness(snapshot.session.id),
+        harnessClient.effectiveHarness(snapshot.session.id),
       ])
         .then(([nextPapers, nextHarness]) => {
           if (!disposed) {
@@ -115,15 +119,15 @@ export default function WorkspaceAttachmentsPanel({
     });
   const selectPaper = (paperId: string | null) =>
     act(async () => {
-      const latest = await workbenchClient.conversationSnapshot(
+      const latest = await conversationClient.sessionSnapshot(
         snapshot.session.id,
       );
-      const effective = await workbenchClient.effectiveHarness(
+      const effective = await harnessClient.effectiveHarness(
         snapshot.session.id,
       );
       const enableResearch =
         paperId !== null && !effective.enabledModules.includes("paper_context");
-      const updated = await workbenchClient.updateSession({
+      const updated = await conversationClient.updateSession({
         sessionId: latest.session.id,
         expectedRevision: latest.session.revision,
         operationId: `composer-document-${crypto.randomUUID()}`,
@@ -154,7 +158,7 @@ export default function WorkspaceAttachmentsPanel({
           Using a document in the conversation switches to the Research
           assistant profile so ChatGPT can read it.
           {snapshot.activeBinding &&
-            " This changes the model context for your next message; the saved transcript remains here."}
+            " The assistant will use this document in your next message. Earlier messages stay in the conversation."}
         </p>
       )}
       {mode === "import" && (
@@ -177,6 +181,7 @@ export default function WorkspaceAttachmentsPanel({
           className="whitespace-pre-wrap text-ui-meta text-danger"
         >
           {error}
+          <ReportIssueLink />
         </p>
       )}
       {loading ? (

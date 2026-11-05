@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -10,6 +11,7 @@ import Theory from "./Theory";
 import type { ProjectHome } from "../../lib/projectClient";
 import type { TheoryOverview } from "../../lib/studioClient";
 const mocks = vi.hoisted(() => ({
+  confirm: vi.fn(),
   theory: vi.fn(),
   mutate: vi.fn(),
   invoke: vi.fn(),
@@ -19,6 +21,10 @@ vi.mock("../../lib/studioClient", async (original) => ({
   studioClient: mocks,
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
+vi.mock("../DialogService", async (original) => ({
+  ...(await original<typeof import("../DialogService")>()),
+  confirmDialog: mocks.confirm,
+}));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn(), save: vi.fn() }));
 const anchor = (id: string, quote: string) => ({
   id,
@@ -110,14 +116,20 @@ it("never lets a numerical check claim generality and requires its domain", asyn
   );
   render(<Theory {...props()} />);
   fireEvent.click(await screen.findByText("Edit / checks"));
-  const generality = screen.getByLabelText("Claims generality");
+  const generality = screen.getByLabelText(
+    "Applies to all cases under the stated assumptions",
+  );
   fireEvent.click(generality);
   expect(generality).toBeChecked();
   fireEvent.change(screen.getByLabelText("Method"), {
     target: { value: "numerical_verification" },
   });
-  expect(screen.getByLabelText("Claims generality")).toBeDisabled();
-  expect(screen.getByLabelText("Claims generality")).not.toBeChecked();
+  expect(
+    screen.getByLabelText("Applies to all cases under the stated assumptions"),
+  ).toBeDisabled();
+  expect(
+    screen.getByLabelText("Applies to all cases under the stated assumptions"),
+  ).not.toBeChecked();
   expect(
     screen.getByLabelText(
       "Domain of tested instances (required for numerical checks)",
@@ -174,7 +186,7 @@ it("asks for a reason when abandoning and retains unresolved steps on save", asy
   fireEvent.change(screen.getByLabelText("Unresolved steps"), {
     target: { value: "Continuity\n\nCompactness " },
   });
-  fireEvent.change(screen.getByLabelText("Status (your disposition)"), {
+  fireEvent.change(screen.getByLabelText("Your assessment"), {
     target: { value: "abandoned" },
   });
   fireEvent.change(
@@ -197,6 +209,108 @@ it("asks for a reason when abandoning and retains unresolved steps on save", asy
         }),
       }),
     ),
+  );
+});
+
+it("keeps spaces and new lines while typing list fields and splits them on save", async () => {
+  mocks.theory.mockResolvedValue(
+    overview({
+      notes: [note("t1", "proposition", { assumptions: ["a > 0"] })],
+      evidence: { t1: { label: "No checks recorded." } as never },
+    }),
+  );
+  render(<Theory {...props()} />);
+  fireEvent.click(await screen.findByText("Edit / checks"));
+  const assumptions = screen.getByLabelText("Assumptions");
+  expect(assumptions).toHaveValue("a > 0");
+  for (const value of ["a > 0\n", "a > 0\nx ", "a > 0\nx is positive\n"]) {
+    fireEvent.change(assumptions, { target: { value } });
+    expect(assumptions).toHaveValue(value);
+  }
+  fireEvent.change(screen.getByLabelText("Unresolved steps"), {
+    target: { value: "Show continuity \n\n" },
+  });
+  expect(screen.getByLabelText("Unresolved steps")).toHaveValue(
+    "Show continuity \n\n",
+  );
+  fireEvent.click(screen.getByText("Save theory note"));
+  await waitFor(() =>
+    expect(mocks.mutate).toHaveBeenCalledWith(
+      "ws",
+      expect.objectContaining({
+        action: "saveTheory",
+        id: "t1",
+        note: expect.objectContaining({
+          assumptions: ["a > 0", "x is positive"],
+          unresolvedSteps: ["Show continuity"],
+        }),
+      }),
+    ),
+  );
+  fireEvent.click(screen.getByText("New note"));
+  expect(screen.getByLabelText("Assumptions")).toHaveValue("");
+  expect(screen.getByLabelText("Unresolved steps")).toHaveValue("");
+});
+
+it("updates the recorded check when it is saved again", async () => {
+  const recorded = {
+    id: "c1",
+    workspaceId: "ws",
+    kind: "check",
+    revision: 1,
+    updatedAt: "",
+    body: {
+      check: {
+        theoryId: "t1",
+        method: "analytical_argument",
+        outcome: "passed",
+        summary: "Grid serach",
+        domain: "",
+        tolerance: null,
+        precision: null,
+        executionId: null,
+        recipeRunId: null,
+        anchorIds: [],
+        claimsGenerality: false,
+        origin: "manual",
+      },
+      scope: "general",
+      label: "Analytical argument",
+    },
+  };
+  const withNote = {
+    notes: [note("t1", "proposition")],
+    evidence: { t1: { label: "No checks recorded." } as never },
+  };
+  mocks.theory
+    .mockResolvedValueOnce(overview(withNote))
+    .mockResolvedValue(overview({ ...withNote, checks: [recorded] }));
+  mocks.mutate.mockResolvedValue(recorded);
+  render(<Theory {...props()} />);
+  fireEvent.click(await screen.findByText("Edit / checks"));
+  fireEvent.change(screen.getByLabelText("Summary"), {
+    target: { value: "Grid serach" },
+  });
+  fireEvent.click(screen.getByText("Record check"));
+  await screen.findByText("Check recorded.");
+  expect(mocks.mutate).toHaveBeenLastCalledWith(
+    "ws",
+    expect.objectContaining({ id: null, expectedRevision: 0 }),
+  );
+  fireEvent.change(screen.getByLabelText("Summary"), {
+    target: { value: "Grid search" },
+  });
+  await waitFor(() => expect(screen.getByText("Record check")).toBeEnabled());
+  fireEvent.click(screen.getByText("Record check"));
+  await waitFor(() => expect(mocks.mutate).toHaveBeenCalledTimes(2));
+  expect(mocks.mutate).toHaveBeenLastCalledWith(
+    "ws",
+    expect.objectContaining({
+      action: "saveCheck",
+      id: "c1",
+      expectedRevision: 1,
+      check: expect.objectContaining({ summary: "Grid search" }),
+    }),
   );
 });
 
@@ -263,4 +377,188 @@ it("converts a direction into a task only after its discriminating test is state
       expectedRevision: 3,
     }),
   );
+});
+
+it("brings a refused save into view, and shows a save beside its own section", async () => {
+  mocks.theory.mockResolvedValue(
+    overview({ notes: [note("t1", "proposition")] }),
+  );
+  const scrolled = vi.fn();
+  const original = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = scrolled;
+  try {
+    render(<Theory {...props()} />);
+    fireEvent.click(await screen.findByText("Edit / checks"));
+    mocks.mutate.mockRejectedValueOnce({ message: "Unresolved steps remain" });
+    fireEvent.click(screen.getByText("Save theory note"));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Unresolved steps remain");
+    expect(scrolled.mock.contexts).toContain(alert);
+
+    fireEvent.change(screen.getByLabelText("Research question"), {
+      target: { value: "Does it hold?" },
+    });
+    mocks.mutate.mockResolvedValueOnce({ id: "d1", revision: 1, body: {} });
+    const save = screen.getByText("Save direction");
+    fireEvent.click(save);
+    const saved = await screen.findByText("Research direction saved.");
+    expect(saved).toBe(save.nextElementSibling);
+  } finally {
+    Element.prototype.scrollIntoView = original;
+  }
+});
+
+it("asks before another note or New note replaces unsaved text", async () => {
+  mocks.theory.mockResolvedValue(
+    overview({ notes: [note("t1", "proposition"), note("t2", "lemma")] }),
+  );
+  render(<Theory {...props()} />);
+  const [first, second] = await screen.findAllByText("Edit / checks");
+  fireEvent.click(first);
+  const title = screen.getByLabelText("Title");
+  // Choosing a note with nothing typed asks nothing.
+  expect(mocks.confirm).not.toHaveBeenCalled();
+  fireEvent.change(title, { target: { value: "My unsaved title" } });
+
+  mocks.confirm.mockResolvedValueOnce(false);
+  fireEvent.click(second);
+  await waitFor(() => expect(mocks.confirm).toHaveBeenCalledOnce());
+  await act(async () => {});
+  expect(title).toHaveValue("My unsaved title");
+
+  mocks.confirm.mockResolvedValueOnce(false);
+  fireEvent.click(screen.getByText("New note"));
+  await waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(2));
+  await act(async () => {});
+  expect(title).toHaveValue("My unsaved title");
+
+  mocks.confirm.mockResolvedValueOnce(true);
+  fireEvent.click(second);
+  await waitFor(() => expect(title).toHaveValue("lemma title"));
+});
+
+it("does not ask once the note has been saved", async () => {
+  mocks.theory.mockResolvedValue(
+    overview({ notes: [note("t1", "proposition"), note("t2", "lemma")] }),
+  );
+  mocks.mutate.mockImplementation(
+    async (_w: string, action: { note: never }) => ({
+      id: "t1",
+      revision: 3,
+      body: action.note,
+    }),
+  );
+  render(<Theory {...props()} />);
+  const [first, second] = await screen.findAllByText("Edit / checks");
+  fireEvent.click(first);
+  fireEvent.change(screen.getByLabelText("Title"), {
+    target: { value: "Saved title" },
+  });
+  fireEvent.click(screen.getByText("Save theory note"));
+  await screen.findByText("Theory note saved.");
+  fireEvent.click(second);
+  await waitFor(() =>
+    expect(screen.getByLabelText("Title")).toHaveValue("lemma title"),
+  );
+  expect(mocks.confirm).not.toHaveBeenCalled();
+});
+
+it("stages only a saved note, so the text on screen is what reaches the manuscript", async () => {
+  mocks.theory.mockResolvedValue(
+    overview({ notes: [note("t1", "derivation")] }),
+  );
+  mocks.mutate.mockImplementation(
+    async (_w: string, action: { note: never }) => ({
+      id: "t1",
+      revision: 3,
+      body: action.note,
+    }),
+  );
+  const withChange = {
+    ...data,
+    changes: [{ id: "c1", body: { state: "isolated", taskId: "t" } }],
+  } as unknown as ProjectHome;
+  render(<Theory {...props()} data={withChange} />);
+  fireEvent.click(await screen.findByText("Edit / checks"));
+  fireEvent.change(screen.getByLabelText("Task change set"), {
+    target: { value: "c1" },
+  });
+  const stage = screen.getByRole("button", {
+    name: "Stage derivation into manuscript",
+  });
+  expect(stage).toBeEnabled();
+
+  fireEvent.change(screen.getByLabelText("Title"), {
+    target: { value: "Edited title" },
+  });
+  expect(stage).toBeDisabled();
+  expect(screen.getByText(/Save the theory note first/)).toBeInTheDocument();
+
+  fireEvent.click(screen.getByText("Save theory note"));
+  await screen.findByText("Theory note saved.");
+  expect(stage).toBeEnabled();
+  expect(screen.queryByText(/Save the theory note first/)).toBeNull();
+});
+
+it("brings the note form into view from a row in the list", async () => {
+  const scroll = vi.fn();
+  const original = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = scroll;
+  try {
+    mocks.theory.mockResolvedValue(overview({ notes: [note("t1", "lemma")] }));
+    render(<Theory {...props()} />);
+    fireEvent.click(await screen.findByText("Edit / checks"));
+    const form = (await screen.findByText("Edit theory note")).closest(
+      "section",
+    );
+    await waitFor(() => expect(form).toHaveFocus());
+    expect(scroll.mock.contexts).toContain(form);
+  } finally {
+    Element.prototype.scrollIntoView = original;
+  }
+});
+
+it("shows what a sender decided beside an imported note and check", async () => {
+  mocks.theory.mockResolvedValue(
+    overview({
+      notes: [note("t1", "proposition", { importedStatus: "supported" })],
+      checks: [
+        {
+          id: "c1",
+          workspaceId: "ws",
+          kind: "check",
+          revision: 1,
+          updatedAt: "",
+          body: {
+            check: {
+              theoryId: "t1",
+              method: "analytical_argument",
+              outcome: "passed",
+              summary: "Argument",
+              domain: "",
+              tolerance: null,
+              precision: null,
+              executionId: null,
+              recipeRunId: null,
+              anchorIds: [],
+              claimsGenerality: true,
+              origin: "manual",
+            },
+            scope: "general",
+            label: "Recorded",
+            importedFrom: "namespace",
+            importedStatus: "passed",
+          },
+        },
+      ],
+    }),
+  );
+  render(<Theory {...props()} />);
+  expect(
+    await screen.findByText(/the sender marked this supported/),
+  ).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Edit / checks" }));
+  expect(
+    await screen.findByText(/the sender recorded a passed check/),
+  ).toBeInTheDocument();
 });

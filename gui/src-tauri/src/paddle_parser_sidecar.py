@@ -1,9 +1,11 @@
 """Narrow managed sidecar for Pipeline's full PaddleOCR-VL parser.
 
-The Rust host owns the llama.cpp service and passes an authenticated loopback
-URL to this process.  This script owns only PaddleOCR's client-side layout,
-recognition orchestration, page restructuring, and normalization into a small
-versioned JSON contract.  It intentionally has no package-management logic.
+The Rust host either owns a llama.cpp service and passes an authenticated
+loopback URL, or passes a verified model directory for PaddlePaddle to recognize
+with directly.  This script owns only PaddleOCR's layout, recognition
+orchestration, page restructuring, and normalization into a small versioned JSON
+contract.  It intentionally has no package-management logic.  While it runs, it
+reports progress on stdout and leaves stderr to diagnostics.
 """
 
 from __future__ import annotations
@@ -15,11 +17,18 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
+import time
+from collections import Counter, deque
 from pathlib import Path
 from typing import Any
 
 
 SCHEMA_VERSION = 2
+BLANK_PAGE_INK_LEVEL = 48
+BLANK_PAGE_INK_SHARE = 0.001
+# `paddle_server.rs` shows the stdout lines that start with this in the console.
+PROGRESS_PREFIX = "pipeline-progress: "
 MAX_RAW_BLOCK_CHARS = 200_000
 SUSPECT_BASELINE_MIN_CHARS = 200
 FIGURE_RELATED_BLOCK_LABELS = {
@@ -32,6 +41,192 @@ FIGURE_RELATED_BLOCK_LABELS = {
     "picture",
 }
 TABLE_BLOCK_LABELS = {"table", "table_title"}
+FIGURE_REGION_BLOCK_LABELS = {
+    "chart",
+    "image",
+    "figure",
+    "chart_body",
+    "image_body",
+    "picture",
+}
+FIGURE_PAGE_BLOCK_LABELS = FIGURE_RELATED_BLOCK_LABELS | {
+    "number",
+    "header",
+    "header_image",
+    "footer",
+    "footer_image",
+    "paragraph_title",
+    "vision_footnote",
+}
+FIGURE_ONLY_MIN_PAGE_SHARE = 0.25
+# PaddleOCR's own default, which finds faint titles a stricter setting can miss.
+FIGURE_TITLE_LAYOUT_THRESHOLD = 0.3
+REFERENCE_LAYOUT_LABELS = {"reference", "reference_content"}
+# Name the markup Paddle emits. A looser pattern reads the "<" and ">" of two
+# inequalities in recognized math as one tag and deletes the text between them.
+HTML_TAG = re.compile(
+    r"(?is)</?(?:table|thead|tbody|tfoot|tr|td|th|div|img|span|br|sub|sup|center)\b[^<>]*>"
+)
+# Preserve semantic text while excluding repeated visual margins from the
+# compatibility Markdown view. The structured JSON retains them.
+MARKDOWN_IGNORED_LABELS = ["number", "header", "header_image", "footer", "footer_image"]
+# The classes Paddle recognizes when `use_ocr_for_image_block` is on.
+IMAGE_RECOGNITION_BLOCK_LABELS = {"image", "header_image", "footer_image"}
+IMAGE_BLOCK_TEXT = re.compile(
+    r"(?is)^\s*(?:<div\b[^<>]*>)?\s*(?:<img\b[^<>]*>)?\s*(.*?)\s*(?:</div>)?\s*$"
+)
+DATA_TABLE_MIN_ROWS = 3
+DATA_TABLE_MIN_SEPARATORS = 6
+IMAGE_TEXT_MAX_LINES = 200
+# `full_structure.rs` reads this key to report the regions it finds.
+UNVERIFIED_IMAGE_TEXT_KEY = "unverified_image_text"
+UNVERIFIED_IMAGE_TEXT_NOTICE = (
+    "[Image text withheld as unverified: the recognizer returned the kind of data "
+    "it makes up for plots. Read this figure from the image.]"
+)
+
+
+def _report_progress(message: str) -> None:
+    print(f"{PROGRESS_PREFIX}{message}", flush=True)
+
+
+def _counted(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _time_left(seconds: float) -> str:
+    minutes = round(seconds / 60)
+    if minutes < 1:
+        return "less than a minute left"
+    return f"about {_counted(minutes, 'minute')} left"
+
+
+class _PageProgress:
+    """Count extracted pages and estimate the time left.
+
+    `pages_finished` only moves forward, so the fine count from
+    `_watch_recognition` and the coarse count of pages Paddle has returned can
+    both feed it.  Recognition threads share this object.
+    """
+
+    def __init__(self, total_pages: int) -> None:
+        self.of_total = f" of {total_pages}" if total_pages else ""
+        self.total_pages = total_pages
+        self.started = time.monotonic()
+        self.lock = threading.RLock()
+        self.watching = True
+        self.reported = 0
+        self.pages_before_batch = 0
+        self.pages_in_batch = 0
+        self.pages_done_in_batch = 0
+        self.regions_left: Counter[int] = Counter()
+        self.region_pages: deque[int] = deque()
+
+    def pages_finished(self, pages: int) -> None:
+        with self.lock:
+            if pages <= self.reported:
+                return
+            self.reported = pages
+            message = f"{pages}{self.of_total} pages extracted"
+            pages_left = self.total_pages - pages
+            if pages_left > 0:
+                seconds_per_page = (time.monotonic() - self.started) / pages
+                message += f", {_time_left(seconds_per_page * pages_left)}"
+            _report_progress(message)
+
+    def begin_batch(self, pages: int, region_pages: list[int]) -> None:
+        """Take one batch's pages and each region's page, in request order."""
+        with self.lock:
+            if not self.watching:
+                return
+            if not self.pages_in_batch:
+                # Layout runs ahead of the first batch and alongside the rest,
+                # so counting from here gives the steadier estimate.
+                self.started = time.monotonic()
+            self.pages_before_batch += self.pages_in_batch
+            self.pages_in_batch = pages
+            self.regions_left = Counter(region_pages)
+            self.region_pages = deque(region_pages)
+            # A page with nothing to recognize is already finished.
+            self.pages_done_in_batch = pages - len(self.regions_left)
+            first = self.pages_before_batch + 1
+            last = self.pages_before_batch + pages
+            span = f"page {first}" if first == last else f"pages {first}-{last}"
+            _report_progress(
+                f"recognizing {span}{self.of_total}, "
+                f"{_counted(len(region_pages), 'region')}"
+            )
+            self.pages_finished(self.pages_before_batch + self.pages_done_in_batch)
+
+    def next_region(self) -> int | None:
+        with self.lock:
+            return self.region_pages.popleft() if self.region_pages else None
+
+    def region_finished(self, page: int | None) -> None:
+        with self.lock:
+            if page is None:
+                return
+            self.regions_left[page] -= 1
+            if self.regions_left[page] == 0:
+                self.pages_done_in_batch += 1
+                self.pages_finished(self.pages_before_batch + self.pages_done_in_batch)
+
+    def stop_watching(self) -> None:
+        """Keep the single-page retries that follow out of the page count."""
+        with self.lock:
+            self.watching = False
+            self.region_pages.clear()
+
+
+def _watch_recognition(pipeline: Any, progress: _PageProgress) -> None:
+    """Count regions as recognition finishes them.
+
+    Paddle merges queued pages into large batches and returns none of a batch
+    until all of it is done, which leaves minutes of silence on a long document.
+    This reaches into private parts of the pinned runtime.  Without them only
+    detail is lost, because `main` still counts the pages Paddle returns, and
+    the release qualification fails so that an upgrade cannot lose it unnoticed.
+    """
+    inner = getattr(getattr(pipeline, "paddlex_pipeline", None), "_pipeline", None)
+    recognizer = getattr(inner, "vl_rec_model", None)
+    aggregate = getattr(inner, "_paddleocr_vl_aggregate_vlm_batches", None)
+    if recognizer is None or aggregate is None:
+        return
+
+    def aggregate_and_begin_batch(page_results: list[Any]) -> Any:
+        aggregated = aggregate(page_results)
+        groups = aggregated[3].values()
+        progress.begin_batch(
+            len(page_results),
+            [page for group in groups for page, _ in group["vlm_block_ids"]],
+        )
+        return aggregated
+
+    inner._paddleocr_vl_aggregate_vlm_batches = aggregate_and_begin_batch
+
+    client = getattr(recognizer, "genai_client", None)
+    if client is None:
+        # Built-in recognition returns each region as it finishes.
+        predict = recognizer.predict
+
+        def predict_and_count(inputs: Any, **kwargs: Any) -> Any:
+            for result in predict(inputs, **kwargs):
+                progress.region_finished(progress.next_region())
+                yield result
+
+        recognizer.predict = predict_and_count
+        return
+
+    # A server batch comes back as one result, so count each of its requests.
+    send = client.create_chat_completion
+
+    def send_and_count(messages: Any, **kwargs: Any) -> Any:
+        page = progress.next_region()
+        future = send(messages, **kwargs)
+        future.add_done_callback(lambda _: progress.region_finished(page))
+        return future
+
+    client.create_chat_completion = send_and_count
 
 
 def _bool(value: str) -> bool:
@@ -147,7 +342,7 @@ def _layout_confidence(
 
 def _plain_text(markdown: str) -> str:
     text = re.sub(r"(?s)<!--.*?-->", " ", markdown)
-    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = HTML_TAG.sub(" ", text)
     text = re.sub(r"!?\[([^]]*)\]\([^)]+\)", r"\1", text)
     text = re.sub(r"(?m)^\s{0,3}(?:#{1,6}\s+|>\s*|[-+]\s+)", "", text)
     text = text.replace("*", "").replace("_", "").replace("`", "")
@@ -158,8 +353,36 @@ def _substantive_chars(text: str) -> int:
     return sum(1 for char in text if not char.isspace())
 
 
+def _unverified_image_text(label: str, content: str) -> str:
+    """Return recognized image text that looks made up, if any.
+
+    `chart` regions skip recognition, but a plot labeled `image` reaches it. The
+    recognizer then writes rows of pipe-separated values that the plot does not
+    print, or repeats itself until it runs out of tokens. A picture of a real
+    table occasionally comes back the same way, so callers keep this text under
+    a label of its own instead of discarding it.
+    """
+    if label.lower() not in IMAGE_RECOGNITION_BLOCK_LABELS:
+        return ""
+    match = IMAGE_BLOCK_TEXT.match(content)
+    text = match.group(1) if match else ""
+    lines = [line for line in text.splitlines() if line.strip()]
+    rows = sum("|" in line for line in lines)
+    if (
+        rows >= DATA_TABLE_MIN_ROWS
+        or text.count("|") >= DATA_TABLE_MIN_SEPARATORS
+        or len(lines) > IMAGE_TEXT_MAX_LINES
+    ):
+        return text
+    return ""
+
+
 def _result_text_chars(result: Any) -> int:
-    """Measure recognition before cross-page restructuring can move blocks."""
+    """Measure recognition before cross-page restructuring can move blocks.
+
+    Withheld image text does not count, so that it can neither hide a page that
+    lost its real text nor win a retry over a result with a recovered title.
+    """
     info = _jsonable(_property(result, "markdown", {}))
     markdown = ""
     if isinstance(info, dict):
@@ -181,7 +404,10 @@ def _result_text_chars(result: Any) -> int:
             if isinstance(content, (dict, list)):
                 contents.append(json.dumps(_jsonable(content), ensure_ascii=False))
             elif content is not None:
-                contents.append(str(content))
+                label = str(block.get("block_label", block.get("label", "")))
+                unverified = _unverified_image_text(label, str(content))
+                markdown = markdown.replace(unverified, "", 1)
+                contents.append(str(content).replace(unverified, "", 1))
         block_text = "\n\n".join(contents)
 
     return max(
@@ -213,11 +439,46 @@ def _result_is_figure_related(result: Any) -> bool:
     return has_figure_region
 
 
+def _result_is_figure_only(result: Any) -> bool:
+    """Whether figures are the only content the layout model found on a page.
+
+    The text layer of such a page is mostly plot labels. Those stay visible in
+    the figure crops and the rendered page, while whole-page recognition would
+    replace the crops with unreliable text that has lost its panel structure.
+    """
+    raw = _result_json(result)
+    width = raw.get("width")
+    height = raw.get("height")
+    if not isinstance(width, (int, float)) or not isinstance(height, (int, float)):
+        return False
+    parsing = raw.get("parsing_res_list", [])
+    layout = raw.get("layout_det_res", {})
+    boxes = layout.get("boxes", []) if isinstance(layout, dict) else []
+    figure_area = 0.0
+    for collection in (parsing, boxes):
+        if not isinstance(collection, list):
+            return False
+        for block in collection:
+            if not isinstance(block, dict):
+                continue
+            label = str(block.get("block_label", block.get("label", ""))).lower()
+            if label not in FIGURE_PAGE_BLOCK_LABELS:
+                return False
+            if collection is parsing and label in FIGURE_REGION_BLOCK_LABELS:
+                bbox = _bbox(block.get("block_bbox", block.get("bbox", [])))
+                if len(bbox) == 4:
+                    figure_area += max(0.0, bbox[2] - bbox[0]) * max(0.0, bbox[3] - bbox[1])
+    return figure_area >= FIGURE_ONLY_MIN_PAGE_SHARE * width * height
+
+
 def _effective_baseline(
     baseline_chars: int | None,
     prose_chars: int | None,
     is_figure_related: bool,
+    is_figure_only: bool = False,
 ) -> tuple[int | None, bool]:
+    if is_figure_only:
+        return None, False
     fragmented_visual_page = (
         baseline_chars is not None
         and baseline_chars >= SUSPECT_BASELINE_MIN_CHARS
@@ -263,6 +524,28 @@ def _page_image(result: Any) -> Any | None:
     return None
 
 
+def _page_is_blank(image: Any) -> bool:
+    """Whether almost nothing on the page image differs from its background.
+
+    Only this separates a blank page from one whose recognition failed. A scan
+    can carry specks, so a page need not be perfectly uniform.
+    """
+    if image is None:
+        return False
+    try:
+        import numpy
+
+        pixels = numpy.asarray(image)
+        if pixels.size == 0:
+            return False
+        background = int(numpy.median(pixels))
+        ink = numpy.abs(pixels.astype(numpy.int16) - background) > BLANK_PAGE_INK_LEVEL
+        return float(ink.mean()) < BLANK_PAGE_INK_SHARE
+    except Exception as error:
+        print(f"Could not measure a page image: {error}", file=sys.stderr)
+        return False
+
+
 def _copy_page_identity(source: Any, target: Any) -> None:
     for key in ("input_path", "page_index", "page_count"):
         try:
@@ -278,20 +561,23 @@ def _retry_page(
     args: argparse.Namespace,
     *,
     use_layout_detection: bool,
+    layout_threshold: float | None = None,
 ) -> Any | None:
     candidates = list(
         pipeline.predict(
             input=image,
             use_layout_detection=use_layout_detection,
             prompt_label=None if use_layout_detection else "ocr",
-            layout_threshold=args.layout_threshold,
+            layout_threshold=(
+                args.layout_threshold if layout_threshold is None else layout_threshold
+            ),
             layout_nms=args.layout_nms,
-            layout_merge_bboxes_mode=args.layout_merge_bboxes_mode,
+            layout_merge_bboxes_mode=args.resolved_layout_merge_mode,
             merge_layout_blocks=args.merge_layout_blocks,
             use_ocr_for_image_block=args.ocr_image_blocks,
             format_block_content=args.format_block_content,
             max_new_tokens=args.max_new_tokens,
-            temperature=0.0,
+            temperature=_recognition_temperature(args),
             use_queues=False,
         )
     )
@@ -300,6 +586,39 @@ def _retry_page(
     candidate = candidates[0]
     _copy_page_identity(source, candidate)
     return candidate
+
+
+def _recover_figure_title(
+    pipeline: Any,
+    original: Any,
+    chars: int,
+    args: argparse.Namespace,
+    page_number: int,
+) -> tuple[Any, int]:
+    """Look again for a title missed on a sparse figure-only page.
+
+    The whole-page fallback would supply it, but only by discarding the figure
+    crops, so this keeps the layout result and retries detection alone.
+    """
+    image = _page_image(original)
+    if image is None or args.layout_threshold <= FIGURE_TITLE_LAYOUT_THRESHOLD:
+        return original, chars
+    try:
+        candidate = _retry_page(
+            pipeline,
+            original,
+            image,
+            args,
+            use_layout_detection=True,
+            layout_threshold=FIGURE_TITLE_LAYOUT_THRESHOLD,
+        )
+    except Exception as error:
+        print(f"Page {page_number}: figure title retry failed: {error}", file=sys.stderr)
+        return original, chars
+    if candidate is None or not _result_is_figure_only(candidate):
+        return original, chars
+    candidate_chars = _result_text_chars(candidate)
+    return (candidate, candidate_chars) if candidate_chars > chars else (original, chars)
 
 
 def _recover_suspicious_pages(
@@ -320,11 +639,17 @@ def _recover_suspicious_pages(
         )
         best = original
         best_chars = _result_text_chars(best)
+        is_figure_only = _result_is_figure_only(original)
         effective_baseline, used_fragmented_visual_baseline = _effective_baseline(
             baseline,
             prose_baseline,
             _result_is_figure_related(original),
+            is_figure_only,
         )
+        if is_figure_only and _is_suspicious(best_chars, baseline):
+            best, best_chars = _recover_figure_title(
+                pipeline, original, best_chars, args, page_number
+            )
         if _is_suspicious(best_chars, effective_baseline):
             image = _page_image(original)
             if image is None:
@@ -338,10 +663,9 @@ def _recover_suspicious_pages(
                     else "whole-page recognition"
                 )
                 for attempt in range(args.page_retries):
-                    print(
+                    _report_progress(
                         f"Page {page_number}: retrying incomplete {retry_mode} "
-                        f"({best_chars}/{baseline} substantive characters, attempt {attempt + 1}/{args.page_retries}).",
-                        file=sys.stderr,
+                        f"({best_chars}/{baseline} substantive characters, attempt {attempt + 1}/{args.page_retries})."
                     )
                     try:
                         candidate = _retry_page(
@@ -372,10 +696,9 @@ def _recover_suspicious_pages(
                     _is_suspicious(best_chars, effective_baseline)
                     and args.layout_detection
                 ):
-                    print(
+                    _report_progress(
                         f"Page {page_number}: layout retries remained incomplete; "
-                        "recovering the page with PaddleOCR-VL whole-page recognition.",
-                        file=sys.stderr,
+                        "recovering the page with PaddleOCR-VL whole-page recognition."
                     )
                     try:
                         candidate = _retry_page(
@@ -592,6 +915,15 @@ def _normalize_page(
             content = json.dumps(_jsonable(content_value), ensure_ascii=False)
         else:
             content = str(content_value or "")
+        unverified_text = _unverified_image_text(label, content)
+        if unverified_text:
+            content = content.replace(unverified_text, UNVERIFIED_IMAGE_TEXT_NOTICE, 1)
+            if unverified_text in markdown:
+                markdown = markdown.replace(unverified_text, UNVERIFIED_IMAGE_TEXT_NOTICE, 1)
+            elif label.lower() not in MARKDOWN_IGNORED_LABELS:
+                # An empty page falls back to the cleaned blocks below, so text
+                # the export wrote differently still cannot reach the document.
+                markdown = ""
         raw_bbox = item.get("block_bbox", item.get("bbox", []))
         bbox = _bbox(raw_bbox)
         polygon = _polygon(raw_bbox)
@@ -605,6 +937,9 @@ def _normalize_page(
             if Path(asset).name in content or asset in content
         ]
         raw_block = _jsonable(item)
+        if unverified_text:
+            raw_block["block_content" if "block_content" in raw_block else "content"] = content
+            raw_block[UNVERIFIED_IMAGE_TEXT_KEY] = unverified_text
         encoded_raw = json.dumps(raw_block, ensure_ascii=False)
         if len(encoded_raw) > MAX_RAW_BLOCK_CHARS:
             raw_block = {"truncated": True, "block_label": label, "block_order": order}
@@ -654,6 +989,51 @@ def _normalize_page(
     }
 
 
+def _layout_labels(model_dir: Path) -> list[str]:
+    """Read the layout model's class order from its exported configuration."""
+    try:
+        config = (model_dir / "inference.yml").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    match = re.search(r"(?m)^label_list:\r?\n((?:- .+\r?\n?)+)", config)
+    if not match:
+        return []
+    return [line[2:].strip() for line in match.group(1).splitlines()]
+
+
+def _layout_merge_mode(mode: str, labels: list[str]) -> str | dict[int, str]:
+    """Resolve the merge setting so that it cannot remove a bibliography.
+
+    The model draws a `reference` box around a whole list and a
+    `reference_content` box around each entry. Paddle always discards
+    `reference` boxes later, so `large`, which keeps only the outer box, would
+    lose every entry. Paddle keys its per-class modes by the containing class.
+    """
+    if mode != "large" or not REFERENCE_LAYOUT_LABELS.issubset(labels):
+        return mode
+    return {
+        index: "union" if label in REFERENCE_LAYOUT_LABELS else mode
+        for index, label in enumerate(labels)
+    }
+
+
+def _recognition_temperature(args: argparse.Namespace) -> float | None:
+    # Built-in recognition is deterministic and warns on every call if given one.
+    return None if args.native_model_dir else 0.0
+
+
+def _recognition_options(args: argparse.Namespace) -> dict[str, Any]:
+    if args.native_model_dir:
+        return {"vl_rec_model_dir": args.native_model_dir}
+    return {
+        "vl_rec_backend": "llama-cpp-server",
+        "vl_rec_server_url": args.server_url,
+        "vl_rec_max_concurrency": args.concurrency,
+        "vl_rec_api_model_name": args.server_model,
+        "vl_rec_api_key": args.api_key or None,
+    }
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
     parser.add_argument("--probe", action="store_true")
@@ -662,6 +1042,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--output")
     parser.add_argument("--assets-dir")
     parser.add_argument("--layout-model-dir")
+    parser.add_argument("--native-model-dir", default="")
     parser.add_argument("--server-url", default="http://127.0.0.1:9/v1")
     parser.add_argument("--server-model", default="paddleocr-vl-1.6")
     parser.add_argument("--api-key", default=os.environ.get("PIPELINE_PADDLE_API_KEY", ""))
@@ -671,7 +1052,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline-chars", default="[]")
     parser.add_argument("--baseline-prose-chars", default="[]")
     parser.add_argument("--layout-detection", type=_bool, default=True)
-    parser.add_argument("--layout-threshold", type=float, default=0.5)
+    parser.add_argument("--layout-threshold", type=float, default=0.3)
     parser.add_argument("--layout-nms", type=_bool, default=True)
     parser.add_argument("--layout-merge-bboxes-mode", choices=("large", "small", "union"), default="large")
     parser.add_argument("--merge-layout-blocks", type=_bool, default=True)
@@ -706,26 +1087,26 @@ def main() -> int:
     ):
         print("The managed PP-DocLayoutV3 model is incomplete", file=sys.stderr)
         return 2
+    if args.native_model_dir and not Path(args.native_model_dir).is_dir():
+        print("The managed recognition model is incomplete", file=sys.stderr)
+        return 2
 
+    args.resolved_layout_merge_mode = _layout_merge_mode(
+        args.layout_merge_bboxes_mode, _layout_labels(layout_model_dir)
+    )
     pipeline = PaddleOCRVL(
         pipeline_version="v1.6",
         device="cpu",
-        vl_rec_backend="llama-cpp-server",
-        vl_rec_server_url=args.server_url,
-        vl_rec_max_concurrency=args.concurrency,
-        vl_rec_api_model_name=args.server_model,
-        vl_rec_api_key=args.api_key or None,
+        **_recognition_options(args),
         layout_detection_model_dir=str(layout_model_dir),
         use_layout_detection=args.layout_detection,
         layout_threshold=args.layout_threshold,
         layout_nms=args.layout_nms,
-        layout_merge_bboxes_mode=args.layout_merge_bboxes_mode,
+        layout_merge_bboxes_mode=args.resolved_layout_merge_mode,
         merge_layout_blocks=args.merge_layout_blocks,
         use_ocr_for_image_block=args.ocr_image_blocks,
         format_block_content=args.format_block_content,
-        # Preserve semantic text while excluding repeated visual margins from
-        # the compatibility Markdown view. The structured JSON retains them.
-        markdown_ignore_labels=["number", "header", "header_image", "footer", "footer_image"],
+        markdown_ignore_labels=MARKDOWN_IGNORED_LABELS,
         use_queues=True,
     )
     if args.warm_layout:
@@ -739,13 +1120,6 @@ def main() -> int:
     assets_dir = Path(args.assets_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     assets_dir.mkdir(parents=True, exist_ok=True)
-    pages = list(
-        pipeline.predict(
-            input=args.input,
-            max_new_tokens=args.max_new_tokens,
-            temperature=0.0,
-        )
-    )
     try:
         parsed_baselines = json.loads(args.baseline_chars)
         baselines = (
@@ -764,6 +1138,18 @@ def main() -> int:
         )
     except (TypeError, ValueError, json.JSONDecodeError):
         prose_baselines = []
+    _report_progress("parser ready, reading the PDF")
+    progress = _PageProgress(len(baselines))
+    _watch_recognition(pipeline, progress)
+    pages = []
+    for page in pipeline.predict_iter(
+        input=args.input,
+        max_new_tokens=args.max_new_tokens,
+        temperature=_recognition_temperature(args),
+    ):
+        pages.append(page)
+        progress.pages_finished(len(pages))
+    progress.stop_watching()
     quality_notes: list[str] = []
     pages, source_text_chars = _recover_suspicious_pages(
         pipeline,
@@ -773,6 +1159,13 @@ def main() -> int:
         args,
         quality_notes,
     )
+    # Restructuring can move blocks between pages, so read the images first.
+    blank_pages = {
+        number
+        for number, (page, chars) in enumerate(zip(pages, source_text_chars), start=1)
+        if chars == 0 and _page_is_blank(_page_image(page))
+    }
+    _report_progress("assembling the document")
     pages = list(
         pipeline.restructure_pages(
             pages,
@@ -796,6 +1189,8 @@ def main() -> int:
         page_number = page["number"]
         if 1 <= page_number <= len(source_text_chars):
             page["source_text_chars"] = source_text_chars[page_number - 1]
+        if page_number in blank_pages:
+            page["blank_page"] = True
     if not normalized:
         raise RuntimeError("PaddleOCR returned no pages")
     document = {

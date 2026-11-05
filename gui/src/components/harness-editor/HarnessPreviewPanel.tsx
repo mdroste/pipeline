@@ -1,3 +1,4 @@
+import { moduleName, harnessDiagnostic } from "./harnessCopy";
 // Read-only view of what the next turn will actually use: the assembled
 // developer instructions as labelled host-owned bands, tools, and provenance.
 
@@ -20,13 +21,15 @@ interface Props {
 }
 
 function HarnessPreviewPanel({ effective, catalog, snapshot }: Props) {
-  const name = (id: string) =>
-    catalog.modules.find((module) => module.id === id)?.name ?? id;
+  const name = (id: string) => {
+    const module = catalog.modules.find((module) => module.id === id);
+    return module ? moduleName(module) : id;
+  };
   const facts: Array<[string, string]> = [
     ["Agent profile", effective.preset.name],
     ["Access", compactAccessSummary(effective)],
     ["Permission profile", effective.permissionProfile],
-    ["Dynamic tools", String(effective.dynamicTools.length)],
+    ["Available tools", String(effective.dynamicTools.length)],
     [
       "Context",
       effective.contextPreview
@@ -38,9 +41,9 @@ function HarnessPreviewPanel({ effective, catalog, snapshot }: Props) {
   return (
     <div className="space-y-4">
       <p className="text-xs text-gray-500 dark:text-gray-400">
-        Everything below is computed by Pipeline from the resolved settings and
-        snapshotted immutably before each turn. Nothing here is editable; change
-        the profile or access scopes instead.
+        Preview the settings and instructions for your next message. To change
+        them, edit the profile or permissions. Pipeline saves a copy with each
+        message.
       </p>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-xl border border-gray-200 bg-white p-3 text-xs dark:border-gray-700 dark:bg-gray-900 sm:grid-cols-3">
         {facts.map(([label, value]) => (
@@ -82,7 +85,7 @@ function HarnessPreviewPanel({ effective, catalog, snapshot }: Props) {
             effective.unavailableModules.length ===
             0 && (
             <span className="text-[11px] text-gray-500">
-              No modules; plain conversation.
+              No research modules selected.
             </span>
           )}
         </div>
@@ -92,7 +95,7 @@ function HarnessPreviewPanel({ effective, catalog, snapshot }: Props) {
           key={item}
           className="rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200"
         >
-          {item}
+          {harnessDiagnostic(item)}
         </p>
       ))}
       <section className="space-y-2">
@@ -115,7 +118,7 @@ function HarnessPreviewPanel({ effective, catalog, snapshot }: Props) {
       </section>
       <section className="text-[11px] text-gray-500 dark:text-gray-400">
         <h3 className="text-[10px] font-semibold uppercase tracking-wide">
-          Native instruction sources
+          Other instruction sources
         </h3>
         <p className="mt-1">
           {snapshot.activeBinding?.instructionSources.length

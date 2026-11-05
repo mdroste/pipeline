@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import ReportWorkspace, {
+import ReportWorkspace from "./ReportWorkspace";
+import {
   canonicalReportProblem,
+  isLegacyReport,
   splitUnexpectedPreamble,
-} from "./ReportWorkspace";
+} from "../lib/reportPresentation";
 import type { PipelineReport } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -87,21 +89,21 @@ describe("ReportWorkspace", () => {
       await screen.findByRole("tabpanel", { name: "Report" }, lazyPanelWait),
     ).toHaveAttribute("aria-labelledby", expect.stringMatching(/-tab-report$/));
     expect(screen.getByText("Monetary Policy and Networks")).toBeVisible();
-    expect(screen.getByRole("tab", { name: "Provenance" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: "Report details" })).toHaveAttribute(
       "aria-selected",
       "false",
     );
     expect(
-      screen.queryByRole("region", { name: "Report provenance" }),
+      screen.queryByRole("region", { name: "Report details" }),
     ).not.toBeInTheDocument();
     expect(screen.getByText("gpt-5.6-sol")).toBeVisible();
     expect(
       await screen.findByRole("heading", { name: "Referee Report" }),
     ).toBeVisible();
 
-    await user.click(screen.getByRole("tab", { name: "Provenance" }));
+    await user.click(screen.getByRole("tab", { name: "Report details" }));
     expect(
-      await screen.findByRole("region", { name: "Report provenance" }),
+      await screen.findByRole("region", { name: "Report details" }),
     ).toBeVisible();
     expect(screen.getByRole("columnheader", { name: "Step" })).toBeVisible();
     expect(screen.getByRole("cell", { name: "Technical" })).toBeVisible();
@@ -120,7 +122,7 @@ describe("ReportWorkspace", () => {
       />,
     );
 
-    await user.click(screen.getByRole("tab", { name: "Provenance" }));
+    await user.click(screen.getByRole("tab", { name: "Report details" }));
     expect(screen.getAllByText("2m 0s")[0]).toBeVisible();
     expect(screen.queryByText("1m 60s")).not.toBeInTheDocument();
   });
@@ -150,7 +152,7 @@ describe("ReportWorkspace", () => {
       />,
     );
 
-    await user.click(screen.getByRole("tab", { name: "Provenance" }));
+    await user.click(screen.getByRole("tab", { name: "Report details" }));
     expect(screen.getAllByRole("cell", { name: "Technical" })).toHaveLength(2);
     expect(screen.getByRole("cell", { name: "gpt-5.6-sol" })).toBeVisible();
     expect(screen.getByRole("cell", { name: "claude-opus-4-8" })).toBeVisible();
@@ -206,7 +208,9 @@ describe("ReportWorkspace", () => {
       await screen.findByText("No final report was produced."),
     ).toBeVisible();
     expect(
-      screen.getByText(/did not substitute an individual agent analysis/i),
+      screen.getByText(
+        /You can still read the individual reviewers’ analyses in Agent reports/i,
+      ),
     ).toBeVisible();
     expect(
       screen.queryByText("This is only the technical specialist analysis."),
@@ -225,6 +229,25 @@ describe("ReportWorkspace", () => {
     ).toBeVisible();
   });
 
+  it("limits the height of the failure details", async () => {
+    const report = makeReport();
+    report.failed_steps = [
+      { step_id: "a", step_label: "Technical", error: "provider error body" },
+    ];
+    render(<ReportWorkspace markdown="# Report" report={report} />);
+    const error = await screen.findByText("provider error body");
+    expect(error.closest("ul")).toHaveClass("max-h-40", "overflow-y-auto");
+  });
+
+  it("labels the run's recorded time as its start", async () => {
+    const user = userEvent.setup();
+    render(<ReportWorkspace markdown="# Report" report={makeReport()} />);
+    await user.click(
+      await screen.findByRole("tab", { name: "Report details" }),
+    );
+    expect(await screen.findByText("Started")).toBeVisible();
+  });
+
   it("quarantines an apparent refusal in a historical report", async () => {
     render(
       <ReportWorkspace
@@ -236,7 +259,9 @@ describe("ReportWorkspace", () => {
     expect(
       await screen.findByText("No final report was produced."),
     ).toBeVisible();
-    expect(screen.getByText(/apparent refusal/i)).toBeVisible();
+    expect(
+      screen.getByText(/appears to have declined the review/i),
+    ).toBeVisible();
     expect(
       screen.queryByText("I'm unable to provide the requested report."),
     ).not.toBeInTheDocument();
@@ -282,7 +307,7 @@ describe("ReportWorkspace", () => {
     );
 
     const reportTab = screen.getByRole("tab", { name: "Report" });
-    const provenanceTab = screen.getByRole("tab", { name: "Provenance" });
+    const provenanceTab = screen.getByRole("tab", { name: "Report details" });
     const sourcesTab = screen.getByRole("tab", { name: "Sources" });
     reportTab.focus();
 
@@ -326,7 +351,7 @@ describe("ReportWorkspace", () => {
     );
 
     const reportTab = screen.getByRole("tab", { name: "Report" });
-    const provenanceTab = screen.getByRole("tab", { name: "Provenance" });
+    const provenanceTab = screen.getByRole("tab", { name: "Report details" });
     const issuesTab = screen.getByRole("tab", { name: /Issues/ });
     const sourcesTab = screen.getByRole("tab", { name: "Sources" });
     expect(issuesTab).toHaveAttribute(
@@ -356,6 +381,51 @@ describe("ReportWorkspace", () => {
     expect(issuesTab).toHaveFocus();
   });
 
+  it("keeps a visited tab mounted so its reading position and settings survive tab switches", async () => {
+    const user = userEvent.setup();
+    render(
+      <ReportWorkspace
+        markdown={"# Referee Report\n\nBody."}
+        report={makeReport()}
+        extractedText="Extracted paper."
+      />,
+    );
+
+    const larger = await screen.findByRole(
+      "button",
+      { name: "Increase report text size" },
+      lazyPanelWait,
+    );
+    await user.click(larger);
+    const size = screen.getByRole("button", {
+      name: "Reset report text size",
+    }).textContent;
+    const scroller = larger.closest(".overflow-y-auto") as HTMLElement;
+    scroller.scrollTop = 320;
+    fireEvent.scroll(scroller);
+
+    await user.click(screen.getByRole("tab", { name: "Report details" }));
+    // Browsers drop the offset of content hidden with display:none.
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
+    // The hidden reader's find bar must not answer Ctrl/Cmd-F.
+    await user.keyboard("{Control>}f{/Control}");
+    expect(
+      screen.queryByRole("textbox", { name: "Find in report", hidden: true }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Report" }));
+    expect(
+      screen.getByRole("button", { name: "Reset report text size" }),
+    ).toHaveTextContent(size ?? "");
+    expect(scroller).toBe(
+      screen
+        .getByRole("button", { name: "Increase report text size" })
+        .closest(".overflow-y-auto"),
+    );
+    expect(scroller.scrollTop).toBe(320);
+  });
+
   it("loads a historical report into the same workspace", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "get_run_report") return Promise.resolve(makeReport());
@@ -378,6 +448,51 @@ describe("ReportWorkspace", () => {
       relPath: "report.md",
     });
     expect(screen.getByRole("button", { name: /Export/ })).toBeVisible();
+  });
+
+  it("loads report content independently of the pending manifest and ignores stale report reads", async () => {
+    let finishOldReport!: (report: PipelineReport) => void;
+    let finishOldMarkdown!: (content: { text: string }) => void;
+    invoke.mockImplementation(
+      (command: string, args?: Record<string, unknown>) => {
+        if (command === "get_run_manifest") return new Promise(() => {});
+        if (command === "get_run_report") {
+          return args?.runId === "old"
+            ? new Promise((resolve) => {
+                finishOldReport = resolve;
+              })
+            : Promise.resolve(makeReport());
+        }
+        if (command === "read_artifact") {
+          return args?.runId === "old"
+            ? new Promise((resolve) => {
+                finishOldMarkdown = resolve;
+              })
+            : Promise.resolve({ text: "# Current report\n\nCurrent body." });
+        }
+        return Promise.reject(new Error(`unexpected command: ${command}`));
+      },
+    );
+    const view = render(<ReportWorkspace runId="old" />);
+    expect(invoke).toHaveBeenCalledWith("get_run_report", { runId: "old" });
+    expect(invoke).toHaveBeenCalledWith("read_artifact", {
+      runId: "old",
+      relPath: "report.md",
+    });
+    view.rerender(<ReportWorkspace runId="current" />);
+    expect(
+      await screen.findByRole("heading", { name: "Current report" }),
+    ).toBeVisible();
+    await act(async () => {
+      finishOldReport(makeReport());
+      finishOldMarkdown({ text: "# Obsolete report\n\nOld body." });
+    });
+    expect(
+      screen.getByRole("heading", { name: "Current report" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Obsolete report" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps preserved agent reports reachable when canonical report files are malformed", async () => {
@@ -436,7 +551,7 @@ describe("ReportWorkspace", () => {
     render(<ReportWorkspace runId="broken_run" />);
 
     expect(
-      await screen.findByText("Canonical report is incomplete."),
+      await screen.findByText("The final report is incomplete."),
     ).toBeVisible();
     expect(screen.getByRole("tab", { name: "Sources" })).toHaveAttribute(
       "aria-selected",
@@ -494,7 +609,7 @@ describe("ReportWorkspace", () => {
       relPath: "context/document.md",
     });
     await userEvent.setup().click(screen.getByRole("tab", { name: "Sources" }));
-    await screen.findByText("Select an artifact to preview it.");
+    await screen.findByText("Select a file to preview it.");
     expect(invoke).not.toHaveBeenCalledWith("read_artifact", {
       runId: "saved_run",
       relPath: "context/document.md",
@@ -504,9 +619,15 @@ describe("ReportWorkspace", () => {
 
 describe("splitUnexpectedPreamble", () => {
   it("preserves normal reports and removes narration before the first title", () => {
-    expect(splitUnexpectedPreamble("# Report\n\nBody.").preamble).toBe("");
     expect(
-      splitUnexpectedPreamble("Here is the report.\n\n# Report\n\nBody."),
+      splitUnexpectedPreamble("# Report\n\nBody.", "", true).preamble,
+    ).toBe("");
+    expect(
+      splitUnexpectedPreamble(
+        "Here is the report.\n\n# Report\n\nBody.",
+        "",
+        true,
+      ),
     ).toEqual({
       preamble: "Here is the report.",
       clean: "# Report\n\nBody.",
@@ -524,7 +645,9 @@ describe("splitUnexpectedPreamble", () => {
       "Body.",
     ].join("\n");
 
-    expect(splitUnexpectedPreamble(markdown).clean).toBe("# Report\n\nBody.");
+    expect(splitUnexpectedPreamble(markdown, "", false).clean).toBe(
+      "# Report\n\nBody.",
+    );
   });
 
   it("replaces the duplicated paper-title masthead with the report type", () => {
@@ -539,7 +662,8 @@ describe("splitUnexpectedPreamble", () => {
     ].join("\n");
 
     expect(
-      splitUnexpectedPreamble(markdown, "Monetary Policy and Networks").clean,
+      splitUnexpectedPreamble(markdown, "Monetary Policy and Networks", true)
+        .clean,
     ).toBe("# Referee Report\n\n## Errors & Inconsistencies\n\nFinding.");
   });
 
@@ -558,13 +682,221 @@ describe("splitUnexpectedPreamble", () => {
       "",
       "Substantive content.",
     ].join("\n");
-    const result = splitUnexpectedPreamble(markdown);
+    const result = splitUnexpectedPreamble(markdown, "", true);
 
     expect(result.preamble).toContain("I’ll read the prompt first");
     expect(result.clean).toBe(
       "# Legacy Report\n\n---\n\n## Findings\n\nSubstantive content.",
     );
     expect(result.clean).not.toContain("Report generated by Pipeline");
+  });
+});
+
+describe("reports written since the quality ledger", () => {
+  const report = (schema_version: number) =>
+    ({
+      ...makeReport(),
+      quality: { schema_version, status: "done" },
+    }) as PipelineReport;
+  const body = [
+    "# Referee Report",
+    "",
+    "<!-- PIPELINE RUN DETAILS START -->",
+    "**LLM**: Codex",
+    "<!-- PIPELINE RUN DETAILS END -->",
+    "",
+    "---",
+    "",
+    "I agree with the main conclusion of the paper.",
+    "",
+    "## Run summary of the regressions",
+    "",
+    "The results hold in every specification.",
+    "",
+    "<!-- PIPELINE RUN DETAILS START -->",
+    "## Run summary",
+    "",
+    "Tokens: 100",
+    "<!-- PIPELINE RUN DETAILS END -->",
+  ].join("\n");
+
+  it("keep the model's opening and every section, without run details", async () => {
+    render(<ReportWorkspace markdown={body} report={report(2)} />);
+
+    expect(
+      await screen.findByText("I agree with the main conclusion of the paper."),
+    ).toBeVisible();
+    expect(
+      screen.getByText("The results hold in every specification."),
+    ).toBeVisible();
+    expect(screen.queryByText("Tokens: 100")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Output-quality warning"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("still cleans a report from before the ledger", async () => {
+    render(
+      <ReportWorkspace
+        markdown={[
+          "# Referee Report",
+          "",
+          "---",
+          "",
+          "I'll read the prompt first.",
+          "",
+          "## Findings",
+          "",
+          "Substantive content.",
+          "",
+          "---",
+          "",
+          "## Run summary",
+          "",
+          "Tokens: 100",
+        ].join("\n")}
+        report={report(0)}
+      />,
+    );
+
+    expect(await screen.findByText("Substantive content.")).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Output-quality warning",
+    );
+    expect(screen.queryByText("Tokens: 100")).not.toBeInTheDocument();
+  });
+
+  it("leaves the text alone when the saved report could not be loaded", () => {
+    expect(isLegacyReport(null)).toBe(false);
+    expect(isLegacyReport(makeReport())).toBe(true);
+  });
+});
+
+describe("a report with no final text", () => {
+  const refusal = "I cannot provide the requested report.";
+
+  it.each(["done", "degraded"])(
+    "does not read as completed when its stored status is %s",
+    async (status) => {
+      const user = userEvent.setup();
+      const report = {
+        ...makeReport(),
+        quality: {
+          schema_version: 2,
+          status,
+          orientation_included_bytes: 1_000,
+          orientation_omitted_bytes: 0,
+        },
+      } as PipelineReport;
+      render(<ReportWorkspace markdown={refusal} report={report} />);
+
+      await screen.findByText("No final report was produced.");
+      expect(screen.queryByText("Completed report")).not.toBeInTheDocument();
+      expect(screen.getByRole("banner")).toHaveTextContent("partial report");
+
+      await user.click(screen.getByRole("tab", { name: "Report details" }));
+      const details = await screen.findByRole("region", {
+        name: "Report details",
+      });
+      expect(details).toHaveTextContent("partial report");
+      expect(details).not.toHaveTextContent("Completed");
+    },
+  );
+});
+
+describe("a report too long to read in one piece", () => {
+  const cut = "# Referee Report\n\nThe first part.";
+  const whole = `${cut} The rest.\n\n## Last section\n\nThe end.`;
+  const report = {
+    ...makeReport(),
+    quality: { schema_version: 2, status: "done" },
+  } as PipelineReport;
+
+  beforeEach(() => {
+    invoke.mockReset();
+    invoke.mockImplementation(async (command: string) => {
+      if (command === "get_run_manifest")
+        return { artifacts: [], status: "done" };
+      if (command === "get_run_report") return report;
+      if (command === "read_artifact")
+        return { kind: "text", text: cut, truncated: true, bytes: 2_000_000 };
+      if (command === "read_full_report") return whole;
+      return null;
+    });
+  });
+
+  async function openExports() {
+    const user = userEvent.setup();
+    render(<ReportWorkspace runId="saved_run" />);
+    await screen.findByText(
+      "This report is too long to show in full. Export it to read the rest.",
+      undefined,
+      lazyPanelWait,
+    );
+    await user.click(screen.getByRole("button", { name: "Export ▾" }));
+    return user;
+  }
+
+  it("says so, and saves the whole file as Markdown", async () => {
+    const user = await openExports();
+    await user.click(screen.getByRole("menuitem", { name: "Save Markdown…" }));
+
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        "save_report_md",
+        expect.objectContaining({ markdown: whole }),
+      ),
+    );
+    expect(invoke).toHaveBeenCalledWith("read_full_report", {
+      runId: "saved_run",
+    });
+  });
+
+  it("prints the whole report", async () => {
+    const user = await openExports();
+    await user.click(
+      screen.getByRole("menuitem", { name: "Print / save as PDF…" }),
+    );
+
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        "print_report_html",
+        expect.objectContaining({
+          markdown: "The first part. The rest.\n\n## Last section\n\nThe end.",
+        }),
+      ),
+    );
+  });
+
+  it("does not read the file again for a report shown in full", async () => {
+    invoke.mockImplementation(async (command: string) => {
+      if (command === "get_run_manifest")
+        return { artifacts: [], status: "done" };
+      if (command === "get_run_report") return report;
+      if (command === "read_artifact")
+        return { kind: "text", text: cut, truncated: false, bytes: 40 };
+      return null;
+    });
+    const user = userEvent.setup();
+    render(<ReportWorkspace runId="saved_run" />);
+    await user.click(
+      await screen.findByRole("button", { name: "Export ▾" }, lazyPanelWait),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Save Markdown…" }));
+
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        "save_report_md",
+        expect.objectContaining({ markdown: cut }),
+      ),
+    );
+    expect(invoke).not.toHaveBeenCalledWith(
+      "read_full_report",
+      expect.anything(),
+    );
+    expect(
+      screen.queryByText(/too long to show in full/),
+    ).not.toBeInTheDocument();
   });
 });
 

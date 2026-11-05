@@ -1,5 +1,10 @@
 import { useState, useEffect, useRef } from "react";
-import { projectClient, type ResearchTask } from "../../lib/projectClient";
+import {
+  projectClient,
+  type ProjectRecord,
+  type ResearchTask,
+} from "../../lib/projectClient";
+import { workbenchErrorMessage } from "../../lib/workbenchError";
 import {
   TASK_STATUSES,
   button,
@@ -9,6 +14,21 @@ import {
   isOpenTask,
   type SurfaceApi,
 } from "./shared";
+import ReportIssueLink from "../ReportIssueLink";
+
+type Task = ProjectRecord<ResearchTask>;
+
+/** Folds a refreshed first page into the loaded history: known items update
+ * in place and new ones are listed first. */
+function mergeFirstPage(history: Task[], page: Task[]): Task[] {
+  const fresh = new Map(page.map((t) => [t.id, t]));
+  const known = new Set(history.map((t) => t.id));
+  return [
+    ...page.filter((t) => !known.has(t.id)),
+    ...history.map((t) => fresh.get(t.id) ?? t),
+  ];
+}
+
 export default function ProjectActionItems(props: SurfaceApi) {
   const {
     data,
@@ -27,16 +47,24 @@ export default function ProjectActionItems(props: SurfaceApi) {
   const [cursor, setCursor] = useState(data.tasksCursor);
   const [pageError, setPageError] = useState("");
   const [loading, setLoading] = useState(false);
-  const current = useRef(data.tasks);
-  current.current = data.tasks;
+  const current = useRef(workspaceId);
+  current.current = workspaceId;
+  // Refreshes keep the older pages already shown and their cursor; an edited
+  // older item stays in place because the refreshed first page carries it.
+  const shown = useRef(workspaceId);
   useEffect(() => {
+    if (shown.current === workspaceId) {
+      setHistory((old) => mergeFirstPage(old, data.tasks));
+      return;
+    }
+    shown.current = workspaceId;
     setHistory(data.tasks);
     setCursor(data.tasksCursor);
     setPageError("");
-  }, [data.tasks, data.tasksCursor]);
+  }, [workspaceId, data.tasks, data.tasksCursor]);
   const earlier = async () => {
     if (!cursor || loading) return;
-    const base = data.tasks;
+    const base = workspaceId;
     setLoading(true);
     setPageError("");
     try {
@@ -50,7 +78,7 @@ export default function ProjectActionItems(props: SurfaceApi) {
       ]);
       setCursor(page.nextCursor);
     } catch (e) {
-      if (current.current === base) setPageError(String(e));
+      if (current.current === base) setPageError(workbenchErrorMessage(e));
     } finally {
       setLoading(false);
     }
@@ -178,7 +206,12 @@ export default function ProjectActionItems(props: SurfaceApi) {
           </select>
         </div>
       ))}
-      {pageError && <p role="alert">{pageError}</p>}
+      {pageError && (
+        <p role="alert">
+          {pageError}
+          <ReportIssueLink />
+        </p>
+      )}
       {cursor && (
         <button
           className={button}

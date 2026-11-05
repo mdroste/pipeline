@@ -25,6 +25,8 @@ vi.mock("./SourceEditor", () => ({
     />
   ),
 }));
+const confirmDialog = vi.hoisted(() => vi.fn());
+vi.mock("../DialogService", () => ({ confirmDialog }));
 vi.mock("../ReportViewer", () => ({
   default: ({ markdown }: { markdown: string }) => <div>{markdown}</div>,
 }));
@@ -44,6 +46,14 @@ const file = (
   externalPath: null,
 });
 beforeEach(() => localStorage.clear());
+function openFileMenu() {
+  fireEvent.click(screen.getByRole("button", { name: "More file actions" }));
+}
+function clickReload() {
+  openFileMenu();
+  fireEvent.click(screen.getByRole("menuitem", { name: "Reload" }));
+}
+
 it("retains per-file drafts across tabs and saves using the loaded hash", async () => {
   const adapter: FileAdapter = {
     id: "test",
@@ -61,10 +71,10 @@ it("retains per-file drafts across tabs and saves using the loaded hash", async 
   fireEvent.change(await screen.findByLabelText("Source editor: a.py"), {
     target: { value: "A draft" },
   });
-  fireEvent.change(screen.getByLabelText("Quick open file"), {
+  fireEvent.change(screen.getByLabelText("Find a file"), {
     target: { value: "b.py" },
   });
-  fireEvent.keyDown(screen.getByLabelText("Quick open file"), { key: "Enter" });
+  fireEvent.keyDown(screen.getByLabelText("Find a file"), { key: "Enter" });
   fireEvent.change(await screen.findByLabelText("Source editor: b.py"), {
     target: { value: "B draft" },
   });
@@ -164,11 +174,13 @@ it("preserves newer edits and their retained base while Reload is pending", asyn
     />,
   );
   const editor = await screen.findByLabelText("Source editor: a.py");
-  fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+  clickReload();
   fireEvent.change(editor, { target: { value: "New unsaved work" } });
   await act(async () => finish(file("a.py", "Changed on disk", "external")));
   expect(editor).toHaveValue("New unsaved work");
-  expect(screen.getByText(/Reload skipped/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/not reloaded because you made more edits/),
+  ).toBeInTheDocument();
   unmount();
   expect(
     JSON.parse(localStorage.getItem("pipeline.files.draft.reload-race.a.py")!),
@@ -195,7 +207,7 @@ it("reloads an unchanged buffer and uses the new disk hash for its next save", a
     />,
   );
   const editor = await screen.findByLabelText("Source editor: a.py");
-  fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+  clickReload();
   await waitFor(() => expect(editor).toHaveValue("Changed on disk"));
   fireEvent.change(editor, { target: { value: "Edited refreshed file" } });
   fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -224,7 +236,7 @@ it("gives tabs scoped panels, manual activation and keyboard closing with draft 
   fireEvent.change(await screen.findByLabelText("Source editor: a.py"), {
     target: { value: "Preserved draft" },
   });
-  const search = screen.getByRole("textbox", { name: "Quick open file" });
+  const search = screen.getByRole("textbox", { name: "Find a file" });
   await user.type(search, "b.py{Enter}");
   await screen.findByLabelText("Source editor: b.py");
   const a = screen.getByRole("tab", { name: "a.py •" });
@@ -273,7 +285,7 @@ it("keeps the last file selection when an earlier read completes late", async ()
     />,
   );
   await screen.findByLabelText("Source editor: a.py");
-  const search = screen.getByLabelText("Quick open file");
+  const search = screen.getByLabelText("Find a file");
   fireEvent.change(search, { target: { value: "slow.py" } });
   fireEvent.keyDown(search, { key: "Enter" });
   fireEvent.change(search, { target: { value: "b.py" } });
@@ -287,4 +299,227 @@ it("keeps the last file selection when an earlier read completes late", async ()
   expect(
     screen.queryByRole("tab", { name: "slow.py" }),
   ).not.toBeInTheDocument();
+});
+
+it("compares a conflicting draft with the current file, then saves against the current hash", async () => {
+  localStorage.setItem(
+    "pipeline.files.draft.rebase.a.py",
+    JSON.stringify({
+      file: { path: "a.py", hash: "old", text: "Old" },
+      draft: "Mine",
+    }),
+  );
+  const adapter: FileAdapter = {
+    id: "rebase",
+    read: vi.fn(async () => file("a.py", "Other edit", "new")),
+    save: vi.fn(async () => "saved"),
+  };
+  render(
+    <FileWorkspace
+      adapter={adapter}
+      paths={["a.py"]}
+      initial={{ path: "a.py" }}
+    />,
+  );
+  await screen.findByText(/Restored draft; the file changed externally/);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Compare with current file" }),
+  );
+  await screen.findByText(/compares your draft with the current file/);
+  expect(screen.getByRole("button", { name: "Changes" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  expect(screen.getByText("Other edit")).toBeInTheDocument();
+  await waitFor(() =>
+    expect(
+      JSON.parse(localStorage.getItem("pipeline.files.draft.rebase.a.py")!),
+    ).toEqual({
+      file: { path: "a.py", hash: "new", text: "Other edit" },
+      draft: "Mine",
+    }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  await waitFor(() =>
+    expect(adapter.save).toHaveBeenCalledWith(
+      expect.objectContaining({ hash: "new" }),
+      "Mine",
+    ),
+  );
+});
+
+it("explains a save conflict and offers the comparison", async () => {
+  const read = vi
+    .fn<FileAdapter["read"]>()
+    .mockResolvedValueOnce(file("a.py"))
+    .mockResolvedValue(file("a.py", "Other edit", "second"));
+  const adapter: FileAdapter = {
+    id: "save-conflict",
+    read,
+    save: vi.fn(async () => {
+      throw {
+        code: "storage_conflict",
+        message: "This file changed outside the editor.",
+        recovery: "Refresh the Workbench record and retry your edit.",
+      };
+    }),
+  };
+  render(
+    <FileWorkspace
+      adapter={adapter}
+      paths={["a.py"]}
+      initial={{ path: "a.py" }}
+    />,
+  );
+  fireEvent.change(await screen.findByLabelText("Source editor: a.py"), {
+    target: { value: "Draft" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(
+    await screen.findByText(/Compare with the current file to keep your draft/),
+  ).toBeInTheDocument();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.queryByText(/Refresh the Workbench record/)).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Compare with current file" }),
+  ).toBeEnabled();
+  expect(screen.getByLabelText("Source editor: a.py")).toHaveValue("Draft");
+});
+
+it("gives the reason when a save is refused for an unchanged file", async () => {
+  const read = vi.fn(async () => file("a.py"));
+  const adapter: FileAdapter = {
+    id: "save-busy",
+    read,
+    save: vi.fn(async () => {
+      throw {
+        code: "storage_conflict",
+        message:
+          'The local job "Tables" is using a.py. Wait for it to finish or stop it, then try again.',
+        recovery: "Refresh the Workbench record and retry your edit.",
+      };
+    }),
+  };
+  render(
+    <FileWorkspace
+      adapter={adapter}
+      paths={["a.py"]}
+      initial={{ path: "a.py" }}
+    />,
+  );
+  fireEvent.change(await screen.findByLabelText("Source editor: a.py"), {
+    target: { value: "Draft" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
+  expect(
+    await screen.findByText(
+      'The local job "Tables" is using a.py. Wait for it to finish or stop it, then try again.',
+    ),
+  ).toBeInTheDocument();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText(/changed elsewhere/)).toBeNull();
+  expect(screen.queryByText(/Refresh the Workbench record/)).toBeNull();
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Source editor: a.py")).toHaveValue("Draft");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled(),
+  );
+});
+
+it("discards a draft only after confirmation", async () => {
+  confirmDialog.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  render(
+    <FileWorkspace
+      adapter={{
+        id: "discard-dirty",
+        read: vi.fn().mockResolvedValue(file("a.py")),
+        save: vi.fn(),
+      }}
+      paths={["a.py"]}
+      initial={{ path: "a.py" }}
+    />,
+  );
+  const editor = await screen.findByLabelText("Source editor: a.py");
+  fireEvent.change(editor, { target: { value: "Unsaved" } });
+  const discard = screen.getByRole("button", { name: "Discard draft" });
+  await act(async () => fireEvent.click(discard));
+  expect(confirmDialog).toHaveBeenCalledOnce();
+  expect(editor).toHaveValue("Unsaved");
+  await act(async () => fireEvent.click(discard));
+  await waitFor(() => expect(editor).not.toHaveValue("Unsaved"));
+  confirmDialog.mockClear();
+});
+
+it("reloads a file with unsaved edits only after confirmation", async () => {
+  confirmDialog.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+  const read = vi
+    .fn()
+    .mockResolvedValueOnce(file("a.py"))
+    .mockResolvedValueOnce(file("a.py", "Changed on disk", "external"));
+  render(
+    <FileWorkspace
+      adapter={{ id: "reload-dirty", read, save: vi.fn() }}
+      paths={["a.py"]}
+      initial={{ path: "a.py" }}
+    />,
+  );
+  const editor = await screen.findByLabelText("Source editor: a.py");
+  fireEvent.change(editor, { target: { value: "Unsaved" } });
+  openFileMenu();
+  await act(async () =>
+    fireEvent.click(screen.getByRole("menuitem", { name: "Reload" })),
+  );
+  expect(confirmDialog).toHaveBeenCalledOnce();
+  expect(read).toHaveBeenCalledOnce();
+  expect(editor).toHaveValue("Unsaved");
+  clickReload();
+  await waitFor(() => expect(editor).toHaveValue("Changed on disk"));
+});
+
+it("opens each file tab in a fresh view instead of reusing the previous file's scroll position", async () => {
+  const adapter: FileAdapter = {
+    id: "fresh-panes",
+    read: vi.fn(async (path) => ({
+      ...file(path, `# ${path}`),
+      editable: false,
+    })),
+  };
+  const { container } = render(
+    <FileWorkspace
+      adapter={adapter}
+      paths={["a.md", "b.md"]}
+      initial={{ path: "a.md" }}
+    />,
+  );
+  await screen.findByText("# a.md");
+  const first = container.querySelector(".file-pane");
+  fireEvent.change(screen.getByLabelText("Find a file"), {
+    target: { value: "b.md" },
+  });
+  fireEvent.keyDown(screen.getByLabelText("Find a file"), {
+    key: "Enter",
+  });
+  await screen.findByText("# b.md");
+  expect(container.querySelector(".file-pane")).not.toBe(first);
+});
+
+it("hides the file list, remembers that, and brings it back to find a file", async () => {
+  const adapter: FileAdapter = {
+    id: "hide-list",
+    read: vi.fn(async (path) => file(path)),
+  };
+  const view = render(
+    <FileWorkspace adapter={adapter} paths={["a.py", "b.py"]} />,
+  );
+  expect(await screen.findByText("No file open")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Hide file list" }));
+  expect(screen.getByLabelText("Find a file")).not.toBeVisible();
+  view.unmount();
+  render(<FileWorkspace adapter={adapter} paths={["a.py", "b.py"]} />);
+  expect(screen.getByRole("button", { name: "Show file list" })).toBeVisible();
+  fireEvent.keyDown(window, { key: "p", metaKey: true });
+  await waitFor(() =>
+    expect(screen.getByLabelText("Find a file")).toHaveFocus(),
+  );
 });

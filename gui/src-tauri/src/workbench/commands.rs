@@ -3,9 +3,9 @@
 use super::store::{
     ClearWorkspaceRootRequest, ConversationSnapshot, CreateSessionRequest, CreateWorkspaceRequest,
     DeleteSessionRequest, MoveSessionRequest, Mutation, ReconcileResult,
-    RegisterWorkspaceRootRequest, SessionList, SessionSnapshot, Store, UpdateSessionRequest,
-    UpdateWorkspaceRequest, WorkbenchError, WorkbenchResult, WorkbenchSession, Workspace,
-    WorkspaceList,
+    RegisterWorkspaceRootRequest, SessionCursor, SessionList, SessionSnapshot, Store,
+    UpdateSessionRequest, UpdateWorkspaceRequest, WorkbenchError, WorkbenchResult,
+    WorkbenchSession, Workspace, WorkspaceList,
 };
 use super::titles::{self, TitlePreferences};
 use serde::{Deserialize, Serialize};
@@ -23,10 +23,12 @@ static DATABASE_GATE: RwLock<()> = RwLock::const_new(());
 static EVENT_BRIDGE_EPOCH: AtomicU64 = AtomicU64::new(0);
 static TURN_QUEUE: OnceLock<Arc<Semaphore>> = OnceLock::new();
 static ACTIVE_TURN_STATE: OnceLock<StdMutex<ActiveTurnState>> = OnceLock::new();
-static PENDING_SERVER_REQUESTS: OnceLock<StdMutex<HashMap<String, super::codex::NormalizedEvent>>> =
-    OnceLock::new();
+static PENDING_SERVER_REQUESTS: OnceLock<
+    StdMutex<HashMap<String, crate::agent_runtime::events::NormalizedEvent>>,
+> = OnceLock::new();
 
-fn pending_server_requests() -> &'static StdMutex<HashMap<String, super::codex::NormalizedEvent>> {
+fn pending_server_requests(
+) -> &'static StdMutex<HashMap<String, crate::agent_runtime::events::NormalizedEvent>> {
     PENDING_SERVER_REQUESTS.get_or_init(|| StdMutex::new(HashMap::new()))
 }
 
@@ -44,6 +46,7 @@ struct ActiveTurnState {
     connection_closed_during_setup: bool,
     permit: Option<OwnedSemaphorePermit>,
     account_lease: Option<tokio::sync::OwnedRwLockReadGuard<()>>,
+    owner: Option<TurnOwner>,
 }
 
 impl ActiveTurnState {
@@ -89,6 +92,51 @@ fn complete_active_turn(epoch: u64, thread_id: &str, turn_id: &str) {
             });
         }
         *state = ActiveTurnState::default();
+    }
+}
+
+pub(crate) fn accept_local_turn(epoch: u64, thread: &str, turn: &str) {
+    let mut state = active_turn_state()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    state.epoch = Some(epoch);
+    state.thread_id = Some(thread.into());
+    state.turn_id = Some(turn.into());
+}
+
+pub(crate) fn finish_local_turn(epoch: u64, thread: &str, turn: &str) {
+    complete_active_turn(epoch, thread, turn);
+}
+
+pub(crate) fn turn_setup_in_progress() -> bool {
+    active_turn_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .setup_in_progress
+}
+
+/// Whether this native turn still holds the app-wide turn permit. Nothing does
+/// after a restart, so a turn a crash left open has no live owner.
+pub(crate) fn turn_has_live_owner(thread: &str, turn: &str) -> bool {
+    let state = active_turn_state()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    state.thread_id.as_deref() == Some(thread) && state.turn_id.as_deref() == Some(turn)
+}
+
+/// Stops the tools and browser a closed App Server connection leaves behind.
+/// Only one turn runs at a time, so they are its turn's, or left from a finished
+/// one, unless a Claude, API or newer ChatGPT turn holds the permit. That turn's
+/// tools and browser belong to it.
+pub(super) async fn stop_connection_tools(epoch: u64) {
+    let another_runtime = {
+        let state = active_turn_state()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.epoch != Some(epoch) && (state.setup_in_progress || state.epoch.is_some())
+    };
+    if !another_runtime {
+        super::conversation_tools::stop_all().await;
     }
 }
 
@@ -159,6 +207,18 @@ pub struct SendTurnRequest {
     pub(crate) effort: Option<String>,
 }
 
+impl SendTurnRequest {
+    // Explicit automation model choices do not inherit another model's effort.
+    fn inherit_selection(&mut self, overrides: &Value) {
+        if self.model.is_none() {
+            self.model = overrides["model"].as_str().map(str::to_owned);
+            if self.effort.is_none() {
+                self.effort = overrides["effort"].as_str().map(str::to_owned);
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendTurnResult {
@@ -183,8 +243,12 @@ where
     T: Send + 'static,
     F: FnOnce(Store) -> WorkbenchResult<T> + Send + 'static,
 {
-    let _gate = DATABASE_GATE.read().await;
-    run_store_ungated(operation).await
+    let gate = DATABASE_GATE.read().await;
+    run_store_ungated(move |store| {
+        let _gate = gate;
+        operation(store)
+    })
+    .await
 }
 
 pub(crate) async fn run_store_owned<T, F>(store: Store, operation: F) -> WorkbenchResult<T>
@@ -192,14 +256,17 @@ where
     T: Send + 'static,
     F: FnOnce(Store) -> WorkbenchResult<T> + Send + 'static,
 {
-    let _gate = DATABASE_GATE.read().await;
-    let _permit = DATABASE_WORKERS
+    let gate = DATABASE_GATE.read().await;
+    let permit = DATABASE_WORKERS
         .acquire()
         .await
         .map_err(|_| WorkbenchError::worker("Database workers are unavailable", true))?;
-    tokio::task::spawn_blocking(move || operation(store))
-        .await
-        .map_err(|e| WorkbenchError::worker(format!("Database worker ended: {e}"), true))?
+    tokio::task::spawn_blocking(move || {
+        let (_gate, _permit) = (gate, permit);
+        operation(store)
+    })
+    .await
+    .map_err(|e| WorkbenchError::worker(format!("Database worker ended: {e}"), true))?
 }
 
 async fn run_store_ungated<T, F>(operation: F) -> WorkbenchResult<T>
@@ -207,15 +274,19 @@ where
     T: Send + 'static,
     F: FnOnce(Store) -> WorkbenchResult<T> + Send + 'static,
 {
-    let _permit = DATABASE_WORKERS
+    let permit = DATABASE_WORKERS
         .acquire()
         .await
         .map_err(|_| WorkbenchError::worker("Workbench database workers are unavailable", true))?;
-    tokio::task::spawn_blocking(move || operation(Store::open_default()?))
-        .await
-        .map_err(|error| {
-            WorkbenchError::worker(format!("Workbench database worker stopped: {error}"), true)
-        })?
+    tokio::task::spawn_blocking(move || {
+        // A cancelled await must not release admission while its worker runs.
+        let _permit = permit;
+        operation(Store::open_default()?)
+    })
+    .await
+    .map_err(|error| {
+        WorkbenchError::worker(format!("Workbench database worker stopped: {error}"), true)
+    })?
 }
 
 async fn run_store_exclusive<T, F>(operation: F) -> WorkbenchResult<T>
@@ -223,14 +294,28 @@ where
     T: Send + 'static,
     F: FnOnce(Store) -> WorkbenchResult<T> + Send + 'static,
 {
-    let _gate = DATABASE_GATE.write().await;
-    run_store_ungated(operation).await
+    let gate = DATABASE_GATE.write().await;
+    run_store_ungated(move |store| {
+        let _gate = gate;
+        operation(store)
+    })
+    .await
 }
 
 fn storage_turn_permit(queue: Arc<Semaphore>) -> WorkbenchResult<OwnedSemaphorePermit> {
     queue.try_acquire_owned().map_err(|_| {
         WorkbenchError::conflict(
             "Stop or finish the Workspace turn before changing private storage",
+        )
+    })
+}
+
+/// Moving or deleting a conversation waits for the app's one running response,
+/// wherever it is, so nothing here can race that turn.
+fn conversation_turn_permit(queue: Arc<Semaphore>) -> WorkbenchResult<OwnedSemaphorePermit> {
+    queue.try_acquire_owned().map_err(|_| {
+        WorkbenchError::conflict(
+            "A response is still running. Wait for it to finish or stop it, then try again.",
         )
     })
 }
@@ -296,7 +381,34 @@ pub async fn workbench_update_workspace(
 pub async fn workbench_create_session(
     request: CreateSessionRequest,
 ) -> WorkbenchResult<Mutation<WorkbenchSession>> {
-    run_store(move |store| store.create_session(request)).await
+    run_store(move |store| {
+        let overrides = default_session_overrides(&crate::settings::load())?;
+        store.create_session_with_overrides(request, overrides.as_ref())
+    })
+    .await
+}
+
+/// New conversations copy the chosen default, so changing it later never moves
+/// a conversation that has already started. With no choice made they keep the
+/// ChatGPT fallback that conversations without a saved runtime use.
+fn default_session_overrides(
+    settings: &crate::settings::Settings,
+) -> WorkbenchResult<Option<Value>> {
+    if !settings.default_model_chosen {
+        return Ok(None);
+    }
+    let connection =
+        crate::connections::ConnectionId::for_review(&settings.preferred_provider, settings)
+            .map_err(WorkbenchError::invalid)?;
+    let mut overrides = json!({ "runtime": connection });
+    // The conversation picker offers thinking levels only for a chosen model.
+    if !settings.default_model.is_empty() {
+        overrides["model"] = settings.default_model.as_str().into();
+        if !settings.default_effort.is_empty() {
+            overrides["effort"] = settings.default_effort.as_str().into();
+        }
+    }
+    Ok(Some(overrides))
 }
 
 #[tauri::command]
@@ -304,6 +416,53 @@ pub async fn workbench_update_session(
     request: UpdateSessionRequest,
 ) -> WorkbenchResult<Mutation<WorkbenchSession>> {
     run_store(move |store| store.update_session(request)).await
+}
+
+/// Clears a sent message from the saved draft once its turn is accepted. A draft
+/// that has moved on is the researcher's newer text and stays. A title or
+/// settings write can win the revision, so a conflict gets one more attempt:
+/// a sent message left as the draft could come back and be sent twice.
+pub(crate) fn clear_sent_draft(
+    store: &Store,
+    session_id: &str,
+    sent: &str,
+    submission_id: &str,
+) -> WorkbenchResult<bool> {
+    clear_sent_draft_with(store, session_id, sent, submission_id, |request| {
+        store.update_session(request).map(|_| ())
+    })
+}
+
+fn clear_sent_draft_with(
+    store: &Store,
+    session_id: &str,
+    sent: &str,
+    submission_id: &str,
+    mut write: impl FnMut(UpdateSessionRequest) -> WorkbenchResult<()>,
+) -> WorkbenchResult<bool> {
+    for attempt in 0..2 {
+        let snapshot = store.session_snapshot(session_id)?;
+        if snapshot.session.draft.trim() != sent.trim() {
+            return Ok(false);
+        }
+        match write(UpdateSessionRequest {
+            session_id: session_id.to_string(),
+            expected_revision: snapshot.session.revision,
+            operation_id: format!("send-ack-{submission_id}"),
+            title: None,
+            draft: Some(String::new()),
+            overrides: None,
+            archived: None,
+            preset_id: None,
+            paper_id: None,
+            clear_paper: None,
+        }) {
+            Ok(()) => return Ok(true),
+            Err(error) if error.code == "storage_conflict" && attempt == 0 => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(false)
 }
 
 /// Refuses while the conversation's native thread is mid-turn or a turn is
@@ -333,14 +492,14 @@ async fn ensure_session_idle(session_id: String) -> WorkbenchResult<()> {
 pub async fn workbench_move_session(
     request: MoveSessionRequest,
 ) -> WorkbenchResult<Mutation<WorkbenchSession>> {
-    let _permit = storage_turn_permit(turn_queue().clone())?;
+    let _permit = conversation_turn_permit(turn_queue().clone())?;
     ensure_session_idle(request.session_id.clone()).await?;
     run_store(move |store| store.move_session(request)).await
 }
 
 #[tauri::command]
 pub async fn workbench_delete_session(request: DeleteSessionRequest) -> WorkbenchResult<i64> {
-    let _permit = storage_turn_permit(turn_queue().clone())?;
+    let _permit = conversation_turn_permit(turn_queue().clone())?;
     ensure_session_idle(request.session_id.clone()).await?;
     run_store(move |store| store.delete_session(request)).await
 }
@@ -363,9 +522,27 @@ pub async fn workbench_generate_session_title(
     app: tauri::AppHandle,
     session_id: String,
 ) -> Result<String, RuntimeCommandError> {
-    let supervisor = super::codex::supervisor_manager().connect().await?;
-    ensure_event_bridge(app.clone(), supervisor.clone());
-    generate_session_title(&app, &supervisor, session_id, true)
+    let selected_session = session_id.clone();
+    let overrides =
+        run_store(move |store| Ok(store.session_snapshot(&selected_session)?.session.overrides))
+            .await?;
+    let runtime = if let Some(provider) = super::api::selected(&overrides)? {
+        TitleRuntime::Api {
+            epoch: super::api::next_epoch(),
+            connection: super::api::config::load(provider, overrides["model"].as_str(), None)
+                .await
+                .map_err(super::api::error)?,
+        }
+    } else if super::claude::selected(&overrides)? {
+        TitleRuntime::Claude {
+            epoch: super::claude::fresh_epoch(),
+        }
+    } else {
+        let supervisor = super::codex::supervisor_manager().connect().await?;
+        ensure_event_bridge(app.clone(), supervisor.clone());
+        TitleRuntime::Codex(supervisor)
+    };
+    generate_session_title(&app, &runtime, session_id, true)
         .await?
         .ok_or_else(|| RuntimeCommandError {
             code: "title_unavailable".to_string(),
@@ -379,18 +556,54 @@ pub async fn workbench_generate_session_title(
 const TITLE_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 const TITLE_PROJECTION_ATTEMPTS: usize = 10;
 
+/// The provider that writes a conversation's title: the one it talks to.
+pub(crate) enum TitleRuntime {
+    Codex(Arc<super::codex::AppServerSupervisor>),
+    Claude {
+        epoch: u64,
+    },
+    Api {
+        epoch: u64,
+        connection: super::api::Connection,
+    },
+}
+
+impl TitleRuntime {
+    fn namespace(&self) -> String {
+        match self {
+            Self::Codex(supervisor) => supervisor.runtime_namespace(),
+            Self::Claude { .. } => super::claude::NAMESPACE.to_string(),
+            Self::Api { .. } => super::api::NAMESPACE.to_string(),
+        }
+    }
+
+    fn epoch(&self) -> u64 {
+        match self {
+            Self::Codex(supervisor) => supervisor.status().epoch,
+            Self::Claude { epoch } | Self::Api { epoch, .. } => *epoch,
+        }
+    }
+}
+
 /// One title side call. Returns `Ok(None)` when nothing should change: titles
 /// are disabled, the user already named the conversation, or no completed
 /// exchange exists yet. `force` skips the first two checks.
 async fn generate_session_title(
     app: &tauri::AppHandle,
-    supervisor: &Arc<super::codex::AppServerSupervisor>,
+    runtime: &TitleRuntime,
     session_id: String,
     force: bool,
 ) -> Result<Option<String>, RuntimeCommandError> {
     let preferences = run_store(|store| titles::load_preferences(&store)).await?;
     if !force && !preferences.enabled {
         return Ok(None);
+    }
+    if !force {
+        let lookup = session_id.clone();
+        let session = run_store(move |store| store.session_snapshot(&lookup)).await?;
+        if !titles::is_default_title(&session.session.title) {
+            return Ok(None);
+        }
     }
     let mut exchange = None;
     for attempt in 0..TITLE_PROJECTION_ATTEMPTS {
@@ -412,32 +625,28 @@ async fn generate_session_title(
     let Some((user, assistant)) = exchange else {
         return Ok(None);
     };
-    let catalog = supervisor.model_catalog().await?;
-    let (model, effort) = match titles::choose_model(&catalog.models, &preferences) {
-        Some((model, effort)) => (Some(model), effort),
-        None => (None, None),
-    };
-    let scratch = tempfile::Builder::new()
-        .prefix("pipeline-workbench-title-")
-        .tempdir()
-        .map_err(|error| RuntimeCommandError {
-            code: "storage_error".to_string(),
-            message: format!("Could not create a scratch directory for the title call: {error}"),
+    let raw = match runtime {
+        TitleRuntime::Api { connection, .. } => {
+            super::api::title(connection, &titles::title_prompt(&user, &assistant))
+                .await
+                .map_err(super::api::error)?
+        }
+        TitleRuntime::Codex(supervisor) => {
+            codex_title(supervisor, &preferences, &user, &assistant).await?
+        }
+        // Title preferences name ChatGPT models; Claude uses its cheapest offered model.
+        TitleRuntime::Claude { .. } => super::claude::title::generate(
+            titles::title_prompt(&user, &assistant),
+            TITLE_CALL_TIMEOUT,
+        )
+        .await
+        .map_err(|message| RuntimeCommandError {
+            code: "title_failed".to_string(),
+            message,
             retryable: true,
             recovery: None,
-        })?;
-    let raw = supervisor
-        .run_side_turn(super::codex::SideTurnRequest {
-            cwd: scratch.path().to_string_lossy().into_owned(),
-            permissions: "workbench-inspect".to_string(),
-            developer_instructions: titles::TITLE_INSTRUCTIONS.to_string(),
-            text: titles::title_prompt(&user, &assistant),
-            model,
-            effort,
-            timeout: TITLE_CALL_TIMEOUT,
-        })
-        .await?;
-    drop(scratch);
+        })?,
+    };
     let Some(title) = titles::sanitize_title(&raw) else {
         return Err(RuntimeCommandError {
             code: "title_unusable".to_string(),
@@ -481,7 +690,7 @@ async fn generate_session_title(
         "workbench:event",
         json!({
             "kind": "sessionTitleUpdated",
-            "epoch": supervisor.status().epoch,
+            "epoch": runtime.epoch(),
             "sessionId": session_id,
             "title": title
         }),
@@ -489,10 +698,46 @@ async fn generate_session_title(
     Ok(Some(title))
 }
 
+/// The ChatGPT title side call: an ephemeral read-only App Server thread.
+async fn codex_title(
+    supervisor: &Arc<super::codex::AppServerSupervisor>,
+    preferences: &TitlePreferences,
+    user: &str,
+    assistant: &str,
+) -> Result<String, RuntimeCommandError> {
+    let catalog = supervisor.model_catalog().await?;
+    let (model, effort) = match titles::choose_model(&catalog.models, preferences) {
+        Some((model, effort)) => (Some(model), effort),
+        None => (None, None),
+    };
+    let scratch = tempfile::Builder::new()
+        .prefix("pipeline-workbench-title-")
+        .tempdir()
+        .map_err(|error| RuntimeCommandError {
+            code: "storage_error".to_string(),
+            message: format!("Could not create a scratch directory for the title call: {error}"),
+            retryable: true,
+            recovery: None,
+        })?;
+    let raw = supervisor
+        .run_side_turn(super::codex::SideTurnRequest {
+            cwd: scratch.path().to_string_lossy().into_owned(),
+            permissions: "workbench-inspect".to_string(),
+            developer_instructions: titles::TITLE_INSTRUCTIONS.to_string(),
+            text: titles::title_prompt(user, assistant),
+            model,
+            effort,
+            timeout: TITLE_CALL_TIMEOUT,
+        })
+        .await?;
+    drop(scratch);
+    Ok(raw)
+}
+
 /// Background title generation after a conversation turn completes.
-fn spawn_title_generation(
+pub(crate) fn spawn_title_generation(
     app: tauri::AppHandle,
-    supervisor: Arc<super::codex::AppServerSupervisor>,
+    runtime: TitleRuntime,
     thread_id: String,
     turn_id: String,
 ) {
@@ -504,7 +749,7 @@ fn spawn_title_generation(
         {
             return;
         }
-        let namespace = supervisor.runtime_namespace();
+        let namespace = runtime.namespace();
         let lookup_thread = thread_id.clone();
         let session = run_store(move |store| store.session_for_thread(&namespace, &lookup_thread))
             .await
@@ -513,14 +758,13 @@ fn spawn_title_generation(
         let Some(session_id) = session else {
             return;
         };
-        if let Err(error) =
-            generate_session_title(&app, &supervisor, session_id.clone(), false).await
+        if let Err(error) = generate_session_title(&app, &runtime, session_id.clone(), false).await
         {
             let _ = app.emit(
                 "workbench:event",
                 json!({
                     "kind": "sessionTitleFailed",
-                    "epoch": supervisor.status().epoch,
+                    "epoch": runtime.epoch(),
                     "sessionId": session_id,
                     "error": error.message
                 }),
@@ -533,8 +777,12 @@ fn spawn_title_generation(
 pub async fn workbench_list_sessions(
     workspace_id: Option<String>,
     include_archived: bool,
+    cursor: Option<SessionCursor>,
 ) -> WorkbenchResult<SessionList> {
-    run_store(move |store| store.list_sessions(workspace_id.as_deref(), include_archived)).await
+    run_store(move |store| {
+        store.list_sessions_page(workspace_id.as_deref(), include_archived, cursor.as_ref())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -557,10 +805,12 @@ pub async fn workbench_transcript_page(
     run_store(move |store| store.transcript_page(&session_id, before.as_ref())).await
 }
 
+mod active_turn;
 mod codex;
 mod desk;
 mod project;
 mod research;
+mod version_control;
 
 #[cfg(test)]
 #[path = "commands/tests.rs"]
@@ -571,8 +821,11 @@ use crate::agent_runtime::codex::is_safe_auth_url;
 #[cfg(test)]
 use codex::{validate_pending_request, validate_server_response};
 
+pub use active_turn::*;
+use active_turn::{TurnOrigin, TurnOwner};
 pub use codex::*;
 use codex::{ensure_event_bridge, transcript_text};
 pub use desk::*;
 pub use project::*;
 pub use research::*;
+pub use version_control::*;

@@ -27,7 +27,17 @@ export type IconName =
   | "import"
   | "stop"
   | "arrow-up"
-  | "warning";
+  | "warning"
+  | "sidebar"
+  | "search"
+  | "chevron-right"
+  | "arrow-left"
+  | "columns"
+  | "code"
+  | "image"
+  | "table"
+  | "media"
+  | "link";
 
 export function Icon({
   name,
@@ -96,11 +106,10 @@ export function Icon({
     case "tasks":
       return (
         <svg {...common}>
-          <rect x="4" y="4" width="16" height="16" rx="3" />
           <path
             strokeLinecap="round"
             strokeLinejoin="round"
-            d="m8 12 2.5 2.5L16 9"
+            d="M16.5 3 20 6.5 16.5 10M4 11.5v-2a3 3 0 0 1 3-3h13M7.5 21 4 17.5 7.5 14M20 12.5v2a3 3 0 0 1-3 3H4"
           />
         </svg>
       );
@@ -171,6 +180,17 @@ export function Icon({
             strokeLinecap="round"
             strokeLinejoin="round"
             d="M19 13.25v-2.5l-2.05-.52a5.7 5.7 0 0 0-.55-1.32l1.08-1.82-1.77-1.77-1.82 1.08a5.7 5.7 0 0 0-1.32-.55L12.05 3h-2.5l-.52 2.05a5.7 5.7 0 0 0-1.32.55L5.9 4.52 4.12 6.29 5.2 8.11a5.7 5.7 0 0 0-.55 1.32L2.6 9.95v2.5l2.05.52c.13.46.31.9.55 1.32l-1.08 1.82 1.77 1.77 1.82-1.08c.42.24.86.42 1.32.55l.52 2.05h2.5l.52-2.05c.46-.13.9-.31 1.32-.55l1.82 1.08 1.77-1.77-1.08-1.82c.24-.42.42-.86.55-1.32L19 13.25Z"
+          />
+        </svg>
+      );
+    case "search":
+      return (
+        <svg {...common}>
+          <circle cx="11" cy="11" r="6.5" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="m20 20-4.3-4.3"
           />
         </svg>
       );
@@ -304,6 +324,13 @@ export function Icon({
           />
         </svg>
       );
+    case "sidebar":
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
+          <path strokeLinecap="round" d="M9.5 5v14" />
+        </svg>
+      );
     case "arrow":
       return (
         <svg {...common}>
@@ -311,6 +338,75 @@ export function Icon({
             strokeLinecap="round"
             strokeLinejoin="round"
             d="M5 12h14m-5-5 5 5-5 5"
+          />
+        </svg>
+      );
+    case "arrow-left":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M19 12H5m5-5-5 5 5 5"
+          />
+        </svg>
+      );
+    case "chevron-right":
+      return (
+        <svg {...common}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="m9 6 6 6-6 6" />
+        </svg>
+      );
+    case "columns":
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="5" width="17" height="14" rx="2.5" />
+          <path strokeLinecap="round" d="M12 5v14" />
+        </svg>
+      );
+    case "code":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M14 3.5H7A1.5 1.5 0 0 0 5.5 5v14A1.5 1.5 0 0 0 7 20.5h10a1.5 1.5 0 0 0 1.5-1.5V8L14 3.5ZM14 3.5V8h4.5M10.5 12l-2 2.25 2 2.25M13.5 12l2 2.25-2 2.25"
+          />
+        </svg>
+      );
+    case "image":
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="5" width="17" height="14" rx="2" />
+          <circle cx="8.75" cy="10" r="1.5" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="m4 17 4.75-4 3.25 2.75L15.5 12l5 4.5"
+          />
+        </svg>
+      );
+    case "table":
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="5" width="17" height="14" rx="2" />
+          <path strokeLinecap="round" d="M3.5 10h17M3.5 14.5h17M10 10v9" />
+        </svg>
+      );
+    case "media":
+      return (
+        <svg {...common}>
+          <rect x="3.5" y="5" width="17" height="14" rx="2" />
+          <path strokeLinejoin="round" d="M10 9.25v5.5l4.5-2.75-4.5-2.75Z" />
+        </svg>
+      );
+    case "link":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M7 17 17 7m-8 0h8v8"
           />
         </svg>
       );

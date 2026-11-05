@@ -21,6 +21,8 @@ const EXCLUDED_DIRS: &[&str] = &[
 
 pub struct ExpandResult {
     pub matches: Vec<String>,
+    /// How many files matched before `matches` was capped.
+    pub total_matches: usize,
     /// Why the result may be incomplete (`match limit`, `entry limit`,
     /// `directory limit`, `time limit`, or `cancelled`).
     pub limited_by: Option<&'static str>,
@@ -83,6 +85,7 @@ pub fn expand(root: &Path, pattern: &str, max: usize) -> ExpandResult {
         Err(_) => {
             return ExpandResult {
                 matches: Vec::new(),
+                total_matches: 0,
                 limited_by: Some("invalid pattern"),
             };
         }
@@ -155,12 +158,14 @@ pub fn expand(root: &Path, pattern: &str, max: usize) -> ExpandResult {
         }
     }
     matches.sort();
-    if matches.len() > max {
+    let total_matches = matches.len();
+    if total_matches > max {
         limited_by.get_or_insert("match limit");
     }
     matches.truncate(max);
     ExpandResult {
         matches,
+        total_matches,
         limited_by,
     }
 }

@@ -1,5 +1,5 @@
 // Manifest-driven Workflow artifact surface. Reads stay behind the run-owned client.
-import { lazy, Suspense, useMemo } from "react";
+import { lazy, Suspense, useCallback, useMemo } from "react";
 import type { ArtifactExplorerProps } from "../lib/artifactTypes";
 export type {
   ArtifactContent,
@@ -15,6 +15,7 @@ import ArtifactTree from "./artifact-explorer/ArtifactTree";
 import { Viewer } from "./artifact-explorer/ArtifactViewer";
 import useArtifactSelection from "./artifact-explorer/useArtifactSelection";
 import { PAGE_SELECTION_PREFIX } from "./artifact-explorer/navigation";
+import ReportIssueLink from "./ReportIssueLink";
 const FileWorkspace = lazy(() => import("./file-workspace/FileWorkspace"));
 
 export default function ArtifactExplorer({
@@ -32,6 +33,7 @@ export default function ArtifactExplorer({
     retryManifest,
     selected,
     selectionHistory,
+    selectionNotice,
     content,
     loadError,
     navigationOpen,
@@ -54,6 +56,15 @@ export default function ArtifactExplorer({
       ),
     [runId, manifest],
   );
+  // A choice in the file list or a preview shows that file, so it leaves the
+  // file tabs, which would otherwise cover it.
+  const showArtifact = useCallback(
+    (next: string) => {
+      setFileTab(null);
+      selectArtifact(next);
+    },
+    [selectArtifact, setFileTab],
+  );
 
   // Graceful degradation: no manifest → plain report view.
   if (manifestError) {
@@ -63,9 +74,7 @@ export default function ArtifactExplorer({
           role="alert"
           className="m-4 rounded-lg border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-3 text-sm text-red-700 dark:text-red-300"
         >
-          <p className="font-medium">
-            Could not load this run's artifact manifest.
-          </p>
+          <p className="font-medium">Could not load this review’s file list.</p>
           <p className="mt-1 text-xs">{manifestError}</p>
           <button
             type="button"
@@ -74,9 +83,10 @@ export default function ArtifactExplorer({
           >
             Retry
           </button>
+          <ReportIssueLink />
         </div>
         {fallbackMarkdown && (
-          <section aria-label="Fallback report">
+          <section aria-label="Saved report text">
             <p className="mx-4 text-xs text-gray-500">
               Showing the fallback report.
             </p>
@@ -102,16 +112,25 @@ export default function ArtifactExplorer({
         manifest={manifest}
         artifactsByGroup={artifactsByGroup}
         selected={selected}
-        selectArtifact={selectArtifact}
+        selectArtifact={showArtifact}
       />
       {/* Viewer */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {selected && !selected.startsWith(PAGE_SELECTION_PREFIX) && (
+        {selectionNotice && (
+          <p
+            role="status"
+            className="shrink-0 border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-300"
+          >
+            {selectionNotice}
+          </p>
+        )}
+        {(fileTab ||
+          (selected && !selected.startsWith(PAGE_SELECTION_PREFIX))) && (
           <div className="file-toolbar">
             <button
               onClick={() => setFileTab(fileTab ? null : { path: selected })}
             >
-              {fileTab ? "Return to artifact preview" : "Open in file tabs"}
+              {fileTab ? "Return to file preview" : "Open in file tabs"}
             </button>
           </div>
         )}
@@ -165,11 +184,11 @@ export default function ArtifactExplorer({
           <div className="min-h-0 flex-1 overflow-auto">
             {loadError ? (
               <div className="p-6 text-sm text-gray-500 dark:text-gray-400">
-                Could not read this artifact: {loadError}
+                Could not read this file: {loadError}
               </div>
             ) : !selected ? (
               <div className="flex h-full items-center justify-center p-8 text-center text-sm text-gray-500 dark:text-gray-400">
-                Select an artifact to preview it.
+                Select a file to preview it.
               </div>
             ) : content ? (
               <RunMarkdown
@@ -183,7 +202,7 @@ export default function ArtifactExplorer({
                   content={content}
                   artifacts={manifest.artifacts}
                   pageArtifacts={manifest.page_artifacts}
-                  onSelectArtifact={selectArtifact}
+                  onSelectArtifact={showArtifact}
                 />
               </RunMarkdown>
             ) : (

@@ -56,14 +56,13 @@ pub(super) async fn checkpoint_output(
             .map_err(|error| format!("Failed to write step checkpoint: {error}"))?;
         temp.flush()
             .map_err(|error| format!("Failed to flush step checkpoint: {error}"))?;
-        temp.as_file()
-            .sync_all()
+        crate::safety::sync_file(temp.as_file())
             .map_err(|error| format!("Failed to sync step checkpoint: {error}"))?;
         temp.persist(&destination)
             .map_err(|error| format!("Failed to publish step checkpoint: {}", error.error))?;
         #[cfg(unix)]
         std::fs::File::open(&directory)
-            .and_then(|directory| directory.sync_all())
+            .and_then(|directory| crate::safety::sync_file(&directory))
             .map_err(|error| format!("Failed to sync checkpoint directory: {error}"))?;
         Ok(())
     })
@@ -118,11 +117,11 @@ pub(super) async fn checkpoint_wave(
         .map_err(|e| e.to_string())?;
         let mut temp = tempfile::NamedTempFile::new_in(&directory).map_err(|e| e.to_string())?;
         temp.write_all(&bytes).map_err(|e| e.to_string())?;
-        temp.as_file().sync_all().map_err(|e| e.to_string())?;
+        crate::safety::sync_file(temp.as_file()).map_err(|e| e.to_string())?;
         temp.persist(destination).map_err(|e| e.to_string())?;
         #[cfg(unix)]
         std::fs::File::open(&directory)
-            .and_then(|f| f.sync_all())
+            .and_then(|directory| crate::safety::sync_file(&directory))
             .map_err(|e| e.to_string())?;
         Ok(())
     })
@@ -152,14 +151,13 @@ pub(super) async fn checkpoint_failure(
             .map_err(|error| format!("Failed to write failure checkpoint: {error}"))?;
         temp.flush()
             .map_err(|error| format!("Failed to flush failure checkpoint: {error}"))?;
-        temp.as_file()
-            .sync_all()
+        crate::safety::sync_file(temp.as_file())
             .map_err(|error| format!("Failed to sync failure checkpoint: {error}"))?;
         temp.persist(&destination)
             .map_err(|error| format!("Failed to publish failure checkpoint: {}", error.error))?;
         #[cfg(unix)]
         std::fs::File::open(&directory)
-            .and_then(|directory| directory.sync_all())
+            .and_then(|directory| crate::safety::sync_file(&directory))
             .map_err(|error| format!("Failed to sync checkpoint directory: {error}"))?;
         Ok(())
     })

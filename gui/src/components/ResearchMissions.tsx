@@ -14,6 +14,7 @@ import {
   type MissionSummary,
 } from "../lib/missionClient";
 import "./research-missions/Missions.css";
+import ReportIssueLink from "./ReportIssueLink";
 const Builder = lazy(() => import("./research-missions/Builder"));
 const Detail = lazy(() => import("./research-missions/Detail"));
 const SelfDiscovery = lazy(() => import("./self-discovery/Page"));
@@ -108,7 +109,7 @@ export default function ResearchMissions({
   if (discovery)
     return (
       <Suspense
-        fallback={<p className="task-empty">Loading self-discovery…</p>}
+        fallback={<p className="task-empty">Loading research discovery…</p>}
       >
         <SelfDiscovery
           initialRunId={initialDiscoveryId}
@@ -125,24 +126,26 @@ export default function ResearchMissions({
         <div>
           <h2>Research automations</h2>
           <p className="task-muted">
-            Pursue a research question over several checked rounds.
+            Investigate a research question over several rounds, checking the
+            findings along the way.
           </p>
         </div>
         <button className="task-primary" onClick={create}>
           + New research automation
         </button>
       </div>
-      <div className="task-actions" aria-label="Autonomous paper discovery">
+      <div className="task-actions" aria-label="Research discovery">
         <button onClick={() => setDiscovery("supervised")}>
-          Full self-discovery (supervised)
+          Research discovery — choose projects yourself
         </button>
         <button onClick={() => setDiscovery("unsupervised")}>
-          Full self-discovery (unsupervised)
+          Research discovery — let Pipeline choose projects
         </button>
       </div>
       {error && (
         <p className="task-error" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       <div

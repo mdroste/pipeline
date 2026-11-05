@@ -74,7 +74,10 @@ enabled = false\n",
     let (_, permissions) = production
         .split_once("\n[permissions.")
         .ok_or("Production permission profiles missing")?;
-    let config = format!("{config}\n[permissions.{permissions}");
+    let mut config = format!("{config}\n[permissions.{permissions}");
+    if std::env::var_os("PIPELINE_PROBE_NETWORK").is_some() {
+        config=format!("features.network_proxy = true\n{config}\n[permissions.workbench-inspect-network.network.domains]\n\"example.org\" = \"allow\"\n");
+    }
     let path = codex_home.join("config.toml");
     std::fs::write(&path, config)
         .map_err(|error| format!("Failed to write Workbench probe config: {error}"))?;

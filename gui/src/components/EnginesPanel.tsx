@@ -2,19 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { confirmDialog } from "./DialogService";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
-import type { EngineStatus } from "../lib/types";
+import type { EngineDownloadProgress, EngineStatus } from "../lib/types";
+import EngineInstallStatus, { type PhaseStatus } from "./EngineInstallStatus";
 import InfoButton from "./InfoButton";
-
-type PhaseStatus = "running" | "done" | "failed";
-
-const PHASES: { id: string; label: string }[] = [
-  { id: "runtime", label: "Runtime" },
-  { id: "packages", label: "Packages" },
-  { id: "models", label: "Models" },
-];
+import ReportIssueLink from "./ReportIssueLink";
 
 /** Cap the streamed install log kept in memory. */
 const MAX_LOG_LINES = 200;
+
+/** Status poll while an install started before this panel mounted runs. */
+const BACKGROUND_POLL_MS = 2500;
 
 /**
  * Installable native extraction engines. Everything lands under
@@ -30,8 +27,11 @@ export default function EnginesPanel({
   const [engines, setEngines] = useState<EngineStatus[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [phases, setPhases] = useState<Record<string, PhaseStatus>>({});
+  const [download, setDownload] = useState<EngineDownloadProgress | null>(null);
   const [logLines, setLogLines] = useState<string[]>([]);
+  const [uninstalling, setUninstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [repaired, setRepaired] = useState<string | null>(null);
   const [listenersReady, setListenersReady] = useState(false);
   const [listenerError, setListenerError] = useState<string | null>(null);
   const [listenerAttempt, setListenerAttempt] = useState(0);
@@ -41,8 +41,9 @@ export default function EnginesPanel({
   const [refreshingStatus, setRefreshingStatus] = useState(true);
   const [openDirError, setOpenDirError] = useState<string | null>(null);
   const [openingPipelineDir, setOpeningPipelineDir] = useState(false);
-  const logRef = useRef<HTMLPreElement>(null);
   const refreshGeneration = useRef(0);
+  const backgroundInstalls = useRef(new Set<string>());
+  const cancelRequested = useRef(false);
 
   const refresh = useCallback(() => {
     const generation = ++refreshGeneration.current;
@@ -61,6 +62,7 @@ export default function EnginesPanel({
         )?.install_progress;
         if (activeProgress) {
           setPhases(activeProgress.phases as Record<string, PhaseStatus>);
+          setDownload(activeProgress.download ?? null);
           setLogLines(activeProgress.log_lines.slice(-MAX_LOG_LINES));
         }
         setEngineStatusError(null);
@@ -71,9 +73,7 @@ export default function EnginesPanel({
         onEngineStatusChange?.([]);
         const detail =
           reason instanceof Error ? reason.message : String(reason);
-        setEngineStatusError(
-          `Local engine status could not be loaded: ${detail}`,
-        );
+        setEngineStatusError(`Could not check the local parser: ${detail}`);
       },
     );
     void Promise.allSettled([engineRequest]).then(() => {
@@ -116,6 +116,10 @@ export default function EnginesPanel({
           }));
         },
       ),
+      listen<{ download: EngineDownloadProgress | null }>(
+        "engines:download",
+        (e) => setDownload(e.payload.download),
+      ),
       listen<{ line: string }>("engines:log", (e) => {
         setLogLines((l) => [...l.slice(-(MAX_LOG_LINES - 1)), e.payload.line]);
       }),
@@ -131,11 +135,11 @@ export default function EnginesPanel({
         registered.forEach((unlisten) => unlisten());
         if (live && failed) {
           setListenerError(
-            `Engine progress connection failed: ${
+            `Could not track install progress: ${
               failed.reason instanceof Error
                 ? failed.reason.message
                 : String(failed.reason)
-            }. Retry before installing or removing an engine.`,
+            }. Retry before you install or uninstall the parser.`,
           );
         }
         return;
@@ -149,24 +153,25 @@ export default function EnginesPanel({
     };
   }, [listenerAttempt]);
 
-  useEffect(() => {
-    if (logRef.current) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
-    }
-  }, [logLines]);
-
-  const install = async (id: string) => {
+  // The installer leaves sound files alone and rebuilds what fails its check,
+  // so repairing is the same call as installing.
+  const install = async (id: string, repairLabel?: string) => {
+    cancelRequested.current = false;
     setBusy(id);
     setError(null);
+    setRepaired(null);
     setPhases({});
+    setDownload(null);
     setLogLines([]);
     try {
       await invoke("install_engine", { engineId: id });
       onSystemChange?.();
+      if (repairLabel) setRepaired(repairLabel);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
+      setDownload(null);
       refresh();
     }
   };
@@ -174,9 +179,9 @@ export default function EnginesPanel({
   const uninstall = async (id: string) => {
     if (
       !(await confirmDialog(
-        "Uninstall this engine? Its managed runtime, packages, and model files will be removed.",
+        "Uninstall this parser and remove its installed software and model files?",
         {
-          title: "Uninstall engine",
+          title: "Uninstall parser",
           confirmLabel: "Uninstall",
           destructive: true,
         },
@@ -185,8 +190,11 @@ export default function EnginesPanel({
       return;
     }
     setBusy(id);
+    setUninstalling(true);
     setError(null);
+    setRepaired(null);
     setPhases({});
+    setDownload(null);
     setLogLines([]);
     try {
       await invoke("uninstall_engine", { engineId: id });
@@ -195,31 +203,60 @@ export default function EnginesPanel({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(null);
+      setUninstalling(false);
       refresh();
     }
   };
 
   const cancel = async () => {
     setError(null);
+    cancelRequested.current = true;
     try {
       await invoke("cancel_engine_install");
     } catch (caught) {
       const detail = caught instanceof Error ? caught.message : String(caught);
-      setError(`Engine cancellation failed: ${detail}`);
+      setError(`Could not cancel the install: ${detail}`);
     }
   };
 
   // An install started elsewhere (e.g. before this panel mounted).
   const backendBusy = engines.some((e) => e.installing);
+  const watchingBackground = backendBusy && busy === null;
+
+  // The backend reports no completion event, so a remounted panel polls the
+  // engine list until the install it inherited ends.
+  useEffect(() => {
+    if (!watchingBackground) return;
+    const timer = window.setInterval(refresh, BACKGROUND_POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [refresh, watchingBackground]);
+
+  useEffect(() => {
+    if (busy !== null) return;
+    const finished: EngineStatus[] = [];
+    for (const engine of engines) {
+      if (engine.installing) backgroundInstalls.current.add(engine.id);
+      else if (backgroundInstalls.current.delete(engine.id))
+        finished.push(engine);
+    }
+    if (!finished.length) return;
+    onSystemChange?.();
+    const failed = finished.find((engine) => !engine.installed);
+    if (failed && !cancelRequested.current)
+      setError(
+        `${failed.label} didn’t finish installing. Choose Install to try again.`,
+      );
+    cancelRequested.current = false;
+  }, [busy, engines, onSystemChange]);
 
   return (
     <div>
       <div className="mb-3 flex items-center gap-1.5">
         <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-          Local Engines
+          Local parser
         </h4>
-        <InfoButton label="Local Engines">
-          Managed engines are installed under{" "}
+        <InfoButton label="Local parser">
+          The parser is installed in{" "}
           <button
             type="button"
             onClick={openPipelineDir}
@@ -236,6 +273,7 @@ export default function EnginesPanel({
       {openDirError && (
         <p role="alert" className="mb-3 text-xs text-red-700 dark:text-red-400">
           {openDirError}
+          <ReportIssueLink />
         </p>
       )}
 
@@ -244,7 +282,10 @@ export default function EnginesPanel({
           role="alert"
           className="mb-3 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
         >
-          <span className="flex-1">{engineStatusError}</span>
+          <span className="flex-1">
+            {engineStatusError}
+            <ReportIssueLink />
+          </span>
           <button
             type="button"
             onClick={refresh}
@@ -260,7 +301,10 @@ export default function EnginesPanel({
           role="alert"
           className="mb-3 flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300"
         >
-          <span className="flex-1">{listenerError}</span>
+          <span className="flex-1">
+            {listenerError}
+            <ReportIssueLink />
+          </span>
           <button
             type="button"
             onClick={() => setListenerAttempt((attempt) => attempt + 1)}
@@ -309,14 +353,24 @@ export default function EnginesPanel({
                       Cancel
                     </button>
                   ) : engine.installed ? (
-                    <button
-                      type="button"
-                      onClick={() => uninstall(engine.id)}
-                      disabled={!listenersReady}
-                      className="text-xs py-1.5 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                    >
-                      Uninstall
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => install(engine.id, engine.label)}
+                        disabled={!listenersReady || !available}
+                        className="text-xs py-1.5 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                      >
+                        Repair
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => uninstall(engine.id)}
+                        disabled={!listenersReady}
+                        className="text-xs py-1.5 px-3 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                      >
+                        Uninstall
+                      </button>
+                    </>
                   ) : (
                     <button
                       type="button"
@@ -346,46 +400,33 @@ export default function EnginesPanel({
                 </p>
               )}
 
-              {isBusy && (
-                <div className="space-y-2">
-                  <p
-                    className="text-xs text-blue-700 dark:text-blue-300"
-                    role="status"
-                  >
-                    Installation continues in the background if you leave
-                    Settings.
-                  </p>
-                  <div className="flex items-center gap-2">
-                    {PHASES.map((phase) => {
-                      const status = phases[phase.id];
-                      const chip =
-                        status === "done"
-                          ? "bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300"
-                          : status === "running"
-                            ? "bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300 animate-pulse"
-                            : status === "failed"
-                              ? "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300"
-                              : "bg-gray-100 text-gray-400 dark:bg-gray-800 dark:text-gray-500";
-                      return (
-                        <span
-                          key={phase.id}
-                          className={`text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded ${chip}`}
-                        >
-                          {phase.label}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {(isBusy || error) && logLines.length > 0 && (
-                <pre
-                  ref={logRef}
-                  className="text-[11px] leading-relaxed font-mono bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-2.5 max-h-40 overflow-y-auto whitespace-pre-wrap"
+              {uninstalling && isBusy ? (
+                <p
+                  className="text-xs text-gray-500 dark:text-gray-400"
+                  role="status"
                 >
-                  {logLines.join("\n")}
-                </pre>
+                  Removing {engine.label}…
+                </p>
+              ) : (
+                <>
+                  {isBusy && (
+                    <p
+                      className="text-xs text-blue-700 dark:text-blue-300"
+                      role="status"
+                    >
+                      Installation continues in the background if you leave
+                      Settings.
+                    </p>
+                  )}
+                  {(isBusy || (error && logLines.length > 0)) && (
+                    <EngineInstallStatus
+                      active={isBusy}
+                      phases={phases}
+                      download={download}
+                      logLines={logLines}
+                    />
+                  )}
+                </>
               )}
             </div>
           );
@@ -394,18 +435,28 @@ export default function EnginesPanel({
 
       {refreshingStatus && engines.length === 0 && !engineStatusError && (
         <p role="status" className="text-xs text-gray-500 dark:text-gray-400">
-          Loading local engine status…
+          Loading local parser status…
         </p>
       )}
       {!refreshingStatus && !engineStatusError && engines.length === 0 && (
         <p className="text-xs text-gray-500 dark:text-gray-400">
-          No managed local engines are available.
+          No local parsers are available to install.
+        </p>
+      )}
+
+      {repaired && (
+        <p
+          className="mt-3 text-xs text-gray-500 dark:text-gray-400"
+          role="status"
+        >
+          {repaired} is checked and ready.
         </p>
       )}
 
       {error && (
         <p className="mt-3 text-xs text-red-600 dark:text-red-400" role="alert">
           {error}
+          <ReportIssueLink />
         </p>
       )}
     </div>

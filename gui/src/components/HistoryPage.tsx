@@ -1,18 +1,30 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { reviewHistoryClient } from "../lib/reviewHistoryClient";
+import {
+  lazy,
+  Suspense,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+} from "react";
+import { listedRunStatus } from "../lib/reportPresentation";
 import { router } from "../lib/router";
 import { confirmDialog, notify } from "./DialogService";
-import ComparePage from "./ComparePage";
 import ErrorBoundary from "./ErrorBoundary";
 import ReportWorkspace from "./ReportWorkspace";
+import useListScrollMemory from "./history-page/useListScrollMemory";
+import useRefreshWhenRunsFinish from "./history-page/useRefreshWhenRunsFinish";
 import type {
   Project,
-  ProjectsResponse,
   RunSummary,
   RunsDiskUsage,
   TrashedRun,
 } from "../lib/types";
 import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
+import ReportIssueLink from "./ReportIssueLink";
+
+const ComparePage = lazy(() => import("./ComparePage"));
 
 interface Props {
   onClose: () => void;
@@ -86,11 +98,14 @@ function fmtDate(iso: string): string {
   });
 }
 
+const isRunning = (run: RunSummary) => run.status === "running";
+const RUNNING_TITLE =
+  "This review is still running. Its report opens here when it finishes.";
+
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
+    running: "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300",
     done: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300",
-    degraded:
-      "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
     partial:
       "bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300",
     failed: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300",
@@ -151,6 +166,37 @@ export default function HistoryPage({
     [],
   );
 
+  // The route can change while this page stays mounted, and App may supply
+  // the cited source just after the route commits.
+  useEffect(() => {
+    setOpenRunId(initialRunId ?? null);
+  }, [initialRunId]);
+  useEffect(() => {
+    setOpenSourceSelection(initialSourceSelection ?? null);
+  }, [initialSourceSelection]);
+
+  // Rows stay on screen during a reload; only the first load replaces them.
+  const showLoading = loading && runs.length === 0;
+  const scroll = useListScrollMemory(
+    [
+      pageNumber,
+      filter,
+      statusFilter,
+      providerFilter,
+      profileFilter,
+      projectFilter,
+      dateFilter,
+      sortOrder,
+    ].join("\0"),
+    !comparing && !openRunId && !showLoading,
+  );
+
+  const openRun = (runId: string) => {
+    scroll.remember();
+    setOpenSourceSelection(null);
+    setOpenRunId(runId);
+  };
+
   const toggleCompareId = (id: string) =>
     setCompareIds((prev) =>
       prev.includes(id)
@@ -167,6 +213,7 @@ export default function HistoryPage({
     const secondCreated = Date.parse(
       runs.find((run) => run.run_id === second)?.created ?? "",
     );
+    scroll.remember();
     if (
       Number.isFinite(firstCreated) &&
       Number.isFinite(secondCreated) &&
@@ -183,12 +230,16 @@ export default function HistoryPage({
     setLoading(true);
     try {
       const [nextRuns, nextUsage, nextProjects] = await Promise.all([
-        invoke<RunSummary[]>("list_runs"),
-        invoke<RunsDiskUsage>("runs_disk_usage").catch(() => null),
-        invoke<ProjectsResponse>("list_projects").catch(() => null),
+        reviewHistoryClient.list(),
+        reviewHistoryClient.usage().catch(() => null),
+        reviewHistoryClient.projects().catch(() => null),
       ]);
       if (request !== refreshRequestRef.current) return;
       setRuns(nextRuns);
+      // A report that left the list cannot be compared, and its row is gone.
+      setCompareIds((prev) =>
+        prev.filter((id) => nextRuns.some((run) => run.run_id === id)),
+      );
       setUsage(nextUsage);
       if (nextProjects) setProjects(nextProjects.projects);
       setError(null);
@@ -208,7 +259,7 @@ export default function HistoryPage({
   const refreshTrash = useCallback(async () => {
     setTrashLoading(true);
     try {
-      setTrashedRuns(await invoke<TrashedRun[]>("list_trashed_runs"));
+      setTrashedRuns(await reviewHistoryClient.trashed());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -219,6 +270,8 @@ export default function HistoryPage({
   useEffect(() => {
     if (trashOpen) void refreshTrash();
   }, [trashOpen, refreshTrash]);
+
+  useRefreshWhenRunsFinish(refresh);
 
   const needle = filter.trim().toLowerCase();
   const providers = useMemo(
@@ -239,7 +292,11 @@ export default function HistoryPage({
   );
   const visible = useMemo(() => {
     const matching = runs.filter((run) => {
-      if (statusFilter !== "all" && run.status !== statusFilter) return false;
+      if (
+        statusFilter !== "all" &&
+        listedRunStatus(run.status) !== statusFilter
+      )
+        return false;
       if (providerFilter !== "all" && run.provider !== providerFilter)
         return false;
       if (
@@ -324,7 +381,7 @@ export default function HistoryPage({
       .map((t) => t.trim())
       .filter(Boolean);
     try {
-      await invoke("update_run_meta", { runId, title: editTitle, tags });
+      await reviewHistoryClient.updateMeta({ runId, title: editTitle, tags });
       setEditing(null);
       void refresh();
     } catch (e) {
@@ -346,8 +403,9 @@ export default function HistoryPage({
     )
       return;
     try {
-      await invoke("delete_run", { runId: r.run_id });
+      await reviewHistoryClient.trash({ runId: r.run_id });
       notify("Report moved to Trash.", "success");
+      setCompareIds((prev) => prev.filter((id) => id !== r.run_id));
       if (openRunId === r.run_id) {
         setOpenRunId(null);
         setOpenSourceSelection(null);
@@ -361,7 +419,7 @@ export default function HistoryPage({
 
   const restoreRun = async (run: TrashedRun) => {
     try {
-      await invoke("restore_trashed_run", { runId: run.run_id });
+      await reviewHistoryClient.restore({ runId: run.run_id });
       notify("Report restored to History.", "success");
       await Promise.all([refresh(), refreshTrash()]);
     } catch (e) {
@@ -383,7 +441,7 @@ export default function HistoryPage({
     )
       return;
     try {
-      await invoke("permanently_delete_trashed_run", { runId: run.run_id });
+      await reviewHistoryClient.remove({ runId: run.run_id });
       notify("Report permanently deleted.", "success");
       await refreshTrash();
     } catch (e) {
@@ -394,11 +452,13 @@ export default function HistoryPage({
   // ── Compare view: diff two runs ──
   if (comparing) {
     return (
-      <ComparePage
-        runA={comparing[0]}
-        runB={comparing[1]}
-        onBack={() => setComparing(null)}
-      />
+      <Suspense fallback={null}>
+        <ComparePage
+          runA={comparing[0]}
+          runB={comparing[1]}
+          onBack={() => setComparing(null)}
+        />
+      </Suspense>
     );
   }
 
@@ -407,7 +467,7 @@ export default function HistoryPage({
     const run = runs.find((r) => r.run_id === openRunId);
     return (
       // A rendering defect in one saved run must not take down History.
-      <ErrorBoundary>
+      <ErrorBoundary nested>
         <ReportWorkspace
           runId={openRunId}
           summary={run}
@@ -423,7 +483,7 @@ export default function HistoryPage({
 
   // ── List view ──
   return (
-    <div className="flex flex-col h-full">
+    <div ref={scroll.rootRef} className="flex flex-col h-full">
       <div className="flex flex-wrap items-center gap-3 px-4 sm:px-6 py-3 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 shrink-0">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
           Review history
@@ -468,7 +528,7 @@ export default function HistoryPage({
           Compare
         </button>
         <button
-          onClick={refresh}
+          onClick={() => void refresh()}
           className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
           title="Reload"
         >
@@ -497,8 +557,8 @@ export default function HistoryPage({
           >
             <option value="all">All statuses</option>
             {[
+              "running",
               "done",
-              "degraded",
               "partial",
               "failed",
               "interrupted",
@@ -586,7 +646,7 @@ export default function HistoryPage({
               Report Trash
             </h3>
             <span className="text-xs text-gray-500 dark:text-gray-400">
-              Restore reports here, or deliberately delete them forever.
+              Restore reports or delete them permanently.
             </span>
             <button
               onClick={refreshTrash}
@@ -654,13 +714,17 @@ export default function HistoryPage({
         </div>
       )}
 
-      <div className="flex-1 overflow-auto p-4">
-        {error && (
-          <div className="mb-3 p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400">
-            {error}
-          </div>
-        )}
-        {loading ? (
+      {error && (
+        <div
+          role="alert"
+          className="mx-4 mt-4 shrink-0 p-3 bg-red-50 dark:bg-red-950 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-400"
+        >
+          {error}
+          <ReportIssueLink />
+        </div>
+      )}
+      <div ref={scroll.listRef} className="flex-1 overflow-auto p-4">
+        {showLoading ? (
           <p className="text-gray-500 dark:text-gray-400 text-sm px-2">
             Loading…
           </p>
@@ -719,24 +783,29 @@ export default function HistoryPage({
                       <input
                         type="checkbox"
                         checked={compareIds.includes(r.run_id)}
+                        disabled={isRunning(r)}
                         onChange={() => toggleCompareId(r.run_id)}
                         className="mt-1 shrink-0"
                         aria-label={`Select ${r.title || r.input_name} for comparison`}
+                        title={isRunning(r) ? RUNNING_TITLE : undefined}
                       />
                     )}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <button
-                          onClick={() => {
-                            setOpenSourceSelection(null);
-                            setOpenRunId(r.run_id);
-                          }}
-                          className="text-sm font-medium text-gray-900 dark:text-gray-100 hover:underline truncate"
-                          title="Open this report"
-                        >
-                          {r.title || r.input_name}
-                        </button>
-                        <StatusBadge status={r.status} />
+                        {isRunning(r) ? (
+                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                            {r.title || r.input_name}
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => openRun(r.run_id)}
+                            className="text-sm font-medium text-gray-900 dark:text-gray-100 hover:underline truncate"
+                            title="Open this report"
+                          >
+                            {r.title || r.input_name}
+                          </button>
+                        )}
+                        <StatusBadge status={listedRunStatus(r.status)} />
                         {r.tags.map((t) => (
                           <span
                             key={t}
@@ -796,15 +865,16 @@ export default function HistoryPage({
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <button
-                        onClick={() => {
-                          setOpenSourceSelection(null);
-                          setOpenRunId(r.run_id);
-                        }}
-                        className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+                        onClick={() => openRun(r.run_id)}
+                        disabled={isRunning(r)}
+                        title={isRunning(r) ? RUNNING_TITLE : undefined}
+                        className="px-2 py-1 text-xs rounded border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-40"
                       >
                         Open
                       </button>
-                      {onRerun && r.resumable && (
+                      {/* A running review cannot be resumed, regenerated,
+                          renamed or moved to Trash until it finishes. */}
+                      {!isRunning(r) && onRerun && r.resumable && (
                         <button
                           onClick={() => onRerun(r.run_id, true)}
                           disabled={runInProgress}
@@ -812,48 +882,50 @@ export default function HistoryPage({
                           title={
                             runInProgress
                               ? "A report is already being generated"
-                              : "Continue from the last completed step"
+                              : `Continue from the last completed step with ${r.profile_name || "this run's review design"}`
                           }
                         >
                           Resume
                         </button>
                       )}
-                      <details className="relative">
-                        <summary
-                          aria-label={`More actions for ${r.title || r.input_name}`}
-                          className="cursor-pointer list-none rounded px-2 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100"
-                        >
-                          •••
-                        </summary>
-                        <div className="absolute right-0 z-20 mt-1 min-w-36 rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-gray-900">
-                          {onRerun && (
+                      {!isRunning(r) && (
+                        <details className="relative">
+                          <summary
+                            aria-label={`More actions for ${r.title || r.input_name}`}
+                            className="cursor-pointer list-none rounded px-2 py-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+                          >
+                            •••
+                          </summary>
+                          <div className="absolute right-0 z-20 mt-1 min-w-36 rounded-lg border border-gray-200 bg-white p-1 shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                            {onRerun && (
+                              <button
+                                onClick={() => onRerun(r.run_id, false)}
+                                disabled={runInProgress}
+                                className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 disabled:opacity-40"
+                                title={
+                                  runInProgress
+                                    ? "A report is already being generated"
+                                    : `Run ${r.profile_name || "this run's review design"} again using the saved document and input assessment.`
+                                }
+                              >
+                                Regenerate
+                              </button>
+                            )}
                             <button
-                              onClick={() => onRerun(r.run_id, false)}
-                              disabled={runInProgress}
-                              className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 disabled:opacity-40"
-                              title={
-                                runInProgress
-                                  ? "A report is already being generated"
-                                  : "Regenerate with the active workflow, reusing the captured document and orientation"
-                              }
+                              onClick={() => startEdit(r)}
+                              className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
                             >
-                              Regenerate
+                              Rename and tag
                             </button>
-                          )}
-                          <button
-                            onClick={() => startEdit(r)}
-                            className="block w-full rounded px-2 py-1.5 text-left text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
-                          >
-                            Rename and tag
-                          </button>
-                          <button
-                            onClick={() => deleteRun(r)}
-                            className="block w-full rounded px-2 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
-                          >
-                            Move to Trash
-                          </button>
-                        </div>
-                      </details>
+                            <button
+                              onClick={() => deleteRun(r)}
+                              className="block w-full rounded px-2 py-1.5 text-left text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/40"
+                            >
+                              Move to Trash
+                            </button>
+                          </div>
+                        </details>
+                      )}
                     </div>
                   </div>
                 )}

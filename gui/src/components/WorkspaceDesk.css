@@ -57,13 +57,16 @@
   color: var(--ui-text);
   font-size: var(--ui-text-meta);
 }
-.workspace-browse-button {
+.workspace-desk-title {
   min-width: 0;
   max-width: 36%;
+  overflow: hidden;
+  padding: 6px 10px;
   color: var(--ui-text);
   font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.workspace-browse-button > span,
 .workspace-tool-trigger > span:first-child {
   overflow: hidden;
   text-overflow: ellipsis;

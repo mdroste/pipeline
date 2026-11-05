@@ -183,6 +183,8 @@ fn validate_step(value: &serde_json::Value, path: &str) -> Result<(), String> {
         &[
             "id",
             "label",
+            "kind",
+            "analyzer",
             "prompt",
             "system_prompt",
             "enabled",
@@ -203,6 +205,13 @@ fn validate_step(value: &serde_json::Value, path: &str) -> Result<(), String> {
     )?;
     if let Some(overrides) = value.get("model_overrides") {
         validate_model_map(overrides, &format!("{path}.model_overrides"))?;
+    }
+    if let Some(analyzer) = value.get("analyzer") {
+        reject_unknown(
+            analyzer,
+            &format!("{path}.analyzer"),
+            &["id", "version", "options"],
+        )?;
     }
     if let Some(policy) = value.get("dependency_policy") {
         reject_unknown(
@@ -344,6 +353,7 @@ pub fn parse_workflow_document_strict(json: &str) -> Result<WorkflowDocument, St
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|error| format!("Invalid workflow JSON: {error}"))?;
     validate_strict_shape(&value)?;
+    let raw_steps = value.get("steps").cloned().unwrap_or_default();
     let envelope: ExportEnvelope = serde_json::from_value(value)
         .map_err(|error| format!("Invalid workflow document: {error}"))?;
     let ExportEnvelope::Profile {
@@ -368,6 +378,8 @@ pub fn parse_workflow_document_strict(json: &str) -> Result<WorkflowDocument, St
             "Unsupported workflow schema v{schema_version}; this Pipeline supports v1–v{CURRENT_SCHEMA_VERSION}"
         ));
     }
+    // The same file must mean the same workflow here as in a desktop import.
+    let steps = wire_implicit_context(&raw_steps, steps, &extraction.input_mode)?;
     let profile = ProfileData {
         name,
         steps,
@@ -390,6 +402,30 @@ pub fn parse_workflow_document_strict(json: &str) -> Result<WorkflowDocument, St
     apply_agent_defaults(&mut budget_config, &default_settings);
     crate::safety::validate_run_budget(&budget_config, &default_settings)?;
     Ok(document)
+}
+
+/// Warnings for enabled model steps that read nothing from the run. An explicit
+/// empty context is valid, so a workflow with one still loads and runs.
+pub fn steps_without_inputs(config: &PipelineConfig) -> Vec<String> {
+    if config.extraction.input_mode == "none" {
+        return Vec::new();
+    }
+    config
+        .steps
+        .iter()
+        .filter(|step| {
+            step.enabled
+                && step.kind.is_model()
+                && step.for_each.is_none()
+                && step.context.include.is_empty()
+        })
+        .map(|step| {
+            format!(
+                "Step '{}' reads nothing from the run, so it will not see the document. List what it reads under context.include.",
+                step.label
+            )
+        })
+        .collect()
 }
 
 /// A small, valid workflow agents can modify rather than inventing the wire
@@ -582,6 +618,8 @@ pub fn workflow_json_schema() -> serde_json::Value {
                 "properties": {
                     "id": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$" },
                     "label": { "type": "string" }, "prompt": { "type": "string" }, "system_prompt": { "type": "string" },
+                    "kind": { "enum": ["model", "analyzer"] },
+                    "analyzer": { "type": "object", "additionalProperties": false, "required": ["id", "version"], "properties": { "id": { "type": "string", "pattern": "^[a-z0-9_]{1,64}$" }, "version": { "type": "integer", "minimum": 1 }, "options": { "type": "object" } } },
                     "enabled": { "type": "boolean" }, "phase": { "enum": ["parallel", "sequential"] },
                     "tools": { "type": "array", "uniqueItems": true, "items": { "enum": ALLOWED_TOOLS } },
                     "agents": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/agent" } },
@@ -618,6 +656,75 @@ mod tests {
         let reparsed = parse_workflow_document_strict(&template.canonical_json).unwrap();
         assert_eq!(template.fingerprint, reparsed.fingerprint);
         assert_eq!(reparsed.config.outputs.primary_step, "synthesis");
+    }
+
+    fn portable_workflow(steps: serde_json::Value) -> String {
+        serde_json::json!({
+            "type": "profile",
+            "schema_version": 1,
+            "name": "Portable review",
+            "extraction": {"input_mode": "document"},
+            "steps": steps,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn a_file_that_leaves_out_context_means_the_same_workflow_as_a_desktop_import() {
+        let json = portable_workflow(serde_json::json!([
+            {"id": "read", "label": "Read", "prompt": "Review it.", "enabled": true, "phase": "parallel"},
+            {"id": "write", "label": "Write", "prompt": "Summarize.", "enabled": true, "phase": "sequential"},
+        ]));
+        let parsed = parse_workflow_document_strict(&json).unwrap();
+        let ExportEnvelope::Profile { steps, .. } =
+            crate::pipeline_config::import_envelope(&json).unwrap()
+        else {
+            panic!("a profile export");
+        };
+        assert!(!parsed.config.steps[0].context.include.is_empty());
+        assert!(parsed.config.steps[1]
+            .context
+            .include
+            .iter()
+            .any(|selector| matches!(
+                selector,
+                crate::pipeline_config::ArtifactSelector::Step { step, .. } if step == "read"
+            )));
+        assert_eq!(
+            serde_json::to_value(&parsed.config.steps).unwrap(),
+            serde_json::to_value(&steps).unwrap()
+        );
+        assert!(steps_without_inputs(&parsed.config).is_empty());
+
+        // What is saved keeps the flow, and reading that back changes nothing.
+        let saved = parse_workflow_document_strict(&parsed.canonical_json).unwrap();
+        assert_eq!(saved.fingerprint, parsed.fingerprint);
+    }
+
+    #[test]
+    fn a_file_where_only_some_steps_say_what_they_read_is_refused() {
+        let error = parse_workflow_document_strict(&portable_workflow(serde_json::json!([
+            {"id": "read", "label": "Read", "prompt": "Review it.", "enabled": true, "phase": "parallel",
+             "context": {"include": [{"kind": "survey"}]}},
+            {"id": "write", "label": "Write", "prompt": "Summarize.", "enabled": true, "phase": "sequential"},
+        ])))
+        .unwrap_err();
+        assert!(error.contains("say what they read"), "{error}");
+    }
+
+    #[test]
+    fn an_explicitly_isolated_step_loads_and_is_warned_about() {
+        let parsed = parse_workflow_document_strict(&portable_workflow(serde_json::json!([
+            {"id": "read", "label": "Read", "prompt": "Review it.", "enabled": true, "phase": "parallel",
+             "context": {"include": []}},
+            {"id": "write", "label": "Write", "prompt": "Summarize.", "enabled": true, "phase": "sequential",
+             "context": {"include": [{"kind": "survey"}]}},
+        ])))
+        .unwrap();
+        assert!(parsed.config.steps[0].context.include.is_empty());
+        let warnings = steps_without_inputs(&parsed.config);
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].starts_with("Step 'Read' reads nothing"));
     }
 
     #[test]

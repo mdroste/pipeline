@@ -3,6 +3,11 @@ import { useCallback, useState } from "react";
 import type { EngineStatus, Settings } from "../../lib/types";
 
 import EnginesPanel from "../EnginesPanel";
+import {
+  NO_PARSER_CONTROLS,
+  parserControls,
+  type ParserControls,
+} from "./search";
 
 import {
   selectClass,
@@ -15,40 +20,45 @@ export function ExtractionSection({
   settings,
   setSettings,
   onSystemChange,
+  knownControls = NO_PARSER_CONTROLS,
 }: {
   settings: Settings;
   setSettings: (s: Settings) => void;
   onSystemChange?: () => void;
+  /** Lets a search result reach its control before the engine list reloads. */
+  knownControls?: ParserControls;
 }) {
   const [paddleInstalled, setPaddleInstalled] = useState(false);
+  const [
+    { graphicsCard: gpuInstalled, processorCores: gpuListed },
+    setControls,
+  ] = useState(knownControls);
   const handleEngineStatusChange = useCallback((engines: EngineStatus[]) => {
     setPaddleInstalled(
       engines.some(
         (engine) => engine.id === "paddleocr-vl-parser" && engine.installed,
       ),
     );
+    setControls(parserControls(engines));
   }, []);
-  const automaticDescription = paddleInstalled
-    ? "PaddleOCR-VL Full Parser is installed, so Pipeline will use it. If the parser is later removed, Pipeline will use LLM extraction."
-    : "Uses PaddleOCR-VL Full Parser when it is installed; otherwise uses LLM extraction.";
   const manualMethods = [
     {
       value: "paddleocr-vl-full",
-      label: "Local engine: PaddleOCR-VL 1.6 Full Parser",
+      label: "Local parser: PaddleOCR-VL 1.6 Full Parser",
       quality: "Best quality",
       qualityClass:
-        "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300",
+        "bg-gray-800 text-white dark:bg-neutral-300 dark:text-neutral-900",
       description:
-        "Highest expected fidelity. Layout-aware extraction preserves reading order, structured blocks, title hierarchy, formula metadata, and cross-page tables.",
+        "Keeps reading order, headings, equations, and tables, including tables that span pages.",
     },
     {
       value: "llm",
-      label: "LLM",
+      label: "Selected model",
       quality: "High quality",
       qualityClass:
-        "bg-blue-100 text-blue-700 dark:bg-blue-950/70 dark:text-blue-300",
+        "bg-gray-200 text-gray-800 dark:bg-neutral-700 dark:text-neutral-100",
       description:
-        "Your selected model reads the PDF a few pages at a time. This may lose more detail than PaddleOCR-VL, take longer, and add model costs.",
+        "Reads the PDF a few pages at a time. It can lose more detail than PaddleOCR-VL, takes longer, and adds model costs.",
     },
     {
       value: "pdftotext",
@@ -57,19 +67,19 @@ export function ExtractionSection({
       qualityClass:
         "bg-gray-100 text-gray-600 dark:bg-neutral-800 dark:text-neutral-300",
       description:
-        "Fastest option, but layout is flattened and equations are typically lost.",
+        "The fastest method. It loses page layout and usually loses equations.",
     },
   ] as const;
 
   return (
     <>
       <SectionHeader
-        title="PDF Extraction"
-        description="Choose how PDFs become readable input. LaTeX source is always extracted natively."
+        title="PDF extraction"
+        description="Choose how Pipeline reads PDFs. LaTeX files are read directly."
       />
 
       <div className="space-y-4">
-        <Field label="PDF Extraction Method">
+        <Field label="PDF extraction method">
           <div>
             <label
               className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 transition-colors ${
@@ -99,7 +109,8 @@ export function ExtractionSection({
                   </span>
                 </div>
                 <div className="mt-0.5 text-xs text-gray-500 dark:text-neutral-400">
-                  {automaticDescription}
+                  Uses PaddleOCR-VL Full Parser if it’s installed. Otherwise,
+                  your selected model reads the PDF.
                 </div>
               </div>
             </label>
@@ -116,7 +127,7 @@ export function ExtractionSection({
             <div className="relative space-y-1.5 pl-4">
               <div
                 aria-hidden="true"
-                className="absolute bottom-3 left-[3px] top-3 w-0.5 rounded-full bg-gradient-to-b from-emerald-500 via-blue-400 to-gray-300 dark:from-emerald-400 dark:via-blue-500 dark:to-neutral-600"
+                className="absolute bottom-3 left-[3px] top-3 w-0.5 rounded-full bg-gradient-to-b from-gray-700 via-gray-400 to-gray-200 dark:from-neutral-300 dark:via-neutral-500 dark:to-neutral-700"
               />
               {manualMethods.map(
                 ({ value, label, quality, qualityClass, description }) => (
@@ -182,20 +193,55 @@ export function ExtractionSection({
           </summary>
           {!paddleInstalled && (
             <p className="settings-row-description mt-3">
-              These preferences apply when the local parser is installed and
-              selected above.
+              These settings apply only when Pipeline uses PaddleOCR-VL Full
+              Parser.
             </p>
           )}
+          <p className="settings-row-description mt-3">
+            Changing any of these settings makes Pipeline read a PDF again
+            instead of reusing its saved result.
+          </p>
           <div className="space-y-6 pt-5">
             <div className="pl-1 border-l-2 border-gray-200 dark:border-neutral-700 ml-1">
-              <SubsectionHeader
-                label="PaddleOCR-VL recognition server"
-                help="The Full Parser uses Pipeline's managed llama.cpp server for recognition; no separate llama.cpp installation is needed."
-              />
+              <SubsectionHeader label="Speed and memory" />
               <div className="space-y-3 pl-4">
+                {gpuInstalled && (
+                  <Toggle
+                    label="Use graphics card"
+                    description="Read pages with your graphics card. Turn this off to use the processor, which is slower but needs no graphics memory."
+                    checked={settings.paddle_use_gpu}
+                    onChange={(v) =>
+                      setSettings({ ...settings, paddle_use_gpu: v })
+                    }
+                  />
+                )}
+                {gpuListed && (
+                  <Field
+                    label="Processor cores"
+                    help="How many cores lay out and read pages. When your graphics card reads pages, this applies to layout only. More cores leave less for other programs. Saved results are kept when you change this."
+                  >
+                    <select
+                      aria-label="PaddleOCR-VL processor cores"
+                      value={settings.paddle_cpu_threads}
+                      onChange={(e) =>
+                        setSettings({
+                          ...settings,
+                          paddle_cpu_threads: parseInt(e.target.value, 10),
+                        })
+                      }
+                      className={selectClass}
+                    >
+                      <option value={1}>1 core</option>
+                      <option value={2}>2 cores</option>
+                      <option value={4}>4 cores (recommended)</option>
+                      <option value={8}>8 cores</option>
+                      <option value={16}>16 cores</option>
+                    </select>
+                  </Field>
+                )}
                 <Field
                   label="Concurrent pages"
-                  help="Automatic uses two slots on Apple Silicon and one elsewhere. Each slot receives a full 16K context."
+                  help="How many pages to read at once. Automatic reads two on Apple Silicon and one on other computers. Each added page uses more memory."
                 >
                   <select
                     aria-label="PaddleOCR-VL concurrent pages"
@@ -209,19 +255,19 @@ export function ExtractionSection({
                     className={selectClass}
                   >
                     <option value={0}>Automatic (recommended)</option>
-                    <option value={1}>1 page — lowest memory</option>
-                    <option value={2}>2 pages — higher throughput</option>
-                    <option value={3}>3 pages — high-memory workstation</option>
-                    <option value={4}>4 pages — maximum throughput</option>
+                    <option value={1}>1 page (least memory)</option>
+                    <option value={2}>2 pages (faster)</option>
+                    <option value={3}>3 pages (needs more memory)</option>
+                    <option value={4}>4 pages (fastest)</option>
                   </select>
                 </Field>
 
                 <Field
-                  label="Vision encoder batch"
-                  help="Larger batches can speed image encoding when enough GPU memory is available. They do not reduce OCR resolution."
+                  label="Image batch size"
+                  help="Larger batches can process page images faster if you have enough GPU memory. OCR quality stays the same."
                 >
                   <select
-                    aria-label="PaddleOCR-VL vision encoder batch"
+                    aria-label="PaddleOCR-VL image batch size"
                     value={settings.paddle_mtmd_batch_tokens}
                     onChange={(e) =>
                       setSettings({
@@ -232,12 +278,10 @@ export function ExtractionSection({
                     className={selectClass}
                   >
                     <option value={0}>Automatic (recommended)</option>
-                    <option value={512}>512 tokens — lower memory</option>
-                    <option value={1024}>1,024 tokens — conservative</option>
-                    <option value={2048}>2,048 tokens — faster prefill</option>
-                    <option value={4096}>
-                      4,096 tokens — highest peak memory
-                    </option>
+                    <option value={512}>512 tokens (less memory)</option>
+                    <option value={1024}>1,024 tokens</option>
+                    <option value={2048}>2,048 tokens (faster)</option>
+                    <option value={4096}>4,096 tokens (most memory)</option>
                   </select>
                 </Field>
 
@@ -253,17 +297,17 @@ export function ExtractionSection({
                     }
                     className={selectClass}
                   >
-                    <option value={2048}>2,048 tokens — shorter pages</option>
-                    <option value={4096}>4,096 tokens — recommended</option>
+                    <option value={2048}>2,048 tokens (shorter pages)</option>
+                    <option value={4096}>4,096 tokens (recommended)</option>
                     <option value={8192}>
-                      8,192 tokens — unusually dense pages
+                      8,192 tokens (very dense pages)
                     </option>
                   </select>
                 </Field>
 
                 <Field
                   label="Page retries"
-                  help="Suspicious layout-aware pages are retried before the Full Parser records an extraction failure."
+                  help="The parser retries pages with possible extraction errors before reporting a failure."
                 >
                   <select
                     aria-label="PaddleOCR-VL page retries"
@@ -277,7 +321,7 @@ export function ExtractionSection({
                     className={selectClass}
                   >
                     <option value={0}>No retries</option>
-                    <option value={1}>1 retry — recommended</option>
+                    <option value={1}>1 retry (recommended)</option>
                     <option value={2}>2 retries</option>
                     <option value={3}>3 retries</option>
                   </select>
@@ -285,7 +329,7 @@ export function ExtractionSection({
 
                 <Field
                   label="Flash Attention"
-                  help="Automatic is safest across platforms. Force it on when benchmarking a supported GPU; turn it off for compatibility troubleshooting."
+                  help="Leave this on Automatic. Turn it off if recognition fails on your GPU."
                 >
                   <select
                     aria-label="PaddleOCR-VL Flash Attention"
@@ -307,14 +351,11 @@ export function ExtractionSection({
             </div>
 
             <div className="pl-1 border-l-2 border-gray-200 dark:border-neutral-700 ml-1">
-              <SubsectionHeader
-                label="Full parser structure"
-                help="These options are included in the Full Parser cache fingerprint, so changing one creates a distinct cached result."
-              />
+              <SubsectionHeader label="Document structure" />
               <div className="space-y-3 pl-4">
                 <Toggle
                   label="Layout detection and reading order"
-                  description="Run PP-DocLayoutV3 before recognition and retain semantic regions, coordinates, and reading order."
+                  description="Find the regions on each page and their reading order before reading the text."
                   checked={settings.paddle_full_layout_detection}
                   onChange={(v) =>
                     setSettings({
@@ -333,18 +374,19 @@ export function ExtractionSection({
                         paddle_full_layout_threshold: parseFloat(
                           e.target.value,
                         ),
+                        paddle_full_layout_threshold_version: 1,
                       })
                     }
                     className={selectClass}
                   >
-                    <option value={0.3}>0.30 — retain more regions</option>
-                    <option value={0.5}>0.50 — recommended</option>
-                    <option value={0.7}>0.70 — higher precision</option>
+                    <option value={0.3}>0.30 (recommended)</option>
+                    <option value={0.5}>0.50 (fewer regions)</option>
+                    <option value={0.7}>0.70 (fewest regions)</option>
                   </select>
                 </Field>
                 <Toggle
-                  label="Layout NMS"
-                  description="Suppress overlapping layout detections before region recognition."
+                  label="Remove overlapping regions"
+                  description="Drop duplicate regions before reading their text."
                   checked={settings.paddle_full_layout_nms}
                   onChange={(v) =>
                     setSettings({ ...settings, paddle_full_layout_nms: v })
@@ -363,15 +405,15 @@ export function ExtractionSection({
                     className={selectClass}
                   >
                     <option value="large">
-                      Keep outer region — recommended
+                      Keep outer region (recommended)
                     </option>
                     <option value="small">Keep inner region</option>
                     <option value="union">Keep both</option>
                   </select>
                 </Field>
                 <Toggle
-                  label="Merge layout blocks"
-                  description="Join cross-column or vertically staggered regions before producing reading-order blocks."
+                  label="Merge split regions"
+                  description="Join regions that cross columns or are staggered down the page."
                   checked={settings.paddle_full_merge_layout_blocks}
                   onChange={(v) =>
                     setSettings({
@@ -381,8 +423,8 @@ export function ExtractionSection({
                   }
                 />
                 <Toggle
-                  label="OCR text inside images"
-                  description="Recognize labels and other text within image regions."
+                  label="Read text inside images"
+                  description="Read labels and other text in figures and images."
                   checked={settings.paddle_full_ocr_image_blocks}
                   onChange={(v) =>
                     setSettings({
@@ -392,8 +434,8 @@ export function ExtractionSection({
                   }
                 />
                 <Toggle
-                  label="Format block content"
-                  description="Retain block-level Markdown for tables, formulas, lists, and other semantic regions."
+                  label="Save regions as Markdown"
+                  description="Save tables, equations, lists, and other regions as separate Markdown blocks."
                   checked={settings.paddle_full_format_block_content}
                   onChange={(v) =>
                     setSettings({
@@ -404,15 +446,15 @@ export function ExtractionSection({
                 />
                 <Toggle
                   label="Merge tables across pages"
-                  description="Reconstruct a continuing table as one logical table when page boundaries divide it."
+                  description="Join tables that continue onto the next page."
                   checked={settings.paddle_full_merge_tables}
                   onChange={(v) =>
                     setSettings({ ...settings, paddle_full_merge_tables: v })
                   }
                 />
                 <Toggle
-                  label="Relevel titles"
-                  description="Reconstruct a consistent multi-level heading hierarchy across the document."
+                  label="Fix heading levels"
+                  description="Use consistent heading levels throughout the document."
                   checked={settings.paddle_full_relevel_titles}
                   onChange={(v) =>
                     setSettings({
@@ -422,8 +464,8 @@ export function ExtractionSection({
                   }
                 />
                 <Toggle
-                  label="Retain formula numbers"
-                  description="Keep equation numbers in the Markdown and structured formula evidence."
+                  label="Keep equation numbers"
+                  description="Keep equation numbers in the extracted text."
                   checked={settings.paddle_full_show_formula_numbers}
                   onChange={(v) =>
                     setSettings({
@@ -438,11 +480,11 @@ export function ExtractionSection({
         </details>
 
         <Field
-          label="Extraction time budget"
-          help="Applies to the complete extraction stage, including retries. An incomplete document fails before orientation instead of silently continuing."
+          label="Extraction time limit"
+          help="Time allowed to read a whole document, including retries. If time runs out, the review stops."
         >
           <select
-            aria-label="PDF extraction time budget"
+            aria-label="PDF extraction time limit"
             value={settings.pdf_extraction_timeout_secs}
             onChange={(e) =>
               setSettings({
@@ -455,7 +497,7 @@ export function ExtractionSection({
             <option value={300}>5 minutes</option>
             <option value={600}>10 minutes</option>
             <option value={900}>15 minutes</option>
-            <option value={1800}>30 minutes — recommended</option>
+            <option value={1800}>30 minutes (recommended)</option>
             <option value={3600}>60 minutes</option>
           </select>
         </Field>

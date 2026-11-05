@@ -10,6 +10,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceHarnessEditor from "./WorkspaceHarnessEditor";
 import type {
   ConversationSnapshot,
+  SessionSnapshot,
   EffectiveHarness,
   HarnessCatalog,
   HarnessPreset,
@@ -24,11 +25,14 @@ const mocks = vi.hoisted(() => ({
   saveWorkspaceConfig: vi.fn(),
   clonePreset: vi.fn(),
   updatePreset: vi.fn(),
-  conversationSnapshot: vi.fn(),
+  sessionSnapshot: vi.fn(),
   updateSession: vi.fn(),
   confirmDialog: vi.fn(),
 }));
-vi.mock("../lib/workbenchClient", () => ({ workbenchClient: mocks }));
+vi.mock("../lib/workbench/conversationClient", () => ({
+  conversationClient: mocks,
+}));
+vi.mock("../lib/workbench/harnessClient", () => ({ harnessClient: mocks }));
 vi.mock("./DialogService", () => ({
   confirmDialog: mocks.confirmDialog,
   notify: vi.fn(),
@@ -252,7 +256,7 @@ beforeEach(() => {
           },
   );
   mocks.saveWorkspaceConfig.mockResolvedValue({});
-  mocks.conversationSnapshot.mockImplementation(async () => snapshot());
+  mocks.sessionSnapshot.mockImplementation(async () => snapshot());
   mocks.updateSession.mockImplementation(
     async (request: {
       presetId?: string;
@@ -280,7 +284,7 @@ afterEach(cleanup);
 function renderEditor(
   props: Partial<{
     snapshot: ConversationSnapshot;
-    onSnapshot: (next: ConversationSnapshot) => void;
+    onSnapshot: (next: SessionSnapshot) => void;
     onClose: () => void;
   }> = {},
 ) {
@@ -307,16 +311,16 @@ it("lists presets, opens the preset in use as read-only, and flags the successor
     screen.queryByRole("button", { name: "Use in this conversation" }),
   ).not.toBeInTheDocument();
   expect(screen.getByTestId("preset-summary")).toHaveTextContent(
-    "Adds 2 instruction packs, paper context, 3 tools, and 2 inspectors.",
+    "Adds 2 research instruction sets, paper context, 3 tools, and 2 research panels.",
   );
   expect(screen.getAllByText("In use")).toHaveLength(1);
-  expect(screen.getByText(/assistant will start fresh/)).toBeInTheDocument();
+  expect(
+    screen.getByText(/Your next message starts a new assistant session/),
+  ).toBeInTheDocument();
   expect(screen.getByText("Your profiles")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /My audit/ })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "Tools & context" }));
-  expect(
-    screen.getByRole("switch", { name: "Research execution" }),
-  ).toBeDisabled();
+  expect(screen.getByRole("switch", { name: "Local analysis" })).toBeDisabled();
   expect(screen.getByText(/Needs Edit access mode/)).toBeInTheDocument();
 });
 
@@ -356,13 +360,15 @@ it("edits a custom preset as a draft, saves with the expected revision, and guar
   const name = await screen.findByLabelText("Profile name");
   expect(name).toHaveValue("My audit");
   expect(screen.getByText("based on Empirical audit")).toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Supplemental instructions"), {
+  fireEvent.change(screen.getByLabelText("Additional instructions"), {
     target: { value: "Check the estimand. <workspace_context>" },
   });
   expect(screen.getByText(/reserved for the host/)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "Tools & context" }));
-  fireEvent.click(screen.getByRole("switch", { name: "Evidence inspector" }));
-  fireEvent.click(screen.getByRole("button", { name: "Paper + ledger" }));
+  fireEvent.click(screen.getByRole("switch", { name: "Evidence" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Read papers & record findings" }),
+  );
   expect(screen.getByText("Unsaved")).toBeInTheDocument();
   expect(
     screen.getByRole("button", { name: "Use in this conversation" }),
@@ -427,19 +433,19 @@ it("shows the inheritance table with the winning scope and writes to global, wor
   const table = await screen.findByRole("table");
   const rows = within(table).getAllByRole("row");
   const budgetRow = rows.find((row) =>
-    within(row).queryByText("Context budget"),
+    within(row).queryByText("Source text limit"),
   )!;
   const winning = within(budgetRow)
     .getAllByRole("cell")
     .filter((cell) => cell.dataset.winning);
   expect(winning).toHaveLength(1);
   expect(
-    within(winning[0]).getByLabelText("Context budget (Global)"),
+    within(winning[0]).getByLabelText("Source text limit (Global)"),
   ).toHaveValue("262144");
 
   fireEvent.click(
     within(table).getByRole("button", {
-      name: "Inherit Command network for Workspace",
+      name: "Inherit Internet access for commands for Project",
     }),
   );
   await waitFor(() =>
@@ -452,7 +458,7 @@ it("shows the inheritance table with the winning scope and writes to global, wor
     ),
   );
 
-  fireEvent.change(within(table).getByLabelText("Context budget (Global)"), {
+  fireEvent.change(within(table).getByLabelText("Source text limit (Global)"), {
     target: { value: "16384" },
   });
   await waitFor(() =>
@@ -480,7 +486,7 @@ it("shows the inheritance table with the winning scope and writes to global, wor
 
   fireEvent.click(
     within(table).getByRole("button", {
-      name: "Inherit Command network for This conversation",
+      name: "Inherit Internet access for commands for This conversation",
     }),
   );
   await waitFor(() =>
@@ -490,11 +496,13 @@ it("shows the inheritance table with the winning scope and writes to global, wor
   );
 
   expect(
-    within(table).queryByLabelText("Native web search (Global)"),
+    within(table).queryByLabelText("Web search (Global)"),
   ).not.toBeInTheDocument();
   expect(
-    screen.getByText(/Web search is not available in Workspace yet/),
-  ).toBeInTheDocument();
+    within(table).getByRole("button", {
+      name: "Override Web search for Global",
+    }),
+  ).toBeEnabled();
 });
 
 it("offers to switch an inspect conversation to Edit beside an execution module", async () => {
@@ -523,9 +531,7 @@ it("renders the effective preview as labelled bands", async () => {
   expect(
     screen.getByText("Preset instructions: Empirical audit"),
   ).toBeInTheDocument();
-  expect(
-    screen.getByText("Research execution · unavailable"),
-  ).toBeInTheDocument();
+  expect(screen.getByText("Local analysis · unavailable")).toBeInTheDocument();
   expect(screen.getByText("AGENTS.md")).toBeInTheDocument();
 });
 
@@ -564,7 +570,7 @@ it("shows the Codex default prompt layers honestly and keeps the built-in read-o
     await screen.findByLabelText("Codex native base prompt"),
   ).toHaveTextContent("Cached base template");
   expect(
-    screen.queryByRole("textbox", { name: "Supplemental instructions" }),
+    screen.queryByRole("textbox", { name: "Additional instructions" }),
   ).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "Save profile" }),
@@ -622,7 +628,7 @@ it("discards a draft when navigating away and does not resurrect it on return", 
   await screen.findByRole("heading", { name: "Empirical audit" });
   fireEvent.click(screen.getByRole("button", { name: /My audit/ }));
   await screen.findByLabelText("Profile name");
-  fireEvent.change(await screen.findByLabelText("Supplemental instructions"), {
+  fireEvent.change(await screen.findByLabelText("Additional instructions"), {
     target: { value: "Unsaved prompt" },
   });
   fireEvent.click(screen.getByRole("button", { name: /Codex default/ }));
@@ -630,7 +636,7 @@ it("discards a draft when navigating away and does not resurrect it on return", 
   fireEvent.click(screen.getByRole("button", { name: /My audit/ }));
   await screen.findByLabelText("Profile name");
   expect(
-    screen.getByRole("textbox", { name: "Supplemental instructions" }),
+    screen.getByRole("textbox", { name: "Additional instructions" }),
   ).toHaveValue("Check the estimand.");
 });
 
@@ -711,7 +717,9 @@ it("lets a custom profile start from a viewable native template with its provena
   expect(
     await screen.findByLabelText("Codex native base prompt"),
   ).toHaveTextContent("Cached base template");
-  expect(screen.getByText(/does not establish which default/)).toBeVisible();
+  expect(
+    screen.getByText(/may differ from the ones Pipeline uses/),
+  ).toBeVisible();
   fireEvent.click(
     screen.getByRole("button", { name: "Use this template as replacement" }),
   );
@@ -719,7 +727,7 @@ it("lets a custom profile start from a viewable native template with its provena
   expect(screen.getByLabelText("Replacement base prompt")).toHaveValue(
     "Cached base template",
   );
-  expect(screen.getByLabelText("Supplemental instructions")).toHaveValue(
+  expect(screen.getByLabelText("Additional instructions")).toHaveValue(
     custom.instructions,
   );
 });

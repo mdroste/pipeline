@@ -39,6 +39,23 @@ describe("WorkflowGalleryPage", () => {
     );
   });
 
+  it("titles the page and filters by category", async () => {
+    const user = userEvent.setup();
+    render(<WorkflowGalleryPage onInstalled={vi.fn()} />);
+
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Workflow gallery" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Teaching" }));
+    expect(screen.getByRole("button", { name: "Teaching" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(
+      screen.queryByRole("heading", { name: "Revision Response Check" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("installs a gallery item as an editable local profile and activates it", async () => {
     const user = userEvent.setup();
     const onInstalled = vi.fn();

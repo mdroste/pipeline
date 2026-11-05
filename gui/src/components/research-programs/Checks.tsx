@@ -12,7 +12,7 @@ import {
   useProgram,
   type DeskProps,
 } from "./shared";
-export default function Checks(props: DeskProps & { active?: boolean }) {
+export default function Checks(props: DeskProps) {
   const p = useProgram(props, ["dataset"]);
   const [title, setTitle] = useState("Tracked research change"),
     [monitor, setMonitor] = useState<Monitor>({
@@ -37,7 +37,9 @@ export default function Checks(props: DeskProps & { active?: boolean }) {
         .catch(() => undefined);
     };
     load();
-    const timer = setInterval(load, 15000);
+    const timer = setInterval(() => {
+      if (document.visibilityState === "visible") load();
+    }, 15000);
     const event = listen<{ workspaceId: string }>(
       "workbench-research-attention",
       (e) => {
@@ -181,8 +183,8 @@ export default function Checks(props: DeskProps & { active?: boolean }) {
                 setMonitor((m) => ({ ...m, networkConsent: e.target.checked }))
               }
             />{" "}
-            Allow this query to be sent to api.crossref.org at each check.
-            Project acquisition access must also be enabled.
+            Allow Pipeline to send this search to Crossref at each check.
+            Literature search must also be enabled for this project.
           </label>
         )}
         <button
@@ -230,7 +232,7 @@ export default function Checks(props: DeskProps & { active?: boolean }) {
                 )
               }
             >
-              Acknowledge this attention item
+              Mark as seen
             </button>
           </section>
         ))}

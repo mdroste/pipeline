@@ -5,12 +5,20 @@ import {
   type DeskRecord,
   type PlanStatus,
 } from "../../lib/deskClient";
-import { workbenchClient } from "../../lib/workbenchClient";
+import { executionClient } from "../../lib/workbench/executionClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import type { ExecutionProfile } from "../../lib/workbenchTypes";
+import useReopenCount from "../../hooks/useReopenCount";
+import useReveal from "../../hooks/useReveal";
 import Jobs from "../research-studio/Jobs";
 import { button, input, card, muted, type DeskProps } from "./shared";
-export default function Plans({ workspaceId, onError }: DeskProps) {
+export default function Plans({
+  workspaceId,
+  onError,
+  onChanged,
+  onActionStart,
+  active = true,
+}: DeskProps) {
   const [inputs, setInputs] = useState<DeskRecord[]>([]);
   const [selectedInputs, setSelectedInputs] = useState<string[]>([]);
   const [profiles, setProfiles] = useState<ExecutionProfile[]>([]);
@@ -23,7 +31,7 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
   const [preview, setPreview] = useState<PlanStatus | null>(null);
   const refresh = useCallback(async () => {
     const [p, c] = await Promise.all([
-      workbenchClient.listExecutionProfiles(workspaceId),
+      executionClient.listExecutionProfiles(workspaceId),
       deskClient.records(workspaceId, "execution_plan"),
     ]);
     setProfiles(p);
@@ -33,14 +41,22 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
       ...(await deskClient.records(workspaceId, "sample")),
     ]);
   }, [workspaceId]);
+  const reopened = useReopenCount(active);
+  const planReview = useReveal<HTMLElement>();
+  const missing = [
+    !profileId && "choose a configured profile",
+    !version.trim() && "enter the toolchain version",
+  ].filter(Boolean);
   useEffect(() => {
     void refresh().catch((e) => onError(workbenchErrorMessage(e)));
-  }, [refresh, onError]);
+  }, [refresh, onError, reopened]);
   const run = async (fn: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(true);
+    onActionStart?.();
     try {
       await fn();
+      onChanged?.();
       await refresh();
     } catch (e) {
       onError(workbenchErrorMessage(e));
@@ -52,7 +68,7 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
     run(async () => {
       if (!preview) return;
       const profile = preview.record.body.profile as ExecutionProfile;
-      await workbenchClient.runExecution({
+      await executionClient.runExecution({
         profileId: profile.id,
         planId: preview.record.id,
         sessionId: null,
@@ -63,11 +79,11 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
   return (
     <div className="space-y-5">
       <section className={card}>
-        <h2 className="font-semibold">Captured execution plans</h2>
+        <h2 className="font-semibold">Saved analysis plans</h2>
         <p className={muted}>
-          Capture a configured profile's scripts and declared inputs. Each test
-          or replay copies those bytes into a fresh private directory. The
-          process retains host access.
+          Save a command’s scripts and listed input files. Each run uses a new
+          working folder with those saved files. The command still has your
+          computer’s file and network permissions.
         </p>
         <select
           aria-label="Execution profile to capture"
@@ -83,9 +99,8 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
           ))}
         </select>
         <p className={muted}>
-          Configure profiles in conversation Research → Results, or the
-          execution setup tool. Use relative script paths and declare every
-          input and package lockfile.
+          Set up profiles in Analyze → Command settings. Use relative script
+          paths and declare every input and package lockfile.
         </p>
         <fieldset className="space-y-1">
           <legend className="text-xs">
@@ -144,20 +159,25 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
                   .map(reference),
               );
               setPreview(await deskClient.planStatus(workspaceId, r.id));
+              planReview.reveal();
             })
           }
         >
           Capture inputs and review plan
         </button>
+        {missing.length > 0 && (
+          <p className={muted}>To capture a plan, {missing.join(" and ")}.</p>
+        )}
       </section>
       {plans.map((p) => (
         <button
           key={p.id}
           className={`${card} block w-full text-left`}
           onClick={() =>
-            void run(async () =>
-              setPreview(await deskClient.planStatus(workspaceId, p.id)),
-            )
+            void run(async () => {
+              setPreview(await deskClient.planStatus(workspaceId, p.id));
+              planReview.reveal();
+            })
           }
         >
           <span className="font-semibold">{p.title}</span>
@@ -168,11 +188,11 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
         </button>
       ))}
       {preview && (
-        <section className={card}>
+        <section ref={planReview.ref} tabIndex={-1} className={card}>
           <h2 className="font-semibold">Review exact plan</h2>
           <p className="text-sm">
-            This command runs with your host operating-system access. Captured
-            inputs do not contain its filesystem or network access.
+            This command runs with your computer’s permissions. It can access
+            files and the network beyond the saved inputs.
           </p>
           <pre className="max-h-96 overflow-auto whitespace-pre-wrap text-xs">
             {JSON.stringify(preview.record.body, null, 2)}
@@ -198,7 +218,7 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
                 )
               }
             >
-              Authorize this exact host plan
+              Allow this plan to run on this computer
             </button>
           )}
           <button
@@ -206,7 +226,7 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
             disabled={busy || !preview.authorized}
             onClick={() => void queue(true)}
           >
-            Test captured plan
+            Test saved plan
           </button>
           <button
             className={button}
@@ -215,13 +235,15 @@ export default function Plans({ workspaceId, onError }: DeskProps) {
             }
             onClick={() => void queue(false)}
           >
-            Run / replay in a fresh directory
+            Run in a new working folder
           </button>
         </section>
       )}
       <Jobs
         workspaceId={workspaceId}
+        visible={active}
         onCompleted={() => {
+          onChanged?.();
           void refresh();
           if (preview)
             void deskClient

@@ -20,6 +20,77 @@ function dep(overrides: Partial<DepStatus>): DepStatus {
 }
 
 describe("DepsCheck", () => {
+  it("keeps green for a ready status, off the row behind it", () => {
+    render(
+      <DepsCheck
+        report={{
+          ready: true,
+          deps: [dep({ cli_auth_status: "signed_in" })],
+        }}
+        onDismiss={() => {}}
+      />,
+    );
+    const row = screen.getByText("Claude").closest("li")!;
+    expect(row.className).not.toMatch(/emerald/);
+    expect(row.className).toContain("dark:bg-neutral-800/30");
+    expect(row.innerHTML).toMatch(/text-emerald/);
+  });
+
+  it("opens with a progress message before the first result arrives", () => {
+    render(<DepsCheck report={null} checking onDismiss={() => {}} />);
+    expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
+      "Checking dependencies…",
+    );
+    for (const name of ["Model access", "PDF parsing"]) {
+      const section = screen.getByRole("region", { name });
+      expect(section).toHaveAttribute("aria-busy", "true");
+      expect(within(section).getByText("Checking")).toBeVisible();
+    }
+    expect(screen.queryByText("Needs attention")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close" })).toBeVisible();
+  });
+
+  it("keeps the last result on screen while a newer check runs", () => {
+    render(
+      <DepsCheck
+        report={{
+          ready: false,
+          deps: [dep({ authenticated: false })],
+        }}
+        checking
+        onDismiss={() => {}}
+      />,
+    );
+    const models = screen.getByRole("region", { name: "Model access" });
+    expect(within(models).getByText("Claude")).toBeVisible();
+    expect(within(models).getByText("Checking")).toBeVisible();
+    expect(within(models).queryByText("Needs attention")).toBeNull();
+    expect(
+      screen.queryByText(/Check the required model connections/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("explains a failed check and offers another attempt", async () => {
+    const onRetry = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <DepsCheck
+        report={null}
+        error="The workflow could not be read."
+        onRetry={onRetry}
+        onDismiss={() => {}}
+      />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The workflow could not be read.",
+    );
+    expect(screen.getByRole("dialog")).toHaveAccessibleDescription(
+      "Pipeline could not finish checking its dependencies.",
+    );
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
   it("shows the managed Workflow sign-in as ready without CLI authentication", () => {
     render(
       <DepsCheck
@@ -27,7 +98,7 @@ describe("DepsCheck", () => {
           ready: true,
           deps: [
             dep({
-              name: "Workflow ChatGPT",
+              name: "ChatGPT (reviews)",
               authenticated: true,
               cli_auth_status: undefined,
             }),
@@ -44,14 +115,14 @@ describe("DepsCheck", () => {
 
   it("highlights a required connection failure even when another provider is ready", () => {
     const hint =
-      "Workflow ChatGPT connection is in use by another Pipeline process";
+      "The ChatGPT connection for reviews is in use by another Pipeline process";
     render(
       <DepsCheck
         report={{
           ready: false,
           deps: [
             dep({ authenticated: true, required: false }),
-            dep({ name: "Workflow ChatGPT", authenticated: false, hint }),
+            dep({ name: "ChatGPT (reviews)", authenticated: false, hint }),
             dep({ name: "Google API", found: false, required: false }),
           ],
         }}
@@ -64,11 +135,7 @@ describe("DepsCheck", () => {
       "text-red-700",
     );
     expect(within(models).getByText("Not set up")).toHaveClass("text-gray-500");
-    expect(
-      within(models).getByText(
-        "ChatGPT connection is in use by another Pipeline process",
-      ),
-    ).toBeVisible();
+    expect(within(models).getByText(hint)).toBeVisible();
     // An unused provider that is not set up needs no remedy.
     expect(within(models).queryByText(/install it/)).not.toBeInTheDocument();
   });
@@ -211,7 +278,7 @@ describe("DepsCheck", () => {
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
-  it("links a missing required PaddleOCR-VL extractor to PDF Extraction settings", async () => {
+  it("links a missing required PaddleOCR-VL extractor to PDF extraction settings", async () => {
     const onOpenPdfSettings = vi.fn();
     const report: DepsReport = {
       ready: false,
@@ -240,7 +307,7 @@ describe("DepsCheck", () => {
       screen.getByText(/Required PDF parsing tools are missing\./),
     ).toBeInTheDocument();
     const settingsLink = screen.getByRole("link", {
-      name: "Settings → Reviews → PDF Extraction",
+      name: "Settings → Reviews → PDF extraction",
     });
     expect(settingsLink).toHaveAttribute("href", "#paddleocr-local-engine");
     await userEvent.setup().click(settingsLink);
@@ -430,5 +497,28 @@ describe("DepsCheck", () => {
     ).not.toBeInTheDocument();
     await user.keyboard("{Escape}");
     expect(onDismiss).toHaveBeenCalledOnce();
+  });
+
+  it("speaks of reviews in general when opened with no review in sight", () => {
+    render(
+      <DepsCheck
+        report={{
+          ready: false,
+          deps: [dep({ name: "ChatGPT (reviews)", found: false })],
+        }}
+        onDismiss={() => {}}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Complete the highlighted setup before running a review.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "Each provider a review uses needs a subscription or API key.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/workflow/i)).not.toBeInTheDocument();
   });
 });

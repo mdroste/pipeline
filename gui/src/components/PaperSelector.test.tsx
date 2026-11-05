@@ -1,14 +1,36 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PaperSelector from "./PaperSelector";
+import type { FileDropEvent } from "../lib/fileDrop";
 
 const openDialog = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: openDialog }));
+const drop = vi.hoisted(() => ({
+  emit: null as ((event: FileDropEvent) => void) | null,
+  inputFiles: vi.fn(),
+}));
+vi.mock("../lib/fileDrop", () => ({
+  onFileDrop: async (handler: (event: FileDropEvent) => void) => {
+    drop.emit = handler;
+    return () => {
+      drop.emit = null;
+    };
+  },
+}));
+vi.mock("../lib/appClient", () => ({
+  appClient: { inputFiles: drop.inputFiles },
+}));
+
+const dropFiles = async (paths: string[], target: Element) => {
+  document.elementFromPoint = () => target;
+  await act(async () => drop.emit!({ type: "drop", x: 10, y: 10, paths }));
+};
 
 describe("PaperSelector", () => {
   beforeEach(() => {
     openDialog.mockReset();
+    drop.inputFiles.mockReset();
     localStorage.clear();
   });
 
@@ -170,5 +192,108 @@ describe("PaperSelector", () => {
     openDialog.mockResolvedValueOnce("/papers/replacement.pdf");
     await user.click(screen.getByRole("button", { name: "Replace" }));
     expect(onPathChange).toHaveBeenLastCalledWith("/papers/replacement.pdf");
+  });
+
+  it("shows the selection its caller holds across remounts", () => {
+    const selection = {
+      paths: ["/papers/held.pdf"],
+      interpretation: "document" as const,
+      selectionKind: "file" as const,
+    };
+    const { unmount } = render(
+      <PaperSelector
+        selection={selection}
+        onPathChange={() => {}}
+        disabled={false}
+      />,
+    );
+    unmount();
+    const { rerender } = render(
+      <PaperSelector
+        selection={selection}
+        onPathChange={() => {}}
+        disabled={false}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "held.pdf" }),
+    ).toBeInTheDocument();
+    rerender(
+      <PaperSelector
+        selection={null}
+        onPathChange={() => {}}
+        disabled={false}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: /select files/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("selects supported files dropped from the desktop onto the inputs", async () => {
+    const onSelectionChange = vi.fn();
+    render(
+      <>
+        <PaperSelector
+          onPathChange={() => {}}
+          onSelectionChange={onSelectionChange}
+          disabled={false}
+        />
+        <div data-testid="elsewhere" />
+      </>,
+    );
+    await dropFiles(["/papers/a.pdf"], screen.getByTestId("elsewhere"));
+    expect(onSelectionChange).not.toHaveBeenCalled();
+
+    const inputs = screen.getByText("Inputs");
+    await dropFiles(["/papers/notes.txt"], inputs);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Only PDF, LaTeX, and Word files can be dropped here.",
+    );
+
+    await dropFiles(
+      ["/papers/a.PDF", "/papers/notes.txt", "/papers/b.docx"],
+      inputs,
+    );
+    expect(onSelectionChange).toHaveBeenLastCalledWith({
+      paths: ["/papers/a.PDF", "/papers/b.docx"],
+      interpretation: "batch",
+      selectionKind: "file",
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("accepts one dropped folder for a folder workflow", async () => {
+    const onSelectionChange = vi.fn();
+    drop.inputFiles.mockImplementation(async (path: string) => {
+      if (path === "/projects/code") return [];
+      throw new Error("Cannot read folder: Not a directory");
+    });
+    render(
+      <PaperSelector
+        inputMode="folder"
+        onPathChange={() => {}}
+        onSelectionChange={onSelectionChange}
+        disabled={false}
+      />,
+    );
+    const inputs = screen.getByText("Inputs");
+    await dropFiles(["/projects/readme.md"], inputs);
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Drop one folder, or use Select folder.",
+    );
+    await dropFiles(["/projects/code"], inputs);
+    expect(onSelectionChange).toHaveBeenLastCalledWith({
+      paths: ["/projects/code"],
+      interpretation: "source_tree",
+      selectionKind: "folder",
+    });
+  });
+
+  it("ignores drops while disabled", async () => {
+    const onPathChange = vi.fn();
+    render(<PaperSelector onPathChange={onPathChange} disabled={true} />);
+    await dropFiles(["/papers/a.pdf"], screen.getByText("Inputs"));
+    expect(onPathChange).not.toHaveBeenCalled();
   });
 });

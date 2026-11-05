@@ -18,8 +18,7 @@ pub(super) fn write_manifest(dir: &Path, manifest: &RunManifest) -> Result<(), S
         .map_err(|e| format!("Failed to write manifest temp file: {e}"))?;
     temp.flush()
         .map_err(|e| format!("Failed to flush manifest temp file: {e}"))?;
-    temp.as_file()
-        .sync_all()
+    crate::safety::sync_file(temp.as_file())
         .map_err(|e| format!("Failed to sync manifest temp file: {e}"))?;
     temp.persist(&destination)
         .map_err(|e| format!("Failed to publish manifest: {}", e.error))?;
@@ -27,7 +26,7 @@ pub(super) fn write_manifest(dir: &Path, manifest: &RunManifest) -> Result<(), S
     {
         // Make the rename durable across a sudden power loss.
         fs::File::open(dir)
-            .and_then(|directory| directory.sync_all())
+            .and_then(|directory| crate::safety::sync_file(&directory))
             .map_err(|e| format!("Failed to sync run directory: {e}"))?;
     }
     Ok(())
@@ -49,14 +48,13 @@ pub(super) fn write_text_atomic(dir: &Path, name: &str, content: &[u8]) -> Resul
         .map_err(|error| format!("Failed to write recovery temp file: {error}"))?;
     temp.flush()
         .map_err(|error| format!("Failed to flush recovery temp file: {error}"))?;
-    temp.as_file()
-        .sync_all()
+    crate::safety::sync_file(temp.as_file())
         .map_err(|error| format!("Failed to sync recovery temp file: {error}"))?;
     temp.persist(destination)
         .map_err(|error| format!("Failed to publish recovered file: {}", error.error))?;
     #[cfg(unix)]
     fs::File::open(dir)
-        .and_then(|directory| directory.sync_all())
+        .and_then(|directory| crate::safety::sync_file(&directory))
         .map_err(|error| format!("Failed to sync recovery directory: {error}"))?;
     Ok(())
 }

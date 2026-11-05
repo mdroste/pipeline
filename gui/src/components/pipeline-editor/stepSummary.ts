@@ -1,3 +1,4 @@
+import { PROVIDER_LABELS, type Provider } from "../../lib/providers";
 import type {
   PipelineConfig,
   PrimaryArtifactPart,
@@ -12,7 +13,7 @@ function naturalList(items: string[]): string {
 }
 
 function providerLabel(provider: string): string {
-  return provider.charAt(0).toUpperCase() + provider.slice(1);
+  return PROVIDER_LABELS[provider as Provider] ?? provider;
 }
 
 function isIssuesSchema(
@@ -23,6 +24,10 @@ function isIssuesSchema(
   return (
     !!properties && typeof properties === "object" && "issues" in properties
   );
+}
+
+function stepLabel(id: string, config: PipelineConfig): string {
+  return config.steps.find((step) => step.id === id)?.label ?? id;
 }
 
 function inputDescriptions(step: StepConfig, config: PipelineConfig): string[] {
@@ -83,7 +88,7 @@ export function describeStep(
 ): StepSummary {
   const providers = step.agents.length
     ? naturalList(step.agents.map(providerLabel))
-    : "the profile’s default provider";
+    : "the review’s default provider";
   const timing =
     step.phase === "parallel"
       ? "Runs independently"
@@ -97,7 +102,7 @@ export function describeStep(
   const inputs = inputDescriptions(step, config);
   const receives = inputs.length
     ? `Receives ${naturalList(inputs)}.`
-    : "Receives no workflow artifacts.";
+    : "Receives no review files.";
   const output = isIssuesSchema(step.output_schema)
     ? "Produces structured issues JSON."
     : step.output_schema
@@ -106,9 +111,12 @@ export function describeStep(
   const maxUnits = step.for_each?.max ?? 1;
   const agentCount = Math.max(1, step.agents.length);
   const maxCalls = maxUnits * agentCount;
-  const fanOut = step.for_each
-    ? ` Fans out over up to ${step.for_each.max} files matching ${step.for_each.glob}.`
-    : "";
+  const fanOutSource = step.for_each?.artifact;
+  const fanOut = !step.for_each
+    ? ""
+    : fanOutSource
+      ? ` Fans out over up to ${step.for_each.max} items from ${stepLabel(fanOutSource.step, config)}.`
+      : ` Fans out over up to ${step.for_each.max} files matching ${step.for_each.glob}.`;
   const calls =
     maxCalls === 1
       ? "One provider call before retries."
@@ -117,7 +125,9 @@ export function describeStep(
 
   return {
     sentence: `${disabled}${timing}${condition} using ${providers}. ${receives} ${output}${fanOut} ${calls}`,
-    compact: `${step.enabled ? timing : "Disabled"} · ${providers} · ${maxCalls} ${maxCalls === 1 ? "call" : "calls"}`,
+    // The list's section header says when a step runs, its toggle whether it
+    // is on, and its chips who runs it; the row adds only a multi-call count.
+    compact: maxCalls === 1 ? "" : `Up to ${maxCalls} calls`,
     maxCalls,
   };
 }

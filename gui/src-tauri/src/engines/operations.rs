@@ -3,7 +3,7 @@ use super::*;
 /// Install a registered native engine. Unknown and retired engine IDs are
 /// rejected before any download or subprocess can begin.
 pub async fn install_engine(app: &crate::emit::EventBus, engine_id: &str) -> Result<(), String> {
-    if engine_id != "paddleocr-vl-parser" {
+    if engine_id != "paddleocr-vl-parser" && engine_id != GPU_RECOGNITION_ID {
         return Err(format!("Unknown engine '{engine_id}'"));
     }
     let spec = engine(engine_id)?;
@@ -30,9 +30,34 @@ pub async fn install_engine(app: &crate::emit::EventBus, engine_id: &str) -> Res
     // plus bounded archive/cache headroom, not the whole shared stack again.
     let home = pipeline_home()?;
     std::fs::create_dir_all(&home).map_err(|e| format!("Failed to create ~/.pipeline: {e}"))?;
-    let base_installed = paddle_root()
-        .ok()
-        .is_some_and(|root| paddle_paths_at(&root).is_some());
+    if engine_id == GPU_RECOGNITION_ID {
+        if gpu_recognition_sound().await? {
+            log(app, format!("{} passed its check", spec.label));
+            emit_phase(app, engine_id, "gpu", "done");
+            return Ok(());
+        }
+        let (space_plan, required_mb) = install_space_requirement(engine_id, false, false, false)?;
+        if let Ok(free) = fs2::available_space(&home) {
+            check_install_space(free, space_plan, required_mb)
+                .map_err(|error| format!("{} ({})", error, spec.label))?;
+        }
+        return install_gpu_recognition(app, spec).await;
+    }
+    // Never refuse a working install that only needs its sidecar refreshed.
+    if !lightweight_parser_refresh {
+        if let Err(error) = ensure_native_path(&home) {
+            emit_phase(app, engine_id, "runtime", "failed");
+            return Err(error);
+        }
+    }
+    let base_installed = match new_install_recognition_backend() {
+        RecognitionBackend::ManagedLlama => paddle_root()
+            .ok()
+            .is_some_and(|root| paddle_paths_at(&root).is_some()),
+        // Built-in weights live in the parser install, so anything beyond a
+        // sidecar refresh needs room for them.
+        RecognitionBackend::BuiltIn => lightweight_parser_refresh,
+    };
     let parser_target_present = paddle_parser_version_root()
         .ok()
         .is_some_and(|target| target.exists());
@@ -69,15 +94,26 @@ pub async fn install_engine(app: &crate::emit::EventBus, engine_id: &str) -> Res
 /// Uninstall a registered native engine. Retired engine IDs are intentionally
 /// rejected; Pipeline never executes their package managers or entry points.
 pub async fn uninstall_engine(app: &crate::emit::EventBus, engine_id: &str) -> Result<(), String> {
-    if engine_id != "paddleocr-vl-parser" {
+    if engine_id != "paddleocr-vl-parser" && engine_id != GPU_RECOGNITION_ID {
         return Err(format!("Unknown engine '{engine_id}'"));
     }
     let spec = engine(engine_id)?;
     let _guard = acquire_install_guard()?;
     INSTALL_CANCEL.store(false, Ordering::Release);
     cleanup_managed_engine_storage_locked()?;
+    // Cleanup keeps a finished download for another attempt. Nobody wants one now.
+    remove_children_matching(&pipeline_home()?.join("native"), |name| {
+        name.starts_with(GPU_STAGING_PREFIX)
+    })?;
 
-    let roots = [paddle_parser_root()?, paddle_root()?];
+    if engine_id == GPU_RECOGNITION_ID {
+        return uninstall_gpu_recognition(app).await;
+    }
+    let roots = [
+        paddle_parser_root()?,
+        paddle_root()?,
+        gpu_recognition_root_at(&pipeline_home()?.join("native")),
+    ];
     tokio::task::spawn_blocking(move || {
         for root in roots {
             remove_owned_path(&root)?;

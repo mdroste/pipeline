@@ -3,6 +3,12 @@ use super::err;
 use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
 use std::path::{Component, Path, PathBuf};
 
+/// Whether a journal row belongs to this data folder at all. Rows that do are
+/// held to every rule in `checked_paths`; rows that don't are left alone.
+pub(super) fn is_local(store: &Store, original: &Path, recorded_trash: &Path) -> bool {
+    original.starts_with(store.root_path()) && recorded_trash.starts_with(store.root_path())
+}
+
 pub(super) fn checked_paths(
     store: &Store,
     id: &str,

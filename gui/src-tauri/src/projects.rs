@@ -224,6 +224,8 @@ fn list_projects_from(dir: &Path) -> Result<ProjectsResponse, String> {
         };
         match load_project_from(dir, id) {
             Ok(project) => projects.push(project),
+            // Deleted while listing: it is simply gone.
+            Err(_) if !path.exists() => {}
             Err(error) => warnings.push(error),
         }
     }
@@ -319,12 +321,12 @@ fn set_project_run_in(
     Ok(project)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_projects() -> Result<ProjectsResponse, String> {
     list_projects_from(&projects_dir()?)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_project(name: String, description: Option<String>) -> Result<Project, String> {
     create_project_in(
         &projects_dir()?,
@@ -333,12 +335,12 @@ pub fn create_project(name: String, description: Option<String>) -> Result<Proje
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_project(id: String, name: String, description: String) -> Result<Project, String> {
     update_project_in(&projects_dir()?, &id, &name, &description)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_project_run(
     project_id: String,
     run_id: String,
@@ -347,7 +349,7 @@ pub fn set_project_run(
     set_project_run_in(&projects_dir()?, &project_id, &run_id, included, included)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_project(id: String) -> Result<(), String> {
     let dir = projects_dir()?;
     delete_project_in(&dir, &id)
@@ -422,7 +424,7 @@ fn list_trashed_projects_from(dir: &Path) -> Result<Vec<TrashedProject>, String>
     Ok(projects)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_trashed_projects() -> Result<Vec<TrashedProject>, String> {
     list_trashed_projects_from(&projects_dir()?)
 }
@@ -466,7 +468,7 @@ fn restore_trashed_project_in(dir: &Path, id: &str) -> Result<(), String> {
     sync_dir(&trash)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn restore_trashed_project(id: String) -> Result<(), String> {
     restore_trashed_project_in(&projects_dir()?, &id)
 }
@@ -489,7 +491,7 @@ fn permanently_delete_trashed_project_in(dir: &Path, id: &str) -> Result<(), Str
     sync_dir(&trash)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn permanently_delete_trashed_project(id: String) -> Result<(), String> {
     permanently_delete_trashed_project_in(&projects_dir()?, &id)
 }

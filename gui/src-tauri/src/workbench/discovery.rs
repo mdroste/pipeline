@@ -9,7 +9,7 @@ use std::path::PathBuf;
 mod tests;
 
 fn error(e: impl std::fmt::Display) -> WorkbenchError {
-    WorkbenchError::storage("Self-discovery workspace", e)
+    WorkbenchError::storage("Research discovery", e)
 }
 fn key(value: &str) -> String {
     desk::hash(value.as_bytes())
@@ -152,7 +152,7 @@ pub fn source(
     } else {
         store
             .create_workspace(CreateWorkspaceRequest {
-                name: format!("Self-discovery: {title}"),
+                name: format!("Research discovery: {title}"),
                 root: None,
                 operation_id: project_op,
             })?
@@ -164,7 +164,7 @@ pub fn source(
     Ok(store
         .create_session(CreateSessionRequest {
             workspace_id: Some(workspace.id),
-            title: "Self-discovery research".into(),
+            title: "Research discovery".into(),
             operation_id: session_op,
         })?
         .record
@@ -208,7 +208,7 @@ pub fn role(
         store
             .create_session(CreateSessionRequest {
                 workspace_id: Some(ws.into()),
-                title: format!("Self-discovery · {role_key}"),
+                title: format!("Research discovery · {role_key}"),
                 operation_id: operation.clone(),
             })?
             .record
@@ -231,7 +231,7 @@ pub fn role(
                     source_workspace_id: None,
                     workspace_id: Some(ws.into()),
                     source_preset_id: h.preset.id.clone(),
-                    name: format!("Self-discovery · {role_key}"),
+                    name: format!("Research discovery · {role_key}"),
                     operation_id: preset_operation.clone(),
                 },
             )?
@@ -243,9 +243,9 @@ pub fn role(
             modules:vec!["paper_tools".into()],operation_id:format!("{preset_operation}-config")})?;
         }
         let current = store.session_snapshot(&session.id)?.session;
-        let mut overrides = json!({"mode":if writer{"edit"}else{"inspect"},"commandNetwork":false,"webSearch":false});
-        // Preserve explicitly selected model/effort, but not inherited write roots or domain presets.
-        for k in ["model", "effort"] {
+        let mut overrides = json!({"mode":if writer{"edit"}else{"inspect"},"commandNetwork":false,"webSearch":false,"browser":false});
+        // Preserve the selected provider, model and effort, but not inherited write roots or domain presets.
+        for k in ["runtime", "model", "effort"] {
             if let Some(v) = source_snapshot.session.overrides.get(k) {
                 overrides[k] = v.clone();
             }
@@ -284,6 +284,7 @@ pub fn role(
         workspace_id: b.workspace_id,
         session_cursor: Some(b.cursor),
         harness_fingerprint: Some(b.harness_fingerprint),
+        connection_id: b.connection_id,
         runtime_root: Some(b.runtime_root),
         root_identity: Some(b.root_identity),
         profiles: source.profiles.clone(),
@@ -293,13 +294,18 @@ pub fn role(
 }
 pub async fn acquire(workspace: String, query: String, operation: String) -> Result<Value, String> {
     let ws = workspace.clone();
-    let enabled = super::commands::run_store(move |s| super::acquisition::network_enabled(&s, &ws))
-        .await
-        .map_err(|e| e.message)?;
+    let (enabled, contact) = super::commands::run_store(move |s| {
+        Ok((
+            super::acquisition::network_enabled(&s, &ws)?,
+            super::acquisition::crossref_contact(&s)?,
+        ))
+    })
+    .await
+    .map_err(|e| e.message)?;
     if !enabled {
         return Err("Project literature acquisition is disabled".into());
     }
-    let result = super::acquisition::crossref(&query).await;
+    let result = super::acquisition::crossref_with_contact(&query, contact.as_deref()).await;
     super::commands::run_store(move|s|{
         if !super::acquisition::network_enabled(&s,&workspace)?{return Err(WorkbenchError::invalid("Acquisition access was revoked"));}
         let record=super::acquisition::record_lookup(&s,&workspace,&query,result,&operation)?;
@@ -330,15 +336,15 @@ pub async fn resolve_autonomous_request(
         return false;
     };
     let namespace = supervisor.runtime_namespace();
-    let discovery = super::commands::run_store(move |s| {
+    let autonomous = super::commands::run_store(move |s| {
         let Some(session) = s.session_for_thread(&namespace, &thread)? else {
             return Ok(false);
         };
-        is_role(&s, &session)
+        Ok(is_role(&s, &session)? || super::missions::is_role(&s, &session)?)
     })
     .await
     .unwrap_or(false);
-    if !discovery {
+    if !autonomous {
         return false;
     }
     let response=match method.as_str() {

@@ -69,14 +69,14 @@ function makeConfig(): PipelineConfig {
 
 const profiles: ProfileSummary[] = [
   {
-    id: "auto-review",
-    name: "Automatic Paper Review (Full)",
+    id: "auto-paper-review",
+    name: "Paper Review",
     step_count: 5,
     builtin: true,
   },
   {
-    id: "auto-review-quick",
-    name: "Automatic Paper Review (Quick)",
+    id: "auto-paper-review-fast",
+    name: "Paper Review (Fast)",
     step_count: 4,
     builtin: true,
   },
@@ -174,6 +174,33 @@ describe("WorkflowPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps a saved design that needs repair in the list, with its reason", async () => {
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "get_pipeline_config") return Promise.resolve(makeConfig());
+      if (cmd === "list_profiles")
+        return Promise.resolve([
+          ...profiles,
+          {
+            id: "old-copy",
+            name: "Old copy",
+            step_count: 4,
+            builtin: false,
+            invalid: "Profile 'old-copy' is invalid: stale contract",
+          },
+        ]);
+      if (cmd === "get_active_profile") return Promise.resolve("old-copy");
+      if (cmd === "get_auto_review_catalog") return Promise.resolve(catalog);
+      return Promise.reject(new Error(`unexpected command: ${cmd}`));
+    });
+    renderPanel();
+    expect(
+      await screen.findByRole("option", { name: "Old copy (needs repair)" }),
+    ).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "stale contract",
+    );
+  });
+
   it("summarizes the workflow without duplicating the plan", async () => {
     mockLoad(makeConfig());
     renderPanel();
@@ -221,7 +248,7 @@ describe("WorkflowPanel", () => {
       pointer: "/review_plan/method_specialist_ids",
       contains: "formal_proofs",
     };
-    mockLoad(autoConfig, "auto-review");
+    mockLoad(autoConfig, "auto-paper-review");
     renderPanel();
 
     expect(
@@ -270,7 +297,7 @@ describe("WorkflowPanel", () => {
         },
       },
     };
-    mockLoad(quickConfig, "auto-review-quick");
+    mockLoad(quickConfig, "auto-paper-review-fast");
     renderPanel();
 
     expect(

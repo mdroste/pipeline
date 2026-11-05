@@ -1,5 +1,8 @@
+import { render, screen } from "@testing-library/react";
 import { expect, it } from "vitest";
-import { parseResearchTable } from "./ResearchTablePreview";
+import ResearchTablePreview, {
+  parseResearchTable,
+} from "./ResearchTablePreview";
 it("preserves quoted delimiters, multiline cells, escaped quotes, and numeric text", () => {
   expect(
     parseResearchTable(
@@ -22,4 +25,9 @@ it("bounds rows and exposes malformed input", () => {
     truncated: true,
   });
   expect(parseResearchTable('"unfinished', ",").error).toBeTruthy();
+});
+it("shows the source text when the table cannot be parsed", () => {
+  render(<ResearchTablePreview text={'size\n5" sample'} path="data.csv" />);
+  expect(screen.getByText(/Malformed quoted field/)).toBeVisible();
+  expect(screen.getByText(/5" sample/)).toBeVisible();
 });

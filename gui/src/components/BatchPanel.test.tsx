@@ -124,6 +124,38 @@ describe("BatchPanel profile semantics", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("filters a named-input picker to the workflow's allowed types", async () => {
+    const plan = {
+      ...setup(),
+      inputSlots: [
+        {
+          key: "rubric",
+          label: "Rubric",
+          mode: "document",
+          required: true,
+          extensions: ["md", "txt"],
+        },
+      ],
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_batch_status") return Promise.resolve([]);
+      if (command === "get_execution_plan") return Promise.resolve(plan);
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    open.mockResolvedValue(null);
+    const user = userEvent.setup();
+    render(<BatchPanel onClose={vi.fn()} onOpenRun={vi.fn()} />);
+
+    await screen.findByRole("textbox", { name: "Tone" });
+    await user.click(screen.getByRole("button", { name: "Choose…" }));
+
+    expect(open).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filters: [{ name: "Rubric", extensions: ["md", "txt"] }],
+      }),
+    );
+  });
+
   it("identifies the field when a named-input picker fails", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "get_batch_status") return Promise.resolve([]);
@@ -291,5 +323,68 @@ describe("BatchPanel profile semantics", () => {
     );
     expect(screen.getByRole("alert")).toHaveTextContent("review its options");
     expect(invoke).not.toHaveBeenCalledWith("start_batch", expect.anything());
+  });
+
+  it("starts a choice without a usable default unselected, so what is shown is what is sent", async () => {
+    const choiceSetup = {
+      ...setup(),
+      variables: [
+        {
+          key: "approach",
+          label: "Approach",
+          kind: "choice",
+          choices: ["empirical", "theory"],
+          default: "",
+        },
+        {
+          key: "venue",
+          label: "Venue",
+          kind: "choice",
+          choices: ["journal", "conference"],
+          default: "workshop",
+        },
+        {
+          key: "depth",
+          label: "Depth",
+          kind: "choice",
+          choices: ["brief", "full"],
+          default: "full",
+        },
+      ],
+      inputSlots: [],
+    };
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_batch_status") return Promise.resolve([]);
+      if (command === "get_execution_plan") return Promise.resolve(choiceSetup);
+      if (command === "start_batch") return Promise.resolve();
+      return Promise.reject(new Error(`unexpected command: ${command}`));
+    });
+    open.mockResolvedValueOnce(["C:\\Users\\Ada\\paper.pdf"]);
+    const user = userEvent.setup();
+    render(<BatchPanel onClose={vi.fn()} onOpenRun={vi.fn()} />);
+
+    const approach = await screen.findByRole("combobox", { name: "Approach" });
+    expect(approach).toHaveValue("");
+    expect(approach).toHaveDisplayValue("Choose…");
+    expect(screen.getByRole("combobox", { name: "Venue" })).toHaveDisplayValue(
+      "Choose…",
+    );
+    expect(screen.getByRole("combobox", { name: "Depth" })).toHaveValue("full");
+
+    await user.selectOptions(approach, "theory");
+    await user.click(screen.getByRole("button", { name: "Add files…" }));
+    expect(screen.getByText("paper.pdf")).toHaveAttribute(
+      "title",
+      "C:\\Users\\Ada\\paper.pdf",
+    );
+    await user.click(screen.getByRole("button", { name: "Start batch (1)" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        "start_batch",
+        expect.objectContaining({
+          variables: { approach: "theory", venue: "", depth: "full" },
+        }),
+      ),
+    );
   });
 });

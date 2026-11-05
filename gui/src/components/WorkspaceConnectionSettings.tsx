@@ -68,8 +68,8 @@ export default function WorkspaceConnectionSettings({
                 <dd>{capabilities.stataPolicy}</dd>
               </dl>
               <p className="text-xs text-gray-500">
-                Test each command profile before using it. Platform test
-                details: {capabilities.record}
+                Test each command profile before using it. Platform support:{" "}
+                {capabilities.record}
               </p>
             </>
           )}

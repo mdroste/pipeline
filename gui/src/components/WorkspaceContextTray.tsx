@@ -51,12 +51,14 @@ function SourceChip({
   name,
   item,
   disabled,
+  onOpen,
   onRole,
   onRemove,
 }: {
   name: string;
   item: ContextItem;
   disabled: boolean;
+  onOpen: () => void;
   onRole: (role: ContextItem["role"]) => void;
   onRemove: () => void;
 }) {
@@ -100,6 +102,7 @@ function SourceChip({
         side="top"
         align="start"
       >
+        <MenuItem onSelect={onOpen}>Open</MenuItem>
         <MenuLabel>Use as</MenuLabel>
         {roles.map((value) => (
           <MenuItem
@@ -135,6 +138,8 @@ export default function WorkspaceContextTray({
   const [busy, setBusy] = useState(false);
   const [loadedSession, setLoadedSession] = useState<string | null>(null);
   const [names, setNames] = useState<Record<string, string>>({});
+  // Each source's title is read once: reading one loads its full text.
+  const titles = useRef(new Map<string, string>());
   const [pending, setPending] = useState<OpenResearchObject[]>([]);
   const [moreOpen, setMoreOpen] = useState(false);
   const more = useRef<HTMLButtonElement>(null);
@@ -146,6 +151,7 @@ export default function WorkspaceContextTray({
     saving.current = false;
     setLoadedSession(null);
     setSelection({ revision: 0, items: [] });
+    titles.current = new Map();
     setNames({});
     setPending([]);
     setMoreOpen(false);
@@ -167,25 +173,31 @@ export default function WorkspaceContextTray({
   }, [sessionId, workspaceId, onError]);
   useEffect(() => {
     let alive = true;
-    void Promise.all(
-      selection.items.map(
-        async (item) =>
-          [
-            key(item.object),
-            (await deskClient.read(workspaceId, item.object)).title,
-          ] as const,
-      ),
-    )
-      .then((pairs) => {
-        if (alive) setNames(Object.fromEntries(pairs));
-      })
-      .catch((e) => {
-        if (alive) onError(workbenchErrorMessage(e));
+    const unread = selection.items.filter(
+      (item) => !titles.current.has(key(item.object)),
+    );
+    if (!unread.length) return;
+    void Promise.allSettled(
+      unread.map((item) => deskClient.read(workspaceId, item.object)),
+    ).then((results) => {
+      if (!alive) return;
+      // The chip says so itself; a source that stays unreadable would otherwise
+      // raise an error every time the conversation opens.
+      results.forEach((result, index) => {
+        const { object } = unread[index];
+        titles.current.set(
+          key(object),
+          result.status === "fulfilled"
+            ? result.value.title
+            : `${object.kind} (could not be read)`,
+        );
       });
+      setNames(Object.fromEntries(titles.current));
+    });
     return () => {
       alive = false;
     };
-  }, [selection, workspaceId, onError]);
+  }, [selection, workspaceId]);
   const save = useCallback(
     async (items: ContextItem[]) => {
       if (disabled || saving.current || loadedSession !== sessionId) return;
@@ -276,6 +288,9 @@ export default function WorkspaceContextTray({
       name={names[key(item.object)] ?? item.object.kind}
       item={item}
       disabled={locked}
+      onOpen={() =>
+        appEvents.emit("open-object", { workspaceId, object: item.object })
+      }
       onRole={(role) =>
         void save(
           selection.items.map((value, n) =>

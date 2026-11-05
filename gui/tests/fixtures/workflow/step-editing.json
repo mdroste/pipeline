@@ -1,0 +1,764 @@
+{
+  "limits": {
+    "step_id_chars": 64,
+    "step_label_chars": 200
+  },
+  "findings_role": {
+    "step": "reference_audit",
+    "source": {
+      "steps": [
+        {
+          "id": "reference_audit",
+          "label": "Reference check",
+          "kind": "analyzer",
+          "analyzer": {
+            "id": "reference_audit",
+            "version": 1
+          },
+          "prompt": "",
+          "enabled": true,
+          "phase": "sequential",
+          "tools": [],
+          "agents": [],
+          "after": [],
+          "context": {
+            "include": []
+          }
+        },
+        {
+          "id": "report",
+          "label": "Report",
+          "enabled": true,
+          "phase": "sequential",
+          "tools": [],
+          "agents": [],
+          "prompt": "Run report.",
+          "after": [],
+          "context": {
+            "include": []
+          }
+        }
+      ],
+      "outputs": {
+        "primary_step": "report"
+      }
+    },
+    "ticked": {
+      "steps": [
+        {
+          "id": "reference_audit",
+          "label": "Reference check",
+          "kind": "analyzer",
+          "analyzer": {
+            "id": "reference_audit",
+            "version": 1
+          },
+          "prompt": "",
+          "enabled": true,
+          "phase": "sequential",
+          "tools": [],
+          "agents": [],
+          "after": [],
+          "context": {
+            "include": []
+          }
+        },
+        {
+          "id": "report",
+          "label": "Report",
+          "enabled": true,
+          "phase": "sequential",
+          "tools": [],
+          "agents": [],
+          "prompt": "Run report.",
+          "after": [],
+          "context": {
+            "include": []
+          }
+        }
+      ],
+      "outputs": {
+        "primary_step": "report",
+        "findings_step": "reference_audit"
+      }
+    },
+    "unticked": {
+      "steps": [
+        {
+          "id": "reference_audit",
+          "label": "Reference check",
+          "kind": "analyzer",
+          "analyzer": {
+            "id": "reference_audit",
+            "version": 1
+          },
+          "prompt": "",
+          "enabled": true,
+          "phase": "sequential",
+          "tools": [],
+          "agents": [],
+          "after": [],
+          "context": {
+            "include": []
+          }
+        },
+        {
+          "id": "report",
+          "label": "Report",
+          "enabled": true,
+          "phase": "sequential",
+          "tools": [],
+          "agents": [],
+          "prompt": "Run report.",
+          "after": [],
+          "context": {
+            "include": []
+          }
+        }
+      ],
+      "outputs": {
+        "primary_step": "report",
+        "findings_step": ""
+      }
+    }
+  },
+  "sequential": [
+    {
+      "name": "two agents and fan-out",
+      "step": "checks",
+      "confirms": true,
+      "source": {
+        "steps": [
+          {
+            "id": "source",
+            "label": "Source",
+            "enabled": true,
+            "phase": "parallel",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run source.",
+            "after": [],
+            "context": {
+              "include": []
+            },
+            "output_schema": {
+              "type": "object",
+              "required": [
+                "items"
+              ],
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "id": "checks",
+            "label": "Checks",
+            "enabled": true,
+            "phase": "parallel",
+            "tools": [],
+            "agents": [
+              "claude",
+              "codex"
+            ],
+            "prompt": "Run checks.",
+            "after": [],
+            "context": {
+              "include": []
+            },
+            "for_each": {
+              "glob": "",
+              "max": 5,
+              "artifact": {
+                "step": "source",
+                "pointer": "/items"
+              }
+            }
+          },
+          {
+            "id": "report",
+            "label": "Report",
+            "enabled": true,
+            "phase": "sequential",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run report.",
+            "after": [],
+            "context": {
+              "include": []
+            }
+          }
+        ],
+        "outputs": {
+          "primary_step": "report"
+        }
+      },
+      "result": {
+        "steps": [
+          {
+            "id": "source",
+            "label": "Source",
+            "enabled": true,
+            "phase": "parallel",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run source.",
+            "after": [],
+            "context": {
+              "include": []
+            },
+            "output_schema": {
+              "type": "object",
+              "required": [
+                "items"
+              ],
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "id": "checks",
+            "label": "Checks",
+            "enabled": true,
+            "phase": "sequential",
+            "tools": [],
+            "agents": [
+              "claude"
+            ],
+            "prompt": "Run checks.",
+            "after": [],
+            "context": {
+              "include": []
+            },
+            "for_each": null
+          },
+          {
+            "id": "report",
+            "label": "Report",
+            "enabled": true,
+            "phase": "sequential",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run report.",
+            "after": [],
+            "context": {
+              "include": []
+            }
+          }
+        ],
+        "outputs": {
+          "primary_step": "report"
+        }
+      }
+    },
+    {
+      "name": "two agents",
+      "step": "checks",
+      "confirms": true,
+      "source": {
+        "steps": [
+          {
+            "id": "source",
+            "label": "Source",
+            "enabled": true,
+            "phase": "parallel",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run source.",
+            "after": [],
+            "context": {
+              "include": []
+            },
+            "output_schema": {
+              "type": "object",
+              "required": [
+                "items"
+              ],
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "id": "checks",
+            "label": "Checks",
+            "enabled": true,
+            "phase": "parallel",
+            "tools": [],
+            "agents": [
+              "claude",
+              "codex"
+            ],
+            "prompt": "Run checks.",
+            "after": [],
+            "context": {
+              "include": []
+            }
+          },
+          {
+            "id": "report",
+            "label": "Report",
+            "enabled": true,
+            "phase": "sequential",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run report.",
+            "after": [],
+            "context": {
+              "include": []
+            }
+          }
+        ],
+        "outputs": {
+          "primary_step": "report"
+        }
+      },
+      "result": {
+        "steps": [
+          {
+            "id": "source",
+            "label": "Source",
+            "enabled": true,
+            "phase": "parallel",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run source.",
+            "after": [],
+            "context": {
+              "include": []
+            },
+            "output_schema": {
+              "type": "object",
+              "required": [
+                "items"
+              ],
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "id": "checks",
+            "label": "Checks",
+            "enabled": true,
+            "phase": "sequential",
+            "tools": [],
+            "agents": [
+              "claude"
+            ],
+            "prompt": "Run checks.",
+            "after": [],
+            "context": {
+              "include": []
+            }
+          },
+          {
+            "id": "report",
+            "label": "Report",
+            "enabled": true,
+            "phase": "sequential",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run report.",
+            "after": [],
+            "context": {
+              "include": []
+            }
+          }
+        ],
+        "outputs": {
+          "primary_step": "report"
+        }
+      }
+    },
+    {
+      "name": "fan-out",
+      "step": "checks",
+      "confirms": true,
+      "source": {
+        "steps": [
+          {
+            "id": "source",
+            "label": "Source",
+            "enabled": true,
+            "phase": "parallel",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run source.",
+            "after": [],
+            "context": {
+              "include": []
+            },
+            "output_schema": {
+              "type": "object",
+              "required": [
+                "items"
+              ],
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "id": "checks",
+            "label": "Checks",
+            "enabled": true,
+            "phase": "parallel",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run checks.",
+            "after": [],
+            "context": {
+              "include": []
+            },
+            "for_each": {
+              "glob": "",
+              "max": 5,
+              "artifact": {
+                "step": "source",
+                "pointer": "/items"
+              }
+            }
+          },
+          {
+            "id": "report",
+            "label": "Report",
+            "enabled": true,
+            "phase": "sequential",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run report.",
+            "after": [],
+            "context": {
+              "include": []
+            }
+          }
+        ],
+        "outputs": {
+          "primary_step": "report"
+        }
+      },
+      "result": {
+        "steps": [
+          {
+            "id": "source",
+            "label": "Source",
+            "enabled": true,
+            "phase": "parallel",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run source.",
+            "after": [],
+            "context": {
+              "include": []
+            },
+            "output_schema": {
+              "type": "object",
+              "required": [
+                "items"
+              ],
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "id": "checks",
+            "label": "Checks",
+            "enabled": true,
+            "phase": "sequential",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run checks.",
+            "after": [],
+            "context": {
+              "include": []
+            },
+            "for_each": null
+          },
+          {
+            "id": "report",
+            "label": "Report",
+            "enabled": true,
+            "phase": "sequential",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run report.",
+            "after": [],
+            "context": {
+              "include": []
+            }
+          }
+        ],
+        "outputs": {
+          "primary_step": "report"
+        }
+      }
+    },
+    {
+      "name": "one agent and no fan-out",
+      "step": "checks",
+      "confirms": false,
+      "source": {
+        "steps": [
+          {
+            "id": "source",
+            "label": "Source",
+            "enabled": true,
+            "phase": "parallel",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run source.",
+            "after": [],
+            "context": {
+              "include": []
+            },
+            "output_schema": {
+              "type": "object",
+              "required": [
+                "items"
+              ],
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "id": "checks",
+            "label": "Checks",
+            "enabled": true,
+            "phase": "parallel",
+            "tools": [],
+            "agents": [
+              "claude"
+            ],
+            "prompt": "Run checks.",
+            "after": [],
+            "context": {
+              "include": []
+            }
+          },
+          {
+            "id": "report",
+            "label": "Report",
+            "enabled": true,
+            "phase": "sequential",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run report.",
+            "after": [],
+            "context": {
+              "include": []
+            }
+          }
+        ],
+        "outputs": {
+          "primary_step": "report"
+        }
+      },
+      "result": {
+        "steps": [
+          {
+            "id": "source",
+            "label": "Source",
+            "enabled": true,
+            "phase": "parallel",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run source.",
+            "after": [],
+            "context": {
+              "include": []
+            },
+            "output_schema": {
+              "type": "object",
+              "required": [
+                "items"
+              ],
+              "properties": {
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "id": "checks",
+            "label": "Checks",
+            "enabled": true,
+            "phase": "sequential",
+            "tools": [],
+            "agents": [
+              "claude"
+            ],
+            "prompt": "Run checks.",
+            "after": [],
+            "context": {
+              "include": []
+            }
+          },
+          {
+            "id": "report",
+            "label": "Report",
+            "enabled": true,
+            "phase": "sequential",
+            "tools": [],
+            "agents": [],
+            "prompt": "Run report.",
+            "after": [],
+            "context": {
+              "include": []
+            }
+          }
+        ],
+        "outputs": {
+          "primary_step": "report"
+        }
+      }
+    }
+  ],
+  "long_label": {
+    "label": "Check whether the identification strategy is consistent with the sample restrictions and the reported robustness tables and appendix",
+    "overlong_id": "check_whether_the_identification_strategy_is_consistent_with_the_sample_restrictions_and_the_reported_robustness_tables_and_appendix",
+    "source": {
+      "steps": [
+        {
+          "id": "report",
+          "label": "Report",
+          "enabled": true,
+          "phase": "sequential",
+          "tools": [],
+          "agents": [],
+          "prompt": "Run report.",
+          "after": [],
+          "context": {
+            "include": []
+          }
+        }
+      ],
+      "outputs": {
+        "primary_step": "report"
+      }
+    },
+    "result": {
+      "steps": [
+        {
+          "id": "check_whether_the_identification_strategy_is_consistent_with_the",
+          "label": "Check whether the identification strategy is consistent with the sample restrictions and the reported robustness tables and appendix",
+          "enabled": true,
+          "phase": "parallel",
+          "tools": [],
+          "agents": [],
+          "prompt": "# Check whether the identification strategy is consistent with the sample restrictions and the reported robustness tables and appendix\n\nDescribe what this step should evaluate.\n\n## Method\n\n...\n\n## Output structure\n\n...",
+          "after": [],
+          "context": {
+            "include": [
+              {
+                "kind": "primary",
+                "parts": [
+                  "text",
+                  "structure",
+                  "visuals",
+                  "source"
+                ]
+              },
+              {
+                "kind": "survey"
+              }
+            ]
+          },
+          "output_schema": null
+        },
+        {
+          "id": "report",
+          "label": "Report",
+          "enabled": true,
+          "phase": "sequential",
+          "tools": [],
+          "agents": [],
+          "prompt": "Run report.",
+          "after": [],
+          "context": {
+            "include": []
+          }
+        }
+      ],
+      "outputs": {
+        "primary_step": "report"
+      }
+    }
+  },
+  "step_ids": [
+    {
+      "base": "check_whether_the_identification_strategy_is_consistent_with_the_sample_restrictions_and_the_reported_robustness_tables_and_appendix",
+      "taken": [],
+      "id": "check_whether_the_identification_strategy_is_consistent_with_the"
+    },
+    {
+      "base": "check_whether_the_identification_strategy_is_consistent_with_the_sample_restrictions_and_the_reported_robustness_tables_and_appendix",
+      "taken": [
+        "check_whether_the_identification_strategy_is_consistent_with_the"
+      ],
+      "id": "check_whether_the_identification_strategy_is_consistent_with_t_2"
+    },
+    {
+      "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "taken": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_2"
+    },
+    {
+      "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_b",
+      "taken": [],
+      "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "base": "plain",
+      "taken": [
+        "plain",
+        "plain_2"
+      ],
+      "id": "plain_3"
+    }
+  ]
+}

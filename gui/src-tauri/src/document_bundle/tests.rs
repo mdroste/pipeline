@@ -241,6 +241,7 @@ fn paddle_structure_preserves_roles_exact_markdown_and_page_evidence() {
         pages: vec![crate::pipeline::extract::PaddleStructuredPage {
             number: 2,
             markdown: String::new(),
+            blank_page: false,
             source_text_chars: None,
             width: None,
             height: None,
@@ -306,6 +307,72 @@ fn paddle_structure_preserves_roles_exact_markdown_and_page_evidence() {
 }
 
 #[test]
+fn withheld_image_text_stays_labeled_and_cannot_be_quoted() {
+    use crate::pipeline::analyzers::quotes::{verify_evidence, DocumentIndex, NOT_FOUND, VERIFIED};
+
+    let notice = "[Image text withheld as unverified.]";
+    let mut bundle = build(
+        &extraction(&format!(
+            "<!-- PAGE 1 -->\nThe response peaks after a year.\n\n{notice}"
+        )),
+        tempfile::tempdir().unwrap().path(),
+    )
+    .unwrap()
+    .bundle;
+    let structure = crate::pipeline::extract::PaddleStructure {
+        schema_version: 2,
+        parser: "paddleocr-vl-full".to_string(),
+        parser_version: "3.7.0".to_string(),
+        settings: serde_json::Value::Null,
+        quality_notes: Vec::new(),
+        pages: vec![crate::pipeline::extract::PaddleStructuredPage {
+            number: 1,
+            markdown: notice.to_string(),
+            blank_page: false,
+            source_text_chars: None,
+            width: Some(1224),
+            height: Some(1584),
+            blocks: vec![crate::pipeline::extract::PaddleStructuredBlock {
+                block_id: "paddle-full-page-0001-block-1".to_string(),
+                role: "image".to_string(),
+                block_label: "image".to_string(),
+                markdown: notice.to_string(),
+                text: notice.to_string(),
+                boundary: None,
+                note_marker: None,
+                order: Some(1),
+                bbox: vec![321.0, 157.0, 908.0, 570.0],
+                polygon: Vec::new(),
+                confidence: Some(0.87),
+                asset_files: Vec::new(),
+                raw: serde_json::json!({
+                    "block_content": notice,
+                    "unverified_image_text": "Month | Baseline\n1 | -0.1\n5 | -0.8",
+                }),
+            }],
+        }],
+    };
+    add_paddle_structured_nodes(&mut bundle, &structure);
+
+    let index = bundle.to_model_index_pretty().unwrap();
+    assert!(index.contains("\"unverified_image_text\": \"Month | Baseline"));
+
+    let index = DocumentIndex::from_bundle(&bundle);
+    let status = |quote: &str| {
+        let evidence = crate::models::FindingEvidence {
+            evidence_type: "document".to_string(),
+            quote: quote.to_string(),
+            page: Some(1),
+            ..Default::default()
+        };
+        verify_evidence(&index, &evidence, &mut |_| None).status
+    };
+    assert_eq!(status("Month | Baseline"), NOT_FOUND);
+    assert_eq!(status("5 | -0.8"), NOT_FOUND);
+    assert_eq!(status("The response peaks after a year."), VERIFIED);
+}
+
+#[test]
 fn full_paddle_structure_preserves_layout_semantics_and_merges_formula_numbers() {
     let mut bundle = build(
         &extraction("<!-- PAGE 1 -->\n# Results\n\nA table follows."),
@@ -340,6 +407,7 @@ fn full_paddle_structure_preserves_layout_semantics_and_merges_formula_numbers()
         pages: vec![crate::pipeline::extract::PaddleStructuredPage {
             number: 1,
             markdown: "# Results\n\n## Baseline\n\n| x | y |".to_string(),
+            blank_page: false,
             source_text_chars: None,
             width: Some(1200),
             height: Some(1600),
@@ -517,6 +585,7 @@ fn paddle_formula_numbers_require_unambiguous_page_geometry() {
         pages: vec![crate::pipeline::extract::PaddleStructuredPage {
             number: 1,
             markdown: String::new(),
+            blank_page: false,
             source_text_chars: None,
             width: Some(1200),
             height: Some(1600),
@@ -783,4 +852,19 @@ fn asset_links_require_label_or_page_evidence() {
         asset.label = "Unlabelled image".into();
     }
     assert!(closest_assets(&bundle, "figure", None, "4").is_empty());
+}
+
+#[test]
+fn every_form_of_includegraphics_names_its_figure() {
+    let project = tempfile::tempdir().unwrap();
+    for name in ["a.png", "b.png", "c.png", "d.png"] {
+        fs::write(project.path().join(name), b"image").unwrap();
+    }
+    let mut source = extraction(
+        r"\includegraphics{a.png} \includegraphics*{b.png} \includegraphics [width=2in] {c.png} \includegraphics*[scale=1]{d.png}",
+    );
+    source.source_path = project.path().join("main.tex").display().to_string();
+    let run = tempfile::tempdir().unwrap();
+    let copied = copy_tex_assets(&source, run.path()).unwrap();
+    assert_eq!(copied.len(), 4, "{copied:?}");
 }

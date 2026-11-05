@@ -1,18 +1,21 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useEffect, useRef, useState } from "react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
-import FlappyBirdGame from "./FlappyBirdGame";
 import type { AppPage } from "./NavRail";
 import type { ProfileSummary } from "../lib/types";
 import { REPORT_WORKSPACE_TABS } from "../lib/productMetadata";
+import { workspaceSections } from "../lib/workspaceNavigation";
+import PageHeader from "../ui/PageHeader";
+
+const FlappyBirdGame = lazy(() => import("./FlappyBirdGame"));
 
 interface Props {
   onClose: () => void;
   showBack?: boolean;
   /** Lets Help sections jump to the page they describe; links are hidden without it. */
   onNavigate?: (page: AppPage) => void;
-  /** Jumps to the PaddleOCR-VL install card in Settings → Reviews → PDF Extraction. */
+  /** Jumps to the PaddleOCR-VL install card in Settings → Reviews → PDF extraction. */
   onOpenPdfSettings?: () => void;
   /** Opens and scrolls to a section on arrival (used by the run-setup privacy link). */
   initialSection?: "privacy";
@@ -85,33 +88,75 @@ export default function AboutPage({
 
   return (
     <>
-      <div className="p-8 max-w-3xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-lg font-bold text-gray-900 dark:text-gray-100">
-            Help
-          </h2>
-          {showBack && (
-            <button
-              onClick={onClose}
-              className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-            >
-              Back
-            </button>
-          )}
-        </div>
-
-        <HelpContent
-          onNavigate={onNavigate}
-          onOpenPdfSettings={onOpenPdfSettings}
-          initialSection={initialSection}
-          builtinProfiles={builtinProfiles}
+      <div className="ui-page">
+        <PageHeader
+          title="Help"
+          description="How to get set up, what each part of the app does, and where your data goes."
+          action={
+            showBack ? (
+              <button
+                type="button"
+                className="ui-page-button"
+                onClick={onClose}
+              >
+                Back
+              </button>
+            ) : undefined
+          }
         />
-        <AboutFooter />
+        {/* Long passages stay at a readable width on a wide page. */}
+        <div className="max-w-3xl">
+          <HelpContent
+            onNavigate={onNavigate}
+            onOpenPdfSettings={onOpenPdfSettings}
+            initialSection={initialSection}
+            builtinProfiles={builtinProfiles}
+          />
+          <AboutFooter />
+        </div>
       </div>
-      {gameOpen && <FlappyBirdGame onClose={() => setGameOpen(false)} />}
+      {gameOpen && (
+        <Suspense fallback={null}>
+          <FlappyBirdGame onClose={() => setGameOpen(false)} />
+        </Suspense>
+      )}
     </>
   );
 }
+
+/** Listed until `list_profiles` answers; its results reuse these descriptions. */
+const BUILTIN_REVIEWS = [
+  {
+    id: "auto-paper-review",
+    name: "Paper Review",
+    description:
+      "Assesses the argument, presentation, and contribution. It adds subject and method specialists, combines their comments, and checks them against the paper.",
+  },
+  {
+    id: "auto-paper-review-fast",
+    name: "Paper Review (Fast)",
+    description:
+      "A shorter Paper Review with fewer specialists and no separate assessment of contribution and literature.",
+  },
+  {
+    id: "slide-review",
+    name: "Slide Review",
+    description:
+      "Assesses a deck's argument, figures, readability, and slide order. Export your slides as a PDF first.",
+  },
+  {
+    id: "grant-review",
+    name: "Grant Proposal Review",
+    description:
+      "Assesses aims, feasibility, consistency, and how well the proposal reads for a panel.",
+  },
+  {
+    id: "declaude",
+    name: "Declaude",
+    description:
+      "Finds formulaic prose and suggests replacements that fit the document's subject, audience, and style.",
+  },
+];
 
 function HelpContent({
   onNavigate,
@@ -132,93 +177,173 @@ function HelpContent({
     }
   }, [initialSection]);
 
+  const builtinReviews =
+    builtinProfiles.length > 0
+      ? builtinProfiles.map((profile) => ({
+          name: profile.name,
+          description:
+            BUILTIN_REVIEWS.find((review) => review.id === profile.id)
+              ?.description ?? "",
+        }))
+      : BUILTIN_REVIEWS;
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-8 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
       {/* Overview */}
-      <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-        Pipeline orchestrates AI agents for doing and reviewing academic
-        research. Projects keep conversations, files, and evidence together;
-        Reviews provide repeatable, structured assessments of papers, proposals,
-        and other research material.
+      <p>
+        Pipeline is a desktop app for academic research. Chat with an AI
+        assistant, keep each paper and its files in a project, get AI reviews of
+        your drafts, and automate repeated work.
       </p>
 
       {/* Setup */}
-      <Section title="Before your first report">
-        <div className="space-y-2">
-          <BadgeRow
-            badge="Required"
-            badgeColor="text-red-700 bg-red-50 dark:text-red-300 dark:bg-red-900/30"
-            title="An AI provider"
-          >
-            Sign in to ChatGPT in Settings → Providers or through Claude Code;
-            add an Anthropic, OpenAI, or Google API key in Settings; or connect
-            a local OpenAI-compatible server. A Claude or ChatGPT subscription
-            works without an API key; Google always uses a Gemini API key. The
-            status button in the lower-left corner shows what Pipeline found.
-            <NavLink
-              onClick={onNavigate && (() => onNavigate("settings"))}
-              label="Open Settings"
-            />
-          </BadgeRow>
-          <BadgeRow
-            badge="Included"
-            badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
-            title="PDF tools"
-          >
-            The tools that render PDF pages, check extraction completeness, and
-            run pdftotext are bundled. Nothing else is required.
-          </BadgeRow>
-          <BadgeRow
-            badge="Highly recommended"
-            badgeColor="text-amber-700 bg-amber-50 dark:text-amber-300 dark:bg-amber-900/30"
-            title="PaddleOCR-VL Full Parser"
-          >
-            A local PDF parser that recovers reading order, headings, formulas,
-            and tables, with no extra model calls. Install it once under
-            Settings → Reviews → PDF Extraction.
-            <NavLink onClick={onOpenPdfSettings} label="Install in Settings" />
-          </BadgeRow>
-        </div>
+      <Section title="Set up">
+        <BadgeRow
+          badge="Required"
+          badgeColor="text-red-700 bg-red-50 dark:text-red-300 dark:bg-red-900/30"
+          title="Connect an AI provider"
+        >
+          <p>
+            Add at least one connection in <Label>Settings → Connections</Label>
+            . The dot beside Help turns green when Pipeline has what it needs,
+            and the sidebar shows <Label>Setup needed</Label> when it does not.
+          </p>
+          <TermList
+            items={[
+              {
+                name: "ChatGPT plan",
+                description: (
+                  <>
+                    Install the Codex command-line tool. On the{" "}
+                    <Label>OpenAI</Label> card, choose{" "}
+                    <Label>Sign in to ChatGPT</Label>, then{" "}
+                    <Label>Subscription</Label>.
+                  </>
+                ),
+              },
+              {
+                name: "Claude plan",
+                description: (
+                  <>
+                    Install Claude Code and run{" "}
+                    <InlineCode>claude auth login</InlineCode> in a terminal. On
+                    the <Label>Anthropic</Label> card, choose{" "}
+                    <Label>Subscription</Label>.
+                  </>
+                ),
+              },
+              {
+                name: "API key",
+                description:
+                  "Paste a key from OpenAI, Anthropic, or Google. The provider bills you for each call.",
+              },
+              {
+                name: "Local server",
+                description: (
+                  <>
+                    Enter the address of a server such as Ollama or LM Studio on
+                    the <Label>OpenAI-compatible</Label> card.
+                  </>
+                ),
+              },
+            ]}
+          />
+          <NavLink
+            onClick={onNavigate && (() => onNavigate("settings"))}
+            label="Open Settings"
+          />
+        </BadgeRow>
+        <BadgeRow
+          badge="Included"
+          badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
+          title="PDF tools"
+        >
+          Pipeline can show PDFs and extract their plain text with nothing else
+          to install.
+        </BadgeRow>
+        <BadgeRow
+          badge="Highly recommended"
+          badgeColor="text-amber-700 bg-amber-50 dark:text-amber-300 dark:bg-amber-900/30"
+          title="PaddleOCR-VL Full Parser"
+        >
+          Reads PDFs on your computer and keeps the reading order, headings,
+          equations, and tables. It uses no model calls.
+          <NavLink onClick={onOpenPdfSettings} label="Install in Settings" />
+        </BadgeRow>
       </Section>
 
-      {/* Quick start */}
-      <Section title="Quick start">
+      {/* First review */}
+      <Section title="Run your first review">
         <div className="grid gap-3">
           <StageCard
             number="1"
-            title="Choose a review and input"
-            description="On New review, pick a review design, then select files or a folder and say how Pipeline should treat the selection — one document, a LaTeX project, a browsable folder, or a batch."
+            title="Choose a review and a document"
+            description={
+              <>
+                Open <Label>New review</Label> and pick a review design. Add a
+                PDF, Word file, .tex file, or folder. For a folder, say whether
+                it holds one LaTeX paper, source files to browse, or a batch of
+                documents.
+              </>
+            }
           />
           <StageCard
             number="2"
-            title="Confirm the preview"
-            description="Pipeline shows which steps will run, which provider they will use, and what they may read. Nothing starts until you confirm."
+            title="Check the preview"
+            description={
+              <>
+                Choose <Label>Start review</Label> to open the preview. It shows
+                each step, its provider, the files it can read, and the expected
+                usage. Choose <Label>Start review</Label> again when it looks
+                right.
+              </>
+            }
           />
           <StageCard
             number="3"
             title="Read the report"
-            description="Pipeline extracts the text, builds a short survey of the material so each step knows where things are, runs the steps, and opens the finished report."
+            description="Pipeline extracts the text, runs the reviewers, combines their comments, and checks them against your document. The report opens when the review finishes."
           />
         </div>
+        <p>
+          To see a finished report first, choose{" "}
+          <Label>See an example review</Label> on Home. It uses no model calls.
+        </p>
       </Section>
 
       <Section title="Projects and conversations">
-        <p className="text-sm leading-relaxed text-gray-600 dark:text-gray-400">
-          Chat with the assistant in an unfiled conversation, or create a
-          project to keep papers, files, notes, and related conversations
-          together. Add research tools and saved instructions when you need
-          them.
+        <p>
+          A conversation is a chat with the AI assistant. Start one with{" "}
+          <Label>New conversation</Label> on Home, or inside a project to keep
+          it with that paper. The <Label>Model and thinking</Label> chip below
+          the message box sets the provider and model.{" "}
+          <Label>Assistant settings</Label> sets which files and tools the
+          assistant can use.
         </p>
-        <p className="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
-          Backups include your projects, research files, and conversation
-          transcripts. After restoring, sign in to ChatGPT to continue from your
-          reviewed notes and selected evidence.
+        <p>
+          A project keeps a paper, its folder, your notes, and its conversations
+          together. Create one with <Label>New project</Label> under{" "}
+          <Label>Projects</Label>. Every project has six areas:
         </p>
-        <p className="mt-2 text-sm leading-relaxed text-gray-600 dark:text-gray-400">
-          Choose “Review this revision” to review a saved copy of the paper. The
-          preview lets you choose the review design and models before starting.
-          Each run uses the settings and provider sign-in configured for
-          Reviews.
+        <TermList
+          items={workspaceSections.map((section) => ({
+            name: section.label,
+            description: section.description,
+          }))}
+        />
+        <p>
+          To review a saved version of a paper, open{" "}
+          <Label>Write → Send for review</Label>, choose the{" "}
+          <Label>Paper to review</Label>, then choose{" "}
+          <Label>Review this revision…</Label> to open the preview. The review
+          uses your Reviews settings and account. Project notes aren't sent.
+        </p>
+        <p>
+          To back up all your projects and conversations, open{" "}
+          <Label>Settings → Data & Storage → Manage research data</Label> and
+          choose <Label>Export research backup</Label>. Backups leave out
+          reviews, automations, project folders, and sign-ins. Keep your own
+          copies of project folders, and sign in again after restoring.
         </p>
         <NavLink
           onClick={onNavigate && (() => onNavigate("workspace"))}
@@ -226,64 +351,56 @@ function HelpContent({
         />
       </Section>
 
+      <Section title="Automations">
+        <p>
+          An automation runs a series of steps for you, such as conversation
+          turns, reviews, checks, and pauses for your input. The{" "}
+          <Label>Review and revise</Label> template drafts a paper, reviews it,
+          and revises it a set number of times. To start one, open{" "}
+          <Label>Automations</Label> and choose <Label>+ New automation</Label>.
+        </p>
+        <p>
+          Automations run only while Pipeline is running. To keep them going
+          after you close the window, turn on{" "}
+          <Label>Keep running when the window closes</Label> on the Automations
+          page. Pipeline can't wake a sleeping computer.
+        </p>
+        <NavLink
+          onClick={onNavigate && (() => onNavigate("tasks"))}
+          label="Open Automations"
+        />
+      </Section>
+
       {/* Reference sections, collapsed by default */}
       <div className="border-t border-gray-200 dark:border-gray-800">
         <Collapsible title="Reviews">
-          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            A review design contains saved steps, prompts, and settings. Pick
-            one in New review; edit the active one in Review designer. Steps run
-            as soon as their prerequisites finish, and independent steps run at
-            the same time.
+          <p>
+            A review design is a saved set of steps, prompts, and settings.
+            Pipeline comes with these:
           </p>
-          <div className="space-y-1.5">
-            {(builtinProfiles.length > 0
-              ? builtinProfiles
-              : [
-                  {
-                    id: "auto-review",
-                    name: "Automatic Paper Review (Full)",
-                    step_count: 5,
-                    builtin: true,
-                  },
-                  {
-                    id: "auto-review-quick",
-                    name: "Automatic Paper Review (Quick)",
-                    step_count: 4,
-                    builtin: true,
-                  },
-                  {
-                    id: "grant-review",
-                    name: "Grant Proposal Review",
-                    step_count: 4,
-                    builtin: true,
-                  },
-                ]
-            ).map((profile) => (
-              <BuiltinRow
-                key={profile.id}
-                name={profile.name}
-                description={`${profile.step_count} configured review step${profile.step_count === 1 ? "" : "s"}. Open Reviews → Designer for the current prompts, providers, inputs, and outputs.`}
-              />
-            ))}
-          </div>
+          <TermList items={builtinReviews} />
+          <p>
+            The <Label>Gallery</Label> has more, such as Reference Check and
+            Thesis Chapter Review. Install one and edit it to fit your work.
+          </p>
           <div>
-            <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed mb-2">
-              In Reviews → Designer you can:
+            <p className="mb-2">
+              In the <Label>Review designer</Label> you can:
             </p>
             <ul className="space-y-1.5">
-              <CheckItem text="Add, remove, reorder, or rewrite steps, and choose what each step may read" />
-              <CheckItem text="Pick a provider and model per step, or run one step with several providers and merge the results" />
-              <CheckItem text="Allow web search, add run conditions, repeat a step over matching files, or collect values before a report starts" />
-              <CheckItem text="Import and export a step, a workflow, or all workflows and settings" />
+              <CheckItem text="Add, remove, reorder, or rewrite steps" />
+              <CheckItem text="Choose what each step can read" />
+              <CheckItem text="Pick a provider and model for each step, or run one step with several providers and merge the results" />
+              <CheckItem text="Turn on web search, run a step only under set conditions, or repeat it across matching files" />
+              <CheckItem text="Ask for values before a review starts" />
+              <CheckItem text="Import and export a step, a review design, or all your designs and settings" />
             </ul>
           </div>
-          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            The Gallery installs curated workflows as ordinary editable copies.
-          </p>
+          <p>Steps that don't depend on each other run at the same time.</p>
           <div className="flex gap-4">
             <NavLink
               onClick={onNavigate && (() => onNavigate("pipeline"))}
-              label="Open Designer"
+              label="Open Review designer"
             />
             <NavLink
               onClick={onNavigate && (() => onNavigate("gallery"))}
@@ -292,39 +409,52 @@ function HelpContent({
           </div>
         </Collapsible>
 
-        <Collapsible title="Reading your report">
-          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            A finished report can expose {REPORT_WORKSPACE_TABS.length} views:{" "}
-            {REPORT_WORKSPACE_TABS.map((tab) => tab.label).join(", ")}.{" "}
-            {REPORT_WORKSPACE_TABS.map(
-              (tab) =>
-                `${tab.label} contains ${tab.description} (${tab.availability}).`,
-            ).join(" ")}
+        <Collapsible title="Reading a report">
+          <p>A finished review has these tabs:</p>
+          <TermList
+            items={REPORT_WORKSPACE_TABS.map((tab) => ({
+              name: tab.label,
+              description: tab.description,
+            }))}
+          />
+          <p>
+            <Label>Export</Label> saves a report as HTML or Word.{" "}
+            <Label>Word with comments on the original</Label> and{" "}
+            <Label>PDF with highlights</Label> mark each finding on a copy of
+            your document.
           </p>
-          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            Use Export for a safe shareable package, a clearly marked sensitive
-            forensic archive, a custom selection, Markdown, or the system print
-            dialog for saving PDF.
+          <p>
+            <Label>Shareable report</Label> removes private information and
+            leaves out unverified findings, your source documents, and raw model
+            responses. <Label>Complete review archive</Label> includes all of
+            them, plus the logs. <Label>Save Markdown…</Label> and{" "}
+            <Label>Print / save as PDF…</Label> are in the same menu.
           </p>
         </Collapsible>
 
         <Collapsible title="Review history & collections">
-          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            History lists every saved report. Rename, tag, or delete reports;
-            resume an interrupted one; rerun one from scratch; or compare two
-            side by side. Settings can also add a model-written comparison
-            automatically when Pipeline finds an earlier report for the same
-            document.
+          <p>
+            <Label>Review history</Label> lists every saved report.{" "}
+            <Label>Resume</Label> continues an interrupted review.{" "}
+            <Label>Regenerate</Label> runs the current review design again on
+            the saved document. <Label>Compare</Label> shows two reports side by
+            side. Deleted reports go to <Label>Trash</Label>, where you can
+            restore them.
           </p>
-          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            Review collections group related reports and revisions and keep a
-            running ledger of issues across them, without moving or deleting
-            anything.
+          <p>
+            To compare each new report with the previous one automatically, turn
+            on <Label>Compare with the previous report</Label> under{" "}
+            <Label>Settings → Reviews</Label>. It lists which concerns were
+            addressed, which remain, and which are new. This adds a model call.
+          </p>
+          <p>
+            A review collection groups related reports and tracks their findings
+            across drafts. Open <Label>Collections</Label> from Review history.
           </p>
           <div className="flex gap-4">
             <NavLink
               onClick={onNavigate && (() => onNavigate("history"))}
-              label="Open History"
+              label="Open Review history"
             />
             <NavLink
               onClick={onNavigate && (() => onNavigate("projects"))}
@@ -333,12 +463,14 @@ function HelpContent({
           </div>
         </Collapsible>
 
-        <Collapsible title="PDF & document handling">
-          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            Pipeline prepares a text version of each document before the
-            workflow begins. LaTeX and Word files are read directly. For PDFs,
-            pick a method in the workflow or inherit the choice from Settings →
-            Reviews → PDF Extraction.
+        <Collapsible title="How Pipeline reads documents">
+          <p>
+            Pipeline turns each document into text before the review starts. For
+            PDFs, set the method under{" "}
+            <Label>Settings → Reviews → PDF extraction</Label>, or change it for
+            a single review. The default, <Label>Automatic</Label>, uses the
+            Full Parser if it's installed and your AI model if it isn't. If
+            extraction fails, the review stops and shows the error.
           </p>
           <div className="space-y-2">
             <BadgeRow
@@ -346,44 +478,47 @@ function HelpContent({
               badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
               title="LaTeX and Word"
             >
-              Read directly, keeping equations and table structure. A LaTeX
-              project also keeps page images from its compiled PDF when one is
-              present.
-            </BadgeRow>
-            <BadgeRow
-              badge="Uses your provider"
-              badgeColor="text-blue-700 bg-blue-50 dark:text-blue-300 dark:bg-blue-900/30"
-              title="LLM PDF extraction"
-            >
-              The model transcribes the PDF in page ranges. This costs model
-              calls but usually preserves equations and layout best. Pipeline
-              stops if its page checks fail.
+              Read directly, so equations and tables come through intact. If a
+              compiled PDF sits beside your LaTeX source, Pipeline uses it for
+              page images.
             </BadgeRow>
             <BadgeRow
               badge="Optional install"
               badgeColor="text-gray-700 bg-gray-100 dark:text-gray-300 dark:bg-gray-700/50"
               title="PaddleOCR-VL Full Parser"
             >
-              A local engine that recovers reading order, headings, formulas,
-              and tables. Install it under Settings → Reviews → PDF Extraction.
+              Runs on your computer and keeps reading order, headings,
+              equations, and tables, even when a table spans pages. It needs
+              about 4 GB of disk space.
+            </BadgeRow>
+            <BadgeRow
+              badge="Uses your provider"
+              badgeColor="text-blue-700 bg-blue-50 dark:text-blue-300 dark:bg-blue-900/30"
+              title="LLM (your AI model)"
+            >
+              Your selected model reads the PDF a few pages at a time. The PDF
+              goes to your provider, and each call counts toward your usage.
             </BadgeRow>
             <BadgeRow
               badge="Included"
               badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
               title="pdftotext"
             >
-              Fast local plain-text extraction. Fine for simple text; equations
-              and complex layouts may not survive.
+              The fastest option. It runs on your computer, flattens the layout,
+              and usually loses equations.
             </BadgeRow>
           </div>
         </Collapsible>
 
-        <Collapsible title="Batch reports">
-          <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
-            To review several documents with the same workflow, select multiple
-            files on New review, or choose a folder and set its meaning to Batch
-            of documents. Each document becomes an independent report and the
-            queue appears under Current batch.
+        <Collapsible title="Reviewing several documents">
+          <p>
+            To run the same review on several documents, select multiple files
+            on <Label>New review</Label>, or choose a folder and select{" "}
+            <Label>Batch of documents</Label>. Each document gets its own
+            report. <Label>Activity</Label> in the sidebar lists running and
+            queued reviews, and{" "}
+            <Label>Settings → Reviews → Reviews at once</Label> sets how many
+            run at once.
           </p>
         </Collapsible>
 
@@ -392,39 +527,38 @@ function HelpContent({
           defaultOpen={initialSection === "privacy"}
           detailsRef={privacyRef}
         >
-          <ul className="space-y-2 text-sm text-gray-600 dark:text-gray-400 leading-relaxed list-disc pl-5">
+          <ul className="space-y-2 list-disc pl-5">
             <li>
-              Reports, sources, and logs stay on this computer under{" "}
-              <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded font-mono">
-                ~/.pipeline/runs/
-              </code>{" "}
-              until you delete them or set a retention limit in Settings.
+              Your research is saved on this computer. Pipeline has no account
+              or cloud storage, and it collects no analytics.
             </li>
             <li>
-              Project conversations, research records, saved attachments, and
-              separate assistant state are stored under{" "}
-              <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded font-mono">
-                ~/.pipeline/workbench/
-              </code>
-              . Project archives exclude assistant credentials, but the exported
-              archive or transcript is a sensitive ordinary file wherever you
-              save it.
+              Reports, source documents, and logs are in{" "}
+              <InlineCode>~/.pipeline/runs/</InlineCode> until you delete them
+              or set a retention limit in Settings.
             </li>
             <li>
-              Each step reads only the material its workflow allows. When a step
-              runs on a cloud provider, that material is sent through the
-              provider's CLI or API and is subject to your provider account's
-              plan and data-use terms.
+              Conversations, research records, and attachments are in{" "}
+              <InlineCode>~/.pipeline/workbench/</InlineCode>. If you chose
+              another research data folder, both folders are there instead.
             </li>
             <li>
-              The project assistant sends conversation content and selected
-              research context or tool results through its managed ChatGPT
-              account. Imported material stays local until selected as context
-              or returned by an enabled tool.
+              A conversation sends your messages, recent history, and any
+              material you select or an allowed tool reads to the provider you
+              chose. Papers in your Library stay on your computer until then.
             </li>
             <li>
-              If a workflow enables web search and the provider supports it,
-              search queries are also sent to an external service.
+              A review step sends its prompt and the material it can read to
+              that step's provider. The preview shows what each step can read.
+            </li>
+            <li>
+              Your provider's plan and data-use terms apply to everything it
+              receives.
+            </li>
+            <li>
+              With web search on, queries go to your provider's search tool or
+              to Bing. They can include terms from your paper, even when the
+              model runs on your computer.
             </li>
           </ul>
           <ExternalLink url="https://github.com/mdroste/pipeline/blob/main/PRIVACY.md">
@@ -434,17 +568,23 @@ function HelpContent({
       </div>
 
       {/* Troubleshooting */}
-      <Section title="Something not working?">
-        <ul className="space-y-1.5 text-sm text-gray-600 dark:text-gray-400 leading-relaxed list-disc pl-5">
+      <Section title="Troubleshooting">
+        <ul className="space-y-1.5 list-disc pl-5">
           <li>
-            The status button in the lower-left corner reports missing CLIs,
-            keys, and tools.
+            If the sidebar shows <Label>Setup needed</Label>, select it to see
+            what's missing.
           </li>
           <li>
-            The Console at the bottom of the workspace has per-step logs; failed
-            steps keep their error output.
+            If a provider fails, choose <Label>Check connection</Label> on its
+            card in <Label>Settings → Connections</Label>.
           </li>
-          <li>Found a bug? Open an issue through the GitHub link below.</li>
+          <li>
+            The <Label>Console</Label> below a review shows each step's log,
+            including errors from failed steps.
+          </li>
+          <li>
+            To report a bug, open an issue on GitHub using the link below.
+          </li>
         </ul>
       </Section>
     </div>
@@ -462,11 +602,47 @@ function Section({
 }) {
   return (
     <div>
-      <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">
+      <h2 className="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">
         {title}
-      </h3>
-      {children}
+      </h2>
+      <div className="space-y-3">{children}</div>
     </div>
+  );
+}
+
+/** The name of a control, written exactly as the app shows it. */
+function Label({ children }: { children: React.ReactNode }) {
+  return (
+    <strong className="font-medium text-gray-800 dark:text-gray-200">
+      {children}
+    </strong>
+  );
+}
+
+function InlineCode({ children }: { children: React.ReactNode }) {
+  return (
+    <code className="text-xs bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 rounded font-mono">
+      {children}
+    </code>
+  );
+}
+
+function TermList({
+  items,
+}: {
+  items: { name: string; description: React.ReactNode }[];
+}) {
+  return (
+    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+      {items.map(({ name, description }) => (
+        <Fragment key={name}>
+          <dt className="font-medium text-gray-800 dark:text-gray-200">
+            {name}
+          </dt>
+          <dd>{description}</dd>
+        </Fragment>
+      ))}
+    </dl>
   );
 }
 
@@ -527,7 +703,7 @@ function StageCard({
 }: {
   number: string;
   title: string;
-  description: string;
+  description: React.ReactNode;
 }) {
   return (
     <div className="flex gap-3 items-start p-3 rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-100 dark:border-gray-700">
@@ -542,25 +718,6 @@ function StageCard({
           {description}
         </p>
       </div>
-    </div>
-  );
-}
-
-function BuiltinRow({
-  name,
-  description,
-}: {
-  name: string;
-  description: string;
-}) {
-  return (
-    <div className="flex items-baseline gap-2">
-      <span className="text-sm font-medium text-gray-800 dark:text-gray-200 shrink-0">
-        {name}
-      </span>
-      <span className="text-xs text-gray-500 dark:text-gray-400">
-        {description}
-      </span>
     </div>
   );
 }
@@ -606,9 +763,9 @@ function BadgeRow({
         <p className="text-sm font-medium text-gray-800 dark:text-gray-200">
           {title}
         </p>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed">
+        <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 leading-relaxed space-y-1.5">
           {children}
-        </p>
+        </div>
       </div>
     </div>
   );

@@ -1,4 +1,10 @@
 //! Disposable, local FTS5 projection. Exact-reference reads use authoritative records.
+//!
+//! Each workspace has one index generation. Invalidation bumps it and resets the
+//! cursor. Batches resume from the saved cursor and re-check the generation inside
+//! the write transaction, so overlapping workers never publish mixed-generation
+//! rows. Search pages bind the generation; a changed index needs a new search.
+//! Deletions, source exclusions and data-policy changes must invalidate.
 use super::{
     desk::{err, ResearchObjectRef},
     store::{Store, WorkbenchError, WorkbenchResult},

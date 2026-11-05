@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { workbenchClient } from "../lib/workbenchClient";
+import { harnessClient } from "../lib/workbench/harnessClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type { EffectiveHarness } from "../lib/workbenchTypes";
 import Spinner from "../ui/Spinner";
+import ReportIssueLink from "./ReportIssueLink";
 
 /** The honesty surface: exactly what the assistant will see for this
  * conversation — instructions, enabled tools, and the assembled context. */
@@ -23,7 +24,7 @@ export default function WorkspaceContextInspector({
     if (!sessionId) return;
     let stale = false;
     setHarness(null);
-    workbenchClient
+    harnessClient
       .effectiveHarness(sessionId)
       .then((loaded) => {
         if (!stale) setHarness(loaded);
@@ -57,6 +58,7 @@ export default function WorkspaceContextInspector({
       ) : error ? (
         <p role="alert" className="text-xs text-red-600 dark:text-red-400">
           {error}
+          <ReportIssueLink />
         </p>
       ) : !harness ? (
         <Spinner inline label="Assembling context…" />
@@ -96,8 +98,8 @@ export default function WorkspaceContextInspector({
               </pre>
             ) : (
               <p className="mt-1 text-gray-500">
-                No project material is attached to this conversation yet. Use
-                Sources above your message to add some.
+                No project material is attached to this conversation yet. Choose
+                + (Add to message) in the message box to add some.
               </p>
             )}
           </div>

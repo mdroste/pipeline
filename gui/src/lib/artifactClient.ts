@@ -17,4 +17,7 @@ export const artifactClient = {
     invoke<PdfArtifactPage>("read_pdf_artifact_page", { runId, relPath, page }),
   pdfBytes: (runId: string, relPath?: string) =>
     invoke<string>("read_pdf_artifact_bytes", { runId, relPath }),
+  /** A `pipeline-file` token for a retained PDF or image. */
+  stream: (runId: string, relPath: string) =>
+    invoke<string>("open_run_artifact_stream", { runId, relPath }),
 };

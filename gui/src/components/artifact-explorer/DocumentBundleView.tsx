@@ -88,7 +88,9 @@ export function DocumentBundleView({
       <section>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold">DocumentBundle inspection</h2>
+            <h2 className="text-lg font-semibold">
+              Extracted document details
+            </h2>
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
               Schema {bundle.schema_version} · {bundle.source_kind} · extracted
               with {bundle.extraction?.method}
@@ -116,7 +118,7 @@ export function DocumentBundleView({
       <section className="grid gap-3 lg:grid-cols-2">
         <div className="rounded-lg border border-gray-200 dark:border-gray-700 p-3">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-            Source provenance
+            Original sources
           </h3>
           <div className="mt-2 space-y-2">
             {(bundle.origins ?? []).map((origin) => (
@@ -155,12 +157,12 @@ export function DocumentBundleView({
       </section>
 
       <section>
-        <h3 className="text-sm font-semibold">Visual assets</h3>
+        <h3 className="text-sm font-semibold">Figures and images</h3>
         {visualAssets.length === 0 ? (
           <p className="mt-2 text-xs text-gray-500">
             {bundle.pages?.length
-              ? `${bundle.pages.length} page renders are indexed in the compact Pages browser; no separate figures or media were extracted.`
-              : "No visual assets were extracted."}
+              ? `${bundle.pages.length} page images are available in Pages. No separate figures or media files were extracted.`
+              : "No figures or images were extracted."}
           </p>
         ) : (
           <div className="mt-2 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
@@ -249,8 +251,8 @@ export function DocumentBundleView({
           </div>
         </div>
         <p className="mt-1 text-xs text-gray-500">
-          The readable document artifact contains the full extracted text. This
-          view exposes semantic blocks and provenance.
+          Open Readable document for the full extracted text. This view shows
+          the document’s sections, text blocks, and source details.
         </p>
         <div className="mt-3 space-y-2">
           {visibleNodes.map((node) => (

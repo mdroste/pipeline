@@ -3,6 +3,8 @@ use super::*;
 /// Maximum total output size for extracted LaTeX (10 MB).
 pub(super) const MAX_LATEX_SIZE: usize = 10_000_000;
 pub(super) const MAX_SCOPED_SOURCE_FILES: usize = 512;
+/// Per-file and total bounds on the source a run copies: a LaTeX project's
+/// closure, or the private copy of a selected folder.
 pub(super) const MAX_SCOPED_SOURCE_FILE_BYTES: u64 = 32 * 1024 * 1024;
 pub(super) const MAX_SCOPED_SOURCE_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 /// Folder inventories are context, not an archival crawler. Bound every
@@ -71,7 +73,7 @@ pub(super) fn open_regular_file(path: &Path) -> Result<fs::File, String> {
     crate::safety::open_regular_file(path)
 }
 
-pub(super) fn read_utf8_capped(path: &Path, limit: usize) -> Result<String, String> {
+fn read_capped(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
     use std::io::Read as _;
     let file = open_regular_file(path)?;
     let mut bytes = Vec::with_capacity(64 * 1024);
@@ -85,7 +87,103 @@ pub(super) fn read_utf8_capped(path: &Path, limit: usize) -> Result<String, Stri
             limit / 1_000_000
         ));
     }
-    String::from_utf8(bytes).map_err(|e| format!("{} is not valid UTF-8: {e}", path.display()))
+    Ok(bytes)
+}
+
+pub(super) fn read_utf8_capped(path: &Path, limit: usize) -> Result<String, String> {
+    String::from_utf8(read_capped(path, limit)?)
+        .map_err(|e| format!("{} is not valid UTF-8: {e}", path.display()))
+}
+
+/// The bytes 0x80 to 0x9F of Windows-1252. Latin-1 differs only here, so
+/// decoding as Windows-1252 also covers it. Five bytes have no character.
+const WINDOWS_1252_HIGH: [char; 32] = [
+    '€', '\u{FFFD}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{FFFD}', 'Ž',
+    '\u{FFFD}', '\u{FFFD}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{FFFD}',
+    'ž', 'Ÿ',
+];
+
+fn decode_windows_1252(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|&byte| match byte {
+            0x80..=0x9F => WINDOWS_1252_HIGH[usize::from(byte - 0x80)],
+            _ => char::from(byte),
+        })
+        .collect()
+}
+
+/// The encoding named by `\usepackage[...]{inputenc}` or `\inputencoding{...}`.
+fn declared_input_encoding(source: &str) -> Option<String> {
+    let declaration =
+        Regex::new(r"\\usepackage\s*\[([^\]]*)\]\s*\{inputenc\}|\\inputencoding\s*\{([^}]*)\}")
+            .expect("LaTeX input encoding regex is invalid");
+    let visible = super::latex::latex_without_comments(source);
+    let declared = declaration
+        .captures_iter(&visible)
+        .filter_map(|capture| capture.get(1).or(capture.get(2)))
+        .filter_map(|options| options.as_str().rsplit(',').next())
+        .map(|encoding| encoding.trim().to_ascii_lowercase())
+        .find(|encoding| !encoding.is_empty());
+    declared
+}
+
+/// Text for a LaTeX file that is not valid UTF-8, with the quality note that
+/// says how it was read. A file that declares UTF-8 keeps its intact
+/// characters; anything else is read as Windows-1252, the usual legacy default.
+fn decode_legacy_latex(bytes: &[u8], path: &Path) -> (String, String) {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let windows_1252 = decode_windows_1252(bytes);
+    match declared_input_encoding(&windows_1252).as_deref() {
+        Some("utf8" | "utf8x" | "utf-8") => (
+            String::from_utf8_lossy(bytes).into_owned(),
+            format!(
+                "{name} declares UTF-8 but contains invalid bytes; the characters they stood for were replaced."
+            ),
+        ),
+        Some("latin1" | "latin9" | "ansinew" | "cp1252" | "ascii") | None => (
+            windows_1252,
+            format!(
+                "{name} is not UTF-8, so it was read as Windows-1252. Check accented characters and symbols against the source."
+            ),
+        ),
+        Some(declared) => {
+            let note = format!(
+                "{name} declares the {declared} encoding, which Pipeline cannot read, so it was read as Windows-1252. Accented characters and symbols may be wrong."
+            );
+            (windows_1252, note)
+        }
+    }
+}
+
+/// Read LaTeX source in whatever encoding it was saved. The second value is a
+/// quality note, present when the file was not valid UTF-8.
+pub(super) fn read_latex_capped(
+    path: &Path,
+    limit: usize,
+) -> Result<(String, Option<String>), String> {
+    let bytes = read_capped(path, limit)?;
+    let bytes = match String::from_utf8(bytes) {
+        Ok(text) => return Ok((text, None)),
+        Err(error) => error.into_bytes(),
+    };
+    // NUL never occurs in an 8-bit text file: this is UTF-16 or binary data,
+    // and decoding it as text would hand reviewers noise.
+    if bytes.contains(&0) {
+        return Err(format!("{} is not a text file", path.display()));
+    }
+    let (text, note) = decode_legacy_latex(&bytes, path);
+    if text.len() > limit {
+        return Err(format!(
+            "{} exceeds the {} MB safety limit",
+            path.display(),
+            limit / 1_000_000
+        ));
+    }
+    Ok((text, Some(note)))
 }
 
 #[derive(Debug)]
@@ -97,7 +195,11 @@ pub(super) struct BoundedOutput {
     pub(super) stderr_truncated: bool,
 }
 
-pub(super) fn drain_capped<R: std::io::Read>(mut reader: R, limit: usize) -> (Vec<u8>, bool) {
+pub(super) fn drain_capped<R: std::io::Read>(
+    mut reader: R,
+    limit: usize,
+    mut observe: impl FnMut(&[u8]),
+) -> (Vec<u8>, bool) {
     let mut kept = Vec::new();
     let mut truncated = false;
     let mut chunk = [0u8; 16 * 1024];
@@ -106,6 +208,7 @@ pub(super) fn drain_capped<R: std::io::Read>(mut reader: R, limit: usize) -> (Ve
             Ok(0) | Err(_) => break,
             Ok(count) => count,
         };
+        observe(&chunk[..count]);
         let remaining = limit.saturating_sub(kept.len());
         let take = count.min(remaining);
         kept.extend_from_slice(&chunk[..take]);
@@ -114,18 +217,92 @@ pub(super) fn drain_capped<R: std::io::Read>(mut reader: R, limit: usize) -> (Ve
     (kept, truncated)
 }
 
+/// The most of one stdout line handed to an observer.
+const MAX_OBSERVED_LINE_BYTES: usize = 4 * 1024;
+/// Lines waiting for the poll loop. A longer backlog loses lines rather than
+/// stalling the child on its own pipe.
+const MAX_OBSERVED_LINE_BACKLOG: usize = 256;
+
+/// Split a child's output into bounded lines for the poll loop.
+struct LineForwarder {
+    sender: std::sync::mpsc::SyncSender<String>,
+    line: Vec<u8>,
+}
+
+impl LineForwarder {
+    fn push(&mut self, mut bytes: &[u8]) {
+        while let Some(end) = bytes.iter().position(|byte| *byte == b'\n') {
+            self.extend(&bytes[..end]);
+            self.finish_line();
+            bytes = &bytes[end + 1..];
+        }
+        self.extend(bytes);
+    }
+
+    fn extend(&mut self, bytes: &[u8]) {
+        let room = MAX_OBSERVED_LINE_BYTES.saturating_sub(self.line.len());
+        self.line.extend_from_slice(&bytes[..bytes.len().min(room)]);
+    }
+
+    fn finish_line(&mut self) {
+        let line = String::from_utf8_lossy(&self.line);
+        let _ = self
+            .sender
+            .try_send(line.trim_end_matches('\r').to_string());
+        self.line.clear();
+    }
+
+    fn finish(&mut self) {
+        if !self.line.is_empty() {
+            self.finish_line();
+        }
+    }
+}
+
+fn deliver_lines(
+    lines: &std::sync::mpsc::Receiver<String>,
+    on_stdout_line: &mut Option<&mut dyn FnMut(&str)>,
+) {
+    if let Some(on_stdout_line) = on_stdout_line {
+        for line in lines.try_iter() {
+            on_stdout_line(&line);
+        }
+    }
+}
+
 /// Run a blocking extraction subprocess with bounded capture, cancellation,
 /// timeout, process-tree termination, and PID cleanup.
 pub(super) fn run_bounded_output(
-    mut command: StdCommand,
+    command: StdCommand,
     label: &str,
     timeout: std::time::Duration,
     output_limit: usize,
     watched_output_dir: Option<&Path>,
 ) -> Result<BoundedOutput, String> {
+    run_bounded_output_observed(
+        command,
+        label,
+        timeout,
+        output_limit,
+        watched_output_dir,
+        None,
+    )
+}
+
+/// Like `run_bounded_output`, and hands each stdout line to `on_stdout_line`
+/// while the child runs. The callback runs on this thread, inside its run
+/// scope, so it can log. Lines are best effort and stdout is still captured.
+pub(super) fn run_bounded_output_observed(
+    mut command: StdCommand,
+    label: &str,
+    timeout: std::time::Duration,
+    output_limit: usize,
+    watched_output_dir: Option<&Path>,
+    mut on_stdout_line: Option<&mut dyn FnMut(&str)>,
+) -> Result<BoundedOutput, String> {
     use std::process::Stdio;
 
-    crate::pipeline::claude::configure_silent_command(&mut command);
+    crate::agent_runtime::process::configure_silent_command(&mut command);
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -142,15 +319,29 @@ pub(super) fn run_bounded_output(
     let stderr = child.stderr.take();
     let (stdout_tx, stdout_rx) = std::sync::mpsc::sync_channel(1);
     let (stderr_tx, stderr_rx) = std::sync::mpsc::sync_channel(1);
+    let (line_tx, line_rx) = std::sync::mpsc::sync_channel(MAX_OBSERVED_LINE_BACKLOG);
+    let mut forwarder = on_stdout_line.is_some().then(|| LineForwarder {
+        sender: line_tx,
+        line: Vec::new(),
+    });
     let stdout_thread = std::thread::spawn(move || {
         let result = stdout
-            .map(|pipe| drain_capped(pipe, output_limit))
+            .map(|pipe| {
+                drain_capped(pipe, output_limit, |bytes| {
+                    if let Some(forwarder) = forwarder.as_mut() {
+                        forwarder.push(bytes);
+                    }
+                })
+            })
             .unwrap_or_default();
+        if let Some(forwarder) = forwarder.as_mut() {
+            forwarder.finish();
+        }
         let _ = stdout_tx.send(result);
     });
     let stderr_thread = std::thread::spawn(move || {
         let result = stderr
-            .map(|pipe| drain_capped(pipe, output_limit))
+            .map(|pipe| drain_capped(pipe, output_limit, |_| {}))
             .unwrap_or_default();
         let _ = stderr_tx.send(result);
     });
@@ -158,6 +349,7 @@ pub(super) fn run_bounded_output(
     let started = std::time::Instant::now();
     let mut last_output_scan = std::time::Instant::now();
     let result = loop {
+        deliver_lines(&line_rx, &mut on_stdout_line);
         match child.try_wait() {
             Ok(Some(status)) => break Ok(status),
             Ok(None) if crate::commands::is_cancelled() => {
@@ -253,6 +445,7 @@ pub(super) fn run_bounded_output(
     if stderr_result.is_some() {
         let _ = stderr_thread.join();
     }
+    deliver_lines(&line_rx, &mut on_stdout_line);
     let (stdout, stdout_truncated) = stdout_result
         .ok_or_else(|| format!("{label} stdout pipe did not close after termination"))?;
     let (stderr, stderr_truncated) = stderr_result
@@ -395,7 +588,7 @@ pub(crate) fn find_main_tex(dir: &Path) -> Option<PathBuf> {
 
     let mut candidates: Vec<PathBuf> = Vec::new();
     for path in &tex_files {
-        if let Ok(content) = read_utf8_capped(path, MAX_LATEX_SIZE) {
+        if let Ok((content, _)) = read_latex_capped(path, MAX_LATEX_SIZE) {
             if latex_without_comments(&content).contains("\\documentclass") {
                 candidates.push(path.clone());
             }

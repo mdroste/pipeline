@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { confirmDialog } from "./DialogService";
 import type {
   Project,
   ProjectIssue,
@@ -10,6 +11,7 @@ import type {
   RunSummary,
 } from "../lib/types";
 import type { ArtifactSelectionTarget } from "../lib/artifactTypes";
+import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
   project: Project;
@@ -144,7 +146,7 @@ function exportLedger(project: Project, issues: ProjectIssue[]): string {
       return `## ${issueIndex + 1}. ${issue.title}\n\n- Status: ${issue.status}\n- Severity: ${issue.severity || "unspecified"}\n- First observed: ${formatDate(issueFirstObserved(issue))}\n- Last observed: ${formatDate(issueLastObserved(issue))}\n- Occurrences: ${issue.occurrences.length}${issue.section ? `\n- Current section/location: ${issue.section}` : ""}${issue.note ? `\n\n**Collection note:** ${issue.note}` : ""}\n\n### Observations\n\n${occurrences}`;
     })
     .join("\n\n");
-  return `# ${project.name} — Issue ledger\n\nExported ${formatDate(new Date().toISOString(), true)}. Lifecycle decisions are collection-level; observations retain their original report provenance.\n\n${body || "No issues match the current filters."}\n`;
+  return `# ${project.name} — Findings across reviews\n\nExported ${formatDate(new Date().toISOString(), true)}. Lifecycle decisions are collection-level; observations retain their original report provenance.\n\n${body || "No issues match the current filters."}\n`;
 }
 
 export default function ProjectIssueLedgerPanel({
@@ -164,40 +166,83 @@ export default function ProjectIssueLedgerPanel({
   const [severityFilter, setSeverityFilter] = useState("all");
   const [workflowFilter, setWorkflowFilter] = useState("all");
   const [runFilter, setRunFilter] = useState("all");
+  // The ledger whose notes the drafts were seeded from.
+  const ledgerRef = useRef<ProjectIssueLedger | null>(null);
+  // Only the latest refresh may install its ledger or report its outcome.
+  const refreshRef = useRef(0);
+  // Bumped when the collection or its reports change, so lifecycle, note
+  // and merge responses for the previous scope are discarded.
+  const scopeRef = useRef(0);
 
   const installLedger = (next: ProjectIssueLedger) => {
+    const previousNotes = new Map(
+      ledgerRef.current?.issues.map((issue) => [issue.id, issue.note]) ?? [],
+    );
+    ledgerRef.current = next;
     setLedger(next);
+    // A draft is an unsaved edit only while it differs from the note it
+    // was seeded from; otherwise show the note the backend now holds.
     setNoteDrafts((current) =>
       Object.fromEntries(
-        next.issues.map((issue) => [issue.id, current[issue.id] ?? issue.note]),
+        next.issues.map((issue) => {
+          const draft = current[issue.id];
+          return [
+            issue.id,
+            draft !== undefined && draft !== previousNotes.get(issue.id)
+              ? draft
+              : issue.note,
+          ];
+        }),
       ),
     );
   };
 
+  /** Forget drafts so the next ledger shows the stored notes. With `sent`,
+   *  keep a draft the user changed after it was sent. */
+  const dropDrafts = (issueIds: string[], sent?: string) =>
+    setNoteDrafts((current) => {
+      const next = { ...current };
+      issueIds.forEach((issueId) => {
+        if (sent === undefined || next[issueId] === sent) delete next[issueId];
+      });
+      return next;
+    });
+
   const refresh = async () => {
+    const request = ++refreshRef.current;
+    const isCurrent = () => request === refreshRef.current;
     setLoading(true);
     setError(null);
     try {
-      installLedger(
-        await invoke<ProjectIssueLedger>("sync_project_issue_ledger", {
-          projectId: project.id,
-        }),
+      const next = await invoke<ProjectIssueLedger>(
+        "sync_project_issue_ledger",
+        { projectId: project.id },
       );
+      if (isCurrent()) installLedger(next);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (isCurrent())
+        setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   };
 
   useEffect(() => {
+    ledgerRef.current = null;
     setLedger(null);
     setExpanded(new Set());
     setNoteDrafts({});
     setMergeTargets({});
+    setSearch("");
+    setStatusFilter("all");
+    setSeverityFilter("all");
     setWorkflowFilter("all");
     setRunFilter("all");
     void refresh();
+    return () => {
+      refreshRef.current += 1;
+      scopeRef.current += 1;
+    };
   }, [project.id, project.run_ids.join("\0")]);
 
   const runsById = useMemo(
@@ -295,19 +340,23 @@ export default function ProjectIssueLedgerPanel({
     note: string,
   ) => {
     if (pendingIssueId) return;
+    const scope = scopeRef.current;
     setPendingIssueId(issue.id);
     setError(null);
     try {
-      installLedger(
-        await invoke<ProjectIssueLedger>("update_project_issue", {
-          projectId: project.id,
-          issueId: issue.id,
-          status,
-          note,
-        }),
-      );
+      const updated = await invoke<ProjectIssueLedger>("update_project_issue", {
+        projectId: project.id,
+        issueId: issue.id,
+        status,
+        note,
+      });
+      if (scope !== scopeRef.current) return;
+      // The saved note may differ from the draft (the backend trims it).
+      dropDrafts([issue.id], note);
+      installLedger(updated);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (scope === scopeRef.current)
+        setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setPendingIssueId(null);
     }
@@ -316,16 +365,30 @@ export default function ProjectIssueLedgerPanel({
   const mergeIssue = async (issue: ProjectIssue) => {
     const targetIssueId = mergeTargets[issue.id];
     if (!targetIssueId || pendingIssueId) return;
+    const scope = scopeRef.current;
+    const target = ledger?.issues.find((i) => i.id === targetIssueId);
+    const confirmed = await confirmDialog(
+      `“${issue.title}” will be removed and its report observations moved to “${target?.title ?? "the chosen issue"}”. This can't be undone.`,
+      {
+        title: "Combine these issues?",
+        confirmLabel: "Combine",
+        destructive: true,
+      },
+    );
+    if (!confirmed || scope !== scopeRef.current) return;
     setPendingIssueId(issue.id);
     setError(null);
     try {
-      installLedger(
-        await invoke<ProjectIssueLedger>("merge_project_issues", {
-          projectId: project.id,
-          sourceIssueId: issue.id,
-          targetIssueId,
-        }),
-      );
+      const merged = await invoke<ProjectIssueLedger>("merge_project_issues", {
+        projectId: project.id,
+        sourceIssueId: issue.id,
+        targetIssueId,
+      });
+      if (scope !== scopeRef.current) return;
+      // The merge rewrites the target's note; show it rather than the
+      // target's pre-merge draft.
+      dropDrafts([issue.id, targetIssueId]);
+      installLedger(merged);
       setExpanded((current) => {
         const next = new Set(current);
         next.delete(issue.id);
@@ -333,7 +396,8 @@ export default function ProjectIssueLedgerPanel({
         return next;
       });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
+      if (scope === scopeRef.current)
+        setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setPendingIssueId(null);
     }
@@ -364,7 +428,7 @@ export default function ProjectIssueLedgerPanel({
   if (loading && !ledger) {
     return (
       <div className="rounded-xl border border-gray-200 px-4 py-10 text-center text-sm text-gray-500 dark:border-gray-800 dark:text-gray-400">
-        Refreshing issue ledger…
+        Refreshing findings…
       </div>
     );
   }
@@ -374,13 +438,12 @@ export default function ProjectIssueLedgerPanel({
       <div className="flex flex-wrap items-start gap-4">
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-            Issue ledger
+            Findings across reviews
           </h2>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-gray-500 dark:text-gray-400">
-            Findings are matched conservatively across structured reports.
-            Collection decisions persist; a missing finding is never treated as
-            addressed automatically. The ledger works the same way for
-            documents, source trees, and input-free reports.
+            Track related findings across reports. Pipeline links clear matches
+            and keeps your decisions. A finding stays open when a later report
+            omits it, until you mark it addressed.
           </p>
         </div>
         <div className="flex gap-2">
@@ -409,6 +472,7 @@ export default function ProjectIssueLedgerPanel({
           className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-300"
         >
           {error}
+          <ReportIssueLink />
         </div>
       )}
       {ledger && ledger.warnings.length > 0 && (
@@ -482,12 +546,12 @@ export default function ProjectIssueLedgerPanel({
           ))}
         </select>
         <select
-          aria-label="Issue workflow filter"
+          aria-label="Issue review type filter"
           value={workflowFilter}
           onChange={(event) => setWorkflowFilter(event.target.value)}
           className="rounded-lg border border-gray-300 bg-white px-2 py-2 text-xs dark:border-gray-700 dark:bg-gray-900"
         >
-          <option value="all">All workflows</option>
+          <option value="all">All review types</option>
           {workflows.map(([id, name]) => (
             <option key={id} value={id}>
               {name}
@@ -772,7 +836,7 @@ export default function ProjectIssueLedgerPanel({
             </article>
           );
         })}
-        {!loading && visibleIssues.length === 0 && (
+        {!loading && !error && visibleIssues.length === 0 && (
           <div className="rounded-xl border border-dashed border-gray-300 px-5 py-10 text-center dark:border-gray-700">
             <p className="text-sm text-gray-600 dark:text-gray-300">
               {ledger?.issues.length
@@ -780,9 +844,8 @@ export default function ProjectIssueLedgerPanel({
                 : "No structured issues were found in this collection’s reports."}
             </p>
             <p className="mx-auto mt-1 max-w-xl text-xs leading-5 text-gray-500 dark:text-gray-400">
-              Issues appear here when a workflow saves structured findings,
-              including older Paper Review reports. Reports saved only as prose
-              do not populate this list.
+              Findings appear here when a review saves them as individual items.
+              Reports containing only prose do not add items to this list.
             </p>
           </div>
         )}

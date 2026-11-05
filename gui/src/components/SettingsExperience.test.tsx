@@ -110,10 +110,10 @@ it("finds synonyms, shows current values, and opens an advanced parser control",
   const search = await screen.findByRole("searchbox");
   await user.type(search, "OCR formula");
   await user.click(
-    screen.getByRole("button", { name: /Retain formula numbers/ }),
+    screen.getByRole("button", { name: /Keep equation numbers/ }),
   );
   const toggle = await screen.findByRole("switch", {
-    name: "Retain formula numbers",
+    name: "Keep equation numbers",
   });
   await waitFor(() => expect(toggle).toHaveFocus());
   expect(toggle.closest("details")).toHaveAttribute("open");
@@ -146,7 +146,7 @@ it("does not persist an empty retention field and only commits valid input", asy
   const input = await screen.findByLabelText("Review history size limit in GB");
   await user.clear(input);
   await user.tab();
-  expect(input).toHaveAttribute("aria-invalid", "true");
+  await waitFor(() => expect(input).toHaveAttribute("aria-invalid", "true"));
   expect(
     mocks.invoke.mock.calls.some(([name]) => name === "save_settings"),
   ).toBe(false);
@@ -161,6 +161,26 @@ it("does not persist an empty retention field and only commits valid input", asy
   );
   const card = input.closest(".settings-card") as HTMLElement;
   await waitFor(() => expect(within(card).getByText("Saved")).toBeVisible());
+});
+it("shows why a connection check failed without an error prefix", async () => {
+  const user = userEvent.setup();
+  mocks.invoke.mockResolvedValue({
+    readiness: {
+      deps: [
+        { name: "Claude CLI", found: false, hint: "Install Claude Code." },
+      ],
+    },
+  });
+  render(
+    <ConnectionStatus
+      provider="claude"
+      settings={makeSettings()}
+      onCheck={vi.fn()}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Check connection" }));
+  expect(await screen.findByText(/Install Claude Code\./)).toBeVisible();
+  expect(screen.queryByText(/Error:/)).not.toBeInTheDocument();
 });
 it("discards an old sign-in check when the connection changes", async () => {
   const user = userEvent.setup();
@@ -198,9 +218,7 @@ it("discards an old sign-in check when the connection changes", async () => {
     }),
   );
   expect(screen.getByText("API key required")).toBeVisible();
-  expect(
-    screen.queryByText("Subscription sign-in verified."),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByText("Signed in")).not.toBeInTheDocument();
   expect(onCheck).not.toHaveBeenCalled();
   expect(
     screen.getByRole("button", { name: "Check connection" }),
@@ -228,9 +246,14 @@ it("keeps the desktop setting off when permission is denied", async () => {
 it("reports local preference write failures without applying the change", async () => {
   view();
   const select = await screen.findByLabelText("Interface text size");
-  const write = vi.spyOn(localStorage, "setItem").mockImplementation(() => {
-    throw new Error("full");
-  });
+  const setItem = localStorage.setItem.bind(localStorage);
+  const write = vi
+    .spyOn(localStorage, "setItem")
+    .mockImplementation((key, value) => {
+      // Inject the preference failure without failing unrelated panel-width effects.
+      if (key === PREFERENCES_KEY) throw new Error("full");
+      setItem(key, value);
+    });
   fireEvent.change(select, { target: { value: "125" } });
   expect(screen.getByRole("alert")).toHaveTextContent(
     "Could not save this preference",

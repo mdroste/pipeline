@@ -5,7 +5,10 @@ import Button from "../ui/Button";
 import Skeleton from "../ui/Skeleton";
 import { Menu, MenuItem } from "../ui/Menu";
 import { Icon } from "../ui/icons";
-import type { ConversationSnapshot } from "../lib/workbenchTypes";
+import type {
+  ConversationSnapshot,
+  SessionSnapshot,
+} from "../lib/workbenchTypes";
 
 const WorkspaceAttachmentsPanel = lazy(
   () => import("./WorkspaceAttachmentsPanel"),
@@ -24,7 +27,7 @@ export default function WorkspaceComposerMenu({
 }: {
   snapshot: ConversationSnapshot | null;
   disabled: boolean;
-  onSnapshot: (next: ConversationSnapshot) => void;
+  onSnapshot: (next: SessionSnapshot) => void;
   onBusy: (busy: boolean) => void;
   /** Open project navigation, for a conversation that has no project yet. */
   onBrowseProjects: () => void;

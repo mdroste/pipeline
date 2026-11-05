@@ -1,7 +1,11 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { workbenchClient } from "../lib/workbenchClient";
+import { releaseClient } from "../lib/workbench/releaseClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
+import { confirmDialog, notify } from "./DialogService";
+import WorkspaceRestoreRootsDialog, {
+  type RootMappings,
+} from "./WorkspaceRestoreRootsDialog";
 import type {
   ConversationSnapshot,
   PaperWithRevision,
@@ -11,23 +15,21 @@ import type {
 
 const ExchangePanel = lazy(() => import("./WorkspaceExchangePanel"));
 
+const plural = (count: number, noun: string) =>
+  `${count} ${noun}${count === 1 ? "" : "s"}`;
+
 function operation(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
-function parseRootMappings(value: string): Record<string, string | null> {
-  const parsed: unknown = JSON.parse(value);
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Workspace root mappings must be a JSON object.");
+/** Long enough to recognize the damage, short enough to fit in a dialog. */
+const LISTED_FILES = 12;
+function fileList(names: string[]) {
+  const listed = names.slice(0, LISTED_FILES).map((name) => `• ${name}`);
+  if (names.length > LISTED_FILES) {
+    listed.push(`• and ${names.length - LISTED_FILES} more`);
   }
-  for (const [root, replacement] of Object.entries(parsed)) {
-    if (!root || (replacement !== null && typeof replacement !== "string")) {
-      throw new Error(
-        "Each root mapping must use a nonempty path and a string or null value.",
-      );
-    }
-  }
-  return parsed as Record<string, string | null>;
+  return listed.join("\n");
 }
 
 interface WorkspaceReleasePanelProps {
@@ -53,64 +55,113 @@ export default function WorkspaceReleasePanel({
 }: WorkspaceReleasePanelProps) {
   const workspaceId = projectId ?? snapshot?.session.workspaceId ?? null;
   const [budgets, setBudgets] = useState<PerformanceBudget[]>([]);
+  const [restoreRoots, setRestoreRoots] = useState<string[] | null>(null);
+  const rootMappingAnswer = useRef<
+    ((value: RootMappings | null) => void) | null
+  >(null);
+
+  useEffect(() => () => rootMappingAnswer.current?.(null), []);
+
+  const chooseRootMappings = (roots: string[]) =>
+    new Promise<RootMappings | null>((resolve) => {
+      rootMappingAnswer.current = resolve;
+      setRestoreRoots(roots);
+    });
+
+  const finishRootMappings = (mappings: RootMappings | null) => {
+    const answer = rootMappingAnswer.current;
+    rootMappingAnswer.current = null;
+    setRestoreRoots(null);
+    answer?.(mappings);
+  };
 
   useEffect(() => {
     if (view !== "all" && view !== "diagnostics") return;
-    void workbenchClient
+    void releaseClient
       .performanceBudgets()
       .then(setBudgets)
       .catch((cause) => onError(workbenchErrorMessage(cause)));
   }, [onError, view]);
 
   const exportArchive = async () => {
+    const missing = await releaseClient.missingBackupFiles();
+    if (
+      missing.length &&
+      !(await confirmDialog(
+        `The files behind ${plural(missing.length, "saved item")} are missing from your research data folder, so a backup can't include them:\n${fileList(missing.map((file) => file.description))}\n\nEverything else will be saved. After restoring, these items stay in your projects and show as unavailable. If you still have the files, cancel and copy them back first.`,
+        {
+          title: "Back up without these files?",
+          confirmLabel: "Back up without them",
+        },
+      ))
+    )
+      return;
     const path = await save({
       defaultPath: "workspace-research.pwrx",
-      filters: [{ name: "Workspace research archive", extensions: ["pwrx"] }],
+      filters: [{ name: "Research backup", extensions: ["pwrx"] }],
     });
     if (!path) return;
-    const report = await workbenchClient.exportResearchArchive(path);
-    window.alert(
-      `Exported ${report.workspaceCount} workspace(s), ${report.sessionCount} conversation(s), and ${report.blobCount} file(s).\n\n${report.portabilityNote}`,
+    const report = await releaseClient.exportResearchArchive(
+      path,
+      missing.map((file) => file.reference),
     );
+    const summary = `Exported ${plural(report.workspaceCount, "project")}, ${plural(report.sessionCount, "conversation")}, and ${plural(report.blobCount, "file")}.`;
+    if (report.omittedFiles.length) {
+      await confirmDialog(
+        `${summary}\n\nLeft out because their files were missing:\n${fileList(report.omittedFiles)}\n\n${report.portabilityNote}`,
+        {
+          title: "Backup saved without some files",
+          confirmLabel: "OK",
+          acknowledgeOnly: true,
+        },
+      );
+      return;
+    }
+    notify(`${summary}\n\n${report.portabilityNote}`, "success");
   };
 
   const restoreArchive = async () => {
     const path = await open({
       multiple: false,
-      filters: [{ name: "Workspace research archive", extensions: ["pwrx"] }],
+      filters: [{ name: "Research backup", extensions: ["pwrx"] }],
     });
     if (typeof path !== "string") return;
-    const inspection = await workbenchClient.inspectResearchArchive(path);
+    const inspection = await releaseClient.inspectResearchArchive(path);
     const roots = inspection.workspaceRoots.length
       ? inspection.workspaceRoots.map((root) => `• ${root}`).join("\n")
-      : "• No registered Workspace roots";
+      : "• None";
+    const leftOut = inspection.omittedFileCount
+      ? `This backup was made without ${plural(inspection.omittedFileCount, "file")} that had gone missing. The items that used them come back as unavailable.\n\n`
+      : "";
     if (
-      !window.confirm(
-        `You can restore only when Workspace has no saved research data. Restoring does not run any tools. Conversations restart from saved context, and command profiles must be tested again.\n\nProject folders in this backup:\n${roots}\n\n${inspection.portabilityNote}\n\nContinue?`,
-      )
+      !(await confirmDialog(
+        `You can restore only if Pipeline has no saved projects or conversations. Conversations restart from saved context. Test your command profiles again after restoring.\n\nProject folders in this backup:\n${roots}\n\n${leftOut}${inspection.portabilityNote}`,
+        { title: "Restore research backup", confirmLabel: "Continue" },
+      ))
     )
       return;
-    const defaultMappings = Object.fromEntries(
-      inspection.workspaceRoots.map((root) => [root, null]),
-    );
-    const mappingText = window.prompt(
-      `Choose a new absolute path for every archived Workspace root, or leave its value null to detach it.\n\nArchived roots:\n${roots}`,
-      JSON.stringify(defaultMappings, null, 2),
-    );
-    if (mappingText === null) return;
-    const report = await workbenchClient.importResearchArchive(
-      path,
-      parseRootMappings(mappingText),
-    );
-    window.alert(
-      `Restored ${report.workspaceCount} workspace(s) and ${report.sessionCount} conversation(s).\n\n${report.portabilityNote}`,
+    const mappings = inspection.workspaceRoots.length
+      ? await chooseRootMappings(inspection.workspaceRoots)
+      : {};
+    if (!mappings) return;
+    const report = await releaseClient.importResearchArchive(path, mappings);
+    const unavailable = report.omittedFiles.length
+      ? `Unavailable because their files were missing from this backup:\n${fileList(report.omittedFiles)}\n\n`
+      : "";
+    await confirmDialog(
+      `Restored ${plural(report.workspaceCount, "project")} and ${plural(report.sessionCount, "conversation")}.\n\n${unavailable}${report.portabilityNote}`,
+      {
+        title: "Research backup restored",
+        confirmLabel: "OK",
+        acknowledgeOnly: true,
+      },
     );
     window.location.reload();
   };
 
   const handoffToReview = async () => {
     if (!workspaceId || !selectedPaper?.revision || !onReviewHandoff) return;
-    const handoff = await workbenchClient.prepareReviewHandoff({
+    const handoff = await releaseClient.prepareReviewHandoff({
       workspaceId,
       sessionId: snapshot?.session.id ?? null,
       paperId: selectedPaper.paper.id,
@@ -122,16 +173,21 @@ export default function WorkspaceReleasePanel({
 
   return (
     <div className="space-y-4">
+      {restoreRoots && (
+        <WorkspaceRestoreRootsDialog
+          roots={restoreRoots}
+          onDone={finishRootMappings}
+        />
+      )}
       {(view === "all" || view === "backup") && (
         <section>
           <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
             Research backup
           </h3>
           <p className="mt-1 text-xs text-gray-500">
-            Back up project records, retained research files, conversation
-            working files, and transcripts in Markdown and JSON. External
-            project folders, Review and Automation stores, Trash, and sign-in
-            details are excluded. Back up external folders separately.
+            Saves your projects, research files, and conversations to one file.
+            It leaves out attached project folders, reviews, automations, Trash,
+            and sign-ins. Back up attached folders separately.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <button
@@ -148,7 +204,7 @@ export default function WorkspaceReleasePanel({
               onClick={() => onAction(restoreArchive)}
               className="rounded border px-3 py-2 text-xs"
             >
-              Restore archive
+              Restore research backup
             </button>
           </div>
         </section>
@@ -177,7 +233,7 @@ export default function WorkspaceReleasePanel({
             Paper review
           </h3>
           <p className="mt-1 text-xs text-gray-500">
-            Review a saved copy of this paper. Choose the workflow and models in
+            Review a saved copy of this paper. Choose the review and models in
             the preview before starting.
           </p>
           <button
@@ -194,9 +250,8 @@ export default function WorkspaceReleasePanel({
             Review this revision…
           </button>
           <p className="mt-2 text-[10px] text-gray-500">
-            The review receives the paper and its selected metadata. It uses
-            your Reviews settings and sign-in, and does not include project
-            notes.
+            Send the paper and selected document details using your Reviews
+            settings and account. Project notes stay out of the review.
           </p>
         </section>
       )}
@@ -225,9 +280,8 @@ export default function WorkspaceReleasePanel({
 
       {(view === "all" || view === "backup") && (
         <p className="rounded border border-blue-200 bg-blue-50 p-2 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
-          After restoring, sign in to ChatGPT to continue. New replies use your
-          reviewed notes and selected evidence; earlier messages remain in the
-          saved transcript.
+          After restoring, sign in to ChatGPT. Conversations restart from your
+          notes and evidence. You can still read earlier messages.
         </p>
       )}
     </div>

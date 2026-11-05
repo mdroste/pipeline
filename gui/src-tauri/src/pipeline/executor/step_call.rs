@@ -1,7 +1,23 @@
 //! One supervised unit call: retries, validation and response journaling.
 use super::findings::{check_finding_lineage, check_validation_dispositions, PreservedFinding};
 use crate::output::{extract_report_envelope, normalize_math_delimiters};
+use crate::pipeline::unit_files;
 use std::sync::Arc;
+use std::time::Duration;
+
+/// Waits before each retry of a throttled call. Provider rate windows last
+/// about a minute, outlasting a CLI's own retries, so an immediate retry only
+/// spends the attempt. The step keeps its worker slot, which also eases the
+/// pressure that caused the throttling.
+const THROTTLE_RETRY_WAIT_SECS: [u64; 2] = [60, 120];
+
+fn throttle_retry_wait(error: &str, attempt: u32, max_retries: u32) -> Option<Duration> {
+    if attempt >= max_retries || !crate::pipeline::provider_error::is_throttling_error(error) {
+        return None;
+    }
+    let index = (attempt as usize).min(THROTTLE_RETRY_WAIT_SECS.len() - 1);
+    Some(Duration::from_secs(THROTTLE_RETRY_WAIT_SECS[index]))
+}
 
 pub(super) fn is_cancellation_error(error: &str) -> bool {
     crate::commands::is_pipeline_cancellation_error(error)
@@ -86,6 +102,7 @@ pub(super) struct StepCallRequest<'a> {
     pub(super) shared_context: Option<Arc<crate::pipeline::context_cache::PreparedContext>>,
 }
 
+#[derive(Default)]
 pub(super) struct StepCallResult {
     pub(super) text: String,
     pub(super) duration_secs: u64,
@@ -93,6 +110,14 @@ pub(super) struct StepCallResult {
     pub(super) attempt_count: u32,
     pub(super) usage_limit_fallbacks: Vec<crate::pipeline::call::UsageLimitFallback>,
     pub(super) effective_fallback: Option<crate::pipeline::call::UsageLimitFallback>,
+}
+
+/// A step call that ended without an accepted response. `spent` describes
+/// every provider attempt it made, with empty text, so the Review's cost
+/// limit can count attempts that left no output.
+pub(super) struct StepCallFailure {
+    pub(super) error: String,
+    pub(super) spent: StepCallResult,
 }
 
 pub(super) async fn capture_response(
@@ -140,6 +165,44 @@ pub(super) async fn finish_response_capture(
 pub(super) async fn execute_step_call(
     request: StepCallRequest<'_>,
 ) -> Result<StepCallResult, String> {
+    execute_metered_step_call(request)
+        .await
+        .map_err(|failure| failure.error)
+}
+
+/// [`execute_step_call`], keeping the usage of a call that fails.
+pub(super) async fn execute_metered_step_call(
+    request: StepCallRequest<'_>,
+) -> Result<StepCallResult, StepCallFailure> {
+    let mut spent = StepCallResult::default();
+    let app = request.app;
+    let unit_root = request.write_dir;
+    if let Err(error) = unit_root.map_or(Ok(()), unit_files::begin_call) {
+        return Err(StepCallFailure { error, spent });
+    }
+    match run_step_call_attempts(request, &mut spent).await {
+        Ok(text) => match unit_root.map_or(Ok(()), unit_files::accept_call) {
+            Ok(()) => Ok(StepCallResult { text, ..spent }),
+            Err(error) => Err(StepCallFailure { error, spent }),
+        },
+        Err(error) => {
+            if let Some(root) = unit_root {
+                if let Err(reason) = unit_files::reject_call(root).await {
+                    crate::pipeline::logging::emit(app, format!("WARNING: {reason}"));
+                }
+            }
+            Err(StepCallFailure { error, spent })
+        }
+    }
+}
+
+/// Runs the attempts of one step call and returns the accepted text. Every
+/// attempt's duration, usage and fallbacks accumulate in `spent`, whatever
+/// the outcome.
+async fn run_step_call_attempts(
+    request: StepCallRequest<'_>,
+    spent: &mut StepCallResult,
+) -> Result<String, String> {
     let timeout = request.settings.step_timeout_secs.max(60);
     let max_retries = request.settings.max_retries;
     let text_artifact_schema = request
@@ -151,9 +214,6 @@ pub(super) async fn execute_step_call(
         .or(text_artifact_schema.as_ref())
         .expect("every step artifact has a terminal JSON schema");
     let mut last_error = String::new();
-    let mut total_duration_secs = 0u64;
-    let mut total_usage = crate::pipeline::logging::CallUsage::default();
-    let mut usage_limit_fallbacks = Vec::new();
 
     for attempt in 0..=max_retries {
         let attempt_number = attempt.saturating_add(1);
@@ -172,6 +232,10 @@ pub(super) async fn execute_step_call(
                 "pipeline:pass",
                 serde_json::json!({ "name": request.pass_key, "status": "running" }),
             );
+            // What the rejected attempt wrote must not pass as this attempt's.
+            if let Some(root) = request.write_dir {
+                unit_files::set_aside_files(root).await?;
+            }
         }
 
         // Consume any stale compatibility file before starting this attempt.
@@ -217,11 +281,16 @@ pub(super) async fn execute_step_call(
             shared_context: request.shared_context.clone(),
         })
         .await;
-        total_duration_secs = total_duration_secs.saturating_add(call.duration_secs);
-        total_usage.add_usage(call.usage);
-        let call_fallback = call.usage_limit_fallback.clone();
-        if let Some(fallback) = call_fallback.clone() {
-            usage_limit_fallbacks.push(fallback);
+        spent.duration_secs = spent.duration_secs.saturating_add(call.duration_secs);
+        spent.usage.add_usage(call.usage);
+        spent.attempt_count =
+            u32::try_from(spent.usage.provider_attempts.max(u64::from(attempt_number)))
+                .unwrap_or(u32::MAX);
+        spent
+            .effective_fallback
+            .clone_from(&call.usage_limit_fallback);
+        if let Some(fallback) = call.usage_limit_fallback.clone() {
+            spent.usage_limit_fallbacks.push(fallback);
         }
 
         let compatibility_file = ingest_report_file(request.write_dir, request.report_rel).await;
@@ -391,6 +460,21 @@ pub(super) async fn execute_step_call(
                     {
                         return Err(error);
                     }
+                    if let Some(wait) = throttle_retry_wait(&error, attempt, max_retries) {
+                        let _ = request.app.emit_event(
+                            "pipeline:log",
+                            serde_json::json!({ "line": format!(
+                                "{}: provider is limiting requests; waiting {}s before retrying",
+                                request.log_label,
+                                wait.as_secs(),
+                            )}),
+                        );
+                        crate::commands::await_or_cancel(
+                            tokio::time::sleep(wait),
+                            Some(request.pass_key),
+                        )
+                        .await?;
+                    }
                     last_error = error;
                     continue;
                 }
@@ -467,19 +551,7 @@ pub(super) async fn execute_step_call(
         )
         .await?;
 
-        return Ok(StepCallResult {
-            text,
-            duration_secs: total_duration_secs,
-            usage: total_usage,
-            attempt_count: u32::try_from(
-                total_usage
-                    .provider_attempts
-                    .max(u64::from(attempt.saturating_add(1))),
-            )
-            .unwrap_or(u32::MAX),
-            usage_limit_fallbacks,
-            effective_fallback: call_fallback,
-        });
+        return Ok(text);
     }
 
     Err(if last_error.is_empty() {

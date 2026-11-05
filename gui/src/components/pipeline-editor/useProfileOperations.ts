@@ -1,5 +1,5 @@
+import { workflowProfileClient } from "../../lib/workflowProfileClient";
 import { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import type {
   PipelineConfig,
@@ -8,16 +8,24 @@ import type {
   ExportEnvelope,
   Settings,
 } from "../../lib/types";
+import { DEFAULT_PROFILE_ID } from "../../lib/autoReview";
+import {
+  forgetWorkflowDraft,
+  workflowDraftKey,
+} from "../../lib/workflowDraftRecovery";
 
 import { confirmDialog, notify } from "../DialogService";
 
+import { uniqueStepId } from "./editorState";
 import { normalizeConfig } from "./utils";
 
 import type { WorkflowEditor } from "./useWorkflowEditor";
 export function useProfileOperations(
   editor: WorkflowEditor,
   settings: Settings | null,
-  onProfileChange?: () => void,
+  /** Called after any change to the active workflow. A save passes the saved
+   *  configuration, so the run setup can keep an input that still fits. */
+  onProfileChange?: (config?: PipelineConfig) => void,
 ) {
   const {
     config,
@@ -55,54 +63,62 @@ export function useProfileOperations(
     [],
   );
 
+  // The stored draft of a workflow, if it differs from the saved one and the
+  // researcher wants it back.
+  const offerStoredDraft = async (
+    profile: string,
+    saved: PipelineConfig,
+  ): Promise<PipelineConfig | null> => {
+    const draftKey = workflowDraftKey(profile);
+    let storedDraft: string | null = null;
+    try {
+      storedDraft = window.localStorage.getItem(draftKey);
+    } catch {
+      editor.disableRecoveryCache();
+    }
+    if (!storedDraft) return null;
+    try {
+      const candidate = normalizeConfig(
+        JSON.parse(storedDraft) as PipelineConfig,
+      );
+      if (
+        JSON.stringify(candidate) !== JSON.stringify(saved) &&
+        (await confirmDialog(
+          "Pipeline found an unsaved draft for this review. Restore it?",
+          {
+            title: "Recover review draft",
+            confirmLabel: "Restore draft",
+          },
+        ))
+      ) {
+        return candidate;
+      }
+    } catch {
+      try {
+        window.localStorage.removeItem(draftKey);
+      } catch {
+        editor.disableRecoveryCache();
+      }
+    }
+    return null;
+  };
+
   useEffect(() => {
     let live = true;
     setLoading(true);
     setLoadError(null);
     Promise.all([
-      invoke<PipelineConfig>("get_pipeline_config"),
-      invoke<ProfileSummary[]>("list_profiles"),
-      invoke<string>("get_active_profile"),
+      workflowProfileClient.config(),
+      workflowProfileClient.profiles(),
+      workflowProfileClient.active(),
     ])
       .then(async ([c, p, a]) => {
         if (!live) return;
         const normalized = normalizeConfig(c);
-        const draftKey = `pipeline.workflowDraft.${a}`;
-        let restored = normalized;
-        let savedDraft: string | null = null;
-        try {
-          savedDraft = window.localStorage.getItem(draftKey);
-        } catch {
-          editor.disableRecoveryCache();
-        }
-        if (savedDraft) {
-          try {
-            const candidate = normalizeConfig(
-              JSON.parse(savedDraft) as PipelineConfig,
-            );
-            if (
-              JSON.stringify(candidate) !== JSON.stringify(normalized) &&
-              (await confirmDialog(
-                "Pipeline found an unsaved draft for this workflow. Restore it?",
-                {
-                  title: "Recover workflow draft",
-                  confirmLabel: "Restore draft",
-                },
-              ))
-            ) {
-              restored = candidate;
-              setDirty(true);
-            }
-          } catch {
-            try {
-              window.localStorage.removeItem(draftKey);
-            } catch {
-              editor.disableRecoveryCache();
-            }
-          }
-        }
+        const draft = await offerStoredDraft(a, normalized);
+        if (draft) setDirty(true);
         if (!live) return;
-        replaceDraft(restored, normalized, a, false);
+        replaceDraft(draft ?? normalized, normalized, a, false);
         setProfiles(p);
         setActiveProfile(a);
         setLoading(false);
@@ -139,7 +155,7 @@ export function useProfileOperations(
 
   const refreshProfiles = async (request?: number) => {
     try {
-      const p = await invoke<ProfileSummary[]>("list_profiles");
+      const p = await workflowProfileClient.profiles();
       if (request !== undefined && !profileMutationIsCurrent(request)) return;
       setProfiles(p);
     } catch (e) {
@@ -150,10 +166,17 @@ export function useProfileOperations(
   };
 
   const switchProfileForMutation = async (id: string, request: number) => {
-    const newConfig = await invoke<PipelineConfig>("switch_profile", { id });
+    const previous = activeProfileRef.current;
+    const newConfig = await workflowProfileClient.switch({ id });
     if (!profileMutationIsCurrent(request)) return false;
     const normalized = normalizeConfig(newConfig);
-    replaceDraft(normalized, normalized, id, true);
+    const draft = await offerStoredDraft(id, normalized);
+    if (!profileMutationIsCurrent(request)) return false;
+    // Every caller confirmed leaving the previous workflow and its edits, so
+    // its recovery copy must not come back on the next visit.
+    if (previous !== id) forgetWorkflowDraft(previous);
+    replaceDraft(draft ?? normalized, normalized, id, true);
+    if (draft) setDirty(true);
     onProfileChange?.();
     return true;
   };
@@ -165,7 +188,7 @@ export function useProfileOperations(
     if (
       dirty &&
       !(await confirmDialog(
-        "You have unsaved changes. Switch workflow and discard them?",
+        "You have unsaved changes. Switch review and discard them?",
         { destructive: true },
       ))
     )
@@ -177,7 +200,7 @@ export function useProfileOperations(
     } catch (e) {
       if (profileMutationIsCurrent(request)) {
         notify(
-          `Failed to switch workflow: ${e instanceof Error ? e.message : String(e)}`,
+          `Failed to switch review: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     } finally {
@@ -187,13 +210,13 @@ export function useProfileOperations(
 
   const handleNewProfile = () => {
     setPromptDialog({
-      title: "New profile name",
+      title: "New review name",
       defaultValue: "",
       onSubmit: async (name) => {
         if (
           dirty &&
           !(await confirmDialog(
-            "Create this workflow and discard the current unsaved changes?",
+            "Create this review and discard the current unsaved changes?",
             { destructive: true },
           ))
         ) {
@@ -202,7 +225,7 @@ export function useProfileOperations(
         const request = beginProfileMutation();
         if (request === null) return;
         try {
-          const summary = await invoke<ProfileSummary>("create_profile", {
+          const summary = await workflowProfileClient.create({
             name,
           });
           if (!profileMutationIsCurrent(request)) return;
@@ -211,7 +234,7 @@ export function useProfileOperations(
         } catch (e) {
           if (profileMutationIsCurrent(request)) {
             notify(
-              `Failed to create workflow: ${e instanceof Error ? e.message : String(e)}`,
+              `Failed to create review: ${e instanceof Error ? e.message : String(e)}`,
             );
           }
         } finally {
@@ -229,7 +252,7 @@ export function useProfileOperations(
         if (
           dirty &&
           !(await confirmDialog(
-            "Duplicate this workflow and discard the current unsaved changes?",
+            "Duplicate this review and discard the current unsaved changes?",
             { destructive: true },
           ))
         ) {
@@ -239,7 +262,7 @@ export function useProfileOperations(
         if (request === null) return;
         const sourceId = activeProfileRef.current;
         try {
-          const summary = await invoke<ProfileSummary>("duplicate_profile", {
+          const summary = await workflowProfileClient.duplicate({
             sourceId,
             newName: name,
           });
@@ -249,7 +272,7 @@ export function useProfileOperations(
         } catch (e) {
           if (profileMutationIsCurrent(request)) {
             notify(
-              `Failed to duplicate workflow: ${e instanceof Error ? e.message : String(e)}`,
+              `Failed to duplicate review: ${e instanceof Error ? e.message : String(e)}`,
             );
           }
         } finally {
@@ -263,13 +286,13 @@ export function useProfileOperations(
     const current = profiles.find((p) => p.id === activeProfile);
     const profile = activeProfile;
     setPromptDialog({
-      title: "Rename profile",
+      title: "Rename review",
       defaultValue: current?.name ?? "",
       onSubmit: async (name) => {
         const request = beginProfileMutation();
         if (request === null) return;
         try {
-          await invoke<ProfileSummary>("rename_profile", {
+          await workflowProfileClient.rename({
             id: profile,
             newName: name,
           });
@@ -282,7 +305,7 @@ export function useProfileOperations(
         } catch (e) {
           if (profileMutationIsCurrent(request)) {
             notify(
-              `Failed to rename workflow: ${e instanceof Error ? e.message : String(e)}`,
+              `Failed to rename review: ${e instanceof Error ? e.message : String(e)}`,
             );
           }
         } finally {
@@ -295,28 +318,28 @@ export function useProfileOperations(
   const handleDeleteProfile = async () => {
     const profile = activeProfileRef.current;
     if (profiles.find((candidate) => candidate.id === profile)?.builtin) {
-      notify("Built-in workflows cannot be deleted.", "info");
+      notify("Built-in reviews cannot be deleted.", "info");
       return;
     }
     const current = profiles.find((candidate) => candidate.id === profile);
     if (
       !(await confirmDialog(
-        `Delete workflow “${current?.name ?? profile}”? This cannot be undone.`,
-        { title: "Delete workflow", confirmLabel: "Delete", destructive: true },
+        `Delete review “${current?.name ?? profile}”? This cannot be undone.`,
+        { title: "Delete review", confirmLabel: "Delete", destructive: true },
       ))
     )
       return;
     const request = beginProfileMutation();
     if (request === null) return;
     try {
-      await invoke("delete_profile", { id: profile });
+      await workflowProfileClient.remove({ id: profile });
       if (!profileMutationIsCurrent(request)) return;
       await refreshProfiles(request);
-      await switchProfileForMutation("auto-review", request);
+      await switchProfileForMutation(DEFAULT_PROFILE_ID, request);
     } catch (e) {
       if (profileMutationIsCurrent(request)) {
         notify(
-          `Failed to delete workflow: ${e instanceof Error ? e.message : String(e)}`,
+          `Failed to delete review: ${e instanceof Error ? e.message : String(e)}`,
         );
       }
     } finally {
@@ -332,7 +355,7 @@ export function useProfileOperations(
     setSaving(true);
     setSaved(false);
     try {
-      await invoke("save_pipeline_config", {
+      await workflowProfileClient.save({
         config: configToSave,
         profileId: profileToSave,
       });
@@ -345,7 +368,9 @@ export function useProfileOperations(
         setDirty(false);
       }
       await refreshProfiles();
-      onProfileChange?.();
+      onProfileChange?.(
+        activeProfileRef.current === profileToSave ? configToSave : undefined,
+      );
       if (isCurrentVersion) setTimeout(() => setSaved(false), 2000);
       return isCurrentVersion;
     } catch (e) {
@@ -364,7 +389,7 @@ export function useProfileOperations(
     if (!dirty) return true;
     if (
       !(await confirmDialog(
-        `Exporting ${what} requires saving this profile's unsaved edits first. Save and continue?`,
+        `Exporting ${what} requires saving this review's unsaved edits first. Save and continue?`,
       ))
     ) {
       return false;
@@ -372,7 +397,7 @@ export function useProfileOperations(
     const currentSaved = await persistCurrentConfig();
     if (!currentSaved) {
       notify(
-        "Export cancelled because the workflow changed while it was being saved.",
+        "Export cancelled because the review changed while it was being saved.",
         "info",
       );
     }
@@ -382,8 +407,8 @@ export function useProfileOperations(
   const handleReset = async () => {
     if (
       !(await confirmDialog(
-        "Reset this workflow to defaults? All customizations will be lost.",
-        { title: "Reset workflow", confirmLabel: "Reset", destructive: true },
+        "Reset this review to defaults? All customizations will be lost.",
+        { title: "Reset review", confirmLabel: "Reset", destructive: true },
       ))
     )
       return;
@@ -391,7 +416,7 @@ export function useProfileOperations(
     if (request === null) return;
     const profile = activeProfileRef.current;
     try {
-      const d = await invoke<PipelineConfig>("reset_pipeline_config");
+      const d = await workflowProfileClient.reset();
       if (
         !profileMutationIsCurrent(request) ||
         activeProfileRef.current !== profile
@@ -430,7 +455,7 @@ export function useProfileOperations(
     const envelope: ExportEnvelope = { type: "step", data: editingStep };
     const suggestedName = `pipeline-step-${editingStep.id}.json`;
     try {
-      await invoke("export_item", {
+      await workflowProfileClient.exportItem({
         json: JSON.stringify(envelope, null, 2),
         suggestedName,
       });
@@ -442,8 +467,11 @@ export function useProfileOperations(
   const handleExportProfile = async () => {
     const suggestedName = `pipeline-profile-${activeProfile}.json`;
     try {
-      if (!(await saveBeforeExport("the profile"))) return;
-      await invoke("export_profile", { id: activeProfile, suggestedName });
+      if (!(await saveBeforeExport("the review"))) return;
+      await workflowProfileClient.exportProfile({
+        id: activeProfile,
+        suggestedName,
+      });
     } catch (e) {
       notify(`Export failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -452,7 +480,7 @@ export function useProfileOperations(
   const handleExportBundle = async () => {
     try {
       if (!(await saveBeforeExport("the settings bundle"))) return;
-      await invoke("export_bundle", {
+      await workflowProfileClient.exportBundle({
         suggestedName: "pipeline-settings-backup.json",
       });
     } catch (e) {
@@ -468,7 +496,7 @@ export function useProfileOperations(
         filters: [{ name: "JSON", extensions: ["json"] }],
       });
       if (!path) return;
-      const envelope = await invoke<ExportEnvelope>("import_item", { path });
+      const envelope = await workflowProfileClient.importItem({ path });
       switch (envelope.type) {
         case "step": {
           const imported = envelope.data as StepConfig;
@@ -487,14 +515,12 @@ export function useProfileOperations(
             !(await confirmDialog(
               `Import step “${step.label}”?\n\n` +
                 `Tools: ${step.tools?.join(", ") || "none"}\n` +
-                `Agents: ${step.agents?.join(", ") || "profile default"}${fanOut}\n` +
+                `Agents: ${step.agents?.join(", ") || "review default"}${fanOut}\n` +
                 `Maximum provider attempts from this step: ${attempts}`,
             ))
           )
             return;
-          const id = config.steps.some((s) => s.id === step.id)
-            ? `${step.id}_${Date.now()}`
-            : step.id;
+          const id = uniqueStepId(step.id, config.steps);
           setConfig({
             ...config,
             steps: [...config.steps, { ...step, id }],
@@ -525,15 +551,15 @@ export function useProfileOperations(
             logicalCalls * ((settings?.max_retries ?? 0) + 1) + mergeCalls;
           if (
             !(await confirmDialog(
-              `Import and activate profile “${envelope.name}”?\n\n` +
+              `Import and activate review “${envelope.name}”?\n\n` +
                 `${enabled.length} enabled steps; up to ${maxAttempts} provider attempts per report (including retries and merges).\n` +
                 `Tools: ${tools.join(", ") || "none"}\n` +
-                `Agents: ${agents.join(", ") || "profile default"}\n\n` +
-                "Review the imported prompts in the editor before generating a report.",
+                `Agents: ${agents.join(", ") || "review default"}\n\n` +
+                "Check the imported prompts in the designer before you start the review.",
             ))
           )
             return;
-          const summary = await invoke<ProfileSummary>("import_profile", {
+          const summary = await workflowProfileClient.importProfile({
             path,
           });
           await refreshProfiles();
@@ -543,23 +569,26 @@ export function useProfileOperations(
         case "bundle": {
           if (
             !(await confirmDialog(
-              `Import ${envelope.profiles.length} profiles plus provider/settings configuration?\n\n` +
-                "Existing profiles with the same ID will be overwritten. API-key fields and the active profile may change. Review the active profile before running it.",
+              `Import ${envelope.profiles.length} reviews plus provider/settings configuration?\n\n` +
+                "Existing reviews with the same ID will be overwritten. API-key fields and the active review may change. Check the active review before running it.",
             ))
           )
             return;
           const request = beginProfileMutation();
           if (request === null) return;
           try {
-            await invoke("import_bundle", { path });
+            await workflowProfileClient.importBundle({ path });
             const [c, p, a] = await Promise.all([
-              invoke<PipelineConfig>("get_pipeline_config"),
-              invoke<ProfileSummary[]>("list_profiles"),
-              invoke<string>("get_active_profile"),
+              workflowProfileClient.config(),
+              workflowProfileClient.profiles(),
+              workflowProfileClient.active(),
             ]);
             if (!profileMutationIsCurrent(request)) return;
             const normalized = normalizeConfig(c);
-            replaceDraft(normalized, normalized, a, true);
+            const draft = await offerStoredDraft(a, normalized);
+            if (!profileMutationIsCurrent(request)) return;
+            replaceDraft(draft ?? normalized, normalized, a, true);
+            if (draft) setDirty(true);
             setProfiles(p);
             onProfileChange?.();
           } finally {

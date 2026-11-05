@@ -1,6 +1,6 @@
 //! Pure portfolio transitions. Model judgments never authorize tools or accept evidence.
 use super::{
-    super::store::{hash, Result},
+    super::store::{hash, now, Result},
     model::*,
     validate,
 };
@@ -315,6 +315,7 @@ pub fn consume(
             } else if p.run.definition.mode == Mode::Supervised {
                 p.run.state = "awaitingSelection".into();
                 p.run.phase = Phase::Select;
+                p.run.selection_since = Some(now());
                 p.run.due_at = None;
                 p.run.reason = "Choose the projects to develop from the reviewed shortlist".into();
             } else {

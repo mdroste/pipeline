@@ -125,6 +125,7 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
         }
     }
     files.sort();
+    let omissions = super::folder_snapshot::folder_omissions(&canonical_root);
 
     let root_display = root.replace('\\', "/");
     let mut text = format!(
@@ -134,6 +135,7 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
     for (rel, size, _) in &files {
         text.push_str(&format!("| {rel} | {size} |\n"));
     }
+    text.push_str(&omissions.inventory_section());
     if truncated {
         text.push_str(&format!(
             "\n> Inventory truncated by its safety limits (maximum {MAX_INVENTORY_FILES} files, {MAX_INVENTORY_ENTRIES} entries, and {MAX_INVENTORY_DIRS} directories).\n"
@@ -147,7 +149,8 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
     }
 
     // Fingerprint the listing. Name, size, and mtime always contribute;
-    // content contributes up to a small per-file budget. A file that cannot
+    // content contributes up to a small per-file budget. A run reads its private
+    // copy, which keeps each original modified time. A file that cannot
     // be opened or read (permissions, cloud placeholder, deleted since the
     // listing) is fingerprinted by metadata alone and counted in a quality
     // note — the listing pass above already tolerates unreadable entries,
@@ -201,6 +204,14 @@ pub fn ingest_folder(root: &str) -> Result<ExtractionResult, String> {
         let note = format!(
             "{skipped_unreadable} file(s) in the folder could not be read (permissions, cloud placeholder, or removed mid-scan) and were fingerprinted by name and size only.",
         );
+        text.push_str(&format!("\n> {note}\n"));
+        quality_notes.push(note);
+    }
+    // A file left out of the copy still identifies the folder it came from.
+    if !omissions.is_empty() {
+        hasher.update(serde_json::to_vec(&omissions).unwrap_or_default());
+    }
+    for note in omissions.notes() {
         text.push_str(&format!("\n> {note}\n"));
         quality_notes.push(note);
     }

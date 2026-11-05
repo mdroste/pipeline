@@ -41,7 +41,14 @@ it.each(["/project", "\\\\?\\C:\\project"])(
         initial={{ path: "notes/review.md" }}
       />,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Preview" }));
+    // The first test to reach this loads the preview's lazy module.
+    fireEvent.click(
+      await screen.findByRole(
+        "button",
+        { name: "Preview" },
+        { timeout: 15_000 },
+      ),
+    );
     expect(
       await screen.findByRole("img", { name: "Root image" }),
     ).toHaveAttribute("src", "data:image/png;base64,QUJT");
@@ -56,6 +63,7 @@ it.each(["/project", "\\\\?\\C:\\project"])(
     await screen.findByText("Nested sentinel");
     await waitFor(() => expect(read).toHaveBeenCalledWith("notes/results.csv"));
   },
+  30_000,
 );
 
 it("keeps captured Markdown isolated from live absolute paths", async () => {
@@ -82,4 +90,30 @@ it("keeps captured Markdown isolated from live absolute paths", async () => {
   expect(screen.queryByRole("link", { name: "Live" })).toBeNull();
   await screen.findByText(/Image is not available/);
   expect(read).toHaveBeenCalledTimes(1);
+});
+
+it("releases the stream a Markdown image opens without needing it", async () => {
+  const read = vi.fn(async (path: string): Promise<FilePreview> => ({
+    path,
+    hash: path,
+    bytes: 10,
+    editable: false,
+    truncated: false,
+    externalPath: null,
+    mime: path.endsWith(".png") ? "image/png" : "text/plain",
+    base64: path.endsWith(".png") ? "QUJT" : null,
+    text: path.endsWith(".png") ? null : "![Chart](figure.png)",
+    streamToken: path.endsWith(".png") ? "image-token" : null,
+  }));
+  const release = vi.fn();
+  render(
+    <FileWorkspace
+      adapter={{ id: "report", read, release }}
+      paths={["report.md"]}
+      initial={{ path: "report.md" }}
+    />,
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "Preview" }));
+  await screen.findByRole("img", { name: "Chart" });
+  expect(release).toHaveBeenCalledWith("image-token");
 });

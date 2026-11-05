@@ -1,3 +1,4 @@
+import { PROVIDER_LABELS, type Provider } from "./providers";
 import {
   isPaperOrientation,
   type PipelineReport,
@@ -42,7 +43,8 @@ export interface RunProvenance {
   subject: string;
   authors: string[];
   workflow: string;
-  completed: string;
+  /** When the run began. Manifests record no finish time. */
+  started: string;
   duration_secs: number | null;
   run_id: string;
   status: string;
@@ -60,6 +62,8 @@ const ZERO_USAGE: UsageTotals = {
   cached_input_tokens: 0,
   cache_write_input_tokens: 0,
 };
+
+const PROVIDER_DEFAULT_MODEL = "Provider default";
 
 function count(value: number | undefined): number {
   return Number.isFinite(value) && value! > 0 ? Math.round(value!) : 0;
@@ -79,6 +83,8 @@ function hasUsage(usage: UsageTotals): boolean {
 function displayProvider(value: string): string {
   const normalized = value.trim();
   if (!normalized) return "Default";
+  const family = PROVIDER_LABELS[normalized.toLowerCase() as Provider];
+  if (family) return family;
   if (normalized.toLowerCase() === "openai") return "OpenAI";
   return normalized[0].toUpperCase() + normalized.slice(1);
 }
@@ -296,9 +302,8 @@ export function buildRunProvenance({
       manifest?.profile_name ||
       summary?.profile_id ||
       manifest?.profile_id ||
-      "Current workflow",
-    completed:
-      summary?.created || manifest?.created || report.report_date || "",
+      "Current review",
+    started: summary?.created || manifest?.created || report.report_date || "",
     duration_secs:
       resolvedDuration &&
       Number.isFinite(resolvedDuration) &&
@@ -318,6 +323,26 @@ export function buildRunProvenance({
     provider_summary: providers.join(", ") || "Default",
     model_summary: models.join(", ") || "Automatic",
   };
+}
+
+/**
+ * Split the model summary for display. A CLI step on Automatic records the
+ * "Provider default" placeholder rather than a model name, so it reads as a
+ * note beside named models instead of as another entry in the list.
+ */
+export function namedModelSummary(provenance: RunProvenance): {
+  models: string;
+  usesProviderDefault: boolean;
+} {
+  const models = unique(provenance.usage.map((row) => row.model));
+  const named = models.filter((model) => model !== PROVIDER_DEFAULT_MODEL);
+  if (!named.length || named.length === models.length) {
+    return {
+      models: provenance.model_summary,
+      usesProviderDefault: false,
+    };
+  }
+  return { models: named.join(", "), usesProviderDefault: true };
 }
 
 export function formatRunDuration(seconds?: number | null): string {
@@ -385,7 +410,7 @@ export function provenanceMarkdown(provenance: RunProvenance): string {
     "",
     `**Document:** ${escapeMarkdown(provenance.subject)}`,
     "",
-    `**Workflow:** ${escapeMarkdown(provenance.workflow)}`,
+    `**Review:** ${escapeMarkdown(provenance.workflow)}`,
     "",
     `**Token usage:** ${escapeMarkdown(tokenSummary(provenance))}`,
     "",

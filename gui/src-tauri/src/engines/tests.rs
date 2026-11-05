@@ -51,7 +51,7 @@ fn registry_has_unique_ids() {
     }
     assert_eq!(
         ids,
-        std::collections::HashSet::from(["paddleocr-vl-parser"])
+        std::collections::HashSet::from(["paddleocr-vl-parser", GPU_RECOGNITION_ID])
     );
     assert!(engine("paddleocr-vl").is_ok());
 }
@@ -194,6 +194,130 @@ fn parser_cleanup_commit_marker_is_bounded_and_release_specific() {
 }
 
 #[test]
+fn windows_code_integrity_blocks_explain_smart_app_control() {
+    for code in [0xC0E9_0002_u32, 0xC0E9_0007, 0xC000_0428] {
+        let message = probe_exit_error("llama-server", Some(code as i32));
+        assert!(message.contains("Smart App Control"), "{message}");
+    }
+    let refused = "Failed to start subprocess: An Application Control policy has blocked \
+                   this file. (os error 4551)";
+    assert!(probe_start_error("llama-server", refused).contains("Smart App Control"));
+}
+
+#[test]
+fn other_probe_failures_keep_their_diagnostics() {
+    assert_eq!(
+        probe_exit_error("llama-server", Some(0xC000_0135_u32 as i32)),
+        "llama-server failed its validation check (exit code 0xC0000135)"
+    );
+    assert_eq!(
+        probe_exit_error("llama-server", None),
+        "llama-server failed its validation check"
+    );
+    assert_eq!(
+        probe_start_error("llama-server", "Subprocess timed out after 15s"),
+        "llama-server validation failed: Subprocess timed out after 15s"
+    );
+}
+
+#[test]
+fn new_windows_installs_use_built_in_recognition() {
+    assert_eq!(
+        recognition_backend_for("windows", "x86_64"),
+        RecognitionBackend::BuiltIn
+    );
+    for (os, arch) in [
+        ("macos", "aarch64"),
+        ("linux", "x86_64"),
+        ("linux", "aarch64"),
+        ("windows", "aarch64"),
+    ] {
+        assert_eq!(
+            recognition_backend_for(os, arch),
+            RecognitionBackend::ManagedLlama
+        );
+    }
+}
+
+#[test]
+fn recognition_backend_round_trips_through_the_manifest() {
+    for backend in [
+        RecognitionBackend::ManagedLlama,
+        RecognitionBackend::BuiltIn,
+    ] {
+        let manifest = serde_json::json!({ "recognition_backend": backend.manifest_value() });
+        assert_eq!(RecognitionBackend::from_manifest(&manifest), Some(backend));
+    }
+    assert_eq!(
+        RecognitionBackend::from_manifest(&serde_json::json!({ "recognition_backend": "other" })),
+        None
+    );
+    assert_eq!(
+        RecognitionBackend::from_manifest(&serde_json::json!({})),
+        None
+    );
+}
+
+#[test]
+fn native_model_files_are_pinned_and_fit_the_integrity_limits() {
+    assert_eq!(NATIVE_MODEL_REVISION.len(), 40);
+    assert!(NATIVE_MODEL_FILES.iter().all(|file| {
+        file.sha256.len() == 64
+            && file.sha256.chars().all(|c| c.is_ascii_hexdigit())
+            && file.bytes > 0
+            && file.bytes <= MAX_INTEGRITY_FILE_BYTES
+            && !file.name.ends_with(".py")
+    }));
+    for required in ["inference.yml", "config.json", "model.safetensors"] {
+        assert!(NATIVE_MODEL_FILES.iter().any(|file| file.name == required));
+    }
+}
+
+#[test]
+fn built_in_parser_status_needs_no_llama_component() {
+    let native = tempfile::tempdir().unwrap();
+    let parser = native.path().join("paddleocr-parser");
+    let version = parser.join("versions").join(PADDLE_PARSER_RELEASE);
+    let layout = version.join("models/PP-DocLayoutV3_infer");
+    let python = venv_python(&version.join("venv"));
+    std::fs::create_dir_all(python.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(&layout).unwrap();
+    std::fs::write(&python, b"python").unwrap();
+    for path in [
+        version.join("paddle_parser_sidecar.py"),
+        version.join("packages.txt"),
+        version.join("pylock.toml"),
+        version.join("runtime-lock.json"),
+        version.join("integrity.json"),
+        layout.join("inference.json"),
+        layout.join("inference.yml"),
+        layout.join("inference.pdiparams"),
+    ] {
+        std::fs::write(path, b"fixture").unwrap();
+    }
+    std::fs::write(
+        version.join("install.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "engine": "paddleocr-vl-parser",
+            "release": PADDLE_PARSER_RELEASE,
+            "recognition_backend": RecognitionBackend::BuiltIn.manifest_value(),
+            "integrity_sha256": "0".repeat(64),
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(paddle_full_parser_status_at(native.path()).is_none());
+
+    let model = native_model_dir(&version);
+    std::fs::create_dir_all(&model).unwrap();
+    for file in NATIVE_MODEL_FILES {
+        std::fs::write(model.join(file.name), b"x").unwrap();
+    }
+    assert!(paddle_full_parser_status_at(native.path()).is_some());
+    assert!(!native.path().join("paddleocr-vl").exists());
+}
+
+#[test]
 fn parser_status_probe_uses_committed_file_shapes() {
     let native = tempfile::tempdir().unwrap();
     let base = native.path().join("paddleocr-vl");
@@ -302,7 +426,7 @@ fn full_parser_support_is_explicit_for_release_platforms() {
     assert!(full_parser_support_for("linux", "x86_64").is_ok());
     assert!(full_parser_support_for("macos", "x86_64")
         .unwrap_err()
-        .contains("Intel macOS"));
+        .contains("Intel Macs"));
     assert!(full_parser_support_for("windows", "aarch64").is_err());
 }
 
@@ -828,13 +952,42 @@ fn extraction_waits_for_a_detached_verification_to_release_the_engine_gate() {
         drop(guard);
     });
     let runtime = tokio::runtime::Runtime::new().unwrap();
+    let announced = std::sync::atomic::AtomicBool::new(false);
     let lease = runtime
-        .block_on(acquire_waiting_on_detached_gate(
+        .block_on(acquire_waiting_on_engine_gate(
             || acquire_engine_guard(false),
-            std::time::Duration::from_secs(5),
+            || announced.store(true, std::sync::atomic::Ordering::SeqCst),
         ))
         .unwrap();
     holder.join().unwrap();
+    assert!(announced.load(std::sync::atomic::Ordering::SeqCst));
     drop(lease);
     assert!(!engine_gate_busy_without_install());
+}
+
+#[test]
+fn interrupted_parser_staging_is_swept_and_finished_caches_stay() {
+    let cache = tempfile::tempdir().unwrap();
+    let paper = cache.path().join("0123456789abcdef");
+    let abandoned = paper.join(format!("{PADDLE_FULL_STAGING_PREFIX}Ab12"));
+    let finished = paper.join("fedcba9876543210");
+    std::fs::create_dir_all(abandoned.join("assets")).unwrap();
+    std::fs::create_dir_all(&finished).unwrap();
+    std::fs::write(paper.join("active.json"), b"{}").unwrap();
+
+    assert_eq!(cleanup_parser_staging_at(cache.path()).unwrap(), 1);
+
+    assert!(!abandoned.exists());
+    assert!(finished.is_dir());
+    assert!(paper.join("active.json").is_file());
+    assert_eq!(cleanup_parser_staging_at(cache.path()).unwrap(), 0);
+}
+
+#[test]
+fn parser_staging_sweep_tolerates_a_missing_cache() {
+    let cache = tempfile::tempdir().unwrap();
+    assert_eq!(
+        cleanup_parser_staging_at(&cache.path().join("absent")).unwrap(),
+        0
+    );
 }

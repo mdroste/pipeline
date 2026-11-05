@@ -9,14 +9,86 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
 fn error(e: impl std::fmt::Display) -> WorkbenchError {
-    WorkbenchError::storage("Research mission", e)
+    WorkbenchError::storage("Research automation", e)
 }
 
+const ROLE_OVERRIDE: &str = "automationRole";
+
+/// Marks fingerprints from `authority`. A run saved with `access-v2:` keeps that
+/// comparison, and an unmarked one was saved before either, so `legacy_authority`
+/// answers for it.
+const AUTHORITY_FORMAT: &str = "access-v3:";
+const AUTHORITY_V2_FORMAT: &str = "access-v2:";
+const SOURCE_AUTHORITY_FORMAT: &str = "source-v1:";
+
+/// What a role may do. `tasks::access` holds a schedule to its whole module list,
+/// but a run lasts for days and most modules only add text or read-only tools,
+/// with their own admission. Only modules that can act count here, and a module
+/// missing from the catalog counts until someone says otherwise.
+fn role_access(h: &research::EffectiveHarness) -> Value {
+    let catalog = research::harness_modules();
+    let acting = h
+        .enabled_modules
+        .iter()
+        .filter(|id| {
+            !catalog.iter().any(|m| {
+                m.id == id.as_str() && matches!(m.capability, "instructions" | "read" | "inspect")
+            })
+        })
+        .collect::<Vec<_>>();
+    json!({"permission":h.permission_profile,"mode":h.mode,"fileMode":h.file_mode,
+        "webSearch":h.web_search,"network":h.command_network,"capabilities":h.capabilities,
+        "acting":acting})
+}
+
+/// The stable identity of what a conversation may reach: its access, preset,
+/// runtime, and selected exact objects. Model, effort, and working-copy overrides
+/// change in ordinary use, and an app update can reword tools and presets, so
+/// none of them may end a run that lasts for days.
 pub fn authority(store: &Store, session: &str) -> WorkbenchResult<String> {
     let h = research::resolve_harness(store, session)?;
     let s = store.session_snapshot(session)?.session;
-    // Dynamic research context may evolve. Permissions, configuration, selected exact
-    // objects, presets, model overrides and task-copy identity may not silently change.
+    let v = json!({"access":role_access(&h),"preset":h.preset.id,
+        "runtime":s.overrides.get("runtime"),"selected":selected_identity(store,session)?});
+    Ok(format!(
+        "{AUTHORITY_FORMAT}{}",
+        desk::hash(v.to_string().as_bytes())
+    ))
+}
+
+/// The comparison a run saved with `access-v2:` was started under.
+fn authority_v2(store: &Store, session: &str) -> WorkbenchResult<String> {
+    let h = research::resolve_harness(store, session)?;
+    let s = store.session_snapshot(session)?.session;
+    let v = json!({"access":tasks::access(&h),"preset":h.preset.id,
+        "runtime":s.overrides.get("runtime"),"selected":selected_identity(store,session)?});
+    Ok(format!(
+        "{AUTHORITY_V2_FORMAT}{}",
+        desk::hash(v.to_string().as_bytes())
+    ))
+}
+
+/// What a discovery run read from its source conversation. The run's own roles
+/// hold their access and are checked with `authority`, so the source's access can
+/// change, as it does when an Edit turn gives it a working copy.
+pub fn source_authority(store: &Store, session: &str) -> WorkbenchResult<String> {
+    Ok(format!(
+        "{SOURCE_AUTHORITY_FORMAT}{}",
+        desk::hash(selected_identity(store, session)?.to_string().as_bytes())
+    ))
+}
+
+fn selected_identity(store: &Store, session: &str) -> WorkbenchResult<Value> {
+    let s = store.session_snapshot(session)?.session;
+    Ok(
+        json!({"paperId":s.paper_id,"context":desk::context(store,session)?,
+        "dataPolicy":s.workspace_id.as_deref().map(|ws|super::data::policy(store,ws)).transpose()?}),
+    )
+}
+
+pub(crate) fn legacy_authority(store: &Store, session: &str) -> WorkbenchResult<String> {
+    let h = research::resolve_harness(store, session)?;
+    let s = store.session_snapshot(session)?.session;
     let v = json!({"preset":h.preset,"mode":h.mode,"network":h.command_network,
         "permission":h.permission_profile,"modules":h.enabled_modules,"tools":h.dynamic_tools,
         "overrides":s.overrides,"paperId":s.paper_id,"context":desk::context(store,session)?,
@@ -24,6 +96,48 @@ pub fn authority(store: &Store, session: &str) -> WorkbenchResult<String> {
         "workspaceConfig":research::load_config(store,s.workspace_id.as_deref())?.body,
         "dataPolicy":s.workspace_id.as_deref().map(|ws|super::data::policy(store,ws)).transpose()?});
     Ok(desk::hash(v.to_string().as_bytes()))
+}
+
+fn authority_unchanged(store: &Store, session: &str, saved: &str) -> WorkbenchResult<bool> {
+    let current = if saved.starts_with(AUTHORITY_FORMAT) {
+        authority(store, session)?
+    } else if saved.starts_with(AUTHORITY_V2_FORMAT) {
+        authority_v2(store, session)?
+    } else if saved.starts_with(SOURCE_AUTHORITY_FORMAT) {
+        source_authority(store, session)?
+    } else {
+        legacy_authority(store, session)?
+    };
+    Ok(current == saved)
+}
+
+/// Whether a conversation is one of a research automation's roles. Nobody is
+/// watching these, so a request for approval or input can only be declined.
+pub fn is_role(store: &Store, session: &str) -> WorkbenchResult<bool> {
+    let overrides = store.session_snapshot(session)?.session.overrides;
+    Ok(marks_role(&overrides))
+}
+
+pub(crate) fn marks_role(overrides: &Value) -> bool {
+    overrides.get(ROLE_OVERRIDE).and_then(Value::as_bool) == Some(true)
+}
+
+/// A source conversation's first Edit turn moves it into a private working copy
+/// of the same project. That is ordinary work, not the folder change these
+/// checks look for, and the scope keeps reading the folder it recorded.
+fn same_source_folder(
+    store: &Store,
+    session: &str,
+    scope: &Scope,
+    actual: &tasks::TaskBinding,
+) -> WorkbenchResult<bool> {
+    Ok(same_folder(scope, actual)
+        || store.session_snapshot(session)?.session.overrides["projectCheckpointId"].is_string())
+}
+
+fn same_folder(scope: &Scope, actual: &tasks::TaskBinding) -> bool {
+    Some(&actual.runtime_root) == scope.runtime_root.as_ref()
+        && Some(&actual.root_identity) == scope.root_identity.as_ref()
 }
 
 /// Discovery reads its source conversation but never submits to it, so a
@@ -37,21 +151,23 @@ pub fn refresh_source_scope(
         .session_id
         .as_deref()
         .ok_or_else(|| WorkbenchError::invalid("Source conversation is missing"))?;
-    if authority(store, session)? != fingerprint {
-        return Err(WorkbenchError::conflict("Source conversation permissions or selected context changed. Prepare a new automation for that scope."));
+    if !authority_unchanged(store, session, fingerprint)? {
+        return Err(WorkbenchError::conflict("The project conversation's permissions or selected sources changed. Start a new research automation to use them."));
     }
     let actual = tasks::binding(store, session)?;
     if !tasks::compatible_cursor(
         scope.session_cursor.as_deref().unwrap_or_default(),
         &actual.cursor,
     ) || actual.workspace_id != scope.workspace_id
-        || Some(&actual.runtime_root) != scope.runtime_root.as_ref()
-        || Some(&actual.root_identity) != scope.root_identity.as_ref()
+        || !same_source_folder(store, session, scope, &actual)?
     {
-        return Err(WorkbenchError::conflict("The source conversation or folder changed outside the recorded work. Review it, then retry the automation."));
+        return Err(WorkbenchError::conflict("The project conversation or its folder changed outside this automation. Review it, then choose Retry."));
     }
     let mut result = scope.clone();
     result.harness_fingerprint = Some(actual.harness_fingerprint);
+    // The authority check above covers the runtime, so this only repairs
+    // scopes saved before they recorded their connection.
+    result.connection_id = actual.connection_id;
     Ok(result)
 }
 
@@ -68,18 +184,22 @@ pub fn readopt_scope(
     let session = scope
         .session_id
         .as_deref()
-        .ok_or_else(|| WorkbenchError::invalid("Mission conversation is missing"))?;
-    if authority(store, session)? != fingerprint {
+        .ok_or_else(|| WorkbenchError::invalid("This automation's conversation is missing"))?;
+    if !authority_unchanged(store, session, fingerprint)? {
         return Err(WorkbenchError::conflict(
-            "Mission authority changed; prepare a new mission",
+            "This conversation's permissions or selected sources changed. Start a new research automation to use them.",
         ));
     }
     let actual = tasks::binding(store, session)?;
-    if Some(&actual.root_identity) != scope.root_identity.as_ref()
-        || Some(&actual.runtime_root) != scope.runtime_root.as_ref()
-        || actual.workspace_id != scope.workspace_id
-    {
-        return Err(WorkbenchError::conflict("Mission folder changed"));
+    let folder_matches = if require_no_draft {
+        same_folder(scope, &actual)
+    } else {
+        same_source_folder(store, session, scope, &actual)?
+    };
+    if !folder_matches || actual.workspace_id != scope.workspace_id {
+        return Err(WorkbenchError::conflict(
+            "This conversation's folder changed. Start a new research automation for that folder.",
+        ));
     }
     if require_no_draft {
         tasks::validate_binding(store, &actual)?;
@@ -87,6 +207,7 @@ pub fn readopt_scope(
     let mut result = scope.clone();
     result.session_cursor = Some(actual.cursor);
     result.harness_fingerprint = Some(actual.harness_fingerprint);
+    result.connection_id = actual.connection_id;
     Ok(result)
 }
 
@@ -94,9 +215,9 @@ pub fn refresh_scope(store: &Store, scope: &Scope, fingerprint: &str) -> Workben
     let session = scope
         .session_id
         .as_deref()
-        .ok_or_else(|| WorkbenchError::invalid("Mission conversation is missing"))?;
-    if authority(store, session)? != fingerprint {
-        return Err(WorkbenchError::conflict("Mission permissions or selected context changed. Prepare a new mission for that scope."));
+        .ok_or_else(|| WorkbenchError::invalid("This automation's conversation is missing"))?;
+    if !authority_unchanged(store, session, fingerprint)? {
+        return Err(WorkbenchError::conflict("This conversation's permissions or selected sources changed. Start a new research automation to use them."));
     }
     let actual = tasks::binding(store, session)?;
     if Some(&actual.cursor) != scope.session_cursor.as_ref()
@@ -104,11 +225,12 @@ pub fn refresh_scope(store: &Store, scope: &Scope, fingerprint: &str) -> Workben
         || Some(&actual.runtime_root) != scope.runtime_root.as_ref()
         || Some(&actual.root_identity) != scope.root_identity.as_ref()
     {
-        return Err(WorkbenchError::conflict("The mission conversation or folder changed outside its recorded work. Inspect the conversation before continuing."));
+        return Err(WorkbenchError::conflict("This automation's conversation or folder changed outside its recorded work. Inspect the conversation, then choose Retry."));
     }
     tasks::validate_binding(store, &actual)?;
     let mut result = scope.clone();
     result.harness_fingerprint = Some(actual.harness_fingerprint);
+    result.connection_id = actual.connection_id;
     Ok(result)
 }
 
@@ -156,14 +278,13 @@ pub fn roles(
                 .and_then(Value::as_str)
                 .is_none())
     {
-        return Err(WorkbenchError::invalid("Mission editing requires a source conversation already using an isolated project task in edit mode"));
+        return Err(WorkbenchError::invalid("Editing requires a source conversation already using an isolated project task in edit mode"));
     }
     if policy.command_network && !h.command_network {
         return Err(WorkbenchError::invalid(
             "Enable command networking in the selected conversation before delegating it",
         ));
     }
-    let selections = desk::context(store, &source.session_id)?;
     let op = format!("mission-preset-{operation}");
     let preset_id = if let Some(id) = existing(store, &op, "preset")? {
         id
@@ -174,7 +295,10 @@ pub fn roles(
                 source_workspace_id: None,
                 workspace_id: source.workspace_id.clone(),
                 source_preset_id: h.preset.id.clone(),
-                name: format!("Mission: {}", name.chars().take(100).collect::<String>()),
+                name: format!(
+                    "Research automation: {}",
+                    name.chars().take(100).collect::<String>()
+                ),
                 operation_id: op.clone(),
             },
         )?
@@ -186,7 +310,7 @@ pub fn roles(
             .presets
             .into_iter()
             .find(|p| p.id == preset_id)
-            .ok_or_else(|| WorkbenchError::invalid("Mission preset is unavailable"))?;
+            .ok_or_else(|| WorkbenchError::invalid("Research automation preset is unavailable"))?;
         let mut modules: Vec<_> = preset
             .modules
             .into_iter()
@@ -196,7 +320,7 @@ pub fn roles(
             modules.push("paper_tools".into());
         }
         research::update_preset(store,research::UpdatePresetRequest{base_prompt:None,preset_id:preset_id.clone(),expected_revision:preset.revision,
-            name:preset.name,description:"Mission research tools; host executions are admitted by the coordinator.".into(),
+            name:preset.name,description:"Research tools for one research automation.".into(),
             instructions:format!("{}\n\nThis conversation belongs to a bounded research mission. Report evidence and limitations. Research conclusions and reusable methods remain model assessments. Do not expand the mission remit, authorize host commands, or accept edits. Host checks are dispatched by the coordinator.",h.preset.instructions),
             modules,operation_id:update_op})?;
     }
@@ -215,6 +339,7 @@ pub fn roles(
                 "inspect"
             });
             overrides["commandNetwork"] = json!(policy.command_network);
+            overrides[ROLE_OVERRIDE] = json!(true);
             store.update_session(UpdateSessionRequest {
                 session_id: s.id.clone(),
                 expected_revision: s.revision,
@@ -228,10 +353,6 @@ pub fn roles(
                 clear_paper: None,
             })?;
         }
-        let current = desk::context(store, &b.session_id)?;
-        if current.revision == 0 && !selections.items.is_empty() {
-            desk::save_context(store, &b.session_id, 0, selections.items.clone())?;
-        }
         let b = tasks::binding(store, &b.session_id)?;
         fingerprints.insert(b.session_id.clone(), authority(store, &b.session_id)?);
         scopes.push(Scope {
@@ -239,6 +360,7 @@ pub fn roles(
             workspace_id: b.workspace_id,
             session_cursor: Some(b.cursor),
             harness_fingerprint: Some(b.harness_fingerprint),
+            connection_id: b.connection_id,
             runtime_root: Some(b.runtime_root),
             root_identity: Some(b.root_identity),
             ..Scope::default()
@@ -278,7 +400,7 @@ pub fn capabilities(store: &Store, ws: &str, policy: &Policy) -> WorkbenchResult
         let preview = research::preview_host_execution(store, id)?;
         if !preview.authorized {
             return Err(WorkbenchError::invalid(format!(
-                "Authorize check '{}' in Research tools first",
+                "Authorize check '{}' in the project's Results view first",
                 profile.name
             )));
         }
@@ -291,6 +413,7 @@ pub fn capabilities(store: &Store, ws: &str, policy: &Policy) -> WorkbenchResult
             parameters: json!({}),
             execution,
             timeout_seconds: profile.timeout_seconds,
+            unavailable: false,
         });
     }
     let mut ids = std::collections::BTreeSet::new();
@@ -314,7 +437,7 @@ pub fn capabilities(store: &Store, ws: &str, policy: &Policy) -> WorkbenchResult
     }
     if ids.len() > 64 {
         return Err(WorkbenchError::invalid(
-            "A mission can authorize at most 64 captured experiment variants",
+            "A research automation can authorize at most 64 captured experiment variants",
         ));
     }
     for id in ids {
@@ -330,6 +453,7 @@ pub fn capabilities(store: &Store, ws: &str, policy: &Policy) -> WorkbenchResult
             parameters: p.parameters,
             execution,
             timeout_seconds: p.profile.timeout_seconds,
+            unavailable: false,
         });
     }
     for id in &policy.monitor_ids {
@@ -361,6 +485,19 @@ pub fn sources(
         let object=super::search::read_object(store,ws,r,8000)?;
         Ok(json!({"kind":"researchSource","reference":r,"object":object,"scope":"Exact retained source; support is assessed separately"}))
     }).collect()
+}
+
+/// Where a new automation starts reading `changes`: anything recorded before it
+/// was prepared is not news to it.
+pub fn watch_baseline(store: &Store, ws: &str) -> WorkbenchResult<i64> {
+    store
+        .connection()?
+        .query_row(
+            "SELECT COALESCE(MAX(rowid),0) FROM research_attention WHERE workspace_id=?1",
+            [ws],
+            |r| r.get(0),
+        )
+        .map_err(error)
 }
 
 pub fn changes(
@@ -495,6 +632,9 @@ mod tests {
             &Policy::default(),
         )
         .unwrap();
+        assert!(scopes
+            .iter()
+            .all(|scope| is_role(&s, scope.session_id.as_deref().unwrap()).unwrap()));
         let (again, _, _) = roles(
             &s,
             &source,
@@ -528,6 +668,66 @@ mod tests {
         );
         assert_ne!(scopes[0].session_id, scopes[1].session_id);
         assert_ne!(scopes[1].session_id, scopes[2].session_id);
+    }
+    fn select_runtime(s: &Store, session: &str, runtime: &str) {
+        let current = s.session_snapshot(session).unwrap().session;
+        s.update_session(UpdateSessionRequest {
+            session_id: session.into(),
+            expected_revision: current.revision,
+            operation_id: format!("select-{runtime}"),
+            title: None,
+            draft: None,
+            overrides: Some(json!({"runtime":runtime})),
+            archived: None,
+            preset_id: None,
+            paper_id: None,
+            clear_paper: None,
+        })
+        .unwrap();
+    }
+    #[test]
+    fn role_scopes_pass_the_check_every_submitted_turn_runs() {
+        for runtime in [
+            "codex",
+            "claude",
+            "openai-api",
+            "anthropic-api",
+            "google-api",
+            "local",
+        ] {
+            let (_temp, s, _ws, session) = fixture();
+            select_runtime(&s, &session, runtime);
+            let source = tasks::binding(&s, &session).unwrap();
+            let (scopes, _, _) = roles(&s, &source, "gate", "Mission", &Policy::default()).unwrap();
+            for scope in &scopes {
+                assert_eq!(scope.connection_id, source.connection_id);
+                let binding = crate::orchestration::adapters::task_binding(scope).unwrap();
+                tasks::validate_binding(&s, &binding).unwrap();
+            }
+        }
+    }
+    #[test]
+    fn saved_scopes_without_a_connection_recover_through_refresh() {
+        let (_temp, s, _ws, session) = fixture();
+        let source = tasks::binding(&s, &session).unwrap();
+        let (scopes, fingerprints, _) =
+            roles(&s, &source, "saved", "Mission", &Policy::default()).unwrap();
+        let mut saved = scopes[0].clone();
+        saved.connection_id = None;
+        let stale = crate::orchestration::adapters::task_binding(&saved).unwrap();
+        assert!(tasks::validate_binding(&s, &stale)
+            .unwrap_err()
+            .message
+            .contains("connection"));
+        let authority = &fingerprints[saved.session_id.as_ref().unwrap()];
+        for recovered in [
+            refresh_scope(&s, &saved, authority).unwrap(),
+            readopt_scope(&s, &saved, authority, true).unwrap(),
+        ] {
+            assert_eq!(recovered.connection_id, source.connection_id);
+            let binding = crate::orchestration::adapters::task_binding(&recovered).unwrap();
+            tasks::validate_binding(&s, &binding).unwrap();
+        }
     }
     #[test]
     fn mission_cannot_upgrade_edit_or_network_permissions() {
@@ -576,6 +776,172 @@ mod tests {
         })
         .unwrap();
         assert!(refresh_scope(&s, scope, &fp[id]).is_err());
+    }
+    /// Lists these modules in a role's preset, as a researcher editing it would.
+    fn list_modules(s: &Store, session: &str, modules: &[&str]) {
+        let h = research::resolve_harness(s, session).unwrap();
+        let mut listed = h.preset.modules.clone();
+        listed.extend(modules.iter().map(|m| m.to_string()));
+        let workspace = s.session_snapshot(session).unwrap().session.workspace_id;
+        let preset = research::harness_catalog(s, workspace.as_deref())
+            .unwrap()
+            .presets
+            .into_iter()
+            .find(|p| p.id == h.preset.id)
+            .unwrap();
+        research::update_preset(
+            s,
+            research::UpdatePresetRequest {
+                base_prompt: None,
+                preset_id: preset.id,
+                expected_revision: preset.revision,
+                name: preset.name,
+                description: preset.description,
+                instructions: preset.instructions,
+                modules: listed,
+                operation_id: format!("list-modules-{}", modules.join("-")),
+            },
+        )
+        .unwrap();
+    }
+    fn set_mode(s: &Store, session: &str, mode: &str) {
+        let current = s.session_snapshot(session).unwrap().session;
+        let mut overrides = current.overrides;
+        overrides["mode"] = json!(mode);
+        s.update_session(UpdateSessionRequest {
+            session_id: session.into(),
+            expected_revision: current.revision,
+            operation_id: format!("mode-{mode}"),
+            title: None,
+            draft: None,
+            overrides: Some(overrides),
+            archived: None,
+            preset_id: None,
+            paper_id: None,
+            clear_paper: None,
+        })
+        .unwrap();
+    }
+    /// A profile in this project passes its test, as the end of a test run records.
+    fn profile_passes(s: &Store, ws: &str, root: &std::path::Path) {
+        let profile = research::save_execution_profile(
+            s,
+            research::SaveExecutionProfileRequest {
+                profile_id: None,
+                workspace_id: ws.into(),
+                name: "Tested".into(),
+                adapter: "command".into(),
+                argv: vec!["/usr/bin/true".into()],
+                cwd: root.to_string_lossy().into(),
+                environment: json!({}),
+                inputs: Vec::new(),
+                timeout_seconds: 30,
+                outputs: Vec::new(),
+                expected_revision: None,
+                operation_id: "tested-profile".into(),
+            },
+        )
+        .unwrap();
+        s.connection()
+            .unwrap()
+            .execute(
+                "UPDATE execution_profiles SET test_status='passed' WHERE id=?1",
+                [&profile.id],
+            )
+            .unwrap();
+    }
+    #[test]
+    fn a_profile_passing_mid_run_neither_stops_a_role_nor_gives_it_the_run_tool() {
+        let (temp, s, ws, session) = fixture();
+        let source = tasks::binding(&s, &session).unwrap();
+        let (scopes, fp, _) = roles(&s, &source, "tested", "Mission", &Policy::default()).unwrap();
+        // The widest case: a role that is in Edit with the module listed.
+        let role = scopes[0].session_id.clone().unwrap();
+        list_modules(&s, &role, &["research_execution"]);
+        set_mode(&s, &role, "edit");
+        let saved = authority(&s, &role).unwrap();
+        for scope in &scopes[1..] {
+            let id = scope.session_id.as_ref().unwrap();
+            assert_eq!(authority(&s, id).unwrap(), fp[id]);
+        }
+
+        profile_passes(&s, &ws, &temp.path().join("project"));
+
+        assert_eq!(authority(&s, &role).unwrap(), saved);
+        let h = research::resolve_harness(&s, &role).unwrap();
+        assert!(!h.enabled_modules.iter().any(|m| m == "research_execution"));
+        assert!(!h
+            .dynamic_tools
+            .iter()
+            .any(|t| t["name"] == "workbench_research_run"));
+        for scope in &scopes[1..] {
+            let id = scope.session_id.as_ref().unwrap();
+            refresh_scope(&s, scope, &fp[id]).unwrap();
+            readopt_scope(&s, scope, &fp[id], true).unwrap();
+        }
+        // Outside a role the same preset and mode do gain the tool.
+        let plain = s
+            .create_session(CreateSessionRequest {
+                workspace_id: Some(ws),
+                title: "Interactive".into(),
+                operation_id: "interactive".into(),
+            })
+            .unwrap()
+            .record;
+        let preset = research::resolve_harness(&s, &role).unwrap().preset.id;
+        s.update_session(UpdateSessionRequest {
+            session_id: plain.id.clone(),
+            expected_revision: plain.revision,
+            operation_id: "interactive-setup".into(),
+            title: None,
+            draft: None,
+            overrides: Some(json!({"mode":"edit"})),
+            archived: None,
+            preset_id: Some(preset),
+            paper_id: None,
+            clear_paper: None,
+        })
+        .unwrap();
+        assert!(research::resolve_harness(&s, &plain.id)
+            .unwrap()
+            .enabled_modules
+            .iter()
+            .any(|m| m == "research_execution"));
+    }
+    #[test]
+    fn a_new_read_only_module_leaves_a_run_alone_but_real_access_changes_stop_it() {
+        let (_temp, s, _ws, session) = fixture();
+        let source = tasks::binding(&s, &session).unwrap();
+        let (scopes, fp, _) = roles(&s, &source, "reach", "Mission", &Policy::default()).unwrap();
+        let scope = &scopes[0];
+        let id = scope.session_id.as_ref().unwrap();
+        list_modules(&s, id, &["evidence_inspector"]);
+        refresh_scope(&s, scope, &fp[id]).unwrap();
+
+        // Proposing automations is what the mission's preset took away.
+        list_modules(&s, id, &["task_tools"]);
+        assert!(refresh_scope(&s, scope, &fp[id]).is_err());
+        assert!(readopt_scope(&s, scope, &fp[id], true).is_err());
+
+        let other = &scopes[1];
+        let other_id = other.session_id.as_ref().unwrap();
+        set_mode(&s, other_id, "edit");
+        assert!(refresh_scope(&s, other, &fp[other_id]).is_err());
+        assert!(readopt_scope(&s, other, &fp[other_id], true).is_err());
+    }
+    #[test]
+    fn a_run_saved_with_the_earlier_format_keeps_its_comparison() {
+        let (_temp, s, _ws, session) = fixture();
+        let source = tasks::binding(&s, &session).unwrap();
+        let (scopes, _, _) = roles(&s, &source, "saved-v2", "Mission", &Policy::default()).unwrap();
+        let scope = &scopes[0];
+        let id = scope.session_id.as_ref().unwrap();
+        let saved = authority_v2(&s, id).unwrap();
+        assert!(saved.starts_with("access-v2:"));
+        refresh_scope(&s, scope, &saved).unwrap();
+        // That format counts every module, so this still stops such a run.
+        list_modules(&s, id, &["evidence_inspector"]);
+        assert!(refresh_scope(&s, scope, &saved).is_err());
     }
     #[test]
     fn exact_sources_cannot_cross_projects_or_invent_revisions() {

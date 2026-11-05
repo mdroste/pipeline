@@ -136,30 +136,44 @@ pub(super) fn import_findings(
     }
     Ok(json!(imported))
 }
-pub fn preview_report(
-    store: &Store,
-    ws: &str,
-    revision: &str,
-) -> WorkbenchResult<Vec<ReportComment>> {
+/// Comments one import accepts.
+const MAX_REPORT_COMMENTS: usize = 500;
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportPreview {
+    pub comments: Vec<ReportComment>,
+    /// Paragraphs in the report, which exceeds `comments` when the split stopped.
+    pub paragraphs: usize,
+}
+pub fn preview_report(store: &Store, ws: &str, revision: &str) -> WorkbenchResult<ReportPreview> {
     let text = exact_text(store, ws, revision)?;
+    let blank_line = regex::Regex::new(r"(?:\r\n|\n){2}|\r\r").expect("paragraph break");
     let mut comments = Vec::new();
-    let mut start = 0;
-    for paragraph in text.split("\n\n") {
-        let end = start + paragraph.len();
-        if !paragraph.trim().is_empty() {
+    let mut paragraphs = 0;
+    let mut add = |start: usize, end: usize| {
+        if text[start..end].trim().is_empty() {
+            return;
+        }
+        paragraphs += 1;
+        if comments.len() < MAX_REPORT_COMMENTS {
             comments.push(ReportComment {
                 number: (comments.len() + 1).to_string(),
                 start,
                 end,
-                text: paragraph.into(),
+                text: text[start..end].into(),
             });
         }
-        start = end + 2;
-        if comments.len() >= 500 {
-            break;
-        }
+    };
+    let mut start = 0;
+    for separator in blank_line.find_iter(&text) {
+        add(start, separator.start());
+        start = separator.end();
     }
-    Ok(comments)
+    add(start, text.len());
+    Ok(ReportPreview {
+        comments,
+        paragraphs,
+    })
 }
 pub(super) fn import_report(
     store: &Store,
@@ -168,7 +182,7 @@ pub(super) fn import_report(
     comments: Vec<ReportComment>,
 ) -> WorkbenchResult<Value> {
     let original = exact_text(store, ws, revision)?;
-    if comments.is_empty() || comments.len() > 500 {
+    if comments.is_empty() || comments.len() > MAX_REPORT_COMMENTS {
         return Err(WorkbenchError::invalid("Select 1–500 report comments"));
     }
     let mut result = Vec::new();
@@ -191,6 +205,8 @@ pub(super) fn import_report(
             result.push(old);
             continue;
         }
+        let decision = initial(c.number.clone());
+        let flags = response_flags(store, ws, &decision)?;
         result.push(put(
             store,
             ws,
@@ -199,8 +215,8 @@ pub(super) fn import_report(
             0,
             &ResponseRecord {
                 source: json!({"kind":"report","revisionId":revision,"comment":c}),
-                decision: initial(c.number),
-                flags: vec![],
+                decision,
+                flags,
             },
         )?);
     }
@@ -303,6 +319,33 @@ pub(super) fn save_response(
         },
     )
 }
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum NumberPart {
+    /// Digits without leading zeros, shorter first, so 9 sorts before 10.
+    Digits(usize, String),
+    Text(String),
+}
+/// A sort key that reads comment numbers the way a person does: 2 before 10, and
+/// 1.2 before 1.10. It orders numbers and never changes them.
+fn natural_key(number: &str) -> Vec<NumberPart> {
+    let mut parts = Vec::new();
+    let mut rest = number;
+    while let Some(first) = rest.chars().next() {
+        let digit = first.is_ascii_digit();
+        let end = rest
+            .find(|c: char| c.is_ascii_digit() != digit)
+            .unwrap_or(rest.len());
+        let (part, tail) = rest.split_at(end);
+        parts.push(if digit {
+            let digits = part.trim_start_matches('0');
+            NumberPart::Digits(digits.len(), digits.to_string())
+        } else {
+            NumberPart::Text(part.to_lowercase())
+        });
+        rest = tail;
+    }
+    parts
+}
 pub fn export_responses(
     store: &Store,
     ws: &str,
@@ -322,8 +365,18 @@ pub fn export_responses(
     } else {
         output.push_str("# Response to reviewers\n\n");
     }
-    for object_id in selected {
-        let r: ResponseRecord = decode(&record(store, ws, object_id, "response")?)?;
+    let mut responses = selected
+        .iter()
+        .map(|object_id| decode::<ResponseRecord>(&record(store, ws, object_id, "response")?))
+        .collect::<WorkbenchResult<Vec<_>>>()?;
+    // The letter follows the referee's numbering, not the order of selection.
+    responses.sort_by_cached_key(|r| {
+        (
+            natural_key(&r.decision.number),
+            r.source["comment"]["start"].as_u64().unwrap_or(0),
+        )
+    });
+    for r in &responses {
         let d = &r.decision;
         if !numbers.insert(d.number.clone()) {
             warnings.push(format!("Duplicate comment number {}", d.number));
@@ -424,9 +477,7 @@ pub fn focus_review(
     let digest = blob(store, &r.workspace_id, text.as_bytes(), "focused_review")?;
     // Neutral Markdown snapshot, then the ordinary immutable handoff/Workflow preview.
     let path = store.root_path().join("blobs").join(format!("{digest}.md"));
-    if !path.exists() {
-        fs::write(&path, text).map_err(err)?;
-    }
+    crate::workbench::desk::write_blob_atomic(&path, text.as_bytes(), &digest).map_err(err)?;
     let paper = research::import_paper(
         store,
         research::ImportPaperRequest {

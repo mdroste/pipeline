@@ -25,7 +25,7 @@ const EXTRACTION_METHODS: { value: string; label: string; hint: string }[] = [
   {
     value: "paddleocr-vl-full",
     label: "Local engine: PaddleOCR-VL 1.6 Full Parser",
-    hint: "Official layout-aware client with structured regions, title hierarchy, formula metadata, and cross-page table reconstruction. Reuses Pipeline's managed llama.cpp server.",
+    hint: "Read the PDF locally, preserving reading order, headings, equations, and tables that span pages. Uses Pipeline’s installed parser.",
   },
   {
     value: "pdftotext",
@@ -53,17 +53,17 @@ function ExtractionEditor({
             Input & PDF Extraction
           </h3>
           <p className="text-xs text-gray-500 dark:text-gray-400 leading-relaxed">
-            Stage 0a. What the workflow takes as input, and how text is pulled
-            from it before any LLM call.
+            Choose the input type and how Pipeline reads its text before the
+            review starts.
           </p>
         </div>
 
         <div>
           <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-            Input mode (per profile)
+            Input mode (per review)
           </label>
           <select
-            aria-label="Workflow input mode"
+            aria-label="Review input mode"
             value={inputMode}
             onChange={(e) => onChange({ input_mode: e.target.value })}
             className="w-full py-1.5 px-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
@@ -98,7 +98,7 @@ function ExtractionEditor({
 
         <div>
           <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-            Method (per profile)
+            Method (per review)
           </label>
           <select
             aria-label="PDF extraction method"
@@ -122,11 +122,9 @@ function ExtractionEditor({
         </div>
 
         <div className="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
-          The chosen PDF method is authoritative: incomplete or failed
-          extraction stops before orientation instead of silently switching
-          engines. Parser-specific speed, memory, OCR, and image settings are
-          configured once in Settings → Reviews → PDF Extraction. LaTeX inputs
-          bypass PDF extraction.
+          Pipeline uses the PDF method you choose and stops if it cannot read
+          the document completely. Adjust speed, memory, OCR, and image options
+          in Settings → Reviews → PDF extraction. LaTeX files are read directly.
         </div>
       </div>
     </div>
@@ -138,6 +136,7 @@ function OrientationEditor({
   schema,
   inputMode,
   autoReview = false,
+  profileId,
   onPromptChange,
   onSchemaChange,
 }: {
@@ -145,6 +144,8 @@ function OrientationEditor({
   schema?: Record<string, unknown> | null;
   inputMode: string;
   autoReview?: boolean;
+  /** Selects a built-in's own stock router when restoring defaults. */
+  profileId?: string;
   onPromptChange: (p: string) => void;
   onSchemaChange: (schema: Record<string, unknown> | null) => void;
 }) {
@@ -213,11 +214,12 @@ function OrientationEditor({
       // The router prompt lists the live catalog's subjects, methods, and
       // genres; the saved schema must match it or newer routing picks fail
       // validation. Restore both together, keeping only the configured
-      // adaptive-agent count from the current schema.
+      // adaptive-agent count from the current schema. Built-ins restore
+      // their own pair (Fast's method cap, Slide Review's genre pin).
       const defaults = await invoke<{
         prompt: string;
         schema: Record<string, unknown>;
-      }>("get_auto_review_orientation_defaults");
+      }>("get_auto_review_orientation_defaults", { profileId });
       if (mounted.current && request === resetRequest.current) {
         const nextSchema = { ...defaults.schema };
         const count = schema?.[ADAPTIVE_AGENT_COUNT_KEY];
@@ -270,11 +272,11 @@ function OrientationEditor({
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="rounded bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-950/40 dark:text-green-300">
+          <span className="rounded bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-gray-800 dark:text-gray-300">
             Required
           </span>
           <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
-            Runs before every workflow
+            Runs before every review
           </span>
           <span className="ml-auto rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
             {schema ? "Schema configured" : "Object-only schema"} · Schemas tab
@@ -351,9 +353,9 @@ function OrientationEditor({
         </div>
         {autoReview && (
           <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-2 leading-relaxed shrink-0">
-            Catalog placeholders are populated from the live specialist
-            manifests only when the workflow runs. The saved prompt stays
-            compact; browse the Catalog tabs to inspect roles.
+            Pipeline fills the catalog placeholders with the current specialist
+            list when the review starts. Browse the Catalog tabs to see those
+            specialists.
           </p>
         )}
         {prompt.trim() === "" && (

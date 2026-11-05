@@ -35,7 +35,9 @@ export function writeInventory(root, platform = process.platform) {
 }
 function writeObservedInventory(root, platform, version) {
   const result = { schemaVersion: 1, platform, versionOutput: version.trim(), note: "Observed bundled files and hashes; not a complete dependency SBOM or corresponding-source offer.", files: inventoryFiles(root) };
-  fs.writeFileSync(path.join(root, filename), JSON.stringify(result, null, 2) + "\n");
+  const inventory = path.join(root, filename), contents = JSON.stringify(result, null, 2) + "\n";
+  // Tauri's build watches this file, so an unchanged rewrite would recompile the app.
+  if (!fs.existsSync(inventory) || fs.readFileSync(inventory, "utf8") !== contents) fs.writeFileSync(inventory, contents);
   return result;
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

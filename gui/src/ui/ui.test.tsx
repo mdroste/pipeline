@@ -10,6 +10,7 @@ import Tooltip from "./Tooltip";
 import IconButton from "./IconButton";
 import Sheet from "./Sheet";
 import Skeleton from "./Skeleton";
+import PageHeader from "./PageHeader";
 
 const viewport = { width: 1000, height: 800 };
 const anchor = (left: number, top: number, width = 100, height = 30) => ({
@@ -21,6 +22,28 @@ const anchor = (left: number, top: number, width = 100, height = 30) => ({
 });
 
 describe("computeAnchoredPosition", () => {
+  it("opens to the right of a rail control and stays inside the window", () => {
+    const anchor = { left: 8, right: 46, top: 700, bottom: 736, width: 38 };
+    const viewport = { width: 1200, height: 760 };
+    expect(
+      computeAnchoredPosition(
+        anchor,
+        { width: 264, height: 300 },
+        viewport,
+        "right",
+      ),
+    ).toEqual({ left: 54, top: 448, maxHeight: 736, side: "right" });
+    expect(
+      computeAnchoredPosition(
+        anchor,
+        { width: 264, height: 100 },
+        viewport,
+        "right",
+        "end",
+      ).top,
+    ).toBe(636);
+  });
+
   it("places below and start-aligned when there is room", () => {
     expect(
       computeAnchoredPosition(
@@ -131,6 +154,26 @@ describe("Popover", () => {
     fireEvent.focusIn(screen.getByRole("button", { name: "Elsewhere" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
+  it("hands Tab back to the anchor for focus-out layers only", () => {
+    const { unmount } = render(<PopoverHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "Open" }));
+    fireEvent.keyDown(screen.getByRole("button", { name: "Inside" }), {
+      key: "Tab",
+    });
+    expect(screen.getByRole("dialog", { name: "Details" })).toBeInTheDocument();
+    unmount();
+
+    render(<PopoverHarness focusOut />);
+    const trigger = screen.getByRole("button", { name: "Open" });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole("button", { name: "Inside" }), {
+      key: "Tab",
+      shiftKey: true,
+    });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    // The browser's default Tab action then continues from the anchor.
+    expect(trigger).toHaveFocus();
+  });
 });
 
 function MenuHarness({ onSelect }: { onSelect: (id: string) => void }) {
@@ -197,6 +240,32 @@ describe("Select", () => {
     { value: "b", label: "Beta", disabled: true },
     { value: "c", label: "Gamma" },
   ];
+  it("scrolls the chosen option into view once the list is placed", () => {
+    const placedWhenScrolled: boolean[] = [];
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+      placedWhenScrolled.push(
+        (this.closest("[role=listbox]") as HTMLElement).style.opacity === "",
+      );
+    };
+    try {
+      render(
+        <Select
+          label="Project"
+          value="c"
+          options={options}
+          onChange={vi.fn()}
+        />,
+      );
+      fireEvent.click(screen.getByRole("combobox", { name: "Project" }));
+      expect(scrolled).toEqual([screen.getByRole("option", { name: "Gamma" })]);
+      expect(placedWhenScrolled).toEqual([true]);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
   it("shows the current choice and changes it from the list", () => {
     const change = vi.fn();
     render(
@@ -232,6 +301,18 @@ describe("Select", () => {
     expect(trigger).toHaveTextContent("gone");
     fireEvent.keyDown(trigger, { key: "ArrowDown" });
     expect(screen.getByRole("listbox")).toBeInTheDocument();
+  });
+  it("closes on Tab and returns focus to the trigger", () => {
+    render(
+      <Select label="Project" value="a" options={options} onChange={vi.fn()} />,
+    );
+    const trigger = screen.getByRole("combobox", { name: "Project" });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(screen.getByRole("option", { name: /Alpha/ }), {
+      key: "Tab",
+    });
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 });
 
@@ -302,6 +383,25 @@ describe("Tooltip and IconButton", () => {
     fireEvent.mouseEnter(screen.getByRole("button", { name: "Child" }));
     expect(enter).toHaveBeenCalledOnce();
     expect(ref.current).toBe(screen.getByRole("button", { name: "Child" }));
+  });
+});
+
+describe("PageHeader", () => {
+  it("shows the page's name, purpose, and main action", () => {
+    render(
+      <PageHeader
+        title="Projects"
+        description="Pick up your research."
+        action={<button>+ New project</button>}
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Projects" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Pick up your research.")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "+ New project" }),
+    ).toBeInTheDocument();
   });
 });
 

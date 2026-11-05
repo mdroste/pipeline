@@ -1,6 +1,9 @@
 //! Codex Tauri commands.
 
+mod bridge_events;
+
 use super::*;
+pub(super) use bridge_events::BridgeEvents;
 
 #[tauri::command]
 pub async fn workbench_reconcile_workspace_roots(
@@ -97,58 +100,56 @@ pub async fn workbench_codex_send_turn(
     app: tauri::AppHandle,
     request: SendTurnRequest,
 ) -> Result<SendTurnResult, RuntimeCommandError> {
-    submit_turn(app, request, None).await
+    submit_turn(Some(app), request, None, Default::default()).await
 }
 
 pub(crate) fn task_turn_available() -> bool {
     turn_queue().available_permits() > 0
 }
 
+/// `app` is required to reach a runtime. Without it the checks and preparation
+/// still run and the message is reported as not sent, which lets a test drive a
+/// real task submission up to this boundary with no provider.
 pub(crate) async fn submit_turn(
-    app: tauri::AppHandle,
+    app: Option<tauri::AppHandle>,
     request: SendTurnRequest,
     task_binding: Option<crate::workbench::tasks::TaskBinding>,
+    control: crate::workbench::submission::Control,
 ) -> Result<SendTurnResult, RuntimeCommandError> {
+    control.check()?;
+    let mut request = request;
     let automated = task_binding.is_some();
-    let permit = if automated {
-        turn_queue()
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| RuntimeCommandError {
-                code: "task_busy".into(),
-                message: "task_busy: Workspace is running another turn".into(),
-                retryable: true,
-                recovery: None,
-            })?
-    } else {
-        turn_queue()
-            .clone()
-            .acquire_owned()
-            .await
-            .map_err(|_| RuntimeCommandError {
-                code: "turn_queue_closed".into(),
-                message: "The Workspace turn queue is unavailable".into(),
-                retryable: true,
-                recovery: None,
-            })?
-    };
+    let origin = TurnOrigin::of(automated, control.0.is_some());
+    // Admission writes nothing, so a refused send leaves its draft and its
+    // conversation exactly as they were.
+    let permit = turn_queue().clone().try_acquire_owned().map_err(|_| {
+        let (code, message) = if automated {
+            ("task_busy", "task_busy: Workspace is running another turn")
+        } else {
+            (TURN_BUSY, "Another response is still running")
+        };
+        RuntimeCommandError {
+            code: code.into(),
+            message: message.into(),
+            retryable: true,
+            recovery: None,
+        }
+    })?;
     if let Some(binding) = task_binding {
         run_store(move |store| crate::workbench::tasks::validate_binding(&store, &binding)).await?;
     }
-    {
-        let mut state = active_turn_state()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        state.setup_in_progress = true;
-        state.epoch = None;
-        state.thread_id = None;
-        state.turn_id = None;
-        state.completion_during_setup = None;
-        state.connection_closed_during_setup = false;
-        state.permit = Some(permit);
+    let owner_session = request.session_id.clone();
+    let announcer = app.clone();
+    begin_turn_setup(owner_session.clone(), origin, permit);
+    if let Some(app) = &announcer {
+        announce_active_turn(app, None);
     }
 
     let mut dispatched_supervisor = None;
+    // Set when the message is about to be written to App Server. A failure
+    // before then proves the message was not sent. API and Claude never set it:
+    // each one fails only before its prompt leaves, and succeeds from there on.
+    let mut handed_off = false;
     let mut result: Result<SendTurnResult, RuntimeCommandError> = async {
         if !automated {
         let draft_operation = format!("send-draft-{}", request.client_submission_id);
@@ -187,17 +188,38 @@ pub(crate) async fn submit_turn(
         }
 
         let session_id = request.session_id.clone();
-        let (binding, runtime_root, prepared) = run_store(move |store| {
+        let (binding, runtime_root, prepared, runtime) = run_store(move |store| {
             if store.session_snapshot(&session_id)?.session.workspace_id.as_deref().is_some_and(crate::workbench::research::jobs::workspace_active) {return Err(WorkbenchError::conflict("This project has a local job holding its write resources. Finish or stop it before starting a research turn."));}
+            if !automated { crate::workbench::project::conversation_copy::prepare(&store, &session_id)?; }
             Ok::<_, WorkbenchError>((
                 store.active_binding(&session_id)?,
                 store.runtime_root(&session_id)?,
                 crate::workbench::research::prepare_turn(&store, &session_id)?,
+                store.session_snapshot(&session_id)?.session.overrides,
             ))
         })
         .await?;
+        control.check()?;
+        if automated {
+            request.inherit_selection(&runtime);
+        }
+        let desktop = |app: Option<tauri::AppHandle>| {
+            app.ok_or_else(|| {
+                WorkbenchError::invalid("Workspace execution requires the desktop runtime")
+            })
+        };
+        if let Some(provider) = crate::workbench::api::selected(&runtime)? {
+            return crate::workbench::api::submit(desktop(app)?, request, binding, prepared, automated, provider, control).await;
+        }
+        if crate::workbench::claude::selected(&runtime)? {
+            return crate::workbench::claude::submit(desktop(app)?, request, binding, prepared, automated, control).await;
+        }
+        let app = desktop(app)?;
+        let history_session = request.session_id.clone();
+        let history_binding = binding.clone();
+        let fingerprint = prepared.effective.fingerprint.clone();
+        let transferred_history = run_store(move |store| crate::workbench::history::codex_context(&store, &history_session, history_binding.as_ref(), &fingerprint)).await?;
         let root = runtime_root.to_string_lossy().into_owned();
-        let permission_profile = prepared.effective.permission_profile.as_str();
         let supervisor = crate::workbench::codex::supervisor_manager().connect().await?;
         let account_lease = supervisor.account_lease().await?;
         active_turn_state().lock().unwrap_or_else(|error| error.into_inner()).account_lease = account_lease;
@@ -206,32 +228,7 @@ pub(crate) async fn submit_turn(
             .unwrap_or_else(|error| error.into_inner())
             .epoch = Some(supervisor.status().epoch);
         ensure_event_bridge(app, supervisor.clone());
-        let connection = if let Some(binding) = binding.filter(|binding| {
-            binding.harness_fingerprint.as_deref() == Some(&prepared.effective.fingerprint)
-        }) {
-            supervisor
-                .resume_thread(
-                    &request.session_id,
-                    &binding.provider_thread_id,
-                    permission_profile,
-                    vec![root],
-                )
-                .await?
-        } else {
-            supervisor
-                .start_thread(crate::workbench::codex::StartThreadRequest {
-                    base_instructions: prepared.effective.preset.base_instructions.clone(),
-                    workbench_session_id: request.session_id.clone(),
-                    cwd: root.clone(),
-                    runtime_workspace_roots: vec![root],
-                    permissions: permission_profile.to_string(),
-                    developer_instructions: prepared.effective.developer_instructions.clone(),
-                    model: request.model.clone(),
-                    effort: request.effort.clone(),
-                    dynamic_tools: prepared.effective.dynamic_tools.clone(),
-                })
-                .await?
-        };
+        let connection = open_thread(&supervisor, &request, binding, transferred_history, &prepared, root).await?;
         active_turn_state()
             .lock()
             .unwrap_or_else(|error| error.into_inner())
@@ -247,6 +244,23 @@ pub(crate) async fn submit_turn(
                     retryable: true,
                     recovery: None,
                 })?;
+        let sent_text = request.text.clone();
+        let turn_request = crate::workbench::codex::StartTurnRequest {
+            workbench_binding_id: binding_id.clone(),
+            thread_id: connection.thread_id.clone(),
+            text: request.text,
+            client_user_message_id: request.client_submission_id.clone(),
+            model: request.model,
+            effort: request.effort,
+        };
+        // Validation (including the live model catalog check) writes nothing
+        // to App Server, so its failures must not be treated as an uncertain
+        // dispatch that tears the connection down.
+        control.preflight(async { supervisor.validate_turn(&turn_request).await.map_err(Into::into) }).await?;
+        control.check()?;
+        // A thread only counts as resumable once a turn may have reached it.
+        // This stays ahead of the send: after an unconfirmed send, reconciling
+        // has to find the thread to learn whether the turn arrived.
         let binding_for_snapshot = binding_id.clone();
         let fingerprint = prepared.effective.fingerprint.clone();
         let instruction_sources = connection.instruction_sources.clone();
@@ -254,16 +268,10 @@ pub(crate) async fn submit_turn(
             store.set_binding_harness(&binding_for_snapshot, &fingerprint, &instruction_sources)
         })
         .await?;
+        handed_off = true;
         dispatched_supervisor = Some(supervisor.clone());
         let turn_id = supervisor
-            .start_turn_with_acceptance(crate::workbench::codex::StartTurnRequest {
-                workbench_binding_id: binding_id.clone(),
-                thread_id: connection.thread_id.clone(),
-                text: request.text,
-                client_user_message_id: request.client_submission_id.clone(),
-                model: request.model,
-                effort: request.effort,
-            }, |turn_id| {
+            .dispatch_turn(turn_request, |turn_id| {
                 active_turn_state().lock().unwrap_or_else(|error| error.into_inner()).turn_id = Some(turn_id.to_owned());
             })
             .await?;
@@ -282,26 +290,11 @@ pub(crate) async fn submit_turn(
         .await?;
 
         let draft_cleared = if automated { false } else {
-        let clear_operation = format!("send-ack-{}", request.client_submission_id);
         let session_id = request.session_id;
-        run_store(move |store| {
-            let snapshot = store.session_snapshot(&session_id)?;
-            store.update_session(UpdateSessionRequest {
-                session_id,
-                expected_revision: snapshot.session.revision,
-                operation_id: clear_operation,
-                title: None,
-                draft: Some(String::new()),
-                overrides: None,
-                archived: None,
-                preset_id: None,
-                paper_id: None,
-                clear_paper: None,
-            })?;
-            Ok::<_, WorkbenchError>(())
-        })
-        .await
-        .is_ok()
+        let submission = request.client_submission_id;
+        run_store(move |store| clear_sent_draft(&store, &session_id, &sent_text, &submission))
+            .await
+            .unwrap_or(false)
         };
         Ok(SendTurnResult {
             epoch: supervisor.status().epoch,
@@ -311,6 +304,11 @@ pub(crate) async fn submit_turn(
         })
     }
     .await;
+    if !handed_off {
+        if let Err(error) = &mut result {
+            error.code = TURN_NOT_SENT.into();
+        }
+    }
     // An unacknowledged dispatch retains ownership until its connection is reaped.
     let unacknowledged = result.is_err()
         && active_turn_state()
@@ -335,14 +333,102 @@ pub(crate) async fn submit_turn(
         }
     }
     state.finish_setup(result.is_err());
+    drop(state);
+    if let Some(app) = &announcer {
+        let failure = result.as_ref().err();
+        announce_active_turn(app, failure.map(|error| (owner_session.as_str(), error)));
+    }
     result
 }
+
+/// Continues the bound thread, or starts a successor seeded with the app's own
+/// history when there is nothing to continue. Binding the successor retires the
+/// old thread. Only `resume_thread`'s definite answers lead here, so an
+/// unconfirmed send is never repeated on a new thread.
+pub(super) async fn open_thread(
+    supervisor: &crate::workbench::codex::AppServerSupervisor,
+    request: &SendTurnRequest,
+    binding: Option<crate::workbench::store::SessionBinding>,
+    transferred_history: Option<String>,
+    prepared: &crate::workbench::research::PreparedHarness,
+    root: String,
+) -> Result<crate::workbench::codex::ThreadConnection, RuntimeCommandError> {
+    let effective = &prepared.effective;
+    let permission_profile = effective.permission_profile.as_str();
+    let config = || {
+        Some(effective.capabilities.codex_config(
+            effective.web_search,
+            effective.command_network,
+            permission_profile,
+        ))
+    };
+    if let Some(binding) = binding.filter(|_| transferred_history.is_none()) {
+        let resumed = supervisor
+            .resume_thread(
+                &request.session_id,
+                &binding.provider_thread_id,
+                permission_profile,
+                &root,
+                vec![root.clone()],
+                config(),
+            )
+            .await?;
+        if let Some(connection) = resumed {
+            return Ok(connection);
+        }
+    }
+    let history = match transferred_history {
+        Some(history) => history,
+        None => {
+            let session = request.session_id.clone();
+            run_store(move |store| crate::workbench::history::recent_context(&store, &session))
+                .await?
+        }
+    };
+    Ok(supervisor
+        .start_thread(crate::workbench::codex::StartThreadRequest {
+            base_instructions: effective.preset.base_instructions.clone(),
+            workbench_session_id: request.session_id.clone(),
+            cwd: root.clone(),
+            runtime_workspace_roots: vec![root],
+            permissions: permission_profile.to_string(),
+            developer_instructions: format!("{}\n{}", effective.developer_instructions, history),
+            model: request.model.clone(),
+            effort: request.effort.clone(),
+            dynamic_tools: effective.dynamic_tools.clone(),
+            config: config(),
+        })
+        .await?)
+}
+
+/// Code for a submission that failed before the message left Pipeline. The
+/// message was definitely not sent, so the renderer can restore it as an
+/// unsent draft instead of reporting an uncertain delivery.
+const TURN_NOT_SENT: &str = "turn_not_sent";
+
+/// Code for a composer send refused because another turn holds the permit. A
+/// send never waits for one: the turn ahead may be waiting on an approval the
+/// researcher can't see from here.
+const TURN_BUSY: &str = "turn_busy";
 
 #[tauri::command]
 pub async fn workbench_codex_interrupt_turn(
     thread_id: String,
     turn_id: String,
 ) -> Result<(), crate::workbench::codex::RequestError> {
+    if thread_id.starts_with("api-") {
+        return crate::workbench::api::interrupt(&thread_id, &turn_id);
+    }
+    if thread_id.starts_with("claude-") {
+        let result = crate::workbench::claude::interrupt(&thread_id, &turn_id);
+        let _ = run_store(move |store| {
+            crate::workbench::research::cancel_executions_for_provider_turn(
+                &store, &thread_id, &turn_id,
+            )
+        })
+        .await;
+        return result;
+    }
     let result = crate::workbench::codex::supervisor_manager()
         .connect()
         .await?
@@ -361,12 +447,129 @@ pub async fn workbench_codex_interrupt_turn(
     result
 }
 
+/// API and Claude turns are owned in process and need no connection to settle.
+/// False leaves the conversation to Codex.
+pub(crate) async fn reconcile_local_session(session_id: String) -> WorkbenchResult<bool> {
+    run_store(move |store| {
+        let snapshot = store.session_snapshot(&session_id)?;
+        let api = crate::workbench::api::selected(&snapshot.session.overrides)?.is_some();
+        let claude = !api && crate::workbench::claude::selected(&snapshot.session.overrides)?;
+        let binding = store.active_binding(&session_id)?;
+        match binding.as_ref().map(|b| b.runtime_namespace.as_str()) {
+            Some(crate::workbench::api::NAMESPACE) => {
+                crate::workbench::api::reconcile(store, session_id)
+            }
+            Some(crate::workbench::claude::NAMESPACE) => {
+                crate::workbench::claude::reconcile(store, session_id)
+            }
+            _ => Ok(api || claude),
+        }
+    })
+    .await
+}
+
+/// True when the conversation's state may have changed, so it is worth
+/// reloading. Closing an abandoned turn needs no matching harness or selected
+/// connection: how a turn ended doesn't depend on either.
 #[tauri::command]
 pub async fn workbench_codex_reconcile_session(
     app: tauri::AppHandle,
     session_id: String,
 ) -> Result<bool, RuntimeCommandError> {
-    let lookup_session_id = session_id.clone();
+    let reconciled = if reconcile_local_session(session_id.clone()).await? {
+        Ok(true)
+    } else {
+        reconcile_codex_thread(&app, &session_id).await
+    };
+    if settle_abandoned_turns(&app, session_id).await? {
+        return Ok(true);
+    }
+    reconciled
+}
+
+/// Closes open turns on the conversation's Codex binding that nothing owns, as
+/// a quit or crash leaves them. Each ends as Codex recorded it where the thread
+/// can still be read.
+async fn settle_abandoned_turns(
+    app: &tauri::AppHandle,
+    session_id: String,
+) -> Result<bool, RuntimeCommandError> {
+    let abandoned = run_store(move |store| {
+        let Some(binding) = store.active_binding(&session_id)?.filter(|binding| {
+            !matches!(
+                binding.runtime_namespace.as_str(),
+                crate::workbench::api::NAMESPACE | crate::workbench::claude::NAMESPACE
+            )
+        }) else {
+            return Ok(None);
+        };
+        let open = store.open_provider_turns(&binding.id)?;
+        let thread = binding.provider_thread_id.as_str();
+        Ok(open
+            .iter()
+            .any(|turn| turn_is_abandoned(thread, turn))
+            .then_some(binding))
+    })
+    .await?;
+    let Some(binding) = abandoned else {
+        return Ok(false);
+    };
+    let native = crate::workbench::codex::supervisor_manager()
+        .connect()
+        .await
+        .ok();
+    if let Some(supervisor) = &native {
+        ensure_event_bridge(app.clone(), supervisor.clone());
+    }
+    close_abandoned_turns(native.as_deref(), binding).await?;
+    Ok(true)
+}
+
+/// Read after the turn list: a turn recorded during setup has its owner by now.
+fn turn_is_abandoned(thread: &str, turn: &str) -> bool {
+    !turn_setup_in_progress() && !turn_has_live_owner(thread, turn)
+}
+
+/// Projects Codex's own ending for each open turn it still knows, then marks
+/// the rest interrupted. Without a live owner, none of them is still running.
+pub(super) async fn close_abandoned_turns(
+    native: Option<&crate::workbench::codex::AppServerSupervisor>,
+    binding: crate::workbench::store::SessionBinding,
+) -> WorkbenchResult<()> {
+    let thread = binding.provider_thread_id;
+    if let Some(supervisor) = native {
+        // An error means the thread is unavailable, which the next step covers.
+        let _ = supervisor.reconcile_thread(&binding.id, &thread).await;
+    }
+    let binding = binding.id;
+    run_store(move |store| {
+        for turn in store.open_provider_turns(&binding)? {
+            if !turn_is_abandoned(&thread, &turn) {
+                continue;
+            }
+            let event = crate::agent_runtime::events::NormalizedEvent::TurnCompleted {
+                epoch: crate::workbench::api::next_epoch(),
+                thread_id: thread.clone(),
+                turn: json!({
+                    "id": turn,
+                    "status": "interrupted",
+                    "error": {"message": "The connection ended; this turn was not replayed."}
+                }),
+                turn_id: turn,
+                status: "interrupted".into(),
+            };
+            store.project_codex_event(&binding, &event)?;
+        }
+        Ok(())
+    })
+    .await
+}
+
+async fn reconcile_codex_thread(
+    app: &tauri::AppHandle,
+    session_id: &str,
+) -> Result<bool, RuntimeCommandError> {
+    let lookup_session_id = session_id.to_string();
     let (binding, root, harness) = run_store(move |store| {
         Ok::<_, WorkbenchError>((
             store.active_binding(&lookup_session_id)?,
@@ -387,14 +590,25 @@ pub async fn workbench_codex_reconcile_session(
         .connect()
         .await?;
     ensure_event_bridge(app.clone(), supervisor.clone());
-    let connection = supervisor
+    let root = root.to_string_lossy().into_owned();
+    let Some(connection) = supervisor
         .resume_thread(
-            &session_id,
+            session_id,
             &binding.provider_thread_id,
             permission_profile,
-            vec![root.to_string_lossy().into_owned()],
+            &root,
+            vec![root.clone()],
+            Some(harness.capabilities.codex_config(
+                harness.web_search,
+                harness.command_network,
+                permission_profile,
+            )),
         )
-        .await?;
+        .await?
+    else {
+        // The next message continues on a successor thread.
+        return Ok(false);
+    };
     let binding_id = connection
         .workbench_binding_id
         .ok_or_else(|| RuntimeCommandError {
@@ -406,7 +620,7 @@ pub async fn workbench_codex_reconcile_session(
     supervisor
         .reconcile_thread(&binding_id, &connection.thread_id)
         .await?;
-    reconcile_active_turn(&app, &supervisor).await;
+    reconcile_active_turn(app, &supervisor).await;
     Ok(true)
 }
 
@@ -442,7 +656,7 @@ pub async fn workbench_codex_resolve_server_request(
 }
 
 pub(super) fn claim_pending_request(
-    pending: &mut HashMap<String, crate::workbench::codex::NormalizedEvent>,
+    pending: &mut HashMap<String, crate::agent_runtime::events::NormalizedEvent>,
     request: &ResolveServerRequest,
     epoch: u64,
 ) -> Result<(), crate::workbench::codex::RequestError> {
@@ -462,7 +676,7 @@ pub(super) fn claim_pending_request(
 }
 
 #[tauri::command]
-pub fn workbench_codex_pending_requests() -> Vec<crate::workbench::codex::NormalizedEvent> {
+pub fn workbench_codex_pending_requests() -> Vec<PendingRequest> {
     let mut pending = pending_server_requests()
         .lock()
         .unwrap_or_else(|error| error.into_inner())
@@ -470,12 +684,37 @@ pub fn workbench_codex_pending_requests() -> Vec<crate::workbench::codex::Normal
         .cloned()
         .collect::<Vec<_>>();
     pending.sort_by_key(|event| match event {
-        crate::workbench::codex::NormalizedEvent::ServerRequest { request_id, .. } => {
+        crate::agent_runtime::events::NormalizedEvent::ServerRequest { request_id, .. } => {
             request_key(request_id)
         }
         _ => String::new(),
     });
-    pending
+    pending.into_iter().map(with_session).collect()
+}
+
+/// Refuses a server request no screen can answer. It would otherwise show a card
+/// whose buttons can't reach Codex, and the turn would wait until Stop.
+pub(super) async fn refuse_unsupported_request(
+    supervisor: &crate::workbench::codex::AppServerSupervisor,
+    event: &crate::agent_runtime::events::NormalizedEvent,
+) -> bool {
+    let crate::agent_runtime::events::NormalizedEvent::ServerRequest {
+        request_id, method, ..
+    } = event
+    else {
+        return false;
+    };
+    let any_answer = json!({"decision":"decline","answers":{},"permissions":{}});
+    if validate_server_response(method, &any_answer).is_ok() {
+        return false;
+    }
+    let refusal = crate::workbench::codex::RequestError::invalid(format!(
+        "Pipeline does not support {method}"
+    ));
+    let _ = supervisor
+        .respond_to_server_request(request_id.clone(), Err(refusal))
+        .await;
+    true
 }
 
 pub(super) fn ensure_event_bridge(
@@ -490,7 +729,7 @@ pub(super) fn ensure_event_bridge(
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .clear();
-    let mut events = supervisor.subscribe();
+    let mut source = BridgeEvents::new(supervisor.subscribe(), supervisor.request_sink());
     let recovery = supervisor.clone();
     let recovery_app = app.clone();
     tokio::spawn(async move {
@@ -502,15 +741,17 @@ pub(super) fn ensure_event_bridge(
             }
             if !recovery.status().connected {
                 recovery.shutdown().await;
+                stop_connection_tools(epoch).await;
                 close_active_connection(epoch);
+                announce_active_turn(&recovery_app, None);
                 break;
             }
             reconcile_active_turn(&recovery_app, &recovery).await;
         }
     });
     tokio::spawn(async move {
-        loop {
-            match events.recv().await {
+        while let Some(received) = source.next().await {
+            match received {
                 Ok(event) => {
                     if EVENT_BRIDGE_EPOCH.load(Ordering::Acquire) != epoch {
                         return;
@@ -523,7 +764,7 @@ pub(super) fn ensure_event_bridge(
                     {
                         continue;
                     }
-                    if let crate::workbench::codex::NormalizedEvent::ServerRequest {
+                    if let crate::agent_runtime::events::NormalizedEvent::ServerRequest {
                         request_id,
                         method,
                         params,
@@ -538,12 +779,20 @@ pub(super) fn ensure_event_bridge(
                             let tool_supervisor = supervisor.clone();
                             let tool_app = app.clone();
                             tokio::spawn(async move {
-                                let response = run_store(move |store| {
-                                    crate::workbench::research::handle_dynamic_tool_call(
-                                        &store, &params,
-                                    )
-                                })
-                                .await;
+                                let response = if crate::workbench::conversation_tools::owns(
+                                    params["tool"].as_str().unwrap_or_default(),
+                                ) {
+                                    // Boxed because this future is too large for a thread's stack unoptimized.
+                                    Box::pin(crate::workbench::conversation_tools::handle(params))
+                                        .await
+                                } else {
+                                    run_store(move |store| {
+                                        crate::workbench::research::handle_dynamic_tool_call(
+                                            &store, &params,
+                                        )
+                                    })
+                                    .await
+                                };
                                 crate::workbench::research::jobs::launch_pending();
                                 let mut response = match response {
                                     Ok(value) => value,
@@ -585,13 +834,14 @@ pub(super) fn ensure_event_bridge(
                                         }
                                     }
                                 }
-                                let success = response
+                                let succeeded = response
                                     .get("success")
                                     .and_then(Value::as_bool)
                                     .unwrap_or(false);
-                                let _ = tool_supervisor
-                                    .respond_to_server_request(request_id, Ok(response))
+                                let delivered = tool_supervisor
+                                    .respond_to_tool_call(request_id, response)
                                     .await;
+                                let success = succeeded && matches!(delivered, Ok(true));
                                 let _ = tool_app.emit(
                                     "workbench:event",
                                     json!({"kind":"researchToolCompleted","epoch":epoch,"success":success}),
@@ -605,8 +855,11 @@ pub(super) fn ensure_event_bridge(
                     {
                         continue;
                     }
+                    if refuse_unsupported_request(&supervisor, &event).await {
+                        continue;
+                    }
                     match &event {
-                        crate::workbench::codex::NormalizedEvent::ServerRequest {
+                        crate::agent_runtime::events::NormalizedEvent::ServerRequest {
                             request_id,
                             ..
                         } => {
@@ -615,7 +868,7 @@ pub(super) fn ensure_event_bridge(
                                 .unwrap_or_else(|error| error.into_inner())
                                 .insert(request_key(request_id), event.clone());
                         }
-                        crate::workbench::codex::NormalizedEvent::ServerRequestResolved {
+                        crate::agent_runtime::events::NormalizedEvent::ServerRequestResolved {
                             request_id,
                             ..
                         } => {
@@ -624,7 +877,7 @@ pub(super) fn ensure_event_bridge(
                                 .unwrap_or_else(|error| error.into_inner())
                                 .remove(&request_key(request_id));
                         }
-                        crate::workbench::codex::NormalizedEvent::ConnectionClosed {
+                        crate::agent_runtime::events::NormalizedEvent::ConnectionClosed {
                             epoch,
                             ..
                         } => {
@@ -635,28 +888,45 @@ pub(super) fn ensure_event_bridge(
                             // Transport failure alone does not prove the native
                             // process stopped. Reap it before releasing account use.
                             supervisor.shutdown().await;
+                            stop_connection_tools(*epoch).await;
                             close_active_connection(*epoch);
                         }
-                        crate::workbench::codex::NormalizedEvent::TurnCompleted {
+                        crate::agent_runtime::events::NormalizedEvent::TurnCompleted {
                             epoch,
                             thread_id,
                             turn_id,
                             status,
                             ..
                         } => {
+                            crate::workbench::conversation_tools::report_capture(
+                                &app,
+                                *epoch,
+                                crate::workbench::conversation_tools::finish(thread_id, turn_id)
+                                    .await,
+                            );
                             complete_active_turn(*epoch, thread_id, turn_id);
                             if status == "completed" {
                                 spawn_title_generation(
                                     app.clone(),
-                                    supervisor.clone(),
+                                    TitleRuntime::Codex(supervisor.clone()),
                                     thread_id.clone(),
                                     turn_id.clone(),
                                 );
                             }
                         }
+                        // Nothing in the app reads these, and some carry a whole
+                        // command's output or the turn's cumulative diff.
+                        crate::agent_runtime::events::NormalizedEvent::UnknownNotification {
+                            ..
+                        } => continue,
                         _ => {}
                     }
-                    let _ = app.emit("workbench:event", event);
+                    let _ = match event {
+                        crate::agent_runtime::events::NormalizedEvent::ServerRequest { .. } => {
+                            app.emit("workbench:event", with_session(event))
+                        }
+                        event => app.emit("workbench:event", event),
+                    };
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                     reconcile_active_turn(&app, &supervisor).await;
@@ -667,12 +937,56 @@ pub(super) fn ensure_event_bridge(
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                     supervisor.shutdown().await;
+                    stop_connection_tools(epoch).await;
                     close_active_connection(epoch);
+                    announce_active_turn(&app, None);
                     return;
                 }
             }
         }
     });
+}
+
+/// Stops ChatGPT conversations for an app exit: the running turn is asked to
+/// stop and given a moment to record how it ended, then App Server is stopped.
+/// A turn left open is closed as interrupted on the next launch, and a
+/// connection still starting can't hold up the exit: App Server stops by itself
+/// when this process ends.
+pub(crate) async fn stop_codex_runtime() {
+    let stop = stop_codex(crate::workbench::codex::supervisor_manager());
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(12), stop).await;
+}
+
+pub(super) async fn stop_codex(manager: &crate::workbench::codex::SupervisorManager) {
+    let Some(supervisor) = manager.current().await else {
+        return;
+    };
+    let identity = {
+        let state = active_turn_state()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state
+            .thread_id
+            .clone()
+            .zip(state.turn_id.clone())
+            .filter(|_| state.epoch == Some(supervisor.status().epoch))
+    };
+    if let Some((thread, turn)) = identity {
+        let interrupted = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            supervisor.interrupt_turn(&thread, &turn),
+        )
+        .await;
+        if matches!(interrupted, Ok(Ok(()))) {
+            for _ in 0..40 {
+                if !turn_has_live_owner(&thread, &turn) {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        }
+    }
+    manager.shutdown().await;
 }
 
 /// Recover permit ownership from authoritative native state after event loss.
@@ -693,14 +1007,21 @@ async fn reconcile_active_turn(
     let Some((thread, turn)) = identity else {
         return;
     };
-    if let Ok(snapshot) = supervisor.read_thread(&thread).await {
-        if let Some(native_turn) = recovered_terminal(&snapshot, &thread, &turn) {
+    // Status only: the heartbeat runs every few seconds for the whole turn,
+    // so it must not reread the conversation's items.
+    if let Ok(recent) = supervisor.recent_turns(&thread).await {
+        if let Some(native_turn) = recovered_terminal(&recent, &turn) {
+            crate::workbench::conversation_tools::report_capture(
+                app,
+                epoch,
+                crate::workbench::conversation_tools::finish(&thread, &turn).await,
+            );
             complete_active_turn(epoch, &thread, &turn);
             // The same loss that hid completion from the permit owner can hide
             // it from the renderer. Re-emit the authoritative terminal identity.
             let _ = app.emit(
                 "workbench:event",
-                crate::workbench::codex::NormalizedEvent::TurnCompleted {
+                crate::agent_runtime::events::NormalizedEvent::TurnCompleted {
                     epoch,
                     thread_id: thread,
                     turn_id: turn,
@@ -712,15 +1033,9 @@ async fn reconcile_active_turn(
     }
 }
 
-pub(super) fn recovered_terminal<'a>(
-    snapshot: &'a Value,
-    thread: &str,
-    turn: &str,
-) -> Option<&'a Value> {
-    if snapshot["thread"]["id"] != thread {
-        return None;
-    }
-    snapshot["thread"]["turns"].as_array()?.iter().find(|t| {
+/// The terminal native turn with this id in a `thread/turns/list` page.
+pub(super) fn recovered_terminal<'a>(recent: &'a Value, turn: &str) -> Option<&'a Value> {
+    recent["data"].as_array()?.iter().find(|t| {
         t["id"] == turn
             && matches!(
                 t["status"].as_str(),
@@ -734,24 +1049,24 @@ fn request_key(request_id: &Value) -> String {
 }
 
 pub(super) fn validate_pending_request(
-    event: &crate::workbench::codex::NormalizedEvent,
+    event: &crate::agent_runtime::events::NormalizedEvent,
     active_epoch: u64,
     submitted_method: &str,
 ) -> Result<(), crate::workbench::codex::RequestError> {
     match event {
-        crate::workbench::codex::NormalizedEvent::ServerRequest { epoch, method, .. }
+        crate::agent_runtime::events::NormalizedEvent::ServerRequest { epoch, method, .. }
             if *epoch == active_epoch && method == submitted_method =>
         {
             Ok(())
         }
-        crate::workbench::codex::NormalizedEvent::ServerRequest { epoch, .. }
+        crate::agent_runtime::events::NormalizedEvent::ServerRequest { epoch, .. }
             if *epoch != active_epoch =>
         {
             Err(crate::workbench::codex::RequestError::invalid(
                 "Server request belongs to an expired connection",
             ))
         }
-        crate::workbench::codex::NormalizedEvent::ServerRequest { .. } => Err(
+        crate::agent_runtime::events::NormalizedEvent::ServerRequest { .. } => Err(
             crate::workbench::codex::RequestError::invalid("Server request method did not match"),
         ),
         _ => Err(crate::workbench::codex::RequestError::invalid(

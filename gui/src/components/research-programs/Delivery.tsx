@@ -1,3 +1,4 @@
+import { Fold } from "../../ui";
 import { useEffect, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { DeskRecord, OpenResearchObject } from "../../lib/deskClient";
@@ -57,11 +58,10 @@ export default function Delivery(props: DeskProps) {
   const drafts = (p.records.deliverable ?? []) as DeskRecord<Deliverable>[];
   return (
     <div className="space-y-5">
-      <section className={card}>
-        <h2 className="font-semibold">Research starter kits</h2>
+      <Fold title="Research starter kits">
         <p className={muted}>
-          Start with an editable outline and two concrete tasks. Kits work
-          before a manuscript is imported and make no model call.
+          Create an editable outline and two action items. You can start without
+          a manuscript or an AI call.
         </p>
         <div className="flex flex-wrap gap-2">
           {kits.map((k) => (
@@ -89,9 +89,7 @@ export default function Delivery(props: DeskProps) {
                 onChange={(e) => setInstructions(e.target.value)}
               />
             </Field>
-            <p className={muted}>
-              Creates one ordinary outline note with these sections:
-            </p>
+            <p className={muted}>Creates an outline with these sections:</p>
             <ul className="list-inside list-disc text-sm">
               {kit.sections.map((s) => (
                 <li key={s}>{s}</li>
@@ -123,17 +121,17 @@ export default function Delivery(props: DeskProps) {
                 })
               }
             >
-              Install the previewed structure
+              Create this outline and action items
             </button>
           </div>
         )}
-      </section>
+      </Fold>
       <section className={card}>
-        <h2 className="font-semibold">Deliverable assembly</h2>
+        <h2 className="font-semibold">Build a draft</h2>
         <p className={muted}>
-          Arrange prose, exact source excerpts, and retained publication assets.
-          Each generation creates a new Markdown and TeX draft for comparison
-          and acceptance.
+          Arrange text, source excerpts, tables, and figures. Generate a new
+          Markdown and TeX draft, then compare it with earlier versions and
+          review the changes.
         </p>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Deliverable title">
@@ -170,7 +168,7 @@ export default function Delivery(props: DeskProps) {
                 onChange={(e) => change(i, { heading: e.target.value })}
               />
             </Field>
-            <Field label="Your section prose">
+            <Field label="Section text">
               <textarea
                 className={input}
                 rows={4}
@@ -322,6 +320,7 @@ export default function Delivery(props: DeskProps) {
             artifacts={d.body.artifacts}
             choices={p.choices}
             onError={props.onError}
+            onChanged={props.onChanged}
           />
           {d.body.attachments.length > 0 && (
             <Inspect
@@ -332,10 +331,12 @@ export default function Delivery(props: DeskProps) {
         </section>
       ))}
       <section className={card}>
-        <h3 className="font-semibold">Project deliverable roles</h3>
+        <h3 className="font-semibold">
+          Main manuscript and supporting documents
+        </h3>
         <p className={muted}>
-          A main deliverable is optional. Existing manuscript selection remains
-          available in Project brief.
+          A main deliverable is optional. Choose the current version of the
+          paper in Project settings.
         </p>
         <Field label="Deliverable role">
           <select
@@ -354,7 +355,7 @@ export default function Delivery(props: DeskProps) {
           choices={p.choices?.objects ?? []}
           value={roleObject}
           onChange={setRoleObject}
-          label="Object to assign"
+          label="Document or file"
         />
         <button
           className={button}
@@ -384,9 +385,9 @@ export default function Delivery(props: DeskProps) {
         ))}
       </section>
       <p className={muted}>
-        For external editing, open Writing → Edits & acceptance: inspect an
-        exact working file, open it externally, refresh the project inventory,
-        and compare incoming changes before acceptance.
+        To edit in another app, open the file under Files and choose Open
+        externally from its … menu. After saving, choose Refresh file list in
+        Project settings.
       </p>
     </div>
   );

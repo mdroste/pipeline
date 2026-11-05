@@ -53,6 +53,47 @@ it("loads older action items and carries the selected record into the edit view"
     screen.queryByRole("button", { name: "Show older action items" }),
   ).toBeNull();
 });
+it("keeps older action items through a refresh and updates an edited one in place", async () => {
+  const api = props();
+  mocks.taskPage.mockResolvedValue({ records: [older], nextCursor: null });
+  const view = render(<ProjectActionItems {...api} />);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Show older action items" }),
+  );
+  await screen.findByText("Older open action");
+  const done = {
+    ...older,
+    revision: 2,
+    updatedAt: "newest",
+    body: { ...older.body, status: "completed" },
+  };
+  const added = {
+    ...older,
+    id: "new",
+    body: { ...older.body, objective: "Newly added action" },
+  };
+  view.rerender(
+    <ProjectActionItems
+      {...api}
+      data={
+        {
+          ...api.data,
+          tasks: [done, added],
+          tasksCursor: { id: "new", updatedAt: "now" },
+        } as ProjectHome
+      }
+    />,
+  );
+  const statuses = screen.getAllByRole("combobox");
+  expect(statuses.map((s) => s.getAttribute("aria-label"))).toEqual([
+    "Status: Newly added action",
+    "Status: Older open action",
+  ]);
+  expect(statuses[1]).toHaveValue("completed");
+  expect(
+    screen.queryByRole("button", { name: "Show older action items" }),
+  ).toBeNull();
+});
 it("discards a page response after the project changes", async () => {
   let resolve!: (v: unknown) => void;
   mocks.taskPage.mockImplementation(

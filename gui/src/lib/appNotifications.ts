@@ -10,6 +10,8 @@ export interface AppNotice {
   title: string;
   body: string;
   discoveryId?: string;
+  /** False when the app already shows this notice itself. */
+  toast?: boolean;
 }
 export function notificationsAllowed(
   kind: NoticeKind,
@@ -51,6 +53,15 @@ export function workspaceNotice(event: WorkbenchEvent): AppNotice | null {
       body: "Open the conversation to inspect the error.",
     };
   return null; // Stopped turns and connection lifecycle events are not failures.
+}
+
+/** A problem in a conversation the researcher has left. */
+export function notifyConversationProblem(sessionId: string, message: string) {
+  notify(message, "error", {
+    label: "Open conversation",
+    run: () =>
+      void router.navigate({ page: "workspace", sessionId, surface: "chat" }),
+  });
 }
 
 export function automationNotice(
@@ -139,7 +150,9 @@ export async function deliverNotice(
       : notice.kind === "completion"
         ? "success"
         : "info";
-  if (notice.discoveryId) {
+  if (notice.toast === false) {
+    /* Sound and desktop delivery below still apply. */
+  } else if (notice.discoveryId) {
     notify(message, kind, {
       label: "Open portfolio",
       run: () =>

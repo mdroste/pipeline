@@ -34,9 +34,6 @@ export function AdaptiveAgentsRow({
           {countLabel} agents
         </span>
       </span>
-      <span className="mt-0.5 block text-[11px] text-blue-700/80 dark:text-blue-300/80">
-        Subject and method specialists selected from the paper’s orientation
-      </span>
     </button>
   );
 }
@@ -55,36 +52,23 @@ export function AdaptiveAgentsEditorPanel({
   onBrowse: (kind: AdaptiveSlotKind) => void;
 }) {
   const automaticRange = `${range.totalMin}–${range.totalMax}`;
-  const methodRange =
-    range.methodMin === range.methodMax
-      ? `${range.methodMin}`
-      : `${range.methodMin} to ${range.methodMax}`;
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="mx-auto max-w-3xl space-y-5 p-5">
+      <div className="mx-auto max-w-xl space-y-6 p-5">
         <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-              Adaptive agents
-            </h3>
-            <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
-              Auto-selected
-            </span>
-          </div>
-          <p className="mt-2 text-sm leading-6 text-gray-600 dark:text-gray-300">
-            Orientation selects the subject and method specialists best matched
-            to the paper, and classifies the document’s genre — every reviewer
-            receives that classification as shared context. Each selected role
-            becomes an independent parallel review step.
+          <h3 className="text-base font-semibold text-ink">Adaptive agents</h3>
+          <p className="mt-1 text-ui-body text-ink-muted">
+            Pipeline selects specialists after assessing the paper. Each reviews
+            it independently.
           </p>
         </div>
 
-        <section className="rounded-xl border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/20">
+        <div>
           <label
             htmlFor="adaptive-agent-count"
-            className="text-xs font-semibold uppercase tracking-wide text-blue-800 dark:text-blue-200"
+            className="block text-ui-label font-medium text-ink"
           >
-            Number of adaptive agents
+            Number of agents
           </label>
           <select
             id="adaptive-agent-count"
@@ -96,7 +80,7 @@ export function AdaptiveAgentsEditorPanel({
                   : Number(event.target.value),
               );
             }}
-            className="mt-2 block w-full max-w-xs rounded-lg border border-blue-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:ring-2 focus:ring-blue-200 dark:border-blue-800 dark:bg-gray-900 dark:text-gray-100 dark:focus:ring-blue-950"
+            className="mt-1.5 block w-full max-w-xs rounded-ui-sm border border-line-strong bg-raised px-3 py-2 text-ui-body text-ink outline-none focus:ring-2 focus:ring-accent-soft"
           >
             <option value="automatic">Automatic ({automaticRange})</option>
             {Array.from(
@@ -108,65 +92,68 @@ export function AdaptiveAgentsEditorPanel({
               </option>
             ))}
           </select>
-          <p className="mt-2 text-xs leading-5 text-blue-900/80 dark:text-blue-200/80">
-            A fixed count is enforced by the validated review plan. Automatic
-            lets the router use the smallest set that covers the paper, from{" "}
-            {range.totalMin} to {range.totalMax} agents.
+          <p className="mt-1.5 text-ui-meta text-ink-muted">
+            Automatic uses the fewest that cover the paper.
           </p>
-        </section>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <section className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-              Subject specialists
-            </h4>
-            <p className="mt-2 text-sm leading-6 text-gray-700 dark:text-gray-300">
-              One primary subject specialist is always selected. A second may
-              cover genuinely interdisciplinary work.
-            </p>
-            <button
-              type="button"
-              onClick={() => onBrowse("subject")}
-              className="mt-3 text-xs font-medium text-blue-700 underline decoration-blue-300 underline-offset-2 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100"
-            >
-              Browse subject catalog
-            </button>
-          </section>
-
-          <section className="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
-            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
-              Method specialists
-            </h4>
-            <p className="mt-2 text-sm leading-6 text-gray-700 dark:text-gray-300">
-              {methodRange} method reviewer{range.methodMax === 1 ? "" : "s"}{" "}
-              scrutinize the methods that materially support the paper’s central
-              claims.
-            </p>
-            <button
-              type="button"
-              onClick={() => onBrowse("method")}
-              className="mt-3 text-xs font-medium text-blue-700 underline decoration-blue-300 underline-offset-2 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100"
-            >
-              Browse method catalog
-            </button>
-          </section>
         </div>
 
-        <section className="rounded-xl border border-green-200 bg-green-50/60 p-4 dark:border-green-950 dark:bg-green-950/20">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-green-700 dark:text-green-300">
-            Synthesis input
-          </h4>
-          <p className="mt-2 text-sm leading-6 text-green-900 dark:text-green-100">
-            Every adaptive-agent report feeds directly into{" "}
-            <span className="font-medium">Consolidate Feedback</span>
-            {coreStepLabels.length > 0
-              ? `, alongside ${coreStepLabels.join(", ")}`
-              : ""}
-            . Validate Feedback then checks the consolidated report against the
-            paper.
+        <dl className="divide-y divide-line rounded-ui-md border border-line">
+          <SpecialistRow
+            label="Subject specialists"
+            min={range.subjectMin}
+            max={range.subjectMax}
+            onBrowse={() => onBrowse("subject")}
+            browseLabel="Browse subject catalog"
+          />
+          <SpecialistRow
+            label="Method specialists"
+            min={range.methodMin}
+            max={range.methodMax}
+            onBrowse={() => onBrowse("method")}
+            browseLabel="Browse method catalog"
+          />
+        </dl>
+
+        {coreStepLabels.length > 0 && (
+          <p className="text-ui-meta text-ink-muted">
+            Their reports are consolidated alongside {coreStepLabels.join(", ")}
+            .
           </p>
-        </section>
+        )}
       </div>
+    </div>
+  );
+}
+
+function SpecialistRow({
+  label,
+  min,
+  max,
+  onBrowse,
+  browseLabel,
+}: {
+  label: string;
+  min: number;
+  max: number;
+  onBrowse: () => void;
+  browseLabel: string;
+}) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-3">
+      <dt className="flex-1 text-ui-label text-ink">{label}</dt>
+      <dd className="text-ui-label tabular-nums text-ink-muted">
+        {min === max ? min : `${min}–${max}`} per paper
+      </dd>
+      <dd>
+        <button
+          type="button"
+          onClick={onBrowse}
+          aria-label={browseLabel}
+          className="rounded-ui-sm px-2 py-1 text-ui-label font-medium text-accent hover:bg-sunken"
+        >
+          Browse
+        </button>
+      </dd>
     </div>
   );
 }

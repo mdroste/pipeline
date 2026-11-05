@@ -1,4 +1,8 @@
 //! Bounded concurrent JSONL transport for one Codex App Server connection.
+//! Token-refresh requests are answered through the account service and never
+//! broadcast. Request sinks are lossless, so a Review's tool calls and a
+//! Conversation's approvals survive event-queue lag; ordinary events may lag
+//! and must be reconciled.
 
 use super::wire::{
     normalize_notification, parse_frame, IncomingFrame, InitializeResult, NormalizedEvent,
@@ -20,6 +24,9 @@ const OUTBOUND_QUEUE_CAPACITY: usize = 64;
 // ordinary burst never lags a subscriber.
 const EVENT_QUEUE_CAPACITY: usize = 4096;
 const REQUEST_SINK_CAPACITY: usize = 256;
+/// The `request_sinks` key for requests no thread's own sink takes. Thread ids
+/// are never empty.
+const ANY_THREAD: &str = "";
 const WRITE_QUEUE_TIMEOUT: Duration = Duration::from_secs(2);
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -115,9 +122,11 @@ struct Shared {
     epoch: u64,
     pending: Mutex<HashMap<u64, PendingReply>>,
     events: broadcast::Sender<NormalizedEvent>,
+    /// Events sent to `events` so far, which places a sink's request among them.
+    emitted: AtomicU64,
     /// Lossless delivery of server requests for threads whose owner
     /// registered a sink; the broadcast queue may drop them under lag.
-    request_sinks: Mutex<HashMap<String, mpsc::Sender<NormalizedEvent>>>,
+    request_sinks: Mutex<HashMap<String, mpsc::Sender<PlacedRequest>>>,
     closed: AtomicBool,
     close_reason: Mutex<Option<RequestError>>,
     close_signal: watch::Sender<Option<RequestError>>,
@@ -134,7 +143,7 @@ impl Shared {
         for (_, sender) in pending {
             let _ = sender.send(Err(error.clone()));
         }
-        let _ = self.events.send(NormalizedEvent::ConnectionClosed {
+        self.emit(NormalizedEvent::ConnectionClosed {
             epoch: self.epoch,
             reason: error.message,
             retryable: error.retryable,
@@ -149,6 +158,7 @@ impl Shared {
     }
 
     fn emit(&self, event: NormalizedEvent) {
+        self.emitted.fetch_add(1, Ordering::AcqRel);
         let _ = self.events.send(event);
     }
 
@@ -158,39 +168,65 @@ impl Shared {
         let NormalizedEvent::ServerRequest { params, .. } = &event else {
             return Some(event);
         };
-        let Some(thread_id) = params.get("threadId").and_then(Value::as_str) else {
-            return Some(event);
+        let sender = {
+            let sinks = self.request_sinks.lock().unwrap_or_else(|e| e.into_inner());
+            params
+                .get("threadId")
+                .and_then(Value::as_str)
+                .and_then(|thread_id| sinks.get(thread_id))
+                .or_else(|| sinks.get(ANY_THREAD))
+                .cloned()
         };
-        let sender = self
-            .request_sinks
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(thread_id)
-            .cloned();
         let Some(sender) = sender else {
             return Some(event);
         };
-        match sender.try_send(event) {
+        let placed = PlacedRequest {
+            after: self.emitted.load(Ordering::Acquire),
+            event,
+        };
+        match sender.try_send(placed) {
             Ok(()) => None,
-            Err(mpsc::error::TrySendError::Full(event))
-            | Err(mpsc::error::TrySendError::Closed(event)) => Some(event),
+            Err(mpsc::error::TrySendError::Full(placed))
+            | Err(mpsc::error::TrySendError::Closed(placed)) => Some(placed.event),
         }
     }
 }
 
-/// Server requests for one thread, delivered in order and never dropped by
-/// event-queue lag. Dropping the sink returns the thread to broadcast delivery.
+/// A server request and where it fell in the connection's event stream: the
+/// number of broadcast events the server sent before it.
+#[derive(Debug)]
+pub struct PlacedRequest {
+    pub after: u64,
+    pub event: NormalizedEvent,
+}
+
+/// Server requests for one thread or a whole connection, delivered in order and
+/// never dropped by event-queue lag. Dropping the sink returns those requests to
+/// broadcast delivery.
 pub struct ServerRequestSink {
     shared: Arc<Shared>,
     thread_id: String,
-    receiver: mpsc::Receiver<NormalizedEvent>,
+    receiver: mpsc::Receiver<PlacedRequest>,
 }
 
 impl ServerRequestSink {
     /// The next server request for this thread; `None` only after the
     /// transport is gone.
     pub async fn recv(&mut self) -> Option<NormalizedEvent> {
+        self.recv_placed().await.map(|placed| placed.event)
+    }
+
+    /// As `recv`, keeping the request's place for an owner that also reads
+    /// broadcast events and has to show the two in the server's order.
+    pub async fn recv_placed(&mut self) -> Option<PlacedRequest> {
         self.receiver.recv().await
+    }
+
+    /// Events sent so far. Read after subscribing, this is at or past the
+    /// subscription's first event, so a count kept from it can't wait for
+    /// an event the subscriber will never receive.
+    pub fn emitted(&self) -> u64 {
+        self.shared.emitted.load(Ordering::Acquire)
     }
 }
 
@@ -235,6 +271,7 @@ impl AppServerClient {
             auth_requests: Arc::new(tokio::sync::Semaphore::new(1)),
             pending: Mutex::new(HashMap::new()),
             events,
+            emitted: AtomicU64::new(0),
             request_sinks: Mutex::new(HashMap::new()),
             closed: AtomicBool::new(false),
             close_reason: Mutex::new(None),
@@ -292,19 +329,28 @@ impl AppServerClient {
         }
     }
 
+    /// Lossless delivery of every server request no thread's own sink takes,
+    /// for one owner that answers all of this connection's requests. The same
+    /// terms as `server_request_sink` apply.
+    pub fn connection_request_sink(&self) -> ServerRequestSink {
+        self.server_request_sink(ANY_THREAD)
+    }
+
     pub fn is_closed(&self) -> bool {
         self.shared.closed.load(Ordering::Acquire)
     }
 
     pub async fn initialize(&self) -> Result<InitializeResult, RequestError> {
-        self.initialize_as("pipeline_workbench", "Pipeline Workbench")
+        self.initialize_as("pipeline_workbench", "Pipeline Workbench", &[])
             .await
     }
 
+    /// `quiet` names notifications this connection never wants sent.
     pub async fn initialize_as(
         &self,
         name: &str,
         title: &str,
+        quiet: &[&str],
     ) -> Result<InitializeResult, RequestError> {
         let result = self
             .request(
@@ -315,7 +361,10 @@ impl AppServerClient {
                         "title": title,
                         "version": env!("CARGO_PKG_VERSION")
                     },
-                    "capabilities": { "experimentalApi": true }
+                    "capabilities": {
+                        "experimentalApi": true,
+                        "optOutNotificationMethods": quiet
+                    }
                 }),
                 DEFAULT_REQUEST_TIMEOUT,
             )
@@ -1008,6 +1057,52 @@ mod tests {
                     Err(error) => panic!("{error}"),
                 }
             }
+        });
+    }
+
+    #[test]
+    fn a_connection_sink_keeps_requests_that_no_thread_sink_takes() {
+        runtime().block_on(async {
+            let (client_io, mut server_io) = tokio::io::duplex(1024 * 1024);
+            let (client_reader, client_writer) = tokio::io::split(client_io);
+            let client = AppServerClient::from_io(14, client_reader, client_writer);
+            let mut events = client.subscribe();
+            let mut connection = client.connection_request_sink();
+            let mut thread = client.server_request_sink("thread-1");
+            for (id, params) in [
+                ("thread-request", json!({"threadId":"thread-1"})),
+                ("other-thread", json!({"threadId":"thread-2"})),
+                ("no-thread", json!({})),
+            ] {
+                write_json(
+                    &mut server_io,
+                    json!({"id":id,"method":"item/permissions/requestApproval","params":params}),
+                )
+                .await;
+            }
+            for index in 0..(EVENT_QUEUE_CAPACITY + 40) {
+                write_json(
+                    &mut server_io,
+                    json!({"method":"simulator/progress","params":{"index":index}}),
+                )
+                .await;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            assert!(matches!(
+                events.recv().await,
+                Err(broadcast::error::RecvError::Lagged(_))
+            ));
+            let wait = Duration::from_secs(5);
+            let id = |event: Result<Option<NormalizedEvent>, _>| match event {
+                Ok(Some(NormalizedEvent::ServerRequest { request_id, .. })) => request_id,
+                other => panic!("unexpected {other:?}"),
+            };
+            let first = tokio::time::timeout(wait, thread.recv()).await;
+            assert_eq!(id(first), json!("thread-request"));
+            let second = tokio::time::timeout(wait, connection.recv()).await;
+            assert_eq!(id(second), json!("other-thread"));
+            let third = tokio::time::timeout(wait, connection.recv()).await;
+            assert_eq!(id(third), json!("no-thread"));
         });
     }
 

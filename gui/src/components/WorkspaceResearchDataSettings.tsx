@@ -1,5 +1,6 @@
 import { lazy, Suspense, useState } from "react";
 import { workbenchErrorMessage } from "../lib/workbenchError";
+import ReportIssueLink from "./ReportIssueLink";
 const Release = lazy(() => import("./WorkspaceReleasePanel"));
 const Retention = lazy(() => import("./WorkspaceStorageRetention"));
 
@@ -42,8 +43,7 @@ export default function WorkspaceResearchDataSettings({
           : "Research diagnostics"}
       </h2>
       <p className="mt-2 text-sm text-gray-500">
-        Backups and retention apply to all projects and conversations on this
-        device.
+        Applies to all projects and conversations on this computer.
       </p>
       {!expanded && (
         <button
@@ -59,6 +59,7 @@ export default function WorkspaceResearchDataSettings({
       {error && (
         <p role="alert" className="mt-3 text-sm text-red-600">
           {error}
+          <ReportIssueLink />
         </p>
       )}
       {open && (

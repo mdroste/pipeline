@@ -1,7 +1,7 @@
 //! Direct Anthropic Messages API client.
 
 use super::api_common::*;
-use super::claude::LlmOverrides;
+use super::providers::LlmOverrides;
 use crate::settings::Settings;
 use std::time::Instant;
 
@@ -13,8 +13,6 @@ fn resolve_model(_settings: &Settings, override_model: Option<&str>) -> String {
         .unwrap_or("");
     // Dateless aliases track the current model in each tier; dated snapshots
     // get retired (the 20250514 snapshots died 2026-06-15 and broke this path).
-    // These tiers don't emit thinking blocks when `thinking` is omitted, which
-    // the tool loop in api_common.rs relies on when echoing assistant content.
     match raw {
         "" | "sonnet" => "claude-sonnet-4-6".to_string(),
         "opus" => "claude-opus-4-6".to_string(),
@@ -24,17 +22,10 @@ fn resolve_model(_settings: &Settings, override_model: Option<&str>) -> String {
 }
 
 /// Map the effort setting to the Messages API's `output_config`.
-/// Effort is GA on Sonnet 4.6 / Opus 4.6+ but rejected by Haiku models,
-/// so it is silently skipped there. Unknown values are skipped rather than
-/// sent, so a value tuned for the CLI path can't 400 the whole step.
+/// Connection resolution validates the selected level against model metadata
+/// before this encoder runs.
 fn effort_config(model: &str, effort: &str) -> Option<serde_json::Value> {
-    if model.starts_with("claude-haiku") {
-        return None;
-    }
-    match effort {
-        "low" | "medium" | "high" | "max" => Some(serde_json::json!({ "effort": effort })),
-        _ => None,
-    }
+    crate::connections::thinking::anthropic_config(model, effort)
 }
 
 fn output_config(
@@ -67,36 +58,54 @@ fn remove_structured_format(config: &mut Option<serde_json::Value>) {
     }
 }
 
+/// The request that warms a shared context. It keeps the real request's
+/// `thinking` and effort: both are rendered into the prompt, so a warm-up
+/// without them would write a cache entry the real request never reads.
+fn warm_up_request(
+    request: &AnthropicRequest,
+    messages: Vec<AnthropicMessage>,
+) -> AnthropicRequest {
+    let mut warm_request = request.clone();
+    warm_request.max_tokens = 32;
+    remove_structured_format(&mut warm_request.output_config);
+    warm_request.messages = messages;
+    warm_request
+}
+
 /// Build Anthropic tools array from allowed tool names.
 fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
     let mut tools = Vec::new();
     if allowed_tools.contains(&"Read") {
         let def = ReadToolDef::default();
-        tools.push(serde_json::json!({
-            "name": def.name,
-            "description": def.description,
-            "input_schema": def.input_schema,
-        }));
+        tools.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::Anthropic,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
         let def = ReadTextBatchToolDef::default();
-        tools.push(serde_json::json!({
-            "name": def.name,
-            "description": def.description,
-            "input_schema": def.input_schema,
-        }));
+        tools.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::Anthropic,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
     }
     if allowed_tools.contains(&"ReadDocumentAsset") {
         let def = DocumentAssetToolDef::default();
-        tools.push(serde_json::json!({
-            "name": def.name,
-            "description": def.description,
-            "input_schema": def.input_schema,
-        }));
+        tools.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::Anthropic,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
         let def = DocumentAssetsBatchToolDef::default();
-        tools.push(serde_json::json!({
-            "name": def.name,
-            "description": def.description,
-            "input_schema": def.input_schema,
-        }));
+        tools.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::Anthropic,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
     }
     if allowed_tools.contains(&"WebSearch") {
         // Hosted search can execute several queries inside one Messages API
@@ -110,11 +119,12 @@ fn build_tools(allowed_tools: &[&str]) -> Vec<serde_json::Value> {
     }
     if allowed_tools.contains(&"Write") {
         let def = WriteToolDef::default();
-        tools.push(serde_json::json!({
-            "name": def.name,
-            "description": def.description,
-            "input_schema": def.input_schema,
-        }));
+        tools.push(crate::agent_runtime::api::function_tool(
+            crate::connections::ApiProvider::Anthropic,
+            &def.name,
+            &def.description,
+            &def.input_schema,
+        ));
     }
     tools
 }
@@ -223,6 +233,13 @@ pub async fn call_anthropic_api(
         .effort
         .filter(|s| !s.trim().is_empty())
         .unwrap_or("");
+    let connection = crate::connections::ApiConnection::from_settings(
+        crate::connections::ApiProvider::Anthropic,
+        Some(&model),
+        Some(effort).filter(|value| !value.trim().is_empty()),
+        settings,
+    )
+    .await?;
     let output_config = output_config(&model, effort.trim(), overrides.output_schema)?;
     log(
         app,
@@ -251,6 +268,7 @@ pub async fn call_anthropic_api(
         messages,
         tools,
         output_config,
+        thinking: connection.thinking,
     };
 
     let mut warm_usage = Usage::default();
@@ -273,26 +291,27 @@ pub async fn call_anthropic_api(
         let slot = context.slot(cache_key).await;
         let mut state = slot.lock().await;
         if state.is_none() {
-            let mut warm_request = request.clone();
-            warm_request.max_tokens = 32;
-            remove_structured_format(&mut warm_request.output_config);
-            warm_request.messages = vec![AnthropicMessage {
-                role: "user".to_string(),
-                content: build_content(
-                    "Acknowledge this shared context by replying only: Context prepared. Do not call tools.",
-                    overrides.pdf_attachment,
-                    Some(context),
-                )?,
-            }];
+            let warm_request = warm_up_request(
+                &request,
+                vec![AnthropicMessage {
+                    role: "user".to_string(),
+                    content: build_content(
+                        "Acknowledge this shared context by replying only: Context prepared. Do not call tools.",
+                        overrides.pdf_attachment,
+                        Some(context),
+                    )?,
+                }],
+            );
             let warm_label = format!("{label} · cache warm-up");
             super::logging::record_provider_attempt();
             match anthropic_tool_loop(
                 app,
                 client,
-                &settings.anthropic_api_key,
+                crate::connections::ApiProvider::Anthropic.key(settings)?,
                 warm_request,
                 timeout_secs,
                 &warm_label,
+                true,
                 &access,
             )
             .await
@@ -321,10 +340,11 @@ pub async fn call_anthropic_api(
     let result = anthropic_tool_loop(
         app,
         client,
-        &settings.anthropic_api_key,
+        crate::connections::ApiProvider::Anthropic.key(settings)?,
         request,
         timeout_secs,
         label,
+        false,
         &access,
     )
     .await;
@@ -345,10 +365,11 @@ pub async fn call_anthropic_api(
             anthropic_tool_loop(
                 app,
                 client,
-                &settings.anthropic_api_key,
+                crate::connections::ApiProvider::Anthropic.key(settings)?,
                 fallback_request,
                 retry_timeout,
                 label,
+                false,
                 &access,
             )
             .await?
@@ -373,10 +394,11 @@ pub async fn call_anthropic_api(
             anthropic_tool_loop(
                 app,
                 client,
-                &settings.anthropic_api_key,
+                crate::connections::ApiProvider::Anthropic.key(settings)?,
                 fallback_request,
                 retry_timeout,
                 label,
+                false,
                 &access,
             )
             .await?
@@ -405,6 +427,29 @@ pub async fn call_anthropic_api(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_warm_up_keeps_the_settings_rendered_into_the_cached_prefix() {
+        let request = AnthropicRequest {
+            model: "claude-opus-5-5".to_string(),
+            max_tokens: 4096,
+            system: None,
+            messages: Vec::new(),
+            tools: Vec::new(),
+            output_config: Some(serde_json::json!({
+                "effort": "high",
+                "format": {"type": "json_schema", "schema": {}}
+            })),
+            thinking: Some(serde_json::json!({"type": "adaptive"})),
+        };
+        let warm = warm_up_request(&request, Vec::new());
+        assert_eq!(warm.max_tokens, 32);
+        assert_eq!(warm.thinking, request.thinking);
+        assert_eq!(
+            warm.output_config,
+            Some(serde_json::json!({"effort": "high"}))
+        );
+    }
 
     #[test]
     fn resolve_model_uses_dateless_aliases() {
@@ -525,6 +570,7 @@ mod tests {
         ));
 
         let mut request = AnthropicRequest {
+            thinking: None,
             model: "model".to_string(),
             max_tokens: 10,
             system: None,

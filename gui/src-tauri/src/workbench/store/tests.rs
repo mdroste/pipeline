@@ -525,7 +525,7 @@ fn rust_dto_accepts_the_shared_frontend_fixture() {
 
 #[test]
 fn completed_codex_events_reconcile_into_durable_app_owned_projection() {
-    use crate::workbench::codex::NormalizedEvent;
+    use crate::agent_runtime::events::NormalizedEvent;
 
     let (_temporary, store, workspace_root) = fixture();
     let workspace = store
@@ -802,7 +802,7 @@ fn moving_a_conversation_refiles_it_and_clears_workspace_bound_context() {
 
 #[test]
 fn deleting_a_conversation_removes_its_native_projection_graph() {
-    use crate::workbench::codex::NormalizedEvent;
+    use crate::agent_runtime::events::NormalizedEvent;
     let (_temporary, store, _workspace_root) = fixture();
     let session = store
         .create_session(CreateSessionRequest {
@@ -875,7 +875,7 @@ fn deleting_a_conversation_removes_its_native_projection_graph() {
 
 #[test]
 fn reprojection_under_a_new_incarnation_keeps_transcript_order() {
-    use crate::workbench::codex::NormalizedEvent;
+    use crate::agent_runtime::events::NormalizedEvent;
 
     let (_temporary, store, _workspace_root) = fixture();
     let session = store
@@ -950,4 +950,94 @@ fn reprojection_under_a_new_incarnation_keeps_transcript_order() {
         .map(|i| i.provider_item_id.as_str())
         .collect();
     assert_eq!(ordered, ["item-user", "item-agent", "item-new"]);
+}
+
+#[test]
+fn a_session_can_start_with_its_settings() {
+    let (_temp, store, _root) = fixture();
+    let request = |operation_id: &str| CreateSessionRequest {
+        workspace_id: None,
+        title: "New conversation".into(),
+        operation_id: operation_id.into(),
+    };
+    let overrides = json!({"runtime":"claude","model":"opus"});
+    let session = store
+        .create_session_with_overrides(request("first"), Some(&overrides))
+        .unwrap()
+        .record;
+    assert_eq!(session.overrides, overrides);
+    assert_eq!(session.revision, 1);
+
+    let plain = store.create_session(request("second")).unwrap().record;
+    assert_eq!(plain.overrides, json!({}));
+    assert!(store
+        .create_session_with_overrides(request("third"), Some(&json!({"runtime":"other"})))
+        .is_err());
+}
+
+#[test]
+fn an_idle_connection_keeps_the_log_until_it_closes() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = Store::open_at(&temp.path().join("store")).unwrap();
+    let log = store.root_path().join("research.sqlite3-wal");
+    let idle = store.connection().unwrap();
+    store
+        .create_session(CreateSessionRequest {
+            workspace_id: None,
+            title: "kept".into(),
+            operation_id: "kept".into(),
+        })
+        .unwrap();
+    assert!(
+        log.exists(),
+        "the log survives an operation while one is open"
+    );
+    drop(idle);
+    assert!(
+        !log.exists(),
+        "the last close folds the log into the database"
+    );
+    let copy = rusqlite::Connection::open(store.root_path().join("research.sqlite3")).unwrap();
+    let sessions: i64 = copy
+        .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(sessions, 1);
+}
+
+#[test]
+fn a_backup_restores_past_an_idle_connection() {
+    use crate::workbench::release::{
+        export_archive, import_archive, ExportArchiveRequest, ImportArchiveRequest,
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let source = Store::open_at(&temp.path().join("source")).unwrap();
+    source
+        .create_session(CreateSessionRequest {
+            workspace_id: None,
+            title: "restored".into(),
+            operation_id: "restored".into(),
+        })
+        .unwrap();
+    let path = temp.path().join("backup.pwrx");
+    export_archive(
+        &source,
+        ExportArchiveRequest {
+            path: path.to_string_lossy().into(),
+        },
+    )
+    .unwrap();
+    let target = Store::open_at(&temp.path().join("target")).unwrap();
+    let idle = target.connection().unwrap();
+    import_archive(
+        &target,
+        ImportArchiveRequest {
+            path: path.to_string_lossy().into(),
+            root_mappings: Default::default(),
+        },
+    )
+    .unwrap();
+    let sessions: i64 = idle
+        .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(sessions, 1);
 }

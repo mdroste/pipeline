@@ -8,6 +8,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import ProjectsPage from "./ProjectsPage";
+import { router } from "../lib/router";
 
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -217,5 +218,54 @@ describe("ProjectsPage", () => {
     unmount();
     expect(register).toHaveBeenLastCalledWith(null);
     expect(dirty).toHaveBeenLastCalledWith(false);
+  });
+
+  describe("with two collections", () => {
+    const second = { ...project, id: "other", name: "Other collection" };
+    beforeEach(() => {
+      const single = invoke.getMockImplementation()!;
+      invoke.mockImplementation((command: string, args?: never) =>
+        command === "list_projects"
+          ? Promise.resolve({ projects: [project, second], warnings: [] })
+          : single(command, args),
+      );
+      router.init({ page: "projects" });
+    });
+
+    it("selects the collection the route names", async () => {
+      router.init({ page: "projects", collectionId: "other" });
+      render(<ProjectsPage onOpenRun={vi.fn()} />);
+      expect(
+        await screen.findByDisplayValue("Other collection"),
+      ).toBeInTheDocument();
+    });
+
+    it("falls back to the first collection when the named one is gone", async () => {
+      router.init({ page: "projects", collectionId: "deleted" });
+      render(<ProjectsPage onOpenRun={vi.fn()} />);
+      expect(
+        await screen.findByDisplayValue("Paper revision"),
+      ).toBeInTheDocument();
+    });
+
+    it("starts another collection at the top", async () => {
+      render(<ProjectsPage onOpenRun={vi.fn()} />);
+      await screen.findByDisplayValue("Paper revision");
+      const main = screen.getByRole("main");
+      main.scrollTop = 400;
+      fireEvent.click(screen.getByRole("button", { name: /Other collection/ }));
+      await screen.findByDisplayValue("Other collection");
+      expect(main.scrollTop).toBe(0);
+    });
+  });
+
+  it("keeps a long Trash list from crushing the collection list", async () => {
+    render(<ProjectsPage onOpenRun={vi.fn()} />);
+    await screen.findByDisplayValue("Paper revision");
+    fireEvent.click(screen.getByRole("button", { name: /^Trash/ }));
+    expect(screen.getByLabelText("Review collection Trash")).toHaveClass(
+      "max-h-64",
+      "overflow-y-auto",
+    );
   });
 });

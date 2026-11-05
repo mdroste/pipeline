@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
-import { taskClient, taskTime, type Trigger } from "../../lib/taskClient";
+import { taskClient } from "../../lib/taskClient";
+import { taskTime } from "../../lib/taskPresentation";
+import { type Trigger } from "../../lib/taskTypes";
 import {
   localDateTime,
   localDateTimeHint,
   readLocalDateTime,
 } from "../../lib/localDateTime";
+import { NumberField } from "./NumberField";
 
 const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 export function Timing({
@@ -98,17 +101,13 @@ export function Timing({
           <>
             <label>
               Every{" "}
-              <input
+              <NumberField
                 aria-label="Interval in minutes"
-                type="number"
                 min={1}
                 max={525600}
                 value={value.seconds / 60}
-                onChange={(e) =>
-                  onChange({
-                    ...value,
-                    seconds: Math.max(1, Number(e.target.value)) * 60,
-                  })
+                onChange={(minutes) =>
+                  onChange({ ...value, seconds: minutes * 60 })
                 }
               />{" "}
               minutes

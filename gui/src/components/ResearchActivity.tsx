@@ -1,11 +1,16 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { taskClient, type TaskSummary } from "../lib/taskClient";
-import { workbenchClient } from "../lib/workbenchClient";
+import { listen } from "@tauri-apps/api/event";
+import { taskClient } from "../lib/taskClient";
+import { type TaskSummary } from "../lib/taskTypes";
+import { runtimeClient } from "../lib/workbench/runtimeClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
+import { listedRunStatus } from "../lib/reportPresentation";
 import type { RunSummary } from "../lib/types";
 import type { WorkbenchEvent } from "../lib/workbenchTypes";
 import { button, muted, Inspect } from "./research-programs/shared";
+import PageHeader from "../ui/PageHeader";
+import ReportIssueLink from "./ReportIssueLink";
 interface Activity {
   turns: {
     sessionId: string;
@@ -45,18 +50,17 @@ export default function ResearchActivity({
   const [activity, setActivity] = useState<Activity | null>(null),
     [tasks, setTasks] = useState<TaskSummary[]>([]),
     [reviews, setReviews] = useState<RunSummary[]>([]),
-    [error, setError] = useState("");
+    [error, setError] = useState(""),
+    [reviewError, setReviewError] = useState("");
   const refresh = async () => {
-    const [a, t, r] = await Promise.allSettled([
+    const [a, t] = await Promise.allSettled([
       invoke<Activity>("workbench_research_activity"),
       taskClient.list(),
-      invoke<RunSummary[]>("list_runs"),
     ]);
     if (a.status === "fulfilled") setActivity(a.value);
     if (t.status === "fulfilled") setTasks(t.value);
-    if (r.status === "fulfilled") setReviews(r.value);
     setError(
-      [a, t, r]
+      [a, t]
         .flatMap((result) =>
           result.status === "rejected"
             ? [workbenchErrorMessage(result.reason)]
@@ -65,11 +69,33 @@ export default function ResearchActivity({
         .join(" · "),
     );
   };
+  const refreshReviews = () =>
+    invoke<RunSummary[]>("list_runs")
+      .then((next) => {
+        setReviews(next);
+        setReviewError("");
+      })
+      .catch((e) => setReviewError(workbenchErrorMessage(e)));
   useEffect(() => {
     void refresh().catch((e) => setError(workbenchErrorMessage(e)));
-    const timer = setInterval(
-      () => void refresh().catch(() => undefined),
-      4000,
+    void refreshReviews();
+    let pending = false;
+    const timer = setInterval(() => {
+      if (pending || document.visibilityState === "hidden") return;
+      pending = true;
+      void refresh()
+        .catch(() => undefined)
+        .finally(() => {
+          pending = false;
+        });
+    }, 4000);
+    // Listing reviews reads every run, so it follows the queue. The slow timer
+    // catches states the queue does not report, such as a paused review.
+    const reviewTimer = setInterval(() => {
+      if (document.visibilityState !== "hidden") void refreshReviews();
+    }, 30_000);
+    const queue = listen("runs:queue", () => void refreshReviews()).catch(
+      () => undefined,
     );
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !asPage) onClose();
@@ -77,6 +103,8 @@ export default function ResearchActivity({
     window.addEventListener("keydown", key);
     return () => {
       clearInterval(timer);
+      clearInterval(reviewTimer);
+      void queue.then((off) => off?.());
       window.removeEventListener("keydown", key);
     };
   }, []);
@@ -87,54 +115,53 @@ export default function ResearchActivity({
     reviews.filter((r) =>
       ["running", "paused", "interrupted"].includes(r.status),
     ).length;
+  const action = asPage ? "ui-page-button mr-2" : button;
+  const row = asPage ? "ui-page-row space-y-2" : "space-y-2 border-t py-3";
   return (
     <aside
       role={asPage ? undefined : "dialog"}
       aria-label={asPage ? "Activity" : "Suite activity"}
       className={
         asPage
-          ? "mx-auto flex w-full max-w-3xl flex-col px-6 py-8"
+          ? "ui-page"
           : "absolute right-0 top-0 z-50 flex h-full w-[min(32rem,95vw)] flex-col overflow-auto border-l bg-white p-5 shadow-xl dark:bg-neutral-950"
       }
     >
-      <div className="flex justify-between">
-        {asPage ? (
-          <div>
-            <h1 className="text-xl font-semibold">Activity</h1>
-            <p className={`${muted} mt-1`}>
-              What is running, what needs you, and what finished — across
-              conversations, reviews, automations, and local jobs.
-            </p>
-          </div>
-        ) : (
-          <>
-            <h2 className="font-semibold">Suite activity</h2>
-            <button autoFocus className={button} onClick={onClose}>
-              Close
-            </button>
-          </>
-        )}
-      </div>
-      {error && <p role="alert">{error}</p>}
-      <p className={`${muted} my-3`}>
+      {asPage ? (
+        <PageHeader
+          title="Activity"
+          description="See work in progress, completed work, and items that need your attention."
+        />
+      ) : (
+        <div className="flex justify-between">
+          <h2 className="font-semibold">Suite activity</h2>
+          <button autoFocus className={button} onClick={onClose}>
+            Close
+          </button>
+        </div>
+      )}
+      {(error || reviewError) && (
+        <p role="alert">
+          {[error, reviewError].filter(Boolean).join(" · ")}
+          <ReportIssueLink />
+        </p>
+      )}
+      <p className={`${muted} ${asPage ? "ui-page-toolbar" : "my-3"}`}>
         {activity?.pendingRequests.length ?? 0} unresolved conversation requests
         · {activity?.researchAttention ?? 0} research attention items
       </p>
       {activity?.turns.map((t) => (
-        <section
-          className="space-y-2 border-t py-3"
-          key={`${t.sessionId}:${t.turnId}`}
-        >
+        <section className={row} key={`${t.sessionId}:${t.turnId}`}>
           <h3>{t.title}</h3>
           <p className={muted}>Conversation · {t.state}</p>
-          <button className={button} onClick={() => onSession(t.sessionId)}>
+          <button className={action} onClick={() => onSession(t.sessionId)}>
             Open conversation and requests
           </button>
           {t.turnId && (
             <button
-              className={button}
+              className={action}
               onClick={() =>
-                void workbenchClient
+                void runtimeClient
                   .interruptTurn(t.threadId, t.turnId!)
                   .then(refresh)
                   .catch((e) => setError(workbenchErrorMessage(e)))
@@ -152,14 +179,14 @@ export default function ResearchActivity({
         </section>
       ))}
       {activity?.jobs.map((j) => (
-        <section className="space-y-2 border-t py-3" key={j.id}>
+        <section className={row} key={j.id}>
           <h3>
             {j.title} · {j.adapter}
           </h3>
           <p className={muted}>
             Local job · {j.state} · owner: {j.owner ?? "unestablished"}
           </p>
-          <button className={button} onClick={() => onProject(j.workspaceId)}>
+          <button className={action} onClick={() => onProject(j.workspaceId)}>
             Open job logs and recovery
           </button>
         </section>
@@ -167,12 +194,12 @@ export default function ResearchActivity({
       {tasks
         .filter((t) => !["finished", "cancelled"].includes(t.state))
         .map((t) => (
-          <section className="space-y-2 border-t py-3" key={t.id}>
+          <section className={row} key={t.id}>
             <h3>{t.name}</h3>
             <p className={muted}>
               Automation · {t.state} · {t.reason}
             </p>
-            <button className={button} onClick={() => onTasks(t.id)}>
+            <button className={action} onClick={() => onTasks(t.id)}>
               Open task controls
             </button>
           </section>
@@ -180,22 +207,20 @@ export default function ResearchActivity({
       {reviews
         .filter((r) => ["running", "paused", "interrupted"].includes(r.status))
         .map((r) => (
-          <section className="space-y-2 border-t py-3" key={r.run_id}>
+          <section className={row} key={r.run_id}>
             <h3>{r.title || r.input_name}</h3>
             <p className={muted}>Review · {r.status}</p>
-            <button className={button} onClick={() => onReview(r.run_id)}>
+            <button className={action} onClick={() => onReview(r.run_id)}>
               Open Review controls
             </button>
           </section>
         ))}
       {asPage && running === 0 && (
-        <p className={`${muted} border-t py-4`}>
-          Nothing is running right now.
-        </p>
+        <p className={`${muted} ui-page-row`}>Nothing is running right now.</p>
       )}
       {asPage && (
-        <section aria-label="Recently finished reviews" className="mt-6">
-          <h2 className="text-sm font-semibold">Recently finished reviews</h2>
+        <section aria-label="Recently finished reviews" className="mt-7">
+          <h2 className="ui-page-label">Recently finished reviews</h2>
           {reviews
             .filter(
               (r) => !["running", "paused", "interrupted"].includes(r.status),
@@ -204,25 +229,28 @@ export default function ResearchActivity({
             .map((r) => (
               <div
                 key={r.run_id}
-                className="flex items-center gap-3 border-t py-2.5 first:border-t-0"
+                className="ui-page-row flex items-center gap-3"
               >
                 <span className="min-w-0 flex-1 truncate text-sm">
                   {r.title || r.input_name}
                 </span>
-                <span className={muted}>{r.status}</span>
-                <button className={button} onClick={() => onReview(r.run_id)}>
+                <span className={muted}>{listedRunStatus(r.status)}</span>
+                <button
+                  className="ui-page-button"
+                  onClick={() => onReview(r.run_id)}
+                >
                   Open
                 </button>
               </div>
             ))}
           {reviews.length === 0 && (
-            <p className={`${muted} mt-2`}>No reviews yet.</p>
+            <p className={`${muted} px-3 pt-2`}>No reviews yet.</p>
           )}
         </section>
       )}
-      <p className={`${muted} mt-4`}>
-        Each runtime retains its own Stop and recovery controls. Stopping a
-        Stopping a review does not cancel project jobs.
+      <p className={`${muted} ${asPage ? "mt-6 px-3" : "mt-4"}`}>
+        Stop or resume work from its own page. Stopping a review leaves project
+        jobs running.
       </p>
     </aside>
   );

@@ -176,11 +176,11 @@ pub async fn start_batch(
                         .get("run_id")
                         .and_then(|r| r.as_str())
                         .map(|s| s.to_string());
-                    let partial = v.get("status").and_then(|s| s.as_str()) == Some("partial");
+                    let failed = run_has_failures(&v);
                     set_job(i, |j| {
-                        j.status = if partial { "failed" } else { "done" }.to_string();
+                        j.status = if failed { "failed" } else { "done" }.to_string();
                         j.run_id = run_id.clone();
-                        if partial {
+                        if failed {
                             j.error = Some("One or more pipeline steps failed".to_string());
                         }
                         j.duration_secs = secs;
@@ -201,6 +201,18 @@ pub async fn start_batch(
     }));
 
     Ok(())
+}
+
+/// A run can return normally with every step failed, so "the call succeeded"
+/// says nothing about the document. Any failed step fails its batch job.
+fn run_has_failures(result: &serde_json::Value) -> bool {
+    matches!(
+        result.get("status").and_then(|status| status.as_str()),
+        Some("partial" | "failed")
+    ) || result
+        .pointer("/report/failed_steps")
+        .and_then(|failed| failed.as_array())
+        .is_some_and(|failed| !failed.is_empty())
 }
 
 pub(super) fn set_job(i: usize, f: impl FnOnce(&mut BatchJob)) {
@@ -273,5 +285,28 @@ pub fn scan_input_files(dir: &str) -> Result<Vec<String>, String> {
 /// List input files (PDF/LaTeX/Word) directly under `dir`, for "queue this folder".
 #[tauri::command]
 pub async fn list_input_files(dir: String) -> Result<Vec<String>, String> {
-    scan_input_files(&dir)
+    tokio::task::spawn_blocking(move || scan_input_files(&dir))
+        .await
+        .map_err(|e| format!("Folder scan failed: {e}"))?
+}
+
+#[cfg(test)]
+mod run_failure_tests {
+    use super::run_has_failures;
+    use serde_json::json;
+
+    #[test]
+    fn a_run_that_returned_with_failed_steps_is_a_failed_job() {
+        assert!(run_has_failures(&json!({"status": "failed"})));
+        assert!(run_has_failures(&json!({"status": "partial"})));
+        assert!(run_has_failures(&json!({
+            "status": "degraded",
+            "report": {"failed_steps": [{"step_id": "final"}]},
+        })));
+        assert!(!run_has_failures(&json!({
+            "status": "done",
+            "report": {"failed_steps": []},
+        })));
+        assert!(!run_has_failures(&json!({"status": "degraded"})));
+    }
 }

@@ -334,7 +334,7 @@ pub fn export(store: &Store, r: Export, fingerprint: &str) -> WorkbenchResult<Va
         }
         zip.finish().map_err(err)?;
     }
-    temp.as_file_mut().sync_all().map_err(err)?;
+    crate::safety::sync_file(temp.as_file()).map_err(err)?;
     temp.persist(path).map_err(|e| err(e.error))?;
     Ok(json!({"path":r.path,"fingerprint":digest,"manifest":m}))
 }
@@ -351,7 +351,12 @@ fn read(path: &str) -> WorkbenchResult<(Manifest, BTreeMap<String, Vec<u8>>)> {
     let mut total = 0;
     for i in 0..zip.len() {
         let mut entry = zip.by_index(i).map_err(err)?;
-        let name = entry.name().to_owned();
+        let name = entry
+            .name()
+            .map_err(|error| {
+                WorkbenchError::invalid(format!("Invalid capsule entry name: {error}"))
+            })?
+            .into_owned();
         relative(&name)?;
         if !(name == "manifest.json" || name == "README.md" || name.starts_with("blobs/"))
             || entry.is_dir()

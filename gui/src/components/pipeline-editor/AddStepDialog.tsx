@@ -1,23 +1,28 @@
 import { invoke } from "@tauri-apps/api/core";
-import { memo, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type {
   AutoReviewCatalog,
   AutoReviewCatalogRole,
   Phase,
 } from "../../lib/types";
 import useModalDialog from "../../hooks/useModalDialog";
+import { MAX_STEP_LABEL_CHARS } from "./editorState";
+import AnalyzerChoice, { type AnalyzerSelection } from "./AnalyzerChoice";
+import ReportIssueLink from "../ReportIssueLink";
 
 export type StepContextPreset =
   "standard" | "input" | "prior_reports" | "isolated";
 
 export interface AddStepDraft {
-  mode: "guided" | "adaptive" | "blank";
+  mode: "guided" | "adaptive" | "blank" | "check";
   label: string;
   instructions: string;
   phase: Phase;
   contextPreset: StepContextPreset;
   output: "report" | "issues";
   templateId?: string;
+  /** For `check`: the Pipeline check and whether it may use the network. */
+  analyzer?: AnalyzerSelection;
 }
 
 type AdaptiveCatalogTab = "subjects" | "methods";
@@ -146,6 +151,7 @@ function AddStepDialog({
   const [selectedRoleId, setSelectedRoleId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [analyzer, setAnalyzer] = useState<AnalyzerSelection | null>(null);
   const adaptiveSearchRef = useRef<HTMLInputElement>(null);
   const titleId = useId();
   const descriptionId = useId();
@@ -235,7 +241,9 @@ function AddStepDialog({
   const canCreate =
     mode === "adaptive"
       ? !!selectedRole
-      : !!label.trim() && (mode === "blank" || !!instructions.trim());
+      : mode === "check"
+        ? !!analyzer
+        : !!label.trim() && (mode === "blank" || !!instructions.trim());
 
   const submit = async () => {
     if (!canCreate || submitting) return;
@@ -250,6 +258,7 @@ function AddStepDialog({
         contextPreset,
         output,
         templateId: mode === "adaptive" ? selectedRole?.id : undefined,
+        analyzer: mode === "check" ? (analyzer ?? undefined) : undefined,
       });
     } catch (caught) {
       setSubmitError(caught instanceof Error ? caught.message : String(caught));
@@ -282,14 +291,13 @@ function AddStepDialog({
             id={titleId}
             className="text-base font-semibold text-gray-900 dark:text-gray-100"
           >
-            Add workflow step
+            Add review step
           </h2>
           <p
             id={descriptionId}
             className="mt-1 text-xs text-gray-500 dark:text-gray-400"
           >
-            Design a new step or add a configurable agent from the adaptive
-            review suite.
+            Create a step or add a subject or methods specialist.
           </p>
           <div
             role="tablist"
@@ -323,11 +331,22 @@ function AddStepDialog({
             >
               Blank step
             </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "check"}
+              onClick={() => setMode("check")}
+              className={`border-b-2 pb-2 text-xs font-medium ${mode === "check" ? "border-gray-900 text-gray-900 dark:border-gray-100 dark:text-gray-100" : "border-transparent text-gray-500"}`}
+            >
+              Pipeline check
+            </button>
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
-          {mode === "adaptive" ? (
+          {mode === "check" ? (
+            <AnalyzerChoice value={analyzer} onChange={setAnalyzer} />
+          ) : mode === "adaptive" ? (
             <div className="space-y-4">
               <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-4 py-3 dark:border-blue-900 dark:bg-blue-950/30">
                 <p className="text-xs font-medium text-blue-950 dark:text-blue-100">
@@ -335,8 +354,8 @@ function AddStepDialog({
                 </p>
                 <p className="mt-1 text-[11px] leading-4 text-blue-800 dark:text-blue-200">
                   Choose a subject or method specialist. Its complete prompt and
-                  execution settings are copied into this workflow, where you
-                  can configure them like any other step.
+                  execution settings are copied into this review, where you can
+                  configure them like any other step.
                 </p>
               </div>
 
@@ -363,6 +382,7 @@ function AddStepDialog({
                   >
                     Try again
                   </button>
+                  <ReportIssueLink />
                 </div>
               )}
 
@@ -458,6 +478,7 @@ function AddStepDialog({
                 <input
                   id="new-step-name"
                   data-autofocus
+                  maxLength={MAX_STEP_LABEL_CHARS}
                   value={label}
                   onChange={(event) => setLabel(event.target.value)}
                   placeholder="e.g. Check identification strategy"
@@ -494,7 +515,7 @@ function AddStepDialog({
                     value="parallel"
                     checked={phase === "parallel"}
                     title="Independently"
-                    description="Run alongside other ready steps. It cannot consume their output."
+                    description="Run at the same time as other ready steps. This step cannot read their results."
                     onChange={() => choosePhase("parallel")}
                   />
                   <ChoiceCard
@@ -502,7 +523,7 @@ function AddStepDialog({
                     value="sequential"
                     checked={phase === "sequential"}
                     title="After earlier steps"
-                    description="May wait for and read reports or files produced upstream."
+                    description="Can wait for earlier steps and read their reports or files."
                     onChange={() => choosePhase("sequential")}
                   />
                 </div>
@@ -548,7 +569,7 @@ function AddStepDialog({
                         name="new-step-context"
                         value="isolated"
                         checked={contextPreset === "isolated"}
-                        title="No workflow artifacts"
+                        title="No review files"
                         description="Run only from the instructions written in the prompt."
                         onChange={() => setContextPreset("isolated")}
                       />
@@ -565,7 +586,7 @@ function AddStepDialog({
                         value="report"
                         checked={output === "report"}
                         title="Markdown report"
-                        description="A readable analysis for the final workflow output."
+                        description="A readable analysis for the final report."
                         onChange={() => setOutput("report")}
                       />
                       <ChoiceCard
@@ -583,10 +604,8 @@ function AddStepDialog({
 
               {mode === "blank" && (
                 <p className="rounded-lg bg-gray-50 p-3 text-xs leading-relaxed text-gray-600 dark:bg-gray-800 dark:text-gray-400">
-                  A starter prompt and the standard context for the selected
-                  phase will be added. The new step opens immediately so you can
-                  configure its prompt, inputs, execution rules, models, and
-                  agents.
+                  Start with a suggested prompt and inputs. Then edit the step’s
+                  instructions, conditions, and models.
                 </p>
               )}
             </div>
@@ -600,12 +619,13 @@ function AddStepDialog({
               className="mb-3 text-xs text-red-700 dark:text-red-300"
             >
               Could not copy this step: {submitError}
+              <ReportIssueLink />
             </p>
           )}
           <div className="flex items-center justify-between gap-3">
             <p className="text-[11px] text-gray-500 dark:text-gray-400">
               {mode === "adaptive"
-                ? "This adds an editable snapshot. Workflow changes never alter the adaptive suite default."
+                ? "Add a copy you can edit for this review design. The original specialist stays unchanged."
                 : "All choices remain editable after creation."}
             </p>
             <div className="flex shrink-0 gap-2">
@@ -636,4 +656,4 @@ function AddStepDialog({
   );
 }
 
-export default memo(AddStepDialog);
+export default AddStepDialog;

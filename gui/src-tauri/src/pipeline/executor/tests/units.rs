@@ -7,7 +7,9 @@ fn build_units_single_agent_has_empty_suffix() {
     let step = make_step("s", Phase::Parallel);
     let settings = crate::settings::Settings::default();
     let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-    let units = build_units(&step, &settings, "/tmp/x.pdf", None, &bus).unwrap();
+    let units = build_units(&step, &settings, "/tmp/x.pdf", None, &bus)
+        .unwrap()
+        .units;
     assert_eq!(units.len(), 1);
     assert_eq!(units[0].suffix, ""); // bare step id, no composite key
     assert_eq!(units[0].agent, settings.preferred_provider);
@@ -19,7 +21,9 @@ fn build_units_multi_agent_keys_by_agent() {
     step.agents = vec!["claude".into(), "antigravity".into()];
     let settings = crate::settings::Settings::default();
     let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-    let units = build_units(&step, &settings, "/tmp/x.pdf", None, &bus).unwrap();
+    let units = build_units(&step, &settings, "/tmp/x.pdf", None, &bus)
+        .unwrap()
+        .units;
     assert_eq!(units.len(), 2);
     assert_eq!(units[0].suffix, "claude");
     assert_eq!(units[1].suffix, "antigravity");
@@ -42,7 +46,9 @@ fn fan_out_builds_item_by_agent_cartesian_product() {
     });
     let settings = crate::settings::Settings::default();
     let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
-    let units = build_units(&step, &settings, temp.path().to_str().unwrap(), None, &bus).unwrap();
+    let units = build_units(&step, &settings, temp.path().to_str().unwrap(), None, &bus)
+        .unwrap()
+        .units;
 
     assert_eq!(units.len(), 4);
     assert_eq!(units.iter().filter(|u| u.agent == "claude").count(), 2);
@@ -64,7 +70,7 @@ fn fan_out_with_empty_source_root_matches_nothing() {
     let settings = crate::settings::Settings::default();
     let bus: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
     // An empty source root must not fall back to scanning the process cwd.
-    let units = build_units(&step, &settings, "", None, &bus).unwrap();
+    let units = build_units(&step, &settings, "", None, &bus).unwrap().units;
     assert!(units.is_empty());
 }
 

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import EnginesPanel from "./EnginesPanel";
-import type { EngineStatus } from "../lib/types";
+import type { EngineDownloadProgress, EngineStatus } from "../lib/types";
 
 const invoke = vi.hoisted(() => vi.fn());
 const confirmDialog = vi.hoisted(() => vi.fn());
@@ -100,7 +100,7 @@ describe("EnginesPanel", () => {
     render(<EnginesPanel />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Local engine status could not be loaded: engine catalog unavailable",
+      "Could not check the local parser: engine catalog unavailable",
     );
     await user.click(screen.getByRole("button", { name: "Retry status" }));
 
@@ -128,7 +128,7 @@ describe("EnginesPanel", () => {
     await screen.findByText("PaddleOCR-VL 1.6 Full Parser");
     await user.click(
       screen.getByRole("button", {
-        name: "More information about Local Engines",
+        name: "More information about Local parser",
       }),
     );
     await user.click(screen.getByRole("button", { name: "~/.pipeline/" }));
@@ -156,7 +156,7 @@ describe("EnginesPanel", () => {
       engineId: "paddleocr-vl-parser",
     });
 
-    // While installing: phase chips update from events, log lines stream.
+    // While installing: steps update from events, log lines stream.
     act(() => {
       handlers.get("engines:phase")!({
         payload: {
@@ -172,7 +172,11 @@ describe("EnginesPanel", () => {
     expect(
       await screen.findByText("Downloading model weights..."),
     ).toBeInTheDocument();
-    expect(screen.getByText("Models")).toBeInTheDocument();
+    expect(screen.getByText("Layout model").closest("li")).toHaveAttribute(
+      "aria-current",
+      "step",
+    );
+    expect(screen.getByText("Installing the layout model…")).toBeVisible();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
 
     await act(async () => {
@@ -184,6 +188,100 @@ describe("EnginesPanel", () => {
         invoke.mock.calls.filter(([command]) => command === "list_engines"),
       ).toHaveLength(2),
     );
+  });
+
+  async function startInstall() {
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_engines") return Promise.resolve([engine()]);
+      if (cmd === "install_engine") return new Promise(() => {});
+      return Promise.resolve();
+    });
+    render(<EnginesPanel />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Install/ }),
+    );
+  }
+
+  function emitDownload(
+    download: Partial<EngineDownloadProgress> | null,
+  ): void {
+    act(() => {
+      handlers.get("engines:download")!({
+        payload: {
+          download: download && {
+            label: "llama.cpp runtime",
+            received_bytes: 0,
+            total_bytes: null,
+            bytes_per_second: 0,
+            retrying: false,
+            ...download,
+          },
+        },
+      });
+    });
+  }
+
+  it("shows the size, speed, and time left of the current download", async () => {
+    await startInstall();
+
+    emitDownload({
+      received_bytes: 412_000_000,
+      total_bytes: 936_000_000,
+      bytes_per_second: 8_400_000,
+    });
+
+    const bar = screen.getByRole("progressbar", {
+      name: "Downloading llama.cpp runtime",
+    });
+    expect(bar).toHaveAttribute("aria-valuenow", "44");
+    expect(screen.getByText("44%")).toBeVisible();
+    expect(
+      screen.getByText("412 MB of 936 MB · 8.4 MB/s · about 2 min left"),
+    ).toBeVisible();
+
+    emitDownload(null);
+    expect(screen.queryByText("44%")).toBeNull();
+  });
+
+  it("keeps an unknown-size download indeterminate", async () => {
+    await startInstall();
+
+    emitDownload({ received_bytes: 25_000_000, bytes_per_second: 500_000 });
+
+    expect(screen.getByRole("progressbar")).not.toHaveAttribute(
+      "aria-valuenow",
+    );
+    expect(screen.getByText("25 MB · 500 KB/s")).toBeVisible();
+  });
+
+  it("explains a dropped connection while it reconnects", async () => {
+    await startInstall();
+
+    emitDownload({
+      received_bytes: 1_250_000_000,
+      total_bytes: 2_000_000_000,
+      retrying: true,
+    });
+
+    expect(
+      screen.getByText(
+        "Connection interrupted. Reconnecting and continuing from 1.25 GB.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("keeps the installer log collapsed until it is requested", async () => {
+    await startInstall();
+    act(() => {
+      handlers.get("engines:log")!({ payload: { line: "Verified runtime" } });
+    });
+
+    const line = screen.getByText("Verified runtime");
+    expect(line).not.toBeVisible();
+
+    await userEvent.click(screen.getByText("Show details"));
+
+    expect(line).toBeVisible();
   });
 
   it("restores an in-progress install after the panel is remounted", async () => {
@@ -198,8 +296,15 @@ describe("EnginesPanel", () => {
                 installing: true,
                 install_progress: {
                   engine_id: "paddleocr-vl-parser",
-                  phases: { runtime: "done", models: "running" },
+                  phases: { recognition: "running" },
                   log_lines: ["Downloading model weights in the background..."],
+                  download: {
+                    label: "PaddleOCR-VL Q8 model",
+                    received_bytes: 500_000_000,
+                    total_bytes: 1_000_000_000,
+                    bytes_per_second: 0,
+                    retrying: false,
+                  },
                 },
               }),
         ]);
@@ -217,8 +322,10 @@ describe("EnginesPanel", () => {
     render(<EnginesPanel />);
 
     expect(
-      await screen.findByText("Downloading model weights in the background..."),
-    ).toBeVisible();
+      await screen.findByRole("progressbar", {
+        name: "Downloading PaddleOCR-VL Q8 model",
+      }),
+    ).toHaveAttribute("aria-valuenow", "50");
     expect(screen.getByRole("status")).toHaveTextContent(
       "Installation continues in the background if you leave Settings.",
     );
@@ -226,6 +333,70 @@ describe("EnginesPanel", () => {
     expect(
       invoke.mock.calls.filter(([command]) => command === "install_engine"),
     ).toHaveLength(1);
+  });
+
+  it("polls an inherited install until it ends and then shows the result", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const running = engine({
+        installing: true,
+        install_progress: {
+          engine_id: "paddleocr-vl-parser",
+          phases: { runtime: "done", packages: "done", models: "running" },
+          log_lines: ["Downloading model weights in the background..."],
+        },
+      });
+      let status = running;
+      invoke.mockImplementation((cmd: string) =>
+        cmd === "list_engines" ? Promise.resolve([status]) : Promise.resolve(),
+      );
+      const onSystemChange = vi.fn();
+      const onEngineStatusChange = vi.fn();
+      render(
+        <EnginesPanel
+          onSystemChange={onSystemChange}
+          onEngineStatusChange={onEngineStatusChange}
+        />,
+      );
+      expect(
+        await screen.findByRole("button", { name: "Cancel" }),
+      ).toBeEnabled();
+
+      status = engine({ installed: true, version: "3.7.0" });
+      await act(() => vi.advanceTimersByTimeAsync(2500));
+
+      expect(await screen.findByText("installed v3.7.0")).toBeVisible();
+      expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+      expect(onSystemChange).toHaveBeenCalledTimes(1);
+      expect(onEngineStatusChange).toHaveBeenLastCalledWith([status]);
+      const polls = invoke.mock.calls.length;
+      await act(() => vi.advanceTimersByTimeAsync(10000));
+      expect(invoke.mock.calls).toHaveLength(polls);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports an inherited install that ended without installing", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      let status = engine({ installing: true });
+      invoke.mockImplementation((cmd: string) =>
+        cmd === "list_engines" ? Promise.resolve([status]) : Promise.resolve(),
+      );
+      render(<EnginesPanel />);
+      await screen.findByRole("button", { name: "Cancel" });
+      status = engine();
+      await act(() => vi.advanceTimersByTimeAsync(2500));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "PaddleOCR-VL 1.6 Full Parser didn’t finish installing.",
+      );
+      expect(
+        screen.getByRole("button", { name: /Install \(~2\.9 GB\)/ }),
+      ).toBeEnabled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("cancel button invokes cancel_engine_install", async () => {
@@ -257,7 +428,7 @@ describe("EnginesPanel", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Engine cancellation failed: cancellation channel unavailable",
+      "Could not cancel the install: cancellation channel unavailable",
     );
   });
 
@@ -275,6 +446,113 @@ describe("EnginesPanel", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Not enough disk space",
     );
+  });
+
+  it("keeps the failed step and log visible after an install fails", async () => {
+    let failInstall!: (reason: string) => void;
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_engines") return Promise.resolve([engine()]);
+      if (cmd === "install_engine")
+        return new Promise((_, reject) => {
+          failInstall = reject;
+        });
+      return Promise.resolve();
+    });
+    render(<EnginesPanel />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Install/ }),
+    );
+    act(() => {
+      handlers.get("engines:phase")!({
+        payload: {
+          engine: "paddleocr-vl-parser",
+          phase: "recognition",
+          status: "failed",
+        },
+      });
+      handlers.get("engines:log")!({ payload: { line: "github.com: 404" } });
+    });
+
+    await act(async () => failInstall("llama.cpp runtime download failed"));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "llama.cpp runtime download failed",
+    );
+    expect(screen.getByText("OCR model").closest("li")).toHaveClass(
+      "text-red-700",
+    );
+    expect(screen.getByText("Show details")).toBeVisible();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("describes a running uninstall without install progress", async () => {
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_engines")
+        return Promise.resolve([engine({ installed: true })]);
+      if (cmd === "uninstall_engine") return new Promise(() => {});
+      return Promise.resolve();
+    });
+    confirmDialog.mockResolvedValueOnce(true);
+    render(<EnginesPanel />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Uninstall" }),
+    );
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Removing PaddleOCR-VL 1.6 Full Parser…",
+    );
+    expect(screen.queryByRole("progressbar")).toBeNull();
+  });
+
+  it("repairs an installed parser through the installer", async () => {
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_engines")
+        return Promise.resolve([engine({ installed: true })]);
+      return Promise.resolve();
+    });
+    render(<EnginesPanel />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Repair" }),
+    );
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("install_engine", {
+        engineId: "paddleocr-vl-parser",
+      }),
+    );
+    expect(confirmDialog).not.toHaveBeenCalled();
+    expect(await screen.findByText(/is checked and ready/)).toBeInTheDocument();
+  });
+
+  it("shows why a repair failed and offers it again", async () => {
+    invoke.mockImplementation((cmd: string) => {
+      if (cmd === "list_engines")
+        return Promise.resolve([engine({ installed: true })]);
+      if (cmd === "install_engine") return Promise.reject("Disk full");
+      return Promise.resolve();
+    });
+    render(<EnginesPanel />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Repair" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("Disk full");
+    expect(screen.queryByText(/is checked and ready/)).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Repair" }),
+    ).toBeInTheDocument();
+  });
+
+  it("disables a repair for an engine unavailable here", async () => {
+    invoke.mockResolvedValue([
+      engine({
+        installed: true,
+        available: false,
+        unavailable_reason: "Not on this computer",
+      }),
+    ]);
+    render(<EnginesPanel />);
+    expect(
+      await screen.findByRole("button", { name: "Repair" }),
+    ).toBeDisabled();
   });
 
   it("uninstall asks for confirmation and skips when declined", async () => {
