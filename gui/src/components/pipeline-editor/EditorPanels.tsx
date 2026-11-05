@@ -10,6 +10,18 @@ import type {
   VarSpec,
 } from "../../lib/types";
 import { ADAPTIVE_REVIEW_PROFILE_IDS } from "../../lib/autoReview";
+import {
+  defaultMergeAgent,
+  defaultParallelAgents,
+  defaultSequentialAgent,
+  PROVIDER_LABELS,
+  type Provider,
+} from "../../lib/providers";
+
+const providerNames = (agents: string[]) =>
+  agents
+    .map((agent) => PROVIDER_LABELS[agent as Provider] ?? agent)
+    .join(" + ");
 import PromptEditor from "../PromptEditor";
 import AdvancedStepOptions from "./AdvancedStepOptions";
 import AnalyzerStepPanel from "./AnalyzerStepPanel";
@@ -24,9 +36,11 @@ import {
 
 export const MergeEditorPanel = memo(function MergeEditorPanel({
   merge,
+  settings = null,
   onChange,
 }: {
   merge: MergeConfig;
+  settings?: Settings | null;
   onChange: (patch: Partial<MergeConfig>) => void;
 }) {
   return (
@@ -61,6 +75,11 @@ export const MergeEditorPanel = memo(function MergeEditorPanel({
         </p>
         <AgentChips
           agents={merge.agents ?? []}
+          inherited={
+            settings
+              ? `Settings → Combine results: ${providerNames([defaultMergeAgent(settings)])}`
+              : undefined
+          }
           onChange={(agents) => onChange({ agents })}
         />
       </div>
@@ -580,6 +599,13 @@ export const StepEditorPanel = memo(function StepEditorPanel({
         <AgentChips
           agents={step.agents ?? []}
           multi={step.phase === "parallel"}
+          inherited={
+            settings
+              ? step.phase === "parallel"
+                ? `Settings → Parallel review: ${providerNames(defaultParallelAgents(settings))}`
+                : `Settings → Sequential steps: ${providerNames([defaultSequentialAgent(settings)])}`
+              : undefined
+          }
           onChange={(agents) => onUpdate(step.id, { agents })}
         />
         <ModelOverrides

@@ -116,6 +116,9 @@ What is the most important remaining issue?]"#
             timeout,
         );
         request.output_schema = Some(output_schema.clone());
+        // Comparison runs on the default (review) model, at its thinking level.
+        let effort = settings.model_effort(&settings.preferred_provider);
+        request.effort = (!effort.trim().is_empty()).then(|| effort.to_string());
         request.settings = std::sync::Arc::new(settings.clone());
         let raw = match execute_text(request).await {
             Ok(raw) => raw,

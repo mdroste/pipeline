@@ -347,6 +347,9 @@ pub struct ExecutionPlanResponse {
     /// Rough preflight range of calls, tokens, and API list-price cost, with
     /// the Review limits that will apply.
     pub usage_estimate: executor::budget::UsageEstimate,
+    /// Every model the run will call, and whether each follows the review
+    /// model, the default model, a Settings exception, or a workflow pin.
+    pub model_roster: Vec<super::model_roster::RosterEntry>,
     /// Analyzer steps, with what each reads and any service it contacts.
     pub host_checks: Vec<crate::pipeline::analyzers::registry::HostCheck>,
     /// Files in the selected folders that won't fit in the Review's copy.
@@ -363,7 +366,7 @@ pub async fn get_execution_plan(
     diff: Option<bool>,
     paper_path: Option<String>,
     input_interpretation: Option<String>,
-    run_parallel_overrides: Option<RunParallelOverrides>,
+    run_parallel_overrides: Option<RunModelOverrides>,
 ) -> Result<ExecutionPlanResponse, String> {
     let variables = variables.unwrap_or_default();
     let extra_inputs = extra_inputs.unwrap_or_default();
@@ -380,7 +383,8 @@ pub async fn get_execution_plan(
                 .to_string(),
         );
     }
-    let snapshot = bind_parallel_overrides(snapshot, run_parallel_overrides.as_ref())?;
+    let raw_config = snapshot.config.clone();
+    let snapshot = bind_model_overrides(snapshot, run_parallel_overrides.as_ref())?;
     validate_primary_input_selection(
         &snapshot.config,
         paper_path.as_deref(),
@@ -488,9 +492,48 @@ pub async fn get_execution_plan(
         merge_agent,
         backup_unavailable,
         usage_estimate,
+        model_roster: super::model_roster::model_roster(
+            &snapshot.settings,
+            &planning_config,
+            &raw_config,
+            run_parallel_overrides
+                .as_ref()
+                .is_some_and(|overrides| overrides.review.is_some()),
+            run_parallel_overrides
+                .as_ref()
+                .is_some_and(|overrides| !overrides.agents.is_empty()),
+            diff,
+        ),
         host_checks: crate::pipeline::analyzers::registry::host_checks(&planning_config),
         input_notices,
     })
+}
+
+/// The models a review would call with these one-report choices, without the
+/// dependency probes `get_execution_plan` runs. New review shows this list
+/// while the researcher changes the review model.
+#[tauri::command]
+pub async fn get_model_roster(
+    run_parallel_overrides: Option<RunModelOverrides>,
+    diff: Option<bool>,
+) -> Result<Vec<super::model_roster::RosterEntry>, String> {
+    let snapshot = load_run_snapshot()?;
+    let raw_config = snapshot.config.clone();
+    let snapshot = bind_model_overrides(snapshot, run_parallel_overrides.as_ref())?;
+    let mut config = snapshot.config.clone();
+    pipeline_config::apply_agent_defaults(&mut config, &snapshot.settings);
+    Ok(super::model_roster::model_roster(
+        &snapshot.settings,
+        &config,
+        &raw_config,
+        run_parallel_overrides
+            .as_ref()
+            .is_some_and(|overrides| overrides.review.is_some()),
+        run_parallel_overrides
+            .as_ref()
+            .is_some_and(|overrides| !overrides.agents.is_empty()),
+        diff.unwrap_or(false),
+    ))
 }
 
 #[tauri::command]

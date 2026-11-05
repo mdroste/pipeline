@@ -1,6 +1,8 @@
 // Execution adapters, their argument templates, and detected research tools.
 // Mirrors gui/src-tauri/src/workbench/research/execution/{adapters,toolchains}.rs.
 
+import { readArgvText } from "../argvText";
+
 export type ExecutionAdapter =
   | "command"
   | "latex"
@@ -169,16 +171,8 @@ export function toolsForAdapter(
 }
 
 function parseArgv(value: string): string[] | null {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return Array.isArray(parsed) &&
-      parsed.length > 0 &&
-      parsed.every((item) => typeof item === "string")
-      ? parsed
-      : null;
-  } catch {
-    return null;
-  }
+  const parsed = readArgvText(value);
+  return parsed && parsed.length > 0 ? parsed : null;
 }
 
 export const STATA_CLEANUP_NOTICE =

@@ -86,7 +86,7 @@ export default function ProvenancePanel({
               <dd className={METADATA_VALUE}>{models}</dd>
               {usesProviderDefault && (
                 <dd className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                  Some steps used the provider's default model.
+                  Some steps ran on a model the CLI chose and did not report.
                 </dd>
               )}
             </div>

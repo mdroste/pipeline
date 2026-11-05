@@ -206,8 +206,9 @@ describe("the shared default", () => {
         catalogs,
       ),
     ).toBe("Claude Code · OPUS · High");
+    // An unset default names who picks the model rather than "Automatic".
     expect(defaultModelSummary(makeSettings(), catalogs)).toBe(
-      "Claude Code · Automatic",
+      "Claude Code · Claude Code's choice",
     );
   });
 

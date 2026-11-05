@@ -1,4 +1,5 @@
 import type { ModelCatalog, ModelSelection, Settings } from "./types";
+import { modelDisplayName, unsetModel, unsetModelOption } from "./modelChoice";
 
 import {
   providerFamilies,
@@ -51,21 +52,24 @@ export function withAccessMode(
   };
 }
 
-function modelName(catalog: ModelCatalog | undefined, id: string): string {
-  return catalog?.models.find((model) => model.id === id)?.display_name || id;
-}
-
+/** The default model, by name, as in "Claude Code · Opus 5.5 (Claude Code's choice)". */
 export function defaultModelSummary(
   settings: Settings,
   catalogs: Record<string, ModelCatalog>,
 ): string {
   const provider = settings.preferred_provider;
-  const model =
+  const catalog = catalogs[provider];
+  const pinned =
     provider === "local" ? settings.local_model : settings.default_model;
+  const unset = unsetModel(settings, provider, catalog);
   const effort = settings.default_effort;
   return [
     connectionDescription(defaultConnectionId(settings)).label,
-    model ? modelName(catalogs[provider], model) : "Automatic",
+    pinned
+      ? modelDisplayName(catalog, pinned)
+      : unset.name
+        ? `${unset.name} (${unset.chooser}'s choice)`
+        : `${unset.chooser}'s choice`,
     effort ? effort.charAt(0).toUpperCase() + effort.slice(1) : null,
   ]
     .filter(Boolean)
@@ -78,11 +82,7 @@ export function inheritedModelLabel(
   provider: string,
   catalog: ModelCatalog | undefined,
 ): string {
-  if (provider === "local")
-    return `Provider default · ${settings.local_model || "not selected"}`;
-  return provider === settings.preferred_provider && settings.default_model
-    ? `Default · ${modelName(catalog, settings.default_model)}`
-    : "Provider default";
+  return unsetModelOption(settings, provider, catalog);
 }
 
 export function defaultParallelAgents(settings: Settings): string[] {

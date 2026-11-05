@@ -303,3 +303,50 @@ fn relative_cli_inputs_are_resolved_against_the_current_directory() {
     .unwrap();
     assert_eq!(Path::new(&extra["appendix"]), cwd.join("./a.tex"));
 }
+
+#[test]
+fn model_flags_choose_one_review_model() {
+    let parsed = parse_cli(&strings(&[
+        "run",
+        "--input",
+        "paper.pdf",
+        "--model",
+        "claude:claude-opus-5-5:MAX",
+        "--model-everywhere",
+    ]))
+    .unwrap();
+    let ParseAction::Execute(Command::Run(args)) = parsed else {
+        panic!("expected a run");
+    };
+    let overrides = args.model.overrides().unwrap();
+    let review = overrides.review.unwrap();
+    assert_eq!(
+        (
+            review.provider.as_str(),
+            review.model.as_str(),
+            review.effort.as_str()
+        ),
+        ("claude", "claude-opus-5-5", "max")
+    );
+    assert!(overrides.clear_settings_exceptions && overrides.override_workflow_pins);
+
+    let ParseAction::Execute(Command::Batch(batch)) = parse_cli(&strings(&[
+        "batch",
+        "--input-dir",
+        "papers",
+        "--model",
+        "chatgpt",
+    ]))
+    .unwrap() else {
+        panic!("expected a batch");
+    };
+    let review = batch.model.overrides().unwrap().review.unwrap();
+    assert_eq!(
+        (review.provider.as_str(), review.model.as_str()),
+        ("codex", "")
+    );
+
+    assert!(parse_cli(&strings(&["run", "--model", "gpt"])).is_err());
+    assert!(parse_cli(&strings(&["run", "--model-everywhere"])).is_err());
+    assert!(parse_cli(&strings(&["run", "--model", "claude", "--model", "local"])).is_err());
+}

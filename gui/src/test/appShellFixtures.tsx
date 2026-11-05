@@ -200,7 +200,7 @@ export function createAppComponentMocks({
     WorkflowPanel: {
       default: () => <div>Test workflow</div>,
     },
-    RunParallelAgents: {
+    RunModelChoice: {
       default: ({
         onChange,
       }: {

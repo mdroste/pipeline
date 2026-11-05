@@ -428,6 +428,7 @@ pub fn run() {
             commands::config::resolve_orientation_schema_catalogs,
             commands::config::get_auto_review_specialist_step,
             commands::config::get_execution_plan,
+            commands::config::get_model_roster,
             pipeline::analyzers::registry::list_analyzers,
             commands::config::save_pipeline_config,
             commands::config::get_default_parallel_template,

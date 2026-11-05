@@ -99,6 +99,9 @@ pub(in crate::pipeline::extract) async fn request_llm_pages(
     request.pdf_attachment = attach.then_some(path);
     request.max_output_tokens = Some(EXTRACTION_MAX_OUTPUT_TOKENS);
     request.output_schema = Some(crate::output::text_artifact_schema());
+    // Extraction runs on the default (review) model, at its thinking level.
+    let effort = settings.model_effort(&settings.preferred_provider);
+    request.effort = (!effort.trim().is_empty()).then(|| effort.to_string());
     request.settings = settings;
     let raw = crate::pipeline::call::execute_text(request).await?;
     let text = crate::output::extract_text_artifact(&raw)?;

@@ -149,8 +149,14 @@ pub(super) fn read_at_most(path: &Path, limit: usize) -> Result<(Vec<u8>, bool),
 /// parent directory (matching `write_manifest`). Finalization deletes the step
 /// checkpoints only after `report.json`/`report.md` are durable, so a power
 /// loss in the writeback window cannot lose both copies of the step outputs.
+///
+/// The file is opened for writing (without truncating or creating it) because
+/// Windows `FlushFileBuffers` refuses a read-only handle with "Access is
+/// denied" (os error 5).
 pub(crate) fn sync_run_file(path: &Path) -> Result<(), String> {
-    fs::File::open(path)
+    fs::OpenOptions::new()
+        .write(true)
+        .open(path)
         .and_then(|file| crate::safety::sync_file(&file))
         .map_err(|e| format!("Failed to sync {}: {e}", path.display()))?;
     #[cfg(unix)]

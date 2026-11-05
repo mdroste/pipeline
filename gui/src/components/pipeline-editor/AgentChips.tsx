@@ -4,10 +4,13 @@ import { PROVIDER_LABELS, PROVIDERS } from "../../lib/providers";
 function AgentChips({
   agents,
   multi,
+  inherited,
   onChange,
 }: {
   agents: string[];
   multi?: boolean;
+  /** What an empty choice runs, as in "Settings → Parallel review: Claude". */
+  inherited?: string;
   onChange: (agents: string[]) => void;
 }) {
   return (
@@ -15,7 +18,7 @@ function AgentChips({
       <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1.5">
         LLM Agents
         <span className="font-normal text-gray-600 dark:text-gray-400 ml-1">
-          (empty = global setting
+          (empty = {inherited ?? "Settings"}
           {multi ? "; select multiple to run in parallel" : ""})
         </span>
       </label>

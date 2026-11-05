@@ -3,8 +3,22 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
-## Unreleased
+## 1.4.3 — 2026-11-04
 
+- **New review → Models for this review** chooses one model, with its thinking
+  level, for the whole review. Orientation, parallel and sequential steps,
+  combining results, LLM PDF extraction, and revision comparison all use it.
+  Stages that Settings or the workflow assign to another model are listed
+  under it, and **Use the review model for everything** switches them for that
+  review. `pipeline-cli run` and `batch` accept `--model` and
+  `--model-everywhere`.
+- Pipeline no longer shows a bare "default" model. Menus, Settings, the
+  console, and saved reports name the model and who chose it, for example
+  "Opus 5.5 (Claude Code's choice)". The console warns when a CLI uses a
+  different model than expected.
+- **Settings → Model defaults** starts with the default review model, then
+  second-opinion models for parallel steps. Stages with their own model are
+  grouped under **Stage exceptions**.
 - The **Review overview** is a numbered timeline. Step 1, **Prepare document
   bundle**, holds Extract and Orient. Each later number is a group of steps
   that run at the same time. Review steps show their agents, web search,

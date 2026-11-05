@@ -110,6 +110,8 @@ pub(super) struct StepCallResult {
     pub(super) attempt_count: u32,
     pub(super) usage_limit_fallbacks: Vec<crate::pipeline::call::UsageLimitFallback>,
     pub(super) effective_fallback: Option<crate::pipeline::call::UsageLimitFallback>,
+    /// The model the primary provider last reported across attempts.
+    pub(super) reported_model: Option<String>,
 }
 
 /// A step call that ended without an accepted response. `spent` describes
@@ -289,6 +291,9 @@ async fn run_step_call_attempts(
         spent
             .effective_fallback
             .clone_from(&call.usage_limit_fallback);
+        if call.reported_model.is_some() {
+            spent.reported_model.clone_from(&call.reported_model);
+        }
         if let Some(fallback) = call.usage_limit_fallback.clone() {
             spent.usage_limit_fallbacks.push(fallback);
         }

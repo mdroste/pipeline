@@ -24,7 +24,37 @@ it("shows a role by its name", () => {
   );
 
   expect(
-    screen.getByText("Claude · Quality · Default thinking"),
+    screen.getByText("Claude · Quality (opus) · Claude Code default thinking"),
+  ).toBeInTheDocument();
+});
+
+it("names the model an unset choice runs and who picks it", () => {
+  render(
+    <ModelStage
+      title="Parallel review"
+      agents={["claude"]}
+      settings={
+        {
+          claude_access_mode: "subscription",
+          preferred_provider: "codex",
+        } as Settings
+      }
+      catalogs={{
+        claude: {
+          default_model: "claude-opus-5-5",
+          models: [{ id: "claude-opus-5-5", display_name: "Opus 5.5" }],
+          roles: [],
+        } as unknown as ModelCatalog,
+      }}
+    >
+      <div />
+    </ModelStage>,
+  );
+
+  expect(
+    screen.getByText(
+      "Claude · Opus 5.5 (Claude Code's choice) · Claude Code default thinking",
+    ),
   ).toBeInTheDocument();
 });
 

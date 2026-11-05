@@ -153,6 +153,53 @@ fn recovered_path_is_used_for_preview_child_helpers_and_authorization() {
     );
 }
 
+#[test]
+fn windows_runs_ask_python_for_utf8_stdio_unless_the_profile_chooses() {
+    use super::process::python_stdio_default;
+    assert_eq!(
+        python_stdio_default(&json!({}), true),
+        Some(("PYTHONIOENCODING", "utf-8"))
+    );
+    assert_eq!(
+        python_stdio_default(&json!({"pythonioencoding": "cp1252"}), true),
+        None
+    );
+    assert_eq!(python_stdio_default(&json!({}), false), None);
+}
+
+/// A canonical (`\\?\C:\…`) cwd must reach the child as an ordinary path:
+/// cmd.exe otherwise reports "UNC paths are not supported" and runs in
+/// C:\Windows, and so does everything a build or script starts through it.
+#[cfg(windows)]
+#[test]
+fn windows_children_start_in_the_profile_folder_not_a_verbatim_path() {
+    let temp = tempfile::tempdir().unwrap();
+    let canonical = temp.path().canonicalize().unwrap();
+    assert!(canonical.to_string_lossy().starts_with(r"\\?\"));
+    let p = profile(
+        &canonical,
+        vec![
+            "cmd".into(),
+            "/d".into(),
+            "/c".into(),
+            "cd & echo %PYTHONIOENCODING%".into(),
+        ],
+        json!({}),
+    );
+    let launch = launch_manifest(&p).unwrap();
+    let output = run_profile_process("windows-verbatim-cwd", &p, &launch).unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut lines = stdout.lines().map(str::trim);
+    let expected = crate::file_viewer::system_path(&canonical);
+    assert_eq!(
+        lines.next().map(str::to_ascii_lowercase),
+        Some(expected.to_string_lossy().to_ascii_lowercase()),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(lines.next(), Some("utf-8"));
+}
+
 #[cfg(windows)]
 #[test]
 fn windows_preview_and_execution_resolve_the_same_extensionless_program() {

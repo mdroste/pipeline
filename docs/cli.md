@@ -159,6 +159,21 @@ started with, even if you change them in the app.
 
 ## Limit cost, calls, or time
 
+`run` and `batch` accept `--model` to choose the review model for that
+command, in the form `PROVIDER[:MODEL[:THINKING]]`:
+
+```bash
+pipeline-cli run --input paper.pdf --model claude:claude-opus-5-5:max
+```
+
+`PROVIDER` is `claude`, `chatgpt`, `gemini`, or `local`. Leave `MODEL` empty to
+let the provider choose. Every call that follows your default model uses the
+review model: orientation, parallel and sequential steps, combining results,
+LLM PDF extraction, and revision comparison. Stages that **Settings → Model
+defaults** assigns to another model, and steps the workflow assigns to a
+model, keep their own models. Add `--model-everywhere` to use the review model
+for those too. The usage-limit backup is unchanged.
+
 `run` and `batch` accept `--max-cost <USD>`, `--max-calls <N>`, and
 `--max-minutes <N>`:
 

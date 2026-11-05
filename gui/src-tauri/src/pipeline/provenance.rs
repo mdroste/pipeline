@@ -4,29 +4,52 @@ use super::{call::UsageLimitFallback, logging::CallUsage};
 use crate::model_catalog::ResolvedModel;
 use crate::models::{StepCallRecord, StepOutput};
 
+/// The model to record for a call and how Pipeline knows it (see
+/// `StepCallRecord::model_basis`). A provider's own report outranks the
+/// request: a CLI alias such as `opus` is reported as the full model ID, and a
+/// CLI Automatic call has no other record of its model.
+pub(super) fn recorded_model(
+    provider: &str,
+    resolution: &ResolvedModel,
+    reported: Option<&str>,
+) -> (String, &'static str) {
+    if let Some(model) = reported.map(str::trim).filter(|model| !model.is_empty()) {
+        return (model.to_string(), "reported");
+    }
+    if resolution.command_model.is_some() || resolution.transport == "api" {
+        return (resolution.resolved_model.clone(), "requested");
+    }
+    match crate::model_catalog::cli_default_model(provider) {
+        Some(model) => (model, "expected"),
+        None => (resolution.resolved_model.clone(), "unknown"),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) fn call_record(
     role: &str,
     provider: &str,
     agent: &str,
     resolution: &ResolvedModel,
+    reported_model: Option<&str>,
     effort: &str,
     duration_secs: u64,
     usage: CallUsage,
 ) -> StepCallRecord {
+    let (model, model_basis) = recorded_model(provider, resolution, reported_model);
     StepCallRecord {
         role: role.to_string(),
         provider: provider.to_string(),
         agent: agent.to_string(),
-        model: resolution.resolved_model.clone(),
+        model,
         model_transport: resolution.transport.clone(),
         model_policy: resolution.selection.label(),
         model_source: resolution.source.clone(),
         model_catalog_updated_at: resolution.catalog_updated_at.clone(),
-        effort: if effort.trim().is_empty() {
-            "default".to_string()
-        } else {
-            effort.to_string()
-        },
+        model_basis: model_basis.to_string(),
+        // Empty means the provider's own default applied. Readers name that
+        // default by provider instead of storing a bare "default".
+        effort: effort.trim().to_string(),
         duration_secs,
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,
@@ -44,6 +67,7 @@ pub(super) fn fallback_record(role: &str, fallback: &UsageLimitFallback) -> Step
         &fallback.provider,
         &fallback.provider,
         &fallback.resolution,
+        fallback.reported_model.as_deref(),
         &fallback.effort,
         fallback.fallback_duration_secs,
         fallback.fallback_usage,
@@ -64,6 +88,7 @@ pub(super) fn call_records_for_output(output: &StepOutput) -> Vec<StepCallRecord
         model_policy: output.model_policy.clone(),
         model_source: output.model_source.clone(),
         model_catalog_updated_at: output.model_catalog_updated_at.clone(),
+        model_basis: String::new(),
         effort: String::new(),
         duration_secs: output.duration_secs,
         input_tokens: output.input_tokens,

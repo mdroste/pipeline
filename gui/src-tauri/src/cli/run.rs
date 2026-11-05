@@ -53,6 +53,7 @@ pub(super) async fn cmd_run(args: RunArgs) -> i32 {
         variables: args.variables,
         extra_inputs,
         limits: args.limits.overrides(),
+        models: args.model.overrides(),
     };
     // Invalid input exits 2, as under `check`. Anything later is a failed run.
     if let Err(error) = commands::validate_headless_input(&options) {
@@ -114,6 +115,7 @@ pub(super) async fn cmd_check(args: CheckArgs) -> i32 {
         variables: args.variables,
         extra_inputs,
         limits: Default::default(),
+        models: None,
     };
     let plan = match commands::check_headless_plan(&options).await {
         Ok(report) => report,
@@ -253,6 +255,7 @@ pub(super) async fn cmd_batch(args: BatchArgs) -> i32 {
             variables: args.variables.clone(),
             extra_inputs: extra_inputs.clone(),
             limits: args.limits.overrides(),
+            models: args.model.overrides(),
         };
         match run_with_interrupt(bus, options, Some(&snapshot)).await {
             Ok(value) => {

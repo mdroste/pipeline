@@ -312,6 +312,7 @@ pub(super) async fn run_connected(
     attempt.record["state_before_drop"] = json!("submitting");
     attempt.save()?;
     logging::record_provider_attempt();
+    logging::record_reported_model(effective_model);
     logging::emit(app, format!("[App Server] {label}: {effective_model}; attempt {id}; selected context supplied in a fresh thread"));
     let turn = match c
         .native

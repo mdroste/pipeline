@@ -17,6 +17,10 @@ use std::time::{Duration, Instant};
 
 type BoxCallFuture<'a> =
     Pin<Box<dyn Future<Output = std::result::Result<String, String>> + Send + 'a>>;
+/// A provider call paired with the model the provider reported for it.
+type BoxObservedCallFuture<'a> = Pin<
+    Box<dyn Future<Output = (std::result::Result<String, String>, Option<String>)> + Send + 'a>,
+>;
 
 /// Borrowed convenience request used by the executor and merge paths. It is
 /// immediately converted to [`OwnedRequest`] before any scheduler boundary.
@@ -140,6 +144,9 @@ pub struct Result {
     pub output: std::result::Result<String, String>,
     pub usage: super::logging::CallUsage,
     pub duration_secs: u64,
+    /// The model the primary provider said it ran, when it says. CLI
+    /// Automatic calls have no other record of the model.
+    pub reported_model: Option<String>,
     /// Present when a durable provider usage limit caused one configured
     /// cross-provider fallback call. Step outputs use this to retain accurate
     /// provider/model provenance for both calls.
@@ -151,6 +158,8 @@ pub struct UsageLimitFallback {
     pub provider: String,
     pub resolution: crate::model_catalog::ResolvedModel,
     pub effort: String,
+    /// The model the fallback provider said it ran, when it says.
+    pub reported_model: Option<String>,
     pub primary_usage: super::logging::CallUsage,
     pub primary_duration_secs: u64,
     pub fallback_usage: super::logging::CallUsage,
@@ -161,6 +170,7 @@ struct ProviderCallResult {
     output: std::result::Result<String, String>,
     usage: super::logging::CallUsage,
     duration_secs: u64,
+    reported_model: Option<String>,
 }
 
 /// A call task must never detach: dropping its waiter kills registered
@@ -219,6 +229,7 @@ impl CallTask {
                     }),
                     usage: super::logging::CallUsage::default(),
                     duration_secs: self.started.elapsed().as_secs(),
+                    reported_model: None,
                     usage_limit_fallback: None,
                 }
             }
@@ -324,12 +335,15 @@ async fn execute_provider_once(
     // Type-erase before entering each generic task-local scope. Otherwise the
     // generated TaskLocalFuture states duplicate the entire concrete call
     // future and grow rapidly in debug builds.
-    let (output, usage) = super::logging::measure_usage(bounded).await;
+    let observed: BoxObservedCallFuture<'_> =
+        Box::pin(super::logging::observe_reported_model(bounded));
+    let ((output, reported_model), usage) = super::logging::measure_usage(observed).await;
 
     ProviderCallResult {
         output,
         usage,
         duration_secs: started.elapsed().as_secs(),
+        reported_model,
     }
 }
 
@@ -429,6 +443,7 @@ async fn execute_inner(request: OwnedRequest) -> Result {
                     output: primary.output,
                     usage: primary.usage,
                     duration_secs: total_started.elapsed().as_secs(),
+                    reported_model: primary.reported_model,
                     usage_limit_fallback: None,
                 };
             }
@@ -438,6 +453,7 @@ async fn execute_inner(request: OwnedRequest) -> Result {
                 output: primary.output,
                 usage: primary.usage,
                 duration_secs: total_started.elapsed().as_secs(),
+                reported_model: primary.reported_model,
                 usage_limit_fallback: None,
             };
         }
@@ -468,6 +484,7 @@ async fn execute_inner(request: OwnedRequest) -> Result {
                 output: primary.output,
                 usage: primary.usage,
                 duration_secs: total_started.elapsed().as_secs(),
+                reported_model: primary.reported_model,
                 usage_limit_fallback: None,
             };
         };
@@ -488,6 +505,7 @@ async fn execute_inner(request: OwnedRequest) -> Result {
                 )),
                 usage: primary.usage,
                 duration_secs: total_started.elapsed().as_secs(),
+                reported_model: primary.reported_model,
                 usage_limit_fallback: None,
             };
         }
@@ -521,6 +539,7 @@ async fn execute_inner(request: OwnedRequest) -> Result {
                     )),
                     usage: primary.usage,
                     duration_secs: total_started.elapsed().as_secs(),
+                    reported_model: primary.reported_model,
                     usage_limit_fallback: None,
                 };
             }
@@ -529,6 +548,10 @@ async fn execute_inner(request: OwnedRequest) -> Result {
             .settings
             .usage_limit_fallback_effort(fallback_provider);
         let model_policy = resolution.selection.label();
+        // Never surface the CLI Automatic placeholder: name the expected model
+        // and who picks it.
+        let fallback_model_label =
+            crate::model_catalog::describe_resolution(fallback_provider, &resolution);
         let mut fallback_overrides = primary_overrides.clone();
         fallback_overrides.model = resolution.command_model.as_deref();
         fallback_overrides.model_display = Some(&resolution.resolved_model);
@@ -550,7 +573,7 @@ async fn execute_inner(request: OwnedRequest) -> Result {
                 &primary_error,
                 "fallback_failed",
                 Some(fallback_provider),
-                Some(&resolution.resolved_model),
+                Some(&fallback_model_label),
             );
             return Result {
                 output: Err(format!(
@@ -558,6 +581,7 @@ async fn execute_inner(request: OwnedRequest) -> Result {
                 )),
                 usage: primary.usage,
                 duration_secs: total_started.elapsed().as_secs(),
+                reported_model: primary.reported_model,
                 usage_limit_fallback: None,
             };
         }
@@ -566,7 +590,7 @@ async fn execute_inner(request: OwnedRequest) -> Result {
             &request.app,
             format!(
                 "WARNING: {}: continuing with usage-limit fallback {} / {}",
-                request.log_label, fallback_provider, resolution.resolved_model
+                request.log_label, fallback_provider, fallback_model_label
             ),
         );
         let fallback = execute_provider_once(
@@ -584,18 +608,21 @@ async fn execute_inner(request: OwnedRequest) -> Result {
         } else {
             "fallback_failed"
         };
+        let fallback_model_label = fallback
+            .reported_model
+            .clone()
+            .unwrap_or(fallback_model_label);
         emit_usage_limit_event(
             &request,
             primary_provider,
             &primary_error,
             status,
             Some(fallback_provider),
-            Some(&resolution.resolved_model),
+            Some(&fallback_model_label),
         );
         let output = fallback.output.map_err(|fallback_error| {
             format!(
-                "{primary_error}; usage-limit fallback {fallback_provider} / {} also failed: {fallback_error}",
-                resolution.resolved_model
+                "{primary_error}; usage-limit fallback {fallback_provider} / {fallback_model_label} also failed: {fallback_error}"
             )
         });
 
@@ -603,10 +630,12 @@ async fn execute_inner(request: OwnedRequest) -> Result {
             output,
             usage: total_usage,
             duration_secs: total_started.elapsed().as_secs(),
+            reported_model: primary.reported_model,
             usage_limit_fallback: Some(UsageLimitFallback {
                 provider: fallback_provider.to_string(),
                 resolution,
                 effort,
+                reported_model: fallback.reported_model,
                 primary_usage: primary.usage,
                 primary_duration_secs: primary.duration_secs,
                 fallback_usage: fallback.usage,
@@ -627,6 +656,7 @@ mod tests {
             output: Ok(String::new()),
             usage: super::super::logging::CallUsage::default(),
             duration_secs: 0,
+            reported_model: None,
             usage_limit_fallback: None,
         }
     }

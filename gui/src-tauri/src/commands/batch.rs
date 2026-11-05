@@ -17,7 +17,7 @@ pub(super) async fn prepare_batch_launch(
     variables: Option<std::collections::HashMap<String, String>>,
     extra_inputs: Option<std::collections::HashMap<String, String>>,
     expected_profile_config_snapshot_id: Option<String>,
-    run_parallel_overrides: Option<RunParallelOverrides>,
+    run_parallel_overrides: Option<RunModelOverrides>,
 ) -> Result<BatchLaunch, String> {
     let paths: Vec<String> = paths.into_iter().filter(|p| !p.trim().is_empty()).collect();
     if paths.is_empty() {
@@ -34,7 +34,7 @@ pub(super) async fn prepare_batch_launch(
                 .to_string(),
         );
     }
-    let snapshot = bind_parallel_overrides(snapshot, run_parallel_overrides.as_ref())?;
+    let snapshot = bind_model_overrides(snapshot, run_parallel_overrides.as_ref())?;
     if snapshot.config.extraction.input_mode.trim() == "none" {
         return Err("Batch processing requires a workflow that accepts input".to_string());
     }
@@ -86,7 +86,7 @@ pub async fn start_batch(
     variables: Option<std::collections::HashMap<String, String>>,
     extra_inputs: Option<std::collections::HashMap<String, String>>,
     expected_profile_config_snapshot_id: Option<String>,
-    run_parallel_overrides: Option<RunParallelOverrides>,
+    run_parallel_overrides: Option<RunModelOverrides>,
 ) -> Result<(), String> {
     let BatchLaunch {
         paths,

@@ -9,10 +9,8 @@ import {
   defaultParallelAgents,
   defaultMergeAgent,
   defaultSequentialAgent,
-  providerTransport,
-  PROVIDER_LABELS,
-  type Provider,
 } from "../../lib/providers";
+import { stageModelSummary } from "../../lib/modelChoice";
 
 export interface SettingsSearchEntry {
   section: Section;
@@ -185,7 +183,7 @@ export function settingsSearchEntries(
     "workflow",
     "workflow-models",
     "Model defaults",
-    "Input assessment orientation, parallel review, combine merge results, sequential steps, provider, thinking, reasoning",
+    "Default review model, second opinion, stage exceptions, input assessment orientation, parallel review, combine merge results, sequential steps, provider, thinking, reasoning",
     "",
   );
   for (const [label, target, agents, models, efforts] of [
@@ -197,8 +195,8 @@ export function settingsSearchEntries(
       s.default_orientation_effort_overrides,
     ],
     [
-      "Parallel review",
-      "Parallel review providers",
+      "Parallel steps",
+      "Parallel steps providers",
       defaultParallelAgents(s),
       s.default_parallel_model_overrides,
       s.default_parallel_effort_overrides,
@@ -219,11 +217,7 @@ export function settingsSearchEntries(
     ],
   ] as const) {
     const value = agents
-      .map((agent) => {
-        const key = `${agent}:${providerTransport(s, agent)}`;
-        const model = models?.[key] ?? models?.[agent];
-        return `${PROVIDER_LABELS[agent as Provider]} · ${model?.mode === "pinned" ? model.model : model?.mode === "role" ? model.role : "Provider default"} · ${efforts?.[key] || efforts?.[agent] || "Default thinking"}`;
-      })
+      .map((agent) => stageModelSummary(s, agent, models, efforts, {}))
       .join("; ");
     add(
       "workflow",

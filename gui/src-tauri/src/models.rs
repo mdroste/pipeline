@@ -332,8 +332,15 @@ pub struct StepCallRecord {
     pub model_source: String,
     #[serde(default)]
     pub model_catalog_updated_at: String,
-    /// Resolved reasoning-effort setting requested for this call. Empty for
-    /// reports saved before effort provenance was recorded.
+    /// How Pipeline knows `model`: `reported` (the provider said so after the
+    /// call), `requested` (Pipeline sent this model), `expected` (the CLI
+    /// chose and did not say; this is the model it last chose or listed as
+    /// its default), or `unknown`. Empty for reports saved before this field.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model_basis: String,
+    /// Resolved reasoning-effort setting requested for this call. Empty when
+    /// the provider's default applied, and for reports saved before effort
+    /// provenance was recorded.
     #[serde(default)]
     pub effort: String,
     #[serde(default)]

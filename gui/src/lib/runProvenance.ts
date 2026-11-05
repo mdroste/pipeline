@@ -1,5 +1,10 @@
 import { PROVIDER_LABELS, type Provider } from "./providers";
 import {
+  isUnrecordedModelLabel,
+  recordedEffortLabel,
+  recordedModelLabel,
+} from "./modelChoice";
+import {
   isPaperOrientation,
   type PipelineReport,
   type RunSummary,
@@ -63,8 +68,6 @@ const ZERO_USAGE: UsageTotals = {
   cache_write_input_tokens: 0,
 };
 
-const PROVIDER_DEFAULT_MODEL = "Provider default";
-
 function count(value: number | undefined): number {
   return Number.isFinite(value) && value! > 0 ? Math.round(value!) : 0;
 }
@@ -99,12 +102,21 @@ function usageIdentity(
     step.provider?.trim() ||
     step.agent?.trim() ||
     "default";
+  const transport =
+    call?.model_transport?.trim() || step.model_transport?.trim() || "";
   return {
     provider: displayProvider(provider),
-    model: call?.model?.trim() || step.model?.trim() || "Automatic",
-    transport:
-      call?.model_transport?.trim() || step.model_transport?.trim() || "",
-    effort: call?.effort?.trim() || "",
+    // Never a bare "Automatic" or "Provider default": name the model, or who
+    // chose it when the run could not record it.
+    model: recordedModelLabel(
+      provider,
+      transport,
+      call?.model?.trim() || step.model?.trim(),
+      call?.model_basis,
+    ),
+    transport,
+    // Only per-call records store effort; older step totals never did.
+    effort: call ? recordedEffortLabel(provider, transport, call.effort) : "",
   };
 }
 
@@ -321,21 +333,21 @@ export function buildRunProvenance({
     totals,
     usage_matches_total: sameUsage(attributedTotals, totals),
     provider_summary: providers.join(", ") || "Default",
-    model_summary: models.join(", ") || "Automatic",
+    model_summary: models.join(", ") || "Not recorded",
   };
 }
 
 /**
- * Split the model summary for display. A CLI step on Automatic records the
- * "Provider default" placeholder rather than a model name, so it reads as a
- * note beside named models instead of as another entry in the list.
+ * Split the model summary for display. A CLI call that chose its own model and
+ * did not report it has no model name, so it reads as a note beside named
+ * models instead of as another entry in the list.
  */
 export function namedModelSummary(provenance: RunProvenance): {
   models: string;
   usesProviderDefault: boolean;
 } {
   const models = unique(provenance.usage.map((row) => row.model));
-  const named = models.filter((model) => model !== PROVIDER_DEFAULT_MODEL);
+  const named = models.filter((model) => !isUnrecordedModelLabel(model));
   if (!named.length || named.length === models.length) {
     return {
       models: provenance.model_summary,

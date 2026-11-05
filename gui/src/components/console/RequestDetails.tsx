@@ -153,15 +153,39 @@ export default function RequestDetails({
             · {transport}
           </span>
         </Fact>
-        <Fact
-          label="Model"
-          title={`${request.model} (${request.model_policy})`}
-        >
-          <span className="font-mono">{request.model}</span>{" "}
-          <span className="text-gray-500 dark:text-gray-400">
-            · {request.model_policy}
-          </span>
-        </Fact>
+        {request.model_chosen_by ? (
+          // The CLI picks this model. Name the one it is expected to pick and
+          // who picks it; the log reports what it actually used.
+          <Fact
+            label="Model"
+            title={
+              request.model
+                ? `${request.model}, expected: ${request.model_chosen_by} chooses the model and reports it when the call finishes`
+                : `${request.model_chosen_by} chooses the model and reports it when the call finishes`
+            }
+          >
+            {request.model ? (
+              <>
+                <span className="font-mono">{request.model}</span>{" "}
+                <span className="text-gray-500 dark:text-gray-400">
+                  · {request.model_chosen_by}'s choice
+                </span>
+              </>
+            ) : (
+              <>Chosen by {request.model_chosen_by}</>
+            )}
+          </Fact>
+        ) : (
+          <Fact
+            label="Model"
+            title={`${request.model} (${request.model_policy})`}
+          >
+            <span className="font-mono">{request.model}</span>{" "}
+            <span className="text-gray-500 dark:text-gray-400">
+              · {request.model_policy}
+            </span>
+          </Fact>
+        )}
         <Fact label="Effort">{request.effort}</Fact>
         <Fact label="Tools" title={tools}>
           {tools}

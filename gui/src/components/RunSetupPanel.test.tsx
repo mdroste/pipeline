@@ -9,7 +9,7 @@ vi.mock("./PaperSelector", () => ({
   ),
 }));
 vi.mock("./WorkflowPanel", () => ({ default: () => null }));
-vi.mock("./RunParallelAgents", () => ({ default: () => null }));
+vi.mock("./RunModelChoice", () => ({ default: () => null }));
 
 const selection: PrimaryInputSelection = {
   paths: ["/papers/draft.pdf"],

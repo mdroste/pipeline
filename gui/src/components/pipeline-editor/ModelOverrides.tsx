@@ -1,5 +1,10 @@
 import { reviewConnectionLabel } from "../../lib/connections";
 import { memo, useState } from "react";
+import {
+  modelDisplayName,
+  unsetEffortLabel,
+  unsetModelOption,
+} from "../../lib/modelChoice";
 import type { ModelCatalog, Settings, StepConfig } from "../../lib/types";
 import {
   decodeModelSelection,
@@ -45,6 +50,55 @@ function ModelOverrides({
   const transportFor = (provider: string): "cli" | "api" =>
     settings ? providerTransport(settings, provider) : "api";
 
+  // Mirrors apply_agent_defaults: only a step that leaves its agents empty
+  // takes the Settings stage's model and thinking choices.
+  const stage =
+    step.phase === "parallel" ? "Parallel review" : "Sequential steps";
+  const stageModels = !settings
+    ? undefined
+    : step.phase === "parallel"
+      ? settings.default_parallel_model_overrides
+      : settings.default_sequential_model_overrides;
+  const stageEfforts = !settings
+    ? undefined
+    : step.phase === "parallel"
+      ? settings.default_parallel_effort_overrides
+      : settings.default_sequential_effort_overrides;
+  const usesStage = !step.agents?.length;
+
+  const inheritedModel = (
+    provider: string,
+    key: string,
+    explicitAutomatic: boolean,
+  ): string => {
+    if (!settings) return "Not set";
+    const catalog = catalogs[provider];
+    // A saved Automatic choice skips the Settings stage and step model.
+    if (explicitAutomatic) return unsetModelOption(settings, provider, catalog);
+    if (step.model)
+      return `This step: ${modelDisplayName(catalog, step.model)}`;
+    const staged = usesStage
+      ? (stageModels?.[key] ?? stageModels?.[provider])
+      : undefined;
+    if (staged?.mode === "pinned")
+      return `Settings → ${stage}: ${modelDisplayName(catalog, staged.model)}`;
+    if (staged?.mode === "role")
+      return `Settings → ${stage}: ${catalog?.roles.find((role) => role.id === staged.role)?.label ?? staged.role}`;
+    return unsetModelOption(settings, provider, catalog);
+  };
+
+  const inheritedEffort = (provider: string, key: string): string => {
+    if (!settings) return "Not set";
+    const capitalized = (value: string) =>
+      value.charAt(0).toUpperCase() + value.slice(1);
+    if (step.effort) return `This step: ${capitalized(step.effort)}`;
+    const staged = usesStage
+      ? stageEfforts?.[key] || stageEfforts?.[provider]
+      : undefined;
+    if (staged) return `Settings → ${stage}: ${capitalized(staged)}`;
+    return unsetEffortLabel(settings, provider);
+  };
+
   const updateModel = (key: string, value: string) => {
     const next = { ...(step.model_overrides ?? {}) };
     const selection = decodeModelSelection(value);
@@ -87,7 +141,8 @@ function ModelOverrides({
       {open && (
         <div className="mt-2 space-y-2 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
           <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-relaxed">
-            Choose Automatic, a model role, or a model by name.
+            Keep what this step inherits, or choose a model role or a model by
+            name.
           </p>
           {providers.map((provider) => {
             const key = `${provider}:${transportFor(provider)}`;
@@ -124,7 +179,13 @@ function ModelOverrides({
                   onChange={(event) => updateModel(key, event.target.value)}
                   className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
                 >
-                  <option value="inherit">Automatic</option>
+                  <option value="inherit">
+                    {inheritedModel(
+                      provider,
+                      key,
+                      selection?.mode === "automatic",
+                    )}
+                  </option>
                   {!!catalog?.roles.length && (
                     <optgroup label="Stable roles">
                       {catalog.roles.map((role) => (
@@ -160,7 +221,7 @@ function ModelOverrides({
                     onChange={(event) => updateEffort(key, event.target.value)}
                     className="w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-xs text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
                   >
-                    <option value="">Default thinking</option>
+                    <option value="">{inheritedEffort(provider, key)}</option>
                     {efforts.map((effort) => (
                       <option key={effort} value={effort}>
                         {effort.charAt(0).toUpperCase() + effort.slice(1)}

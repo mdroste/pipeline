@@ -13,6 +13,7 @@ pub(crate) mod config;
 pub(crate) mod export;
 mod guard;
 pub(crate) mod lifecycle;
+pub(crate) mod model_roster;
 pub(crate) mod orchestration;
 mod profile_import;
 pub(crate) mod rerun;
@@ -37,7 +38,7 @@ pub(crate) use lifecycle::{
     unregister_engine_child_pid,
 };
 pub use rerun::*;
-pub use run_context::ReviewLimitOverrides;
+pub use run_context::{ReviewLimitOverrides, ReviewModelChoice, RunModelOverrides};
 pub use run_entry::{
     check_headless_dependencies, check_headless_plan, run_headless, run_headless_batch_item,
     run_headless_with_options, run_pipeline, validate_headless_input, HeadlessBatchSnapshot,

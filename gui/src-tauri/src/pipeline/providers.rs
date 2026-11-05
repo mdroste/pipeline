@@ -18,15 +18,7 @@ use super::claude::call_claude;
 /// directory when the LLM needs to read figures or other assets alongside the paper.
 /// When `None`, the subprocess runs in the system temp dir.
 pub(crate) fn request_provider_label(provider: &str, transport: &str) -> &'static str {
-    match (provider, transport) {
-        ("claude", "api") => "Anthropic",
-        ("claude", _) => "Claude Code",
-        ("codex", "api") => "OpenAI",
-        ("codex", _) => "Codex",
-        ("antigravity", _) => "Google",
-        ("local", _) => "Local server",
-        _ => "Unknown provider",
-    }
+    crate::model_catalog::model_chooser(provider, transport)
 }
 
 pub(crate) fn request_effort(
@@ -41,7 +33,8 @@ pub(crate) fn request_effort(
         _ => return "Not configurable".to_string(),
     };
     if configured.is_empty() {
-        return "Provider default".to_string();
+        // Name who decides, so an unset level never reads as a bare "default".
+        return format!("{} default", request_provider_label(provider, transport));
     }
     if provider == "claude" && transport == "api" {
         if model.starts_with("claude-haiku") {
@@ -122,6 +115,15 @@ pub async fn call_llm(
 
         let connection = crate::connections::ConnectionId::for_review(provider, &settings)?;
         let transport = connection.legacy_transport();
+        // CLI Automatic sends no model flag, so the CLI picks. Name the model
+        // it is expected to pick (from its model list or an earlier call) and
+        // check it against what the CLI reports once the call finishes.
+        let cli_chooses =
+            transport != "api" && overrides.model.map(str::trim).is_none_or(str::is_empty);
+        let chooser = request_provider_label(provider, transport);
+        let expected_model = cli_chooses
+            .then(|| crate::model_catalog::cli_default_model(provider))
+            .flatten();
         let model = overrides
             .model_display
             .filter(|value| !value.trim().is_empty())
@@ -146,7 +148,15 @@ pub async fn call_llm(
                 }
             });
         let effort = request_effort(provider, transport, &model, &settings, overrides);
-        let provider_label = request_provider_label(provider, transport);
+        let provider_label = chooser;
+        let (model_text, model_basis) = if cli_chooses {
+            match expected_model.as_deref() {
+                Some(expected) => (format!("{expected} ({chooser}'s choice)"), "expected"),
+                None => (format!("chosen by {chooser}"), "unknown"),
+            }
+        } else {
+            (model.clone(), "requested")
+        };
         let prompt_chars = prompt.chars().count();
         let prompt_preview = event_text_preview(prompt);
         let system_prompt_chars = system_prompt
@@ -171,7 +181,7 @@ pub async fn call_llm(
             }
         };
         let summary = format!(
-            "LLM request · {provider_label} {} · model {model} · effort {effort} · \
+            "LLM request · {provider_label} {} · model {model_text} · effort {effort} · \
              {prompt_chars} prompt characters",
             transport.to_ascii_uppercase(),
         );
@@ -182,7 +192,13 @@ pub async fn call_llm(
                 "provider": provider,
                 "provider_label": provider_label,
                 "transport": transport,
-                "model": model,
+                "model": if cli_chooses {
+                    expected_model.as_deref().unwrap_or("")
+                } else {
+                    model.as_str()
+                },
+                "model_basis": model_basis,
+                "model_chosen_by": cli_chooses.then_some(chooser),
                 "model_policy": model_policy,
                 "effort": effort,
                 "tools": allowed_tools,
@@ -208,140 +224,183 @@ pub async fn call_llm(
             }),
         );
 
-        // Direct API path is an explicit credential-mode choice. A saved key
-        // may remain available while subscription mode is active, and must
-        // not silently change the transport.
-        use crate::connections::ConnectionId;
-        if let Some(api) = connection.api() {
-            api.key(&settings)?;
-        }
-        match connection {
-            ConnectionId::AnthropicApi => {
-                return crate::pipeline::api_anthropic::call_anthropic_api(
-                    app,
-                    prompt,
-                    allowed_tools,
-                    system_prompt,
-                    timeout_secs,
-                    label,
-                    &settings,
-                    extra_read_dirs,
-                    overrides,
-                )
-                .await;
+        let dispatch: BoxedProviderFuture<'_> = Box::pin(async {
+            // Direct API path is an explicit credential-mode choice. A saved key
+            // may remain available while subscription mode is active, and must
+            // not silently change the transport.
+            use crate::connections::ConnectionId;
+            if let Some(api) = connection.api() {
+                api.key(&settings)?;
             }
-            ConnectionId::OpenAiApi => {
-                return crate::pipeline::api_openai::call_openai_api(
-                    app,
-                    prompt,
-                    allowed_tools,
-                    system_prompt,
-                    timeout_secs,
-                    label,
-                    &settings,
-                    extra_read_dirs,
-                    overrides,
-                )
-                .await;
+            match connection {
+                ConnectionId::AnthropicApi => {
+                    return crate::pipeline::api_anthropic::call_anthropic_api(
+                        app,
+                        prompt,
+                        allowed_tools,
+                        system_prompt,
+                        timeout_secs,
+                        label,
+                        &settings,
+                        extra_read_dirs,
+                        overrides,
+                    )
+                    .await;
+                }
+                ConnectionId::OpenAiApi => {
+                    return crate::pipeline::api_openai::call_openai_api(
+                        app,
+                        prompt,
+                        allowed_tools,
+                        system_prompt,
+                        timeout_secs,
+                        label,
+                        &settings,
+                        extra_read_dirs,
+                        overrides,
+                    )
+                    .await;
+                }
+                ConnectionId::GeminiApi => {
+                    return crate::pipeline::api_google::call_google_api(
+                        app,
+                        prompt,
+                        allowed_tools,
+                        system_prompt,
+                        timeout_secs,
+                        label,
+                        &settings,
+                        extra_read_dirs,
+                        overrides,
+                    )
+                    .await;
+                }
+                // Local OpenAI-compatible server (Ollama, LM Studio, llama.cpp, vLLM).
+                // Always direct HTTP — there is no CLI fallback for this provider.
+                ConnectionId::Local => {
+                    return crate::pipeline::api_openai::call_local_api(
+                        app,
+                        prompt,
+                        allowed_tools,
+                        system_prompt,
+                        timeout_secs,
+                        label,
+                        &settings,
+                        extra_read_dirs,
+                        overrides,
+                    )
+                    .await;
+                }
+                _ => {}
             }
-            ConnectionId::GeminiApi => {
-                return crate::pipeline::api_google::call_google_api(
-                    app,
-                    prompt,
-                    allowed_tools,
-                    system_prompt,
-                    timeout_secs,
-                    label,
-                    &settings,
-                    extra_read_dirs,
-                    overrides,
-                )
-                .await;
-            }
-            // Local OpenAI-compatible server (Ollama, LM Studio, llama.cpp, vLLM).
-            // Always direct HTTP — there is no CLI fallback for this provider.
-            ConnectionId::Local => {
-                return crate::pipeline::api_openai::call_local_api(
-                    app,
-                    prompt,
-                    allowed_tools,
-                    system_prompt,
-                    timeout_secs,
-                    label,
-                    &settings,
-                    extra_read_dirs,
-                    overrides,
-                )
-                .await;
-            }
-            _ => {}
-        }
 
-        // Remaining subscription transports use their owning CLI adapters.
-        let cli_call: BoxedProviderFuture<'_> = Box::pin(async {
-            match provider {
-                "codex" => {
-                    if connection.transport(&settings)
-                        == crate::connections::Transport::CodexAppServer
-                    {
-                        return crate::pipeline::codex_server::call_codex(
+            // Remaining subscription transports use their owning CLI adapters.
+            let cli_call: BoxedProviderFuture<'_> = Box::pin(async {
+                match provider {
+                    "codex" => {
+                        if connection.transport(&settings)
+                            == crate::connections::Transport::CodexAppServer
+                        {
+                            return crate::pipeline::codex_server::call_codex(
+                                app,
+                                prompt,
+                                allowed_tools,
+                                system_prompt,
+                                timeout_secs,
+                                label,
+                                extra_read_dirs,
+                                overrides,
+                            )
+                            .await;
+                        }
+                        let codex_cwd = cwd.or_else(|| {
+                            extra_read_dirs
+                                .iter()
+                                .copied()
+                                .find(|path| !path.trim().is_empty())
+                        });
+                        crate::pipeline::codex::call_codex(
                             app,
                             prompt,
                             allowed_tools,
                             system_prompt,
+                            output_format,
                             timeout_secs,
                             label,
+                            codex_cwd,
+                            overrides,
+                        )
+                        .await
+                    }
+                    _ => {
+                        call_claude(
+                            app,
+                            prompt,
+                            allowed_tools,
+                            system_prompt,
+                            output_format,
+                            timeout_secs,
+                            label,
+                            cwd,
                             extra_read_dirs,
                             overrides,
                         )
-                        .await;
+                        .await
                     }
-                    let codex_cwd = cwd.or_else(|| {
-                        extra_read_dirs
-                            .iter()
-                            .copied()
-                            .find(|path| !path.trim().is_empty())
-                    });
-                    crate::pipeline::codex::call_codex(
-                        app,
-                        prompt,
-                        allowed_tools,
-                        system_prompt,
-                        output_format,
-                        timeout_secs,
-                        label,
-                        codex_cwd,
-                        overrides,
-                    )
-                    .await
                 }
-                _ => {
-                    call_claude(
-                        app,
-                        prompt,
-                        allowed_tools,
-                        system_prompt,
-                        output_format,
-                        timeout_secs,
-                        label,
-                        cwd,
-                        extra_read_dirs,
-                        overrides,
-                    )
-                    .await
-                }
+            });
+            if let Some(write_dir) = overrides.write_dir {
+                supervise_artifact_writes(
+                    cli_call,
+                    write_dir,
+                    crate::pipeline::logging::current_pass(),
+                )
+                .await
+            } else {
+                cli_call.await
             }
         });
-        if let Some(write_dir) = overrides.write_dir {
-            supervise_artifact_writes(
-                cli_call,
-                write_dir,
-                crate::pipeline::logging::current_pass(),
-            )
-            .await
-        } else {
-            cli_call.await
+        let (result, reported) = crate::pipeline::logging::observe_reported_model(dispatch).await;
+        if let Some(reported) = reported.as_deref() {
+            // Hand the report on to the caller's call record.
+            crate::pipeline::logging::record_reported_model(reported);
+            if cli_chooses {
+                note_cli_choice(
+                    app,
+                    label,
+                    provider,
+                    chooser,
+                    expected_model.as_deref(),
+                    reported,
+                );
+            }
         }
+        result
     });
     crate::pipeline::logging::with_session(session_id, label, operation).await
+}
+
+/// Report which model a CLI picked on its own. A model that differs from the
+/// one Pipeline expected is a warning: what the app showed before the call
+/// was wrong.
+fn note_cli_choice(
+    app: &crate::emit::EventBus,
+    label: &str,
+    provider: &str,
+    chooser: &str,
+    expected: Option<&str>,
+    reported: &str,
+) {
+    crate::model_catalog::remember_cli_default(provider, reported);
+    match expected {
+        Some(expected) if expected == reported => {}
+        Some(expected) => crate::pipeline::logging::emit(
+            app,
+            format!(
+                "WARNING: {label}: {chooser} used {reported}, not {expected} as expected. \
+                 Its default model may have changed."
+            ),
+        ),
+        None => crate::pipeline::logging::emit(app, format!("{label}: {chooser} chose {reported}")),
+    }
 }

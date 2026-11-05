@@ -37,6 +37,7 @@ USAGE:
                        [--var <KEY=VALUE>]...
                        [--extra-input <KEY=PATH>]... [--out <FILE>] [--force]
                        [--max-cost <USD>] [--max-calls <N>] [--max-minutes <N>]
+                       [--model <PROVIDER[:MODEL[:THINKING]]>] [--model-everywhere]
 
 OPTIONS:
   -i, --input <PATH>          Primary document or folder. Omit only for a
@@ -55,6 +56,13 @@ OPTIONS:
                               spend reaches USD (API list prices). 0 = no limit.
       --max-calls <N>         Stop starting new steps after N model calls.
       --max-minutes <N>       Stop starting new steps after N minutes.
+      --model <PROVIDER[:MODEL[:THINKING]]>
+                              Review model for this run, for example
+                              claude:claude-opus-5-5:max or chatgpt. Calls that
+                              follow the default model use it; an empty MODEL
+                              lets the provider choose.
+      --model-everywhere      Also use --model for stages Settings assigns to
+                              another model and for steps the workflow pins.
   -h, --help                  Show this help.
 
 Progress goes to stderr. A non-zero exit status indicates invalid arguments,
@@ -69,6 +77,7 @@ USAGE:
                      [--var <KEY=VALUE>]...
                      [--extra-input <KEY=PATH>]... [--out-dir <DIR>] [--force]
                      [--max-cost <USD>] [--max-calls <N>] [--max-minutes <N>]
+                     [--model <PROVIDER[:MODEL[:THINKING]]>] [--model-everywhere]
 
 OPTIONS:
   -i, --input-dir <DIR>       Folder containing PDF, TeX, or DOCX inputs.
@@ -84,6 +93,13 @@ OPTIONS:
                               spend reaches USD (API list prices). 0 = no limit.
       --max-calls <N>         Stop starting new steps after N model calls.
       --max-minutes <N>       Stop starting new steps after N minutes.
+      --model <PROVIDER[:MODEL[:THINKING]]>
+                              Review model for this run, for example
+                              claude:claude-opus-5-5:max or chatgpt. Calls that
+                              follow the default model use it; an empty MODEL
+                              lets the provider choose.
+      --model-everywhere      Also use --model for stages Settings assigns to
+                              another model and for steps the workflow pins.
   -h, --help                  Show this help.
 
 Folder discovery is non-recursive and skips hidden files. Every run is also

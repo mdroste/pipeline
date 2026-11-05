@@ -486,6 +486,55 @@ describe("Console", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("names who chooses a CLI model instead of a bare default", async () => {
+    const chosen: LlmRequestDetails = {
+      ...REQUEST,
+      provider: "claude",
+      provider_label: "Claude Code",
+      transport: "cli",
+      model: "claude-opus-5-5",
+      model_basis: "expected",
+      model_chosen_by: "Claude Code",
+      effort: "Claude Code default",
+    };
+    const unknown: LlmRequestDetails = {
+      ...chosen,
+      model: "",
+      model_basis: "unknown",
+    };
+    const user = userEvent.setup();
+    render(
+      <Console
+        logs={[
+          {
+            ...log("LLM request · Claude Code CLI", "info", 3),
+            label: "Orientation",
+            request: chosen,
+          },
+          {
+            ...log("LLM request · Claude Code CLI", "info", 4),
+            label: "Synthesis",
+            request: unknown,
+          },
+        ]}
+        usage={EMPTY_USAGE}
+      />,
+    );
+
+    const selector = screen.getByRole("combobox");
+    await user.selectOptions(selector, "3");
+    let details = screen.getByRole("region", { name: "Request details" });
+    expect(details).toHaveTextContent(
+      "Modelclaude-opus-5-5 · Claude Code's choice",
+    );
+    expect(details).toHaveTextContent("EffortClaude Code default");
+
+    await user.selectOptions(selector, "4");
+    details = screen.getByRole("region", { name: "Request details" });
+    expect(details).toHaveTextContent("ModelChosen by Claude Code");
+    expect(details).not.toHaveTextContent("Provider default");
+  });
+
   it("names sessions by step, unit, and agent without boilerplate", () => {
     const codex: LlmRequestDetails = {
       ...REQUEST,

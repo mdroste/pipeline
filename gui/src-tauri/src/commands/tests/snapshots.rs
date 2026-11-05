@@ -176,7 +176,7 @@ fn parallel_override_snapshot_identity_is_order_stable_and_value_sensitive() {
             );
             effort_overrides.insert(key.to_string(), effort.to_string());
         }
-        RunParallelOverrides {
+        RunModelOverrides {
             agents: vec!["claude".into(), "codex".into()],
             model_overrides,
             effort_overrides,
@@ -184,7 +184,7 @@ fn parallel_override_snapshot_identity_is_order_stable_and_value_sensitive() {
         }
     };
 
-    let first = bind_parallel_overrides(
+    let first = bind_model_overrides(
         snapshot(),
         Some(&overrides([
             ("claude:cli", "claude-model", "high"),
@@ -193,7 +193,7 @@ fn parallel_override_snapshot_identity_is_order_stable_and_value_sensitive() {
     )
     .unwrap()
     .fingerprint;
-    let reordered = bind_parallel_overrides(
+    let reordered = bind_model_overrides(
         snapshot(),
         Some(&overrides([
             ("codex:cli", "codex-model", "medium"),
@@ -204,7 +204,7 @@ fn parallel_override_snapshot_identity_is_order_stable_and_value_sensitive() {
     .fingerprint;
     assert_eq!(first, reordered);
 
-    let changed = bind_parallel_overrides(
+    let changed = bind_model_overrides(
         snapshot(),
         Some(&overrides([
             ("claude:cli", "different-model", "high"),
@@ -267,7 +267,7 @@ fn one_run_parallel_override_replaces_explicit_and_inherited_parallel_agents() {
         specialist_catalog_revision: String::new(),
         agent_overrides: None,
     };
-    let overrides = RunParallelOverrides {
+    let overrides = RunModelOverrides {
         agents: vec!["codex".into(), "antigravity".into()],
         model_overrides: std::collections::HashMap::from([(
             "codex:cli".into(),
@@ -279,7 +279,7 @@ fn one_run_parallel_override_replaces_explicit_and_inherited_parallel_agents() {
         ..Default::default()
     };
 
-    let bound = bind_parallel_overrides(snapshot, Some(&overrides)).unwrap();
+    let bound = bind_model_overrides(snapshot, Some(&overrides)).unwrap();
 
     for step in &bound.config.steps[..2] {
         assert_eq!(step.agents, vec!["codex", "antigravity"]);
@@ -312,7 +312,7 @@ fn one_run_merge_override_replaces_the_workflow_merge_provider_and_policy() {
         specialist_catalog_revision: String::new(),
         agent_overrides: None,
     };
-    let overrides = RunParallelOverrides {
+    let overrides = RunModelOverrides {
         agents: vec!["claude".into(), "codex".into()],
         merge_agent: Some("codex".into()),
         merge_model_overrides: std::collections::HashMap::from([(
@@ -328,7 +328,7 @@ fn one_run_merge_override_replaces_the_workflow_merge_provider_and_policy() {
         ..Default::default()
     };
 
-    let bound = bind_parallel_overrides(snapshot, Some(&overrides)).unwrap();
+    let bound = bind_model_overrides(snapshot, Some(&overrides)).unwrap();
 
     assert!(bound.config.merge.agents.is_empty());
     assert_eq!(bound.settings.merge_agent(), "codex");

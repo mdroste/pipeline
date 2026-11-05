@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { projectClient } from "../../lib/projectClient";
 import { executionClient } from "../../lib/workbench/executionClient";
+import { parseArgvText } from "../../lib/argvText";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { operation } from "./useResearchPanelController";
 import { compactHash, plainLabel } from "./format";
@@ -207,14 +208,7 @@ export default function ResultsTab({
                 throw new Error(
                   `Enter a time limit from 1 to ${TIMEOUT_MAX.toLocaleString()} seconds.`,
                 );
-              const parsed = JSON.parse(argv);
-              if (
-                !Array.isArray(parsed) ||
-                !parsed.every((value) => typeof value === "string")
-              )
-                throw new Error(
-                  "Enter command arguments as a JSON array of text values.",
-                );
+              const parsed = parseArgvText(argv);
               await executionClient.saveExecutionProfile({
                 profileId: editing?.id ?? null,
                 workspaceId,

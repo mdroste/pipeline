@@ -7,7 +7,7 @@
 //! cannot be used stops the re-run: continuing on other agents is the failure
 //! this module prevents.
 
-use crate::commands::run_context::{apply_parallel_overrides, RunParallelOverrides};
+use crate::commands::run_context::{apply_model_overrides, RunModelOverrides};
 use crate::pipeline::providers::request_provider_label;
 use crate::pipeline_config::PipelineConfig;
 use crate::runs::RunWriter;
@@ -18,7 +18,7 @@ const UNUSABLE: &str = "This Review was started with its own agent choice, and t
 
 pub(in crate::commands) fn save_agent_overrides(
     writer: &mut RunWriter,
-    overrides: Option<&RunParallelOverrides>,
+    overrides: Option<&RunModelOverrides>,
 ) -> Result<(), String> {
     let Some(overrides) = overrides else {
         return Ok(());
@@ -30,7 +30,7 @@ pub(in crate::commands) fn save_agent_overrides(
         .map_err(|error| format!("Could not save this Review's agents: {error}"))
 }
 
-fn read_agent_overrides(run_dir: &std::path::Path) -> Result<Option<RunParallelOverrides>, String> {
+fn read_agent_overrides(run_dir: &std::path::Path) -> Result<Option<RunModelOverrides>, String> {
     let path = run_dir.join(AGENT_OVERRIDES_PATH);
     if matches!(
         std::fs::symlink_metadata(&path),
@@ -45,17 +45,17 @@ fn read_agent_overrides(run_dir: &std::path::Path) -> Result<Option<RunParallelO
         .ok_or_else(|| format!("{UNUSABLE} could not be read. Start a new Review."))
 }
 
-pub(super) fn saved_agent_overrides(run_id: &str) -> Result<Option<RunParallelOverrides>, String> {
+pub(super) fn saved_agent_overrides(run_id: &str) -> Result<Option<RunModelOverrides>, String> {
     crate::runs::validate_run_id(run_id)?;
     read_agent_overrides(&crate::runs::runs_dir()?.join(run_id))
 }
 
 pub(super) fn reapply(
-    overrides: &RunParallelOverrides,
+    overrides: &RunModelOverrides,
     settings: &mut crate::settings::Settings,
     config: &mut PipelineConfig,
 ) -> Result<(), String> {
-    apply_parallel_overrides(settings, config, overrides)
+    apply_model_overrides(settings, config, overrides)
         .map_err(|error| format!("{UNUSABLE} can no longer be used: {error}. Start a new Review."))
 }
 
@@ -67,17 +67,32 @@ fn agent_names<'a>(agents: impl Iterator<Item = &'a str>) -> String {
 }
 
 /// What the researcher sees before continuing, and what the log records.
-pub(super) fn notice(overrides: &RunParallelOverrides) -> String {
-    let parallel = agent_names(overrides.agents.iter().map(String::as_str));
-    match overrides.merge_agent.as_deref() {
-        Some(merge) => format!(
-            "This Review was started with its own agent choice, and continuing uses it again. Parallel: {parallel}. Merge: {}.",
-            agent_names(std::iter::once(merge))
-        ),
-        None => format!(
-            "This Review was started with its own agent choice, and continuing uses it again. Parallel: {parallel}."
-        ),
+pub(super) fn notice(overrides: &RunModelOverrides) -> String {
+    let mut text =
+        "This Review was started with its own agent choice, and continuing uses it again."
+            .to_string();
+    if let Some(review) = &overrides.review {
+        let provider = agent_names(std::iter::once(review.provider.as_str()));
+        let model = if review.model.trim().is_empty() {
+            format!("{provider}'s choice")
+        } else {
+            review.model.trim().to_string()
+        };
+        let effort = if review.effort.trim().is_empty() {
+            String::new()
+        } else {
+            format!(", {} thinking", review.effort.trim())
+        };
+        text.push_str(&format!(" Review model: {provider}, {model}{effort}."));
     }
+    if !overrides.agents.is_empty() {
+        let parallel = agent_names(overrides.agents.iter().map(String::as_str));
+        text.push_str(&format!(" Parallel: {parallel}."));
+    }
+    if let Some(merge) = overrides.merge_agent.as_deref() {
+        text.push_str(&format!(" Merge: {}.", agent_names(std::iter::once(merge))));
+    }
+    text
 }
 
 #[cfg(test)]
@@ -85,8 +100,8 @@ mod tests {
     use super::*;
     use crate::pipeline_config::{apply_agent_defaults, Phase, StepConfig};
 
-    fn overrides() -> RunParallelOverrides {
-        RunParallelOverrides {
+    fn overrides() -> RunModelOverrides {
+        RunModelOverrides {
             agents: vec!["codex".into()],
             merge_agent: Some("codex".into()),
             effort_overrides: [("codex".to_string(), "high".to_string())]
@@ -158,7 +173,7 @@ mod tests {
 
     #[test]
     fn a_choice_settings_no_longer_allow_stops_the_rerun() {
-        let stale = RunParallelOverrides {
+        let stale = RunModelOverrides {
             agents: vec!["gemini".into()],
             ..Default::default()
         };
@@ -167,8 +182,24 @@ mod tests {
     }
 
     #[test]
+    fn the_notice_names_the_review_model() {
+        let text = notice(&RunModelOverrides {
+            review: Some(crate::commands::run_context::ReviewModelChoice {
+                provider: "claude".into(),
+                model: "claude-opus-5-5".into(),
+                effort: "max".into(),
+            }),
+            ..Default::default()
+        });
+        assert!(
+            text.ends_with("Review model: Claude Code, claude-opus-5-5, max thinking."),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn the_notice_names_the_agents_in_researcher_terms() {
-        let text = notice(&RunParallelOverrides {
+        let text = notice(&RunModelOverrides {
             agents: vec!["codex".into(), "claude".into()],
             merge_agent: Some("claude".into()),
             ..Default::default()

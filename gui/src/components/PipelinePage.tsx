@@ -216,7 +216,11 @@ export default function PipelinePage({
             onBrowseCatalog={setCatalogTab}
           />
         ) : editing === "merge" ? (
-          <MergeEditorPanel merge={config.merge} onChange={updateMerge} />
+          <MergeEditorPanel
+            merge={config.merge}
+            settings={settings}
+            onChange={updateMerge}
+          />
         ) : editing === "extraction" ? (
           <ExtractionEditor
             extraction={config.extraction ?? DEFAULT_EXTRACTION}

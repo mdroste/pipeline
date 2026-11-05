@@ -1,6 +1,6 @@
 [package]
 name = "pipeline-gui"
-version = "1.4.2"
+version = "1.4.3"
 description = "Desktop agent orchestration suite for academic research and review"
 homepage = "https://github.com/mdroste/pipeline"
 repository = "https://github.com/mdroste/pipeline"
@@ -74,7 +74,7 @@ png = "0.18"
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Security"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_Debug", "Win32_System_IO", "Win32_System_Registry", "Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Security"] }
 
 # Full per-variable debuginfo made target/debug grow ~1 GB per rebuild cycle;
 # line tables keep backtraces and profiling usable at a fraction of the size.

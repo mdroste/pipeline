@@ -105,12 +105,12 @@ pub(super) async fn prepare_foreground_launch(
     variables: &std::collections::HashMap<String, String>,
     extra_inputs: &std::collections::HashMap<String, String>,
     expected_profile_snapshot_id: Option<&str>,
-    run_parallel_overrides: Option<&RunParallelOverrides>,
+    run_parallel_overrides: Option<&RunModelOverrides>,
 ) -> Result<RunSnapshot, String> {
     let _ = crate::runs::recover_resumable_runs();
     crate::safety::validate_runtime_context(variables, "Run variables")?;
     crate::safety::validate_runtime_context(extra_inputs, "Named input paths")?;
-    let snapshot = bind_parallel_overrides(load_run_snapshot()?, run_parallel_overrides)?;
+    let snapshot = bind_model_overrides(load_run_snapshot()?, run_parallel_overrides)?;
     validate_runtime_bindings(&snapshot.config, variables, extra_inputs, true)?;
     validate_primary_input_selection(&snapshot.config, Some(paper_path), input_interpretation)?;
     validate_named_input_paths(&snapshot.config, extra_inputs, true)?;
@@ -145,7 +145,7 @@ pub async fn run_pipeline(
     variables: Option<std::collections::HashMap<String, String>>,
     extra_inputs: Option<std::collections::HashMap<String, String>>,
     expected_profile_snapshot_id: Option<String>,
-    run_parallel_overrides: Option<RunParallelOverrides>,
+    run_parallel_overrides: Option<RunModelOverrides>,
 ) -> Result<serde_json::Value, String> {
     // Registered before preflight so a cancel click during the probes below
     // is recorded in this run's scope and honored once the task starts.
@@ -194,6 +194,8 @@ pub struct HeadlessRunOptions {
     pub extra_inputs: std::collections::HashMap<String, String>,
     /// One-run Review limits; empty keeps Settings.
     pub limits: ReviewLimitOverrides,
+    /// One-run review model; `None` keeps Settings and the workflow.
+    pub models: Option<RunModelOverrides>,
 }
 
 #[derive(Debug, Clone)]
@@ -255,6 +257,7 @@ fn bind_headless_snapshot(
     snapshot: RunSnapshot,
 ) -> Result<RunSnapshot, String> {
     let snapshot = bind_review_limits(snapshot, &options.limits)?;
+    let snapshot = bind_model_overrides(snapshot, options.models.as_ref())?;
     crate::safety::validate_runtime_context(&options.variables, "Run variables")?;
     crate::safety::validate_runtime_context(&options.extra_inputs, "Named input paths")?;
     validate_runtime_bindings(

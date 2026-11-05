@@ -87,6 +87,10 @@ tokio::task_local! {
     // caller can read back exactly what one step consumed without threading the
     // count through `call_llm`'s return type.
     static USAGE_ACCUM: Arc<Mutex<CallUsage>>;
+    // Set by `observe_reported_model`; provider adapters record the model the
+    // provider says it ran, which can differ from what Pipeline requested
+    // (or be the only record of it when the CLI chose the model itself).
+    static REPORTED_MODEL: Arc<Mutex<Option<String>>>;
     // The pipeline pass (step key, e.g. "technical/claude") currently running on
     // this task. `register_child_pid` reads it so a specific pass's subprocess
     // can be cancelled by name. Set by the executor around each `call_llm`.
@@ -134,6 +138,27 @@ pub async fn measure_usage<F: Future>(fut: F) -> (F::Output, CallUsage) {
     let out = USAGE_ACCUM.scope(cell.clone(), fut).await;
     let usage = *cell.lock().unwrap_or_else(|e| e.into_inner());
     (out, usage)
+}
+
+/// Run `fut` while capturing the model a provider reports for it. The last
+/// report wins: a CLI session fallback re-runs the same request.
+pub async fn observe_reported_model<F: Future>(fut: F) -> (F::Output, Option<String>) {
+    let cell = Arc::new(Mutex::new(None));
+    let out = REPORTED_MODEL.scope(cell.clone(), fut).await;
+    let model = cell.lock().unwrap_or_else(|e| e.into_inner()).take();
+    (out, model)
+}
+
+/// Record the model the provider says ran the current call. Outside an
+/// `observe_reported_model` scope this does nothing.
+pub fn record_reported_model(model: &str) {
+    let model = model.trim();
+    if model.is_empty() {
+        return;
+    }
+    let _ = REPORTED_MODEL.try_with(|cell| {
+        *cell.lock().unwrap_or_else(|e| e.into_inner()) = Some(model.to_string());
+    });
 }
 
 /// Allocate a fresh, process-unique session id.
@@ -483,6 +508,20 @@ mod tests {
         assert_eq!(usage.tool_calls.web, 1);
         assert_eq!(usage.tool_calls.unknown, 2);
         assert_eq!(usage.tool_calls.total(), 6);
+    }
+
+    #[test]
+    fn observe_reported_model_keeps_the_last_report() {
+        let (_, model) = block_on(observe_reported_model(async {
+            record_reported_model("claude-sonnet-5-5");
+            record_reported_model("  ");
+            record_reported_model("claude-opus-5-5");
+        }));
+        assert_eq!(model.as_deref(), Some("claude-opus-5-5"));
+        let (_, none) = block_on(observe_reported_model(async {}));
+        assert_eq!(none, None);
+        // Outside a scope, recording is a harmless no-op.
+        record_reported_model("ignored");
     }
 
     #[test]

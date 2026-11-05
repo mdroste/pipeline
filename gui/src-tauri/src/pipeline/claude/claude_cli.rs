@@ -619,7 +619,12 @@ async fn call_claude_inner(
     let exit_code = status.code().unwrap_or(-1);
     let parsed_result = parse_claude_result(&raw_stdout);
     let (text, claude_usage) = match parsed_result {
-        Ok(result) => result,
+        Ok((text, usage, model)) => {
+            if let Some(model) = model {
+                crate::pipeline::logging::record_reported_model(&model);
+            }
+            (text, usage)
+        }
         Err(error) if !status.success() => (
             error
                 .strip_prefix("provider error: ")
@@ -709,14 +714,46 @@ pub(super) fn absolute_rule_path(dir: &str) -> String {
     }
 }
 
-/// Parse `claude -p --output-format json` output into the model's result text
-/// and, when present, cache-aware token usage. `input_tokens` remains the
-/// logical total and includes cache reads/creation. Successful CLI calls are
-/// required to use this envelope so incidental stdout can never be promoted
-/// to model output.
+/// The model that produced a result envelope. `modelUsage` is keyed by model
+/// ID; a call that also used a helper model (for example a small model for
+/// tool summaries) reports both, so take the one that wrote the most output.
+fn claude_result_model(envelope: &serde_json::Value) -> Option<String> {
+    let usage = envelope.get("modelUsage")?.as_object()?;
+    let tokens = |entry: &serde_json::Value, key: &str| {
+        entry
+            .get(key)
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0)
+    };
+    usage
+        .iter()
+        .filter(|(model, _)| !model.trim().is_empty())
+        .max_by_key(|(_, entry)| {
+            (
+                tokens(entry, "outputTokens"),
+                tokens(entry, "inputTokens")
+                    .saturating_add(tokens(entry, "cacheReadInputTokens"))
+                    .saturating_add(tokens(entry, "cacheCreationInputTokens")),
+            )
+        })
+        .map(|(model, _)| model.trim().to_string())
+}
+
+/// Parse `claude -p --output-format json` output into the model's result text,
+/// cache-aware token usage when present, and the model Claude Code reports it
+/// used. `input_tokens` remains the logical total and includes cache
+/// reads/creation. Successful CLI calls are required to use this envelope so
+/// incidental stdout can never be promoted to model output.
 pub(super) fn parse_claude_result(
     raw: &str,
-) -> Result<(String, Option<crate::pipeline::logging::CallUsage>), String> {
+) -> Result<
+    (
+        String,
+        Option<crate::pipeline::logging::CallUsage>,
+        Option<String>,
+    ),
+    String,
+> {
     let trimmed = raw.trim();
     let v = serde_json::from_str::<serde_json::Value>(trimmed)
         .map_err(|error| format!("invalid JSON: {error}"))?;
@@ -786,7 +823,7 @@ pub(super) fn parse_claude_result(
             },
         )
     });
-    Ok((text, usage))
+    Ok((text, usage, claude_result_model(&v)))
 }
 
 fn claude_result_error_detail(value: &serde_json::Value) -> Option<String> {

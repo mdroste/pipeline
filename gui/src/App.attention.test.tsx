@@ -75,10 +75,10 @@ vi.mock(
       .WorkflowPanel,
 );
 vi.mock(
-  "./components/RunParallelAgents",
+  "./components/RunModelChoice",
   async () =>
     (await import("./test/appShellFixtures")).createAppComponentMocks(mocks)
-      .RunParallelAgents,
+      .RunModelChoice,
 );
 vi.mock(
   "./components/ProjectsPage",

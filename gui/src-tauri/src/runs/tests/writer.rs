@@ -276,6 +276,22 @@ fn run_records_flush_on_any_volume_and_still_report_a_failed_save() {
     assert_eq!(fs::read(dir.join("recovered.txt")).unwrap(), b"x");
 }
 
+/// A real flush of a finished run file must succeed on every platform. Windows
+/// refuses `FlushFileBuffers` on a read-only handle with "Access is denied"
+/// (os error 5), which the simulated, Unix-only test above cannot catch.
+#[test]
+fn finished_run_files_flush_on_every_platform() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut writer = RunWriter::create_in(temp.path(), "real-sync-run").unwrap();
+    writer
+        .add_text("report.md", "Report", "report", "# Report\n")
+        .unwrap();
+    let report = writer.dir().join("report.md");
+
+    assert_eq!(crate::runs::sync_run_file(&report), Ok(()));
+    assert_eq!(fs::read(&report).unwrap(), b"# Report\n");
+}
+
 #[test]
 fn rejected_files_are_listed_apart_from_accepted_files() {
     let temp = tempfile::tempdir().unwrap();

@@ -2,13 +2,13 @@ import { useState } from "react";
 import PaperSelector from "./PaperSelector";
 import SidebarPanel, { SidebarHeader } from "./SidebarPanel";
 import WorkflowPanel from "./WorkflowPanel";
-import RunParallelAgents from "./RunParallelAgents";
+import RunModelChoice from "./RunModelChoice";
 import { isWindows } from "../lib/platform";
 import type {
   DepsReport,
   PipelineConfig,
   PrimaryInputSelection,
-  RunParallelOverrides,
+  RunModelOverrides,
 } from "../lib/types";
 import ReportIssueLink from "./ReportIssueLink";
 
@@ -30,7 +30,8 @@ interface Props {
   localLlmActive: boolean;
   paperPath: string | null;
   preparingRun: boolean;
-  parallelOverrides: RunParallelOverrides | null;
+  /** This review's model choices; null follows Settings and the workflow. */
+  parallelOverrides: RunModelOverrides | null;
   selectionKey: number;
   width: number;
   /** Reviews already queued or running, and how many may run at once. */
@@ -40,7 +41,7 @@ interface Props {
   onPaperPathChange: (path: string | null) => void;
   onInputSelectionChange: (selection: PrimaryInputSelection | null) => void;
   onPrivacyDetails: () => void;
-  onParallelOverridesChange: (overrides: RunParallelOverrides | null) => void;
+  onParallelOverridesChange: (overrides: RunModelOverrides | null) => void;
   onProfileChange: (config?: PipelineConfig) => void;
   onRetryConfig: () => void;
   onRetryDependencies: () => void;
@@ -128,7 +129,7 @@ export default function RunSetupPanel({
             refreshKey={configVersion}
           />
 
-          <RunParallelAgents
+          <RunModelChoice
             value={parallelOverrides}
             disabled={configLoading || preparingRun}
             dependencies={dependencies}

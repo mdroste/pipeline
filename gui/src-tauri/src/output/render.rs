@@ -164,20 +164,40 @@ fn models_that_ran(report: &PipelineReport) -> (String, String, String) {
     let mut models = std::collections::BTreeSet::new();
     let mut efforts = std::collections::BTreeSet::new();
     for output in report.all_outputs().iter().filter(|output| !output.skipped) {
-        let mut record = |provider: &str, model: &str, effort: &str| {
-            // Host analyzers record this provider but call no model.
-            if provider == "pipeline" || (provider.is_empty() && model.is_empty()) {
-                return;
-            }
-            providers.insert(capitalize(provider));
-            models.insert(model.to_string());
-            efforts.insert(if effort.is_empty() { "default" } else { effort }.to_string());
-        };
+        let mut record =
+            |provider: &str, transport: &str, model: &str, basis: &str, effort: Option<&str>| {
+                // Host analyzers record this provider but call no model.
+                if provider == "pipeline" || (provider.is_empty() && model.is_empty()) {
+                    return;
+                }
+                providers.insert(capitalize(provider));
+                models.insert(crate::model_catalog::recorded_model_label(
+                    provider, transport, model, basis,
+                ));
+                // Outputs saved before per-call records never stored effort.
+                if let Some(effort) = effort {
+                    efforts.insert(crate::model_catalog::recorded_effort_label(
+                        provider, transport, effort,
+                    ));
+                }
+            };
         if output.calls.is_empty() {
-            record(&output.provider, &output.model, "");
+            record(
+                &output.provider,
+                &output.model_transport,
+                &output.model,
+                "",
+                None,
+            );
         }
         for call in &output.calls {
-            record(&call.provider, &call.model, &call.effort);
+            record(
+                &call.provider,
+                &call.model_transport,
+                &call.model,
+                &call.model_basis,
+                Some(&call.effort),
+            );
         }
     }
     (
@@ -394,7 +414,7 @@ mod tests {
             step(vec![call("codex", "gpt-5.6-sol", "")]),
         ]));
         assert!(
-            header.contains("**LLM**: Codex · **Model**: gpt-5.6-sol · **Effort**: default"),
+            header.contains("**LLM**: Codex · **Model**: gpt-5.6-sol · **Effort**: Codex default"),
             "{header}"
         );
     }

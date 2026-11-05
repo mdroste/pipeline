@@ -668,10 +668,15 @@ async fn request_api_catalog(provider: &str, settings: &Settings) -> Result<Mode
 }
 
 mod chatgpt;
+mod choice;
 mod discovery;
 pub(crate) mod effort;
 mod resolution;
 
+pub use choice::{
+    cli_default_model, describe_resolution, model_chooser, recorded_effort_label,
+    recorded_model_label, remember_cli_default,
+};
 use discovery::cli_catalog;
 pub(crate) use discovery::rpc_exchange;
 pub use resolution::{discover, discover_connection, price_for_model, resolve};

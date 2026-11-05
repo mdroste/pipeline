@@ -53,6 +53,13 @@ fn detect() -> Detection {
     if !cfg!(windows) {
         return Detection::Missing;
     }
+    // Windows ships a `wsl.exe` stub even when WSL is not installed. Started
+    // without a distribution, it can wait on a hidden "press any key to
+    // install" prompt until the probe times out, which would then read as a
+    // cold start on every turn. Only run it once the user has a distribution.
+    if !wsl2_distribution_registered() {
+        return Detection::Missing;
+    }
     let Some(wsl) = crate::deps::resolve_command("wsl.exe") else {
         return Detection::Missing;
     };
@@ -62,6 +69,119 @@ fn detect() -> Detection {
         wsl,
         crate::process::run_bounded_independent(&mut command, DETECT_TIMEOUT, 8192),
     )
+}
+
+/// The per-user WSL distribution registry, written by `wsl --install` and
+/// `wsl --import` for both the inbox and the Store/MSI WSL.
+#[cfg(any(windows, test))]
+const LXSS: &str = r"Software\Microsoft\Windows\CurrentVersion\Lxss";
+
+/// Whether the default distribution is registered and not WSL1. The probe
+/// itself still checks the kernel, tools, and sign-in; this only decides
+/// whether starting `wsl.exe` can do anything but offer to install WSL.
+#[cfg(any(windows, test))]
+fn default_distribution_registered(
+    string: impl Fn(&str, &str) -> Option<String>,
+    dword: impl Fn(&str, &str) -> Option<u32>,
+) -> bool {
+    let Some(id) = string(LXSS, "DefaultDistribution") else {
+        return false;
+    };
+    let id = id.trim();
+    if id.is_empty() || id.contains(['\\', '/']) {
+        return false;
+    }
+    let key = format!(r"{LXSS}\{id}");
+    string(&key, "DistributionName").is_some_and(|name| !name.trim().is_empty())
+        && dword(&key, "Version") != Some(1)
+}
+
+#[cfg(windows)]
+fn wsl2_distribution_registered() -> bool {
+    default_distribution_registered(registry::string, registry::dword)
+}
+
+#[cfg(not(windows))]
+fn wsl2_distribution_registered() -> bool {
+    false
+}
+
+/// Minimal `HKEY_CURRENT_USER` value reads. Missing keys, missing values, and
+/// unexpected types all read as `None`.
+#[cfg(windows)]
+mod registry {
+    use windows_sys::Win32::System::Registry::{
+        RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+    };
+
+    const MAX_STRING_BYTES: u32 = 64 * 1024;
+
+    fn wide(value: &str) -> Vec<u16> {
+        value.encode_utf16().chain(Some(0)).collect()
+    }
+
+    pub(super) fn string(key: &str, name: &str) -> Option<String> {
+        let (key, name) = (wide(key), wide(name));
+        let mut bytes = 0u32;
+        // SAFETY: both names are NUL-terminated UTF-16 and outlive the call;
+        // a null data pointer asks only for the value's size.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut bytes,
+            )
+        };
+        if status != 0 || bytes == 0 || bytes > MAX_STRING_BYTES {
+            return None;
+        }
+        let mut buffer = vec![0u16; (bytes as usize).div_ceil(2)];
+        // SAFETY: `buffer` holds at least `bytes` bytes, which RegGetValueW
+        // will not exceed; a value that grew since the size query fails.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                buffer.as_mut_ptr().cast(),
+                &mut bytes,
+            )
+        };
+        if status != 0 {
+            return None;
+        }
+        buffer.truncate(bytes as usize / 2);
+        while buffer.last() == Some(&0) {
+            buffer.pop();
+        }
+        String::from_utf16(&buffer).ok()
+    }
+
+    pub(super) fn dword(key: &str, name: &str) -> Option<u32> {
+        let (key, name) = (wide(key), wide(name));
+        let mut value = 0u32;
+        let mut bytes = std::mem::size_of::<u32>() as u32;
+        // SAFETY: names are NUL-terminated; `value` is a writable u32 and
+        // `bytes` gives its exact size.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_DWORD,
+                std::ptr::null_mut(),
+                (&mut value as *mut u32).cast(),
+                &mut bytes,
+            )
+        };
+        (status == 0).then_some(value)
+    }
 }
 
 fn classify(
@@ -275,6 +395,77 @@ impl OwnedGroup {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    /// A fake `HKEY_CURRENT_USER` keyed by (subkey, value name).
+    struct Registry {
+        strings: HashMap<(String, String), String>,
+        dwords: HashMap<(String, String), u32>,
+    }
+
+    impl Registry {
+        fn new() -> Self {
+            Self {
+                strings: HashMap::new(),
+                dwords: HashMap::new(),
+            }
+        }
+        fn distribution(mut self, id: &str, name: &str, version: Option<u32>) -> Self {
+            let key = format!(r"{LXSS}\{id}");
+            self.strings
+                .insert((key.clone(), "DistributionName".into()), name.into());
+            if let Some(version) = version {
+                self.dwords.insert((key, "Version".into()), version);
+            }
+            self
+        }
+        fn with_default(mut self, id: &str) -> Self {
+            self.strings
+                .insert((LXSS.into(), "DefaultDistribution".into()), id.into());
+            self
+        }
+        fn registered(&self) -> bool {
+            default_distribution_registered(
+                |key, name| self.strings.get(&(key.into(), name.into())).cloned(),
+                |key, name| self.dwords.get(&(key.into(), name.into())).copied(),
+            )
+        }
+    }
+
+    #[test]
+    fn the_inbox_wsl_stub_alone_is_never_started() {
+        // Windows 11 without WSL installed: no Lxss key at all.
+        assert!(!Registry::new().registered());
+        // A distribution with no default, or a default that names nothing.
+        let id = "{3e6b5c62-1a2b-4c3d-8e9f-0123456789ab}";
+        assert!(!Registry::new()
+            .distribution(id, "Ubuntu", Some(2))
+            .registered());
+        assert!(!Registry::new().with_default(id).registered());
+        assert!(!Registry::new()
+            .distribution(id, "Ubuntu", Some(2))
+            .with_default(r"..\..\Run")
+            .registered());
+    }
+
+    #[test]
+    fn a_default_wsl2_distribution_is_probed_and_wsl1_is_not() {
+        let id = "{3e6b5c62-1a2b-4c3d-8e9f-0123456789ab}";
+        let wsl2 = Registry::new()
+            .distribution(id, "Ubuntu", Some(2))
+            .with_default(id);
+        assert!(wsl2.registered());
+        let wsl1 = Registry::new()
+            .distribution(id, "Ubuntu", Some(1))
+            .with_default(id);
+        assert!(!wsl1.registered());
+        // Without a recorded version the probe's kernel check decides.
+        let unknown = Registry::new()
+            .distribution(id, "Ubuntu", None)
+            .with_default(id);
+        assert!(unknown.registered());
+    }
+
     #[test]
     fn recognizes_only_windows_paths_for_translation() {
         assert!(windows_path("C:\\Users\\Research\\paper.tex"));

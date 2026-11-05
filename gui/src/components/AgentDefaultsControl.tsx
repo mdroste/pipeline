@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { providerAvailability } from "../lib/connections";
+import { unsetEffortLabel } from "../lib/modelChoice";
 import type {
   DepsReport,
   ModelCatalog,
@@ -240,7 +241,9 @@ export default function AgentDefaultsControl({
                     }
                     className="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[13px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
                   >
-                    <option value="">Default thinking</option>
+                    <option value="">
+                      {unsetEffortLabel(settings, provider)}
+                    </option>
                     {efforts.map((effort) => (
                       <option key={effort} value={effort}>
                         {effort.charAt(0).toUpperCase() + effort.slice(1)}

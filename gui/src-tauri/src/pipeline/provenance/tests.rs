@@ -25,6 +25,7 @@ fn role_and_attempt_saturation_survive_shared_record_construction() {
             "codex",
             "agent",
             &resolution,
+            Some("catalog-model"),
             "high",
             9,
             CallUsage {
@@ -36,9 +37,76 @@ fn role_and_attempt_saturation_survive_shared_record_construction() {
         assert_eq!(record.attempt_count, u32::MAX);
         assert_eq!(record.effort, "high");
         assert_eq!(record.model, "catalog-model");
+        assert_eq!(record.model_basis, "reported");
         assert_eq!(record.model_transport, "cli");
         assert_eq!(record.model_catalog_updated_at, "fixture-version");
     }
+}
+
+#[test]
+fn recorded_model_prefers_the_report_and_says_how_it_knows() {
+    let cli_automatic = ResolvedModel {
+        selection: ModelSelection::Automatic,
+        command_model: None,
+        resolved_model: "Provider default".into(),
+        transport: "cli".into(),
+        source: "provider_default".into(),
+        catalog_updated_at: String::new(),
+        supported_efforts: vec![],
+    };
+    // A provider name no other test remembers a default for.
+    let provider = "provenance-test";
+    assert_eq!(
+        recorded_model(provider, &cli_automatic, Some("claude-opus-5-5")),
+        ("claude-opus-5-5".to_string(), "reported")
+    );
+    assert_eq!(
+        recorded_model(provider, &cli_automatic, None),
+        ("Provider default".to_string(), "unknown")
+    );
+    crate::model_catalog::remember_cli_default(provider, "listed-default");
+    assert_eq!(
+        recorded_model(provider, &cli_automatic, Some(" ")),
+        ("listed-default".to_string(), "expected")
+    );
+    let pinned = ResolvedModel {
+        command_model: Some("opus".into()),
+        resolved_model: "opus".into(),
+        ..cli_automatic.clone()
+    };
+    assert_eq!(
+        recorded_model(provider, &pinned, None),
+        ("opus".to_string(), "requested")
+    );
+    assert_eq!(
+        recorded_model(provider, &pinned, Some("claude-opus-4-7")),
+        ("claude-opus-4-7".to_string(), "reported")
+    );
+}
+
+#[test]
+fn an_unset_effort_is_recorded_empty_rather_than_as_default() {
+    let resolution = ResolvedModel {
+        selection: ModelSelection::Automatic,
+        command_model: Some("gpt-5.6-terra".into()),
+        resolved_model: "gpt-5.6-terra".into(),
+        transport: "api".into(),
+        source: "provider_api".into(),
+        catalog_updated_at: String::new(),
+        supported_efforts: vec![],
+    };
+    let record = call_record(
+        "step",
+        "codex",
+        "codex",
+        &resolution,
+        None,
+        "  ",
+        1,
+        CallUsage::default(),
+    );
+    assert_eq!(record.effort, "");
+    assert_eq!(record.model_basis, "requested");
 }
 
 #[test]

@@ -268,11 +268,12 @@ pub(super) fn render_run_summary(report: &PipelineReport, settings: &Settings) -
                 } else {
                     capitalize(&o.provider)
                 },
-                if o.model.trim().is_empty() {
-                    "default"
-                } else {
-                    &o.model
-                }
+                crate::model_catalog::recorded_model_label(
+                    &o.provider,
+                    &o.model_transport,
+                    &o.model,
+                    "",
+                )
             ));
         } else {
             for call in &o.calls {
@@ -283,11 +284,12 @@ pub(super) fn render_run_summary(report: &PipelineReport, settings: &Settings) -
                     } else {
                         capitalize(&call.provider)
                     },
-                    if call.model.trim().is_empty() {
-                        "default"
-                    } else {
-                        &call.model
-                    }
+                    crate::model_catalog::recorded_model_label(
+                        &call.provider,
+                        &call.model_transport,
+                        &call.model,
+                        &call.model_basis,
+                    )
                 );
                 if !provider_models.contains(&label) {
                     provider_models.push(label);

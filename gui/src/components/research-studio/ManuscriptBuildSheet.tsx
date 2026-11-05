@@ -7,6 +7,7 @@ import {
   type BuildConfig,
   type BuildRecord,
 } from "../../lib/studioClient";
+import { parseArgvText } from "../../lib/argvText";
 import type { ProjectRecord } from "../../lib/projectClient";
 import type { ExecutionProfile } from "../../lib/workbenchTypes";
 import { button, input, Field, Select, Text, lines } from "./shared";
@@ -196,7 +197,9 @@ export default function ManuscriptBuildSheet({
                 config: {
                   ...config,
                   inputs: lines(config.inputs.join("\n")),
-                  advancedArgv: advanced.trim() ? JSON.parse(advanced) : null,
+                  advancedArgv: advanced.trim()
+                    ? parseArgvText(advanced)
+                    : null,
                 },
               },
             );

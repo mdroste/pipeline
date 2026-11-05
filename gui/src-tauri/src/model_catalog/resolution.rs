@@ -205,6 +205,13 @@ async fn discover_uncached(
     match live {
         Ok(mut catalog) => {
             apply_policy(&mut catalog, &policy);
+            // CLI Automatic sends no model, so this is the only advance word
+            // on which model the CLI will pick. Keep it for console labels.
+            if transport == "cli" {
+                if let Some(model) = catalog.default_model.as_deref() {
+                    super::remember_cli_default(provider, model);
+                }
+            }
             let envelope = CacheEnvelope {
                 schema_version: CACHE_SCHEMA_VERSION,
                 policy_fingerprint: bundled_policy_fingerprint(),

@@ -283,7 +283,12 @@ export interface StepCallRecord {
   model_policy?: string;
   model_source?: string;
   model_catalog_updated_at?: string;
-  /** Resolved reasoning-effort setting requested for this call. */
+  /**
+   * How the app knows `model`: reported by the provider, requested by
+   * Pipeline, expected (the CLI chose and did not say), or unknown.
+   */
+  model_basis?: "reported" | "requested" | "expected" | "unknown" | "";
+  /** Requested thinking level. Empty when the provider's default applied. */
   effort?: string;
   duration_secs?: number;
   input_tokens?: number;
@@ -854,13 +859,54 @@ export interface Settings {
 }
 
 /** Transient New report override; never persisted to Settings. */
-export interface RunParallelOverrides {
+/** The model a whole review runs on. An empty model lets the CLI or Pipeline choose. */
+export interface ReviewModelChoice {
+  provider: string;
+  model: string;
+  effort: string;
+}
+
+/**
+ * One-report model choices (mirrors the backend's RunModelOverrides).
+ * `review` sets the model every inheriting call runs on; `agents` and the
+ * merge fields choose Parallel and Merge agents for this report.
+ */
+export interface RunModelOverrides {
+  review?: ReviewModelChoice;
+  /** Settings stage exceptions use the review model for this report. */
+  clear_settings_exceptions?: boolean;
+  /** Workflow-pinned steps use the review model for this report. */
+  override_workflow_pins?: boolean;
   agents: string[];
   model_overrides: Record<string, ModelSelection>;
   effort_overrides: Record<string, string>;
   merge_agent?: string;
   merge_model_overrides?: Record<string, ModelSelection>;
   merge_effort_overrides?: Record<string, string>;
+}
+
+/** Older name, kept for queued and batch launches. */
+export type RunParallelOverrides = RunModelOverrides;
+
+/** One group of calls in a review's model list (backend RosterEntry). */
+export interface RosterEntry {
+  stage:
+    | "extraction"
+    | "orientation"
+    | "parallel"
+    | "merge"
+    | "sequential"
+    | "reconcile"
+    | "fallback";
+  label: string;
+  step_ids: string[];
+  step_labels: string[];
+  provider: string;
+  transport: string;
+  model: ModelSelection;
+  effort: string;
+  source: "review" | "default" | "settings" | "workflow";
+  note: string | null;
 }
 
 export interface DepStatus {

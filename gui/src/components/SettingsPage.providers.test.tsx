@@ -335,7 +335,7 @@ describe("SettingsPage providers", () => {
     await screen.findByText("Model defaults");
     for (const label of [
       "Input assessment",
-      "Parallel review",
+      "Parallel steps",
       "Combine results",
       "Sequential steps",
     ])

@@ -34,6 +34,68 @@ pub(super) struct RunArgs {
     pub(super) out: Option<String>,
     pub(super) force: bool,
     pub(super) limits: LimitArgs,
+    pub(super) model: ModelArgs,
+}
+
+/// `--model PROVIDER[:MODEL[:THINKING]]` and `--model-everywhere`.
+#[derive(Debug, Default, PartialEq, Eq, Clone)]
+pub(super) struct ModelArgs {
+    pub(super) review: Option<pipeline_gui_lib::commands::ReviewModelChoice>,
+    pub(super) everywhere: bool,
+}
+
+impl ModelArgs {
+    pub(super) fn overrides(&self) -> Option<pipeline_gui_lib::commands::RunModelOverrides> {
+        self.review
+            .clone()
+            .map(|review| pipeline_gui_lib::commands::RunModelOverrides {
+                review: Some(review),
+                clear_settings_exceptions: self.everywhere,
+                override_workflow_pins: self.everywhere,
+                ..Default::default()
+            })
+    }
+}
+
+/// Parses one model flag; returns false when `flag` is not a model flag.
+fn parse_model(
+    flag: &str,
+    args: &[String],
+    index: &mut usize,
+    model: &mut ModelArgs,
+    command: &str,
+) -> Result<bool, String> {
+    match flag {
+        "--model" => {
+            let value = next_value(args, index, "--model")?;
+            let mut parts = value.splitn(3, ':').map(str::trim);
+            let provider = match parts.next().unwrap_or("").to_ascii_lowercase().as_str() {
+                "claude" => "claude",
+                "chatgpt" | "codex" | "openai" => "codex",
+                "gemini" | "antigravity" | "google" => "antigravity",
+                "local" => "local",
+                other => {
+                    return Err(format!(
+                        "{command}: --model provider '{other}' is not claude, chatgpt, gemini, or local"
+                    ))
+                }
+            };
+            let choice = pipeline_gui_lib::commands::ReviewModelChoice {
+                provider: provider.to_string(),
+                model: parts.next().unwrap_or("").to_string(),
+                effort: parts.next().unwrap_or("").to_ascii_lowercase(),
+            };
+            set_limit(&mut model.review, choice, "--model")?;
+        }
+        "--model-everywhere" if !model.everywhere => model.everywhere = true,
+        "--model-everywhere" => {
+            return Err(format!(
+                "{command}: --model-everywhere may be specified only once"
+            ))
+        }
+        _ => return Ok(false),
+    }
+    Ok(true)
 }
 
 /// `--max-cost`, `--max-calls`, `--max-minutes`, validated at parse time.
@@ -114,6 +176,7 @@ pub(super) struct BatchArgs {
     pub(super) out_dir: Option<String>,
     pub(super) force: bool,
     pub(super) limits: LimitArgs,
+    pub(super) model: ModelArgs,
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -268,12 +331,16 @@ fn parse_run(args: &[String]) -> Result<ParseAction, String> {
             "--force" if !parsed.force => parsed.force = true,
             "--force" => return Err("run: --force may be specified only once".to_string()),
             flag if parse_limit(flag, args, &mut index, &mut parsed.limits, "run")? => {}
+            flag if parse_model(flag, args, &mut index, &mut parsed.model, "run")? => {}
             unknown => return Err(format!("run: unknown argument '{unknown}'")),
         }
         index += 1;
     }
     if parsed.input_interpretation.is_some() && parsed.input.is_none() {
         return Err("run: --interpret-as requires --input".to_string());
+    }
+    if parsed.model.everywhere && parsed.model.review.is_none() {
+        return Err("run: --model-everywhere requires --model".to_string());
     }
     if parsed.force && matches!(parsed.out.as_deref(), None | Some("-")) {
         return Err("run: --force requires a file destination in --out".to_string());
@@ -316,11 +383,15 @@ fn parse_batch(args: &[String]) -> Result<ParseAction, String> {
             "--force" if !parsed.force => parsed.force = true,
             "--force" => return Err("batch: --force may be specified only once".to_string()),
             flag if parse_limit(flag, args, &mut index, &mut parsed.limits, "batch")? => {}
+            flag if parse_model(flag, args, &mut index, &mut parsed.model, "batch")? => {}
             unknown => return Err(format!("batch: unknown argument '{unknown}'")),
         }
         index += 1;
     }
     parsed.input_dir = input_dir.ok_or("batch: --input-dir <DIR> is required")?;
+    if parsed.model.everywhere && parsed.model.review.is_none() {
+        return Err("batch: --model-everywhere requires --model".to_string());
+    }
     if parsed.force && parsed.out_dir.is_none() {
         return Err("batch: --force requires --out-dir".to_string());
     }

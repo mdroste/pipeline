@@ -38,6 +38,23 @@ fn drain_capped<R: Read>(mut reader: R, limit: usize, job: &str, stream: &str) -
     (kept, truncated)
 }
 
+/// On Windows, Python encodes a piped stdout in the ANSI code page and stops
+/// at the first character outside it (`β`, `≤`, …), although the same script
+/// prints fine in a console window. Pipeline reads this output as UTF-8, so
+/// ask for UTF-8 stdio. Only stdio changes: a script's own `open()` calls keep
+/// the system default, as in the researcher's terminal. A profile that sets
+/// the variable itself keeps its value; `-E`/`-I` in its argv ignore both.
+pub(super) fn python_stdio_default(
+    environment: &Value,
+    windows: bool,
+) -> Option<(&'static str, &'static str)> {
+    const KEY: &str = "PYTHONIOENCODING";
+    let configured = environment
+        .as_object()
+        .is_some_and(|values| values.keys().any(|key| key.eq_ignore_ascii_case(KEY)));
+    (windows && !configured).then_some((KEY, "utf-8"))
+}
+
 pub(crate) fn run_profile_process(
     execution_id: &str,
     profile: &ExecutionProfile,
@@ -69,10 +86,19 @@ pub(crate) fn run_profile_process(
     }
     command
         .args(&profile.argv[1..])
-        .current_dir(&profile.cwd)
+        // The saved cwd is canonical, which on Windows is a `\\?\C:\…` path.
+        // cmd.exe refuses that as a working folder and runs in C:\Windows, so
+        // latexmk, Stata `shell`, and Python `shell=True` would all start in
+        // the wrong place. Containment was checked on the canonical form.
+        .current_dir(crate::file_viewer::system_path(std::path::Path::new(
+            &profile.cwd,
+        )))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if let Some((key, value)) = python_stdio_default(&profile.environment, cfg!(windows)) {
+        command.env(key, value);
+    }
     if let Some(environment) = profile.environment.as_object() {
         for (key, value) in environment {
             if let Some(value) = value.as_str() {

@@ -10,6 +10,7 @@ import {
   defaultSequentialAgent,
   PROVIDERS,
 } from "../../lib/providers";
+import { stageModelSummary } from "../../lib/modelChoice";
 
 import ModelStage from "./ModelStage";
 import AgentDefaultsControl from "../AgentDefaultsControl";
@@ -45,18 +46,39 @@ export function ModelDefaultsSection({
         providerAvailability(provider, settings, dependencies) === status,
     );
   const backupChoice = backupStatus("ready") ?? backupStatus("unknown");
-  const defaultLabel = "Default model";
+  const defaultLabel = "Default review model";
+  // Stages with their own model, which New review lists as exceptions.
+  const exceptionCount = [
+    settings.default_orientation_agent ||
+      Object.keys(settings.default_orientation_model_overrides ?? {}).length ||
+      Object.keys(settings.default_orientation_effort_overrides ?? {}).length,
+    settings.default_merge_agent ||
+      Object.keys(settings.default_merge_model_overrides ?? {}).length ||
+      Object.keys(settings.default_merge_effort_overrides ?? {}).length,
+    settings.default_sequential_agent ||
+      Object.keys(settings.default_sequential_model_overrides ?? {}).length ||
+      Object.keys(settings.default_sequential_effort_overrides ?? {}).length,
+  ].filter(Boolean).length;
+  // An inheriting stage names the model it inherits, not just where from.
+  const defaultSummary = defaultModelSummary(settings, catalogs);
+  const inheritsDefault = `${defaultLabel}: ${defaultSummary}`;
+  const sequentialSummary = settings.default_sequential_agent
+    ? stageModelSummary(
+        settings,
+        sequentialAgent,
+        settings.default_sequential_model_overrides,
+        settings.default_sequential_effort_overrides,
+        catalogs,
+      )
+    : defaultSummary;
 
   return (
     <>
       <SectionHeader
         title="Model defaults"
-        description="Review stages use your default model. Choose another for a stage here, or for a step in the review designer."
+        description="Every review runs on your default review model. A stage below, or a step in the review designer, can use another model. New review lists any that do, and can change the model for one review."
       />
-      <SettingRow
-        label={defaultLabel}
-        description={defaultModelSummary(settings, catalogs)}
-      >
+      <SettingRow label={defaultLabel} description={defaultSummary}>
         <button
           type="button"
           className="settings-button"
@@ -72,57 +94,10 @@ export function ModelDefaultsSection({
           <div className="divide-y divide-gray-200 dark:divide-neutral-800">
             <div>
               <ModelStage
-                title="Input assessment"
-                inherited={
-                  !settings.default_orientation_agent ? defaultLabel : undefined
-                }
-                agents={[orientationAgent]}
-                models={settings.default_orientation_model_overrides}
-                efforts={settings.default_orientation_effort_overrides}
-                settings={settings}
-                catalogs={catalogs}
-              >
-                <AgentDefaultsControl
-                  agents={[orientationAgent]}
-                  modelOverrides={settings.default_orientation_model_overrides}
-                  effortOverrides={
-                    settings.default_orientation_effort_overrides
-                  }
-                  settings={settings}
-                  catalogs={catalogs}
-                  providers={PROVIDERS}
-                  dependencies={dependencies}
-                  inherit={{
-                    active: !settings.default_orientation_agent,
-                    label: defaultLabel,
-                    onSelect: () =>
-                      setSettings({
-                        ...settings,
-                        default_orientation_agent: "",
-                        default_orientation_model_overrides: {},
-                        default_orientation_effort_overrides: {},
-                      }),
-                  }}
-                  label="Input assessment"
-                  help="Reads the inputs and selects the specialist reviewers."
-                  onChange={(next) =>
-                    setSettings({
-                      ...settings,
-                      default_orientation_agent: next.agents[0],
-                      default_orientation_model_overrides: next.modelOverrides,
-                      default_orientation_effort_overrides:
-                        next.effortOverrides,
-                    })
-                  }
-                />
-              </ModelStage>
-            </div>
-            <div>
-              <ModelStage
-                title="Parallel review"
+                title="Parallel steps"
                 inherited={
                   !settings.default_parallel_agents?.length
-                    ? defaultLabel
+                    ? inheritsDefault
                     : undefined
                 }
                 agents={parallelAgents}
@@ -151,8 +126,8 @@ export function ModelDefaultsSection({
                         default_parallel_effort_overrides: {},
                       }),
                   }}
-                  label="Parallel review"
-                  help="Choose one or more models for steps that run at the same time."
+                  label="Parallel steps"
+                  help="Steps that run at the same time use the default review model. Add another model to run a second opinion of each step."
                   onChange={(next) =>
                     setSettings({
                       ...settings,
@@ -164,96 +139,171 @@ export function ModelDefaultsSection({
                 />
               </ModelStage>
             </div>
-            <div>
-              <ModelStage
-                title="Combine results"
-                inherited={
-                  !settings.default_merge_agent
-                    ? "Same as sequential steps"
-                    : undefined
-                }
-                agents={[mergeAgent]}
-                models={defaultMergeModelOverrides(settings)}
-                efforts={defaultMergeEffortOverrides(settings)}
-                settings={settings}
-                catalogs={catalogs}
-              >
-                <AgentDefaultsControl
+            <details
+              className="settings-stage-exceptions py-3"
+              open={exceptionCount > 0}
+            >
+              <summary className="cursor-pointer text-sm text-gray-800 dark:text-neutral-200">
+                <span className="font-medium">Stage exceptions</span>
+                <span className="ml-2 text-xs text-gray-500 dark:text-neutral-400">
+                  {exceptionCount === 0
+                    ? "None: every stage uses the default review model"
+                    : `${exceptionCount} set`}
+                </span>
+              </summary>
+              <p className="mt-1 text-xs leading-5 text-gray-500 dark:text-neutral-400">
+                Give a stage its own model only when it needs one, such as a
+                faster model for input assessment. New review lists every stage
+                set here and can switch it to the review model for one review.
+              </p>
+              <div>
+                <ModelStage
+                  title="Input assessment"
+                  inherited={
+                    !settings.default_orientation_agent
+                      ? inheritsDefault
+                      : undefined
+                  }
+                  agents={[orientationAgent]}
+                  models={settings.default_orientation_model_overrides}
+                  efforts={settings.default_orientation_effort_overrides}
+                  settings={settings}
+                  catalogs={catalogs}
+                >
+                  <AgentDefaultsControl
+                    agents={[orientationAgent]}
+                    modelOverrides={
+                      settings.default_orientation_model_overrides
+                    }
+                    effortOverrides={
+                      settings.default_orientation_effort_overrides
+                    }
+                    settings={settings}
+                    catalogs={catalogs}
+                    providers={PROVIDERS}
+                    dependencies={dependencies}
+                    inherit={{
+                      active: !settings.default_orientation_agent,
+                      label: defaultLabel,
+                      onSelect: () =>
+                        setSettings({
+                          ...settings,
+                          default_orientation_agent: "",
+                          default_orientation_model_overrides: {},
+                          default_orientation_effort_overrides: {},
+                        }),
+                    }}
+                    label="Input assessment"
+                    help="Reads the inputs and selects the specialist reviewers."
+                    onChange={(next) =>
+                      setSettings({
+                        ...settings,
+                        default_orientation_agent: next.agents[0],
+                        default_orientation_model_overrides:
+                          next.modelOverrides,
+                        default_orientation_effort_overrides:
+                          next.effortOverrides,
+                      })
+                    }
+                  />
+                </ModelStage>
+              </div>
+              <div>
+                <ModelStage
+                  title="Combine results"
+                  inherited={
+                    !settings.default_merge_agent
+                      ? `Same as sequential steps: ${sequentialSummary}`
+                      : undefined
+                  }
                   agents={[mergeAgent]}
-                  modelOverrides={defaultMergeModelOverrides(settings)}
-                  effortOverrides={defaultMergeEffortOverrides(settings)}
+                  models={defaultMergeModelOverrides(settings)}
+                  efforts={defaultMergeEffortOverrides(settings)}
                   settings={settings}
                   catalogs={catalogs}
-                  providers={PROVIDERS}
-                  dependencies={dependencies}
-                  inherit={{
-                    active: !settings.default_merge_agent,
-                    label: "Same as sequential steps",
-                    onSelect: () =>
+                >
+                  <AgentDefaultsControl
+                    agents={[mergeAgent]}
+                    modelOverrides={defaultMergeModelOverrides(settings)}
+                    effortOverrides={defaultMergeEffortOverrides(settings)}
+                    settings={settings}
+                    catalogs={catalogs}
+                    providers={PROVIDERS}
+                    dependencies={dependencies}
+                    inherit={{
+                      active: !settings.default_merge_agent,
+                      label: "Same as sequential steps",
+                      onSelect: () =>
+                        setSettings({
+                          ...settings,
+                          default_merge_agent: "",
+                          default_merge_model_overrides: {},
+                          default_merge_effort_overrides: {},
+                        }),
+                    }}
+                    label="Combine results"
+                    help="Choose one model to combine results when a parallel step uses more than one provider."
+                    onChange={(next) =>
                       setSettings({
                         ...settings,
-                        default_merge_agent: "",
-                        default_merge_model_overrides: {},
-                        default_merge_effort_overrides: {},
-                      }),
-                  }}
-                  label="Combine results"
-                  help="Choose one model to combine results when a parallel step uses more than one provider."
-                  onChange={(next) =>
-                    setSettings({
-                      ...settings,
-                      default_merge_agent: next.agents[0],
-                      default_merge_model_overrides: next.modelOverrides,
-                      default_merge_effort_overrides: next.effortOverrides,
-                    })
+                        default_merge_agent: next.agents[0],
+                        default_merge_model_overrides: next.modelOverrides,
+                        default_merge_effort_overrides: next.effortOverrides,
+                      })
+                    }
+                  />
+                </ModelStage>
+              </div>
+              <div>
+                <ModelStage
+                  title="Sequential steps"
+                  inherited={
+                    !settings.default_sequential_agent
+                      ? inheritsDefault
+                      : undefined
                   }
-                />
-              </ModelStage>
-            </div>
-            <div>
-              <ModelStage
-                title="Sequential steps"
-                inherited={
-                  !settings.default_sequential_agent ? defaultLabel : undefined
-                }
-                agents={[sequentialAgent]}
-                models={settings.default_sequential_model_overrides}
-                efforts={settings.default_sequential_effort_overrides}
-                settings={settings}
-                catalogs={catalogs}
-              >
-                <AgentDefaultsControl
                   agents={[sequentialAgent]}
-                  modelOverrides={settings.default_sequential_model_overrides}
-                  effortOverrides={settings.default_sequential_effort_overrides}
+                  models={settings.default_sequential_model_overrides}
+                  efforts={settings.default_sequential_effort_overrides}
                   settings={settings}
                   catalogs={catalogs}
-                  providers={PROVIDERS}
-                  dependencies={dependencies}
-                  inherit={{
-                    active: !settings.default_sequential_agent,
-                    label: defaultLabel,
-                    onSelect: () =>
+                >
+                  <AgentDefaultsControl
+                    agents={[sequentialAgent]}
+                    modelOverrides={settings.default_sequential_model_overrides}
+                    effortOverrides={
+                      settings.default_sequential_effort_overrides
+                    }
+                    settings={settings}
+                    catalogs={catalogs}
+                    providers={PROVIDERS}
+                    dependencies={dependencies}
+                    inherit={{
+                      active: !settings.default_sequential_agent,
+                      label: defaultLabel,
+                      onSelect: () =>
+                        setSettings({
+                          ...settings,
+                          default_sequential_agent: "",
+                          default_sequential_model_overrides: {},
+                          default_sequential_effort_overrides: {},
+                        }),
+                    }}
+                    label="Sequential steps"
+                    help="Choose one model for steps that run one at a time."
+                    onChange={(next) =>
                       setSettings({
                         ...settings,
-                        default_sequential_agent: "",
-                        default_sequential_model_overrides: {},
-                        default_sequential_effort_overrides: {},
-                      }),
-                  }}
-                  label="Sequential steps"
-                  help="Choose one model for steps that run one at a time."
-                  onChange={(next) =>
-                    setSettings({
-                      ...settings,
-                      default_sequential_agent: next.agents[0],
-                      default_sequential_model_overrides: next.modelOverrides,
-                      default_sequential_effort_overrides: next.effortOverrides,
-                    })
-                  }
-                />
-              </ModelStage>
-            </div>
+                        default_sequential_agent: next.agents[0],
+                        default_sequential_model_overrides: next.modelOverrides,
+                        default_sequential_effort_overrides:
+                          next.effortOverrides,
+                      })
+                    }
+                  />
+                </ModelStage>
+              </div>
+            </details>
             <div
               id="usage-limit-fallback"
               tabIndex={-1}

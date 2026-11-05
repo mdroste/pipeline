@@ -325,6 +325,7 @@ pub async fn merge_step_outputs(
                 &provider,
                 &provider,
                 &resolution,
+                call.reported_model.as_deref(),
                 &effort,
                 primary_duration,
                 primary_usage,
@@ -445,6 +446,13 @@ pub async fn merge_step_outputs(
                     let effective_resolution = fallback
                         .map(|value| value.resolution.clone())
                         .unwrap_or_else(|| resolution.clone());
+                    let (effective_model, _) = super::provenance::recorded_model(
+                        &effective_provider,
+                        &effective_resolution,
+                        fallback.map_or(call.reported_model.as_deref(), |value| {
+                            value.reported_model.as_deref()
+                        }),
+                    );
                     Ok((
                         idx,
                         StepOutput {
@@ -471,7 +479,7 @@ pub async fn merge_step_outputs(
                                 total
                             },
                             attempt_count: original_attempts.saturating_add(1),
-                            model: effective_resolution.resolved_model,
+                            model: effective_model,
                             model_transport: effective_resolution.transport,
                             model_policy: effective_resolution.selection.label(),
                             model_source: effective_resolution.source,

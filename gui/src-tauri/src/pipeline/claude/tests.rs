@@ -89,7 +89,11 @@ fn request_effort_reports_what_each_transport_sends() {
 
     assert_eq!(
         request_effort("claude", "api", "claude-sonnet-4-6", &settings, &overrides),
-        "Provider default"
+        "Anthropic default"
+    );
+    assert_eq!(
+        request_effort("claude", "cli", "", &settings, &overrides),
+        "Claude Code default"
     );
     let claude_high = LlmOverrides {
         effort: Some("high"),
@@ -115,7 +119,7 @@ fn request_effort_reports_what_each_transport_sends() {
             &settings,
             &overrides
         ),
-        "Provider default"
+        "Google default"
     );
     assert_eq!(
         request_effort(
@@ -148,7 +152,8 @@ fn unwraps_result_envelope_and_sums_input_tokens() {
         "usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":5,
         "cache_creation_input_tokens":3,"server_tool_use":{"web_search_requests":2,
         "code_execution_requests":1,"future_tool_requests":3}}}"#;
-    let (text, usage) = parse_claude_result(raw).unwrap();
+    let (text, usage, model) = parse_claude_result(raw).unwrap();
+    assert_eq!(model, None);
     assert_eq!(text, "hello world");
     assert_eq!(
         usage,
@@ -212,15 +217,27 @@ fn fork_failures_fall_back_except_cancellation_timeout_and_usage_exhaustion() {
 }
 
 #[test]
+fn envelope_reports_the_model_that_wrote_the_most_output() {
+    // Shape observed from Claude Code 2.1: `modelUsage` keyed by model ID.
+    let raw = r#"{"type":"result","subtype":"success","result":"ok",
+        "modelUsage":{
+            "claude-haiku-4-5":{"inputTokens":900,"outputTokens":12},
+            "claude-opus-5-5":{"inputTokens":2,"outputTokens":40,"cacheReadInputTokens":38819}
+        }}"#;
+    let (_, _, model) = parse_claude_result(raw).unwrap();
+    assert_eq!(model.as_deref(), Some("claude-opus-5-5"));
+}
+
+#[test]
 fn envelope_without_usage_yields_result_and_no_tokens() {
-    let (text, usage) = parse_claude_result(r#"{"type":"result","result":"ok"}"#).unwrap();
+    let (text, usage, _) = parse_claude_result(r#"{"type":"result","result":"ok"}"#).unwrap();
     assert_eq!(text, "ok");
     assert_eq!(usage, None);
 }
 
 #[test]
 fn structured_result_envelope_returns_canonical_json_text() {
-    let (text, usage) =
+    let (text, usage, _) =
         parse_claude_result(r#"{"type":"result","result":"","structured_output":{"ok":true}}"#)
             .unwrap();
     assert_eq!(text, r#"{"ok":true}"#);
@@ -254,7 +271,7 @@ fn error_envelope_preserves_subscription_limit_detail() {
 
 #[test]
 fn envelope_preserves_reported_turns_without_token_usage() {
-    let (_, usage) =
+    let (_, usage, _) =
         parse_claude_result(r#"{"type":"result","result":"ok","num_turns":3}"#).unwrap();
     assert_eq!(
         usage,

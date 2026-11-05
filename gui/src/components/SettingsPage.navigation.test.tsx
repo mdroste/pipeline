@@ -51,9 +51,11 @@ describe("SettingsPage navigation", () => {
       />,
     );
     expect(await screen.findByText("Model defaults")).toBeInTheDocument();
+    // Stages with their own model sit under Stage exceptions, closed by default.
+    await userEvent.click(screen.getByText("Stage exceptions"));
     for (const label of [
       "Input assessment",
-      "Parallel review",
+      "Parallel steps",
       "Combine results",
       "Sequential steps",
     ])
@@ -71,7 +73,7 @@ describe("SettingsPage navigation", () => {
     expect(screen.getByLabelText("Model calls at once")).toBeVisible();
     expect(
       screen.getByText(
-        "Choose one or more models for steps that run at the same time.",
+        "Steps that run at the same time use the default review model. Add another model to run a second opinion of each step.",
       ),
     ).toBeInTheDocument();
     expect(
@@ -91,10 +93,11 @@ describe("SettingsPage navigation", () => {
       name: "Input assessment providers",
     });
     const parallelDefaults = screen.getByRole("group", {
-      name: "Parallel review providers",
+      name: "Parallel steps providers",
     });
+    // Parallel steps (with second opinions) come before the exceptions.
     expect(
-      orientationDefaults.compareDocumentPosition(parallelDefaults) &
+      parallelDefaults.compareDocumentPosition(orientationDefaults) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     const navigation = screen.getByRole("navigation", {

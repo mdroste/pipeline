@@ -92,7 +92,7 @@ describe("SettingsPage workflow", () => {
     await user.click(
       within(
         screen.getByRole("group", { name: "Sequential steps providers" }),
-      ).getByRole("button", { name: "Default model" }),
+      ).getByRole("button", { name: "Default review model" }),
     );
 
     await waitFor(() =>

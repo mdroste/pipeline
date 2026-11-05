@@ -9,7 +9,12 @@ export interface LlmRequestDetails {
   provider: string;
   provider_label: string;
   transport: "cli" | "api";
+  /** Empty when the CLI chooses and its choice is not known yet. */
   model: string;
+  /** `requested`, or for a CLI's own choice `expected` or `unknown`. */
+  model_basis?: "requested" | "expected" | "unknown";
+  /** Who picks the model when Pipeline sends none, e.g. "Claude Code". */
+  model_chosen_by?: string | null;
   model_policy: string;
   effort: string;
   tools: string[];

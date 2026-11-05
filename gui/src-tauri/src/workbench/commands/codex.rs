@@ -219,7 +219,9 @@ pub(crate) async fn submit_turn(
         let history_binding = binding.clone();
         let fingerprint = prepared.effective.fingerprint.clone();
         let transferred_history = run_store(move |store| crate::workbench::history::codex_context(&store, &history_session, history_binding.as_ref(), &fingerprint)).await?;
-        let root = runtime_root.to_string_lossy().into_owned();
+        // Codex runs the model's commands in this folder; a verbatim `\\?\` path
+        // would put cmd.exe in C:\Windows. Path checks canonicalize both sides.
+        let root = crate::file_viewer::system_path(&runtime_root).to_string_lossy().into_owned();
         let supervisor = crate::workbench::codex::supervisor_manager().connect().await?;
         let account_lease = supervisor.account_lease().await?;
         active_turn_state().lock().unwrap_or_else(|error| error.into_inner()).account_lease = account_lease;
@@ -590,7 +592,9 @@ async fn reconcile_codex_thread(
         .connect()
         .await?;
     ensure_event_bridge(app.clone(), supervisor.clone());
-    let root = root.to_string_lossy().into_owned();
+    let root = crate::file_viewer::system_path(&root)
+        .to_string_lossy()
+        .into_owned();
     let Some(connection) = supervisor
         .resume_thread(
             session_id,

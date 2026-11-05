@@ -502,7 +502,7 @@ pub async fn enqueue_run(
     variables: Option<std::collections::HashMap<String, String>>,
     extra_inputs: Option<std::collections::HashMap<String, String>>,
     expected_profile_snapshot_id: Option<String>,
-    run_parallel_overrides: Option<RunParallelOverrides>,
+    run_parallel_overrides: Option<RunModelOverrides>,
 ) -> Result<QueuedRun, String> {
     let variables = variables.unwrap_or_default();
     let extra_inputs = extra_inputs.unwrap_or_default();
@@ -543,7 +543,7 @@ pub async fn enqueue_batch(
     variables: Option<std::collections::HashMap<String, String>>,
     extra_inputs: Option<std::collections::HashMap<String, String>>,
     expected_profile_config_snapshot_id: Option<String>,
-    run_parallel_overrides: Option<RunParallelOverrides>,
+    run_parallel_overrides: Option<RunModelOverrides>,
 ) -> Result<Vec<QueuedRun>, String> {
     let launch = prepare_batch_launch(
         paths,

@@ -114,6 +114,7 @@ fn fallback_records_partition_usage_without_changing_effective_provenance() {
         provider: "codex".into(),
         resolution: resolution("fallback-model"),
         effort: "high".into(),
+        reported_model: None,
         primary_usage,
         primary_duration_secs: 13,
         fallback_usage,
@@ -132,6 +133,7 @@ fn fallback_records_partition_usage_without_changing_effective_provenance() {
             attempt_count: 2,
             usage_limit_fallbacks: vec![fallback.clone()],
             effective_fallback: Some(fallback),
+            reported_model: None,
         },
         &primary,
         "  ",
@@ -149,7 +151,7 @@ fn fallback_records_partition_usage_without_changing_effective_provenance() {
         vec!["usage_limit_primary", "usage_limit_fallback"]
     );
     assert_eq!(output.calls[0].agent, "reviewer");
-    assert_eq!(output.calls[0].effort, "default");
+    assert_eq!(output.calls[0].effort, "");
     assert_eq!(output.calls[0].duration_secs, 13);
     assert_eq!(output.calls[1].duration_secs, 17);
     let records = &output.calls;

@@ -107,12 +107,25 @@ const block = (
   rows: OverviewRow[],
 ): OverviewBlock | null => (rows.length ? { id, title, rows } : null);
 
+/**
+ * One spelling per native path. A Windows project root is canonical
+ * (`\\?\C:\…`, `\\?\UNC\server\share\…`), while a review's input is the path
+ * the file dialog returned (`C:\…`), in whatever case the user saw. Windows
+ * paths drop the verbatim prefix, use `/`, and compare case-insensitively.
+ */
+function comparablePath(value: string): string {
+  let path = value;
+  if (/^\\\\\?\\UNC\\/i.test(path)) path = `\\\\${path.slice(8)}`;
+  else if (/^\\\\\?\\[a-z]:/i.test(path)) path = path.slice(4);
+  const windows = /^[a-z]:([\\/]|$)/i.test(path) || /^\\\\[^\\]/.test(path);
+  if (!windows) return path.replace(/\/+$/, "");
+  return path.replaceAll("\\", "/").replace(/\/+$/, "").toLowerCase();
+}
+
 export function underRoot(path: string, root: string) {
-  const normalize = (value: string) => value.replace(/[\\/]+$/, "");
-  const base = normalize(root);
-  return (
-    path === base || path.startsWith(`${base}/`) || path.startsWith(`${base}\\`)
-  );
+  const base = comparablePath(root);
+  const candidate = comparablePath(path);
+  return candidate === base || candidate.startsWith(`${base}/`);
 }
 
 /** The paper the project treats as the draft, and whether the researcher chose it. */

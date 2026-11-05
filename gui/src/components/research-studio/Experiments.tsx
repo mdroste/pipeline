@@ -11,6 +11,7 @@ import {
 } from "../../lib/studioClient";
 import { workspaceClient } from "../../lib/workbench/workspaceClient";
 import { executionClient } from "../../lib/workbench/executionClient";
+import { parseArgvText } from "../../lib/argvText";
 import type {
   ExecutionProfile,
   ResearchResultV1,
@@ -256,7 +257,7 @@ export default function Experiments({
                     "Enter the Stata command under Advanced argv, then save.",
                   );
                 const command = argv.trim()
-                  ? JSON.parse(argv)
+                  ? parseArgvText(argv)
                   : [language, script];
                 const p = await executionClient.saveExecutionProfile({
                   profileId: profileId || null,

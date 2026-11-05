@@ -70,6 +70,18 @@ pub(super) fn step_output(
     let effective_provider = effective.map_or(provider, |fallback| fallback.provider.as_str());
     let effective_agent = effective.map_or(agent, |fallback| fallback.provider.as_str());
     let effective_resolution = effective.map_or(resolution, |fallback| &fallback.resolution);
+    let (effective_model, _) = match effective {
+        Some(fallback) => crate::pipeline::provenance::recorded_model(
+            &fallback.provider,
+            &fallback.resolution,
+            fallback.reported_model.as_deref(),
+        ),
+        None => crate::pipeline::provenance::recorded_model(
+            provider,
+            resolution,
+            call.reported_model.as_deref(),
+        ),
+    };
     let mut call_records = vec![call_record(
         if effective.is_some() {
             "usage_limit_primary"
@@ -79,6 +91,7 @@ pub(super) fn step_output(
         provider,
         agent,
         resolution,
+        call.reported_model.as_deref(),
         effort,
         call.duration_secs.saturating_sub(fallback_duration),
         primary_usage,
@@ -104,7 +117,7 @@ pub(super) fn step_output(
         model_round_trips: call.usage.model_round_trips,
         tool_calls: call.usage.tool_calls,
         attempt_count: call.attempt_count,
-        model: effective_resolution.resolved_model.clone(),
+        model: effective_model,
         model_transport: effective_resolution.transport.clone(),
         model_policy: effective_resolution.selection.label(),
         model_source: effective_resolution.source.clone(),

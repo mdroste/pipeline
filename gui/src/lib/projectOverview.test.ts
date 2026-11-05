@@ -160,6 +160,34 @@ describe("silence and single actions", () => {
     expect(underRoot("/research/paper.tex", "/research/")).toBe(true);
     expect(underRoot("/research-old/paper.tex", "/research")).toBe(false);
   });
+
+  it("matches a dialog path to the canonical Windows root it sits under", () => {
+    const root = String.raw`\\?\C:\Users\Mike\Paper`;
+    expect(underRoot(String.raw`C:\Users\Mike\Paper\paper.pdf`, root)).toBe(
+      true,
+    );
+    expect(underRoot(String.raw`c:\users\mike\paper\drafts\v2.tex`, root)).toBe(
+      true,
+    );
+    expect(underRoot("C:/Users/Mike/Paper/paper.pdf", root + "\\")).toBe(true);
+    expect(underRoot(String.raw`C:\Users\Mike\Paper-old\paper.pdf`, root)).toBe(
+      false,
+    );
+    expect(underRoot(String.raw`D:\Users\Mike\Paper\paper.pdf`, root)).toBe(
+      false,
+    );
+    const share = String.raw`\\?\UNC\lab\shared\Paper`;
+    expect(underRoot(String.raw`\\lab\shared\Paper\paper.pdf`, share)).toBe(
+      true,
+    );
+    expect(underRoot(String.raw`\\lab\other\Paper\paper.pdf`, share)).toBe(
+      false,
+    );
+  });
+
+  it("keeps POSIX paths case-sensitive", () => {
+    expect(underRoot("/Research/paper.tex", "/research")).toBe(false);
+  });
 });
 
 describe("state of the draft", () => {

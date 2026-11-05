@@ -111,6 +111,18 @@ describe("run provenance", () => {
     ]);
   });
 
+  it("names a recorded model and marks one that was only expected", () => {
+    const expected = report();
+    expected.step_outputs[0].calls![0].model_basis = "expected";
+    expected.step_outputs[0].calls![1].effort = "";
+    const rows = aggregateProviderModelUsage(expected);
+    expect(rows.map((row) => row.model)).toEqual([
+      "gpt-5.6-sol (expected)",
+      "claude-opus-4-8",
+    ]);
+    expect(rows[1].efforts).toEqual(["Anthropic API default"]);
+  });
+
   it("separates the provider default placeholder from named models", () => {
     const withDefault = report();
     withDefault.step_outputs[0].calls![1].model = "Provider default";
@@ -123,7 +135,11 @@ describe("run provenance", () => {
     allDefault.step_outputs[0].calls![1].model = "Provider default";
     expect(
       namedModelSummary(buildRunProvenance({ report: allDefault })),
-    ).toEqual({ models: "Provider default", usesProviderDefault: false });
+    ).toEqual({
+      models:
+        "ChatGPT's choice (not recorded), Anthropic API's choice (not recorded)",
+      usesProviderDefault: false,
+    });
 
     expect(namedModelSummary(buildRunProvenance({ report: report() }))).toEqual(
       {
