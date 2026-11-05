@@ -9,6 +9,7 @@ import type {
   ReviewRoutingSummary,
 } from "../lib/reviewRuntimeTypes";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
+import { preparationTitle } from "../lib/workflowOverview";
 
 interface Props {
   /** The queued review this progress belongs to; scopes pass cancellation. */
@@ -85,6 +86,9 @@ interface DisplayStage {
   /** A failed stage that only stopped because the researcher stopped the run. */
   cancelled?: boolean;
   subitems: DisplaySubitem[];
+  /** Same numbering as the Workflow overview: preparation is 1, then one
+   *  number per execution wave. Merge and completion rows are unnumbered. */
+  number?: number | null;
 }
 
 interface DisplaySubitem {
@@ -200,6 +204,19 @@ function allCancelled(stages: DisplayStage[]): boolean {
   return failed.length > 0 && failed.every((stage) => stage.cancelled);
 }
 
+/** Title of the combined extract + orient row; follows the input it prepares. */
+function preparationStageTitle(stages: DisplayStage[]): string {
+  const extract = stages.find((stage) => stage.kind === "extracting");
+  const work = extract ? processingLabel(extract) : "";
+  return preparationTitle(
+    work === "Creating source-tree inventory"
+      ? "source_tree"
+      : work === "Preparing review context"
+        ? "context"
+        : "document",
+  );
+}
+
 function combinedProcessingStatus(stages: DisplayStage[]): DisplayStatus {
   if (stages.some((stage) => stage.status === "failed")) return "failed";
   if (stages.some((stage) => stage.status === "active")) return "active";
@@ -220,48 +237,20 @@ function combinedProcessingStatus(stages: DisplayStage[]): DisplayStatus {
   return "pending";
 }
 
-function combinedSequentialStatus(stages: DisplayStage[]): DisplayStatus {
-  if (stages.some((stage) => stage.status === "failed")) return "failed";
-  if (stages.some((stage) => stage.status === "active")) return "active";
-  if (stages.every((stage) => stage.status === "skipped")) return "skipped";
-  if (
-    stages.every(
-      (stage) => stage.status === "done" || stage.status === "skipped",
-    )
-  ) {
-    return "done";
-  }
-  if (
-    stages.some(
-      (stage) => stage.status === "done" || stage.status === "skipped",
-    )
-  ) {
-    return "active";
-  }
-  return "pending";
-}
-
-function groupAdjacentSequentialStages(stages: DisplayStage[]): DisplayStage[] {
-  const grouped: DisplayStage[] = [];
-  for (const stage of stages) {
-    const previous = grouped[grouped.length - 1];
-    if (stage.kind === "synthesizing" && previous?.kind === "synthesizing") {
-      previous.cancelled = allCancelled([previous, stage]);
-      previous.status = combinedSequentialStatus([previous, stage]);
-      previous.subitems.push(...stage.subitems);
-    } else {
-      grouped.push({ ...stage, subitems: [...stage.subitems] });
-    }
-  }
-  return grouped;
-}
-
-function StatusDot({ status }: { status: DisplayStatus }) {
+function StageMarker({
+  status,
+  number,
+}: {
+  status: DisplayStatus;
+  number: number | null;
+}) {
+  const base =
+    "relative z-[1] grid h-6 w-6 flex-none place-items-center rounded-full text-[12px] font-semibold tabular-nums";
   if (status === "done") {
     return (
-      <div className="w-5 h-5 rounded-full bg-green-600 flex items-center justify-center">
+      <span className={`${base} bg-green-600 text-white`}>
         <svg
-          className="w-3 h-3 text-white"
+          className="h-3 w-3"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -273,14 +262,14 @@ function StatusDot({ status }: { status: DisplayStatus }) {
             d="M5 13l4 4L19 7"
           />
         </svg>
-      </div>
+      </span>
     );
   }
   if (status === "failed") {
     return (
-      <div className="w-5 h-5 rounded-full bg-red-600 flex items-center justify-center">
+      <span className={`${base} bg-red-600 text-white`}>
         <svg
-          className="w-3 h-3 text-white"
+          className="h-3 w-3"
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
@@ -292,25 +281,35 @@ function StatusDot({ status }: { status: DisplayStatus }) {
             d="M6 18L18 6M6 6l12 12"
           />
         </svg>
-      </div>
-    );
-  }
-  if (status === "active") {
-    return (
-      <div className="w-5 h-5 rounded-full border-2 border-gray-600 flex items-center justify-center">
-        <div className="w-2 h-2 rounded-full bg-gray-600 animate-pulse" />
-      </div>
+      </span>
     );
   }
   if (status === "skipped") {
     return (
-      <div className="w-5 h-5 rounded-full border-2 border-gray-400 dark:border-gray-500 flex items-center justify-center">
-        <span className="h-0.5 w-2 bg-gray-500 dark:bg-gray-400" />
-      </div>
+      <span
+        className={`${base} border border-line-strong bg-surface text-ink-muted`}
+      >
+        <span className="h-0.5 w-2 rounded-full bg-current" />
+      </span>
+    );
+  }
+  if (status === "active") {
+    // The halo sits outside the marker so it pulses around it, not over it.
+    return (
+      <span className="relative z-[1] grid h-6 w-6 flex-none place-items-center">
+        <span className="absolute -inset-1 animate-pulse rounded-full bg-gray-400/40 dark:bg-gray-500/40" />
+        <span className={`${base} bg-inverse text-on-inverse`}>
+          {number ?? <span className="h-2 w-2 rounded-full bg-current" />}
+        </span>
+      </span>
     );
   }
   return (
-    <div className="w-5 h-5 rounded-full border-2 border-gray-400 dark:border-gray-500" />
+    <span
+      className={`${base} border border-line-strong bg-surface text-ink-muted`}
+    >
+      {number ?? <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+    </span>
   );
 }
 
@@ -549,10 +548,14 @@ export default function PipelineProgress({
         }
       }
     }
+    const label =
+      stage.kind === "synthesizing" && stepIds.length === 1
+        ? (stepLabels.get(stepIds[0]) ?? waveLabel(stage.kind, stage.label))
+        : waveLabel(stage.kind, stage.label);
     return {
       id: stage.id,
       kind: stage.kind,
-      label: waveLabel(stage.kind, stage.label),
+      label,
       // A failed reviewer lets the run go on, but its stage did not succeed.
       status:
         status === "done" &&
@@ -580,7 +583,7 @@ export default function PipelineProgress({
     const processingStage: DisplayStage = {
       id: "processing-inputs",
       kind: "processing",
-      label: "Processing inputs",
+      label: preparationStageTitle(processingStages),
       status: combinedProcessingStatus(processingStages),
       cancelled: allCancelled(processingStages),
       subitems: processingStages.map((stage) => ({
@@ -594,7 +597,16 @@ export default function PipelineProgress({
     );
     stages.splice(processingIndex, 0, processingStage);
   }
-  stages = groupAdjacentSequentialStages(stages);
+  let stageNumber = 0;
+  stages = stages.map((stage) => ({
+    ...stage,
+    number:
+      stage.kind === "processing" ||
+      stage.kind === "dispatching" ||
+      stage.kind === "synthesizing"
+        ? ++stageNumber
+        : null,
+  }));
 
   // Screen readers hear stage transitions only. The view itself is not a live
   // region, because its elapsed clocks change every second.
@@ -658,89 +670,146 @@ export default function PipelineProgress({
           )}
         </div>
       )}
-      <div className="space-y-3">
-        {stages.map((stage) => {
+      <ol>
+        {stages.map((stage, index) => {
           const status = stage.status;
+          const last = index === stages.length - 1;
+          // A sequential wave that runs one pass shows that pass inline
+          // instead of repeating the step name underneath itself.
+          const inlinePass =
+            stage.subitems.length === 1 &&
+            stage.subitems[0].label === stage.label
+              ? stage.subitems[0]
+              : null;
           return (
-            <div key={stage.id} data-status={status}>
-              <div className="flex items-center gap-2.5">
-                <StatusDot status={status} />
-                <span
-                  className={`text-sm ${
-                    status === "failed"
-                      ? "text-red-600 dark:text-red-400 font-medium"
-                      : status === "active"
-                        ? "text-gray-900 dark:text-gray-100 font-medium"
-                        : status === "done"
-                          ? "text-gray-500 dark:text-gray-400"
-                          : status === "skipped"
-                            ? "text-gray-500 dark:text-gray-400"
-                            : "text-gray-500 dark:text-gray-400"
-                  }`}
-                >
-                  {stage.label}
-                </span>
-                {status === "failed" && (
-                  <span className="text-red-600 dark:text-red-400 text-xs ml-auto">
-                    {stage.cancelled ? "cancelled" : "failed"}
-                  </span>
+            <li
+              key={stage.id}
+              data-status={status}
+              data-step={stage.number ?? undefined}
+              className="relative flex gap-3"
+            >
+              <div
+                className="relative flex w-6 flex-none justify-center"
+                aria-hidden="true"
+              >
+                {!last && (
+                  <span
+                    className={`absolute bottom-0 top-6 w-px ${
+                      status === "done"
+                        ? "bg-green-600/40 dark:bg-green-500/40"
+                        : "bg-line-strong"
+                    }`}
+                  />
                 )}
-                {status === "active" && stage.subitems.length === 0 && (
-                  <span className="text-gray-500 dark:text-gray-400 text-xs animate-pulse ml-auto">
-                    running…
-                  </span>
-                )}
-                {status === "skipped" && (
-                  <span className="text-gray-500 dark:text-gray-400 text-xs ml-auto">
-                    skipped
-                  </span>
-                )}
+                <StageMarker status={status} number={stage.number ?? null} />
               </div>
+              <div className={`min-w-0 flex-1 ${last ? "" : "pb-4"}`}>
+                <div className="flex min-h-6 items-center gap-2.5">
+                  <span
+                    className={`text-sm ${
+                      status === "failed"
+                        ? "text-red-600 dark:text-red-400 font-medium"
+                        : status === "active"
+                          ? "text-gray-900 dark:text-gray-100 font-medium"
+                          : "text-gray-500 dark:text-gray-400"
+                    }`}
+                  >
+                    {stage.label}
+                  </span>
+                  {status === "failed" && (
+                    <span className="text-red-600 dark:text-red-400 text-xs ml-auto">
+                      {stage.cancelled ? "cancelled" : "failed"}
+                    </span>
+                  )}
+                  {status === "active" && stage.subitems.length === 0 && (
+                    <span className="text-gray-500 dark:text-gray-400 text-xs animate-pulse ml-auto">
+                      running…
+                    </span>
+                  )}
+                  {status === "skipped" && (
+                    <span className="text-gray-500 dark:text-gray-400 text-xs ml-auto">
+                      skipped
+                    </span>
+                  )}
+                  {inlinePass &&
+                    status !== "failed" &&
+                    status !== "skipped" && (
+                      <span className="ml-auto">
+                        <PassMeta
+                          subitem={inlinePass}
+                          elapsed={
+                            inlinePass.passKey
+                              ? passElapsed(inlinePass.passKey)
+                              : null
+                          }
+                          runKey={runKey}
+                        />
+                      </span>
+                    )}
+                </div>
 
-              {stage.subitems.length > 0 && (
-                <div className="ml-7 mt-1.5 space-y-1">
-                  {stage.subitems.map((subitem) => {
-                    const el = subitem.passKey
-                      ? passElapsed(subitem.passKey)
-                      : null;
-                    return (
+                {stage.subitems.length > 0 && !inlinePass && (
+                  <div className="mt-1.5 space-y-1">
+                    {stage.subitems.map((subitem) => (
                       <div
                         key={subitem.key}
                         className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400"
                       >
                         <span>{subitem.label}</span>
-                        <span className="flex items-center gap-2">
-                          {el && (
-                            <span className="text-gray-500 dark:text-gray-400 tabular-nums">
-                              {el}
-                            </span>
-                          )}
-                          <PassStatusIcon status={subitem.status} />
-                          {subitem.status === "running" && subitem.passKey && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                invoke("cancel_pass", {
-                                  passKey: subitem.passKey,
-                                  runKey: runKey ?? null,
-                                }).catch(() => {})
-                              }
-                              aria-label={`Cancel ${subitem.label}`}
-                              className="text-gray-600 hover:text-red-700 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
-                            >
-                              ✕
-                            </button>
-                          )}
-                        </span>
+                        <PassMeta
+                          subitem={subitem}
+                          elapsed={
+                            subitem.passKey
+                              ? passElapsed(subitem.passKey)
+                              : null
+                          }
+                          runKey={runKey}
+                        />
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </li>
           );
         })}
-      </div>
+      </ol>
     </div>
+  );
+}
+
+function PassMeta({
+  subitem,
+  elapsed,
+  runKey,
+}: {
+  subitem: DisplaySubitem;
+  elapsed: string | null;
+  runKey?: string | null;
+}) {
+  return (
+    <span className="flex items-center gap-2 text-xs">
+      {elapsed && (
+        <span className="text-gray-500 dark:text-gray-400 tabular-nums">
+          {elapsed}
+        </span>
+      )}
+      <PassStatusIcon status={subitem.status} />
+      {subitem.status === "running" && subitem.passKey && (
+        <button
+          type="button"
+          onClick={() =>
+            invoke("cancel_pass", {
+              passKey: subitem.passKey,
+              runKey: runKey ?? null,
+            }).catch(() => {})
+          }
+          aria-label={`Cancel ${subitem.label}`}
+          className="text-gray-600 hover:text-red-700 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
+        >
+          ✕
+        </button>
+      )}
+    </span>
   );
 }

@@ -300,8 +300,10 @@ export function WorkflowNavigator({
       <div className="flex-1 overflow-y-auto">
         {navigatorView === "overview" ? (
           <WaveDiagram
+            compact
             steps={config.steps}
             merge={config.merge}
+            inputMode={config.extraction?.input_mode}
             adaptiveReview={autoReview}
             adaptiveAgentCount={adaptiveAgentCount}
             adaptiveAgentRange={adaptiveAgentRange}

@@ -83,6 +83,7 @@ export default function RunPlanPreview({
         <WaveDiagram
           steps={config.steps}
           merge={config.merge}
+          inputMode={config.extraction?.input_mode}
           adaptiveReview={isAutoReview(config)}
           adaptiveAgentCount={adaptiveAgentCount(config)}
           adaptiveAgentRange={adaptiveAgentRange(config)}

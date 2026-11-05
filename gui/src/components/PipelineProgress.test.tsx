@@ -73,7 +73,7 @@ const autoReviewRouting = {
 describe("PipelineProgress", () => {
   it("renders the base stages without the merge stage by default", () => {
     render(<PipelineProgress state={{ kind: "extracting" }} />);
-    expect(screen.getByText("Processing inputs")).toBeInTheDocument();
+    expect(screen.getByText("Prepare document bundle")).toBeInTheDocument();
     expect(screen.getByText("Creating document bundle")).toBeInTheDocument();
     expect(screen.getByText("Creating orientation map")).toBeInTheDocument();
     expect(screen.getByText("Reviewers working together")).toBeInTheDocument();
@@ -98,7 +98,9 @@ describe("PipelineProgress", () => {
         ]}
       />,
     );
-    expect(screen.getByText("Processing inputs")).toBeInTheDocument();
+    expect(
+      screen.getByText("Prepare source-tree inventory"),
+    ).toBeInTheDocument();
     expect(
       screen.getByText("Creating source-tree inventory"),
     ).toBeInTheDocument();
@@ -288,7 +290,7 @@ describe("PipelineProgress", () => {
         />,
       );
       const status = screen.getByRole("status");
-      expect(status).toHaveTextContent("Processing inputs in progress.");
+      expect(status).toHaveTextContent("Prepare document bundle in progress.");
       expect(document.querySelector("[aria-live]")).toBeNull();
       expect(status).not.toContainElement(screen.getByText("0s"));
 
@@ -297,7 +299,7 @@ describe("PipelineProgress", () => {
       });
       expect(screen.getByText("3s")).toBeInTheDocument();
       expect(screen.getByRole("status")).toHaveTextContent(
-        "Processing inputs in progress.",
+        "Prepare document bundle in progress.",
       );
 
       view.rerender(
@@ -307,7 +309,7 @@ describe("PipelineProgress", () => {
         />,
       );
       expect(screen.getByRole("status")).toHaveTextContent(
-        "Processing inputs failed.",
+        "Prepare document bundle failed.",
       );
     } finally {
       vi.useRealTimers();
@@ -348,7 +350,7 @@ describe("PipelineProgress", () => {
       />,
     );
     expect(screen.getAllByText("failed").length).toBeGreaterThan(0);
-    expect(screen.getByText("Processing inputs")).toBeInTheDocument();
+    expect(screen.getByText("Prepare document bundle")).toBeInTheDocument();
     expect(screen.getByText("Creating document bundle")).toBeInTheDocument();
   });
 
@@ -393,7 +395,7 @@ describe("PipelineProgress", () => {
         "failed",
       );
       expect(screen.getByRole("status")).toHaveTextContent(
-        "Reviewers working together failed. Next step in progress.",
+        "Reviewers working together failed. Synthesis in progress.",
       );
     });
 
@@ -412,13 +414,13 @@ describe("PipelineProgress", () => {
       expect(row("Reviewers working together")).not.toHaveTextContent(
         "cancelled",
       );
-      expect(row("Next step")).toHaveTextContent("cancelled");
+      expect(row("Synthesis")).toHaveTextContent("cancelled");
       expect(screen.getByRole("status")).toHaveTextContent(
-        "Reviewers working together failed. Next step cancelled.",
+        "Reviewers working together failed. Synthesis cancelled.",
       );
     });
 
-    it("stays failed when one row holds both the failure and the stop", () => {
+    it("keeps a failed step apart from a later stopped step", () => {
       const first: RuntimeStage = {
         ...next,
         id: "wave-3",
@@ -442,8 +444,14 @@ describe("PipelineProgress", () => {
           stageHistory={[first, second]}
         />,
       );
-      expect(screen.getByRole("status")).toHaveTextContent(/failed\.$/);
-      expect(screen.getByRole("status")).not.toHaveTextContent("cancelled");
+      // Each sequential step has its own numbered row, so the failure and
+      // the stop are reported separately.
+      expect(row("Synthesis")).toHaveTextContent("failed");
+      expect(row("Synthesis")).not.toHaveTextContent("cancelled");
+      expect(row("Memo")).toHaveTextContent("cancelled");
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Synthesis failed. Memo cancelled.",
+      );
     });
 
     it("stays failed after the run finishes", () => {
@@ -508,7 +516,7 @@ describe("PipelineProgress", () => {
     expect(screen.queryByText("failed")).not.toBeInTheDocument();
   });
 
-  it("groups adjacent sequential steps under one progress stage", () => {
+  it("gives each sequential wave its own row titled by its step", () => {
     const plan: ExecutionPlanStage[] = [
       {
         id: "extract",
@@ -567,19 +575,44 @@ describe("PipelineProgress", () => {
       />,
     );
 
-    expect(screen.getAllByText("Next step")).toHaveLength(1);
-    const sequentialStage = screen
-      .getByText("Next step")
+    expect(screen.queryByText("Next step")).not.toBeInTheDocument();
+    // A one-pass wave shows its pass inline rather than repeating the name.
+    expect(screen.getAllByText("Consolidate Feedback")).toHaveLength(1);
+    const consolidate = screen
+      .getByText("Consolidate Feedback")
       .closest("[data-status]");
-    expect(sequentialStage).toHaveAttribute("data-status", "active");
-    expect(sequentialStage).toHaveTextContent("Consolidate Feedback");
-    expect(sequentialStage).toHaveTextContent("Validate Feedback");
+    expect(consolidate).toHaveAttribute("data-status", "done");
+    expect(consolidate).toHaveAttribute("data-step", "2");
+    expect(consolidate).toHaveTextContent("done");
+    const validate = screen
+      .getByText("Validate Feedback")
+      .closest("[data-status]");
+    expect(validate).toHaveAttribute("data-status", "active");
+    expect(validate).toHaveAttribute("data-step", "3");
+    expect(validate).toHaveTextContent("running");
     expect(
-      screen.getByText("Consolidate Feedback").parentElement,
-    ).toHaveTextContent("done");
-    expect(
-      screen.getByText("Validate Feedback").parentElement,
-    ).toHaveTextContent("running");
+      screen.getByRole("button", { name: "Cancel Validate Feedback" }),
+    ).toBeInTheDocument();
+  });
+
+  it("numbers rows like the workflow overview: preparation, then each wave", () => {
+    render(
+      <PipelineProgress state={{ kind: "orienting" }} plan={autoReviewPlan} />,
+    );
+    const stepOf = (text: string) =>
+      screen.getByText(text).closest("[data-status]");
+    expect(stepOf("Prepare document bundle")).toHaveAttribute("data-step", "1");
+    expect(stepOf("Prepare document bundle")).toHaveAttribute(
+      "data-status",
+      "active",
+    );
+    expect(stepOf("Reviewers working together")).toHaveAttribute(
+      "data-step",
+      "2",
+    );
+    expect(stepOf("Merge parallel wave 1")).not.toHaveAttribute("data-step");
+    expect(stepOf("Auto Review Synthesis")).toHaveAttribute("data-step", "3");
+    expect(stepOf("Complete")).not.toHaveAttribute("data-step");
   });
 
   it("retains completed passes across alternating parallel and sequential waves", () => {
@@ -659,7 +692,9 @@ describe("PipelineProgress", () => {
     );
 
     expect(screen.getAllByText("Reviewers working together")).toHaveLength(2);
-    expect(screen.getByText("Next step")).toBeInTheDocument();
+    expect(
+      screen.getByText("Editorial synthesis").closest("[data-status]"),
+    ).toHaveAttribute("data-step", "3");
     expect(screen.getByText("First review")).toBeInTheDocument();
     expect(screen.getByText("Editorial synthesis")).toBeInTheDocument();
     expect(screen.getByText("Final check")).toBeInTheDocument();

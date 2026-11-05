@@ -3,6 +3,15 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
+## Unreleased
+
+- The **Review overview** is a numbered timeline. Step 1, **Prepare document
+  bundle**, holds Extract and Orient. Each later number is a group of steps
+  that run at the same time. Review steps show their agents, web search,
+  fan-out, and run conditions.
+- Review progress uses the same numbers and names as the overview. Steps that
+  run one after another each get their own row, titled with the step's name.
+
 ## 1.4.2 — 2026-11-02
 
 - Conversations, reviews, and automations recover more reliably after interruptions.
