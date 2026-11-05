@@ -26,6 +26,7 @@ pub(super) async fn run_sequential_step(
     settings: &crate::settings::Settings,
     shared_context: Option<Arc<crate::pipeline::context_cache::PreparedContext>>,
     specialist_steps: &std::collections::HashSet<String>,
+    author_note: Option<&str>,
 ) -> Result<StepOutput, String> {
     let _ = app.emit_event(
         "pipeline:pass",
@@ -151,6 +152,7 @@ pub(super) async fn run_sequential_step(
     let effort = step.effort_for(settings, &provider);
     let model_policy = resolution.selection.label();
     let call = execute_step_call(StepCallRequest {
+        author_note,
         app,
         pass_key: &step.id,
         log_label: &log_label,

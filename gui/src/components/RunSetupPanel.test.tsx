@@ -21,6 +21,8 @@ function renderPanel(props: Partial<Parameters<typeof RunSetupPanel>[0]> = {}) {
   localStorage.setItem("pipeline.privacyNoticeAcknowledged.v1", "true");
   return render(
     <RunSetupPanel
+      authorNote=""
+      onAuthorNoteChange={vi.fn()}
       configVersion={0}
       configError={null}
       configLoading={false}
@@ -79,4 +81,11 @@ describe("RunSetupPanel", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Start review/ })).toBeDisabled();
   });
+});
+
+it("prevents launching an over-limit author note without discarding it", () => {
+  renderPanel({ authorNote: "x".repeat(4001) });
+  expect(screen.getByRole("button", { name: /Start review/ })).toBeDisabled();
+  expect(screen.getByRole("textbox")).toHaveValue("x".repeat(4001));
+  expect(screen.getByRole("alert")).toHaveTextContent("4,000");
 });

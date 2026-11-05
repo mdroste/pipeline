@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-export type NavSection = "conversations" | "projects" | "reviews";
+export type NavSection = "projects" | "reviews";
 
 const STORAGE_KEY = "pipeline.ui.navRailSections";
 
@@ -12,9 +12,9 @@ function readChoices(): Choices {
       localStorage.getItem(STORAGE_KEY) ?? "null",
     );
     if (raw && typeof raw === "object") {
-      const { conversations, projects, reviews } = raw as Choices;
+      const { projects, reviews } = raw as Choices;
       return Object.fromEntries(
-        Object.entries({ conversations, projects, reviews }).filter(
+        Object.entries({ projects, reviews }).filter(
           ([, open]) => typeof open === "boolean",
         ),
       );

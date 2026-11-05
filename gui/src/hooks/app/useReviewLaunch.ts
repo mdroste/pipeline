@@ -1,4 +1,9 @@
 import { useCallback, useRef, useState } from "react";
+import {
+  normalizeAuthorNote,
+  authorNoteLength,
+  AUTHOR_NOTE_MAX_CHARS,
+} from "../../lib/authorNote";
 import { router } from "../../lib/router";
 import { appClient } from "../../lib/appClient";
 import {
@@ -40,6 +45,9 @@ export function useReviewLaunch(
   const { enqueue, enqueueBatch, enqueueRerun } = queue;
   const { setPage, clearHistorySourceSelection } = navigation;
   const {
+    authorNote,
+    setAuthorNote,
+    setAuthorNoteFocusKey,
     paperPath,
     setPaperPath,
     inputSelection,
@@ -66,6 +74,7 @@ export function useReviewLaunch(
   // usable, so it neither blocks Start review nor discards entered values.
   const [launchError, setLaunchError] = useState<LaunchFailure | null>(null);
   const launchActive = useRef(false);
+  const noteEditPreview = useRef<PreparedLaunch | null>(null);
   const openRun = useCallback(async (runKey: string) => {
     await router.navigate({ page: "main", runKey });
   }, []);
@@ -100,6 +109,7 @@ export function useReviewLaunch(
       ...latest,
       paperPath: snapshot.paperPath,
       inputSelection: snapshot.inputSelection,
+      authorNote: snapshot.authorNote,
     };
     const reopen =
       latest.inputMode === snapshot.inputMode &&
@@ -161,6 +171,7 @@ export function useReviewLaunch(
         }
         const representativePath = paths[0];
         const plan = await appClient.executionPlan({
+          authorNote: snapshot.authorNote ?? null,
           variables: variables ?? null,
           extraInputs: extraInputs ?? null,
           expectedProfileConfigSnapshotId: snapshot.profileConfigSnapshotId,
@@ -194,6 +205,7 @@ export function useReviewLaunch(
         return;
       }
       const plan = await appClient.executionPlan({
+        authorNote: snapshot.authorNote ?? null,
         variables: variables ?? null,
         extraInputs: extraInputs ?? null,
         expectedProfileConfigSnapshotId: snapshot.profileConfigSnapshotId,
@@ -252,7 +264,9 @@ export function useReviewLaunch(
       // free up and each stays reachable from the sidebar.
       const queued = prepared.batchPaths
         ? await enqueueBatch({
+            authorNote: prepared.snapshot.authorNote ?? null,
             paths: prepared.batchPaths,
+            expectedProfileSnapshotId: prepared.plan.profileSnapshotId,
             variables: prepared.variables ?? null,
             extraInputs: prepared.extraInputs ?? null,
             expectedProfileConfigSnapshotId:
@@ -261,6 +275,7 @@ export function useReviewLaunch(
           })
         : [
             await enqueue({
+              authorNote: prepared.snapshot.authorNote ?? null,
               paperPath: prepared.snapshot.paperPath,
               inputInterpretation:
                 prepared.snapshot.inputSelection?.interpretation ?? null,
@@ -271,6 +286,7 @@ export function useReviewLaunch(
               ...overrides,
             }),
           ];
+      noteEditPreview.current = null;
       setRunPlans((plans) => {
         const next = { ...plans };
         for (const run of queued) next[run.key] = prepared.plan.stages;
@@ -296,6 +312,11 @@ export function useReviewLaunch(
   const handleGenerate = async () => {
     if (preparingRun || runConfigLoading || !runProfileConfigSnapshotId) return;
     setLaunchError(null);
+    if (authorNoteLength(authorNote) > AUTHOR_NOTE_MAX_CHARS) {
+      setAuthorNoteFocusKey((key) => key + 1);
+      return;
+    }
+    const capturedAuthorNote = normalizeAuthorNote(authorNote);
     setPreparingRun(true);
     try {
       const expectedProfileConfigSnapshotId = runProfileConfigSnapshotId;
@@ -322,7 +343,25 @@ export function useReviewLaunch(
         );
         return;
       }
-      const pending = { ...snapshot, paperPath: selectedPath, inputSelection };
+      const pending = {
+        ...snapshot,
+        paperPath: selectedPath,
+        inputSelection,
+        authorNote: capturedAuthorNote,
+      };
+      const edited = noteEditPreview.current;
+      if (
+        edited &&
+        edited.snapshot.profileConfigSnapshotId ===
+          pending.profileConfigSnapshotId &&
+        edited.snapshot.paperPath === pending.paperPath &&
+        JSON.stringify(edited.snapshot.inputSelection) ===
+          JSON.stringify(pending.inputSelection)
+      ) {
+        await launch(pending, edited.variables, edited.extraInputs);
+        return;
+      }
+      noteEditPreview.current = null;
       if (snapshot.variables.length > 0 || snapshot.inputSlots.length > 0) {
         setPendingRun(pending);
         return;
@@ -340,6 +379,10 @@ export function useReviewLaunch(
       selectionKind:
         handoff.inputInterpretation === "source_tree" ? "folder" : "file",
     };
+    noteEditPreview.current = null;
+    setAuthorNote("");
+    setAuthorNoteFocusKey(0);
+    setSelectionKey((key) => key + 1);
     setPage("main");
     setPaperPath(handoff.stagedPath);
     setInputSelection(selection);
@@ -351,6 +394,7 @@ export function useReviewLaunch(
       if (!setup) return;
       const pending = {
         ...setup,
+        authorNote: null,
         paperPath: handoff.stagedPath,
         inputSelection: selection,
       };
@@ -366,6 +410,9 @@ export function useReviewLaunch(
 
   const handleNewRun = async () => {
     if (!(await router.navigate({ page: "main" }))) return;
+    noteEditPreview.current = null;
+    setAuthorNote("");
+    setAuthorNoteFocusKey(0);
     setPaperPath(null);
     setInputSelection(null);
     setRunPreview(null);
@@ -404,6 +451,11 @@ export function useReviewLaunch(
     clearLaunchError: () => setLaunchError(null),
     launch,
     startPreparedLaunch,
+    editPreviewAuthorNote: () => {
+      noteEditPreview.current = runPreview;
+      setRunPreview(null);
+      setAuthorNoteFocusKey((key) => key + 1);
+    },
     handleGenerate,
     handleWorkspaceReviewHandoff,
     handleNewRun,

@@ -25,6 +25,7 @@ export interface RerunRequirements {
 }
 
 export interface ExecutionPlanRequest {
+  authorNote?: string | null;
   variables: Record<string, string> | null;
   extraInputs: Record<string, string> | null;
   expectedProfileConfigSnapshotId: string | null;
@@ -35,6 +36,8 @@ export interface ExecutionPlanRequest {
 }
 
 export interface StartBatchRequest {
+  expectedProfileSnapshotId?: string;
+  authorNote?: string | null;
   paths: string[];
   variables: Record<string, string> | null;
   extraInputs: Record<string, string> | null;
@@ -43,6 +46,7 @@ export interface StartBatchRequest {
 }
 
 export interface EnqueueRunRequest {
+  authorNote?: string | null;
   paperPath: string;
   inputInterpretation: string | null;
   diff: boolean;

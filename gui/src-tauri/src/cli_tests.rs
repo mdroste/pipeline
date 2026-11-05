@@ -350,3 +350,39 @@ fn model_flags_choose_one_review_model() {
     assert!(parse_cli(&strings(&["run", "--model-everywhere"])).is_err());
     assert!(parse_cli(&strings(&["run", "--model", "claude", "--model", "local"])).is_err());
 }
+
+#[test]
+fn author_note_cli_option_is_literal_and_supported_by_run_check_and_batch() {
+    let text = "Model assumptions\n{var:literal}";
+    for (command, input) in [
+        ("run", "--input"),
+        ("check", "--input"),
+        ("batch", "--input-dir"),
+    ] {
+        let parsed = parse_cli(&strings(&[
+            command,
+            input,
+            "/tmp/paper",
+            "--author-note",
+            text,
+        ]))
+        .unwrap();
+        let note = match parsed {
+            ParseAction::Execute(Command::Run(args)) => args.author_note,
+            ParseAction::Execute(Command::Check(args)) => args.author_note,
+            ParseAction::Execute(Command::Batch(args)) => args.author_note,
+            _ => panic!("unexpected command"),
+        };
+        assert_eq!(note.as_deref(), Some(text));
+        assert!(parse_cli(&strings(&[
+            command,
+            input,
+            "/tmp/paper",
+            "--author-note",
+            "a",
+            "--author-note",
+            "b"
+        ]))
+        .is_err());
+    }
+}

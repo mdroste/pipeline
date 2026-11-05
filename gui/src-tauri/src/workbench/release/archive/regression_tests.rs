@@ -25,6 +25,67 @@ fn fixture() -> (tempfile::TempDir, Store, String) {
         .id;
     (root, store, session)
 }
+
+#[cfg(unix)]
+#[test]
+fn a_nonportable_conversation_filename_does_not_replace_an_existing_backup() {
+    let (root, source, session) = fixture();
+    let directory = root.path().join("jobs/conversations").join(session);
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("analysis?.txt"), "keep this file").unwrap();
+    let output = tempfile::tempdir().unwrap();
+    let backup = output.path().join("backup.pwrx");
+    fs::write(&backup, "previous backup").unwrap();
+    let error = export_archive(
+        &source,
+        ExportArchiveRequest {
+            path: backup.to_string_lossy().into(),
+        },
+    )
+    .unwrap_err();
+    assert!(error.message.contains("analysis?.txt"), "{}", error.message);
+    assert_eq!(fs::read(&backup).unwrap(), b"previous backup");
+    assert_eq!(
+        fs::read(directory.join("analysis?.txt")).unwrap(),
+        b"keep this file"
+    );
+}
+
+#[test]
+fn inspection_and_restore_report_case_conflicts_before_reading_content() {
+    let output = tempfile::tempdir().unwrap();
+    let path = output.path().join("conflicting.pwrx");
+    let mut archive = zip::ZipWriter::new(File::create(&path).unwrap());
+    for name in [
+        "manifest.json",
+        "conversation-files/session/A/x.txt",
+        "conversation-files/session/a/y.txt",
+    ] {
+        archive
+            .start_file(name, SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(b"not a valid manifest").unwrap();
+    }
+    archive.finish().unwrap();
+    let error = inspect_archive(ExportArchiveRequest {
+        path: path.to_string_lossy().into(),
+    })
+    .unwrap_err();
+    assert!(
+        error.message.contains("conflicting paths"),
+        "{}",
+        error.message
+    );
+    let target = tempfile::tempdir().unwrap();
+    let store = Store::open_at(target.path()).unwrap();
+    let error = import(&store, &path).unwrap_err();
+    assert!(
+        error.message.contains("conflicting paths"),
+        "{}",
+        error.message
+    );
+    assert!(!target.path().join("jobs/conversations").exists());
+}
 fn export(store: &Store, root: &Path) -> PathBuf {
     let path = root.join("backup.pwrx");
     export_archive(

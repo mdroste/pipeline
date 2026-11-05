@@ -58,6 +58,43 @@ describe("ReportWorkspace", () => {
     invoke.mockReset();
   });
 
+  it("shows a saved author note as plain text in details and clears it for a different run", async () => {
+    const user = userEvent.setup();
+    const note = "Model assumptions\n<b>literal</b>";
+    invoke.mockImplementation(
+      async (command: string, args?: { runId?: string }) => {
+        if (command === "get_run_manifest")
+          return {
+            run_id: args?.runId,
+            artifacts: [],
+            author_note: args?.runId === "noted" ? note : null,
+          };
+        if (command === "get_run_report") return makeReport();
+        return null;
+      },
+    );
+    const view = render(
+      <ReportWorkspace
+        runId="noted"
+        report={makeReport()}
+        markdown="# Review\n\nText."
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Report details" }));
+    expect((await screen.findByText(/Model assumptions/)).textContent).toBe(
+      note,
+    );
+    view.rerender(
+      <ReportWorkspace
+        runId="plain"
+        report={makeReport()}
+        markdown="# Review\n\nText."
+      />,
+    );
+    await user.click(screen.getByRole("tab", { name: "Report details" }));
+    expect(screen.queryByText(/Model assumptions/)).not.toBeInTheDocument();
+  });
+
   it("presents the report by default and keeps provenance in its own tab", async () => {
     const user = userEvent.setup();
     render(

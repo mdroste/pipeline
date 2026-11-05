@@ -20,6 +20,7 @@ export interface RunProfileSnapshot {
 }
 
 export interface PendingRun extends RunProfileSnapshot {
+  authorNote?: string | null;
   paperPath: string;
   inputSelection: PrimaryInputSelection | null;
 }

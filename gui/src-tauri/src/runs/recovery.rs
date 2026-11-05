@@ -467,6 +467,7 @@ pub(super) fn recover_orphan_manifest(dir: &Path) -> Option<RunManifest> {
         0
     };
     let mut manifest = RunManifest {
+        author_note: None,
         artifact_schema_version,
         run_id,
         created,

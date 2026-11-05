@@ -74,6 +74,7 @@ pub(super) async fn ingest_report_file(
 }
 
 pub(super) struct StepCallRequest<'a> {
+    pub(super) author_note: Option<&'a str>,
     pub(super) app: &'a crate::emit::EventBus,
     pub(super) pass_key: &'a str,
     pub(super) log_label: &'a str,
@@ -263,6 +264,7 @@ async fn run_step_call_attempts(
         };
 
         let call = crate::pipeline::call::execute(crate::pipeline::call::Request {
+            author_note: request.author_note,
             app: request.app,
             pass_key: request.pass_key,
             log_label: request.log_label,

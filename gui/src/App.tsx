@@ -17,7 +17,8 @@ import VariablePrompt from "./components/VariablePrompt";
 import RunPreview from "./components/RunPreview";
 import UpdateBanner from "./components/UpdateBanner";
 import WorkspaceBackgroundTurnNotice from "./components/WorkspaceBackgroundTurnNotice";
-import NavRail, { CollapsedNavBar } from "./components/NavRail";
+import NavRail from "./components/NavRail";
+import WindowTitleBar from "./components/WindowTitleBar";
 import { NavRailSlotProvider } from "./components/nav-rail/navRailSlot";
 import RunSetupPanel from "./components/RunSetupPanel";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -26,7 +27,7 @@ import { openGetStarted } from "./lib/getStarted";
 import { HistoryRunOpener } from "./hooks/app/historyRunOpener";
 import WindowControls from "./components/WindowControls";
 import { isMac, isWindows } from "./lib/platform";
-import { router, type AppPage } from "./lib/router";
+import { router } from "./lib/router";
 import { confirmUpdateRestart } from "./lib/updateRestart";
 import { confirmDialog, notify } from "./components/DialogService";
 import { appEvents } from "./lib/appEvents";
@@ -40,7 +41,6 @@ const SettingsPage = lazy(() => import("./components/SettingsPage"));
 const HomePage = lazy(() => import("./components/HomePage"));
 const TasksPage = lazy(() => import("./components/TasksPage"));
 const ProjectIndexPage = lazy(() => import("./components/ProjectIndexPage"));
-const ConversationsPage = lazy(() => import("./components/ConversationsPage"));
 const AppSearch = lazy(() => import("./components/AppSearch"));
 const WorkspacePage = lazy(() => import("./components/WorkspacePage"));
 const PipelinePage = lazy(() => import("./components/PipelinePage"));
@@ -51,16 +51,6 @@ const ProjectsPage = lazy(() => import("./components/ProjectsPage"));
 const WorkflowGalleryPage = lazy(
   () => import("./components/WorkflowGalleryPage"),
 );
-// Pages that start on the plain surface rather than the shell behind it. The
-// Windows title strip takes the same color so it reads as part of the page.
-const SURFACE_TOP_PAGES: ReadonlySet<AppPage> = new Set([
-  "batch",
-  "history",
-  "home",
-  "projects",
-  "workspace",
-]);
-
 const loadBatchPanel = () => import("./components/BatchPanel");
 const BatchPanel = lazy(loadBatchPanel);
 const ReportWorkspace = lazy(() => import("./components/ReportWorkspace"));
@@ -131,6 +121,9 @@ function AppShell() {
     inputMode,
     inputSelection,
     paperPath,
+    authorNote,
+    setAuthorNote,
+    authorNoteFocusKey,
     parallelOverrides,
     selectionKey,
     setPaperPath,
@@ -148,6 +141,7 @@ function AppShell() {
     launchRetry,
     clearLaunchError,
     startPreparedLaunch,
+    editPreviewAuthorNote,
     handleNewRun,
     preparingRun,
     handleGenerate,
@@ -356,6 +350,8 @@ function AppShell() {
 
       {runPreview && (
         <RunPreview
+          authorNote={runPreview.snapshot.authorNote}
+          onEditAuthorNote={editPreviewAuthorNote}
           plan={runPreview.plan}
           config={runPreview.config}
           inputPath={runPreview.snapshot.paperPath}
@@ -377,6 +373,14 @@ function AppShell() {
         />
       )}
       {isWindows && <WindowControls />}
+
+      <WindowTitleBar
+        collapsed={navRailCollapsed}
+        isMac={isMac}
+        isWindows={isWindows}
+        onToggleSidebar={toggleNavRail}
+        toggleRef={navRailToggleRef}
+      />
 
       {closeProtectionUnavailable && (
         <div
@@ -400,19 +404,9 @@ function AppShell() {
         </div>
       )}
 
-      {navRailCollapsed && (
-        <CollapsedNavBar
-          isMac={isMac}
-          isWindows={isWindows}
-          onExpand={toggleNavRail}
-          toggleRef={navRailToggleRef}
-        />
-      )}
       <div className="flex min-h-0 flex-1">
         <NavRail
           collapsed={navRailCollapsed}
-          onToggleCollapsed={toggleNavRail}
-          toggleRef={navRailToggleRef}
           onActivity={() => void handleNavigate("activity")}
           tasksAttention={tasksAttention}
           activePage={page}
@@ -442,8 +436,6 @@ function AppShell() {
           }
           workspaceActive={workspaceActive}
           workspaceAttention={workspaceAttention}
-          isMac={isMac}
-          isWindows={isWindows}
           dependenciesReady={depsReport?.ready ?? null}
           dependenciesLoading={depsLoading}
           dependenciesError={depsError}
@@ -465,6 +457,9 @@ function AppShell() {
 
         {showRunSetup && (
           <RunSetupPanel
+            authorNote={authorNote}
+            onAuthorNoteChange={setAuthorNote}
+            authorNoteFocusKey={authorNoteFocusKey}
             configVersion={configVersion}
             configError={runConfigError}
             configLoading={runConfigLoading}
@@ -510,20 +505,6 @@ function AppShell() {
         )}
 
         <main className="flex min-w-0 flex-1 flex-col">
-          {/* The Windows title bar: the window controls float over its right
-              end. The collapsed sidebar's bar does this job when it is shown. */}
-          {isWindows && !navRailCollapsed && (
-            <div
-              data-testid="window-drag-strip"
-              data-tauri-drag-region
-              className={`h-8 shrink-0 ${
-                SURFACE_TOP_PAGES.has(page) ||
-                (page === "main" && state.kind === "done")
-                  ? "bg-surface"
-                  : ""
-              }`}
-            />
-          )}
           <UpdateBanner
             confirmRestart={() => {
               const unsaved = navigation.unsavedRef.current;
@@ -604,11 +585,7 @@ function AppShell() {
                 <ProjectIndexPage
                   onOpenProject={openWorkspaceProject}
                   onResumeConversation={openWorkspaceSession}
-                />
-              ) : page === "conversations" ? (
-                <ConversationsPage
-                  onOpen={openWorkspaceSession}
-                  onNew={newConversation}
+                  onNewConversation={newConversation}
                 />
               ) : page === "workspace" ? (
                 // A project's Reviews open saved runs (and cited sources)

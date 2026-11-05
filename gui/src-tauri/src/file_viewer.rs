@@ -305,9 +305,9 @@ mod tests {
             ("commands/artifacts.rs", 1),
             // The data folder, resolved here and never passed in.
             ("commands/config.rs", 3),
-            // Reveals a package this session exported, and opens an HTML report
-            // this function just wrote.
-            ("commands/export/desktop.rs", 6),
+            // Opens an HTML report this function just wrote. Package reveal
+            // delegates to the shared `reveal` path below.
+            ("commands/export/desktop.rs", 3),
             // `reveal` shows a file in its folder and never opens it.
             ("file_viewer.rs", 3),
             // `external_target`, `snapshot_conversation_file`, and

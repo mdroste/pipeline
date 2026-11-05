@@ -503,6 +503,7 @@ pub async fn enqueue_run(
     extra_inputs: Option<std::collections::HashMap<String, String>>,
     expected_profile_snapshot_id: Option<String>,
     run_parallel_overrides: Option<RunModelOverrides>,
+    author_note: Option<String>,
 ) -> Result<QueuedRun, String> {
     let variables = variables.unwrap_or_default();
     let extra_inputs = extra_inputs.unwrap_or_default();
@@ -514,6 +515,7 @@ pub async fn enqueue_run(
         &extra_inputs,
         expected_profile_snapshot_id.as_deref(),
         run_parallel_overrides.as_ref(),
+        author_note.as_deref(),
     )
     .await?;
     let profile_name = snapshot.profile_name.clone();
@@ -537,6 +539,7 @@ pub async fn enqueue_run(
 /// Queue one review per document, all bound to one captured snapshot (the
 /// queued form of `start_batch`).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn enqueue_batch(
     app: AppHandle,
     paths: Vec<String>,
@@ -544,6 +547,8 @@ pub async fn enqueue_batch(
     extra_inputs: Option<std::collections::HashMap<String, String>>,
     expected_profile_config_snapshot_id: Option<String>,
     run_parallel_overrides: Option<RunModelOverrides>,
+    author_note: Option<String>,
+    expected_profile_snapshot_id: Option<String>,
 ) -> Result<Vec<QueuedRun>, String> {
     let launch = prepare_batch_launch(
         paths,
@@ -551,6 +556,8 @@ pub async fn enqueue_batch(
         extra_inputs,
         expected_profile_config_snapshot_id,
         run_parallel_overrides,
+        author_note,
+        expected_profile_snapshot_id,
     )
     .await?;
     let bus = crate::emit::from_app(app);

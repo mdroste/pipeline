@@ -145,6 +145,7 @@ describe("App navigation", () => {
   it("opens on the project-centered Home and starts a review from an outcome card", async () => {
     const user = userEvent.setup();
     localStorage.removeItem("pipeline.ui.page");
+    localStorage.removeItem("pipeline.ui.preferences");
     render(<App />);
 
     expect(
@@ -162,7 +163,9 @@ describe("App navigation", () => {
     await user.click(screen.getByRole("button", { name: "Skip for now" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /Review a paper/ }));
+    await user.click(
+      screen.getByRole("button", { name: /Review papers, slides/ }),
+    );
     expect(await screen.findByTestId("run-setup-panel")).toBeVisible();
   });
 
@@ -171,7 +174,7 @@ describe("App navigation", () => {
     localStorage.setItem("pipeline.ui.page", "home");
     localStorage.setItem(
       "pipeline.ui.navRailSections",
-      JSON.stringify({ conversations: true }),
+      JSON.stringify({ projects: true }),
     );
     const unhandled = invoke.getMockImplementation()!;
     invoke.mockImplementation((command: string, args?: unknown) => {
@@ -206,7 +209,7 @@ describe("App navigation", () => {
       localStorage.setItem("pipeline.ui.page", "home");
       localStorage.setItem(
         "pipeline.ui.navRailSections",
-        JSON.stringify({ conversations: true }),
+        JSON.stringify({ projects: true }),
       );
       const unhandled = invoke.getMockImplementation()!;
       invoke.mockImplementation((command: string, args?: unknown) => {
@@ -263,40 +266,49 @@ describe("App navigation", () => {
     await waitFor(() => expect(search()).not.toBeNull());
   });
 
-  it("creates a conversation from New conversation on Home", async () => {
-    const user = userEvent.setup();
-    localStorage.setItem("pipeline.ui.page", "home");
-    const unhandled = invoke.getMockImplementation()!;
-    invoke.mockImplementation((command: string, args?: unknown) => {
-      if (command === "workbench_create_session")
-        return Promise.resolve({ record: { id: "created" } });
-      if (command === "workbench_session_snapshot")
-        return Promise.resolve({
-          session: { id: "created", workspaceId: null },
-        });
-      return unhandled(command, args);
-    });
-    render(<App />);
+  it.each(["home", "project-index"])(
+    "starts a chat without a project from %s",
+    async (page) => {
+      const user = userEvent.setup();
+      localStorage.setItem("pipeline.ui.page", page);
+      const unhandled = invoke.getMockImplementation()!;
+      invoke.mockImplementation((command: string, args?: unknown) => {
+        if (command === "workbench_project_index") return Promise.resolve([]);
+        if (command === "workbench_create_session")
+          return Promise.resolve({ record: { id: "created" } });
+        if (command === "workbench_session_snapshot")
+          return Promise.resolve({
+            session: { id: "created", workspaceId: null },
+          });
+        return unhandled(command, args);
+      });
+      render(<App />);
 
-    await user.click(
-      await screen.findByRole("button", { name: /Ask questions or get help/ }),
-    );
-
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith(
-        "workbench_create_session",
-        expect.objectContaining({
-          request: expect.objectContaining({ workspaceId: null }),
+      await user.click(
+        await screen.findByRole("button", {
+          name:
+            page === "home"
+              ? /Work on a project with your choice of model/
+              : "+ New chat",
         }),
-      ),
-    );
-    await waitFor(() =>
-      expect(router.route).toMatchObject({
-        page: "workspace",
-        sessionId: "created",
-      }),
-    );
-  });
+      );
+
+      await waitFor(() =>
+        expect(invoke).toHaveBeenCalledWith(
+          "workbench_create_session",
+          expect.objectContaining({
+            request: expect.objectContaining({ workspaceId: null }),
+          }),
+        ),
+      );
+      await waitFor(() =>
+        expect(router.route).toMatchObject({
+          page: "workspace",
+          sessionId: "created",
+        }),
+      );
+    },
+  );
 
   it("reopens guided setup and the example Review from Home", async () => {
     const user = userEvent.setup();
@@ -450,7 +462,7 @@ describe("App navigation", () => {
     const closeHandler = onCloseRequested.mock.calls[0][0] as (closeEvent: {
       preventDefault: () => void;
     }) => void;
-    closeHandler(event);
+    await act(async () => closeHandler(event));
 
     expect(confirmDialog).toHaveBeenCalledWith(
       "You have unsaved changes. Quit and discard them?",

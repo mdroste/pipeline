@@ -35,7 +35,7 @@ export function workspaceNotice(event: WorkbenchEvent): AppNotice | null {
       id: `request:${id}:${event.requestId}`,
       kind: "attention",
       title: "Conversation needs attention",
-      body: "Open Conversations to review a request.",
+      body: "Open Projects to review a chat request.",
     };
   if (event.kind !== "turnCompleted") return null;
   if (event.status === "completed")

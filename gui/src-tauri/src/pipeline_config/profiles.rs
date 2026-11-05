@@ -665,9 +665,31 @@ pub(super) fn restore_profile_bytes(path: &Path, bytes: &[u8]) -> std::io::Resul
     let mut temp = tempfile::NamedTempFile::new_in(parent)?;
     temp.write_all(bytes)?;
     temp.flush()?;
-    temp.as_file().sync_all()?;
+    crate::safety::sync_file(temp.as_file())?;
     temp.persist(path).map_err(|error| error.error)?;
     #[cfg(unix)]
-    fs::File::open(parent)?.sync_all()?;
+    if let Ok(directory) = fs::File::open(parent) {
+        crate::safety::sync_landed(&directory);
+    }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod flush_tests {
+    use super::*;
+
+    #[test]
+    fn profile_restore_falls_back_from_full_flush_without_publishing_failed_writes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("profile.json");
+        crate::safety::simulate_sync_failure(Some((libc::EINVAL, false)));
+        let saved = restore_profile_bytes(&path, b"original");
+        crate::safety::simulate_sync_failure(None);
+        saved.unwrap();
+        crate::safety::simulate_sync_failure(Some((libc::EIO, false)));
+        let failed = restore_profile_bytes(&path, b"replacement");
+        crate::safety::simulate_sync_failure(None);
+        assert!(failed.is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"original");
+    }
 }

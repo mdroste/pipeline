@@ -268,6 +268,7 @@ fn zero_match_fan_out_returns_visible_skipped_output() {
             &output_budget,
             false,
             &shared_context_pool,
+            None,
         ))
         .unwrap();
     assert!(wave.failures.is_empty());
@@ -325,6 +326,7 @@ fn run_wave_recording(
         &output_budget,
         false,
         &shared_context_pool,
+        None,
     ));
     let passes = recorder
         .0

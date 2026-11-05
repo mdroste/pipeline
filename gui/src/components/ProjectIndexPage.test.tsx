@@ -16,6 +16,14 @@ vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn().mockResolvedValue(() => {}),
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
+vi.mock("../hooks/useConversationIndex", () => ({
+  default: () => ({
+    conversations: [],
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+  }),
+}));
 const project: ProjectIndexItem = {
   id: "networks",
   name: "Production networks",
@@ -50,7 +58,12 @@ it("opens as an index and resumes the exact conversation only on request", async
   const onOpenProject = vi.fn().mockResolvedValue(undefined);
   const onResumeConversation = vi.fn().mockResolvedValue(true);
   const user = userEvent.setup();
-  render(<ProjectIndexPage {...{ onOpenProject, onResumeConversation }} />);
+  render(
+    <ProjectIndexPage
+      onNewConversation={vi.fn()}
+      {...{ onOpenProject, onResumeConversation }}
+    />,
+  );
   await screen.findByRole("button", { name: "Production networks" });
   expect(
     screen.getByRole("heading", { level: 1, name: "Projects" }),
@@ -72,7 +85,9 @@ it("opens as an index and resumes the exact conversation only on request", async
 it("searches research questions and persists pins independently from project data", async () => {
   const user = userEvent.setup();
   const props = { onOpenProject: vi.fn(), onResumeConversation: vi.fn() };
-  const view = render(<ProjectIndexPage {...props} />);
+  const view = render(
+    <ProjectIndexPage onNewConversation={vi.fn()} {...props} />,
+  );
   await screen.findByRole("button", { name: "Production networks" });
   await user.type(screen.getByRole("searchbox"), "shocks");
   expect(
@@ -87,7 +102,7 @@ it("searches research questions and persists pins independently from project dat
     ),
   ).toBeVisible();
   view.unmount();
-  render(<ProjectIndexPage {...props} />);
+  render(<ProjectIndexPage onNewConversation={vi.fn()} {...props} />);
   expect(
     await screen.findByRole("button", { name: "Unpin Production networks" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -101,6 +116,7 @@ it("reports load and resume failures with retry and retains the project list", a
   const user = userEvent.setup();
   render(
     <ProjectIndexPage
+      onNewConversation={vi.fn()}
       onOpenProject={vi.fn()}
       onResumeConversation={vi
         .fn()
@@ -127,7 +143,11 @@ it("offers folderless project creation and routes attention to the owning projec
   const user = userEvent.setup();
   const open = vi.fn().mockResolvedValue(undefined);
   render(
-    <ProjectIndexPage onOpenProject={open} onResumeConversation={vi.fn()} />,
+    <ProjectIndexPage
+      onNewConversation={vi.fn()}
+      onOpenProject={open}
+      onResumeConversation={vi.fn()}
+    />,
   );
   expect(
     await screen.findByRole("button", { name: "Create your first project" }),

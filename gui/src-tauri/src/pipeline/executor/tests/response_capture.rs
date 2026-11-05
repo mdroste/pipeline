@@ -5,6 +5,7 @@ fn request<'a>(
     root: Option<&'a str>,
 ) -> StepCallRequest<'a> {
     StepCallRequest {
+        author_note: None,
         app,
         pass_key: "audit",
         log_label: "audit",

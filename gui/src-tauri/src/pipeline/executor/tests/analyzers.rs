@@ -57,6 +57,7 @@ async fn run(
         &preloaded,
         None,
         &crate::settings::Settings::default(),
+        None,
     )
     .await
     .unwrap();

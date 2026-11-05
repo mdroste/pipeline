@@ -1,0 +1,235 @@
+/* One treatment for native dropdowns and the app's themed select/menu layers.
+   Keep native form semantics, sizing constraints, and change events intact. */
+:root select:not([multiple]):not([size]),
+:root select:not([multiple])[size="1"],
+:root .ui-select-trigger {
+  min-width: 0;
+  min-height: 34px;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  background-color: var(--ui-surface);
+  color: var(--ui-text);
+  padding: 7px 32px 7px 11px;
+  font-family: inherit;
+  font-size: var(--ui-text-label);
+  font-weight: 450;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: none;
+  outline: none;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+:root select:not([multiple]):not([size]),
+:root select:not([multiple])[size="1"] {
+  overflow: hidden;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23737373' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-position: right 10px center;
+  background-repeat: no-repeat;
+  color-scheme: light;
+}
+
+:root.dark select:not([multiple]):not([size]),
+:root.dark select:not([multiple])[size="1"] {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23a3a3a3' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  color-scheme: dark;
+}
+
+:root .ui-select-trigger {
+  padding-inline-end: 10px;
+}
+
+:root select:not([multiple]):is(:not([size]), [size="1"]):hover:not(:disabled),
+:root .ui-select-trigger:hover:not(:disabled) {
+  border-color: var(--ui-border-strong);
+  background-color: var(--ui-sunken);
+}
+
+:root select:not([multiple]):is(:not([size]), [size="1"]):focus-visible,
+:root .ui-select-trigger:focus-visible {
+  border-color: var(--ui-border-strong);
+  box-shadow: 0 0 0 3px var(--ui-sunken);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ui-muted) 18%, transparent);
+}
+
+:root select:not([multiple]):is(:not([size]), [size="1"]):disabled,
+:root .ui-select-trigger:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Customizable native pickers use the top layer, escaping scrollable panes.
+   Older webviews retain their platform picker and the same quiet trigger. */
+@supports (appearance: base-select) {
+  :root select:not([multiple]):is(:not([size]), [size="1"]),
+  :root select:not([multiple]):is(:not([size]), [size="1"])::picker(select) {
+    appearance: base-select;
+  }
+
+  :root select::picker-icon {
+    display: none;
+  }
+
+  /* The implicit selected-value box can exceed its host in WebKit. Reserve
+     the chevron area even for long labels; the picker shows the full text. */
+  :root select:not([multiple]):is(:not([size]), [size="1"]) {
+    position: relative;
+  }
+
+  :root select:not([multiple]):is(:not([size]), [size="1"])::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline-end: 0;
+    width: 30px;
+    border-radius: 0 var(--ui-radius-md) var(--ui-radius-md) 0;
+    background: inherit;
+    pointer-events: none;
+  }
+
+  :root select::picker(select) {
+    min-inline-size: anchor-size(self-inline);
+    max-inline-size: min(36rem, calc(100vw - 24px));
+    max-block-size: min(360px, calc(100dvh - 24px));
+    margin-block: 5px;
+    border: 1px solid var(--ui-border);
+    border-radius: var(--ui-radius-md);
+    background: var(--ui-raised);
+    padding: 5px;
+    color: var(--ui-text);
+    font-family: inherit;
+    font-size: var(--ui-text-label);
+    font-weight: 400;
+    line-height: 20px;
+    box-shadow: var(--ui-shadow-2);
+    scrollbar-width: thin;
+    scrollbar-color: var(--ui-border-strong) transparent;
+  }
+
+  :root select option {
+    min-block-size: 34px;
+    gap: 10px;
+    border: 0;
+    border-radius: var(--ui-radius-sm);
+    background: transparent;
+    padding: 7px 10px;
+    color: var(--ui-text);
+    font-weight: 400;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    cursor: pointer;
+  }
+
+  :root select option:is(:hover, :focus-visible):not(:disabled) {
+    background: var(--ui-sunken);
+    outline: none;
+  }
+
+  :root select option:checked {
+    font-weight: 500;
+  }
+
+  :root select option:disabled {
+    color: var(--ui-muted);
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  :root select option::checkmark {
+    order: 1;
+    margin-inline-start: auto;
+    color: var(--ui-muted);
+    font-size: var(--ui-text-meta);
+  }
+
+  :root select optgroup {
+    padding: 3px 0;
+    color: var(--ui-muted);
+    font-size: var(--ui-text-meta);
+    font-weight: 500;
+  }
+
+  :root select optgroup::legend {
+    padding: 6px 10px 4px;
+    color: var(--ui-muted);
+    font-size: var(--ui-text-meta);
+    font-weight: 500;
+  }
+}
+
+/* Shared action menus, custom selectors, and the chat model picker. */
+:root [data-ui-popover]:is([role="menu"], [role="listbox"]),
+:root [data-ui-popover]:has([role="listbox"]) {
+  border-color: var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  box-shadow: var(--ui-shadow-2);
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-border-strong) transparent;
+}
+
+:root .ui-dropdown-menu {
+  padding: 5px;
+}
+
+:root .ui-dropdown-item,
+:root [data-ui-popover] [role="option"] {
+  min-height: 34px;
+  border-radius: var(--ui-radius-sm);
+  padding: 7px 10px;
+  font-size: var(--ui-text-label);
+  line-height: 20px;
+  outline: none;
+}
+
+:root
+  .ui-dropdown-item:is(:hover, :focus-visible):not(:disabled):not(
+    [aria-disabled="true"]
+  ),
+:root
+  [data-ui-popover]
+  [role="option"]:is(:hover, :focus-visible):not([aria-disabled="true"]) {
+  background-color: var(--ui-sunken);
+}
+
+:root .ui-dropdown-item[aria-selected="true"] {
+  font-weight: 500;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root select,
+  :root .ui-select-trigger {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  :root select:not([multiple]):is(:not([size]), [size="1"]),
+  :root .ui-select-trigger {
+    border: 1px solid ButtonText;
+    background-color: ButtonFace;
+    color: ButtonText;
+  }
+
+  :root select:not([multiple]):is(:not([size]), [size="1"]) {
+    appearance: auto;
+    background-image: none;
+  }
+
+  :root select::picker(select),
+  :root [data-ui-popover] {
+    border-color: ButtonText;
+    box-shadow: none;
+  }
+
+  :root select option:is(:checked, :focus-visible) {
+    background: Highlight;
+    color: HighlightText;
+  }
+}

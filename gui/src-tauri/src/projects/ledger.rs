@@ -210,8 +210,7 @@ fn write_ledger_to(projects_dir: &Path, ledger: &ProjectIssueLedger) -> Result<(
         .map_err(|error| format!("Failed to create project-ledger staging file: {error}"))?;
     temp.write_all(&bytes)
         .map_err(|error| format!("Failed to stage project issue ledger: {error}"))?;
-    temp.as_file()
-        .sync_all()
+    crate::safety::sync_file(temp.as_file())
         .map_err(|error| format!("Failed to flush project issue ledger: {error}"))?;
     temp.persist(destination)
         .map_err(|error| format!("Failed to save project issue ledger: {}", error.error))?;

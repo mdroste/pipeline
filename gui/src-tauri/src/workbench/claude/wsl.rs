@@ -222,13 +222,18 @@ fn windows_path(value: &str) -> bool {
     let b = value.as_bytes();
     b.len() > 2 && b[0].is_ascii_alphabetic() && b[1] == b':' || value.starts_with("\\\\")
 }
+fn path_for_wsl(value: &str) -> String {
+    crate::file_viewer::normalize_external_path(value).replace('/', "\\")
+}
 impl Environment {
     fn path(&self, value: &str) -> Result<String, String> {
         if !windows_path(value) {
             return Ok(value.into());
         }
-        let value = value.strip_prefix("\\\\?\\").unwrap_or(value);
-        let mut command = self.wsl.command(["--exec", "wslpath", "-a", "-u", value]);
+        // UNC roots need their leading pair of separators after removing a
+        // verbatim prefix; simply dropping \\?\ turns them into relative paths.
+        let value = path_for_wsl(value);
+        let mut command = self.wsl.command(["--exec", "wslpath", "-a", "-u", &value]);
         let output =
             crate::process::run_bounded_independent(&mut command, Duration::from_secs(5), 8192)?;
         let path = String::from_utf8(output.stdout)
@@ -473,6 +478,23 @@ mod tests {
         assert!(!windows_path("/home/research/paper.tex"));
         assert!(!windows_path("~/.ssh"));
         assert!(!windows_path("example.org"));
+    }
+
+    #[test]
+    fn wsl_translation_preserves_unc_and_distribution_roots() {
+        assert_eq!(path_for_wsl(r"\\?\C:\My Project"), r"C:\My Project");
+        assert_eq!(
+            path_for_wsl(r"\\?\UNC\server\share\project"),
+            r"\\server\share\project"
+        );
+        assert_eq!(
+            path_for_wsl(r"\\?\UNC\wsl.localhost\Ubuntu\home\me"),
+            r"\\wsl.localhost\Ubuntu\home\me"
+        );
+        assert_eq!(
+            path_for_wsl(r"\\server\share\project"),
+            r"\\server\share\project"
+        );
     }
 
     #[cfg(unix)]

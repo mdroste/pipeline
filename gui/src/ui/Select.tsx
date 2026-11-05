@@ -84,14 +84,17 @@ export default function Select<T extends string = string>({
             setOpen(true);
           }
         }}
-        className={`flex min-w-0 items-center justify-between gap-2 rounded-ui-sm border border-line bg-surface px-3 py-2 text-left text-ui-label text-ink outline-none hover:border-line-strong focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40 ${className}`}
+        className={`ui-select-trigger flex min-w-0 items-center justify-between gap-2 text-left ${className}`}
       >
         <span
           className={`min-w-0 truncate ${selected ? "" : "text-ink-muted"}`}
         >
           {selected?.label ?? (value || placeholder)}
         </span>
-        <Icon name="chevron-down" className="h-4 w-4 shrink-0 text-ink-muted" />
+        <Icon
+          name="chevron-down"
+          className="h-3.5 w-3.5 shrink-0 text-ink-muted"
+        />
       </button>
       <Popover
         open={open}
@@ -104,7 +107,7 @@ export default function Select<T extends string = string>({
         width="anchor"
         id={listId}
         closeOnFocusOut
-        className="p-1.5"
+        className="ui-dropdown-menu"
         onKeyDown={onListKeyDown}
       >
         {options.map((option) => (
@@ -117,7 +120,7 @@ export default function Select<T extends string = string>({
             data-label={option.label}
             data-autofocus={option.value === autofocus ? "" : undefined}
             onClick={() => choose(option)}
-            className={`flex cursor-default items-start gap-2 rounded-ui-sm px-2.5 py-2 outline-none hover:bg-sunken focus:bg-sunken ${
+            className={`ui-dropdown-item flex cursor-default items-start gap-2 ${
               option.disabled ? "opacity-40" : ""
             }`}
           >

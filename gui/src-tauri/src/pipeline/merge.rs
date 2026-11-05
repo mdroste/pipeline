@@ -43,6 +43,7 @@ fn group_outputs(outputs: Vec<StepOutput>) -> Vec<(String, Vec<StepOutput>)> {
 /// rather than silently dropping the step.
 ///
 /// Returns one StepOutput per step, in original config order.
+#[allow(clippy::too_many_arguments)]
 pub async fn merge_step_outputs(
     app: &crate::emit::EventBus,
     outputs: Vec<StepOutput>,
@@ -51,6 +52,7 @@ pub async fn merge_step_outputs(
     run_artifact_dir: Option<&str>,
     settings: &crate::settings::Settings,
     output_schemas: &BTreeMap<String, serde_json::Value>,
+    author_note: Option<&str>,
 ) -> Result<Vec<StepOutput>, String> {
     // Validate merge prompt has required placeholders
     if !merge_config.prompt.contains("{topic}") || !merge_config.prompt.contains("{agent_reports}")
@@ -205,6 +207,7 @@ pub async fn merge_step_outputs(
         let sem = semaphore.clone();
         let timeout = settings.step_timeout_secs.max(60);
         let run_settings = settings.clone();
+        let author_note = author_note.map(str::to_string);
 
         let task = crate::run_scope::spawn_in(&mut tasks, async move {
             let early_error = |error: String| {
@@ -269,6 +272,7 @@ pub async fn merge_step_outputs(
             };
             let model_policy = resolution.selection.label();
             let call = super::call::execute(super::call::Request {
+                author_note: author_note.as_deref(),
                 app: &app_handle,
                 pass_key: &merge_key_done,
                 log_label: &log_label,
@@ -752,6 +756,7 @@ mod tests {
                 None,
                 &crate::settings::Settings::default(),
                 &BTreeMap::new(),
+                None,
             )
             .await
         })

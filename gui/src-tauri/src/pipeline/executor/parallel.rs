@@ -81,6 +81,7 @@ pub(super) async fn run_parallel_wave(
     output_budget: &Arc<OutputBudget>,
     context_cache_enabled: bool,
     shared_context_pool: &crate::pipeline::context_cache::PreparedContextPool,
+    author_note: Option<&str>,
 ) -> Result<WaveResult, String> {
     let mut tasks: JoinSet<ParallelTaskResult> = JoinSet::new();
     let mut immediate_results: Vec<((usize, String), StepOutput)> = Vec::new();
@@ -376,6 +377,7 @@ pub(super) async fn run_parallel_wave(
             // all retries have completed.
             let context_view = resolved._view;
             let system_prompt = step.system_prompt.clone();
+            let author_note = author_note.map(str::to_string);
 
             // Publish every concrete provider/fan-out unit before it waits for
             // a worker permit. The progress view can then distinguish queued
@@ -436,6 +438,7 @@ pub(super) async fn run_parallel_wave(
                 .map_err(failed)?;
                 let model_policy = resolution.selection.label();
                 let call = execute_metered_step_call(StepCallRequest {
+                    author_note: author_note.as_deref(),
                     app: &app_handle,
                     pass_key: &step_key_emit,
                     log_label: &log_label,

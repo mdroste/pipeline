@@ -47,6 +47,8 @@ OPTIONS:
                               desktop app's active workflow.
   -w, --workflow <FILE|->     Portable workflow JSON file, or '-' for stdin.
                               Runs ephemerally and is not installed.
+      --author-note <TEXT>    Author priorities shared with every review agent
+                              (up to 4,000 characters).
       --var <KEY=VALUE>       Workflow variable; repeat for multiple values.
       --extra-input <KEY=PATH>
                               Named input; repeat for multiple inputs.
@@ -84,6 +86,8 @@ OPTIONS:
   -p, --profile <ID>          Workflow for this batch. Does not change the
                               desktop app's active workflow.
   -w, --workflow <FILE|->     Portable workflow JSON file, or '-' for stdin.
+      --author-note <TEXT>    Author priorities shared with every review agent
+                              (up to 4,000 characters).
       --var <KEY=VALUE>       Workflow variable; repeat for multiple values.
       --extra-input <KEY=PATH>
                               Named input shared by every run; repeatable.
@@ -123,6 +127,8 @@ OPTIONS:
   -p, --profile <ID>          Workflow to check without changing the desktop
                               app's active workflow.
   -w, --workflow <FILE|->     Portable workflow JSON file, or '-' for stdin.
+      --author-note <TEXT>    Author priorities shared with every review agent
+                              (up to 4,000 characters).
       --var <KEY=VALUE>       Workflow variable; repeatable.
       --extra-input <KEY=PATH>
                               Named input; repeatable. Named PDFs also trigger

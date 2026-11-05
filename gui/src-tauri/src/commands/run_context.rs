@@ -5,6 +5,7 @@ const REDACTED_SECRET: &str = "[redacted secret; re-enter to rerun]";
 
 #[derive(Clone)]
 pub(super) struct RunSnapshot {
+    pub(super) author_note: Option<String>,
     pub(super) settings: crate::settings::Settings,
     pub(super) config: PipelineConfig,
     pub(super) profile_name: String,
@@ -199,6 +200,7 @@ pub(super) fn load_run_snapshot_for_workflow(
     ))
     .map_err(|e| format!("Could not fingerprint run configuration: {e}"))?;
     Ok(RunSnapshot {
+        author_note: None,
         settings,
         config,
         profile_name,
@@ -210,6 +212,19 @@ pub(super) fn load_run_snapshot_for_workflow(
         specialist_catalog_revision,
         agent_overrides: None,
     })
+}
+
+pub(super) fn bind_author_note(
+    mut snapshot: RunSnapshot,
+    note: Option<&str>,
+) -> Result<RunSnapshot, String> {
+    snapshot.author_note = crate::pipeline::author_note::normalize(note)?;
+    if let Some(note) = &snapshot.author_note {
+        snapshot.fingerprint =
+            stable_snapshot_fingerprint(&(snapshot.fingerprint.as_str(), "author_note_v1", note))
+                .map_err(|error| format!("Could not fingerprint the author note: {error}"))?;
+    }
+    Ok(snapshot)
 }
 
 pub(super) fn bind_runtime_snapshot(

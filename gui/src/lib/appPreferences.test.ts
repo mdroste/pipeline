@@ -10,9 +10,16 @@ import {
 } from "./appPreferences";
 
 beforeEach(() => localStorage.clear());
-it("preserves old startup behavior and supplies defaults for missing or corrupt preferences", () => {
+it("opens Home by default for missing or corrupt preferences", () => {
   for (const raw of [null, "broken", "null", "[]"])
     expect(parsePreferences(raw)).toEqual(DEFAULT_PREFERENCES);
+  localStorage.setItem("pipeline.ui.page", "workspace");
+  expect(startupRoute(localStorage)).toEqual({ page: "home" });
+  localStorage.setItem("pipeline.ui.route", "#/project/monetary?surface=chat");
+  expect(startupRoute(localStorage)).toEqual({ page: "home" });
+});
+it("restores the last route when explicitly selected", () => {
+  saveAppPreferences({ startup: "restore" });
   localStorage.setItem("pipeline.ui.page", "workspace");
   expect(startupRoute(localStorage)).toEqual({ page: "workspace" });
   localStorage.setItem("pipeline.ui.route", "#/reviews/history?run=run-7");
@@ -92,8 +99,8 @@ it.each([
   expect(startupRoute(localStorage)).toEqual({ page: "home" });
 });
 
-it("still continues research pages where the researcher left them", () => {
-  localStorage.clear();
+it("continues research pages when restore is selected", () => {
+  saveAppPreferences({ startup: "restore" });
   localStorage.setItem("pipeline.ui.route", "#/reviews/history");
   expect(startupRoute(localStorage)).toEqual({ page: "history" });
   localStorage.setItem("pipeline.ui.route", "#/project/monetary?surface=chat");

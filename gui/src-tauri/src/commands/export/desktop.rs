@@ -38,28 +38,7 @@ pub(in crate::commands) fn validated_recent_export(
 
 pub fn reveal_export_in_folder(path: String) -> Result<(), String> {
     let path = validated_recent_export(&path)?;
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut command = std::process::Command::new("open");
-        command.arg("-R").arg(&path);
-        command
-    };
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = std::process::Command::new("explorer.exe");
-        command.arg(format!("/select,{}", path.display()));
-        command
-    };
-    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-    let mut command = {
-        let mut command = std::process::Command::new("xdg-open");
-        command.arg(path.parent().unwrap_or(&path));
-        command
-    };
-    command
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("Could not reveal the exported package: {error}"))
+    crate::file_viewer::reveal(&path)
 }
 
 /// Stash the last export path so we can clean it up on the next export.

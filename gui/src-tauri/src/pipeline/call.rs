@@ -25,6 +25,7 @@ type BoxObservedCallFuture<'a> = Pin<
 /// Borrowed convenience request used by the executor and merge paths. It is
 /// immediately converted to [`OwnedRequest`] before any scheduler boundary.
 pub struct Request<'a> {
+    pub author_note: Option<&'a str>,
     pub app: &'a crate::emit::EventBus,
     pub pass_key: &'a str,
     pub log_label: &'a str,
@@ -49,6 +50,7 @@ pub struct Request<'a> {
 /// call `Send + 'static`, so every caller (including sequential/orientation
 /// paths) gets the same independently scheduled task boundary.
 pub struct OwnedRequest {
+    pub author_note: Option<String>,
     pub app: crate::emit::EventBus,
     pub pass_key: String,
     pub log_label: String,
@@ -85,6 +87,7 @@ impl OwnedRequest {
         timeout_secs: u64,
     ) -> Self {
         Self {
+            author_note: None,
             app: app.clone(),
             pass_key: pass_key.into(),
             log_label: log_label.into(),
@@ -114,6 +117,7 @@ impl OwnedRequest {
 impl From<Request<'_>> for OwnedRequest {
     fn from(request: Request<'_>) -> Self {
         Self {
+            author_note: request.author_note.map(str::to_string),
             app: request.app.clone(),
             pass_key: request.pass_key.to_string(),
             log_label: request.log_label.to_string(),
@@ -256,6 +260,15 @@ pub async fn execute(request: Request<'_>) -> Result {
 /// Execute any owned call through the single scheduler-rooted dispatch path.
 pub async fn execute_owned(mut request: OwnedRequest) -> Result {
     sanitize_model_request(&mut request);
+    if let Err(error) = apply_author_note(&mut request) {
+        return Result {
+            output: Err(error),
+            usage: Default::default(),
+            duration_secs: 0,
+            reported_model: None,
+            usage_limit_fallback: None,
+        };
+    }
     CallTask::spawn(request).join().await
 }
 
@@ -263,6 +276,16 @@ pub async fn execute_owned(mut request: OwnedRequest) -> Result {
 /// duration are still emitted/accumulated by the unified runner.
 pub async fn execute_text(request: OwnedRequest) -> std::result::Result<String, String> {
     execute_owned(request).await.output
+}
+
+// Cached calls already include the note before the document. Compose uncached
+// calls once here, after task sanitization and before provider retries/fallbacks.
+fn apply_author_note(request: &mut OwnedRequest) -> std::result::Result<(), String> {
+    if request.shared_context.is_none() && request.author_note.is_some() {
+        request.prompt =
+            super::author_note::prepend(&request.prompt, request.author_note.as_deref())?;
+    }
+    Ok(())
 }
 
 fn sanitize_model_request(request: &mut OwnedRequest) {
@@ -729,6 +752,7 @@ mod tests {
         let app: crate::emit::EventBus = Arc::new(crate::emit::NullEvents);
         let settings = crate::settings::Settings::default();
         let future = execute(Request {
+            author_note: None,
             app: &app,
             pass_key: "size-test",
             log_label: "Size test",

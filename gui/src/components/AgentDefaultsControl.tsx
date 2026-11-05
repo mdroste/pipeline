@@ -112,11 +112,23 @@ export default function AgentDefaultsControl({
   return (
     <div className="space-y-2.5">
       <div>
-        <p className="text-xs font-medium text-gray-700 dark:text-neutral-300">
+        <p
+          className={
+            stacked
+              ? "text-ui-label font-medium text-ink"
+              : "text-xs font-medium text-gray-700 dark:text-neutral-300"
+          }
+        >
           {label}
         </p>
         {help && (
-          <p className="mt-0.5 text-[13px] leading-4 text-gray-500 dark:text-neutral-500">
+          <p
+            className={
+              stacked
+                ? "mt-1 text-ui-meta leading-5 text-ink-muted"
+                : "mt-0.5 text-[13px] leading-4 text-gray-500 dark:text-neutral-500"
+            }
+          >
             {help}
           </p>
         )}
@@ -148,7 +160,11 @@ export default function AgentDefaultsControl({
               disabled={disabled}
               title={missing ? "Not connected" : undefined}
               onClick={() => updateAgents(provider)}
-              className={`${chipClass} ${active ? chipOn : missing ? chipMissing : chipOff}`}
+              className={
+                stacked
+                  ? `min-h-8 rounded-ui-sm border px-2.5 py-1 text-ui-label font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50 ${active ? "border-inverse bg-inverse text-on-inverse" : missing ? "border-dashed border-line-strong text-ink-muted hover:border-ink-muted" : "border-line bg-surface text-ink-muted hover:border-line-strong hover:text-ink"}`
+                  : `${chipClass} ${active ? chipOn : missing ? chipMissing : chipOff}`
+              }
             >
               {PROVIDER_LABELS[provider]}
             </button>
@@ -188,68 +204,100 @@ export default function AgentDefaultsControl({
           return (
             <div
               key={provider}
-              className={`grid ${stacked ? "grid-cols-1" : "grid-cols-[minmax(64px,0.7fr)_minmax(120px,1.8fr)]"} items-center gap-2 rounded-md border border-gray-200 px-2.5 py-2 dark:border-neutral-800`}
+              className={
+                stacked
+                  ? "grid grid-cols-1 gap-2"
+                  : "grid grid-cols-[minmax(64px,0.7fr)_minmax(120px,1.8fr)] items-center gap-2 rounded-md border border-gray-200 px-2.5 py-2 dark:border-neutral-800"
+              }
             >
-              <span className="truncate text-[13px] font-medium text-gray-700 dark:text-neutral-300">
-                {PROVIDER_LABELS[provider]}
-              </span>
+              {(!stacked || multi) && (
+                <span className="truncate text-ui-label font-medium text-ink">
+                  {PROVIDER_LABELS[provider]}
+                </span>
+              )}
               <div
                 className={`grid gap-1.5 ${efforts.length && !stacked ? "grid-cols-2" : "grid-cols-1"}`}
               >
-                <select
-                  aria-label={`${label} ${PROVIDER_LABELS[provider]} model`}
-                  value={value}
-                  disabled={disabled}
-                  onChange={(event) =>
-                    updateModel(provider, key, event.target.value)
+                <label
+                  className={
+                    stacked
+                      ? "grid min-w-0 gap-1.5 text-ui-meta text-ink-muted"
+                      : "contents"
                   }
-                  className="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[13px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
                 >
-                  <option value="inherit">
-                    {inheritedModelLabel(settings, provider, catalog)}
-                  </option>
-                  {!!catalog?.models.length && (
-                    <optgroup label="Exact model">
-                      {catalog.models.map((model) => (
-                        <option
-                          key={model.id}
-                          value={`pinned:${model.id}`}
-                          disabled={model.deprecated}
-                        >
-                          {model.display_name || model.id}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {!known && (
-                    <option value={value}>
-                      {savedRole
-                        ? `${savedRole.label} · ${savedRole.model}`
-                        : `${selection?.mode === "pinned" ? selection.model : selection?.mode === "role" ? selection.role : "automatic"} (saved, not available)`}
-                    </option>
-                  )}
-                </select>
-                {!!efforts.length && (
+                  {stacked && <span>Model</span>}
                   <select
-                    aria-label={`${label} ${PROVIDER_LABELS[provider]} thinking`}
-                    value={
-                      effortOverrides[key] ?? effortOverrides[provider] ?? ""
-                    }
+                    aria-label={`${label} ${PROVIDER_LABELS[provider]} model`}
+                    value={value}
                     disabled={disabled}
                     onChange={(event) =>
-                      updateEffort(provider, key, event.target.value)
+                      updateModel(provider, key, event.target.value)
                     }
-                    className="min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[13px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                    className={
+                      stacked
+                        ? "min-h-9 w-full min-w-0 rounded-ui-sm border border-line bg-surface px-2 py-1.5 text-ui-label text-ink focus:border-line-strong focus:outline-none focus:ring-2 focus:ring-accent-soft disabled:opacity-50"
+                        : "min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[13px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                    }
                   >
-                    <option value="">
-                      {unsetEffortLabel(settings, provider)}
+                    <option value="inherit">
+                      {inheritedModelLabel(settings, provider, catalog)}
                     </option>
-                    {efforts.map((effort) => (
-                      <option key={effort} value={effort}>
-                        {effort.charAt(0).toUpperCase() + effort.slice(1)}
+                    {!!catalog?.models.length && (
+                      <optgroup label="Exact model">
+                        {catalog.models.map((model) => (
+                          <option
+                            key={model.id}
+                            value={`pinned:${model.id}`}
+                            disabled={model.deprecated}
+                          >
+                            {model.display_name || model.id}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {!known && (
+                      <option value={value}>
+                        {savedRole
+                          ? `${savedRole.label} · ${savedRole.model}`
+                          : `${selection?.mode === "pinned" ? selection.model : selection?.mode === "role" ? selection.role : "automatic"} (saved, not available)`}
                       </option>
-                    ))}
+                    )}
                   </select>
+                </label>
+                {!!efforts.length && (
+                  <label
+                    className={
+                      stacked
+                        ? "grid min-w-0 gap-1.5 text-ui-meta text-ink-muted"
+                        : "contents"
+                    }
+                  >
+                    {stacked && <span>Thinking</span>}
+                    <select
+                      aria-label={`${label} ${PROVIDER_LABELS[provider]} thinking`}
+                      value={
+                        effortOverrides[key] ?? effortOverrides[provider] ?? ""
+                      }
+                      disabled={disabled}
+                      onChange={(event) =>
+                        updateEffort(provider, key, event.target.value)
+                      }
+                      className={
+                        stacked
+                          ? "min-h-9 w-full min-w-0 rounded-ui-sm border border-line bg-surface px-2 py-1.5 text-ui-label text-ink focus:border-line-strong focus:outline-none focus:ring-2 focus:ring-accent-soft disabled:opacity-50"
+                          : "min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[13px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                      }
+                    >
+                      <option value="">
+                        {unsetEffortLabel(settings, provider)}
+                      </option>
+                      {efforts.map((effort) => (
+                        <option key={effort} value={effort}>
+                          {effort.charAt(0).toUpperCase() + effort.slice(1)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
                 )}
               </div>
               {notConnected(provider) && (

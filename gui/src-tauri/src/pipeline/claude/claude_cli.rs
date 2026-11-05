@@ -484,9 +484,10 @@ async fn call_claude_inner(
         tools.join(",")
     });
 
-    if let Some(sys) = system_prompt {
-        cmd_args.push("--append-system-prompt".to_string());
-        cmd_args.push(sys.to_string());
+    let system_prompt_file = system_prompt.map(prepare_cli_system_prompt).transpose()?;
+    if let Some(sys) = &system_prompt_file {
+        cmd_args.push("--append-system-prompt-file".to_string());
+        cmd_args.push(sys.path.clone());
     }
 
     // These subprocesses run non-interactively (stdin=null, -p mode) and
@@ -575,6 +576,7 @@ async fn call_claude_inner(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    validate_cli_command_length(cmd.as_std(), cfg!(windows))?;
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn claude: {e}. Is Claude Code installed?"))?;

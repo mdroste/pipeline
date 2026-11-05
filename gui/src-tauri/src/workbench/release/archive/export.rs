@@ -379,6 +379,17 @@ pub fn export_archive_without(
             "Research archive contains too many entries",
         ));
     }
+    let mut names = super::PortablePaths::default();
+    names.insert("manifest.json")?;
+    names.insert("database/research.sqlite3")?;
+    for transcript in &transcripts {
+        for extension in ["md", "json"] {
+            names.insert(&format!("transcripts/{}.{extension}", transcript.id))?;
+        }
+    }
+    for file in manifest.blobs.iter().chain(&manifest.conversation_files) {
+        names.insert(&file.archive_path)?;
+    }
     let parent = target
         .parent()
         .ok_or_else(|| WorkbenchError::invalid("Archive destination has no parent directory"))?;

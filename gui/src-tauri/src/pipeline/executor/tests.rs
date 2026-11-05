@@ -102,6 +102,7 @@ async fn assert_resumed_runtime_emits_every_planned_scheduler_stage_id() {
         &preloaded,
         None,
         &crate::settings::Settings::default(),
+        None,
     )
     .await
     .unwrap();
@@ -206,6 +207,7 @@ fn out(id: &str, label: &str, text: &str) -> StepOutput {
 }
 
 mod analyzers;
+mod author_note;
 
 mod artifacts;
 

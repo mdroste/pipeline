@@ -159,16 +159,14 @@ describe("RunModelChoice", () => {
     mockWorkflow({ steps: [step("review")] });
     render(<Harness />);
     expect(
-      await screen.findByText(
-        "ChatGPT · GPT-5.6 Sol (ChatGPT's choice) · ChatGPT default thinking",
-      ),
+      await screen.findByText("GPT-5.6 Sol (ChatGPT's choice)"),
     ).toBeVisible();
     expect(screen.getByText(/Your default model/)).toBeVisible();
-    expect(
-      await screen.findByText(
-        /Backup after a usage limit: ChatGPT · GPT-5.6 Sol/,
-      ),
-    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Change" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(await screen.findByText(/ChatGPT · GPT-5.6 Sol/)).toBeVisible();
   });
 
   it("covers the whole review and lists what does not follow it", async () => {
@@ -222,6 +220,7 @@ describe("RunModelChoice", () => {
       clear_settings_exceptions: true,
       override_workflow_pins: true,
     });
+    await user.click(screen.getByText("Advanced options"));
     const list = screen.getByRole("list", {
       name: "Every model this review calls",
     });
@@ -234,6 +233,7 @@ describe("RunModelChoice", () => {
     mockWorkflow({ steps: [step("review")] });
     render(<Harness />);
     await user.click(await screen.findByRole("button", { name: "Change" }));
+    await user.click(screen.getByText("Advanced options"));
     await user.click(
       screen.getByRole("checkbox", {
         name: /Choose the models for parallel steps/,

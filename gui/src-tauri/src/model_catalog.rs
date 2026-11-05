@@ -245,8 +245,7 @@ fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), String> 
         .map_err(|e| format!("Failed to serialize model cache: {e}"))?;
     temp.flush()
         .map_err(|e| format!("Failed to flush model cache: {e}"))?;
-    temp.as_file()
-        .sync_all()
+    crate::safety::sync_file(temp.as_file())
         .map_err(|e| format!("Failed to sync model cache: {e}"))?;
     temp.persist(path)
         .map_err(|e| format!("Failed to persist model cache: {}", e.error))?;

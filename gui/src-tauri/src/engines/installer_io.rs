@@ -644,8 +644,7 @@ pub(super) fn unpack_uv_archive(
                 .map_err(|error| format!("Failed to stage uv.exe: {error}"))?;
             std::io::copy(&mut entry, &mut output)
                 .map_err(|error| format!("Failed to extract uv.exe: {error}"))?;
-            output
-                .sync_all()
+            crate::safety::sync_file(&output)
                 .map_err(|error| format!("Failed to sync uv.exe: {error}"))?;
             return Ok(());
         }
@@ -688,8 +687,7 @@ pub(super) fn unpack_uv_archive(
             output
                 .write_all(&bytes)
                 .map_err(|error| format!("Failed to write uv: {error}"))?;
-            output
-                .sync_all()
+            crate::safety::sync_file(&output)
                 .map_err(|error| format!("Failed to sync uv: {error}"))?;
             #[cfg(unix)]
             {

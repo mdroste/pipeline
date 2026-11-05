@@ -463,6 +463,7 @@ impl RunWriter {
             failed_steps: self.meta.failed_steps.clone(),
             title,
             tags,
+            author_note: self.meta.author_note.clone(),
             variables: self.meta.variables.clone(),
             extra_inputs: self.meta.extra_inputs.clone(),
             extra_input_sources: self.meta.extra_input_sources.clone(),

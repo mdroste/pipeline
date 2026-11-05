@@ -402,3 +402,36 @@ describe("RunPreview", () => {
     expect(screen.getByText(/2–4 calls/)).toBeInTheDocument();
   });
 });
+
+it("shows the exact batch note, its edit action, and each model step's access", async () => {
+  const user = userEvent.setup();
+  const onEdit = vi.fn();
+  const note = "Model assumptions\n{var:literal} <b>plain text</b>";
+  render(
+    <RunPreview
+      config={config}
+      inputPath="/paper.pdf"
+      plan={{
+        profileId: "paper",
+        inputMode: "document",
+        inputInterpretation: "document",
+        stages: [],
+      }}
+      authorNote={note}
+      batchCount={3}
+      onEditAuthorNote={onEdit}
+      onCancel={vi.fn()}
+      onRun={vi.fn()}
+    />,
+  );
+  expect(screen.getByText(/Model assumptions/).textContent).toBe(note);
+  expect(
+    screen.getByText("Shared with every review agent for all 3 documents."),
+  ).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  expect(onEdit).toHaveBeenCalledOnce();
+  await user.click(screen.getByText("Steps and what each can read"));
+  expect(screen.getAllByText(/^Reads: Additional instructions/)).toHaveLength(
+    3,
+  );
+});

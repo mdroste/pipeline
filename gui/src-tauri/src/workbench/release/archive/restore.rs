@@ -140,6 +140,7 @@ pub fn import_archive(
             "Research archive contains too many entries",
         ));
     }
+    super::validate_entry_paths(&mut archive)?;
     let mut total = 0u64;
     let mut extracted_names = HashSet::with_capacity(archive.len());
     for index in 0..archive.len() {

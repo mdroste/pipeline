@@ -173,6 +173,7 @@ export default function Popover({
     <div
       ref={layer}
       id={id}
+      data-ui-popover
       role={role}
       aria-label={label}
       tabIndex={-1}

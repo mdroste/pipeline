@@ -1,3 +1,4 @@
+import AuthorNoteSummary from "../AuthorNoteSummary";
 import {
   formatRunDate,
   formatRunDuration,
@@ -15,10 +16,12 @@ const METADATA_VALUE =
 
 export default function ProvenancePanel({
   provenance,
+  authorNote,
   quality,
   status,
 }: {
   provenance: RunProvenance;
+  authorNote?: string | null;
   quality?: ReportQuality;
   /** The status the report header shows, after checking the report text. */
   status: string;
@@ -95,6 +98,12 @@ export default function ProvenancePanel({
             Report ID: {provenance.run_id || "Unsaved"}
           </p>
         </div>
+
+        {authorNote && (
+          <div className="mt-6">
+            <AuthorNoteSummary note={authorNote} />
+          </div>
+        )}
 
         {quality && quality.schema_version > 0 && (
           <section aria-labelledby="quality-ledger-heading" className="mt-10">

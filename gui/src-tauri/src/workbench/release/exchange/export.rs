@@ -218,6 +218,15 @@ pub fn export_exchange(
         )));
     }
     let manifest = manifest_for(store, ws, &request.selection, &pkg)?;
+    let mut names = super::archive::PortablePaths::default();
+    names.insert("manifest.json")?;
+    names.insert("README.md")?;
+    for (kind, id) in pkg.objects.keys() {
+        names.insert(&format!("objects/{kind}/{id}.json"))?;
+    }
+    for name in pkg.blobs.keys() {
+        names.insert(name)?;
+    }
     let parent = target
         .parent()
         .ok_or_else(|| WorkbenchError::invalid("Package destination has no parent directory"))?;

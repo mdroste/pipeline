@@ -22,6 +22,8 @@ import type { AppPage } from "../../components/NavRail";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 
 export function useReviewSetup() {
+  const [authorNote, setAuthorNote] = useState("");
+  const [authorNoteFocusKey, setAuthorNoteFocusKey] = useState(0);
   const [paperPath, setPaperPath] = useState<string | null>(null);
   const [inputSelection, setInputSelection] =
     useState<PrimaryInputSelection | null>(null);
@@ -167,6 +169,10 @@ export function useReviewSetup() {
   }, [profileChanges, runDependencyCheck]);
 
   return {
+    authorNote,
+    setAuthorNote,
+    authorNoteFocusKey,
+    setAuthorNoteFocusKey,
     paperPath,
     setPaperPath,
     inputSelection,

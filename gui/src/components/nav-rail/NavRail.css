@@ -302,6 +302,22 @@
   background: var(--ui-page-accent) !important;
   color: var(--ui-page-on-accent);
 }
+/* Keep the New action quiet in the light sidebar, including the icon rail. */
+:root:not(.dark) .nav-primary,
+:root:not(.dark) .nav-icon[data-primary] {
+  background: var(--ui-border) !important;
+  color: var(--ui-text);
+}
+:root:not(.dark) .nav-primary:hover,
+:root:not(.dark) .nav-icon[data-primary]:hover {
+  background: var(--ui-border-strong) !important;
+  filter: none;
+}
+:root:not(.dark) .nav-primary:focus-visible,
+:root:not(.dark) .nav-icon[data-primary]:focus-visible {
+  outline: 2px solid var(--ui-text);
+  outline-offset: -1px;
+}
 .nav-icon-mark {
   position: absolute;
   top: 6px;

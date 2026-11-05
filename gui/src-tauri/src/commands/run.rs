@@ -36,6 +36,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     )?;
     validate_named_input_paths(&snapshot.config, &provided_inputs, true)?;
     let RunSnapshot {
+        author_note,
         settings,
         mut config,
         profile_name,
@@ -194,6 +195,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         app,
         &extraction.paper_hash,
         crate::runs::RunFinishMeta {
+            author_note: author_note.clone(),
             input_path: paper_path.to_string(),
             input_mode: input_mode.to_string(),
             input_interpretation: input_interpretation.to_string(),
@@ -215,6 +217,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         }
     }
     if let Some(w) = run_writer.as_mut() {
+        crate::pipeline::author_note::save(w, author_note.as_deref())?;
         w.add_text(
             "context/workflow.json",
             "Workflow snapshot",
@@ -307,6 +310,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         &scoped_source_read_root,
         &run_input_dir,
         &mut run_writer,
+        author_note.as_deref(),
     )
     .await?;
     // Review limits count document preparation and orientation too.
@@ -401,6 +405,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
             &std::collections::HashMap::new(), // no preloaded steps for a fresh run
             artifact_write_dir.as_deref(),
             &settings,
+            author_note.as_deref(),
         ),
     )
     .await?;
@@ -441,6 +446,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         elapsed,
         &settings,
         RunCompletion {
+            author_note,
             input_path: paper_path.to_string(),
             input_mode: input_mode.to_string(),
             input_interpretation: input_interpretation.to_string(),

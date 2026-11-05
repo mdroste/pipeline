@@ -1,3 +1,4 @@
+import AuthorNoteSummary from "./AuthorNoteSummary";
 import { useMemo } from "react";
 import type { PipelineConfig, StepConfig } from "../lib/types";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
@@ -30,6 +31,8 @@ export interface RunPreviewPlan {
 }
 
 interface Props {
+  authorNote?: string | null;
+  onEditAuthorNote?: () => void;
   plan: RunPreviewPlan;
   config: PipelineConfig;
   inputPath: string;
@@ -121,6 +124,8 @@ function fixedAccessRow(
 }
 
 export default function RunPreview({
+  authorNote,
+  onEditAuthorNote,
   plan,
   config,
   inputPath,
@@ -183,9 +188,20 @@ export default function RunPreview({
       rows.push(row);
     }
     insertAdaptiveRows();
+    if (authorNote) {
+      for (const row of rows) {
+        if (
+          row.id === "orientation" ||
+          row.id === "auto_adaptive_agents" ||
+          steps.some((step) => step.id === row.id && step.kind !== "analyzer")
+        )
+          row.reads.unshift("Additional instructions");
+      }
+    }
     return rows;
   }, [
     adaptiveCountLabel,
+    authorNote,
     autoAssembled,
     config.steps,
     config.use_orientation,
@@ -274,6 +290,16 @@ export default function RunPreview({
             </p>
           ))}
 
+          {authorNote && (
+            <div className="mt-5">
+              <AuthorNoteSummary
+                note={authorNote}
+                batchCount={batchCount}
+                onEdit={onEditAuthorNote}
+              />
+            </div>
+          )}
+
           <dl className="mt-6 space-y-4">
             <SummaryRow label="Steps">
               {autoAssembled
@@ -305,6 +331,16 @@ export default function RunPreview({
               </SummaryRow>
             )}
           </dl>
+
+          {!authorNote && onEditAuthorNote && (
+            <button
+              type="button"
+              onClick={onEditAuthorNote}
+              className="mt-5 rounded text-sm text-gray-600 underline underline-offset-2 focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-gray-300"
+            >
+              Add a note from the author
+            </button>
+          )}
 
           {networkChecks.length > 0 && (
             <section

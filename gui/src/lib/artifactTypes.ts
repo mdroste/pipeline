@@ -17,6 +17,7 @@ export interface PageArtifactIndex {
 }
 
 export interface RunManifest {
+  author_note?: string | null;
   artifact_schema_version?: number;
   run_id: string;
   created: string;

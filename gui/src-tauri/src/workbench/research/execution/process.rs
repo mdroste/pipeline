@@ -129,8 +129,7 @@ pub(crate) fn run_profile_process(
         use std::os::windows::process::CommandExt as _;
         command.creation_flags(0x08000000);
     }
-    let mut child = command
-        .spawn()
+    let mut child = crate::commands::lifecycle::spawn_independent(&mut command)
         .map_err(|error| format!("Failed to start research execution: {error}"))?;
     let pid = child.id();
     crate::commands::lifecycle::register_independent_child_pid(pid);
@@ -142,22 +141,26 @@ pub(crate) fn run_profile_process(
     let stderr = child.stderr.take();
     let stdout_id = execution_id.to_string();
     let stderr_id = execution_id.to_string();
+    let (stdout_tx, stdout_rx) = std::sync::mpsc::sync_channel(1);
+    let (stderr_tx, stderr_rx) = std::sync::mpsc::sync_channel(1);
     let stdout_thread = std::thread::spawn(move || {
-        stdout
+        let output = stdout
             .map(|pipe| drain_capped(pipe, 4 * 1024 * 1024, &stdout_id, "stdout"))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let _ = stdout_tx.send(output);
     });
     let stderr_thread = std::thread::spawn(move || {
-        stderr
+        let output = stderr
             .map(|pipe| drain_capped(pipe, 4 * 1024 * 1024, &stderr_id, "stderr"))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        let _ = stderr_tx.send(output);
     });
     let started = Instant::now();
     let waits_for_launcher = adapters::waits_for_stata_launcher(&profile.adapter, &profile.argv);
     let mut wait_error = None;
     let mut stop_requested: Option<(Instant, &str)> = None;
     let mut wrapper_completed_after_stop = false;
-    let (outcome, status) = loop {
+    let (mut outcome, status) = loop {
         if cancelled_executions()
             .lock()
             .unwrap_or_else(|error| error.into_inner())
@@ -217,8 +220,21 @@ pub(crate) fn run_profile_process(
     // Reap this execution's independent group before joining capture threads.
     crate::commands::lifecycle::kill_independent_process(pid);
     crate::commands::lifecycle::unregister_independent_child_pid(pid);
-    let (stdout, stdout_truncated) = stdout_thread.join().unwrap_or_default();
-    let (mut stderr, stderr_truncated) = stderr_thread.join().unwrap_or_default();
+    // Even a failed OS cleanup must not strand the execution in a pipe join.
+    let stdout_result = stdout_rx.recv_timeout(Duration::from_secs(2)).ok();
+    let stderr_result = stderr_rx.recv_timeout(Duration::from_secs(2)).ok();
+    if stdout_result.is_some() {
+        let _ = stdout_thread.join();
+    }
+    if stderr_result.is_some() {
+        let _ = stderr_thread.join();
+    }
+    if stdout_result.is_none() || stderr_result.is_none() {
+        outcome = "outcome_unknown".into();
+        wait_error = Some("Output pipes did not close after stopping the process tree. Check for a detached helper before running again.".into());
+    }
+    let (stdout, stdout_truncated) = stdout_result.unwrap_or_else(|| (Vec::new(), true));
+    let (mut stderr, stderr_truncated) = stderr_result.unwrap_or_else(|| (Vec::new(), true));
     if let Some(error) = wait_error {
         stderr.extend_from_slice(error.as_bytes());
     }

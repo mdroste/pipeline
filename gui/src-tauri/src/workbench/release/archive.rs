@@ -12,6 +12,7 @@ mod export;
 mod format;
 mod inspection;
 mod omissions;
+mod portable;
 mod restore;
 mod transcripts;
 
@@ -19,6 +20,7 @@ pub use export::{export_archive, export_archive_without};
 pub use format::{ArchiveInspection, ArchiveReport, ExportArchiveRequest, ImportArchiveRequest};
 pub use inspection::inspect_archive;
 pub use omissions::{missing_backup_files, MissingBackupFile};
+pub(super) use portable::{validate_entry_paths, PortablePaths};
 pub use restore::import_archive;
 pub(crate) use transcripts::transcript_role;
 

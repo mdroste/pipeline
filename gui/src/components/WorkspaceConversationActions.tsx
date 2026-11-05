@@ -78,7 +78,7 @@ export function MoveConversationDialog({
   onClose,
 }: {
   session: WorkbenchSession;
-  workspaces: Workspace[];
+  workspaces: Pick<Workspace, "id" | "name" | "archivedAt">[];
   busy: boolean;
   error: string | null;
   onMove: (workspaceId: string | null) => void;

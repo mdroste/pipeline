@@ -18,8 +18,9 @@ decisions, and imported data. You can attach a folder later in
 **Project settings**. If setup stops after the project is created, choose
 **Try again** to finish the same project.
 
-**Projects** lists your work under **Pinned** and **Recently active**. Search
-by name, research brief, or folder. Each row shows the latest activity and
+**Projects** brings your projects and chats together. Projects appear under
+**Pinned** and **Recently active**. Search by project name, research brief,
+folder, or chat title. Each row shows the latest activity and
 what needs you, such as an interrupted edit or suggested notes. Choose the
 name to open the Overview, or **Resume conversation** to go back to the last
 conversation. **Pin project** keeps a project at the top on this computer.
@@ -38,8 +39,14 @@ work without a model connection. Conversations and reviews need one. See
 
 Start a conversation from the Overview, with **New conversation** above the conversation, or
 from **New → New conversation** in the sidebar. Outside a project, **New →
-New conversation** starts one with no project. **Conversations** in the sidebar
-lists every conversation, and filters to **Unfiled** and **Archived**.
+New conversation** starts one with no project. **+ New chat** on the Projects
+page also starts a chat without a project. The **Chats** list on that page
+includes conversations across projects, with **No project** and **Archived**
+filters. Choose a chat to resume it, or its project name to open the project.
+**Move to project…** adds a standalone chat to a project; **Change project…**
+lets you move it elsewhere or choose **Unfiled** to remove its project.
+The transcript stays with the chat. Recent chats and the open conversation
+appear inside the **Projects** sidebar section.
 
 ### Work with files outside a project
 

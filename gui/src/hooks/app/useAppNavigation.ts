@@ -21,7 +21,7 @@ import type { DepsReport } from "../../lib/types";
 
 export function useAppNavigation() {
   // The router owns the current location. Initialize it once per app mount
-  // from the persisted route (any destination restores, not just four pages).
+  // using the startup preference (Home by default).
   const routerInitialized = useRef(false);
   if (!routerInitialized.current) {
     routerInitialized.current = true;

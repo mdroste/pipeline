@@ -139,7 +139,7 @@ export default function WorkspaceRailNavigation({
         </>
       )}
       <div className="nav-label">
-        <span>Conversations</span>
+        <span>{project ? "Chats" : "No project"}</span>
         <IconButton
           size="sm"
           className="!h-5 !w-5"

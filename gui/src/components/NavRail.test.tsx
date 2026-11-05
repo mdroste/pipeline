@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useLayoutEffect, type ComponentProps } from "react";
 import { createPortal } from "react-dom";
-import NavRail, { CollapsedNavBar, NAV_RAIL_WIDTH } from "./NavRail";
+import NavRail, { NAV_RAIL_WIDTH } from "./NavRail";
 import { NavRailSlotProvider, useNavRailSlot } from "./nav-rail/navRailSlot";
 import { queuedRun } from "../test/queuedRunFixture";
 import type { QueuedRun } from "../lib/types";
@@ -30,7 +30,6 @@ function railProps(
   return {
     activePage: "home",
     hasCurrentRun: false,
-    isMac: false,
     dependenciesReady: true,
     dependenciesLoading: false,
     width: NAV_RAIL_WIDTH.default,
@@ -54,6 +53,58 @@ const expand = (user: ReturnType<typeof userEvent.setup>, section: string) =>
 describe("NavRail", () => {
   beforeEach(() => localStorage.clear());
 
+  it("animates toggles from the visible width without animating manual resizing", () => {
+    const cancel = vi.fn();
+    const animate = vi.fn(
+      (_frames: Keyframe[], _options: KeyframeAnimationOptions) => ({
+        cancel,
+        playState: "running",
+      }),
+    );
+    const props = railProps({ width: 280 });
+    const { container, rerender, unmount } = render(<NavRail {...props} />);
+    const aside = container.querySelector("aside")!;
+    Object.defineProperty(aside, "animate", { value: animate });
+    vi.spyOn(aside, "getBoundingClientRect").mockReturnValue({
+      width: 150,
+    } as DOMRect);
+
+    rerender(<NavRail {...props} collapsed />);
+    expect(container.querySelector("aside")).toBe(aside);
+    expect(animate.mock.calls[0]).toEqual([
+      [
+        expect.objectContaining({ width: "280px" }),
+        expect.objectContaining({ width: "56px" }),
+      ],
+      expect.objectContaining({ duration: 180 }),
+    ]);
+
+    rerender(<NavRail {...props} />);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(animate.mock.calls[1][0][0]).toEqual(
+      expect.objectContaining({ width: "150px" }),
+    );
+    rerender(<NavRail {...props} width={300} />);
+    expect(animate).toHaveBeenCalledTimes(2);
+    unmount();
+  });
+
+  it("skips sidebar motion when reduced motion is requested", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({ matches: true })),
+    );
+    const props = railProps();
+    const { container, rerender } = render(<NavRail {...props} />);
+    const animate = vi.fn();
+    Object.defineProperty(container.querySelector("aside"), "animate", {
+      value: animate,
+    });
+    rerender(<NavRail {...props} collapsed />);
+    expect(animate).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it("starts with the destinations and opens what each one holds", async () => {
     const user = userEvent.setup();
     const props = renderRail();
@@ -65,8 +116,7 @@ describe("NavRail", () => {
     expect(screen.queryByRole("button", { name: "History" })).toBeNull();
     expect(screen.getByRole("button", { name: "System ready" })).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "Conversations" }));
-    expect(props.onNavigate).toHaveBeenCalledWith("conversations");
+    expect(screen.queryByRole("button", { name: "Conversations" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Projects" }));
     expect(props.onNavigate).toHaveBeenCalledWith("project-index");
     await user.click(screen.getByRole("button", { name: "Automations" }));
@@ -329,15 +379,6 @@ describe("NavRail", () => {
     expect(props.onResize).toHaveBeenCalledWith(248);
   });
 
-  it("offers to fold itself from a button at the top", async () => {
-    const user = userEvent.setup();
-    const onToggleCollapsed = vi.fn();
-    renderRail({ onToggleCollapsed });
-
-    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
-    expect(onToggleCollapsed).toHaveBeenCalledOnce();
-  });
-
   it("keeps every destination as an icon, with sections in a flyout", async () => {
     const user = userEvent.setup();
     const props = renderRail({ collapsed: true, tasksAttention: true });
@@ -407,45 +448,14 @@ describe("Workspace navigation in the sidebar", () => {
     expect(newConversation).toHaveBeenCalledOnce();
   });
 
-  it("places an unfiled conversation under Conversations", async () => {
+  it("places an unfiled conversation under Projects", async () => {
     renderWorkspace(null);
     const conversations = within(
-      screen.getByRole("group", { name: "Conversations" }),
+      screen.getByRole("group", { name: "Projects" }),
     );
     expect(
       await conversations.findByRole("button", { name: "Project tree" }),
     ).toBeVisible();
-    expect(screen.queryByRole("group", { name: "Projects" })).toBeNull();
-  });
-});
-
-describe("CollapsedNavBar", () => {
-  it("drags the window from the top of the rail and collapsed bar on Windows", () => {
-    renderRail({ isWindows: true });
-    expect(
-      document.querySelector("aside > [data-tauri-drag-region]"),
-    ).toBeInTheDocument();
-
-    render(<CollapsedNavBar isMac={false} isWindows onExpand={vi.fn()} />);
-    expect(screen.getByTestId("collapsed-nav-bar")).toHaveAttribute(
-      "data-tauri-drag-region",
-      "deep",
-    );
-  });
-
-  it("leaves dragging to the native title bar on other platforms", () => {
-    renderRail();
-    expect(
-      document.querySelector("[data-tauri-drag-region]"),
-    ).not.toBeInTheDocument();
-  });
-
-  it("brings the full sidebar back", async () => {
-    const user = userEvent.setup();
-    const onExpand = vi.fn();
-    render(<CollapsedNavBar isMac={false} onExpand={onExpand} />);
-
-    await user.click(screen.getByRole("button", { name: "Expand sidebar" }));
-    expect(onExpand).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("group", { name: "Conversations" })).toBeNull();
   });
 });

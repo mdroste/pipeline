@@ -3,6 +3,22 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
+## 1.4.4 — 2026-11-05
+
+- Add an optional **Note from the author** when setting up a review. Every
+  review agent receives it, and it stays with the saved run, preview, and report.
+  The CLI accepts `--author-note` for `run`, `check`, and `batch`.
+- **Projects** brings projects and chats together, with search, **No project**
+  and **Archived** filters, and controls to move chats between projects.
+- Review setup groups document, design, and model choices more clearly, with
+  updated model menus and dropdowns.
+- Pipeline opens **Home** at startup by default. Choose **Continue where I left
+  off** in Settings to reopen the last project, conversation, or review.
+- Closing Pipeline protects active work and handles shutdown more reliably.
+  Windows and Linux include window controls in the app's title bar.
+- Improve project archive portability, manuscript source paths, saved settings,
+  process cleanup, and review recovery and budget handling across platforms.
+
 ## 1.4.3 — 2026-11-04
 
 - **New review → Models for this review** chooses one model, with its thinking

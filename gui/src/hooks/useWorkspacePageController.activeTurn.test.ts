@@ -638,6 +638,12 @@ it("forgets a finished turn's text, so a stale reply never returns", async () =>
 });
 
 describe("the saved route", () => {
+  beforeEach(() => {
+    localStorage.setItem(
+      "pipeline.ui.preferences",
+      JSON.stringify({ startup: "restore" }),
+    );
+  });
   const initial = router.getSnapshot().route;
   afterEach(() => router.init(initial));
   const openRoute = async (

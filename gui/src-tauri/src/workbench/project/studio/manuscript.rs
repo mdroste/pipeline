@@ -453,7 +453,10 @@ pub fn synchronize(store: &Store, request: SyncRequest) -> WorkbenchResult<Value
         cmd.args([
             "view",
             "-i",
-            &format!("{line}:0:{}", Path::new(&e.cwd).join(source).display()),
+            &format!(
+                "{line}:0:{}",
+                crate::file_viewer::system_path(&Path::new(&e.cwd).join(source)).display()
+            ),
             "-o",
         ])
         .arg(&output);
@@ -540,16 +543,9 @@ pub fn synchronize(store: &Store, request: SyncRequest) -> WorkbenchResult<Value
                     }
                 }
                 "Input" => {
-                    let path = Path::new(value.trim());
-                    let relative = path
-                        .strip_prefix(&e.cwd)
-                        .ok()
-                        .map(|p| p.to_string_lossy().into_owned());
-                    if let Some(relative) = relative.filter(|p| {
-                        e.input_manifest["files"]
-                            .as_array()
-                            .is_some_and(|a| a.iter().any(|f| f["path"] == *p))
-                    }) {
+                    if let Some(relative) =
+                        super::synctex_paths::source_path(value, &e.cwd, &e.input_manifest)
+                    {
                         candidate.insert("sourcePath".into(), json!(relative));
                     }
                 }

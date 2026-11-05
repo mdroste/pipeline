@@ -46,6 +46,7 @@ pub(super) async fn cmd_run(args: RunArgs) -> i32 {
         }
     };
     let options = commands::HeadlessRunOptions {
+        author_note: args.author_note.clone(),
         profile_id: args.profile_id,
         workflow,
         input_path,
@@ -108,6 +109,7 @@ pub(super) async fn cmd_check(args: CheckArgs) -> i32 {
         }
     };
     let options = commands::HeadlessRunOptions {
+        author_note: args.author_note.clone(),
         profile_id: args.profile_id,
         workflow,
         input_path,
@@ -248,6 +250,7 @@ pub(super) async fn cmd_batch(args: BatchArgs) -> i32 {
         eprintln!("\n[{}/{}] {path}", index + 1, files.len());
         let bus: EventBus = Arc::new(CliEvents);
         let options = commands::HeadlessRunOptions {
+            author_note: args.author_note.clone(),
             profile_id: selected_profile.clone(),
             workflow: workflow.clone(),
             input_path: path.clone(),

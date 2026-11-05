@@ -31,6 +31,9 @@ impl Drop for RunStateGuard {
 pub(super) static CHILD_JOBS: std::sync::Mutex<Vec<(u32, usize)>> =
     std::sync::Mutex::new(Vec::new());
 
+#[cfg(windows)]
+mod windows_spawn;
+
 /// Minimal Win32 Job Object bindings. Keeping them here avoids making the
 /// platform-neutral build depend on a large Windows bindings crate.
 #[cfg(windows)]
@@ -95,11 +98,11 @@ mod windows_job {
         fn CloseHandle(handle: Handle) -> i32;
     }
 
-    pub fn assign(process_id: u32) -> Option<usize> {
+    pub fn assign(process_id: u32) -> std::io::Result<usize> {
         unsafe {
             let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
             if job.is_null() {
-                return None;
+                return Err(std::io::Error::last_os_error());
             }
             let mut info = ExtendedLimitInformation::default();
             info.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -110,8 +113,9 @@ mod windows_job {
                 std::mem::size_of::<ExtendedLimitInformation>() as u32,
             ) == 0
             {
+                let error = std::io::Error::last_os_error();
                 CloseHandle(job);
-                return None;
+                return Err(error);
             }
             let process = OpenProcess(
                 PROCESS_TERMINATE | PROCESS_SET_QUOTA | PROCESS_QUERY_LIMITED_INFORMATION,
@@ -119,14 +123,15 @@ mod windows_job {
                 process_id,
             );
             if process.is_null() || AssignProcessToJobObject(job, process) == 0 {
+                let error = std::io::Error::last_os_error();
                 if !process.is_null() {
                     CloseHandle(process);
                 }
                 CloseHandle(job);
-                return None;
+                return Err(error);
             }
             CloseHandle(process);
-            Some(job as usize)
+            Ok(job as usize)
         }
     }
 
@@ -147,18 +152,47 @@ mod windows_job {
 
 #[cfg(windows)]
 pub(crate) fn register_process_job(pid: u32) {
-    if let Some(handle) = windows_job::assign(pid) {
-        let mut jobs = CHILD_JOBS.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((_, old)) = jobs
-            .iter()
-            .find(|(registered, _)| *registered == pid)
-            .copied()
-        {
-            windows_job::close(old);
-            jobs.retain(|(registered, _)| *registered != pid);
-        }
+    let mut jobs = CHILD_JOBS.lock().unwrap_or_else(|e| e.into_inner());
+    if jobs.iter().any(|(registered, _)| *registered == pid) {
+        return;
+    }
+    if let Ok(handle) = windows_job::assign(pid) {
         jobs.push((pid, handle));
     }
+}
+
+/// Research launchers may fork and exit immediately. On Windows create them
+/// suspended, capture their job, and only then let their first thread run.
+pub(crate) fn spawn_independent(
+    command: &mut std::process::Command,
+) -> std::io::Result<std::process::Child> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000 | 0x00000004); // NO_WINDOW | SUSPENDED
+        let mut child = command.spawn()?;
+        let pid = child.id();
+        let setup = windows_job::assign(pid).and_then(|handle| {
+            CHILD_JOBS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push((pid, handle));
+            windows_spawn::resume(pid)
+        });
+        if let Err(error) = setup {
+            // Nothing is allowed to run without reliable tree ownership.
+            let _ = child.kill();
+            let _ = child.wait();
+            unregister_process_job(pid);
+            return Err(std::io::Error::new(
+                error.kind(),
+                format!("Could not establish Windows process cleanup: {error}"),
+            ));
+        }
+        Ok(child)
+    }
+    #[cfg(not(windows))]
+    command.spawn()
 }
 
 #[cfg(not(windows))]

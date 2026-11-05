@@ -31,7 +31,6 @@ const goTo = (route: AppRoute) => () => void router.navigate(route);
 const PAGES: SearchEntry[] = (
   [
     ["Home", { page: "home" }],
-    ["Conversations", { page: "conversations" }],
     ["Projects", { page: "project-index" }],
     ["New review", { page: "main" }],
     ["Review history", { page: "history" }],
@@ -44,7 +43,7 @@ const PAGES: SearchEntry[] = (
 ).map(([label, route]) => ({
   id: `page:${route.page}`,
   label,
-  hint: "Go to",
+  hint: route.page === "project-index" ? "Projects and chats" : "Go to",
   run: goTo(route),
 }));
 

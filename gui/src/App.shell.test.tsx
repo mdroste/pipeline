@@ -42,6 +42,8 @@ vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     onCloseRequested: mocks.onCloseRequested,
     setTheme: mocks.setWindowTheme,
+    isMaximized: () => Promise.resolve(false),
+    onResized: () => Promise.resolve(vi.fn()),
   }),
 }));
 vi.mock("@tauri-apps/api/app", () => ({
@@ -65,7 +67,8 @@ vi.mock("./hooks/usePipeline", () => ({
     dismiss: vi.fn(),
   }),
 }));
-vi.mock("./lib/platform", () => ({ isMac: false, isWindows: false }));
+const platform = vi.hoisted(() => ({ isMac: false, isWindows: false }));
+vi.mock("./lib/platform", () => platform);
 vi.mock(
   "./components/PaperSelector",
   async () =>
@@ -134,7 +137,55 @@ vi.mock(
 );
 
 describe("App shell", () => {
-  beforeEach(reset);
+  beforeEach(() => {
+    reset();
+    platform.isMac = false;
+    platform.isWindows = false;
+  });
+
+  it.each([
+    { name: "macOS", isMac: true, isWindows: false, height: "h-7" },
+    { name: "Windows", isMac: false, isWindows: true, height: "h-8" },
+    { name: "Linux", isMac: false, isWindows: false, height: "h-8" },
+  ])(
+    "keeps the $name title bar steady in both sidebar states",
+    async ({ isMac, isWindows, height }) => {
+      platform.isMac = isMac;
+      platform.isWindows = isWindows;
+      const user = userEvent.setup();
+      render(<App />);
+      const bar = screen.getByTestId("window-title-bar");
+      const toggle = screen.getByRole("button", { name: "Collapse sidebar" });
+      expect(bar).toHaveClass(height, "shrink-0", "bg-gray-100/90", "border-b");
+      expect(bar.parentElement).toHaveClass("flex-col");
+      expect(bar.contains(toggle)).toBe(true);
+      if (isMac || isWindows) {
+        expect(bar).toHaveAttribute("data-tauri-drag-region", "deep");
+      } else {
+        expect(bar).not.toHaveAttribute("data-tauri-drag-region");
+      }
+      expect(screen.queryByTestId("window-drag-strip")).not.toBeInTheDocument();
+      if (isWindows)
+        expect(
+          screen.getByRole("group", { name: "Window controls" }),
+        ).toBeVisible();
+
+      await user.click(toggle);
+      expect(screen.getByTestId("window-title-bar")).toBe(bar);
+      expect(bar).toHaveClass(height);
+      expect(screen.getByRole("button", { name: "Expand sidebar" })).toBe(
+        toggle,
+      );
+      expect(toggle).toHaveFocus();
+      expect(toggle).toHaveAttribute("aria-expanded", "false");
+
+      await user.click(toggle);
+      expect(screen.getByTestId("window-title-bar")).toBe(bar);
+      expect(bar).toHaveClass(height);
+      expect(toggle).toHaveAttribute("aria-expanded", "true");
+      expect(toggle).toHaveFocus();
+    },
+  );
 
   it("supports light, dark, and live system appearance preferences", async () => {
     appearance.systemIsDark = true;
@@ -199,6 +250,7 @@ describe("App shell", () => {
     );
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith("get_execution_plan", {
+        authorNote: null,
         variables: null,
         extraInputs: null,
         expectedProfileConfigSnapshotId: "config-test",
@@ -207,6 +259,7 @@ describe("App shell", () => {
         inputInterpretation: "document",
       });
       expect(enqueue).toHaveBeenLastCalledWith({
+        authorNote: null,
         paperPath: "/tmp/test-paper.pdf",
         inputInterpretation: "document",
         diff: false,
@@ -285,7 +338,7 @@ describe("App shell", () => {
     const user = userEvent.setup();
     const { unmount } = render(<App />);
 
-    expect(screen.queryByTestId("collapsed-nav-bar")).not.toBeInTheDocument();
+    expect(screen.getByTestId("window-title-bar")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
     expect(
       screen.getByRole("button", { name: "Expand sidebar" }),
@@ -302,6 +355,6 @@ describe("App shell", () => {
     expect(
       screen.getByRole("button", { name: "Collapse sidebar" }),
     ).toHaveFocus();
-    expect(screen.queryByTestId("collapsed-nav-bar")).not.toBeInTheDocument();
+    expect(screen.getByTestId("window-title-bar")).toBeVisible();
   });
 });

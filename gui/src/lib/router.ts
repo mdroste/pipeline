@@ -9,7 +9,6 @@ export type AppPage =
   | "main"
   | "workspace"
   | "project-index"
-  | "conversations"
   | "tasks"
   | "pipeline"
   | "settings"
@@ -30,7 +29,6 @@ export type AppRoute =
       runKey?: string;
     }
   | { page: "project-index" }
-  | { page: "conversations" }
   | {
       page: "workspace";
       /** Switch to this project on entry; omitted = last-used project. */
@@ -70,7 +68,6 @@ const PAGES: readonly AppPage[] = [
   "main",
   "workspace",
   "project-index",
-  "conversations",
   "tasks",
   "pipeline",
   "settings",
@@ -94,7 +91,6 @@ const PAGE_TO_PATH: Record<AppPage, string> = {
   home: "/home",
   main: "/reviews/new",
   "project-index": "/projects",
-  conversations: "/conversations",
   workspace: "/project",
   tasks: "/automations",
   pipeline: "/reviews/designer",
@@ -115,6 +111,8 @@ const PATH_TO_PAGE = new Map<string, AppPage>([
     ([page, path]) => [path, page as AppPage] as const,
   ),
   [RUN_PATH, "main"],
+  // Saved links from before chats moved into Projects.
+  ["/conversations", "project-index"],
 ]);
 
 export function serializeRoute(route: AppRoute): string {
@@ -392,6 +390,7 @@ export function restoreRoute(
   const legacy = read("pipeline.ui.page");
   if (legacy === "workspace" || legacy === "project-index" || legacy === "home")
     return { page: legacy };
+  if (legacy === "conversations") return { page: "project-index" };
   if (legacy === "main") return { page: "main" };
   return null;
 }

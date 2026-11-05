@@ -4,6 +4,7 @@ mod literature;
 mod manuscript;
 mod results;
 mod review;
+mod synctex_paths;
 mod theory;
 pub use literature::*;
 pub use manuscript::*;

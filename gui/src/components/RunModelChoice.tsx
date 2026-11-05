@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   DepsReport,
@@ -13,7 +13,7 @@ import { workflowParallelAgents } from "../lib/parallelAgents";
 import {
   rosterModelSummary,
   rosterSourceLabel,
-  stageModelSummary,
+  stageModelDetails,
   withoutDefaultModel,
 } from "../lib/modelChoice";
 import {
@@ -24,6 +24,7 @@ import {
   providerTransport,
   type Provider,
 } from "../lib/providers";
+import { Icon } from "../ui/icons";
 import AgentDefaultsControl from "./AgentDefaultsControl";
 
 interface Props {
@@ -75,6 +76,7 @@ export default function RunModelChoice({
   refreshKey = 0,
   onChange,
 }: Props) {
+  const editorId = useId();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [config, setConfig] = useState<PipelineConfig | null>(null);
   const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
@@ -174,9 +176,6 @@ export default function RunModelChoice({
       (entry.source === "settings" || entry.source === "workflow"),
   );
   const fallback = roster?.find((entry) => entry.stage === "fallback");
-  const followers = (roster ?? []).filter(
-    (entry) => entry.source === "review" || entry.source === "default",
-  );
 
   const inherited = workflowParallelAgents(config, settings);
   const parallelChosen = !!value?.agents.length;
@@ -199,59 +198,71 @@ export default function RunModelChoice({
       ? {}
       : defaultMergeEffortOverrides(settings);
 
+  const summary = stageModelDetails(
+    pickerSettings,
+    review.provider,
+    reviewModels,
+    reviewEfforts,
+    catalogs,
+  );
+
   return (
     <section
       aria-label="Models for this review"
-      className="rounded-lg border border-gray-200 bg-gray-50/60 px-3 py-2.5 dark:border-gray-800 dark:bg-gray-800/25"
+      className="overflow-hidden rounded-ui-md border border-line bg-surface"
     >
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <p className="text-xs font-medium text-gray-700 dark:text-gray-300">
-            Models for this review
-          </p>
-          <p className="mt-0.5 break-words text-[11px] leading-4 text-gray-600 dark:text-gray-400">
-            {stageModelSummary(
-              pickerSettings,
-              review.provider,
-              reviewModels,
-              reviewEfforts,
-              catalogs,
-            )}
-          </p>
-          <p className="mt-0.5 text-[11px] leading-4 text-gray-500 dark:text-gray-500">
-            {value ? "Chosen for this review" : "Your default model"}
-            {followers.length > 0 &&
-              ` · runs ${followers
-                .map((entry) => entryName(entry).toLowerCase())
-                .join(", ")}`}
-          </p>
-        </div>
+      <div className="flex items-center justify-between gap-2 px-3 pt-3">
+        <h2 className="text-ui-label font-medium text-ink">
+          Models for this review
+        </h2>
         {value && (
           <button
             type="button"
             disabled={disabled}
             onClick={() => onChange(null)}
-            className="text-[11px] text-gray-500 hover:text-gray-800 disabled:opacity-50 dark:text-gray-400 dark:hover:text-gray-200"
+            className="rounded-ui-sm px-1.5 py-1 text-ui-meta text-ink-muted transition-colors hover:bg-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
           >
             Reset
           </button>
         )}
-        <button
-          type="button"
-          aria-expanded={open}
-          disabled={disabled}
-          onClick={() => setOpen((current) => !current)}
-          className="rounded border border-gray-300 bg-white px-2 py-1 text-[11px] font-medium text-gray-600 hover:border-gray-400 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
-        >
-          {open ? "Done" : "Change"}
-        </button>
       </div>
+      <button
+        type="button"
+        aria-label={open ? "Done" : "Change"}
+        aria-expanded={open}
+        aria-controls={editorId}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        className="group block w-full px-3 py-3 text-left transition-colors hover:bg-sunken/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent disabled:opacity-50"
+      >
+        <span className="mb-2 flex flex-wrap items-center justify-between gap-1.5">
+          <span className="rounded-ui-sm bg-sunken px-2 py-0.5 text-ui-meta font-medium text-ink">
+            {summary.provider}
+          </span>
+          <span className="text-ui-meta text-ink-muted">
+            {value ? "This review" : "Your default model"}
+          </span>
+        </span>
+        <span className="block break-words text-ui-body font-medium leading-5 text-ink">
+          {summary.model}
+        </span>
+        <span className="mt-1 block text-ui-meta leading-5 text-ink-muted">
+          {review.effort ? `${summary.effort} thinking` : summary.effort}
+        </span>
+        <span className="mt-3 flex items-center justify-between gap-2 text-ui-meta font-medium text-ink-muted group-hover:text-ink">
+          {open ? "Done" : "Change model"}
+          <Icon
+            name="chevron-down"
+            className={`h-3.5 w-3.5 transition-transform motion-reduce:transition-none ${open ? "rotate-180" : ""}`}
+          />
+        </span>
+      </button>
 
       {exceptions.length > 0 && (
         <div
           role="note"
           aria-label="Calls on other models"
-          className="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] leading-4 text-amber-900 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200"
+          className="mx-3 mb-3 rounded-ui-sm bg-sunken p-2.5 text-ui-meta leading-5 text-ink"
         >
           <p className="font-medium">
             {exceptions.length === 1
@@ -265,7 +276,7 @@ export default function RunModelChoice({
               >
                 {entryName(entry)} →{" "}
                 {rosterModelSummary(settings, entry, catalogs)}{" "}
-                <span className="text-amber-700 dark:text-amber-300">
+                <span className="text-ink-muted">
                   ({rosterSourceLabel(entry)})
                 </span>
               </li>
@@ -280,21 +291,15 @@ export default function RunModelChoice({
                 override_workflow_pins: true,
               })
             }
-            className="mt-1.5 font-medium underline underline-offset-2 disabled:opacity-50"
+            className="mt-2 rounded-ui-sm text-left font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
           >
             Use the review model for everything
           </button>
         </div>
       )}
-      {fallback && (
-        <p className="mt-1.5 break-words text-[11px] leading-4 text-gray-500 dark:text-gray-500">
-          Backup after a usage limit:{" "}
-          {rosterModelSummary(settings, fallback, catalogs)}
-        </p>
-      )}
 
       {open && (
-        <div className="mt-3 space-y-4 border-t border-gray-200 pt-3 dark:border-gray-800">
+        <div id={editorId} className="space-y-4 border-t border-line px-3 py-4">
           <AgentDefaultsControl
             agents={[review.provider]}
             modelOverrides={reviewModels}
@@ -305,7 +310,7 @@ export default function RunModelChoice({
             stacked
             dependencies={dependencies}
             label="Review model"
-            help="Every part of the review uses this model unless listed above."
+            help="Used throughout the review, except where a different model is assigned."
             disabled={disabled}
             onChange={(next) => {
               const provider = next.agents[0] ?? review.provider;
@@ -325,144 +330,168 @@ export default function RunModelChoice({
             }}
           />
 
-          <div className="space-y-1.5 text-[11px] text-gray-600 dark:text-gray-400">
-            <label className="flex items-start gap-2">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={!!value?.clear_settings_exceptions}
-                disabled={disabled}
-                onChange={(event) =>
-                  change({ clear_settings_exceptions: event.target.checked })
-                }
+          <details className="group/advanced border-t border-line pt-3">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 rounded-ui-sm text-ui-label font-medium text-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent [&::-webkit-details-marker]:hidden">
+              Advanced options
+              <Icon
+                name="chevron-down"
+                className="h-3.5 w-3.5 shrink-0 transition-transform group-open/advanced:rotate-180 motion-reduce:transition-none"
               />
-              Use the review model for stages that Settings sets to another
-              model
-            </label>
-            <label className="flex items-start gap-2">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={!!value?.override_workflow_pins}
-                disabled={disabled}
-                onChange={(event) =>
-                  change({ override_workflow_pins: event.target.checked })
-                }
-              />
-              Use the review model for steps the workflow assigns to a model
-            </label>
-          </div>
-
-          {inherited.applies && (
-            <div className="border-t border-gray-200 pt-3 dark:border-gray-800">
-              <label className="flex items-start gap-2 text-[11px] text-gray-600 dark:text-gray-400">
-                <input
-                  type="checkbox"
-                  className="mt-0.5"
-                  checked={parallelChosen}
-                  disabled={disabled}
-                  onChange={(event) =>
-                    change(
-                      event.target.checked
-                        ? {
-                            agents: [review.provider],
-                            model_overrides: reviewModels,
-                            effort_overrides: reviewEfforts,
-                          }
-                        : {
-                            agents: [],
-                            model_overrides: {},
-                            effort_overrides: {},
-                            merge_agent: undefined,
-                            merge_model_overrides: undefined,
-                            merge_effort_overrides: undefined,
-                          },
-                    )
-                  }
-                />
-                Choose the models for parallel steps, such as a second opinion
-              </label>
-              {parallelChosen && (
-                <div className="mt-3">
-                  <AgentDefaultsControl
-                    agents={agents}
-                    modelOverrides={modelOverrides}
-                    effortOverrides={effortOverrides}
-                    settings={pickerSettings}
-                    catalogs={catalogs}
-                    providers={providers}
-                    multi
-                    stacked
-                    dependencies={dependencies}
-                    label="Parallel steps"
-                    help="Each selected model runs its own version of every parallel step."
+            </summary>
+            <div className="mt-4 space-y-4">
+              <div className="space-y-3 text-ui-meta leading-5 text-ink-muted">
+                <label className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    className="mt-1 shrink-0 accent-inverse"
+                    checked={!!value?.clear_settings_exceptions}
                     disabled={disabled}
-                    onChange={(next) =>
+                    onChange={(event) =>
                       change({
-                        agents: next.agents,
-                        model_overrides: next.modelOverrides,
-                        effort_overrides: next.effortOverrides,
+                        clear_settings_exceptions: event.target.checked,
                       })
                     }
                   />
-                  {agents.length > 1 && config.merge.enabled && (
-                    <div className="mt-4">
+                  Use the review model for stages that Settings sets to another
+                  model
+                </label>
+                <label className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    className="mt-1 shrink-0 accent-inverse"
+                    checked={!!value?.override_workflow_pins}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      change({ override_workflow_pins: event.target.checked })
+                    }
+                  />
+                  Use the review model for steps the workflow assigns to a model
+                </label>
+              </div>
+
+              {inherited.applies && (
+                <div className="border-t border-line pt-3">
+                  <label className="flex items-start gap-2 text-ui-meta leading-5 text-ink-muted">
+                    <input
+                      type="checkbox"
+                      className="mt-1 shrink-0 accent-inverse"
+                      checked={parallelChosen}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        change(
+                          event.target.checked
+                            ? {
+                                agents: [review.provider],
+                                model_overrides: reviewModels,
+                                effort_overrides: reviewEfforts,
+                              }
+                            : {
+                                agents: [],
+                                model_overrides: {},
+                                effort_overrides: {},
+                                merge_agent: undefined,
+                                merge_model_overrides: undefined,
+                                merge_effort_overrides: undefined,
+                              },
+                        )
+                      }
+                    />
+                    Choose the models for parallel steps, such as a second
+                    opinion
+                  </label>
+                  {parallelChosen && (
+                    <div className="mt-3">
                       <AgentDefaultsControl
-                        agents={[mergeAgent]}
-                        modelOverrides={mergeModelOverrides}
-                        effortOverrides={mergeEffortOverrides}
+                        agents={agents}
+                        modelOverrides={modelOverrides}
+                        effortOverrides={effortOverrides}
                         settings={pickerSettings}
                         catalogs={catalogs}
                         providers={providers}
+                        multi
                         stacked
                         dependencies={dependencies}
-                        label="Combine results"
-                        help="One model combines the parallel results before the next steps begin."
+                        label="Parallel steps"
+                        help="Each selected model runs its own version of every parallel step."
                         disabled={disabled}
                         onChange={(next) =>
                           change({
-                            merge_agent: next.agents[0],
-                            merge_model_overrides: next.modelOverrides,
-                            merge_effort_overrides: next.effortOverrides,
+                            agents: next.agents,
+                            model_overrides: next.modelOverrides,
+                            effort_overrides: next.effortOverrides,
                           })
                         }
                       />
+                      {agents.length > 1 && config.merge.enabled && (
+                        <div className="mt-4">
+                          <AgentDefaultsControl
+                            agents={[mergeAgent]}
+                            modelOverrides={mergeModelOverrides}
+                            effortOverrides={mergeEffortOverrides}
+                            settings={pickerSettings}
+                            catalogs={catalogs}
+                            providers={providers}
+                            stacked
+                            dependencies={dependencies}
+                            label="Combine results"
+                            help="One model combines the parallel results before the next steps begin."
+                            disabled={disabled}
+                            onChange={(next) =>
+                              change({
+                                merge_agent: next.agents[0],
+                                merge_model_overrides: next.modelOverrides,
+                                merge_effort_overrides: next.effortOverrides,
+                              })
+                            }
+                          />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               )}
-            </div>
-          )}
 
-          {roster && roster.length > 0 && (
-            <div className="border-t border-gray-200 pt-3 dark:border-gray-800">
-              <p className="text-xs font-medium text-gray-700 dark:text-gray-300">
-                Every model this review calls
-              </p>
-              <ul
-                aria-label="Every model this review calls"
-                className="mt-1.5 space-y-1.5"
-              >
-                {roster.map((entry) => (
-                  <li
-                    key={`${entry.stage}-${entry.step_ids.join(",")}-${entry.provider}`}
-                    className="text-[11px] leading-4"
+              {roster && roster.length > 0 && (
+                <div className="border-t border-line pt-3">
+                  <p className="text-ui-label font-medium text-ink">
+                    Every model this review calls
+                  </p>
+                  <ul
+                    aria-label="Every model this review calls"
+                    className="mt-1.5 space-y-1.5"
                   >
-                    <span className="font-medium text-gray-700 dark:text-gray-300">
-                      {entryName(entry)}
-                    </span>
-                    <span className="block break-words text-gray-600 dark:text-gray-400">
-                      {rosterModelSummary(settings, entry, catalogs)}
-                    </span>
-                    <span className="block text-gray-500 dark:text-gray-500">
-                      {rosterSourceLabel(entry)}
-                      {entry.note ? ` · ${entry.note}` : ""}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+                    {roster.map((entry) => (
+                      <li
+                        key={`${entry.stage}-${entry.step_ids.join(",")}-${entry.provider}`}
+                        className="text-ui-meta leading-5"
+                      >
+                        <span className="font-medium text-ink">
+                          {entryName(entry)}
+                        </span>
+                        <span className="block break-words text-ink-muted">
+                          {rosterModelSummary(settings, entry, catalogs)}
+                        </span>
+                        <span className="block text-ink-muted">
+                          {rosterSourceLabel(entry)}
+                          {entry.note ? ` · ${entry.note}` : ""}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
-          )}
+          </details>
+        </div>
+      )}
+      {fallback && (
+        <div className="border-t border-line bg-sunken/40 px-3 py-2.5">
+          <p className="text-ui-meta font-medium text-ink">
+            Usage-limit backup
+          </p>
+          <p className="mt-1 break-words text-ui-meta leading-5 text-ink-muted">
+            {rosterModelSummary(settings, fallback, catalogs)}
+          </p>
         </div>
       )}
     </section>

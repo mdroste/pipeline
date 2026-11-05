@@ -46,6 +46,7 @@ pub fn inspect_archive(request: ExportArchiveRequest) -> WorkbenchResult<Archive
             "Research archive contains too many entries",
         ));
     }
+    super::validate_entry_paths(&mut archive)?;
     let mut names = HashSet::with_capacity(archive.len());
     let mut manifest_index = None;
     for index in 0..archive.len() {

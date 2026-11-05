@@ -267,6 +267,7 @@ export default function ReportWorkspace({
         provenance && (
           <div className="h-full">
             <ProvenancePanel
+              authorNote={runManifest?.author_note}
               provenance={provenance}
               quality={report?.quality}
               status={status}

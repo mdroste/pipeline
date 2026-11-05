@@ -18,13 +18,13 @@ pub(super) fn quarantine_corrupt_file(path: &std::path::Path, expected: &str) ->
         backup
             .write_all(expected.as_bytes())
             .map_err(|e| e.to_string())?;
-        backup.as_file().sync_all().map_err(|e| e.to_string())?;
+        crate::safety::sync_file(backup.as_file()).map_err(|e| e.to_string())?;
         let (_, backup_path) = backup.keep().map_err(|e| e.to_string())?;
         fs::remove_file(path).map_err(|e| e.to_string())?;
         #[cfg(unix)]
-        fs::File::open(path.parent().unwrap())
-            .and_then(|f| f.sync_all())
-            .map_err(|e| e.to_string())?;
+        if let Ok(directory) = fs::File::open(path.parent().unwrap()) {
+            crate::safety::sync_landed(&directory);
+        }
         Ok(Some(backup_path))
     })();
     match result {

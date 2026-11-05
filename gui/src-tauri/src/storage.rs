@@ -131,13 +131,13 @@ impl Storage {
             .map_err(|e| format!("Cannot save data folder setting: {e}"))?;
         serde_json::to_writer_pretty(&mut file, &config).map_err(|e| e.to_string())?;
         file.write_all(b"\n").map_err(|e| e.to_string())?;
-        file.as_file().sync_all().map_err(|e| e.to_string())?;
+        crate::safety::sync_file(file.as_file()).map_err(|e| e.to_string())?;
         file.persist(self.local.join("storage.json"))
             .map_err(|e| format!("Cannot save data folder setting: {e}"))?;
         #[cfg(unix)]
-        std::fs::File::open(&self.local)
-            .and_then(|dir| dir.sync_all())
-            .map_err(|e| format!("Cannot sync data folder setting: {e}"))?;
+        if let Ok(directory) = std::fs::File::open(&self.local) {
+            crate::safety::sync_landed(&directory);
+        }
         Ok(())
     }
 }

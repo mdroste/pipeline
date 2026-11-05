@@ -18,6 +18,8 @@ pub(super) async fn prepare_batch_launch(
     extra_inputs: Option<std::collections::HashMap<String, String>>,
     expected_profile_config_snapshot_id: Option<String>,
     run_parallel_overrides: Option<RunModelOverrides>,
+    author_note: Option<String>,
+    expected_profile_snapshot_id: Option<String>,
 ) -> Result<BatchLaunch, String> {
     let paths: Vec<String> = paths.into_iter().filter(|p| !p.trim().is_empty()).collect();
     if paths.is_empty() {
@@ -67,6 +69,13 @@ pub(super) async fn prepare_batch_launch(
     .await?;
     require_snapshot_dependencies(&dependencies)?;
     let snapshot = bind_runtime_snapshot(snapshot, &vars, &inputs)?;
+    let snapshot = bind_author_note(snapshot, author_note.as_deref())?;
+    if let Some(expected) = expected_profile_snapshot_id {
+        let planned = bind_foreground_launch(snapshot.clone(), &paths[0], Some("document"), false)?;
+        if expected != planned.fingerprint {
+            return Err("The batch options changed after the preview was prepared. Review the updated plan and try again.".into());
+        }
+    }
     Ok(BatchLaunch {
         paths,
         variables: vars,
@@ -80,6 +89,7 @@ pub(super) async fn prepare_batch_launch(
 /// immediately; progress arrives via `batch:progress` events and
 /// `get_batch_status`. Fails if any run (single or batch) is already active.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn start_batch(
     app: AppHandle,
     paths: Vec<String>,
@@ -87,6 +97,8 @@ pub async fn start_batch(
     extra_inputs: Option<std::collections::HashMap<String, String>>,
     expected_profile_config_snapshot_id: Option<String>,
     run_parallel_overrides: Option<RunModelOverrides>,
+    author_note: Option<String>,
+    expected_profile_snapshot_id: Option<String>,
 ) -> Result<(), String> {
     let BatchLaunch {
         paths,
@@ -99,6 +111,8 @@ pub async fn start_batch(
         extra_inputs,
         expected_profile_config_snapshot_id,
         run_parallel_overrides,
+        author_note,
+        expected_profile_snapshot_id,
     )
     .await?;
     let guard = acquire_pipeline_guard()?;

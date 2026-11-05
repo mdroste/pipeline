@@ -189,3 +189,12 @@ describe("file routes", () => {
     });
   });
 });
+
+it("opens old Conversations links and saved locations in Projects", () => {
+  expect(parseRoute("#/conversations")).toEqual({ page: "project-index" });
+  localStorage.setItem("pipeline.ui.route", "#/conversations");
+  expect(restoreRoute(localStorage)).toEqual({ page: "project-index" });
+  localStorage.removeItem("pipeline.ui.route");
+  localStorage.setItem("pipeline.ui.page", "conversations");
+  expect(restoreRoute(localStorage)).toEqual({ page: "project-index" });
+});

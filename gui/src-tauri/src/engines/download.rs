@@ -255,9 +255,7 @@ async fn fetch_source(
             .await
             .map_err(Failure::Stop)?;
     }
-    transfer
-        .file
-        .sync_all()
+    crate::safety::sync_file(&transfer.file)
         .map_err(|error| Failure::Stop(format!("Failed to sync {}: {error}", job.label)))?;
     let actual = format!("{:x}", transfer.hasher.clone().finalize());
     if actual != expected_sha256 {

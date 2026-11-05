@@ -18,6 +18,7 @@ fn runtime_snapshot_identity_is_order_stable_and_value_sensitive() {
             ..Default::default()
         }];
         RunSnapshot {
+            author_note: None,
             settings: crate::settings::Settings::default(),
             config,
             profile_name: "test".to_string(),
@@ -153,6 +154,7 @@ fn profile_snapshot_identity_is_stable_across_nested_override_map_order() {
 #[test]
 fn parallel_override_snapshot_identity_is_order_stable_and_value_sensitive() {
     let snapshot = || RunSnapshot {
+        author_note: None,
         settings: crate::settings::Settings::default(),
         config: empty_test_config(),
         profile_name: "test".to_string(),
@@ -256,6 +258,7 @@ fn one_run_parallel_override_replaces_explicit_and_inherited_parallel_agents() {
         },
     ];
     let snapshot = RunSnapshot {
+        author_note: None,
         settings: crate::settings::Settings::default(),
         config,
         profile_name: "Test".into(),
@@ -301,6 +304,7 @@ fn one_run_merge_override_replaces_the_workflow_merge_provider_and_policy() {
     let mut config = empty_test_config();
     config.merge.agents = vec!["antigravity".into()];
     let snapshot = RunSnapshot {
+        author_note: None,
         settings: crate::settings::Settings::default(),
         config,
         profile_name: "Test".into(),
@@ -419,4 +423,37 @@ fn a_run_with_a_secret_resumes_only_with_the_secret_entered_again_and_never_keep
     )
     .unwrap_err();
     assert!(error.contains("not a secret variable"), "{error}");
+}
+
+#[test]
+fn author_note_snapshot_is_normalized_optional_and_value_sensitive() {
+    let snapshot = RunSnapshot {
+        author_note: None,
+        settings: crate::settings::Settings::default(),
+        config: empty_test_config(),
+        profile_name: "test".into(),
+        config_fingerprint: "config".into(),
+        fingerprint: "runtime".into(),
+        workflow_source: String::new(),
+        workflow_fingerprint: String::new(),
+        workflow_json: String::new(),
+        specialist_catalog_revision: String::new(),
+        agent_overrides: None,
+    };
+    let empty = bind_author_note(snapshot.clone(), Some(" \r\n ")).unwrap();
+    assert_eq!(empty.fingerprint, snapshot.fingerprint);
+    assert!(empty.author_note.is_none());
+    let first = bind_author_note(snapshot.clone(), Some(" Model\r\nassumptions ")).unwrap();
+    let normalized = bind_author_note(snapshot.clone(), Some("Model\nassumptions")).unwrap();
+    assert_eq!(first.fingerprint, normalized.fingerprint);
+    assert_eq!(first.config_fingerprint, snapshot.config_fingerprint);
+    assert_ne!(first.fingerprint, empty.fingerprint);
+    assert_ne!(
+        first.fingerprint,
+        bind_author_note(snapshot.clone(), Some("Presentation"))
+            .unwrap()
+            .fingerprint
+    );
+    assert_eq!(first.author_note.as_deref(), Some("Model\nassumptions"));
+    assert!(bind_author_note(snapshot, Some(&"x".repeat(4001))).is_err());
 }

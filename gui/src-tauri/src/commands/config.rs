@@ -359,6 +359,7 @@ pub struct ExecutionPlanResponse {
 /// Return the canonical scheduler timeline for one immutable active-profile
 /// snapshot. The frontend must not independently infer dependency waves.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn get_execution_plan(
     variables: Option<std::collections::HashMap<String, String>>,
     extra_inputs: Option<std::collections::HashMap<String, String>>,
@@ -367,6 +368,7 @@ pub async fn get_execution_plan(
     paper_path: Option<String>,
     input_interpretation: Option<String>,
     run_parallel_overrides: Option<RunModelOverrides>,
+    author_note: Option<String>,
 ) -> Result<ExecutionPlanResponse, String> {
     let variables = variables.unwrap_or_default();
     let extra_inputs = extra_inputs.unwrap_or_default();
@@ -425,6 +427,7 @@ pub async fn get_execution_plan(
     let variable_specs = snapshot.config.variables.clone();
     let input_slots = snapshot.config.extraction.extra_inputs.clone();
     let snapshot = bind_runtime_snapshot(snapshot, &variables, &extra_inputs)?;
+    let snapshot = bind_author_note(snapshot, author_note.as_deref())?;
     let snapshot = bind_foreground_launch(
         snapshot,
         paper_path.as_deref().unwrap_or(""),
@@ -452,6 +455,7 @@ pub async fn get_execution_plan(
         &planning_config,
         &snapshot.settings,
         paper_path.as_deref(),
+        snapshot.author_note.as_deref(),
     )
     .await;
     let input_notices = super::reuse_artifacts::folder_capture_notices(

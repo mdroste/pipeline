@@ -109,9 +109,7 @@ pub(super) fn load_or_create_key_inner() -> Result<[u8; KEY_SIZE], String> {
         .map_err(|e| format!("Failed to write keyfile: {e}"))?;
     temp.flush()
         .map_err(|e| format!("Failed to flush keyfile: {e}"))?;
-    temp.as_file()
-        .sync_all()
-        .map_err(|e| format!("Failed to sync keyfile: {e}"))?;
+    crate::safety::sync_file(temp.as_file()).map_err(|e| format!("Failed to sync keyfile: {e}"))?;
     let created = match temp.persist_noclobber(&path) {
         Ok(_) => true,
         Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -235,8 +233,7 @@ pub(super) fn atomic_write(path: &std::path::Path, content: &str) -> Result<(), 
         .map_err(|e| format!("Failed to write {}: {e}", tmp.path().display()))?;
     tmp.flush()
         .map_err(|e| format!("Failed to flush {}: {e}", tmp.path().display()))?;
-    tmp.as_file()
-        .sync_all()
+    crate::safety::sync_file(tmp.as_file())
         .map_err(|e| format!("Failed to sync {}: {e}", tmp.path().display()))?;
     #[cfg(unix)]
     {
@@ -253,8 +250,8 @@ pub(super) fn atomic_write(path: &std::path::Path, content: &str) -> Result<(), 
     tmp.persist(path)
         .map_err(|e| format!("Failed to save {}: {}", path.display(), e.error))?;
     #[cfg(unix)]
-    fs::File::open(dir)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|e| format!("Failed to sync settings directory: {e}"))?;
+    if let Ok(directory) = fs::File::open(dir) {
+        crate::safety::sync_landed(&directory);
+    }
     Ok(())
 }

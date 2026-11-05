@@ -55,8 +55,10 @@ default.
 Enter sends a message. If you prefer, choose Command+Enter on macOS or
 Ctrl+Enter on Windows and Linux.
 
-At startup, Pipeline reopens your last project, conversation, or review. If you
-last used **Settings** or **Help**, it opens **Home**.
+At startup, Pipeline opens **Home** by default. To reopen your last project,
+conversation, or review, choose **Continue where I left off** under
+**General → Startup**. With that setting, **Settings** and **Help** still return
+to **Home** on the next launch.
 **General → Startup → Guided setup** reopens the **Get started** guide.
 
 ## Research data folder

@@ -321,6 +321,7 @@ pub fn estimate_usage(
     orientation_provider: &str,
     pricing: &dyn Fn(&str) -> ProviderPricing,
     budget: RunBudget,
+    author_note: Option<&str>,
 ) -> UsageEstimate {
     let mut estimate = UsageEstimate {
         document_tokens,
@@ -331,7 +332,12 @@ pub fn estimate_usage(
     };
     let mut cost = (0f64, 0f64);
     let mut any_api = false;
-    let mut account = |provider: &str, calls: Calls, estimate: &mut UsageEstimate| {
+    let note_tokens = crate::pipeline::author_note::prefix(author_note)
+        .len()
+        .div_ceil(4) as u64;
+    let mut account = |provider: &str, mut calls: Calls, estimate: &mut UsageEstimate| {
+        calls.input_low += note_tokens * calls.low;
+        calls.input_high += note_tokens * calls.high;
         estimate.calls_low += calls.low;
         estimate.calls_high += calls.high;
         estimate.input_tokens_low += calls.input_low;
@@ -488,6 +494,7 @@ pub async fn preview_estimate(
     config: &PipelineConfig,
     settings: &Settings,
     paper_path: Option<&str>,
+    author_note: Option<&str>,
 ) -> UsageEstimate {
     let document_tokens = match paper_path.filter(|path| !path.trim().is_empty()) {
         Some(path) => {
@@ -556,6 +563,7 @@ pub async fn preview_estimate(
         settings.orientation_agent(),
         &pricing,
         RunBudget::from_settings(settings),
+        author_note,
     )
 }
 

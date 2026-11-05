@@ -126,6 +126,7 @@ pub(super) async fn rerun_run_inner(
     // stopped since then may not have its report yet.
     let parent_recovery = crate::runs::recover_stopped_run(parent_run_id);
     let parent = crate::runs::load_manifest(parent_run_id)?;
+    let author_note = crate::pipeline::author_note::normalize(parent.author_note.as_deref())?;
     let mut workflow = workflow::load_rerun_workflow(
         parent_run_id,
         &parent,
@@ -281,6 +282,7 @@ pub(super) async fn rerun_run_inner(
             survey_template.as_deref(),
             survey_schema.as_ref(),
             scoped_source_read_root.as_deref(),
+            author_note.as_deref(),
         )
         .await?;
         if is_cancelled() {
@@ -325,6 +327,7 @@ pub(super) async fn rerun_run_inner(
         app,
         &parent_report.paper_hash,
         crate::runs::RunFinishMeta {
+            author_note: author_note.clone(),
             input_path: parent.input_path.clone(),
             input_mode: parent.input_mode.clone(),
             input_interpretation: parent.input_interpretation.clone(),
@@ -349,6 +352,7 @@ pub(super) async fn rerun_run_inner(
         )?;
     }
     if let Some(writer) = run_writer.as_mut() {
+        crate::pipeline::author_note::save(writer, author_note.as_deref())?;
         super::reuse_artifacts::retain_source(&scoped_source, writer)?;
         writer
             .add_text(
@@ -460,6 +464,7 @@ pub(super) async fn rerun_run_inner(
             &preloaded,
             artifact_write_dir.as_deref(),
             &settings,
+            author_note.as_deref(),
         ),
     )
     .await?;
@@ -517,6 +522,7 @@ pub(super) async fn rerun_run_inner(
         elapsed,
         &settings,
         RunCompletion {
+            author_note,
             input_path: parent.input_path,
             input_mode: parent.input_mode,
             input_interpretation: parent.input_interpretation,

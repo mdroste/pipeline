@@ -175,6 +175,7 @@ pub async fn execute(
     let fingerprint = stable_snapshot_fingerprint(&settings_for_snapshot_fingerprint(&settings))
         .map_err(|e| e.to_string())?;
     let snapshot = RunSnapshot {
+        author_note: None,
         settings,
         config: document.config,
         profile_name: pinned.profile_name,

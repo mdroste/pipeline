@@ -155,9 +155,9 @@ fn load_project_path(path: &Path, id: &str) -> Result<Project, String> {
 
 fn sync_dir(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
-    fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
-        .map_err(|error| format!("Failed to sync project storage: {error}"))?;
+    if let Ok(directory) = fs::File::open(path) {
+        crate::safety::sync_landed(&directory);
+    }
     Ok(())
 }
 
@@ -199,8 +199,7 @@ fn write_project_to(dir: &Path, project: &Project) -> Result<(), String> {
         .map_err(|error| format!("Failed to create project staging file: {error}"))?;
     temp.write_all(&bytes)
         .map_err(|error| format!("Failed to stage project: {error}"))?;
-    temp.as_file()
-        .sync_all()
+    crate::safety::sync_file(temp.as_file())
         .map_err(|error| format!("Failed to flush project: {error}"))?;
     temp.persist(destination)
         .map_err(|error| format!("Failed to save project: {}", error.error))?;
@@ -499,6 +498,24 @@ pub fn permanently_delete_trashed_project(id: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn saves_on_volumes_without_full_flush_but_preserves_the_old_project_on_io_error() {
+        let root = tempfile::tempdir().unwrap();
+        crate::safety::simulate_sync_failure(Some((libc::ENOTSUP, false)));
+        let saved = create_project_in(root.path(), "Network Drive", "original");
+        crate::safety::simulate_sync_failure(None);
+        let project = saved.unwrap();
+        crate::safety::simulate_sync_failure(Some((libc::EIO, false)));
+        let failed = update_project_in(root.path(), &project.id, "New", "changed");
+        crate::safety::simulate_sync_failure(None);
+        assert!(failed.is_err());
+        assert_eq!(
+            load_project_from(root.path(), &project.id).unwrap(),
+            project
+        );
+    }
 
     #[test]
     fn project_lifecycle_preserves_order_and_membership() {

@@ -176,7 +176,7 @@ describe("PaperSelector", () => {
     );
   });
 
-  it("can clear, replace, and reuse recent selections", async () => {
+  it("can clear and replace selections without showing recent inputs", async () => {
     const onPathChange = vi.fn();
     openDialog.mockResolvedValueOnce("/papers/first.pdf");
     render(<PaperSelector onPathChange={onPathChange} disabled={false} />);
@@ -184,11 +184,12 @@ describe("PaperSelector", () => {
     await user.click(screen.getByRole("button", { name: /select file/i }));
     await user.click(screen.getByRole("button", { name: "Clear" }));
     expect(onPathChange).toHaveBeenLastCalledWith(null);
-    await user.selectOptions(
-      screen.getByRole("combobox", { name: "Choose a recent input" }),
-      "0",
-    );
-    expect(onPathChange).toHaveBeenLastCalledWith("/papers/first.pdf");
+    expect(screen.queryByText("Recent input")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: "Choose a recent input" }),
+    ).not.toBeInTheDocument();
+    openDialog.mockResolvedValueOnce("/papers/first.pdf");
+    await user.click(screen.getByRole("button", { name: /select file/i }));
     openDialog.mockResolvedValueOnce("/papers/replacement.pdf");
     await user.click(screen.getByRole("button", { name: "Replace" }));
     expect(onPathChange).toHaveBeenLastCalledWith("/papers/replacement.pdf");

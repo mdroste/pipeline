@@ -139,16 +139,16 @@ export function unsetEffortLabel(settings: Settings, provider: string): string {
 }
 
 /**
- * One provider's line in a stage summary, as in
- * "Claude · Opus 5.5 (Claude Code's choice) · High". Every part names a value.
+ * Resolve provider, model, and thinking labels together so cards and compact
+ * summaries describe the same selection.
  */
-export function stageModelSummary(
+export function stageModelDetails(
   settings: Settings,
   provider: string,
   models: Record<string, ModelSelection> | undefined,
   efforts: Record<string, string> | undefined,
   catalogs: Record<string, ModelCatalog>,
-): string {
+): { provider: string; model: string; effort: string } {
   const transport =
     provider === "local" || connectionFor(settings, provider).access === "api"
       ? "api"
@@ -171,7 +171,29 @@ export function stageModelSummary(
   const effort = efforts?.[key] || efforts?.[provider];
   const family =
     providerFamilies.find(({ id }) => id === provider)?.label ?? provider;
-  return `${family} · ${model} · ${effort ? capitalize(effort) : unsetEffortLabel(settings, provider)}`;
+  return {
+    provider: family,
+    model,
+    effort: effort ? capitalize(effort) : unsetEffortLabel(settings, provider),
+  };
+}
+
+/** A compact line using the same values as the model picker. */
+export function stageModelSummary(
+  settings: Settings,
+  provider: string,
+  models: Record<string, ModelSelection> | undefined,
+  efforts: Record<string, string> | undefined,
+  catalogs: Record<string, ModelCatalog>,
+): string {
+  const details = stageModelDetails(
+    settings,
+    provider,
+    models,
+    efforts,
+    catalogs,
+  );
+  return `${details.provider} · ${details.model} · ${details.effort}`;
 }
 
 /**

@@ -268,6 +268,8 @@ describe("App launch", () => {
 
     await waitFor(() =>
       expect(enqueueBatch).toHaveBeenCalledWith({
+        authorNote: null,
+        expectedProfileSnapshotId: "snapshot-test",
         paths: ["/tmp/a.pdf", "/tmp/b.pdf"],
         variables: null,
         extraInputs: null,
@@ -294,6 +296,12 @@ describe("App launch", () => {
     invoke.mockImplementation(
       (command: string, args?: { paperPath?: string | null }) => {
         if (command === "mark_smoke_ready") return Promise.resolve(true);
+        if (command === "app_close_hides") return Promise.resolve(false);
+        if (
+          command === "set_app_close_guard" ||
+          command === "complete_app_close"
+        )
+          return Promise.resolve();
         if (command === "get_batch_status") return Promise.resolve([]);
         if (command === "get_pipeline_config")
           return Promise.resolve(previewConfig);
@@ -497,6 +505,9 @@ describe("App launch", () => {
     }) => void;
     invoke.mockImplementation((command: string) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
+      if (command === "app_close_hides") return Promise.resolve(false);
+      if (command === "set_app_close_guard" || command === "complete_app_close")
+        return Promise.resolve();
       if (command === "get_run_setup") {
         return Promise.resolve(runSetup("missing-provider", "missing-config"));
       }
@@ -548,6 +559,9 @@ describe("App launch", () => {
   it("opens PDF extraction settings from a missing PaddleOCR dependency", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
+      if (command === "app_close_hides") return Promise.resolve(false);
+      if (command === "set_app_close_guard" || command === "complete_app_close")
+        return Promise.resolve();
       if (command === "get_run_setup") {
         return Promise.resolve(runSetup("local-pdf", "local-pdf-config"));
       }
@@ -602,6 +616,9 @@ describe("App launch", () => {
     let checks = 0;
     invoke.mockImplementation((command: string) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
+      if (command === "app_close_hides") return Promise.resolve(false);
+      if (command === "set_app_close_guard" || command === "complete_app_close")
+        return Promise.resolve();
       if (command === "get_batch_status") return Promise.resolve([]);
       if (command === "get_pipeline_config")
         return Promise.resolve(previewConfig);
@@ -660,6 +677,9 @@ describe("App launch", () => {
     let plans = 0;
     invoke.mockImplementation((command: string) => {
       if (command === "mark_smoke_ready") return Promise.resolve(true);
+      if (command === "app_close_hides") return Promise.resolve(false);
+      if (command === "set_app_close_guard" || command === "complete_app_close")
+        return Promise.resolve();
       if (command === "get_batch_status") return Promise.resolve([]);
       if (command === "get_pipeline_config")
         return Promise.resolve(previewConfig);

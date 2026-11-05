@@ -516,9 +516,7 @@ pub(super) fn atomic_write_cache(path: &Path, content: &[u8]) -> Result<(), Stri
     temporary
         .write_all(content)
         .map_err(|error| format!("Failed to write extraction cache: {error}"))?;
-    temporary
-        .as_file_mut()
-        .sync_all()
+    crate::safety::sync_file(temporary.as_file())
         .map_err(|error| format!("Failed to flush extraction cache: {error}"))?;
     temporary
         .persist(path)

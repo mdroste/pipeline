@@ -45,10 +45,9 @@ function subscribeNarrow(notify: () => void) {
 /**
  * Whether the primary navigation is folded to icons. It follows the window
  * width until the researcher chooses otherwise; a choice that matches the
- * current width goes back to following it. Only one toggle exists at a time,
- * in the rail or in the bar above the icons, so `toggleRef` carries focus
- * across the swap instead of dropping it to the document body. The Mac View
- * menu flips the same state and leaves focus where the researcher was working.
+ * current width goes back to following it. The persistent title bar owns the
+ * toggle; `toggleRef` keeps focus there after a click. The Mac View menu flips
+ * the same state and leaves focus where the researcher was working.
  */
 export default function useNavRailCollapse() {
   const [mode, setMode] = useState<NavRailMode>(readMode);

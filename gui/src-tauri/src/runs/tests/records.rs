@@ -90,6 +90,7 @@ fn old_manifest_without_metadata_loads() {
 #[test]
 fn summary_carries_metrics_and_basename() {
     let m = RunManifest {
+        author_note: None,
         artifact_schema_version: CURRENT_ARTIFACT_SCHEMA_VERSION,
         run_id: "r1".into(),
         created: "2026-07-07T10:00:00+00:00".into(),

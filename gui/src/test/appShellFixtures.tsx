@@ -83,6 +83,10 @@ export function createAppTestFixture(
     appearance.systemThemeListener = undefined;
     localStorage.clear();
     localStorage.setItem("pipeline.ui.page", "main");
+    localStorage.setItem(
+      "pipeline.ui.preferences",
+      JSON.stringify({ startup: "restore" }),
+    );
     document.documentElement.classList.remove("dark", "theme-switching");
     document.documentElement.style.colorScheme = "";
     Object.defineProperty(window, "matchMedia", {
@@ -105,6 +109,9 @@ export function createAppTestFixture(
       })),
     });
     invoke.mockImplementation((command: string) => {
+      if (command === "app_close_hides") return Promise.resolve(false);
+      if (command === "set_app_close_guard" || command === "complete_app_close")
+        return Promise.resolve();
       if (command === "mark_smoke_ready") return Promise.resolve(true);
       if (command === "get_batch_status") return Promise.resolve([]);
       if (command === "get_pipeline_config")

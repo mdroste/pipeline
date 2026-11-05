@@ -25,6 +25,7 @@ pub(super) enum Command {
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct RunArgs {
+    pub(super) author_note: Option<String>,
     pub(super) input: Option<String>,
     pub(super) input_interpretation: Option<String>,
     pub(super) profile_id: Option<String>,
@@ -168,6 +169,7 @@ fn parse_limit(
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct BatchArgs {
+    pub(super) author_note: Option<String>,
     pub(super) input_dir: String,
     pub(super) profile_id: Option<String>,
     pub(super) workflow_path: Option<String>,
@@ -181,6 +183,7 @@ pub(super) struct BatchArgs {
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct CheckArgs {
+    pub(super) author_note: Option<String>,
     pub(super) input: Option<String>,
     pub(super) input_interpretation: Option<String>,
     pub(super) profile_id: Option<String>,
@@ -272,6 +275,10 @@ fn parse_check(args: &[String]) -> Result<ParseAction, String> {
                 let value = next_value(args, &mut index, "--workflow")?;
                 set_once(&mut parsed.workflow_path, value, "--workflow")?;
             }
+            "--author-note" => {
+                let value = next_value(args, &mut index, "--author-note")?;
+                set_once(&mut parsed.author_note, value, "--author-note")?;
+            }
             "--var" => {
                 let value = next_value(args, &mut index, "--var")?;
                 insert_assignment(&mut parsed.variables, &value, "--var", true)?;
@@ -315,6 +322,10 @@ fn parse_run(args: &[String]) -> Result<ParseAction, String> {
             "--workflow" | "-w" => {
                 let value = next_value(args, &mut index, "--workflow")?;
                 set_once(&mut parsed.workflow_path, value, "--workflow")?;
+            }
+            "--author-note" => {
+                let value = next_value(args, &mut index, "--author-note")?;
+                set_once(&mut parsed.author_note, value, "--author-note")?;
             }
             "--var" => {
                 let value = next_value(args, &mut index, "--var")?;
@@ -367,6 +378,10 @@ fn parse_batch(args: &[String]) -> Result<ParseAction, String> {
             "--workflow" | "-w" => {
                 let value = next_value(args, &mut index, "--workflow")?;
                 set_once(&mut parsed.workflow_path, value, "--workflow")?;
+            }
+            "--author-note" => {
+                let value = next_value(args, &mut index, "--author-note")?;
+                set_once(&mut parsed.author_note, value, "--author-note")?;
             }
             "--var" => {
                 let value = next_value(args, &mut index, "--var")?;

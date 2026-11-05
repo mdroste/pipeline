@@ -3,6 +3,7 @@ pub mod api_anthropic;
 pub mod api_common;
 pub mod api_google;
 pub mod api_openai;
+pub(crate) mod author_note;
 pub(crate) mod call;
 pub mod claude;
 mod cli_process;

@@ -79,6 +79,7 @@ async fn run(
         &preloaded,
         None,
         settings,
+        None,
     )
     .await
     .unwrap();
@@ -211,6 +212,7 @@ async fn a_skipped_step_is_checkpointed_for_recovery() {
         &preloaded,
         run_dir.path().to_str(),
         &crate::settings::Settings::default(),
+        None,
     )
     .await
     .unwrap();

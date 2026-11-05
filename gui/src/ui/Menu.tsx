@@ -53,7 +53,7 @@ export function Menu({
       width={width}
       id={id}
       closeOnFocusOut
-      className="min-w-[200px] p-1.5"
+      className="ui-dropdown-menu min-w-[200px]"
       onKeyDown={onKeyDown}
     >
       <MenuContext.Provider
@@ -103,7 +103,7 @@ export function MenuItem({
         onSelect?.();
         if (!keepOpen) menu?.close();
       }}
-      className={`flex w-full items-start gap-2.5 rounded-ui-sm px-2.5 py-2 text-left text-ui-label outline-none hover:bg-sunken focus:bg-sunken disabled:opacity-40 ${
+      className={`ui-dropdown-item flex w-full items-start gap-2.5 text-left disabled:opacity-40 ${
         danger ? "text-danger" : "text-ink"
       }`}
     >

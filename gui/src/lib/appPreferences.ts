@@ -28,7 +28,7 @@ export const DEFAULT_PREFERENCES: AppPreferences = {
   editorWrap: false,
   density: "comfortable",
   sendShortcut: "enter",
-  startup: "restore",
+  startup: "home",
   notifyCompletion: true,
   notifyFailure: true,
   notifyAttention: true,
@@ -66,7 +66,7 @@ export function parsePreferences(raw: string | null): AppPreferences {
       next[key] = Math.max(min, Math.min(max, Math.round(value[key])));
   if (value.density === "compact") next.density = "compact";
   if (value.sendShortcut === "mod-enter") next.sendShortcut = "mod-enter";
-  if (value.startup === "home") next.startup = "home";
+  if (value.startup === "restore") next.startup = "restore";
   return next;
 }
 

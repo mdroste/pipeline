@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import useConversationIndex from "../hooks/useConversationIndex";
 import type { AppPage } from "../lib/router";
 import Badge from "../ui/Badge";
@@ -32,8 +38,6 @@ interface Props extends Partial<
   hasCurrentRun: boolean;
   /** The review on screen. */
   activeRunKey?: string | null;
-  isMac: boolean;
-  isWindows?: boolean;
   dependenciesReady: boolean | null;
   dependenciesLoading: boolean;
   dependenciesError?: string | null;
@@ -41,8 +45,6 @@ interface Props extends Partial<
   onResize: (width: number) => void;
   /** Folded to icons. */
   collapsed?: boolean;
-  onToggleCollapsed?: () => void;
-  toggleRef?: Ref<HTMLButtonElement>;
   onNewRun: () => void;
   onNewConversation?: () => void;
   onNewProject?: () => void;
@@ -55,53 +57,6 @@ interface Props extends Partial<
   onDependencies: () => void;
 }
 
-// The button keeps one window position in the rail and in the bar above the
-// icons, so a second click undoes the first. On macOS it sits in line with the
-// traffic lights, above the window-wide drag strip. On Windows it sits in the
-// row of the window controls.
-const railToggleClass = (isMac: boolean, isWindows: boolean) =>
-  `absolute ${
-    isMac
-      ? "left-[76px] top-1 z-40 !h-6 !w-6"
-      : isWindows
-        ? "left-3 top-0.5 z-10"
-        : "left-3 top-2 z-10"
-  }`;
-
-/** Sits above the icon rail, so the window controls stay clear of the page. */
-export function CollapsedNavBar({
-  isMac,
-  isWindows = false,
-  onExpand,
-  toggleRef,
-}: {
-  isMac: boolean;
-  isWindows?: boolean;
-  onExpand: () => void;
-  toggleRef?: Ref<HTMLButtonElement>;
-}) {
-  return (
-    <div
-      data-testid="collapsed-nav-bar"
-      data-tauri-drag-region={isMac || isWindows ? "deep" : undefined}
-      className={`relative shrink-0 border-b border-gray-200/80 bg-gray-100/90 dark:border-neutral-800 dark:bg-[#101010] ${
-        isMac ? "h-7" : isWindows ? "h-8" : "h-11"
-      }`}
-    >
-      <IconButton
-        ref={toggleRef}
-        label="Expand sidebar"
-        tooltipSide="bottom"
-        size="sm"
-        className={railToggleClass(isMac, isWindows)}
-        onClick={onExpand}
-      >
-        <Icon name="sidebar" />
-      </IconButton>
-    </div>
-  );
-}
-
 /** The newest conversations, read only while their section is open. */
 function RecentConversations({
   onOpen,
@@ -112,7 +67,7 @@ function RecentConversations({
   if (!conversations.length)
     return (
       <p className="nav-empty">
-        {loading ? "Loading conversations…" : "No conversations yet."}
+        {loading ? "Loading chats…" : "No chats yet."}
       </p>
     );
   return (
@@ -134,10 +89,8 @@ function RecentConversations({
 const NO_RUNS: NonNullable<Props["runs"]> = [];
 const NONE_UNSEEN: ReadonlySet<string> = new Set();
 
-const pageSection = (page: AppPage, unfiled: boolean): NavSection | null => {
-  if (page === "conversations") return "conversations";
-  if (page === "workspace") return unfiled ? "conversations" : "projects";
-  if (page === "project-index") return "projects";
+const pageSection = (page: AppPage): NavSection | null => {
+  if (page === "workspace" || page === "project-index") return "projects";
   if (["main", "history", "batch", "pipeline", "gallery"].includes(page))
     return "reviews";
   return null;
@@ -157,16 +110,12 @@ export default function NavRail({
   workspaceActive = false,
   workspaceAttention = false,
   tasksAttention = false,
-  isMac,
-  isWindows = false,
   dependenciesReady,
   dependenciesLoading,
   dependenciesError,
   width,
   onResize,
   collapsed = false,
-  onToggleCollapsed,
-  toggleRef,
   onNewRun,
   onNewConversation,
   onNewProject,
@@ -181,14 +130,48 @@ export default function NavRail({
   onOpenAutomations,
   onActivity,
 }: Props) {
+  const asideRef = useRef<HTMLElement>(null);
+  const previousLayout = useRef({ collapsed, width });
+  const motion = useRef<Animation | null>(null);
+  useLayoutEffect(() => {
+    const previous = previousLayout.current;
+    previousLayout.current = { collapsed, width };
+    const aside = asideRef.current;
+    // Continue from the visible width when a second toggle interrupts the first.
+    const from =
+      motion.current?.playState === "running"
+        ? aside?.getBoundingClientRect().width
+        : previous.collapsed
+          ? 56
+          : previous.width;
+    motion.current?.cancel();
+    motion.current = null;
+    if (
+      !aside?.animate ||
+      previous.collapsed === collapsed ||
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    )
+      return;
+    motion.current = aside.animate(
+      [
+        { width: `${from}px`, opacity: 0.7, clipPath: "inset(0 -4px 0 0)" },
+        {
+          width: `${collapsed ? 56 : width}px`,
+          opacity: 1,
+          clipPath: "inset(0 -4px 0 0)",
+        },
+      ],
+      { duration: 180, easing: "cubic-bezier(0.2, 0, 0, 1)" },
+    );
+  }, [collapsed, width]);
+  useEffect(() => () => motion.current?.cancel(), []);
+
   const rail = useNavRailSlot();
   const workspace = activePage === "workspace" ? rail?.workspace : null;
-  const unfiled = workspace?.projectId === null;
-  const section = pageSection(activePage, unfiled);
+  const section = pageSection(activePage);
   const { isOpen, toggle } = useNavSections(section);
   const [flyout, setFlyout] = useState<NavSection | null>(null);
   const flyoutAnchors = {
-    conversations: useRef<HTMLButtonElement>(null),
     projects: useRef<HTMLButtonElement>(null),
     reviews: useRef<HTMLButtonElement>(null),
   };
@@ -228,21 +211,8 @@ export default function NavRail({
     setFlyout(null);
     action?.();
   };
-  const conversationChildren =
-    workspace && unfiled ? (
-      slot
-    ) : (
-      <RecentConversations
-        onOpen={(id) => {
-          setFlyout(null);
-          onOpenConversation?.(id);
-        }}
-      />
-    );
-  const projectChildren =
-    workspace && !unfiled ? (
-      slot
-    ) : recentProjectsLoading && !recentProjects.length ? (
+  const recentProjectChildren =
+    recentProjectsLoading && !recentProjects.length ? (
       <div
         role="status"
         aria-label="Loading recent projects"
@@ -278,6 +248,20 @@ export default function NavRail({
     ) : (
       <p className="nav-empty">Your projects will appear here.</p>
     );
+  const projectChildren = workspace ? (
+    slot
+  ) : (
+    <>
+      {recentProjectChildren}
+      <div className="nav-label">Recent chats</div>
+      <RecentConversations
+        onOpen={(id) => {
+          setFlyout(null);
+          onOpenConversation?.(id);
+        }}
+      />
+    </>
+  );
   const reviewChildren = (
     <>
       <NavChild
@@ -315,13 +299,6 @@ export default function NavRail({
       children: ReactNode;
     }
   > = {
-    conversations: {
-      label: "Conversations",
-      icon: "assistant",
-      page: "conversations",
-      current: activePage === "conversations",
-      children: conversationChildren,
-    },
     projects: {
       label: "Projects",
       icon: "project",
@@ -445,7 +422,11 @@ export default function NavRail({
 
   if (collapsed)
     return (
-      <aside className="relative flex w-14 shrink-0 flex-col items-center border-r border-gray-200/80 bg-gray-100/90 px-2 pb-2.5 pt-2 [color-scheme:light] dark:border-neutral-800 dark:bg-[#101010] dark:[color-scheme:dark]">
+      <aside
+        ref={asideRef}
+        style={{ width: 56 }}
+        className="relative flex shrink-0 flex-col items-center border-r border-gray-200/80 bg-gray-100/90 px-2 pb-2.5 pt-2 [color-scheme:light] dark:border-neutral-800 dark:bg-[#101010] dark:[color-scheme:dark]"
+      >
         <nav
           aria-label="Primary"
           className="flex min-h-0 flex-1 flex-col items-center gap-0.5"
@@ -466,7 +447,6 @@ export default function NavRail({
             current={activePage === "home"}
             onClick={() => onNavigate("home")}
           />
-          {groupIcon("conversations")}
           {groupIcon("projects")}
           {groupIcon("reviews")}
           <NavIcon
@@ -512,31 +492,11 @@ export default function NavRail({
 
   return (
     <aside
+      ref={asideRef}
       style={{ width }}
       className="relative flex shrink-0 flex-col border-r border-gray-200/80 bg-gray-100/90 px-2.5 pb-2.5 [color-scheme:light] dark:border-neutral-800 dark:bg-[#101010] dark:[color-scheme:dark]"
     >
-      {(isMac || isWindows) && (
-        <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-7" />
-      )}
-
-      {onToggleCollapsed && (
-        <IconButton
-          ref={toggleRef}
-          label="Collapse sidebar"
-          tooltipSide="bottom"
-          size="sm"
-          className={railToggleClass(isMac, isWindows)}
-          onClick={onToggleCollapsed}
-        >
-          <Icon name="sidebar" />
-        </IconButton>
-      )}
-
-      <div
-        className={`flex shrink-0 items-center text-sm font-semibold tracking-[-0.01em] text-gray-900 dark:text-neutral-100 ${
-          isMac ? "h-7 pl-[96px] pt-1" : isWindows ? "h-8 pl-8" : "h-11 pl-8"
-        }`}
-      >
+      <div className="flex h-9 shrink-0 items-center pl-2 text-sm font-semibold tracking-[-0.01em] text-gray-900 dark:text-neutral-100">
         Pipeline
       </div>
 
@@ -565,7 +525,6 @@ export default function NavRail({
           current={activePage === "home"}
           onClick={() => onNavigate("home")}
         />
-        {group("conversations")}
         {group("projects")}
         {group("reviews")}
         <NavRow

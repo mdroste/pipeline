@@ -74,6 +74,9 @@ impl PageArtifactIndex {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunManifest {
+    /// Author priorities captured for this run, independent of the workflow.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub author_note: Option<String>,
     /// Version of the durable run-artifact layout. Manifests written before
     /// this field was introduced deserialize as version 0.
     #[serde(default)]
@@ -150,6 +153,7 @@ pub struct RunManifest {
 /// doesn't take a dozen positional arguments.
 #[derive(Debug, Clone, Default)]
 pub struct RunFinishMeta {
+    pub author_note: Option<String>,
     pub input_path: String,
     pub input_mode: String,
     pub input_interpretation: String,

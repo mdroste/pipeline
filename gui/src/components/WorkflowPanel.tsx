@@ -1,14 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useId } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { PipelineConfig, ProfileSummary } from "../lib/types";
-import {
-  ADAPTIVE_REVIEW_PROFILE_IDS,
-  adaptiveAgentCount,
-  adaptiveAgentCountLabel,
-  adaptiveAgentRange,
-  isAutoReview,
-} from "../lib/autoReview";
-import AutoReviewCatalogDialog from "./AutoReviewCatalogDialog";
 import ReportIssueLink from "./ReportIssueLink";
 
 interface Props {
@@ -24,6 +16,7 @@ export default function WorkflowPanel({
   onProfileChange,
   refreshKey,
 }: Props) {
+  const selectId = useId();
   const [config, setConfig] = useState<PipelineConfig | null>(null);
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [activeId, setActiveId] = useState<string>("");
@@ -31,7 +24,6 @@ export default function WorkflowPanel({
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
-  const [catalogOpen, setCatalogOpen] = useState(false);
 
   useEffect(() => {
     let stale = false;
@@ -64,7 +56,6 @@ export default function WorkflowPanel({
     setSwitching(true);
     setError(null);
     try {
-      setCatalogOpen(false);
       const newConfig = await invoke<PipelineConfig>("switch_profile", { id });
       setConfig(newConfig);
       setActiveId(id);
@@ -106,20 +97,26 @@ export default function WorkflowPanel({
     );
   }
 
-  const enabledSteps = config.steps.filter((s) => s.enabled);
-  const disabledCount = config.steps.length - enabledSteps.length;
-  const autoAssembled = isAutoReview(config);
-  const autoReview =
-    autoAssembled || ADAPTIVE_REVIEW_PROFILE_IDS.includes(activeId);
-  const configuredAdaptiveCount = adaptiveAgentCount(config);
-  const configuredAdaptiveRange = adaptiveAgentRange(config);
-
   return (
     <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
-      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">
-        Workflow
-      </label>
+      <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+        <label
+          htmlFor={selectId}
+          className="text-ui-label font-medium text-ink"
+        >
+          Workflow
+        </label>
+        <button
+          type="button"
+          onClick={onConfigure}
+          disabled={disabled}
+          className="shrink-0 rounded-ui-sm px-1.5 py-1 text-ui-meta font-medium text-ink-muted transition-colors hover:bg-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
+        >
+          Edit workflow…
+        </button>
+      </div>
       <select
+        id={selectId}
         value={activeId}
         onChange={(e) => handleSwitch(e.target.value)}
         disabled={disabled || switching}
@@ -150,44 +147,6 @@ export default function WorkflowPanel({
         >
           Switching workflow…
         </p>
-      )}
-
-      {autoReview && (
-        <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50/70 px-2.5 py-2 dark:border-blue-900/70 dark:bg-blue-950/25">
-          <p className="text-[11px] leading-4 text-blue-900 dark:text-blue-200">
-            Adaptive agents:{" "}
-            {adaptiveAgentCountLabel(
-              configuredAdaptiveCount,
-              configuredAdaptiveRange,
-            )}{" "}
-            additional subject and method reviewers tailored to each document.
-          </p>
-          <button
-            type="button"
-            onClick={() => setCatalogOpen(true)}
-            className="mt-1 text-[11px] font-medium text-blue-700 underline decoration-blue-300 underline-offset-2 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100"
-          >
-            Browse specialist catalog
-          </button>
-        </div>
-      )}
-      <p className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
-        {enabledSteps.length} step{enabledSteps.length === 1 ? "" : "s"}
-        {disabledCount > 0 ? ` · ${disabledCount} disabled` : ""} — the full
-        plan is shown beside this panel.
-      </p>
-
-      <button
-        onClick={onConfigure}
-        disabled={disabled}
-        className="w-full mt-2 py-1.5 text-xs text-gray-500 hover:text-gray-700
-                   hover:bg-gray-50 dark:hover:bg-gray-800 dark:hover:text-gray-300
-                   rounded transition-colors disabled:opacity-50"
-      >
-        Edit workflow…
-      </button>
-      {catalogOpen && (
-        <AutoReviewCatalogDialog onClose={() => setCatalogOpen(false)} />
       )}
     </div>
   );

@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) struct RunCompletion {
+    pub(super) author_note: Option<String>,
     pub(super) input_path: String,
     pub(super) input_mode: String,
     pub(super) input_interpretation: String,
@@ -38,6 +39,7 @@ pub(super) fn complete_run(
         report.quality.status.clone()
     };
     let meta = crate::runs::RunFinishMeta {
+        author_note: completion.author_note,
         input_path: completion.input_path,
         input_mode: completion.input_mode,
         input_interpretation: completion.input_interpretation,
@@ -98,6 +100,7 @@ pub(super) fn complete_run(
 /// Validate one foreground launch and bind its immutable snapshot: runtime
 /// values, the selected input, the plan fingerprint the user reviewed, and the
 /// exact dependency set. Shared by immediate and queued launches.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn prepare_foreground_launch(
     paper_path: &str,
     input_interpretation: Option<&str>,
@@ -106,6 +109,7 @@ pub(super) async fn prepare_foreground_launch(
     extra_inputs: &std::collections::HashMap<String, String>,
     expected_profile_snapshot_id: Option<&str>,
     run_parallel_overrides: Option<&RunModelOverrides>,
+    author_note: Option<&str>,
 ) -> Result<RunSnapshot, String> {
     let _ = crate::runs::recover_resumable_runs();
     crate::safety::validate_runtime_context(variables, "Run variables")?;
@@ -115,6 +119,7 @@ pub(super) async fn prepare_foreground_launch(
     validate_primary_input_selection(&snapshot.config, Some(paper_path), input_interpretation)?;
     validate_named_input_paths(&snapshot.config, extra_inputs, true)?;
     let snapshot = bind_runtime_snapshot(snapshot, variables, extra_inputs)?;
+    let snapshot = bind_author_note(snapshot, author_note)?;
     let snapshot = bind_foreground_launch(snapshot, paper_path, input_interpretation, diff)?;
     let expected_profile_snapshot_id = expected_profile_snapshot_id
         .filter(|expected| !expected.is_empty())
@@ -146,6 +151,7 @@ pub async fn run_pipeline(
     extra_inputs: Option<std::collections::HashMap<String, String>>,
     expected_profile_snapshot_id: Option<String>,
     run_parallel_overrides: Option<RunModelOverrides>,
+    author_note: Option<String>,
 ) -> Result<serde_json::Value, String> {
     // Registered before preflight so a cancel click during the probes below
     // is recorded in this run's scope and honored once the task starts.
@@ -160,6 +166,7 @@ pub async fn run_pipeline(
         &extra_inputs,
         expected_profile_snapshot_id.as_deref(),
         run_parallel_overrides.as_ref(),
+        author_note.as_deref(),
     )
     .await?;
     let guard = acquire_run_slot()?;
@@ -186,6 +193,7 @@ pub async fn run_pipeline(
 /// profile. An empty `input_path` is valid only for a no-input workflow.
 #[derive(Debug, Clone, Default)]
 pub struct HeadlessRunOptions {
+    pub author_note: Option<String>,
     pub profile_id: Option<String>,
     pub workflow: Option<HeadlessWorkflow>,
     pub input_path: String,
@@ -273,6 +281,7 @@ fn bind_headless_snapshot(
     )?;
     validate_named_input_paths(&snapshot.config, &options.extra_inputs, true)?;
     let snapshot = bind_runtime_snapshot(snapshot, &options.variables, &options.extra_inputs)?;
+    let snapshot = bind_author_note(snapshot, options.author_note.as_deref())?;
     bind_foreground_launch(
         snapshot,
         &options.input_path,
@@ -315,6 +324,7 @@ pub async fn check_headless_plan(
         &config,
         &snapshot.settings,
         Some(options.input_path.as_str()),
+        snapshot.author_note.as_deref(),
     )
     .await;
     let resolved_interpretation = resolved_input_interpretation(

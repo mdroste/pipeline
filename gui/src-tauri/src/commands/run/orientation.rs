@@ -10,6 +10,7 @@ pub(super) struct OrientedDocument {
     pub(super) _orient_tmp: tempfile::NamedTempFile,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn prepare_orientation(
     app: &crate::emit::EventBus,
     config: &crate::pipeline_config::PipelineConfig,
@@ -18,6 +19,7 @@ pub(super) async fn prepare_orientation(
     scoped_source_read_root: &Option<String>,
     run_input_dir: &tempfile::TempDir,
     run_writer: &mut Option<crate::runs::RunWriter>,
+    author_note: Option<&str>,
 ) -> Result<OrientedDocument, String> {
     // Every workflow builds an orientation map before its steps run.
     let orientation_label = if crate::auto_review::uses_auto_review_contract(config) {
@@ -49,6 +51,7 @@ pub(super) async fn prepare_orientation(
         survey_template.as_deref(),
         survey_schema.as_ref(),
         scoped_source_read_root.as_deref(),
+        author_note,
     )
     .await?;
     let orient_secs = orient_start.elapsed().as_secs();

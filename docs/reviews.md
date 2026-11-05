@@ -137,6 +137,28 @@ After a run, open **Sources** to check the extracted text, page images,
 figures, and warnings. If equations or tables are missing, use the LaTeX
 source or another extraction method and run the review again.
 
+## Add a note from the author
+
+In **New review**, open **Note from the author** below the review design.
+Describe what you want reviewers to pay particular attention to, for example:
+“Prioritize critiques of the model, especially its assumptions and potential
+failure cases.” The note is optional and can contain up to 4,000 characters.
+
+Every review agent receives the note at the start of its context, including
+orientation, subject and method specialists, merge, synthesis, and validation.
+It guides emphasis while reviewers still report significant problems elsewhere.
+Extraction and Pipeline checks do not use the note.
+
+The launch preview shows the exact note and lets you return to edit it. For a
+batch, the same note applies to every document. Once queued, the note is fixed
+for that run. Find it later in **Report details** or **Sources → Context → Note
+from the author**. Resume and Regenerate reuse the saved note. To change it,
+start a new review; new reviews start with an empty note. Notes are saved with
+runs and sent to their review providers, but are not part of exported workflows.
+
+The CLI accepts `--author-note "Prioritize critiques of the model"` with `run`,
+`check`, and `batch`.
+
 ## Run several reviews
 
 Reviews use your [default model](settings.md#default-model). To use another,

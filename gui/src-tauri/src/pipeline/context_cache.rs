@@ -26,6 +26,7 @@ pub struct PreparedContext {
 /// those units must share the same `Arc`.
 #[derive(Debug, Default)]
 pub struct PreparedContextPool {
+    author_note: Option<String>,
     contexts: std::sync::Mutex<HashMap<String, Arc<PreparedContext>>>,
     document_index: std::sync::OnceLock<Result<(tempfile::TempDir, String), String>>,
 }
@@ -41,6 +42,14 @@ impl std::fmt::Debug for PreparedContext {
 
 impl PreparedContext {
     pub fn new(paper_text: &str, orientation: &serde_json::Value) -> Result<Self, String> {
+        Self::with_author_note(paper_text, orientation, None)
+    }
+
+    pub fn with_author_note(
+        paper_text: &str,
+        orientation: &serde_json::Value,
+        author_note: Option<&str>,
+    ) -> Result<Self, String> {
         let orientation_text = if orientation.is_null() {
             String::new()
         } else {
@@ -50,7 +59,7 @@ impl PreparedContext {
         let clean_paper_text = crate::safety::strip_span_tags(paper_text);
         let clean_orientation_text = crate::safety::strip_span_tags(&orientation_text);
 
-        let mut content = String::new();
+        let mut content = super::author_note::prefix(author_note);
         push(
             &mut content,
             "SHARED INPUT CONTEXT\n\n\
@@ -161,6 +170,13 @@ impl PreparedContext {
 }
 
 impl PreparedContextPool {
+    pub fn with_author_note(note: Option<&str>) -> Self {
+        Self {
+            author_note: note.map(str::to_string),
+            ..Self::default()
+        }
+    }
+
     /// The structure index, built once in a folder that lasts as long as the
     /// run. The bundle cannot change during a run, so every unit shares this
     /// file, and a failed build is the same failure for each of them.
@@ -187,7 +203,11 @@ impl PreparedContextPool {
         paper_text: &str,
         orientation: &serde_json::Value,
     ) -> Result<Arc<PreparedContext>, String> {
-        let candidate = Arc::new(PreparedContext::new(paper_text, orientation)?);
+        let candidate = Arc::new(PreparedContext::with_author_note(
+            paper_text,
+            orientation,
+            self.author_note.as_deref(),
+        )?);
         let mut contexts = self
             .contexts
             .lock()
@@ -239,6 +259,27 @@ pub fn new_session_id() -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn author_note_changes_cache_identity_and_survives_fallback_once() {
+        let paper = "paper body";
+        let survey = serde_json::Value::Null;
+        let plain = PreparedContext::new(paper, &survey).unwrap();
+        let empty = PreparedContext::with_author_note(paper, &survey, None).unwrap();
+        assert_eq!(plain.key(), empty.key());
+        let a = PreparedContextPool::with_author_note(Some("Focus A"));
+        let b = PreparedContextPool::with_author_note(Some("Focus B"));
+        let first = a.prepare(paper, &survey).unwrap();
+        let repeated = a.prepare(paper, &survey).unwrap();
+        assert!(Arc::ptr_eq(&first, &repeated));
+        assert_ne!(first.key(), b.prepare(paper, &survey).unwrap().key());
+        assert_ne!(first.key(), plain.key());
+        let fallback = first.prefixed_prompt("review task").unwrap();
+        assert!(fallback.starts_with("NOTE FROM THE AUTHOR"));
+        assert_eq!(fallback.matches("Focus A").count(), 1);
+        assert!(fallback.find("Focus A") < fallback.find(paper));
+        assert!(fallback.find(paper) < fallback.find("review task"));
+    }
 
     #[test]
     fn context_is_stable_and_places_shared_material_before_tasks() {

@@ -108,6 +108,7 @@ async fn resume_reuses_a_pipeline_check_and_the_steps_that_read_it() {
         &Default::default(),
         None,
         &crate::settings::Settings::default(),
+        None,
     )
     .await
     .unwrap();

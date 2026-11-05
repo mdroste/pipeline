@@ -5,7 +5,6 @@ import { onFileDrop } from "../lib/fileDrop";
 import type { InputInterpretation, PrimaryInputSelection } from "../lib/types";
 import ReportIssueLink from "./ReportIssueLink";
 
-const RECENT_INPUTS_KEY = "pipeline.recentInputs.v1";
 const DOCUMENT_EXTENSIONS = ["pdf", "tex", "docx"];
 
 const isDocumentPath = (path: string) => {
@@ -22,30 +21,6 @@ const isFolder = (path: string) =>
     () => true,
     () => false,
   );
-
-function loadRecentInputs(): PrimaryInputSelection[] {
-  try {
-    const parsed = JSON.parse(
-      localStorage.getItem(RECENT_INPUTS_KEY) ?? "[]",
-    ) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((item): item is PrimaryInputSelection => {
-        if (!item || typeof item !== "object") return false;
-        const candidate = item as Partial<PrimaryInputSelection>;
-        return (
-          Array.isArray(candidate.paths) &&
-          candidate.paths.every((path) => typeof path === "string") &&
-          typeof candidate.interpretation === "string" &&
-          (candidate.selectionKind === "file" ||
-            candidate.selectionKind === "folder")
-        );
-      })
-      .slice(0, 5);
-  } catch {
-    return [];
-  }
-}
 
 interface Props {
   /** The selection the caller holds. When given, the selector is controlled
@@ -73,28 +48,10 @@ export default function PaperSelector({
   };
   const [pickerError, setPickerError] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
-  const [recentInputs, setRecentInputs] =
-    useState<PrimaryInputSelection[]>(loadRecentInputs);
-
   const applySelection = (next: PrimaryInputSelection) => {
     setSelection(next);
     onPathChange(next.paths[0] ?? null);
     onSelectionChange?.(next);
-    const key = `${next.selectionKind}:${next.interpretation}:${next.paths.join("\0")}`;
-    const updated = [
-      next,
-      ...recentInputs.filter(
-        (item) =>
-          `${item.selectionKind}:${item.interpretation}:${item.paths.join("\0")}` !==
-          key,
-      ),
-    ].slice(0, 5);
-    setRecentInputs(updated);
-    try {
-      localStorage.setItem(RECENT_INPUTS_KEY, JSON.stringify(updated));
-    } catch {
-      // Recent choices are a convenience; selection itself remains valid.
-    }
   };
 
   const clearSelection = () => {
@@ -274,32 +231,6 @@ export default function PaperSelector({
           ? "Drop a folder here, or use the folder picker."
           : "Drop local files here, or use the file and folder pickers."}
       </p>
-      {!selection && recentInputs.length > 0 && (
-        <label className="mt-2 block text-xs text-gray-600 dark:text-gray-300">
-          Recent input
-          <select
-            aria-label="Choose a recent input"
-            defaultValue=""
-            disabled={disabled}
-            onChange={(event) => {
-              const index = Number(event.target.value);
-              if (Number.isInteger(index) && recentInputs[index])
-                applySelection(recentInputs[index]);
-              event.target.value = "";
-            }}
-            className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-800"
-          >
-            <option value="">Choose recent…</option>
-            {recentInputs.map((item, index) => (
-              <option key={`${item.paths.join("|")}-${index}`} value={index}>
-                {item.paths.length === 1
-                  ? item.paths[0]
-                  : `${item.paths.length} files`}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
       {selectedPath && (
         <div className="mt-2 space-y-1.5">
           <p className="text-xs text-gray-500 truncate" title={selectedPath}>

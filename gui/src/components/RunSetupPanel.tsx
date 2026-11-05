@@ -1,9 +1,11 @@
+import AuthorNoteField from "./AuthorNoteField";
+import { authorNoteLength, AUTHOR_NOTE_MAX_CHARS } from "../lib/authorNote";
 import { useState } from "react";
 import PaperSelector from "./PaperSelector";
 import SidebarPanel, { SidebarHeader } from "./SidebarPanel";
 import WorkflowPanel from "./WorkflowPanel";
 import RunModelChoice from "./RunModelChoice";
-import { isWindows } from "../lib/platform";
+import { isMac, isWindows } from "../lib/platform";
 import type {
   DepsReport,
   PipelineConfig,
@@ -11,10 +13,14 @@ import type {
   RunModelOverrides,
 } from "../lib/types";
 import ReportIssueLink from "./ReportIssueLink";
+import "./RunSetupPanel.css";
 
 const PRIVACY_NOTICE_KEY = "pipeline.privacyNoticeAcknowledged.v1";
 
 interface Props {
+  authorNote: string;
+  onAuthorNoteChange: (note: string) => void;
+  authorNoteFocusKey?: number;
   configVersion: number;
   configError: string | null;
   configLoading: boolean;
@@ -49,6 +55,9 @@ interface Props {
 }
 
 export default function RunSetupPanel({
+  authorNote,
+  onAuthorNoteChange,
+  authorNoteFocusKey,
   configVersion,
   configError,
   configLoading,
@@ -84,6 +93,7 @@ export default function RunSetupPanel({
     }
   });
   const canRun =
+    authorNoteLength(authorNote) <= AUTHOR_NOTE_MAX_CHARS &&
     (paperPath !== null || inputMode === "none") &&
     !configLoading &&
     !configError &&
@@ -104,177 +114,193 @@ export default function RunSetupPanel({
       {isWindows && (
         <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-6" />
       )}
-      <SidebarHeader title="New review" heading="h1" />
-      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-5 pb-6 pt-1">
-        <div className="space-y-5">
-          {inputMode === "none" ? (
-            <p className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs leading-5 text-gray-600 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-300">
-              This workflow runs without a source document.
-            </p>
-          ) : (
-            <PaperSelector
-              key={selectionKey}
-              inputMode={inputMode}
-              selection={inputSelection}
-              onPathChange={onPaperPathChange}
-              onSelectionChange={onInputSelectionChange}
-              disabled={configLoading}
-            />
-          )}
-
-          <WorkflowPanel
-            disabled={configLoading || preparingRun}
-            onConfigure={onConfigureWorkflow}
-            onProfileChange={onProfileChange}
-            refreshKey={configVersion}
-          />
-
-          <RunModelChoice
-            value={parallelOverrides}
-            disabled={configLoading || preparingRun}
-            dependencies={dependencies}
-            localLlmActive={localLlmActive}
-            refreshKey={configVersion}
-            onChange={onParallelOverridesChange}
-          />
+      <div className="run-setup-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <div
+          data-tauri-drag-region={isMac ? "deep" : undefined}
+          className="sticky top-0 z-10 shrink-0 select-none bg-white dark:bg-gray-900"
+        >
+          <SidebarHeader title="New review" heading="h1" />
         </div>
-
-        <div className="mt-auto pt-6">
-          {configError && (
-            <div
-              role="alert"
-              className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300"
-            >
-              <p className="font-medium">Workflow setup could not be loaded.</p>
-              <p className="mt-1 break-words">{configError}</p>
-              <button
-                type="button"
-                onClick={onRetryConfig}
-                className="mt-2 font-medium underline underline-offset-2"
-              >
-                Retry workflow
-              </button>
-              <ReportIssueLink />
-            </div>
-          )}
-          {launchError && (
-            <div
-              role="alert"
-              className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300"
-            >
-              <p className="font-medium">The review could not be started.</p>
-              <p className="mt-1 break-words">{launchError}</p>
-              <ReportIssueLink />
-            </div>
-          )}
-          {dependenciesError && (
-            <div
-              role="alert"
-              className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300"
-            >
-              <p className="font-medium">System readiness check failed.</p>
-              <p className="mt-1 break-words">{dependenciesError}</p>
-              <button
-                type="button"
-                onClick={onRetryDependencies}
-                className="mt-2 font-medium underline underline-offset-2"
-              >
-                Retry system check
-              </button>
-              <ReportIssueLink />
-            </div>
-          )}
-          {showPrivacyNotice && (
-            <div
-              role="note"
-              aria-label="Data and privacy"
-              className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5
-                         text-amber-900 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200"
-            >
-              <p>
-                Your AI provider may receive the selected source and any
-                material each step can read. Web searches send queries to an
-                external service. Reports and supporting files stay on this
-                computer until deleted.
+        <div className="flex shrink-0 grow flex-col px-5 pb-6 pt-1">
+          <div className="space-y-5">
+            {inputMode === "none" ? (
+              <p className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs leading-5 text-gray-600 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-300">
+                This workflow runs without a source document.
               </p>
-              <div className="mt-2 flex items-center gap-3">
+            ) : (
+              <PaperSelector
+                key={selectionKey}
+                inputMode={inputMode}
+                selection={inputSelection}
+                onPathChange={onPaperPathChange}
+                onSelectionChange={onInputSelectionChange}
+                disabled={configLoading}
+              />
+            )}
+
+            <WorkflowPanel
+              disabled={configLoading || preparingRun}
+              onConfigure={onConfigureWorkflow}
+              onProfileChange={onProfileChange}
+              refreshKey={configVersion}
+            />
+
+            <AuthorNoteField
+              key={selectionKey}
+              value={authorNote}
+              onChange={onAuthorNoteChange}
+              focusKey={authorNoteFocusKey}
+              disabled={configLoading || preparingRun}
+            />
+
+            <RunModelChoice
+              value={parallelOverrides}
+              disabled={configLoading || preparingRun}
+              dependencies={dependencies}
+              localLlmActive={localLlmActive}
+              refreshKey={configVersion}
+              onChange={onParallelOverridesChange}
+            />
+          </div>
+
+          <div className="mt-auto pt-6">
+            {configError && (
+              <div
+                role="alert"
+                className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300"
+              >
+                <p className="font-medium">
+                  Workflow setup could not be loaded.
+                </p>
+                <p className="mt-1 break-words">{configError}</p>
                 <button
                   type="button"
-                  onClick={onPrivacyDetails}
-                  className="font-medium underline underline-offset-2 hover:text-amber-700 dark:hover:text-amber-100"
+                  onClick={onRetryConfig}
+                  className="mt-2 font-medium underline underline-offset-2"
                 >
-                  Privacy details
+                  Retry workflow
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    try {
-                      localStorage.setItem(PRIVACY_NOTICE_KEY, "true");
-                    } catch {
-                      // The notice can still be dismissed for this session.
-                    }
-                    setShowPrivacyNotice(false);
-                  }}
-                  className="ml-auto rounded border border-amber-300 px-2 py-0.5 font-medium
-                             hover:bg-amber-100 dark:border-amber-800 dark:hover:bg-amber-900/50"
-                >
-                  Got it
-                </button>
+                <ReportIssueLink />
               </div>
-            </div>
-          )}
-          {runActivity && runActivity.running + runActivity.queued > 0 && (
-            <p
-              role="status"
-              className="mb-2 text-xs leading-5 text-gray-500 dark:text-gray-400"
-            >
-              {runActivity.running} running
-              {runActivity.queued > 0
-                ? `, ${runActivity.queued} queued`
-                : ""}.{" "}
-              {runActivity.running + runActivity.queued >= runActivity.limit
-                ? "This review waits for a free slot."
-                : "This review starts right away."}
-            </p>
-          )}
-          <button
-            type="button"
-            onClick={onGenerate}
-            disabled={!canRun}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-gray-950 px-4 py-2.5 text-sm font-medium
+            )}
+            {launchError && (
+              <div
+                role="alert"
+                className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300"
+              >
+                <p className="font-medium">The review could not be started.</p>
+                <p className="mt-1 break-words">{launchError}</p>
+                <ReportIssueLink />
+              </div>
+            )}
+            {dependenciesError && (
+              <div
+                role="alert"
+                className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300"
+              >
+                <p className="font-medium">System readiness check failed.</p>
+                <p className="mt-1 break-words">{dependenciesError}</p>
+                <button
+                  type="button"
+                  onClick={onRetryDependencies}
+                  className="mt-2 font-medium underline underline-offset-2"
+                >
+                  Retry system check
+                </button>
+                <ReportIssueLink />
+              </div>
+            )}
+            {showPrivacyNotice && (
+              <div
+                role="note"
+                aria-label="Data and privacy"
+                className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5
+                         text-amber-900 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200"
+              >
+                <p>
+                  Your AI provider may receive the selected source and any
+                  material each step can read. Web searches send queries to an
+                  external service. Reports and supporting files stay on this
+                  computer until deleted.
+                </p>
+                <div className="mt-2 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={onPrivacyDetails}
+                    className="font-medium underline underline-offset-2 hover:text-amber-700 dark:hover:text-amber-100"
+                  >
+                    Privacy details
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      try {
+                        localStorage.setItem(PRIVACY_NOTICE_KEY, "true");
+                      } catch {
+                        // The notice can still be dismissed for this session.
+                      }
+                      setShowPrivacyNotice(false);
+                    }}
+                    className="ml-auto rounded border border-amber-300 px-2 py-0.5 font-medium
+                             hover:bg-amber-100 dark:border-amber-800 dark:hover:bg-amber-900/50"
+                  >
+                    Got it
+                  </button>
+                </div>
+              </div>
+            )}
+            {runActivity && runActivity.running + runActivity.queued > 0 && (
+              <p
+                role="status"
+                className="mb-2 text-xs leading-5 text-gray-500 dark:text-gray-400"
+              >
+                {runActivity.running} running
+                {runActivity.queued > 0 ? `, ${runActivity.queued} queued` : ""}
+                .{" "}
+                {runActivity.running + runActivity.queued >= runActivity.limit
+                  ? "This review waits for a free slot."
+                  : "This review starts right away."}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={onGenerate}
+              disabled={!canRun}
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-gray-950 px-4 py-2.5 text-sm font-medium
                        text-white transition-colors hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2
                        focus-visible:ring-gray-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-gray-300
                        dark:bg-gray-100 dark:text-gray-950 dark:hover:bg-white dark:focus-visible:ring-offset-gray-900
                        dark:disabled:bg-gray-700 dark:disabled:text-gray-400"
-          >
-            {preparingRun
-              ? "Preparing report…"
-              : configLoading
-                ? "Loading workflow…"
-                : !listenersReady
-                  ? "Preparing event stream…"
-                  : runActivity &&
-                      runActivity.running + runActivity.queued >=
-                        runActivity.limit
-                    ? "Queue review"
-                    : "Start review"}
-            {!configLoading && !preparingRun && listenersReady && (
-              <svg
-                aria-hidden="true"
-                className="h-4 w-4"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={1.7}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="m9 5 7 7-7 7"
-                />
-              </svg>
-            )}
-          </button>
+            >
+              {preparingRun
+                ? "Preparing report…"
+                : configLoading
+                  ? "Loading workflow…"
+                  : !listenersReady
+                    ? "Preparing event stream…"
+                    : runActivity &&
+                        runActivity.running + runActivity.queued >=
+                          runActivity.limit
+                      ? "Queue review"
+                      : "Start review"}
+              {!configLoading && !preparingRun && listenersReady && (
+                <svg
+                  aria-hidden="true"
+                  className="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={1.7}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="m9 5 7 7-7 7"
+                  />
+                </svg>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </SidebarPanel>

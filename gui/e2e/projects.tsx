@@ -171,6 +171,28 @@ const projects: ProjectIndexItem[] = [
     interruptedEdits: 0,
   },
 ];
+const sessions = [
+  session,
+  {
+    ...session,
+    id: "standalone-chat",
+    workspaceId: null,
+    title: "Thinking through an identification strategy",
+  },
+  {
+    ...session,
+    id: "fiscal-chat",
+    workspaceId: "fiscal-preview",
+    title: "Comparing the transfer experiments",
+  },
+  {
+    ...session,
+    id: "archived-chat",
+    workspaceId: null,
+    title: "An earlier research question",
+    archivedAt: time,
+  },
+];
 Object.assign(window, {
   __TAURI_INTERNALS__: {
     transformCallback: () => 1,
@@ -178,6 +200,30 @@ Object.assign(window, {
     invoke: async (command: string, args: any) => {
       if (command.startsWith("plugin:event|")) return 1;
       if (command === "workbench_project_index") return projects;
+      if (command === "workbench_list_workspaces")
+        return {
+          workspaces: projects.map((project) => ({ ...workspace, ...project })),
+        };
+      if (command === "workbench_list_sessions")
+        return {
+          sessions: sessions.filter(
+            (chat) =>
+              chat.workspaceId === args.workspaceId &&
+              (args.includeArchived || !chat.archivedAt),
+          ),
+        };
+      if (command === "workbench_session_snapshot")
+        return {
+          session: sessions.find((chat) => chat.id === args.sessionId),
+        };
+      if (command === "workbench_move_session") {
+        const chat = sessions.find(
+          (chat) => chat.id === args.request.sessionId,
+        )!;
+        chat.workspaceId = args.request.workspaceId;
+        chat.revision++;
+        return { record: chat };
+      }
       if (command === "workbench_project_home") return home;
       if (command === "workbench_get_workspace") return workspace;
       if (command === "workbench_create_note") {
@@ -263,8 +309,6 @@ function Fixture() {
           width={216}
           onResize={() => {}}
           hasCurrentRun={false}
-          runInProgress={false}
-          isMac={false}
           dependenciesReady={true}
           dependenciesLoading={false}
           onNewRun={() => {}}
@@ -272,12 +316,15 @@ function Fixture() {
           onDependencies={() => {}}
           recentProjects={projects}
           onOpenProject={(id) => void open(id)}
+          onOpenConversation={(id) => void resume(id)}
+          onNewConversation={() => void resume("new-unfiled")}
         />
         <main className="min-w-0 flex-1 overflow-auto bg-white dark:bg-neutral-950 dark:text-neutral-100">
           {view === "index" ? (
             <ProjectIndexPage
               onOpenProject={open}
               onResumeConversation={resume}
+              onNewConversation={() => void resume("new-unfiled")}
             />
           ) : view === "project" ? (
             <div className="workspace-chat-shell flex h-full">

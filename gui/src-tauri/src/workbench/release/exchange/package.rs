@@ -27,6 +27,7 @@ pub(super) fn extract(path: &str) -> WorkbenchResult<Extracted> {
     if archive.len() > MAX_ENTRIES {
         return Err(WorkbenchError::invalid("Package contains too many entries"));
     }
+    super::archive::validate_entry_paths(&mut archive)?;
     let mut total = 0u64;
     let mut names = HashSet::new();
     for index in 0..archive.len() {

@@ -46,9 +46,8 @@ export default function HomePage({
 }) {
   const actions = [
     {
-      title: "Conversation",
-      description:
-        "Ask questions or get help with a draft, without setting up a project.",
+      title: "Chat",
+      description: "Work on a project with your choice of model.",
       label: "New conversation",
       icon: "assistant" as const,
       accent:
@@ -58,7 +57,7 @@ export default function HomePage({
     {
       title: "Review",
       description:
-        "Review a paper and save the findings, supporting evidence, and report.",
+        "Review papers, slides, or other documents using a team of agents.",
       // Reviews run side by side, so this always sets up a new one; the
       // banner above returns to running reviews.
       label: "New review",

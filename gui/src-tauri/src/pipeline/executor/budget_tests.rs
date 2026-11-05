@@ -282,6 +282,7 @@ fn estimate_spans_a_range_and_flags_limits() {
             max_calls: Some(3),
             max_minutes: None,
         },
+        None,
     );
     // Orientation plus three steps.
     assert_eq!(estimate.calls_low, 4);
@@ -304,7 +305,14 @@ fn subscription_steps_have_no_cost_and_unknown_prices_are_counted() {
         step("a", Phase::Parallel, &["codex"]),
         step("b", Phase::Parallel, &["local"]),
     ]);
-    let estimate = estimate_usage(&workflow, 1_000, "codex", &priced, RunBudget::default());
+    let estimate = estimate_usage(
+        &workflow,
+        1_000,
+        "codex",
+        &priced,
+        RunBudget::default(),
+        None,
+    );
     // Orientation and step a use codex (subscription); b is unpriced API.
     assert_eq!(estimate.subscription_calls_high, 2);
     assert_eq!(estimate.unpriced_calls, 1);
@@ -322,7 +330,14 @@ fn fan_out_and_multi_agent_steps_widen_the_range() {
     });
     let mut workflow = config(vec![fan_out]);
     workflow.merge.enabled = true;
-    let estimate = estimate_usage(&workflow, 1_000, "codex", &priced, RunBudget::default());
+    let estimate = estimate_usage(
+        &workflow,
+        1_000,
+        "codex",
+        &priced,
+        RunBudget::default(),
+        None,
+    );
     // Orientation 1 + (2 agents + merge) low; 2 agents x 8 units + merge high.
     assert_eq!(estimate.calls_low, 1 + 3);
     assert_eq!(estimate.calls_high, 1 + 17);
@@ -336,4 +351,42 @@ fn document_estimate_uses_pages_for_pdfs_and_size_for_text() {
     std::fs::write(&path, "x".repeat(4_000)).unwrap();
     assert_eq!(document_token_estimate(path.to_str().unwrap(), None), 1_000);
     assert_eq!(document_token_estimate("/missing/file.tex", None), 0);
+}
+
+#[test]
+fn author_note_estimate_counts_each_model_call_without_changing_document_size() {
+    let workflow = config(vec![
+        step("a", Phase::Parallel, &["claude"]),
+        step("b", Phase::Sequential, &["claude"]),
+    ]);
+    let base = estimate_usage(
+        &workflow,
+        1_000,
+        "claude",
+        &priced,
+        RunBudget::default(),
+        None,
+    );
+    let noted = estimate_usage(
+        &workflow,
+        1_000,
+        "claude",
+        &priced,
+        RunBudget::default(),
+        Some("Model assumptions"),
+    );
+    let tokens = crate::pipeline::author_note::prefix(Some("Model assumptions"))
+        .len()
+        .div_ceil(4) as u64;
+    assert_eq!(base.document_tokens, noted.document_tokens);
+    assert_eq!(base.calls_high, noted.calls_high);
+    assert_eq!(
+        noted.input_tokens_low - base.input_tokens_low,
+        tokens * noted.calls_low
+    );
+    assert_eq!(
+        noted.input_tokens_high - base.input_tokens_high,
+        tokens * noted.calls_high
+    );
+    assert!(noted.api_cost_high.unwrap() > base.api_cost_high.unwrap());
 }

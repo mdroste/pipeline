@@ -468,3 +468,36 @@ fn manifest_publication_failure_keeps_existing_destination_and_cleans_staging() 
         "retain"
     );
 }
+
+#[test]
+fn author_note_survives_interruption_and_old_manifests_default_to_none() {
+    let temp = tempfile::tempdir().unwrap();
+    let note = "Model assumptions\n{var:literal}";
+    let mut writer = RunWriter::create_in(temp.path(), "author-note-run").unwrap();
+    writer
+        .set_pending_meta(RunFinishMeta {
+            author_note: Some(note.into()),
+            ..Default::default()
+        })
+        .unwrap();
+    crate::pipeline::author_note::save(&mut writer, Some(note)).unwrap();
+    drop(writer);
+    let run = temp.path().join("author-note-run");
+    let text = fs::read_to_string(run.join("manifest.json")).unwrap();
+    let manifest: RunManifest = serde_json::from_str(&text).unwrap();
+    assert_eq!(manifest.author_note.as_deref(), Some(note));
+    assert_eq!(
+        fs::read_to_string(run.join("context/author_note.txt")).unwrap(),
+        note
+    );
+    assert!(manifest
+        .artifacts
+        .iter()
+        .any(|artifact| artifact.rel_path == "context/author_note.txt"));
+    let mut legacy: serde_json::Value = serde_json::from_str(&text).unwrap();
+    legacy.as_object_mut().unwrap().remove("author_note");
+    assert!(serde_json::from_value::<RunManifest>(legacy)
+        .unwrap()
+        .author_note
+        .is_none());
+}

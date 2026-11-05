@@ -173,7 +173,7 @@ pub(crate) fn private_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path.parent().ok_or("Missing runtime file parent")?;
     let mut file = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
     file.write_all(bytes).map_err(|e| e.to_string())?;
-    file.as_file().sync_all().map_err(|e| e.to_string())?;
+    crate::safety::sync_file(file.as_file()).map_err(|e| e.to_string())?;
     file.persist(path).map_err(|e| e.to_string())?;
     Ok(())
 }

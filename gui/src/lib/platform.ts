@@ -1,7 +1,7 @@
 // With titleBarStyle: Overlay (macOS) the app has no native title bar; the
 // sidebar extends to the window top and the traffic lights float over its top
-// padding. The window drags from the sidebar's top strip, a thin strip along
-// the window's top edge, and the backgrounds of top bars marked
+// padding. The window drags from the sidebar's top strip, a 28px title strip
+// above the main content, the New review header, and top bars marked
 // data-tauri-drag-region="deep" (their controls still take clicks).
 //
 // Windows builds are undecorated (tauri.windows.conf.json), so the sidebar

@@ -129,6 +129,7 @@ pub(super) fn stage(
     let mut omitted = 0;
     let mut total = 0u64;
     let mut manifest_bytes = 0u64;
+    let mut names = super::PortablePaths::default();
     for id in ids {
         let id = id.map_err(|e| WorkbenchError::storage("Decode archived conversation", e))?;
         if !valid_id(&id) {
@@ -172,6 +173,9 @@ pub(super) fn stage(
                 omitted += 1;
                 continue;
             }
+            // Reject portability conflicts explicitly, before staging can
+            // collapse case-only names on the current volume.
+            names.insert(&archive_path)?;
             let target = staging.join(&archive_path);
             let limit = MAX_ENTRY_BYTES.min(budget.bytes - total);
             let Some(count) = copy_within(&source, &target, limit) else {

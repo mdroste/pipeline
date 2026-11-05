@@ -76,6 +76,7 @@ async fn run_unit(
     let app: crate::emit::EventBus = Arc::new(crate::emit::NullEvents);
     let run = crate::run_scope::ActiveScope::begin(format!("unit-files-test-{unit_root}"));
     let call = execute_step_call(StepCallRequest {
+        author_note: None,
         app: &app,
         pass_key: step_key,
         log_label: step_key,

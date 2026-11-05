@@ -2,6 +2,70 @@
 
 use super::*;
 
+/// System instructions are read by the CLI itself, not by a model tool. Keep
+/// even short ones in a private file so their size never consumes argv space.
+pub(crate) struct PreparedCliSystemPrompt {
+    pub path: String,
+    _directory: TempDir,
+}
+
+pub(crate) fn prepare_cli_system_prompt(prompt: &str) -> Result<PreparedCliSystemPrompt, String> {
+    let directory = tempfile::Builder::new()
+        .prefix("pipeline_system_prompt_")
+        .tempdir()
+        .map_err(|e| format!("Failed to create system-instruction folder: {e}"))?;
+    let path = directory.path().join("system.txt");
+    std::fs::write(&path, prompt)
+        .map_err(|e| format!("Failed to write system instructions: {e}"))?;
+    let path = normalize_cli_root(&path.to_string_lossy())
+        .ok_or("Failed to resolve system-instruction file")?;
+    Ok(PreparedCliSystemPrompt {
+        path,
+        _directory: directory,
+    })
+}
+
+/// Count the UTF-16 command line including Rust's Windows argument escaping.
+/// This also catches oversized schemas and tool rules before CreateProcessW
+/// reports a misleading executable-not-found error.
+pub(crate) fn validate_cli_command_length(
+    command: &std::process::Command,
+    windows: bool,
+) -> Result<(), String> {
+    if !windows {
+        return Ok(());
+    }
+    let mut length = command
+        .get_program()
+        .to_string_lossy()
+        .encode_utf16()
+        .count()
+        + 3;
+    for arg in command.get_args() {
+        let text = arg.to_string_lossy();
+        let quoted = text.is_empty() || text.contains([' ', '\t']);
+        length += 1 + if quoted { 2 } else { 0 };
+        let mut slashes = 0;
+        for unit in text.encode_utf16() {
+            if unit == b'\\' as u16 {
+                slashes += 1;
+            } else {
+                length += if unit == b'"' as u16 {
+                    slashes * 2 + 2
+                } else {
+                    slashes + 1
+                };
+                slashes = 0;
+            }
+        }
+        length += slashes * if quoted { 2 } else { 1 };
+    }
+    if length > 32_767 {
+        return Err("This review's command exceeds the Windows launch limit. Shorten its output schema or tool rules and try again; system instructions are already passed in a file.".into());
+    }
+    Ok(())
+}
+
 /// A CLI-safe prompt argument. Long prompts live in a private temporary
 /// directory rather than directly under the process-wide temp directory, so
 /// providers can grant access to only this call's prompt file.
@@ -208,4 +272,37 @@ pub(super) fn same_or_descendant(path: &str, root: &str) -> bool {
         || path
             .strip_prefix(&root)
             .is_some_and(|rest| rest.starts_with('/'))
+}
+
+#[cfg(test)]
+mod prompt_file_tests {
+    use super::*;
+
+    #[test]
+    fn large_system_instructions_stay_out_of_argv_and_are_removed_after_the_call() {
+        let content = "β 📚 instructions\n".repeat(50_000);
+        let prepared = prepare_cli_system_prompt(&content).unwrap();
+        let path = std::path::PathBuf::from(&prepared.path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), content);
+        let mut command = std::process::Command::new("claude.exe");
+        command.args(["--append-system-prompt-file", &prepared.path]);
+        validate_cli_command_length(&command, true).unwrap();
+        drop(prepared);
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn remaining_arguments_are_checked_with_utf16_and_windows_quoting() {
+        let mut command = std::process::Command::new("claude.exe");
+        command.arg("x".repeat(32_753));
+        validate_cli_command_length(&command, true).unwrap();
+        command.arg("x");
+        assert!(validate_cli_command_length(&command, true).is_err());
+        let mut unicode = std::process::Command::new("claude.exe");
+        unicode.arg("📚".repeat(17_000));
+        assert!(validate_cli_command_length(&unicode, true).is_err());
+        let mut escaped = std::process::Command::new("claude.exe");
+        escaped.arg("\\\"".repeat(9_000));
+        assert!(validate_cli_command_length(&escaped, true).is_err());
+    }
 }

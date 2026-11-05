@@ -92,8 +92,7 @@ fn run_bounded_owned(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
+    let mut child = crate::commands::lifecycle::spawn_independent(command)
         .map_err(|e| format!("Failed to start subprocess: {e}"))?;
     let pid = child.id();
     if pid > 0 {

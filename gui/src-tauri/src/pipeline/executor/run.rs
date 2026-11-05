@@ -194,10 +194,12 @@ pub async fn execute_steps(
     preloaded: &std::collections::HashMap<String, Vec<StepOutput>>,
     write_dir: Option<&str>,
     settings: &crate::settings::Settings,
+    author_note: Option<&str>,
 ) -> Result<ExecutionResult, String> {
     let semaphore = Arc::new(Semaphore::new(settings.max_workers.max(1) as usize));
     let output_budget = Arc::new(OutputBudget::default());
-    let shared_context_pool = crate::pipeline::context_cache::PreparedContextPool::default();
+    let shared_context_pool =
+        crate::pipeline::context_cache::PreparedContextPool::with_author_note(author_note);
     let mut all_outputs: Vec<StepOutput> = Vec::new();
     let mut failed_steps: Vec<StepFailure> = Vec::new();
 
@@ -504,6 +506,7 @@ pub async fn execute_steps(
                     &output_budget,
                     config.context_cache.enabled,
                     &shared_context_pool,
+                    author_note,
                 )
                 .await?;
                 let mut wave_outputs = wave.outputs;
@@ -559,6 +562,7 @@ pub async fn execute_steps(
                         write_dir,
                         settings,
                         &output_schemas,
+                        author_note,
                     )
                     .await
                     {
@@ -813,6 +817,7 @@ pub async fn execute_steps(
             settings,
             shared_context,
             &specialist_steps,
+            author_note,
         )
         .await
         {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { appEvents } from "../lib/appEvents";
 import { listProjectIndex, type ProjectIndexItem } from "../lib/projectIndex";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 
@@ -30,11 +31,13 @@ export default function useProjectIndex() {
       timer = setTimeout(() => void refresh(), 250);
     };
     window.addEventListener("focus", changed);
+    const offConversations = appEvents.on("conversations-changed", changed);
     const off = listen<{ kind: string }>("workbench:event", ({ payload }) => {
       if (["turnCompleted", "connectionClosed"].includes(payload.kind))
         changed();
     });
     return () => {
+      offConversations();
       sequence.current++;
       clearTimeout(timer);
       window.removeEventListener("focus", changed);

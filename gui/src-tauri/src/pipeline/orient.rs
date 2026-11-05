@@ -290,6 +290,7 @@ pub async fn build_orientation_map(
     prompt_template: Option<&str>,
     output_schema: Option<&serde_json::Value>,
     source_read_root: Option<&str>,
+    author_note: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let terminal_schema = output_schema
         .map(|schema| {
@@ -372,6 +373,7 @@ pub async fn build_orientation_map(
             prompt.clone(),
             timeout,
         );
+        request.author_note = author_note.map(str::to_string);
         request.agent = Some(provider.clone());
         request.command_model = resolution.command_model.clone();
         request.display_model = Some(resolution.resolved_model.clone());
@@ -1012,6 +1014,7 @@ mod tests {
                 &extraction,
                 Some("Survey {input_text}"),
                 Some(&schema),
+                None,
                 None,
             )
             .await

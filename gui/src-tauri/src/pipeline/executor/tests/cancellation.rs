@@ -76,6 +76,7 @@ async fn stopping_a_review_stops_its_parallel_wave_and_keeps_its_usage() {
             &output_budget,
             false,
             &shared_context_pool,
+            None,
         ),
     );
     let stop = async {
@@ -146,6 +147,7 @@ async fn stopping_a_review_stops_its_merge_and_keeps_its_usage() {
             None,
             &settings,
             &no_schemas,
+            None,
         ),
     );
     let stop = async {
@@ -213,6 +215,7 @@ async fn cancelling_one_pass_leaves_the_rest_of_the_wave_running() {
             &output_budget,
             false,
             &shared_context_pool,
+            None,
         ),
     );
     let stop = async {

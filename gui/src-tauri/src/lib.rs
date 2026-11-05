@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 
 pub mod agent_runtime;
+mod app_close;
 mod app_menu;
 pub mod auto_review;
 pub mod commands;
@@ -63,6 +64,7 @@ pub fn run() {
         .on_menu_event(app_menu::handle_event);
 
     builder
+        .manage(app_close::CloseState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
@@ -111,17 +113,10 @@ pub fn run() {
             updates::start(app.handle().clone());
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == "main"
-                    && orchestration::background_enabled()
-                    && window.hide().is_ok()
-                {
-                    api.prevent_close();
-                }
-            }
-        })
         .invoke_handler(tauri::generate_handler![
+            app_close::set_app_close_guard,
+            app_close::app_close_hides,
+            app_close::complete_app_close,
             workbench::programs::commands::workbench_program,
             workbench::programs::commands::workbench_research_activity,
             workbench::programs::commands::workbench_followups,
@@ -487,10 +482,12 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_, event| {
-            if matches!(event, tauri::RunEvent::Exit) {
-                stop_runtimes();
+        .run(|app, event| match event {
+            tauri::RunEvent::ExitRequested { api, code, .. } => {
+                app_close::on_exit_requested(app, &api, code)
             }
+            tauri::RunEvent::Exit => stop_runtimes(),
+            _ => {}
         });
     commands::cleanup_print_export();
 }
