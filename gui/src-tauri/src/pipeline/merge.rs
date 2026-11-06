@@ -191,7 +191,7 @@ pub async fn merge_step_outputs(
             .iter()
             .fold(0u32, |total, call| total.saturating_add(call.attempt_count));
 
-        let agent_override = merge_config.agents.first().cloned();
+        let (provider, selection, effort) = merge_config.call_policy(settings);
         let agents_joined = group
             .iter()
             .map(|o| o.agent.clone())
@@ -243,16 +243,8 @@ pub async fn merge_step_outputs(
                 serde_json::json!({ "name": merge_key_done, "status": "running" }),
             );
             let log_label = format!("Merge: {}", topic);
-            let inherited_agent = agent_override.is_none();
-            let provider = agent_override
-                .as_deref()
-                .unwrap_or_else(|| run_settings.merge_agent())
-                .to_string();
-            let selection = inherited_agent
-                .then(|| run_settings.merge_model_selection(&provider))
-                .flatten();
             let resolution = crate::commands::await_or_cancel(
-                crate::model_catalog::resolve(&provider, &run_settings, selection.as_ref()),
+                crate::model_catalog::resolve(&provider, &run_settings, Some(&selection)),
                 Some(&merge_key_done),
             )
             .await
@@ -265,11 +257,6 @@ pub async fn merge_step_outputs(
             if let Some(error) = cancellation_error() {
                 return Err(early_error(error));
             }
-            let effort = if inherited_agent {
-                run_settings.merge_effort(&provider)
-            } else {
-                run_settings.model_effort(&provider).to_string()
-            };
             let model_policy = resolution.selection.label();
             let call = super::call::execute(super::call::Request {
                 author_note: author_note.as_deref(),
@@ -661,6 +648,9 @@ pub async fn merge_step_outputs(
                         step_id: base_id,
                         step_label: topic,
                         fan_out_item,
+                        coverage_note: err
+                            .find(super::executor::budget::BUDGET_STOP_PREFIX)
+                            .map(|i| err[i..].to_string()),
                         phase: "parallel".to_string(),
                         agent: agents_joined,
                         raw_text: combined_text,

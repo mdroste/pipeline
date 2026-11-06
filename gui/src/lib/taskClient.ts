@@ -11,9 +11,47 @@ import type {
   TaskProposal,
 } from "./taskTypes";
 
+export interface DeliveredFile {
+  exchangeId: string;
+  ordinal: number;
+  filename: string;
+  createdAt: string;
+}
+
 export const taskClient = {
-  list: (view = "active", sessionId: string | null = null, offset = 0) =>
-    invoke<TaskSummary[]>("task_list", { view, sessionId, offset }),
+  deliveredFiles: (sessionId: string, offset: number) =>
+    invoke<{ files: DeliveredFile[]; warning: string | null }>(
+      "task_delivered_files",
+      { sessionId, offset },
+    ),
+  saveDeliveredFile: (sessionId: string, file: DeliveredFile) =>
+    invoke<string | null>("task_save_delivered_file", {
+      sessionId,
+      exchangeId: file.exchangeId,
+      ordinal: file.ordinal,
+    }),
+  issues: () =>
+    invoke<{ kind: string; id: string; diagnostic: string }[]>(
+      "task_storage_issues",
+    ),
+  list: (
+    view = "active",
+    sessionId: string | null = null,
+    offset = 0,
+    lookahead = false,
+  ) =>
+    invoke<TaskSummary[]>("task_list", {
+      view,
+      sessionId,
+      offset,
+      ...(lookahead ? { lookahead } : {}),
+    }),
+  projectActivity: (sessionIds: string[], offset = 0) =>
+    invoke<TaskSummary[]>("task_list", {
+      view: "projectActivity",
+      sessionIds,
+      offset,
+    }),
   get: (id: string) => invoke<TaskRun>("task_get", { id }),
   events: (id: string, after = 0) =>
     invoke<TaskEvent[]>("task_events", { id, after }),
@@ -27,11 +65,16 @@ export const taskClient = {
     invoke<TaskRun>("task_prepare", {
       request: { chain, sessionId, inputs, trigger, operationId },
     }),
-  control: (run: TaskRun, action: string) =>
+  control: (
+    run: TaskRun,
+    action: string,
+    correctedPapers?: Record<string, string>,
+  ) =>
     invoke<TaskRun>("task_control", {
       id: run.id,
       revision: run.revision,
       action,
+      ...(correctedPapers === undefined ? {} : { correctedPapers }),
     }),
   input: (id: string, address: string, value: Json, operationId: string) =>
     invoke<TaskRun>("task_input", { id, address, value, operationId }),

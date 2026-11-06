@@ -416,6 +416,7 @@ const commandData: Record<string, unknown> = {
   list_input_files: [],
   workbench_list_workspaces: { workspaces: [workspace] },
   workbench_get_workspace: workspace,
+  workbench_conversation_index: {items:[{session, projectName:null}],nextCursor:null},
   workbench_list_sessions: { sessions: [session] },
   workbench_conversation_snapshot: snapshot,
   workbench_session_snapshot: snapshot,
@@ -431,6 +432,7 @@ const commandData: Record<string, unknown> = {
   workbench_codex_model_catalog: workspaceModelCatalog,
   workbench_claude_model_catalog: { models: [{ id: "sonnet", model: "sonnet", displayName: "Sonnet", description: "Balanced reasoning and writing", isDefault: false, defaultReasoningEffort: "", supportedReasoningEfforts: efforts("low", "medium", "high") }, { id: "haiku", model: "haiku", displayName: "Haiku", description: "Fastest for quick answers", isDefault: false, defaultReasoningEffort: "", supportedReasoningEfforts: [] }] },
   workbench_project_home: projectHome,
+  workbench_project_review_links: [],
   workbench_project_index: [
     {
       id: workspace.id, name: workspace.name, root: workspace.root, missingRootAt: null, updatedAt: now,
@@ -569,6 +571,8 @@ const commandData: Record<string, unknown> = {
     ? [{ id: "task-rr", revision: 2, name: "Re-review after Table 4 changes", state: "finished", reason: null, createdAt: 1790000000, updatedAt: Date.parse("2026-09-29T11:00:00Z") / 1000, dueAt: null, sessionId: session.id, scheduleId: null }]
     : [],
   task_schedules: [],
+  task_storage_issues: [],
+  task_delivered_files: { files: [], warning: null },
   task_saved_chains: [],
   task_proposals: [],
   mission_list: [],

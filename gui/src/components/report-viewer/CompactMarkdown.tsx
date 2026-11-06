@@ -10,6 +10,7 @@ import {
   stripPresentationalHtml,
 } from "../../lib/mathMarkdown";
 import {
+  hasRepairableMath,
   rehypeValidateMath,
   remarkRepairMath,
   REPORT_KATEX_OPTIONS,
@@ -90,7 +91,10 @@ export const InlineMathText = memo(function InlineMathText({
         .trim(),
     [text, verbatim],
   );
-  const markdown = useMemo(() => mathOnlyMarkdown(plain), [plain]);
+  const markdown = useMemo(
+    () => mathOnlyMarkdown(plain, !verbatim && hasRepairableMath(plain)),
+    [plain, verbatim],
+  );
   if (markdown === null) return <>{plain}</>;
   return (
     <MathErrorBoundary resetKey={markdown}>

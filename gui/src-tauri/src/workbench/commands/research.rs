@@ -555,3 +555,14 @@ pub async fn workbench_export_conversation(
     })
     .await
 }
+
+#[tauri::command]
+pub async fn workbench_project_review_links(
+    workspace_id: String,
+    after: Option<String>,
+) -> WorkbenchResult<Vec<crate::workbench::release::ProjectReviewLink>> {
+    run_store(move |store| {
+        crate::workbench::release::project_review_links(&store, &workspace_id, after)
+    })
+    .await
+}

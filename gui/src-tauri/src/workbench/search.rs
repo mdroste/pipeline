@@ -306,11 +306,13 @@ pub fn advance(store: &Store, ws: &str) -> WorkbenchResult<IndexStatus> {
         drop(tx);
         return status(store, ws);
     }
-    tx.execute(
-        "DELETE FROM research_fts WHERE workspace_id=?1 AND generation<>?2",
-        params![ws, state.generation],
-    )
-    .map_err(err)?;
+    if state.cursor.is_empty() && state.byte_offset == 0 {
+        tx.execute(
+            "DELETE FROM research_fts WHERE workspace_id=?1 AND generation<>?2",
+            params![ws, state.generation],
+        )
+        .map_err(err)?;
+    }
     for (object, title, text, provenance, access, completeness, metadata) in entries {
         tx.execute("INSERT INTO research_fts(title,body,workspace_id,generation,object_json,provenance,access,completeness,metadata) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![title,text,ws,state.generation,serde_json::to_string(&object).map_err(err)?,provenance,access,completeness,metadata]).map_err(err)?;
     }

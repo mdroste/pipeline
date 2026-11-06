@@ -1,3 +1,4 @@
+import { AllowanceField } from "./Budget";
 import { useEffect, useRef, useState } from "react";
 import { appClient } from "../../lib/appClient";
 import { taskClient } from "../../lib/taskClient";
@@ -348,6 +349,29 @@ export default function Builder({
                 setChain({
                   ...chain,
                   limits: { ...chain.limits, maxActions },
+                })
+              }
+            />
+          </label>
+          <AllowanceField
+            cents={chain.limits.maxApiCostCents}
+            onChange={(maxApiCostCents) =>
+              setChain({
+                ...chain,
+                limits: { ...chain.limits, maxApiCostCents },
+              })
+            }
+          />
+          <label>
+            Active step timeout (seconds)
+            <NumberField
+              min={30}
+              max={28800}
+              value={chain.limits.actionTimeoutSecs}
+              onChange={(actionTimeoutSecs) =>
+                setChain({
+                  ...chain,
+                  limits: { ...chain.limits, actionTimeoutSecs },
                 })
               }
             />

@@ -225,7 +225,7 @@ export function useWorkspaceConversationRuntime(
       let running: { threadId: string; turnId: string } | null = null;
       if (pendingHere && owner.threadId && owner.turnId) {
         running = { threadId: owner.threadId, turnId: owner.turnId };
-      } else if (inProgress && next.activeBinding) {
+      } else if (inProgress && next.activeBinding && !turnHere?.automated) {
         running = {
           threadId: next.activeBinding.providerThreadId,
           turnId: inProgress.providerTurnId!,
@@ -454,7 +454,16 @@ export function createWorkspaceSubmission(
         result.draftCleared === false &&
         draftEditRevision.current === editRevisionAtSend
       )
-        void persistDraft(sessionId, "").catch(() => undefined);
+        void persistDraft(sessionId, "", text)
+          .catch(() => conversationClient.sessionSnapshot(sessionId))
+          .then((latest) => {
+            if (
+              sessionRef.current === sessionId &&
+              draftEditRevision.current === editRevisionAtSend
+            )
+              setDraft(latest.session.draft);
+          })
+          .catch((error) => setError(workbenchErrorMessage(error)));
       const key = terminalKey(result.epoch, result.threadId, result.turnId);
       const terminal =
         completedTurnsRef.current.get(key) ??
@@ -928,14 +937,30 @@ function useWorkbenchEvents({
         matchesThread(payload.threadId) &&
         typeof payload.turnId === "string"
       ) {
-        const turn = {
-          threadId: String(payload.threadId),
-          turnId: payload.turnId,
-        };
-        activeRef.current = turn;
-        setActive(turn);
+        const selected = sessionRef.current;
+        const threadId = String(payload.threadId),
+          turnId = payload.turnId;
         setPendingUser(null);
         clearStream();
+        // The same thread hosts coordinated work. Only the owning surface
+        // may expose Stop, even if the start event beats the ownership query.
+        void refreshActiveTurn().then((host) => {
+          if (
+            disposed ||
+            sessionRef.current !== selected ||
+            !host ||
+            host.automated ||
+            host.threadId !== threadId ||
+            host.turnId !== turnId ||
+            completedTurnsRef.current.has(
+              terminalKey(payload.epoch, threadId, turnId),
+            )
+          )
+            return;
+          const turn = { threadId, turnId };
+          activeRef.current = turn;
+          setActive(turn);
+        });
       }
 
       if (

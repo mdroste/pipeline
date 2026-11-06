@@ -5,7 +5,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import useConversationIndex from "../hooks/useConversationIndex";
+import { loadProjectPins } from "../lib/projectIndex";
+import { appEvents } from "../lib/appEvents";
 import type { AppPage } from "../lib/router";
 import Badge from "../ui/Badge";
 import IconButton from "../ui/IconButton";
@@ -17,6 +18,7 @@ import NewMenu from "./nav-rail/NewMenu";
 import { useNavRailSlot } from "./nav-rail/navRailSlot";
 import useNavSections, { type NavSection } from "./nav-rail/useNavSections";
 import "./nav-rail/NavRail.css";
+import "./project-surface/FocusedProject.css";
 import ResizeHandle from "./ResizeHandle";
 
 export const NAV_RAIL_WIDTH = { default: 240, min: 208, max: 320 };
@@ -53,37 +55,7 @@ interface Props extends Partial<
   recentProjects?: RecentProject[];
   recentProjectsLoading?: boolean;
   onOpenProject?: (projectId: string) => void;
-  onOpenConversation?: (sessionId: string) => void;
   onDependencies: () => void;
-}
-
-/** The newest conversations, read only while their section is open. */
-function RecentConversations({
-  onOpen,
-}: {
-  onOpen?: (sessionId: string) => void;
-}) {
-  const { conversations, loading } = useConversationIndex();
-  if (!conversations.length)
-    return (
-      <p className="nav-empty">
-        {loading ? "Loading chats…" : "No chats yet."}
-      </p>
-    );
-  return (
-    <>
-      {conversations.slice(0, 3).map(({ session, projectName }) => (
-        <NavChild
-          key={session.id}
-          label={session.title}
-          title={
-            projectName ? `${session.title} · ${projectName}` : session.title
-          }
-          onClick={() => onOpen?.(session.id)}
-        />
-      ))}
-    </>
-  );
 }
 
 const NO_RUNS: NonNullable<Props["runs"]> = [];
@@ -124,7 +96,6 @@ export default function NavRail({
   recentProjects = [],
   recentProjectsLoading = false,
   onOpenProject,
-  onOpenConversation,
   onDependencies,
   onOpenConversations,
   onOpenAutomations,
@@ -211,55 +182,54 @@ export default function NavRail({
     setFlyout(null);
     action?.();
   };
-  const recentProjectChildren =
-    recentProjectsLoading && !recentProjects.length ? (
-      <div
-        role="status"
-        aria-label="Loading recent projects"
-        className="space-y-1 px-2 py-1"
-      >
-        {[0, 1].map((item) => (
-          <span
-            key={item}
-            className="block h-6 animate-pulse rounded-md bg-gray-200/70 dark:bg-neutral-800"
-          />
-        ))}
-      </div>
-    ) : recentProjects.length ? (
-      recentProjects
-        .slice(0, 3)
-        .map((project) => (
-          <NavChild
-            key={project.id}
-            label={project.name}
-            onClick={pick(() => onOpenProject?.(project.id))}
-            title={
-              project.missingRootAt
-                ? `${project.name} · Folder unavailable`
-                : project.name
-            }
-            suffix={
-              project.missingRootAt ? (
-                <Badge kind="attention" label="Folder unavailable" />
-              ) : undefined
-            }
-          />
-        ))
-    ) : (
-      <p className="nav-empty">Your projects will appear here.</p>
-    );
+  const [pins, setPins] = useState(loadProjectPins);
+  useEffect(
+    () =>
+      appEvents.on("project-pins-changed", () => setPins(loadProjectPins())),
+    [],
+  );
   const projectChildren = workspace ? (
     slot
   ) : (
     <>
-      {recentProjectChildren}
-      <div className="nav-label">Recent chats</div>
-      <RecentConversations
-        onOpen={(id) => {
-          setFlyout(null);
-          onOpenConversation?.(id);
-        }}
-      />
+      {recentProjectsLoading && !recentProjects.length ? (
+        <p className="nav-empty" role="status">
+          Loading projects…
+        </p>
+      ) : (
+        ["Pinned projects", "Recent projects"].map((label, index) => {
+          const items = recentProjects
+            .filter((p) => (index ? !pins.includes(p.id) : pins.includes(p.id)))
+            .slice(0, index ? 3 : 6);
+          return (
+            items.length > 0 && (
+              <section key={label}>
+                <div className="focused-scope-label">{label}</div>
+                {items.map((project) => (
+                  <NavChild
+                    key={project.id}
+                    label={project.name}
+                    onClick={pick(() => onOpenProject?.(project.id))}
+                    title={
+                      project.missingRootAt
+                        ? project.name + " · Folder unavailable"
+                        : project.name
+                    }
+                    suffix={
+                      project.missingRootAt ? (
+                        <Badge kind="attention" label="Folder unavailable" />
+                      ) : undefined
+                    }
+                  />
+                ))}
+              </section>
+            )
+          );
+        })
+      )}
+      {!recentProjectsLoading && !recentProjects.length && (
+        <p className="nav-empty">Your projects will appear here.</p>
+      )}
     </>
   );
   const reviewChildren = (
@@ -294,7 +264,6 @@ export default function NavRail({
       label: string;
       icon: "assistant" | "project" | "review";
       page: AppPage;
-      current: boolean;
       suffix?: ReactNode;
       children: ReactNode;
     }
@@ -303,7 +272,6 @@ export default function NavRail({
       label: "Projects",
       icon: "project",
       page: "project-index",
-      current: activePage === "project-index",
       suffix: projectStatus,
       children: projectChildren,
     },
@@ -311,7 +279,6 @@ export default function NavRail({
       label: "Reviews",
       icon: "review",
       page: "history",
-      current: false,
       suffix: reviewStatus,
       children: reviewChildren,
     },
@@ -322,11 +289,9 @@ export default function NavRail({
       <NavGroup
         icon={entry.icon}
         label={entry.label}
-        current={entry.current}
         active={section === id}
         open={isOpen(id)}
         onToggle={() => toggle(id)}
-        onClick={() => onNavigate(entry.page)}
         suffix={entry.suffix}
       >
         {entry.children}
@@ -425,7 +390,7 @@ export default function NavRail({
       <aside
         ref={asideRef}
         style={{ width: 56 }}
-        className="relative flex shrink-0 flex-col items-center border-r border-gray-200/80 bg-gray-100/90 px-2 pb-2.5 pt-2 [color-scheme:light] dark:border-neutral-800 dark:bg-[#101010] dark:[color-scheme:dark]"
+        className="relative flex shrink-0 flex-col items-center border-r border-gray-200/80 bg-gray-100/90 px-2 pb-2.5 pt-2 [color-scheme:light] dark:border-neutral-800 dark:bg-surface dark:[color-scheme:dark]"
       >
         <nav
           aria-label="Primary"
@@ -447,7 +412,17 @@ export default function NavRail({
             current={activePage === "home"}
             onClick={() => onNavigate("home")}
           />
-          {groupIcon("projects")}
+          <NavIcon
+            icon="project"
+            label="Projects"
+            current={activePage === "project-index"}
+            active={section === "projects"}
+            onClick={() => onNavigate("project-index")}
+          >
+            {projectStatus && (
+              <span className="nav-icon-mark">{projectStatus}</span>
+            )}
+          </NavIcon>
           {groupIcon("reviews")}
           <NavIcon
             icon="tasks"
@@ -460,6 +435,27 @@ export default function NavRail({
               <span className="nav-icon-mark">{automationStatus}</span>
             )}
           </NavIcon>
+          {workspace && (
+            <div className="mt-2 border-t border-line pt-2">
+              <NavIcon
+                ref={flyoutAnchors.projects}
+                icon={workspace.projectId ? "folder-open" : "assistant"}
+                label={workspace.projectName ?? "Unfiled chats"}
+                tooltip={
+                  workspace.projectName
+                    ? "Project navigation: " + workspace.projectName
+                    : "Browse unfiled chats"
+                }
+                aria-haspopup="dialog"
+                aria-expanded={flyout === "projects"}
+                onClick={() =>
+                  setFlyout((value) =>
+                    value === "projects" ? null : "projects",
+                  )
+                }
+              />
+            </div>
+          )}
         </nav>
         <div className="flex shrink-0 flex-col items-center gap-0.5 border-t border-gray-200/80 pt-2 dark:border-neutral-800">
           {activity}
@@ -479,7 +475,13 @@ export default function NavRail({
         </div>
         {flyout && (
           <NavFlyout
-            label={sections[flyout].label}
+            label={
+              flyout === "projects"
+                ? (workspace?.projectName ?? "No project")
+                : sections[flyout].label
+            }
+            heading={flyout === "projects" ? "Project navigation" : undefined}
+            openLabel={flyout === "projects" ? "All projects" : undefined}
             anchorRef={flyoutAnchors[flyout]}
             onClose={() => setFlyout(null)}
             onOpenPage={pick(() => onNavigate(sections[flyout].page))}
@@ -494,7 +496,7 @@ export default function NavRail({
     <aside
       ref={asideRef}
       style={{ width }}
-      className="relative flex shrink-0 flex-col border-r border-gray-200/80 bg-gray-100/90 px-2.5 pb-2.5 [color-scheme:light] dark:border-neutral-800 dark:bg-[#101010] dark:[color-scheme:dark]"
+      className="relative flex shrink-0 flex-col border-r border-gray-200/80 bg-gray-100/90 px-2.5 pb-2.5 [color-scheme:light] dark:border-neutral-800 dark:bg-surface dark:[color-scheme:dark]"
     >
       <div className="flex h-9 shrink-0 items-center pl-2 text-sm font-semibold tracking-[-0.01em] text-gray-900 dark:text-neutral-100">
         Pipeline
@@ -515,17 +517,21 @@ export default function NavRail({
         )}
       </div>
 
-      <nav
-        aria-label="Primary"
-        className="-mx-1 min-h-0 flex-1 space-y-0.5 overflow-y-auto px-1 [scrollbar-width:thin]"
-      >
+      <nav aria-label="Primary" className="-mx-1 shrink-0 space-y-0.5 px-1">
         <NavRow
           icon="home"
           label="Home"
           current={activePage === "home"}
           onClick={() => onNavigate("home")}
         />
-        {group("projects")}
+        <NavRow
+          icon="project"
+          label="Projects"
+          current={activePage === "project-index"}
+          active={section === "projects"}
+          onClick={() => onNavigate("project-index")}
+          suffix={projectStatus}
+        />
         {group("reviews")}
         <NavRow
           icon="tasks"
@@ -537,6 +543,19 @@ export default function NavRail({
         />
       </nav>
 
+      <div
+        className="focused-project-scope"
+        role="group"
+        aria-label={
+          workspace
+            ? workspace.projectId
+              ? "Current project"
+              : "No project"
+            : "Project shortcuts"
+        }
+      >
+        {projectChildren}
+      </div>
       <div className="mt-2 shrink-0 space-y-1 border-t border-gray-200/80 pt-2 dark:border-neutral-800">
         {needsSetup && (
           <button

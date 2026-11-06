@@ -1,3 +1,5 @@
+import ClaimAssessment from "../tasks/ClaimAssessment";
+import { RecordedUsage } from "../tasks/Budget";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   missionClient,
@@ -144,7 +146,22 @@ export default function MissionDetail({
     }
   }
   const terminal = ["completed", "exhausted", "stopped"].includes(m.state);
-  const latest = [...m.rounds].reverse().find((r) => r.challenge)?.challenge;
+  const assessedRound = [...m.rounds].reverse().find((r) => r.challenge);
+  const latest = assessedRound?.challenge;
+  async function acceptAssessment() {
+    if (!assessedRound?.claimRecord) return;
+    setBusy(true);
+    setError("");
+    try {
+      onUpdated(
+        await missionClient.accept(m, assessedRound.claimRecord.subjectVersion),
+      );
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   const navigate = (
     callback: ((id: string) => void | Promise<void>) | undefined,
     id: string,
@@ -289,6 +306,7 @@ export default function MissionDetail({
           Results view.
         </p>
       )}
+      <RecordedUsage id={m.id} revision={m.revision} />
       <div className="task-actions">
         {m.state === "draft" && (
           <button
@@ -390,6 +408,19 @@ export default function MissionDetail({
       >
         {tab === "agenda" && (
           <>
+            {m.rounds.some((r) => r.finding) && (
+              <p>Investigation brief retained.</p>
+            )}
+            <ClaimAssessment
+              record={assessedRound?.claimRecord}
+              earlier={!!latest}
+              busy={busy}
+              onAccept={
+                assessedRound === m.rounds.at(-1)
+                  ? () => void acceptAssessment()
+                  : undefined
+              }
+            />
             <h3>Original completion criteria</h3>
             <ol className="mission-criteria">
               {m.definition.criteria.map((criterion, i) => {
@@ -401,7 +432,7 @@ export default function MissionDetail({
                     <strong>{criterion}</strong>
                     <span className="task-muted">
                       {assessment
-                        ? `${assessment.status === "met" ? "Assessed as met" : assessment.status}: ${assessment.explanation}`
+                        ? `${assessment.status === "met" ? "Challenger reported met" : assessment.status}: ${assessment.explanation}`
                         : "Awaiting assessment"}
                     </span>
                     {assessment?.evidenceIds.map((id) => (
@@ -489,6 +520,11 @@ export default function MissionDetail({
                   {r.challenge && (
                     <>
                       <h4>Independent challenge · {r.challenge.outcome}</h4>
+                      <ClaimAssessment
+                        record={r.claimRecord}
+                        earlier={true}
+                        busy={busy}
+                      />
                       <p>{r.challenge.summary}</p>
                       <p className="task-muted">{r.challenge.testedDomain}</p>
                       {r.challenge.unresolved.length > 0 && (

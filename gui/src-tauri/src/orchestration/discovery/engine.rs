@@ -40,11 +40,7 @@ fn sorted_candidates(p: &Portfolio) -> Vec<u32> {
     candidates.into_iter().map(|c| c.id).collect()
 }
 fn after_screen(p: &mut Portfolio) {
-    let count = p
-        .run
-        .definition
-        .candidate_count
-        .min(20.max(2 * p.run.definition.shortlist_count));
+    let count = super::budget::deep_limit(&p.run.definition);
     p.run.deep_candidates = sorted_candidates(p).into_iter().take(count).collect();
     if p.run.deep_candidates.is_empty() {
         p.run.state = "partial".into();
@@ -63,8 +59,47 @@ fn after_screen(p: &mut Portfolio) {
         );
     }
 }
-fn after_research(p: &mut Portfolio, index: usize, next: ResearchNext) {
+fn after_research(p: &mut Portfolio, index: usize, next: ResearchNext) -> Result<()> {
     if next == ResearchNext::Abandon {
+        let paper = &mut p.papers[index];
+        let round = paper.rounds.last().ok_or("Investigation missing")?;
+        let challenged = matches!(p.run.phase, Phase::Challenge { .. });
+        let reason = if challenged {
+            paper
+                .challenges
+                .last()
+                .map(|c| format!("{} {}", c.assessment, c.unresolved.join("; ")))
+                .unwrap_or_default()
+        } else {
+            round.reason.clone()
+        };
+        let question = p
+            .candidates
+            .iter()
+            .find(|c| c.id == paper.candidate_id)
+            .map(|c| c.proposal.question.clone())
+            .unwrap_or_else(|| round.contract.clone());
+        paper.infeasibility = Some(crate::orchestration::claims::infeasible(
+            format!(
+                "project-{}-round-{}",
+                paper.candidate_id,
+                paper.rounds.len()
+            ),
+            (
+                if challenged {
+                    "Independent challenger"
+                } else {
+                    "Investigator"
+                },
+                p.run
+                    .active_child
+                    .as_deref()
+                    .ok_or("Investigation action identity is missing")?,
+            ),
+            question,
+            round.contract.clone(),
+            reason,
+        ));
         p.papers[index].state = "abandoned".into();
         p.papers[index].reason =
             "The investigation was assessed as infeasible; retained work is available".into();
@@ -86,8 +121,9 @@ fn after_research(p: &mut Portfolio, index: usize, next: ResearchNext) {
             "Investigating the next unresolved question",
         );
     }
+    Ok(())
 }
-fn needs_revision(p: &Paper) -> bool {
+pub(super) fn needs_revision(p: &Paper) -> bool {
     p.versions.last().is_some_and(|v| {
         v.reviews.iter().any(|r| {
             r.findings
@@ -126,7 +162,7 @@ pub fn next_paper(p: &mut Portfolio, index: usize) {
         );
         return;
     }
-    let count = p.papers.iter().filter(|p| p.state == "complete").count();
+    let count = p.papers.iter().filter(|p| p.supported()).count();
     if p.run.definition.mode == Mode::Unsupervised
         && count < p.run.definition.paper_count
         && p.run.replacements < p.run.definition.max_replacements
@@ -177,7 +213,7 @@ pub fn consume(
                 if acquire {
                     Phase::Acquire { index: 0 }
                 } else {
-                    Phase::Generate
+                    p.run.next_generation_phase()
                 },
                 "Research standards identified; exploring project proposals",
             );
@@ -196,9 +232,44 @@ pub fn consume(
                 if index + 1 < n {
                     Phase::Acquire { index: index + 1 }
                 } else {
-                    Phase::Generate
+                    p.run.next_generation_phase()
                 },
                 "Literature access recorded",
+            );
+        }
+        Phase::Brainstorm => {
+            #[derive(serde::Deserialize)]
+            struct Ideas {
+                ideas: Vec<String>,
+            }
+            let count = p.run.definition.idea_agents;
+            if count == 0 || output["completedIdeaAgents"].as_u64() != Some(u64::from(count)) {
+                return Err("The provider did not confirm the requested idea subagents".into());
+            }
+            let Ideas { ideas } = validate::response(output)?;
+            if ideas.len() != p.run.definition.candidate_count {
+                return Err(format!(
+                    "Expected exactly {} distinct idea sketches",
+                    p.run.definition.candidate_count
+                ));
+            }
+            let mut seen = std::collections::BTreeSet::new();
+            for idea in &ideas {
+                validate::text(idea, 800)?;
+                if !seen.insert(
+                    idea.split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .to_lowercase(),
+                ) {
+                    return Err("Idea sketches contain a duplicate".into());
+                }
+            }
+            p.run.idea_seeds = ideas;
+            ready(
+                p,
+                Phase::Generate,
+                "Developing the idea team's sketches into proposals",
             );
         }
         Phase::Generate => {
@@ -348,7 +419,7 @@ pub fn consume(
                     "Independently challenging the investigation",
                 );
             } else {
-                after_research(p, paper, next);
+                after_research(p, paper, next)?;
             }
         }
         Phase::Challenge { paper } => {
@@ -365,12 +436,14 @@ pub fn consume(
             }
             let next = v.next;
             p.papers[paper].challenges.push(v);
-            after_research(p, paper, next);
+            after_research(p, paper, next)?;
         }
         Phase::Draft { paper } => {
             let v: Manuscript = validate::response(output)?;
             validate::manuscript(&v, &p.papers[paper])?;
             let version = PaperVersion {
+                claim_record: None,
+                draft_delivered: Some(false),
                 version: p.papers[paper].versions.len() + 1,
                 hash: validate::version_hash(&v)?,
                 manuscript: v,
@@ -436,14 +509,7 @@ pub fn consume(
             after_reviews(p, paper);
         }
         Phase::AssessPaper { paper } => {
-            let mut v: Assessment = validate::response(output)?;
-            validate::assessment(&v)?;
-            if needs_revision(&p.papers[paper]) {
-                v.sound = false;
-            }
-            p.papers[paper].state = if v.sound { "complete" } else { "incomplete" }.into();
-            p.papers[paper].reason = v.summary.clone();
-            p.papers[paper].assessment = Some(v);
+            super::assessment::apply(p, paper, output)?;
             next_paper(p, paper);
         }
         Phase::Rank => {
@@ -454,14 +520,24 @@ pub fn consume(
             ready(p, Phase::Deliver, "Final paper ranking recorded");
         }
         Phase::Deliver => {
-            let n = p.papers.iter().filter(|p| p.state == "complete").count();
+            let mut n = 0;
+            let mut supported = 0;
+            for paper in &mut p.papers {
+                if let Some(v) = paper.versions.last_mut() {
+                    v.draft_delivered = Some(true);
+                    n += 1;
+                    if v.claim_record.as_ref().is_some_and(|r| r.supported) {
+                        supported += 1;
+                    }
+                }
+            }
             p.run.state = if n >= p.run.definition.paper_count {
                 "completed"
             } else {
                 "partial"
             }
             .into();
-            p.run.reason=format!("Delivered {n} complete paper drafts of {} requested; reviews, limitations and other research are retained",p.run.definition.paper_count);
+            p.run.reason=format!("Delivered {n} paper drafts of {} requested. Evidence requirements met for {supported}; researcher acceptance is separate.",p.run.definition.paper_count);
             p.run.due_at = None;
         }
         Phase::Select => return Err("Project selection requires a saved selection decision".into()),

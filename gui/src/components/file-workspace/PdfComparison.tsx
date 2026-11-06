@@ -1,15 +1,8 @@
 import SplitView from "../SplitView";
-import { pdfAssetOptions } from "../../lib/pdfAssets";
-import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  getDocument,
-  type PDFDocumentProxy,
-} from "pdfjs-dist/legacy/build/pdf.mjs";
-import PdfReader, { pdfBytes, type PdfPosition } from "./PdfReader";
-import {
-  readCapturedPdf,
-  workspaceFileAdapter,
-} from "../../lib/fileWorkspaceClient";
+import { useEffect, useRef, useState } from "react";
+import { type PDFDocumentProxy } from "pdfjs-dist/legacy/build/pdf.mjs";
+import PdfReader, { type PdfPosition } from "./PdfReader";
+import { workspaceFileAdapter } from "../../lib/fileWorkspaceClient";
 interface Document {
   id: string;
   title: string;
@@ -44,22 +37,18 @@ export default function PdfComparison({
   useEffect(() => {
     if (page) setPosition((old) => ({ ...old, page }));
   }, [page]);
-  const loaders = useMemo(() => {
-    const cache = new Map<string, Promise<string | Uint8Array>>();
-    return (id: string) => {
-      if (!cache.has(id))
-        cache.set(
-          id,
-          readCapturedPdf(
-            workspaceFileAdapter({ workspaceId, revisionId: id }),
-          ),
-        );
-      // PDF.js takes over the bytes it is given, so each reader gets a copy.
-      return cache
-        .get(id)!
-        .then((pdf) => (typeof pdf === "string" ? pdf : pdf.slice()));
-    };
-  }, [workspaceId, primary.id, secondary?.id]);
+  const [documents, setDocuments] = useState(
+    new Map<string, PDFDocumentProxy>(),
+  );
+  const digests = useRef(new WeakMap<PDFDocumentProxy, Map<number, string>>());
+  const attach = (id: string, doc: PDFDocumentProxy | null) => {
+    setDocuments((previous) => {
+      const next = new Map(previous);
+      if (doc) next.set(id, doc);
+      else next.delete(id);
+      return next;
+    });
+  };
   useEffect(() => {
     generation.current++;
     setChanges([]);
@@ -71,9 +60,13 @@ export default function PdfComparison({
     const run = ++generation.current;
     setComparing(true);
     setChanges([]);
-    const tasks: ReturnType<typeof getDocument>[] = [];
+
     const image = async (pdf: PDFDocumentProxy, page: number) => {
       if (page > pdf.numPages) return "missing";
+      const cache = digests.current.get(pdf) ?? new Map<number, string>();
+      digests.current.set(pdf, cache);
+      const cached = cache.get(page);
+      if (cached) return cached;
       const p = await pdf.getPage(page);
       const size = p.getViewport({ scale: 1 });
       const scale = Math.min(320 / size.width, 480 / size.height);
@@ -92,27 +85,20 @@ export default function PdfComparison({
           canvas.height,
         ).data;
         const digest = await crypto.subtle.digest("SHA-256", pixels);
-        return `${canvas.width}:${canvas.height}:${Array.from(new Uint8Array(digest)).join(",")}`;
+        const fingerprint = `${canvas.width}:${canvas.height}:${Array.from(new Uint8Array(digest)).join(",")}`;
+        cache.set(page, fingerprint);
+        return fingerprint;
       } finally {
         canvas.width = 0;
         canvas.height = 0;
-        p.cleanup();
+        // The reader owns the page and may still be painting it.
       }
     };
     try {
-      const encoded = await Promise.all([
-        loaders(primary.id),
-        loaders(secondary.id),
-      ]);
-      for (const data of encoded)
-        tasks.push(
-          getDocument({
-            ...pdfAssetOptions,
-            data: pdfBytes(data),
-            useSystemFonts: true,
-          }),
-        );
-      const [a, b] = await Promise.all(tasks.map((t) => t.promise));
+      const a = documents.get(primary.id),
+        b = documents.get(secondary.id);
+      if (!a || !b)
+        throw new Error("Wait for both PDFs to open, then compare again.");
       const count = Math.max(a.numPages, b.numPages);
       if (count > 5000)
         throw new Error(
@@ -137,7 +123,6 @@ export default function PdfComparison({
     } catch (e) {
       if (run === generation.current && mounted.current) setProgress(String(e));
     } finally {
-      await Promise.all(tasks.map((t) => t.destroy()));
       if (run === generation.current && mounted.current) setComparing(false);
     }
   };
@@ -161,7 +146,14 @@ export default function PdfComparison({
             />{" "}
             Synchronize page, zoom and rotation
           </label>
-          <button disabled={comparing} onClick={() => void compare()}>
+          <button
+            disabled={
+              comparing ||
+              !documents.has(primary.id) ||
+              !documents.has(secondary.id)
+            }
+            onClick={() => void compare()}
+          >
             Find changed pages
           </button>
           {comparing && (
@@ -198,7 +190,11 @@ export default function PdfComparison({
               documentKey={`${workspaceId}:${primary.id}`}
               title={primary.title}
               initialPage={page}
-              load={() => loaders(primary.id)}
+              capture={workspaceFileAdapter({
+                workspaceId,
+                revisionId: primary.id,
+              })}
+              onDocument={(doc) => attach(primary.id, doc)}
               position={position}
               onPosition={setPosition}
               onSource={onSource}
@@ -208,7 +204,11 @@ export default function PdfComparison({
             <PdfReader
               documentKey={`${workspaceId}:${secondary.id}`}
               title={secondary.title}
-              load={() => loaders(secondary.id)}
+              capture={workspaceFileAdapter({
+                workspaceId,
+                revisionId: secondary.id,
+              })}
+              onDocument={(doc) => attach(secondary.id, doc)}
               position={linked ? position : undefined}
               onPosition={linked ? setPosition : undefined}
             />
@@ -220,7 +220,11 @@ export default function PdfComparison({
             documentKey={`${workspaceId}:${primary.id}`}
             title={primary.title}
             initialPage={page}
-            load={() => loaders(primary.id)}
+            capture={workspaceFileAdapter({
+              workspaceId,
+              revisionId: primary.id,
+            })}
+            onDocument={(doc) => attach(primary.id, doc)}
             position={position}
             onPosition={setPosition}
             onSource={onSource}

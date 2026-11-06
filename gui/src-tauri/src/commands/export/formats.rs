@@ -14,7 +14,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
-const MAX_REPORT_JSON_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_REPORT_JSON_BYTES: u64 = crate::runs::MAX_REPORT_BYTES as u64;
 const MAX_REPORT_MARKDOWN_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_BUNDLE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_ORIGINAL_BYTES: u64 = 256 * 1024 * 1024;
@@ -127,7 +127,10 @@ fn load_run(dir: &Path, manifest: RunManifest) -> Result<LoadedRun, String> {
         "saved report data",
     )?)
     .map_err(|error| format!("The saved report data could not be read: {error}"))?;
-    let markdown = report_text(dir).unwrap_or_default();
+    let markdown = match std::fs::symlink_metadata(dir.join("report.md")) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        _ => report_text(dir)?,
+    };
     let bundle = read_bounded(
         &dir.join("context/document_bundle.json"),
         MAX_BUNDLE_BYTES,
@@ -288,6 +291,14 @@ fn stem(run: &LoadedRun) -> String {
 fn generate(run: &LoadedRun, format: ReportFormat) -> Result<Generated, String> {
     let date = &run.export.meta.date;
     let stem = stem(run);
+    let mut protected = [&run.manifest.input_path, &run.bundle.extraction.source_path]
+        .into_iter()
+        .chain(run.manifest.extra_input_sources.values())
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    protected.sort();
+    protected.dedup();
     let file = |bytes, suggested_name, filter, extension| Generated {
         bytes,
         suggested_name,
@@ -296,7 +307,7 @@ fn generate(run: &LoadedRun, format: ReportFormat) -> Result<Generated, String> 
         findings: run.export.findings.len(),
         anchored: 0,
         unanchored: 0,
-        protected: Vec::new(),
+        protected: protected.clone(),
     };
     Ok(match format {
         ReportFormat::Html => file(
@@ -324,7 +335,13 @@ fn generate(run: &LoadedRun, format: ReportFormat) -> Result<Generated, String> 
             Generated {
                 anchored: annotated.anchored,
                 unanchored: annotated.unanchored,
-                protected: vec![path],
+                protected: {
+                    let mut paths = protected.clone();
+                    if !paths.contains(&path) {
+                        paths.push(path);
+                    }
+                    paths
+                },
                 ..file(
                     annotated.bytes,
                     format!("{stem} with review comments.docx"),
@@ -340,7 +357,13 @@ fn generate(run: &LoadedRun, format: ReportFormat) -> Result<Generated, String> 
             Generated {
                 anchored: annotated.anchored,
                 unanchored: annotated.unanchored,
-                protected: vec![path],
+                protected: {
+                    let mut paths = protected.clone();
+                    if !paths.contains(&path) {
+                        paths.push(path);
+                    }
+                    paths
+                },
                 ..file(
                     annotated.bytes,
                     format!("{stem} with review highlights.pdf"),

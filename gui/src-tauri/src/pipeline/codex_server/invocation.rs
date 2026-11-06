@@ -265,6 +265,7 @@ pub(super) async fn run_connected(
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).map_err(|e| e.to_string())?;
     let id: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    crate::pipeline::executor::budget_dispatch::reserve(None, true)?;
     let mut attempt = Attempt {
         connection: c.clone(),
         lease: Some(lease),
@@ -311,7 +312,6 @@ pub(super) async fn run_connected(
     attempt.record["state"] = json!("submitting");
     attempt.record["state_before_drop"] = json!("submitting");
     attempt.save()?;
-    logging::record_provider_attempt();
     logging::record_reported_model(effective_model);
     logging::emit(app, format!("[App Server] {label}: {effective_model}; attempt {id}; selected context supplied in a fresh thread"));
     let turn = match c

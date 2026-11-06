@@ -33,6 +33,9 @@ pub struct Inventory {
     pub modified_ms: HashMap<String, u64>,
 }
 
+const LIMIT_WARNING: &str =
+    "Inventory limit reached. Select a smaller folder or exclude directories and refresh.";
+
 /// Bounded, descriptor-relative reads for the explicit task snapshot bridge.
 /// The caller binds the root; this returns bytes, never a writable project handle.
 pub(crate) fn materialize_research_files(
@@ -196,13 +199,13 @@ fn scan(
         });
     };
     let safe = files::SafeRoot::open(root)?;
-    while let Some(relative) = pending.pop() {
+    let mut limited = false;
+    'walk: while let Some(relative) = pending.pop() {
         if started.elapsed() > Duration::from_secs(5)
-            || visited > 20000
+            || visited >= 20000
             || result.files.len() >= MAX_FILES
         {
-            result.complete = false;
-            result.warnings.push("Inventory limit reached; select a smaller folder or exclude directories and refresh".into());
+            limited = true;
             break;
         }
         let listing = match fs::read_dir(root.join(&relative)) {
@@ -215,6 +218,14 @@ fn scan(
         };
         let mut entries = Vec::new();
         for entry in listing {
+            if visited >= 20000
+                || result.files.len() >= MAX_FILES
+                || started.elapsed() > Duration::from_secs(5)
+            {
+                limited = true;
+                break;
+            }
+            visited += 1;
             match entry {
                 Ok(entry) => entries.push(entry),
                 Err(_) => skip(&mut result, relative.clone()),
@@ -228,7 +239,10 @@ fn scan(
             }
         });
         for entry in entries {
-            visited += 1;
+            if result.files.len() >= MAX_FILES || started.elapsed() > Duration::from_secs(5) {
+                limited = true;
+                break 'walk;
+            }
             let name = entry.file_name().to_string_lossy().into_owned();
             let path = if relative.is_empty() {
                 name
@@ -246,7 +260,7 @@ fn scan(
                 if pending.len() < MAX_FILES {
                     pending.push(path);
                 } else {
-                    result.complete = false;
+                    limited = true;
                 }
                 continue;
             }
@@ -290,6 +304,10 @@ fn scan(
                 executable,
             });
         }
+    }
+    if limited {
+        result.complete = false;
+        result.warnings.push(LIMIT_WARNING.into());
     }
     if unreadable > 0 {
         result.warnings.push(format!(
@@ -345,6 +363,46 @@ fn update_inventory(
                 .into();
             }
         }
+        if inventory.warnings.iter().any(|w| w == LIMIT_WARNING) {
+            let mut scanned: std::collections::BTreeMap<_, _> = inventory
+                .files
+                .drain(..)
+                .map(|f| (f.path.clone(), f))
+                .collect();
+            for old in previous
+                .files
+                .iter()
+                .filter(|f| f.status != "missing" && !ignored(&f.path, &settings.ignored_paths))
+                .take(MAX_FILES)
+            {
+                if let Some(current) = scanned.remove(&old.path) {
+                    inventory.files.push(current);
+                } else {
+                    inventory.files.push(old.clone());
+                    if let Some(time) = previous.modified_ms.get(&old.path) {
+                        inventory.modified_ms.insert(old.path.clone(), *time);
+                    }
+                }
+            }
+            inventory.files.extend(
+                scanned
+                    .into_values()
+                    .take(MAX_FILES - inventory.files.len()),
+            );
+            inventory.files.sort_by(|a, b| a.path.cmp(&b.path));
+            let kept: HashSet<_> = inventory.files.iter().map(|f| f.path.as_str()).collect();
+            inventory
+                .modified_ms
+                .retain(|path, _| kept.contains(path.as_str()));
+            return put(
+                store,
+                workspace_id,
+                &format!("inventory_{workspace_id}"),
+                "inventory",
+                old.as_ref().map_or(0, |r| r.revision),
+                &inventory,
+            );
+        }
         let present: HashSet<String> = inventory.files.iter().map(|f| f.path.clone()).collect();
         let unread: HashSet<String> = inventory
             .files
@@ -390,4 +448,36 @@ fn update_inventory(
         old.map_or(0, |r| r.revision),
         &inventory,
     )
+}
+
+#[cfg(test)]
+#[test]
+fn inventory_limits_a_single_wide_directory() {
+    use crate::workbench::store::CreateWorkspaceRequest;
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("project");
+    fs::create_dir(&dir).unwrap();
+    let store = Store::open_at(&temp.path().join("store")).unwrap();
+    let ws = store
+        .create_workspace(CreateWorkspaceRequest {
+            name: "Scan".into(),
+            root: Some(dir.to_string_lossy().into()),
+            operation_id: "scan".into(),
+        })
+        .unwrap()
+        .record
+        .id;
+    fs::write(dir.join("zz_original.txt"), b"keep").unwrap();
+    refresh(&store, &ws).unwrap();
+    for i in 0..MAX_FILES {
+        fs::write(dir.join(i.to_string()), []).unwrap();
+    }
+    let scan: Inventory = decode(&refresh(&store, &ws).unwrap()).unwrap();
+    assert!(scan.files.len() <= MAX_FILES);
+    assert!(!scan.complete);
+    assert!(scan.warnings.iter().any(|w| w == LIMIT_WARNING));
+    assert!(scan
+        .files
+        .iter()
+        .any(|f| f.path == "zz_original.txt" && f.hash.is_some() && f.status != "missing"));
 }

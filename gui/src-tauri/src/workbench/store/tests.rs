@@ -1041,3 +1041,66 @@ fn a_backup_restores_past_an_idle_connection() {
         .unwrap();
     assert_eq!(sessions, 1);
 }
+
+#[test]
+fn global_conversation_index_pages_ties_and_matches_old_titles() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open_at(dir.path()).unwrap();
+    let mut c = store.connection().unwrap();
+    let tx = c.transaction().unwrap();
+    for i in 0..201 {
+        tx.execute(
+            "INSERT INTO sessions(id,title,created_at,updated_at) VALUES(?1,?2,'now','now')",
+            params![format!("chat-{i:03}"), format!("Résumé {i}")],
+        )
+        .unwrap();
+    }
+    tx.commit().unwrap();
+    let first = store
+        .conversation_index(false, false, "", false, None)
+        .unwrap();
+    assert_eq!(first["items"].as_array().unwrap().len(), 200);
+    let cursor = serde_json::from_value(first["nextCursor"].clone()).unwrap();
+    let last = store
+        .conversation_index(false, false, "", false, Some(&cursor))
+        .unwrap();
+    assert_eq!(last["items"][0]["session"]["id"], "chat-200");
+    assert!(last["nextCursor"].is_null());
+    let search = store
+        .conversation_index(false, false, "conversation RÉSUMÉ 200", true, None)
+        .unwrap();
+    assert_eq!(search["items"], last["items"]);
+}
+
+#[test]
+fn folder_checks_preserve_search_progress_but_home_exclusions_reset_it() {
+    let (_dir, store, _root) = fixture();
+    let c = store.connection().unwrap();
+    c.execute(
+        "INSERT INTO workspaces(id,name,created_at,updated_at) VALUES('ws','test','now','now')",
+        [],
+    )
+    .unwrap();
+    c.execute("INSERT INTO research_index_state(workspace_id,generation,cursor,byte_offset,complete) VALUES('ws',7,'here',10,1)",[]).unwrap();
+    c.execute("INSERT INTO project_records(id,workspace_id,kind,revision,body_json,updated_at) VALUES('inventory','ws','inventory',1,'{}','now')",[]).unwrap();
+    c.execute(
+        "UPDATE project_records SET revision=2 WHERE id='inventory'",
+        [],
+    )
+    .unwrap();
+    let state = || {
+        c.query_row(
+            "SELECT generation,complete FROM research_index_state WHERE workspace_id='ws'",
+            [],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, bool>(1)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(state(), (7, true));
+    c.execute(
+        "UPDATE project_records SET kind='home' WHERE id='inventory'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(state(), (8, false));
+}

@@ -20,6 +20,7 @@ pub(crate) mod rerun;
 mod reuse_artifacts;
 mod run;
 mod run_context;
+mod run_contract;
 pub(crate) mod run_entry;
 pub(crate) mod run_queue;
 mod run_storage;

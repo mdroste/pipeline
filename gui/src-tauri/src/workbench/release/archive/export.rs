@@ -268,12 +268,10 @@ pub fn export_archive_without(
         });
     }
     let old_blob_root = blob_root.to_string_lossy().into_owned();
-    for (table, column) in [
-        ("artifacts", "storage_reference"),
-        ("paper_revisions", "text_reference"),
-        ("source_versions", "text_reference"),
-        ("retained_blobs", "storage_reference"),
-    ] {
+    for (table, column) in super::omissions::FILE_COLUMNS
+        .into_iter()
+        .chain([("retained_blobs", "storage_reference")])
+    {
         snapshot
             .execute(
                 &format!("UPDATE {table} SET {column}=?2 || substr({column},length(?1)+1) WHERE {column} IS NOT NULL AND substr({column},1,length(?1))=?1"),

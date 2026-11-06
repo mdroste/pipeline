@@ -1,7 +1,20 @@
 //! Immutable bounded input snapshots and verified artifact paths.
 use crate::orchestration::store::{err, hash, Result, Scope, Store};
+use crate::workbench::tasks::delivery::DeliveryFile;
 use serde_json::{json, Value};
-use std::{io::Read, path::Path};
+use std::{
+    io::{Read, Write},
+    path::{Path, PathBuf},
+};
+const MAX_BYTES: u64 = 64 * 1024 * 1024;
+
+fn plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains(['/', '\\', '\0'])
+        && !(cfg!(windows) && name.contains(':'))
+}
 
 /// Why a snapshot failed, for callers that hold a model to what it asked for.
 pub enum SnapshotFailure {
@@ -30,8 +43,7 @@ pub fn capture(
     filename: &str,
 ) -> std::result::Result<Value, SnapshotFailure> {
     use SnapshotFailure::{Host, Input};
-    if filename.is_empty() || filename.contains(['/', '\\']) || filename == "." || filename == ".."
-    {
+    if !plain_name(filename) {
         return Err(Input("Snapshot requires a plain filename".into()));
     }
     let bytes = if let Some(path) = input.get("path").and_then(Value::as_str) {
@@ -83,45 +95,90 @@ pub fn capture(
     Ok(json!({"kind":"artifact","path":path,"hash":digest,"filename":filename,"bytes":bytes.len()}))
 }
 
-pub fn artifact_path(store: &Store, value: &Value) -> Result<String> {
-    let path = value
-        .get("path")
-        .and_then(Value::as_str)
-        .ok_or("Review needs an immutable snapshot output")?;
-    let digest = value
-        .get("hash")
-        .and_then(Value::as_str)
-        .ok_or("Artifact hash is missing")?;
-    if ![Some("artifact"), Some("artifactTree")]
-        .contains(&value.get("kind").and_then(Value::as_str))
-    {
-        return Err("Review input is not an artifact".into());
+/// A locator is only a hint for old consumers. All reads resolve the digest in
+/// the active library, including when the former library still exists.
+enum Contents {
+    File(Vec<u8>),
+    Tree(Vec<(String, Vec<u8>)>),
+}
+
+fn verified(store: &Store, value: &Value) -> Result<(PathBuf, Contents)> {
+    let digest = value["hash"].as_str().ok_or("Missing artifact digest")?;
+    let name = value["filename"]
+        .as_str()
+        .ok_or("Missing artifact filename")?;
+    if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) || !plain_name(name) {
+        return Err("Invalid artifact identity".into());
     }
-    let canonical = Path::new(path).canonicalize().map_err(err)?;
-    let root = store.root.join("blobs").canonicalize().map_err(err)?;
-    if !canonical.starts_with(&root) {
-        return Err("Review input is outside task artifact storage".into());
+    let root = store.root.canonicalize().map_err(err)?.join("blobs");
+    let path = match value["kind"].as_str() {
+        Some("artifactTree") => root.join(format!("tree-{digest}")),
+        Some("artifact") => root.join(digest).join(name),
+        _ => return Err("Expected an immutable snapshot".into()),
+    };
+    // A legacy path may belong to an old OS or drive. Only the canonical
+    // blob-store suffix identifies a reference, never an arbitrary host path.
+    if let Some(hint) = value["path"].as_str() {
+        let suffix = if value["kind"] == "artifactTree" {
+            format!("/blobs/tree-{digest}")
+        } else {
+            format!("/blobs/{digest}/{name}")
+        };
+        if !hint.replace('\\', "/").ends_with(&suffix) {
+            return Err("Invalid snapshot locator".into());
+        }
+    }
+    // Equality also rejects a directory or file symlink, including a redirected blob root.
+    if path.canonicalize().map_err(err)? != path {
+        return Err("Snapshot resolves outside its recorded location".into());
     }
     if value["kind"] == "artifactTree" {
-        let files = crate::workbench::project::task_capture(&canonical, &canonical)
-            .map_err(|e| e.message)?;
-        let manifest = tree_manifest(&files);
-        if hash(&manifest)? != digest {
+        let files = crate::workbench::project::task_capture(&path, &path).map_err(|e| e.message)?;
+        if hash(&tree_manifest(&files))? != digest {
             return Err("Snapshot tree changed after capture".into());
         }
-        return Ok(canonical.to_string_lossy().into_owned());
+        return Ok((path, Contents::Tree(files)));
     }
-    let mut file = crate::safety::open_regular_file(&canonical)?;
     let mut bytes = Vec::new();
-    Read::by_ref(&mut file)
-        .take(64 * 1024 * 1024 + 1)
+    crate::safety::open_regular_file(&path)?
+        .take(MAX_BYTES + 1)
         .read_to_end(&mut bytes)
         .map_err(err)?;
-    use sha2::{Digest, Sha256};
-    if bytes.len() > 64 * 1024 * 1024 || format!("{:x}", Sha256::digest(bytes)) != digest {
-        return Err("Review input changed after it was captured".into());
+    if bytes.len() as u64 > MAX_BYTES || crate::workbench::desk::hash(&bytes) != digest {
+        return Err("Snapshot is missing or changed after capture".into());
     }
-    Ok(canonical.to_string_lossy().into_owned())
+    Ok((path, Contents::File(bytes)))
+}
+
+pub fn artifact_path(store: &Store, value: &Value) -> Result<String> {
+    Ok(verified(store, value)?.0.to_string_lossy().into_owned())
+}
+
+/// Package exactly the bytes verified above, including every member of a tree.
+pub(in crate::orchestration) fn export_file(store: &Store, value: &Value) -> Result<DeliveryFile> {
+    let (_, contents) = verified(store, value)?;
+    let filename = value["filename"]
+        .as_str()
+        .ok_or("Missing artifact filename")?;
+    match contents {
+        Contents::File(bytes) => Ok(DeliveryFile {
+            name: filename.into(),
+            bytes,
+        }),
+        Contents::Tree(files) => {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            let options = zip::write::SimpleFileOptions::default()
+                .last_modified_time(zip::DateTime::default());
+            for (name, bytes) in files {
+                zip.start_file(name, options).map_err(err)?;
+                zip.write_all(&bytes).map_err(err)?;
+            }
+            Ok(DeliveryFile {
+                name: format!("{filename}.zip"),
+                bytes: zip.finish().map_err(err)?.into_inner(),
+            })
+        }
+    }
 }
 
 fn tree_manifest(files: &[(String, Vec<u8>)]) -> Value {
@@ -135,15 +192,59 @@ fn snapshot_tree(store: &Store, files: Vec<(String, Vec<u8>)>) -> Result<Value> 
     let root = store.root.join("blobs");
     crate::orchestration::durable::create_directories(&root)?;
     let destination = root.join(format!("tree-{digest}"));
+    let result = json!({"kind":"artifactTree","path":destination,"hash":digest,"manifest":manifest,"filename":"paper-project","bytes":files.iter().map(|(_,b)|b.len()).sum::<usize>()});
     if !destination.exists() {
         let temp = tempfile::tempdir_in(&root).map_err(err)?;
         for (name, bytes) in &files {
             let path = temp.path().join(name);
             crate::orchestration::durable::publish(&path, bytes)?;
         }
-        crate::orchestration::durable::rename(temp.path(), &destination)?;
+        match crate::orchestration::durable::rename(temp.path(), &destination) {
+            Ok(()) => return Ok(result),
+            Err(e) if !destination.exists() => return Err(e),
+            Err(_) => {}
+        }
     }
-    Ok(
-        json!({"kind":"artifactTree","path":destination,"hash":digest,"manifest":manifest,"filename":"paper-project","bytes":files.iter().map(|(_,b)|b.len()).sum::<usize>()}),
-    )
+    // A racing publisher or a previous capture owns the destination.
+    verified(store, &result)?;
+    crate::orchestration::durable::sync_directory(&root)?;
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tree_tests {
+    use super::*;
+    #[test]
+    fn concurrent_folder_capture_reuses_verified_tree() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Store::open(temp.path()).unwrap();
+        let barrier = std::sync::Barrier::new(4);
+        let results = std::thread::scope(|threads| {
+            let handles = (0..4)
+                .map(|_| {
+                    threads.spawn(|| {
+                        let files = (0..30)
+                            .map(|index| (format!("{index:02}.txt"), vec![42; 65536]))
+                            .collect();
+                        barrier.wait();
+                        snapshot_tree(&store, files).unwrap()
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert!(results.iter().all(|v| v == &results[0]));
+        let path = artifact_path(&store, &results[0]).unwrap();
+        std::fs::write(Path::new(&path).join("00.txt"), "changed").unwrap();
+        assert!(snapshot_tree(
+            &store,
+            (0..30)
+                .map(|index| (format!("{index:02}.txt"), vec![42; 65536]))
+                .collect()
+        )
+        .is_err());
+    }
 }

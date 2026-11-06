@@ -137,6 +137,7 @@ fn stuck_on_check(s: &Store, m: &mut Mission, roles: &Roles) -> TaskRun {
     let scope = m.scope.clone();
     let mut child = storage::admit(s, m, chain, scope).unwrap();
     let stopped = Receipt {
+        action_kind: None,
         sequence: 1,
         address: "action".into(),
         step_id: "action".into(),

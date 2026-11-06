@@ -13,8 +13,8 @@ pub(super) struct OrientedDocument {
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn prepare_orientation(
     app: &crate::emit::EventBus,
+    recipe: &crate::commands::run_contract::OrientationRecipe,
     config: &crate::pipeline_config::PipelineConfig,
-    input_mode: &str,
     extraction: &crate::models::ExtractionResult,
     scoped_source_read_root: &Option<String>,
     run_input_dir: &tempfile::TempDir,
@@ -39,17 +39,11 @@ pub(super) async fn prepare_orientation(
     )
     .ok();
     let orient_start = std::time::Instant::now();
-    let survey_template = orient::resolve_survey_template(&config.orientation_prompt, input_mode);
-    let survey_schema = orient::resolve_survey_schema(
-        &config.orientation_prompt,
-        config.orientation_schema.as_ref(),
-        input_mode,
-    );
     let orientation = orient::build_orientation_map(
         app,
         extraction,
-        survey_template.as_deref(),
-        survey_schema.as_ref(),
+        Some(&recipe.template),
+        recipe.schema.as_ref(),
         scoped_source_read_root.as_deref(),
         author_note,
     )

@@ -493,13 +493,19 @@ pub(super) fn create_builtin_profiles() -> Result<(), String> {
     // Paper Review and Slide Review — one validated orientation/router call,
     // core reviews, and a bounded set of selected subject/method specialists.
     for (id, profile) in [
-        (PAPER_REVIEW_ID, auto_review_profile()),
-        (PAPER_REVIEW_FAST_ID, quick_auto_review_profile()),
-        (SLIDE_REVIEW_ID, slide_review_profile()),
-        (GRANT_REVIEW_ID, grant_review_profile()),
-        (DECLAUDE_ID, declaude_profile()),
+        (PAPER_REVIEW_ID, auto_review_profile as fn() -> ProfileData),
+        (
+            PAPER_REVIEW_FAST_ID,
+            quick_auto_review_profile as fn() -> ProfileData,
+        ),
+        (SLIDE_REVIEW_ID, slide_review_profile as fn() -> ProfileData),
+        (GRANT_REVIEW_ID, grant_review_profile as fn() -> ProfileData),
+        (DECLAUDE_ID, declaude_profile as fn() -> ProfileData),
     ] {
-        write_builtin_if_missing(&profiles.join(format!("{id}.json")), &profile)?;
+        let path = profiles.join(format!("{id}.json"));
+        if !path.exists() {
+            write_builtin_if_missing(&path, &profile())?;
+        }
     }
 
     Ok(())

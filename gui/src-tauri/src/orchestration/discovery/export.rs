@@ -12,6 +12,7 @@ pub fn phase_name(p: &Phase) -> &'static str {
     match p {
         Phase::Orient => "Identify research standards",
         Phase::Acquire { .. } => "Inspect literature",
+        Phase::Brainstorm => "Generate ideas with subagents",
         Phase::Generate => "Generate projects",
         Phase::Screen { .. } => "Screen proposals",
         Phase::Assess { .. } => "Assess projects",
@@ -32,16 +33,16 @@ pub fn delivery(p: &Portfolio) -> Value {
     json!({"kind":"selfDiscovery","id":p.run.id,"mode":p.run.definition.mode,"requestedPapers":p.run.definition.paper_count,
         "ranking":p.run.ranking,"papers":p.papers.iter().map(|p|json!({"candidateId":p.candidate_id,"state":p.state,"reason":p.reason,
             "title":p.versions.last().map(|v|&v.manuscript.title),"abstract":p.versions.last().map(|v|&v.manuscript.abstract_text),
-            "versionHash":p.versions.last().map(|v|&v.hash),"reviewCount":p.versions.last().map(|v|v.reviews.len()),
+            "claimRecord":p.versions.last().and_then(|v|v.claim_record.as_ref()).or(p.infeasibility.as_ref()),"draftIncluded":!p.versions.is_empty(),"versionHash":p.versions.last().map(|v|&v.hash),"reviewCount":p.versions.last().map(|v|v.reviews.len()),
             "artifacts":p.versions.last().map(|v|&v.artifacts),"assessment":p.assessment})).collect::<Vec<_>>()})
 }
 pub fn view(p: &Portfolio) -> Value {
     json!({"id":p.run.id,"revision":p.run.revision,"definition":p.run.definition,"state":p.run.state,"reason":p.run.reason,"phase":p.run.phase,
-        "phaseLabel":phase_name(&p.run.phase),"orientation":p.run.orientation,"candidateCount":p.candidates.len(),"selection":p.run.selection,
+        "phaseLabel":phase_name(&p.run.phase),"completedIdeaAgents":if p.run.idea_seeds.is_empty(){0}else{p.run.definition.idea_agents},"orientation":p.run.orientation,"candidateCount":p.candidates.len(),"selection":p.run.selection,
         "selectionHash":p.run.selection_hash,"selected":p.run.selected,"ranking":p.run.ranking,"actionsReserved":p.run.actions_reserved,
         "activeSeconds":p.run.active_seconds,"deadlineAt":p.run.deadline_at,"activeChild":p.run.active_child,"sourceSessionId":p.run.source_session_id,
         "workspaceId":p.run.workspace_id,"papers":p.papers.iter().map(|p|json!({"candidateId":p.candidate_id,"state":p.state,"reason":p.reason,"rounds":p.rounds.len(),
-            "versions":p.versions.len(),"title":p.versions.last().map(|v|&v.manuscript.title),"assessment":p.assessment,
+            "draftDelivered":p.versions.last().and_then(|v|v.draft_delivered),"claimRecord":p.versions.last().and_then(|v|v.claim_record.as_ref()).or(p.infeasibility.as_ref()),"versions":p.versions.len(),"title":p.versions.last().map(|v|&v.manuscript.title),"assessment":p.assessment,
             "reviewCount":p.versions.last().map(|v|v.reviews.len()),"hash":p.versions.last().map(|v|&v.hash)})).collect::<Vec<_>>()})
 }
 pub fn report(p: &Portfolio) -> String {
@@ -69,9 +70,61 @@ pub fn report(p: &Portfolio) -> String {
             "\n- Project {}: {}. {}\n",
             paper.candidate_id, paper.state, paper.reason
         ));
+        if let Some(r) = &paper.infeasibility {
+            s.push_str(&r.describe());
+        }
+        if let Some(v) = paper.versions.last() {
+            s.push_str(match v.draft_delivered {
+                Some(true) => "Draft delivered.\n",
+                Some(false) => "Draft retained; delivery not recorded.\n",
+                None => "Earlier draft; delivery not separately recorded.\n",
+            });
+            if let Some(record) = &v.claim_record {
+                s.push_str(&record.describe());
+            } else if paper.assessment.is_some() {
+                s.push_str("Earlier assessment: claim-level support and researcher acceptance were not recorded.\n");
+            }
+        }
     }
     s
 }
+fn manuscript_export_names(
+    version: &PaperVersion,
+) -> Result<std::collections::BTreeMap<String, String>> {
+    super::validate::attachment_paths(&version.manuscript.files)?;
+    let mut names = std::collections::BTreeMap::new();
+    let mut published = std::collections::BTreeMap::new();
+    for (key, artifact) in &version.artifacts {
+        let name = if let Some(rest) = key.strip_prefix("attachment-") {
+            let (index, basename) = rest.split_once('-').ok_or("Invalid attachment key")?;
+            let relative = version
+                .manuscript
+                .files
+                .get(index.parse::<usize>().map_err(err)?)
+                .ok_or("Missing attachment path")?;
+            if relative.rsplit('/').next() != Some(basename) {
+                return Err("Invalid manuscript attachment path".into());
+            }
+            relative
+        } else if matches!(key.as_str(), "paper.tex" | "paper.md" | "references.bib") {
+            key
+        } else {
+            return Err("Unrecognized manuscript artifact".into());
+        };
+        if let Some(previous) = published.insert(name.clone(), artifact.get("hash")) {
+            // A matching attachment is how the author supplies the source of an attached PDF.
+            if previous == artifact.get("hash")
+                && matches!(name.as_str(), "paper.tex" | "paper.md" | "references.bib")
+            {
+                continue;
+            }
+            return Err(format!("Duplicate manuscript export path {name}"));
+        }
+        names.insert(key.clone(), name.clone());
+    }
+    Ok(names)
+}
+
 pub fn bundle(s: &Store, p: &Portfolio) -> Result<Vec<u8>> {
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default()
@@ -88,7 +141,7 @@ pub fn bundle(s: &Store, p: &Portfolio) -> Result<Vec<u8>> {
         zip.write_all(bytes).map_err(err)
     };
     add("README.md", report(p).as_bytes())?;
-    add("portfolio.json",&serde_json::to_vec_pretty(&json!({"contract":CONTRACT,"configuration":p.run.definition,"orientation":p.run.orientation,"candidates":p.candidates,"selection":p.run.selection,"selected":p.run.selected,"ranking":p.run.ranking,"literature":p.run.literature,"inputFiles":p.run.input_artifacts})).map_err(err)?)?;
+    add("portfolio.json",&serde_json::to_vec_pretty(&json!({"contract":CONTRACT,"configuration":p.run.definition,"ideaSketches":p.run.idea_seeds,"orientation":p.run.orientation,"candidates":p.candidates,"selection":p.run.selection,"selected":p.run.selected,"ranking":p.run.ranking,"literature":p.run.literature,"inputFiles":p.run.input_artifacts})).map_err(err)?)?;
     for (name, artifact) in &p.run.input_artifacts {
         let path = adapters::artifact_path(s, artifact)?;
         let mut bytes = Vec::new();
@@ -101,9 +154,10 @@ pub fn bundle(s: &Store, p: &Portfolio) -> Result<Vec<u8>> {
     for paper in &p.papers {
         let prefix = format!("project-{}", paper.candidate_id);
         // Do not export native credentials, local execution grants or role scope settings.
-        add(&format!("{prefix}/research.json"),&serde_json::to_vec_pretty(&json!({"rounds":paper.rounds,"challenges":paper.challenges,"assessment":paper.assessment,"state":paper.state,"evidence":paper.evidence,"versions":super::artifacts::full_versions(s,paper).iter().map(|v|json!({"version":v.version,"hash":v.hash,"manuscript":v.manuscript,"artifacts":v.artifacts,"reviews":v.reviews,"externalReview":v.external_review,"responseToReview":v.manuscript.response_to_review})).collect::<Vec<_>>()})).map_err(err)?)?;
+        add(&format!("{prefix}/research.json"),&serde_json::to_vec_pretty(&json!({"rounds":paper.rounds,"infeasibility":paper.infeasibility,"challenges":paper.challenges,"assessment":paper.assessment,"state":paper.state,"evidence":paper.evidence,"versions":super::artifacts::full_versions(s,paper).iter().map(|v|json!({"version":v.version,"hash":v.hash,"draftDelivered":v.draft_delivered,"claimRecord":v.claim_record,"manuscript":v.manuscript,"artifacts":v.artifacts,"reviews":v.reviews,"externalReview":v.external_review,"responseToReview":v.manuscript.response_to_review})).collect::<Vec<_>>()})).map_err(err)?)?;
         if let Some(v) = paper.versions.last() {
-            for (name, artifact) in &v.artifacts {
+            for (key, name) in manuscript_export_names(v)? {
+                let artifact = &v.artifacts[&key];
                 if artifact["kind"] != "artifact" {
                     continue;
                 }

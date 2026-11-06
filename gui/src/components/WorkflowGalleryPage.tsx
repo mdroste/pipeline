@@ -123,7 +123,7 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
           <button
             type="button"
             onClick={() => void router.navigate({ page: "pipeline" })}
-            className="shrink-0 rounded-md border border-emerald-300 px-3 py-1.5 text-xs font-medium hover:bg-emerald-100 dark:border-emerald-800 dark:hover:bg-emerald-900/40"
+            className="shrink-0 rounded-md border border-line-strong bg-surface px-3 py-1.5 text-xs font-medium text-ink hover:bg-sunken dark:bg-transparent dark:text-emerald-300 dark:border-emerald-800 dark:hover:bg-emerald-900/40"
           >
             Open in the designer
           </button>

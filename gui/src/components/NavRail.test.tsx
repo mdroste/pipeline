@@ -48,7 +48,7 @@ function renderRail(overrides: Partial<ComponentProps<typeof NavRail>> = {}) {
 }
 
 const expand = (user: ReturnType<typeof userEvent.setup>, section: string) =>
-  user.click(screen.getByRole("button", { name: `Expand ${section}` }));
+  user.click(screen.getByRole("button", { name: section, expanded: false }));
 
 describe("NavRail", () => {
   beforeEach(() => localStorage.clear());
@@ -122,10 +122,11 @@ describe("NavRail", () => {
     await user.click(screen.getByRole("button", { name: "Automations" }));
     expect(props.onNavigate).toHaveBeenCalledWith("tasks");
     await user.click(screen.getByRole("button", { name: "Reviews" }));
-    expect(props.onNavigate).toHaveBeenCalledWith("history");
-
-    await expand(user, "Reviews");
+    expect(props.onNavigate).toHaveBeenCalledTimes(2);
+    expect(props.onNewRun).not.toHaveBeenCalled();
     const reviews = within(screen.getByRole("group", { name: "Reviews" }));
+    await user.click(reviews.getByRole("button", { name: "History" }));
+    expect(props.onNavigate).toHaveBeenLastCalledWith("history");
     await user.click(reviews.getByRole("button", { name: "Designer" }));
     expect(props.onNavigate).toHaveBeenCalledWith("pipeline");
     await user.click(reviews.getByRole("button", { name: "New review" }));
@@ -174,7 +175,9 @@ describe("NavRail", () => {
     expect(screen.getByRole("button", { name: "Designer" })).toBeVisible();
 
     // Closing a section by hand does not stop a later visit from opening it.
-    await user.click(screen.getByRole("button", { name: "Collapse Reviews" }));
+    await user.click(
+      screen.getByRole("button", { name: "Reviews", expanded: true }),
+    );
     expect(screen.queryByRole("button", { name: "Designer" })).toBeNull();
     rerender(<NavRail {...railProps({ activePage: "history" })} />);
     await waitFor(() =>
@@ -205,7 +208,9 @@ describe("NavRail", () => {
       ],
     });
 
-    await expand(user, "Projects");
+    expect(
+      screen.queryByRole("button", { name: "Expand Projects" }),
+    ).toBeNull();
     await user.click(screen.getByRole("button", { name: "Monetary policy" }));
     expect(onOpenProject).toHaveBeenCalledWith("monetary");
     expect(screen.getByRole("button", { name: /Trade paper/ })).toHaveAttribute(
@@ -433,11 +438,13 @@ describe("Workspace navigation in the sidebar", () => {
       </NavRailSlotProvider>,
     );
 
-  it("places an open project under Projects and starts conversations there", async () => {
+  it("separates project navigation from global Projects and starts conversations there", async () => {
     const user = userEvent.setup();
     renderWorkspace("monetary");
 
-    const projects = within(screen.getByRole("group", { name: "Projects" }));
+    const projects = within(
+      screen.getByRole("group", { name: "Current project" }),
+    );
     expect(
       await projects.findByRole("button", { name: "Project tree" }),
     ).toBeVisible();
@@ -448,10 +455,10 @@ describe("Workspace navigation in the sidebar", () => {
     expect(newConversation).toHaveBeenCalledOnce();
   });
 
-  it("places an unfiled conversation under Projects", async () => {
+  it("separates unfiled chats from project controls", async () => {
     renderWorkspace(null);
     const conversations = within(
-      screen.getByRole("group", { name: "Projects" }),
+      screen.getByRole("group", { name: "No project" }),
     );
     expect(
       await conversations.findByRole("button", { name: "Project tree" }),

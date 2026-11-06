@@ -136,6 +136,13 @@ pub(crate) fn uses_auto_review_contract(config: &PipelineConfig) -> bool {
         == Some(AUTO_REVIEW_CONTRACT)
 }
 
+fn parallel_model_donor(config: &PipelineConfig) -> Option<&StepConfig> {
+    config
+        .steps
+        .iter()
+        .find(|step| step.enabled && step.phase == Phase::Parallel && step.kind.is_model())
+}
+
 /// Cheap structural preflight for auto-contract configs, run before the
 /// orientation call: materialization needs one enabled Parallel core step as
 /// the artifact/agent donor for specialists, and discovering that only after
@@ -144,11 +151,7 @@ pub fn validate_auto_review_preflight(config: &PipelineConfig) -> Result<(), Str
     if !uses_auto_review_contract(config) {
         return Ok(());
     }
-    let has_parallel_donor = config
-        .steps
-        .iter()
-        .any(|step| step.enabled && step.phase == Phase::Parallel);
-    if has_parallel_donor {
+    if parallel_model_donor(config).is_some() {
         Ok(())
     } else {
         Err(
@@ -223,10 +226,7 @@ pub fn materialize_config(
 
     // Pipeline checks are not reviewers: specialists copy a model step's
     // artifact access and agents.
-    let donor = materialized
-        .steps
-        .iter()
-        .find(|step| step.enabled && step.phase == Phase::Parallel && step.kind.is_model())
+    let donor = parallel_model_donor(&materialized)
         .cloned()
         .ok_or_else(|| {
             "Auto Review needs at least one enabled parallel core step to define specialist artifact access"
@@ -246,6 +246,8 @@ pub fn materialize_config(
             step.prompt = with_routing_context(&step.prompt, reason);
         }
         step.context = donor.context.clone();
+        // The catalog describes possible tools; the editable donor authorizes them.
+        step.tools.retain(|tool| donor.tools.contains(tool));
         // Specialists mirror the core reviewers' agent/model configuration, so
         // an explicit per-step multi-agent selection in the saved profile (or
         // the one-run Parallel override, which rewrites every Parallel step)

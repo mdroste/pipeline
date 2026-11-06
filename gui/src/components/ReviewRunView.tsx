@@ -18,6 +18,8 @@ interface Props {
   runs: QueuedRun[];
   limit: number;
   state: PipelineState;
+  resultError?: string | null;
+  onRetryResult?: () => void;
   plan: ExecutionPlanStage[] | null;
   stageHistory: RuntimeStage[];
   runStartedAt: number | null;
@@ -47,6 +49,8 @@ export default function ReviewRunView({
   runs,
   limit,
   state,
+  resultError,
+  onRetryResult,
   plan,
   stageHistory,
   runStartedAt,
@@ -103,19 +107,28 @@ export default function ReviewRunView({
   }
 
   if (run.status === "done") {
-    if (run.resultAvailable)
+    if (run.resultAvailable && !resultError)
       return <Spinner label={`Loading the report for ${run.label}…`} />;
     return (
       <EmptyState
         title={`${run.label} finished.`}
-        description="Its report is saved in Review history."
+        description={
+          resultError
+            ? `Could not load the report: ${resultError}`
+            : "Its report is saved in Review history."
+        }
         action={
-          <Button
-            variant="primary"
-            onClick={() => onOpenHistory(run.runId ?? undefined)}
-          >
-            Open report
-          </Button>
+          <div className="flex gap-2">
+            {resultError && onRetryResult && (
+              <Button onClick={onRetryResult}>Retry loading report</Button>
+            )}
+            <Button
+              variant="primary"
+              onClick={() => onOpenHistory(run.runId ?? undefined)}
+            >
+              Open report
+            </Button>
+          </div>
         }
       />
     );

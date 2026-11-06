@@ -110,8 +110,17 @@ pub struct DocumentProvenance {
     pub confidence: Option<f32>,
 }
 
+/// Length and SHA-256 prefix of a retained visual. Older bundles omit this.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisualIdentity {
+    pub bytes: u64,
+    pub sha256: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DocumentAsset {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<VisualIdentity>,
     pub id: String,
     pub kind: String,
     pub label: String,
@@ -340,6 +349,7 @@ fn asset_from_file(
     }
     let (width, height) = image_dimensions(&path);
     Some(DocumentAsset {
+        identity: None,
         id: format!("asset-{}", stable_suffix(rel_path)),
         kind: kind.to_string(),
         label,

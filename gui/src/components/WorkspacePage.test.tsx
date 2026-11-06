@@ -309,27 +309,6 @@ it("offers a way out when no conversation exists to type into", async () => {
   ).not.toBeInTheDocument();
 });
 
-it("places conversations in the sidebar and keeps the draft while switching", async () => {
-  await mount();
-  const draft = screen.getByLabelText("Message");
-  fireEvent.change(draft, { target: { value: "Keep my working question" } });
-  expect(
-    within(screen.getByRole("navigation", { name: "Conversations" })).getByRole(
-      "button",
-      { name: "Policy discussion" },
-    ),
-  ).toBeVisible();
-  // No project is open, so its sections and switcher stay out of the way.
-  expect(
-    screen.queryByRole("navigation", { name: "Project sections" }),
-  ).not.toBeInTheDocument();
-  expect(
-    screen.queryByRole("button", { name: "Switch project" }),
-  ).not.toBeInTheDocument();
-  expect(draft).toHaveValue("Keep my working question");
-  expect(mocks.sendTurn).not.toHaveBeenCalled();
-});
-
 it("opens the project view picker while leaving a message draft untouched", async () => {
   localStorage.setItem("pipeline.workspace.workspaceId", workspace.id);
   localStorage.setItem("pipeline.workspace.sessionId", "conversation");
@@ -389,6 +368,15 @@ it("saves the exact composer draft before allowing navigation back to the index"
   fireEvent.change(message, {
     target: { value: "Preserve this unfinished argument" },
   });
+  const refuse = (event: Event) => event.preventDefault();
+  window.addEventListener("pipeline:flush-drafts", refuse);
+  try {
+    await act(async () => {
+      expect(await save!()).toBe(false);
+    });
+  } finally {
+    window.removeEventListener("pipeline:flush-drafts", refuse);
+  }
   let allowed = false;
   await act(async () => {
     allowed = await save!();
@@ -704,14 +692,18 @@ it("blocks sending while files are being imported", async () => {
   fireEvent.click(screen.getByRole("menuitem", { name: /^Add files/ }));
   fireEvent.click(await screen.findByRole("button", { name: "Choose files…" }));
   expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
-  expect(
-    screen.getByRole("button", { name: "New conversation" }),
-  ).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Browse chats" })).toBeDisabled();
   await act(async () => release(null));
   expect(screen.getByRole("button", { name: "Send" })).toBeEnabled();
 });
 
 const openMenu = () => {
+  if (
+    !screen.queryByRole("button", {
+      name: "Conversation actions for Policy discussion",
+    })
+  )
+    fireEvent.click(screen.getByRole("button", { name: "Browse chats" }));
   fireEvent.click(
     screen.getByRole("button", {
       name: "Conversation actions for Policy discussion",
@@ -744,7 +736,9 @@ it("deletes a conversation only after confirmation and clears the open transcrip
   await waitFor(() => expect(mocks.confirmDialog).toHaveBeenCalledTimes(1));
   expect(mocks.deleteSession).not.toHaveBeenCalled();
   // The prompt also covers Claude and API conversations.
-  expect(mocks.confirmDialog.mock.calls[0][0]).toContain("provider history");
+  expect(mocks.confirmDialog.mock.calls[0][0]).toContain(
+    "provider may retain its own history",
+  );
   expect(mocks.confirmDialog.mock.calls[0][0]).not.toContain("ChatGPT");
   mocks.confirmDialog.mockResolvedValue(true);
   mocks.deleteSession.mockResolvedValue(7);
@@ -756,6 +750,7 @@ it("deletes a conversation only after confirmation and clears the open transcrip
       expect.objectContaining({ sessionId: "conversation" }),
     ),
   );
+  fireEvent.click(screen.getByRole("button", { name: "Browse chats" }));
   await screen.findByText("No conversations yet.");
   expect(
     screen.queryByRole("heading", { name: "Policy discussion" }),

@@ -310,7 +310,15 @@ async fn occurrences_survive_ordinary_research_activity() {
     let rows = coordinator.store.list("active", None, 0).unwrap();
     let run = coordinator.store.get(&rows[0].id).unwrap();
     assert_ne!(run.state, "attention", "{:?}", run.reason);
-    assert!(run.progress.decisions.contains_key("occurrenceSession"));
+    assert_eq!(run.progress.occurrence_session, run.scope.session_id);
+    assert!(!run.progress.decisions.contains_key("occurrenceSession"));
+    assert!(!crate::workbench::tasks::owns_occurrence(&w, &run.id, &session).unwrap());
+    assert!(crate::workbench::tasks::owns_occurrence(
+        &w,
+        &run.id,
+        run.scope.session_id.as_ref().unwrap()
+    )
+    .unwrap());
     assert_ne!(run.scope.session_id.as_ref(), Some(&session));
 }
 
@@ -610,6 +618,7 @@ async fn a_blocked_side_by_side_branch_records_its_wait_once() {
     run.progress.receipts.insert(
         running.address.clone(),
         Receipt {
+            action_kind: None,
             sequence: 1,
             address: running.address.clone(),
             step_id: running.step.id.clone(),
@@ -649,4 +658,81 @@ async fn a_blocked_side_by_side_branch_records_its_wait_once() {
         .filter(|e| e.kind == "queued")
         .count();
     assert_eq!(waits, 1);
+}
+
+#[test]
+fn a_full_page_of_damaged_schedules_leaves_healthy_work_reachable() {
+    let temp = tempfile::tempdir().unwrap();
+    let s = Store::open(temp.path()).unwrap();
+    for index in 0..32 {
+        let id = format!("bad-{index:02}");
+        s.save_schedule(interval_schedule(&id, now() - 5), None)
+            .unwrap();
+        s.connection()
+            .unwrap()
+            .execute("UPDATE schedules SET body='{' WHERE id=?1", [id])
+            .unwrap();
+    }
+    s.save_schedule(interval_schedule("healthy", now() - 1), None)
+        .unwrap();
+    assert!(s.fire_schedules(now()).is_err());
+    s.fire_schedules(now()).unwrap();
+    assert_eq!(
+        s.list("active", None, 0).unwrap()[0].schedule_id.as_deref(),
+        Some("healthy")
+    );
+    assert_eq!(s.schedule_views().unwrap().len(), 1);
+    assert_eq!(s.storage_issues().unwrap().len(), 32);
+    let raw: String = s
+        .connection()
+        .unwrap()
+        .query_row("SELECT body FROM schedules WHERE id='bad-00'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(raw, "{");
+}
+
+#[tokio::test]
+async fn context_refresh_preserves_blocked_due_time() {
+    let (_, _, mut schedule) = prepared_schedule().await;
+    schedule.trigger = Trigger::Interval {
+        seconds: 60,
+        anchor: 120,
+    };
+    schedule.next_due_at = Some(120);
+    commands::update_schedule_timing(&mut schedule, true, None, 130).unwrap();
+    assert_eq!(schedule.next_due_at, Some(120));
+    commands::update_schedule_timing(&mut schedule, false, None, 131).unwrap();
+    commands::update_schedule_timing(&mut schedule, true, None, 132).unwrap();
+    assert_eq!(schedule.next_due_at, Some(180));
+}
+
+#[tokio::test]
+async fn retention_never_archives_a_one_off_conversation_with_the_old_marker() {
+    let (w, session, schedule) = prepared_schedule().await;
+    let (_dir, manager) = super::coordinator::coordinator_fixture();
+    let mut run = manager
+        .store
+        .create("plain", schedule.chain, schedule.scope, json!({}), 0, true)
+        .unwrap();
+    run.state = "finished".into();
+    run.progress
+        .decisions
+        .insert("occurrenceSession".into(), json!(false));
+    manager.store.save(&mut run, "finished", "Done").unwrap();
+    manager
+        .store
+        .connection()
+        .unwrap()
+        .execute("UPDATE runs SET updated_at=0 WHERE id=?1", [&run.id])
+        .unwrap();
+    manager.tick().await.unwrap();
+    assert!(manager.store.get(&run.id).is_err());
+    assert!(w
+        .session_snapshot(&session)
+        .unwrap()
+        .session
+        .archived_at
+        .is_none());
 }

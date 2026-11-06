@@ -184,11 +184,17 @@ export function useWorkspacePageController({
   const routedSession = useRef<string | null>(null);
   const persistence = useWorkspaceSessionPersistence(conversation);
   const { editDraft, saveCurrentDraft, saveSelection } = persistence;
+  const [archivedScope, setArchivedScope] = useState<string | null | undefined>(
+    undefined,
+  );
+  const showArchived = archivedScope === workspaceId;
+  const setShowArchived = (enabled: boolean) =>
+    setArchivedScope(enabled ? workspaceId : undefined);
   const olderSessions = useOlderSessions(
     workspaceRef,
     sessionListSequence,
     setSessions,
-    false,
+    showArchived,
     setError,
   );
   const { position: sessionPosition, setHasOlder } = olderSessions;
@@ -201,7 +207,7 @@ export function useWorkspacePageController({
     sessionListSequence,
     setSessions,
     setSessionId,
-    false,
+    showArchived,
     setError,
     sessionPaging,
   );
@@ -240,13 +246,16 @@ export function useWorkspacePageController({
     setError,
   );
 
+  const lastListScope = useRef<string | null | undefined>(undefined);
   useEffect(() => {
+    const keepSelection = lastListScope.current === workspaceId;
+    lastListScope.current = workspaceId;
     const routed = routedSession.current;
     routedSession.current = null;
     void loadSessions(
       workspaceId,
-      false,
-      routed !== null && routed === sessionRef.current,
+      showArchived,
+      keepSelection || (routed !== null && routed === sessionRef.current),
     );
   }, [loadSessions, workspaceId]);
 
@@ -437,7 +446,7 @@ export function useWorkspacePageController({
 
   const projectCreated = async (created: Workspace) => {
     ++navigationGeneration.current;
-    await saveCurrentDraft().catch(() => undefined);
+    await saveCurrentDraft();
     setWorkspaces((old) => [
       created,
       ...old.filter((item) => item.id !== created.id),
@@ -535,7 +544,7 @@ export function useWorkspacePageController({
 
   const sessionMutations = useWorkspaceSessionMutations({
     workspaceId,
-    showArchived: false,
+    showArchived,
     sessionRef,
     saveCurrentDraft,
     loadSessions,
@@ -651,7 +660,7 @@ export function useWorkspacePageController({
   // left, an approval waiting there, or an Automation here that hasn't started.
   const elsewhere =
     [
-      activeTurn?.sessionId !== sessionId || (activeTurn?.automated && !active)
+      activeTurn?.sessionId !== sessionId || activeTurn?.automated
         ? activeTurn?.sessionId
         : null,
       submissionOwner?.sessionId !== sessionId
@@ -780,6 +789,8 @@ export function useWorkspacePageController({
       workspaces,
       workspaceId,
       sessions,
+      showArchived,
+      setShowArchived,
       hasOlderSessions: olderSessions.hasOlder,
       loadOlderSessions: olderSessions.loadOlder,
       sessionId,

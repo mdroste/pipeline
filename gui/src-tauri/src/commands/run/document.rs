@@ -16,7 +16,7 @@ pub(super) fn build_document_bundle(
             Some(captured_document_path),
             w.dir(),
         ) {
-            Ok(build) => {
+            Ok(mut build) => {
                 for (rel_path, label, group) in &build.added_artifacts {
                     if let Err(error) = w.register_existing(rel_path, label, group) {
                         let _ = app.emit_event(
@@ -27,6 +27,7 @@ pub(super) fn build_document_bundle(
                         );
                     }
                 }
+                w.bind_visual_identities(&mut build.bundle);
                 document_bundle = Some(build.bundle);
             }
             Err(error) => {
@@ -59,6 +60,11 @@ pub(super) fn persist_oriented_bundle(
     let mut bundle_json = None;
     let mut bundle_markdown = None;
     if let Some(bundle) = document_bundle.as_mut() {
+        // Keep the extraction-only projection. Enrichment fills missing fields
+        // and creates model-derived nodes, neither of which can be undone
+        // reliably from the oriented bundle alone.
+        let writer = run_writer.as_mut().ok_or("Missing document workspace")?;
+        crate::commands::run_contract::save_base_bundle(writer, bundle)?;
         bundle.enrich_from_orientation(orientation);
         if let Err(error) = bundle.validate() {
             let _ = app.emit_event(

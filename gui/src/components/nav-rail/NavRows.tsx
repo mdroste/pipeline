@@ -13,11 +13,13 @@ export function NavRow({
   onClick,
   suffix,
   title,
+  "aria-expanded": expanded,
 }: {
   icon: IconName;
   label: string;
   current?: boolean;
   active?: boolean;
+  "aria-expanded"?: boolean;
   disabled?: boolean;
   onClick: () => void;
   suffix?: ReactNode;
@@ -28,6 +30,7 @@ export function NavRow({
       type="button"
       className="nav-row"
       aria-current={current ? "page" : undefined}
+      aria-expanded={expanded}
       data-active={active || undefined}
       disabled={disabled}
       onClick={onClick}
@@ -40,32 +43,33 @@ export function NavRow({
   );
 }
 
-/** A destination that also holds children. The row opens the destination;
- *  the chevron only shows or hides the children. */
+/** A disclosure row that shows or hides its child destinations. */
 export function NavGroup({
   label,
   open,
   onToggle,
   children,
+  suffix,
   ...row
-}: Parameters<typeof NavRow>[0] & {
+}: Omit<Parameters<typeof NavRow>[0], "onClick"> & {
   open: boolean;
   onToggle: () => void;
   children: ReactNode;
 }) {
   return (
-    <div className="nav-group">
-      <NavRow label={label} {...row} />
-      <button
-        type="button"
-        className="nav-chevron"
-        data-open={open || undefined}
+    <div>
+      <NavRow
+        {...row}
+        label={label}
         aria-expanded={open}
-        aria-label={`${open ? "Collapse" : "Expand"} ${label}`}
         onClick={onToggle}
-      >
-        <Icon name="chevron-down" className="h-3.5 w-3.5" />
-      </button>
+        suffix={
+          <>
+            {suffix}
+            <Icon name="chevron-down" className="nav-chevron h-3.5 w-3.5" />
+          </>
+        }
+      />
       {open && (
         <div className="nav-children" role="group" aria-label={label}>
           {children}

@@ -1,6 +1,6 @@
 use super::*;
 use crate::models::StepCallRecord;
-use crate::pipeline_config::StepConfig;
+use crate::pipeline_config::{Phase, PipelineConfig, StepConfig};
 
 fn step(id: &str, phase: Phase, agents: &[&str]) -> StepConfig {
     StepConfig {
@@ -254,7 +254,7 @@ fn orientation_spend_is_priced_only_for_direct_api_orientation() {
     );
 }
 
-fn priced(provider: &str) -> ProviderPricing {
+fn priced(provider: &str, _: &crate::settings::ModelSelection) -> ProviderPricing {
     ProviderPricing {
         provider: provider.into(),
         model: "model".into(),
@@ -275,7 +275,10 @@ fn estimate_spans_a_range_and_flags_limits() {
     let estimate = estimate_usage(
         &workflow,
         20_000,
-        "claude",
+        &Settings {
+            preferred_provider: "claude".into(),
+            ..Default::default()
+        },
         &priced,
         RunBudget {
             max_cost_usd: Some(0.10),
@@ -300,20 +303,25 @@ fn estimate_spans_a_range_and_flags_limits() {
 }
 
 #[test]
-fn subscription_steps_have_no_cost_and_unknown_prices_are_counted() {
+fn local_subscription_and_unpriced_api_steps_have_separate_usage_units() {
     let workflow = config(vec![
         step("a", Phase::Parallel, &["codex"]),
         step("b", Phase::Parallel, &["local"]),
+        step("c", Phase::Parallel, &["antigravity"]),
     ]);
     let estimate = estimate_usage(
         &workflow,
         1_000,
-        "codex",
+        &Settings {
+            preferred_provider: "codex".into(),
+            ..Default::default()
+        },
         &priced,
         RunBudget::default(),
         None,
     );
-    // Orientation and step a use codex (subscription); b is unpriced API.
+    // Orientation and a use the subscription; b runs locally, c is an unpriced external API.
+    assert_eq!(estimate.local_calls_high, 1);
     assert_eq!(estimate.subscription_calls_high, 2);
     assert_eq!(estimate.unpriced_calls, 1);
     assert_eq!(estimate.api_cost_low, Some(0.0));
@@ -333,14 +341,17 @@ fn fan_out_and_multi_agent_steps_widen_the_range() {
     let estimate = estimate_usage(
         &workflow,
         1_000,
-        "codex",
+        &Settings {
+            preferred_provider: "codex".into(),
+            ..Default::default()
+        },
         &priced,
         RunBudget::default(),
         None,
     );
-    // Orientation 1 + (2 agents + merge) low; 2 agents x 8 units + merge high.
+    // Orientation plus one merge for every pair of fan-out outputs.
     assert_eq!(estimate.calls_low, 1 + 3);
-    assert_eq!(estimate.calls_high, 1 + 17);
+    assert_eq!(estimate.calls_high, 1 + 24);
 }
 
 #[test]
@@ -362,7 +373,10 @@ fn author_note_estimate_counts_each_model_call_without_changing_document_size() 
     let base = estimate_usage(
         &workflow,
         1_000,
-        "claude",
+        &Settings {
+            preferred_provider: "claude".into(),
+            ..Default::default()
+        },
         &priced,
         RunBudget::default(),
         None,
@@ -370,7 +384,10 @@ fn author_note_estimate_counts_each_model_call_without_changing_document_size() 
     let noted = estimate_usage(
         &workflow,
         1_000,
-        "claude",
+        &Settings {
+            preferred_provider: "claude".into(),
+            ..Default::default()
+        },
         &priced,
         RunBudget::default(),
         Some("Model assumptions"),
@@ -389,4 +406,165 @@ fn author_note_estimate_counts_each_model_call_without_changing_document_size() 
         tokens * noted.calls_high
     );
     assert!(noted.api_cost_high.unwrap() > base.api_cost_high.unwrap());
+}
+
+#[test]
+fn mixed_provider_costs_do_not_depend_on_agent_order() {
+    let settings = Settings {
+        preferred_provider: "codex".into(),
+        ..Default::default()
+    };
+    let mut workflow = config(vec![step("mixed", Phase::Parallel, &["codex", "claude"])]);
+    workflow.merge.enabled = false;
+    let first = estimate_usage(
+        &workflow,
+        20_000,
+        &settings,
+        &priced,
+        RunBudget::default(),
+        None,
+    );
+    workflow.steps[0].agents.reverse();
+    let reversed = estimate_usage(
+        &workflow,
+        20_000,
+        &settings,
+        &priced,
+        RunBudget::default(),
+        None,
+    );
+    assert_eq!(first, reversed);
+    assert_eq!(first.subscription_calls_high, 2);
+    assert!(first.api_cost_high.unwrap() > 0.0);
+}
+
+#[test]
+fn merges_use_their_own_provider_and_count_every_fan_out_group() {
+    let settings = Settings {
+        preferred_provider: "codex".into(),
+        ..Default::default()
+    };
+    let mut each = step("each", Phase::Parallel, &["codex", "claude"]);
+    each.for_each = Some(crate::pipeline_config::ForEach {
+        glob: "*.tex".into(),
+        max: 8,
+        artifact: None,
+    });
+    let mut workflow = config(vec![each]);
+    workflow.merge.enabled = true;
+    workflow.merge.agents = vec!["local".into()];
+    let estimate = estimate_usage(
+        &workflow,
+        1_000,
+        &settings,
+        &priced,
+        RunBudget {
+            max_calls: Some(20),
+            ..Default::default()
+        },
+        None,
+    );
+    assert_eq!(estimate.calls_low, 4);
+    assert_eq!(estimate.calls_high, 25);
+    assert!(estimate.exceeds_call_limit);
+    assert_eq!(estimate.subscription_calls_high, 9);
+    assert_eq!(
+        estimate.local_calls_high, 8,
+        "one local merge for each group"
+    );
+    assert_eq!(estimate.unpriced_calls, 0);
+}
+
+#[test]
+fn model_pricing_respects_orientation_step_and_merge_selections() {
+    use crate::settings::ModelSelection;
+    let pin = |model: &str| ModelSelection::Pinned {
+        model: model.into(),
+    };
+    let mut settings = Settings {
+        preferred_provider: "claude".into(),
+        default_model: "default".into(),
+        ..Default::default()
+    };
+    let context = settings.model_context_key("claude");
+    settings
+        .default_orientation_model_overrides
+        .insert(context.clone(), pin("orientation"));
+    settings.default_merge_agent = "claude".into();
+    settings
+        .default_merge_model_overrides
+        .insert(context.clone(), pin("merge"));
+    let mut first = step("first", Phase::Parallel, &["claude", "codex"]);
+    first
+        .model_overrides
+        .insert("claude".into(), pin("provider-wide"));
+    first
+        .model_overrides
+        .insert(context.clone(), pin("transport-specific"));
+    first.model = "legacy-ignored".into();
+    let mut second = step("second", Phase::Sequential, &["claude"]);
+    second.model = "legacy".into();
+    let mut workflow = config(vec![first, second]);
+    workflow.merge.enabled = true;
+    workflow.merge.agents.clear();
+    let observed = std::cell::RefCell::new(Vec::new());
+    let price = |provider: &str, model: &ModelSelection| {
+        observed
+            .borrow_mut()
+            .push((provider.to_string(), model.clone()));
+        ProviderPricing {
+            provider: provider.into(),
+            model: String::new(),
+            api: true,
+            price: Some(if *model == pin("transport-specific") {
+                (100.0, 100.0)
+            } else {
+                (1.0, 1.0)
+            }),
+        }
+    };
+    let estimate = estimate_usage(
+        &workflow,
+        1_000,
+        &settings,
+        &price,
+        RunBudget::default(),
+        None,
+    );
+    let selected: Vec<_> = observed
+        .borrow()
+        .iter()
+        .filter(|(provider, _)| provider == "claude")
+        .map(|(_, model)| model.clone())
+        .collect();
+    assert_eq!(
+        selected,
+        vec![
+            pin("orientation"),
+            pin("transport-specific"),
+            pin("merge"),
+            pin("legacy")
+        ]
+    );
+    assert!(
+        estimate.api_cost_low.unwrap() > 0.7,
+        "the expensive override is priced"
+    );
+    observed.borrow_mut().clear();
+    workflow.merge.agents = vec!["claude".into()];
+    estimate_usage(
+        &workflow,
+        1_000,
+        &settings,
+        &price,
+        RunBudget::default(),
+        None,
+    );
+    assert!(
+        observed
+            .borrow()
+            .contains(&("claude".into(), pin("default"))),
+        "a pinned merge provider uses its default model"
+    );
+    assert!(!observed.borrow().contains(&("claude".into(), pin("merge"))));
 }

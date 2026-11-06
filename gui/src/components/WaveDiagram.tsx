@@ -79,10 +79,10 @@ export default function WaveDiagram({
               aria-hidden="true"
             >
               {index > 0 && (
-                <span className="absolute top-0 h-2 w-px bg-line-strong" />
+                <span className="absolute top-0 h-2 w-px bg-line-strong dark:bg-line" />
               )}
               {index < lastIndex && (
-                <span className="absolute bottom-0 top-8 w-px bg-line-strong" />
+                <span className="absolute bottom-0 top-8 w-px bg-line-strong dark:bg-line" />
               )}
               <StageMarker
                 stage={stage}
@@ -153,7 +153,7 @@ function SummaryChips({ model }: { model: OverviewModel }) {
         <span
           key={chip.key}
           title={chip.title}
-          className="rounded-full bg-sunken px-2.5 py-0.5 text-ui-meta tabular-nums text-ink-muted"
+          className="rounded-full bg-sunken px-2.5 py-0.5 text-ui-meta tabular-nums text-ink-muted dark:bg-transparent dark:px-0"
         >
           <span className="font-semibold text-ink">{chip.value}</span>{" "}
           {chip.label}
@@ -175,9 +175,9 @@ function StageMarker({
   active: boolean;
 }) {
   const tone = active
-    ? "border-inverse bg-inverse text-on-inverse"
+    ? "border-inverse bg-inverse text-on-inverse dark:border-line-strong dark:bg-raised dark:text-ink"
     : stage.number !== null
-      ? "border-line-strong bg-surface text-ink"
+      ? "border-line-strong bg-surface text-ink dark:border-line dark:text-ink-muted"
       : "border-line bg-sunken text-ink-muted";
   return (
     <span
@@ -330,7 +330,7 @@ function StepCard({
   const captionId = useId();
   const tone = selected
     ? "border-accent ring-2 ring-accent-soft"
-    : `${node.adaptive ? "border-dashed border-line-strong" : "border-line"} hover:border-line-strong hover:shadow-ui-2`;
+    : `${node.adaptive ? "border-dashed border-line-strong" : "border-line"} hover:border-line-strong hover:shadow-ui-2 dark:border-transparent dark:hover:border-line-strong dark:hover:shadow-none`;
   return (
     <button
       type="button"
@@ -340,7 +340,7 @@ function StepCard({
       aria-describedby={node.caption ? captionId : undefined}
       title={node.condition ?? node.label}
       onClick={() => onSelect(node.id)}
-      className={`flex w-full items-center gap-3 rounded-ui-md border bg-surface px-3 py-2.5 text-left shadow-ui-1 transition-[border-color,box-shadow] duration-150 ${tone} ${FOCUS}`}
+      className={`flex w-full items-center gap-3 rounded-ui-md border bg-surface dark:bg-sunken dark:shadow-none px-3 py-2.5 text-left shadow-ui-1 transition-[border-color,box-shadow] duration-150 ${tone} ${FOCUS}`}
     >
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
@@ -369,10 +369,10 @@ function StepCard({
 // ── Atoms ───────────────────────────────────────────────────────────
 
 const AGENT_COLORS: Record<string, string> = {
-  claude: "#D97757",
-  codex: "#10A37F",
-  antigravity: "#4285F4",
-  local: "#8A8A8A",
+  claude: "bg-[#D97757]",
+  codex: "bg-ink dark:bg-[#10A37F]",
+  antigravity: "bg-[#4285F4]",
+  local: "bg-[#8A8A8A]",
 };
 
 function AgentDots({ agents }: { agents: string[] }) {
@@ -386,8 +386,7 @@ function AgentDots({ agents }: { agents: string[] }) {
       {agents.map((agent) => (
         <span
           key={agent}
-          className="h-2 w-2 rounded-full"
-          style={{ backgroundColor: AGENT_COLORS[agent] ?? "#8A8A8A" }}
+          className={`h-2 w-2 rounded-full ${AGENT_COLORS[agent] ?? AGENT_COLORS.local}`}
         />
       ))}
     </span>

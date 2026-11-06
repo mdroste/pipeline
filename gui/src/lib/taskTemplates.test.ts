@@ -57,7 +57,7 @@ describe("task templates", () => {
   it("captures an existing paper without first drafting another", () => {
     const chain = template(
       "review",
-      "",
+      "Preserve the notation",
       "auto-paper-review",
       2,
       "/research/paper.pdf",
@@ -68,6 +68,9 @@ describe("task templates", () => {
       input: { kind: "literal", value: { path: "/research/paper.pdf" } },
     });
     expect(flatten(chain.steps).some((s) => s.id === "draft")).toBe(false);
+    expect(flatten(chain.steps).find((s) => s.id === "revise")).toMatchObject({
+      prompt: expect.stringContaining("Preserve the notation"),
+    });
   });
   it("waits for durable input before the follow-up", () => {
     const chain = template("input", "Use the new calibration", "");

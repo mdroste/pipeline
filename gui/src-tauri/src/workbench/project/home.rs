@@ -80,7 +80,8 @@ pub fn excluded_notes(store: &Store, workspace_id: &str) -> WorkbenchResult<Vec<
 }
 pub fn project_context(store: &Store, workspace_id: &str) -> WorkbenchResult<String> {
     let settings: ProjectHomeSettings = decode(&home_record(store, workspace_id)?)?;
-    let notes = research::list_notes(store, workspace_id, true)?;
+    let notes =
+        research::list_notes_with_selection(store, workspace_id, true, &settings.brief_note_ids)?;
     let mut text = format!(
         "Current paper version: {}\nReference results run: {}\n",
         settings
@@ -104,7 +105,7 @@ pub fn project_context(store: &Store, workspace_id: &str) -> WorkbenchResult<Str
         }
     }
     if notes.len() == 500 {
-        text.push_str("\nNote context is limited to the 500 most recently ordered notes; older records may be omitted.\n");
+        text.push_str("\nNote context is limited to 500 notes, with brief selections first. Older records may be omitted.\n");
     }
     let tasks = task_pages::page(store, workspace_id, None, true)?;
     if tasks.next_cursor.is_some() {
@@ -220,19 +221,61 @@ fn working_copy_status(store: &Store, ws: &str) -> WorkbenchResult<(String, usiz
     Ok((status, changed))
 }
 
+/// Only a project without a folder or current paper shows its brief above chat.
+pub fn chat_brief(store: &Store, workspace_id: &str) -> WorkbenchResult<Option<String>> {
+    if store.workspace(workspace_id)?.root.is_some() {
+        return Ok(None);
+    }
+    let captured: bool = store.connection()?.query_row(
+        "SELECT EXISTS(SELECT 1 FROM (
+         SELECT id,current_revision_id FROM papers WHERE workspace_id=?1 ORDER BY updated_at DESC LIMIT 500
+         ) p JOIN paper_revisions r ON r.id=p.current_revision_id AND r.paper_id=p.id)",
+        [workspace_id], |row| row.get(0)).map_err(err)?;
+    if captured {
+        return Ok(None);
+    }
+    let settings: ProjectHomeSettings = decode(&home_record(store, workspace_id)?)?;
+    let notes =
+        research::list_notes_with_selection(store, workspace_id, true, &settings.brief_note_ids)?;
+    let accepted = notes.iter().filter(|note| note.state == "accepted");
+    let curated = accepted
+        .clone()
+        .find(|note| settings.brief_note_ids.contains(&note.id));
+    let first = curated.or_else(|| {
+        // max_by_key takes the last equal entry. Reverse the stable note
+        // order first to match the Overview when timestamps tie.
+        accepted
+            .rev()
+            .filter(|note| note.pinned || note.kind == "question")
+            .max_by_key(|note| (note.kind == "question", &note.updated_at))
+    });
+    Ok(first.map(|note| note.body.clone()))
+}
+
 pub fn home(store: &Store, workspace_id: &str) -> WorkbenchResult<ProjectHome> {
     scope(store, workspace_id)?;
     let tasks = task_page(store, workspace_id, None)?;
     let (working_copy_status, working_copy_changed) = working_copy_status(store, workspace_id)?;
+    let settings_record = home_record(store, workspace_id)?;
+    let selected: ProjectHomeSettings = decode(&settings_record)?;
     Ok(ProjectHome {
-        settings: home_record(store, workspace_id)?,
-        notes: research::list_notes(store, workspace_id, true)?,
+        settings: settings_record,
+        notes: research::list_notes_with_selection(
+            store,
+            workspace_id,
+            true,
+            &selected.brief_note_ids,
+        )?,
         note_history: note_history(store, workspace_id)?,
         tasks: tasks.records,
         tasks_cursor: tasks.next_cursor,
         anchors: records(store, workspace_id, "anchor")?,
         papers: research::list_papers(store, workspace_id)?,
-        executions: research::list_executions(store, workspace_id)?,
+        executions: research::list_executions_with_baseline(
+            store,
+            workspace_id,
+            selected.baseline_execution_id.as_deref(),
+        )?,
         ledger: research::research_ledger(store, workspace_id)?,
         inventory: records(store, workspace_id, "inventory")?
             .into_iter()
@@ -272,18 +315,16 @@ pub(super) fn save_home(
         documents::revision(store, workspace_id, id)?;
     }
     if let Some(id) = &settings.baseline_execution_id {
-        if !research::list_executions(store, workspace_id)?
-            .iter()
-            .any(|r| &r.id == id && r.outcome == "completed")
+        if !store.connection()?.query_row("SELECT EXISTS(SELECT 1 FROM research_executions WHERE id=?1 AND workspace_id=?2 AND outcome='completed')", [id.as_str(),workspace_id], |row| row.get::<_,bool>(0)).map_err(err)?
         {
             return Err(WorkbenchError::invalid(
                 "Choose a completed execution from this Workspace",
             ));
         }
     }
-    let notes = research::list_notes(store, workspace_id, true)?;
+    let connection = store.connection()?;
     for id in &settings.brief_note_ids {
-        if !notes.iter().any(|n| &n.id == id && n.state == "accepted") {
+        if !connection.query_row("SELECT EXISTS(SELECT 1 FROM research_notes WHERE id=?1 AND workspace_id=?2 AND state='accepted')", [id.as_str(),workspace_id], |row| row.get::<_,bool>(0)).map_err(err)? {
             return Err(WorkbenchError::invalid(
                 "The brief can include only accepted notes",
             ));

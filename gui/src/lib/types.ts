@@ -157,6 +157,7 @@ export type InputInterpretation =
 
 /** One primary selection may contain several paths when it represents a batch. */
 export interface PrimaryInputSelection {
+  reviewHandoffId?: string;
   paths: string[];
   interpretation: InputInterpretation;
   selectionKind: "file" | "folder";
@@ -222,6 +223,7 @@ export interface OutputConfig {
 export interface NamedProductSpec {
   key: string;
   step: string;
+  required?: boolean;
   media_type?: string;
   viewer?: "" | "text" | "markdown" | "json" | "artifact";
   export_policy?: "" | "full" | "redacted" | "disabled";
@@ -591,6 +593,7 @@ export interface RunSummary {
 }
 
 export interface InputIdentity {
+  review_handoff_id?: string;
   selection_key: string;
   content_hash: string;
   lineage_id: string;

@@ -94,6 +94,9 @@ export default function TasksPage({
     }
     return discard;
   };
+  const [issues, setIssues] = useState<
+    { kind: string; id: string; diagnostic: string }[]
+  >([]);
   const [error, setError] = useState("");
   const [background, setBackground] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -106,21 +109,28 @@ export default function TasksPage({
       const [rows, planned, detail] = await Promise.all([
         view === "missions"
           ? Promise.resolve([])
-          : taskClient.list(view, null, offset),
+          : taskClient.list(view, null, offset, true),
         view === "scheduled" ? taskClient.schedules() : Promise.resolve([]),
         // Cleanup can remove a run a saved route still names; the lists stand.
         selectedId
           ? taskClient.get(selectedId).catch(() => null)
           : Promise.resolve(null),
       ]);
+      // Listing schedules can isolate a damaged row. Read its diagnostic after
+      // the list completes; a diagnostic read failure must not hide healthy work.
+      const diagnostics = await taskClient.issues().then(
+        (issues) => ({ issues, error: "" }),
+        (error) => ({ issues: [], error: String(error) }),
+      );
       if (version !== refreshVersion.current) return;
+      setIssues(diagnostics.issues);
       setRuns(rows);
       setSchedules(planned);
       if (selectedId === selectedRef.current) {
         if (!detail) selectedRef.current = null;
         setSelected(detail);
       }
-      setError("");
+      setError(diagnostics.error);
     } catch (e) {
       if (version === refreshVersion.current) setError(String(e));
     } finally {
@@ -239,6 +249,18 @@ export default function TasksPage({
           Keep running when the window closes
         </label>
       </div>
+      {issues?.length > 0 && (
+        <details className="task-error">
+          <summary>Automation records needing repair ({issues.length})</summary>
+          <ul>
+            {issues.map((issue) => (
+              <li key={issue.kind + issue.id}>
+                {issue.kind} {issue.id} · {issue.diagnostic}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       {error && (
         <p className="task-error" role="alert">
           {error}
@@ -299,9 +321,9 @@ export default function TasksPage({
                     <p>Choose a schedule when creating an automation.</p>
                   </div>
                 )
-              ) : runs.length ? (
+              ) : runs.length || offset > 0 ? (
                 <>
-                  {runs.map((run) => (
+                  {runs.slice(0, 50).map((run) => (
                     <button
                       className={`task-list-row ${selected?.id === run.id ? "is-selected" : ""}`}
                       key={run.id}
@@ -341,7 +363,7 @@ export default function TasksPage({
                         Previous
                       </button>
                     )}
-                    {runs.length === 50 && (
+                    {runs.length > 50 && (
                       <button onClick={() => setOffset(offset + 50)}>
                         Next
                       </button>
@@ -356,9 +378,7 @@ export default function TasksPage({
                   <h2>
                     {view === "history"
                       ? "Completed work will appear here."
-                      : selected
-                        ? "No active automations."
-                        : "Create your first automation."}
+                      : "No active automations."}
                   </h2>
                   <p>
                     Connect project conversations and reviews, pause for input,

@@ -1,3 +1,4 @@
+import type { ProjectReviewLink } from "../projectOverview";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   MissingBackupFile,
@@ -19,6 +20,23 @@ import type {
   DraftWorkflow,
   ResearchEvaluation,
 } from "../workbenchTypes";
+
+export async function listProjectReviewLinks(workspaceId: string) {
+  const links: ProjectReviewLink[] = [];
+  let after: string | null = null;
+  for (;;) {
+    const page: ProjectReviewLink[] = await invoke(
+      "workbench_project_review_links",
+      { workspaceId, after },
+    );
+    links.push(...page);
+    if (page.length < 200) return links;
+    const next = page[page.length - 1].id;
+    if (after !== null && next <= after)
+      throw new Error("Project Review links could not be paged");
+    after = next;
+  }
+}
 
 export const releaseClient = {
   performanceBudgets() {

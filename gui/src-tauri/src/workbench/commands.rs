@@ -36,6 +36,13 @@ fn turn_queue() -> &'static Arc<Semaphore> {
     TURN_QUEUE.get_or_init(|| Arc::new(Semaphore::new(1)))
 }
 
+pub(crate) fn research_team_permit() -> Result<OwnedSemaphorePermit, String> {
+    turn_queue()
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| "task_busy: Workspace is running another turn".into())
+}
+
 #[derive(Default)]
 struct ActiveTurnState {
     setup_in_progress: bool,
@@ -366,8 +373,11 @@ pub async fn workbench_get_workspace(workspace_id: String) -> WorkbenchResult<Wo
 }
 
 #[tauri::command]
-pub async fn workbench_list_workspaces(include_archived: bool) -> WorkbenchResult<WorkspaceList> {
-    run_store(move |store| store.list_workspaces(include_archived)).await
+pub async fn workbench_list_workspaces(
+    include_archived: bool,
+    after_id: Option<String>,
+) -> WorkbenchResult<WorkspaceList> {
+    run_store(move |store| store.list_workspaces_page(include_archived, after_id.as_deref())).await
 }
 
 #[tauri::command]
@@ -501,6 +511,7 @@ pub async fn workbench_move_session(
 pub async fn workbench_delete_session(request: DeleteSessionRequest) -> WorkbenchResult<i64> {
     let _permit = conversation_turn_permit(turn_queue().clone())?;
     ensure_session_idle(request.session_id.clone()).await?;
+    super::browser::close_session(&request.session_id).await;
     run_store(move |store| store.delete_session(request)).await
 }
 
@@ -771,6 +782,20 @@ pub(crate) fn spawn_title_generation(
             );
         }
     });
+}
+
+#[tauri::command]
+pub async fn workbench_conversation_index(
+    archived: bool,
+    unfiled: bool,
+    query: String,
+    palette: bool,
+    cursor: Option<super::store::IndexCursor>,
+) -> WorkbenchResult<Value> {
+    run_store(move |store| {
+        store.conversation_index(archived, unfiled, &query, palette, cursor.as_ref())
+    })
+    .await
 }
 
 #[tauri::command]

@@ -1,11 +1,11 @@
 /* The primary sidebar. These rules also style the project navigation that the
    Workspace page portals into it, and the icon rail's flyouts. */
 :root {
-  --nav-active: rgb(52 78 65 / 0.11);
-  --nav-hover: rgb(39 43 38 / 0.06);
+  --nav-active: var(--ui-border);
+  --nav-hover: var(--ui-sunken);
   --nav-text: var(--ui-page-muted);
   --nav-strong: var(--ui-page-text);
-  --nav-line: rgb(39 43 38 / 0.1);
+  --nav-line: var(--ui-border);
 }
 .dark {
   --nav-active: rgb(255 255 255 / 0.11);
@@ -78,7 +78,6 @@
 }
 .nav-row:focus-visible,
 .nav-child:focus-visible,
-.nav-chevron:focus-visible,
 .nav-primary:focus-visible,
 .nav-status:focus-visible {
   outline: 2px solid var(--ui-page-accent);
@@ -91,33 +90,13 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.nav-group {
-  position: relative;
-}
-.nav-group > .nav-row {
-  padding-right: 32px;
-}
 .nav-chevron {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  display: grid;
-  width: 24px;
-  height: 24px;
-  place-items: center;
-  border-radius: 6px;
-  color: var(--nav-text);
   opacity: 0.7;
   transform: rotate(-90deg);
   transition: transform 0.14s;
 }
-.nav-chevron[data-open] {
+.nav-row[aria-expanded="true"] .nav-chevron {
   transform: none;
-}
-.nav-chevron:hover {
-  background: var(--nav-hover);
-  color: var(--nav-strong);
-  opacity: 1;
 }
 .nav-children {
   display: grid;
@@ -199,13 +178,8 @@
   gap: 7px;
   padding: 0 10px;
   border-radius: 9px;
-  background: var(--ui-page-accent);
-  color: var(--ui-page-on-accent);
   font-size: var(--ui-text-label);
   font-weight: 550;
-}
-.nav-primary:hover {
-  filter: brightness(1.12);
 }
 .nav-primary svg:last-child {
   margin-left: auto;
@@ -299,22 +273,19 @@
 }
 .nav-icon[data-primary] {
   margin-bottom: 2px;
-  background: var(--ui-page-accent) !important;
-  color: var(--ui-page-on-accent);
 }
-/* Keep the New action quiet in the light sidebar, including the icon rail. */
-:root:not(.dark) .nav-primary,
-:root:not(.dark) .nav-icon[data-primary] {
+/* New has the same emphasis in both sidebar widths. */
+.nav-primary,
+.nav-icon[data-primary] {
   background: var(--ui-border) !important;
   color: var(--ui-text);
 }
-:root:not(.dark) .nav-primary:hover,
-:root:not(.dark) .nav-icon[data-primary]:hover {
+.nav-primary:hover,
+.nav-icon[data-primary]:hover {
   background: var(--ui-border-strong) !important;
-  filter: none;
 }
-:root:not(.dark) .nav-primary:focus-visible,
-:root:not(.dark) .nav-icon[data-primary]:focus-visible {
+.nav-primary:focus-visible,
+.nav-icon[data-primary]:focus-visible {
   outline: 2px solid var(--ui-text);
   outline-offset: -1px;
 }

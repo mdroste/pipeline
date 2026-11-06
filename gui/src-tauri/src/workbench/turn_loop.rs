@@ -90,6 +90,7 @@ pub(crate) trait TurnEvents: Send + Sync {
 
 impl TurnEvents for tauri::AppHandle {
     fn publish(&self, event: &NormalizedEvent) -> Result<(), String> {
+        super::tasks::activity::observe(event);
         self.emit("workbench:event", event)
             .map_err(|error| error.to_string())
     }

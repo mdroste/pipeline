@@ -446,7 +446,7 @@ export default function SchemaEditorPanel({
             </span>
           )}
           {target.kind === "step" && target.publishesFindings && (
-            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700 dark:bg-gray-800 dark:text-gray-300">
+            <span className="rounded-full bg-sunken px-2 py-0.5 text-[10px] text-ink dark:bg-gray-800 dark:text-gray-300">
               Published findings
             </span>
           )}
@@ -605,12 +605,12 @@ export default function SchemaEditorPanel({
               </section>
             )}
             {liveReference && (
-              <section className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-gray-700 dark:bg-gray-800/40">
-                <h3 className="text-sm font-medium text-emerald-950 dark:text-gray-100">
+              <section className="rounded-xl border border-line bg-sunken p-4 dark:border-gray-700 dark:bg-gray-800/40">
+                <h3 className="text-sm font-medium text-ink dark:text-gray-100">
                   Live contract reference:{" "}
                   <span className="font-mono">{liveReference}</span>
                 </h3>
-                <p className="mt-1 max-w-2xl text-xs leading-relaxed text-emerald-800/80 dark:text-gray-300">
+                <p className="mt-1 max-w-2xl text-xs leading-relaxed text-ink-muted dark:text-gray-300">
                   This step uses Pipeline’s standard output format, updated for
                   each request. The current format appears below. Replace the
                   reference with a full schema to customize it.

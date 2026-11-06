@@ -18,6 +18,7 @@ import {
   sinceBlock,
   syncBlock,
   targetSummary,
+  reviewsForProject,
   underRoot,
   type OverviewBlock,
   type ProjectSignals,
@@ -837,4 +838,40 @@ describe("repository", () => {
       }),
     ).toBeNull();
   });
+});
+
+it("keeps handoff reviews after relocation and restore without matching empty or unrelated paths", () => {
+  const link = {
+    id: "review_handoff_123",
+    stagedPath: "",
+    contentHash: "abcd",
+    externalReference: "explicit",
+  };
+  const path = (id: string, input: string) =>
+    reviewRun({ run_id: id, input_path: input });
+  const stored = reviewRun({
+    run_id: "stored",
+    input_path: "/new/main.tex",
+    input_identity: {
+      lineage_id: "",
+      selection_key: "",
+      content_hash: "",
+      review_handoff_id: link.id,
+    },
+  });
+  const rows = [
+    stored,
+    path("legacy", "/old/store/handoffs/review_handoff_123/abcd.tex"),
+    path("tree", "C:\\old\\handoffs\\review_handoff_123\\source-tree-abcd"),
+    path("different", "/old/store/handoffs/review_handoff_123/other.tex"),
+    path("explicit", "/other/a.tex"),
+    path("empty", ""),
+    path("other", "/x/abcd.tex"),
+  ];
+  expect(reviewsForProject(rows, null, [link]).map((r) => r.run_id)).toEqual([
+    "stored",
+    "legacy",
+    "tree",
+    "explicit",
+  ]);
 });

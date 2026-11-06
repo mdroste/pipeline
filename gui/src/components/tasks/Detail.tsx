@@ -1,3 +1,4 @@
+import { ChainPreview, RecordedUsage, ReviewEstimate } from "./Budget";
 import { useEffect, useRef, useState } from "react";
 import { stateLabel, taskTime } from "../../lib/taskPresentation";
 import { taskClient } from "../../lib/taskClient";
@@ -73,8 +74,14 @@ function Output({
 }
 const UNRESOLVED = ["unknown", "failed"];
 /** Past its deadline a wait still takes input, and that starts a new deadline. */
+function groupExpired(run: TaskRun) {
+  return Object.values(run.progress.groupDeadlines ?? {}).some(
+    (end) => end <= Date.now() / 1000,
+  );
+}
 function lateInput(run: TaskRun) {
   return (
+    !groupExpired(run) &&
     run.state === "attention" &&
     run.deadlineAt <= Date.now() / 1000 &&
     !Object.values(run.progress.receipts).some((r) =>
@@ -83,6 +90,7 @@ function lateInput(run: TaskRun) {
   );
 }
 function acceptsInput(run: TaskRun) {
+  if (groupExpired(run)) return false;
   return (
     ["waiting", "paused", "running", "queued"].includes(run.state) ||
     lateInput(run)
@@ -151,6 +159,14 @@ export default function Detail({
   const [events, setEvents] = useState<TaskEvent[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [correctedPapers, setCorrectedPapers] = useState<
+    Record<string, string>
+  >({});
+  const corrections = Object.values(run.progress.receipts).filter(
+    (r) =>
+      ["failed", "unknown"].includes(r.state) &&
+      r.error?.startsWith("The revised artifact is unchanged."),
+  );
   const [saved, setSaved] = useState(false);
   const terminal = ["finished", "cancelled", "failed"].includes(run.state);
   useEffect(() => {
@@ -175,7 +191,20 @@ export default function Detail({
     setBusy(true);
     setError("");
     try {
-      onUpdated(await taskClient.control(run, action));
+      onUpdated(
+        await taskClient.control(
+          run,
+          action,
+          action === "retry" && corrections.length
+            ? Object.fromEntries(
+                corrections.map((r) => [
+                  r.address,
+                  correctedPapers[r.address] ?? "",
+                ]),
+              )
+            : undefined,
+        ),
+      );
     } catch (e) {
       setError(String(e));
     } finally {
@@ -207,6 +236,10 @@ export default function Detail({
       {run.state === "draft" && (
         <div className="task-scope">
           <h3>Ready to start</h3>
+          <ChainPreview chain={run.chain} />
+          {Object.keys(run.scope.profiles).map((id) => (
+            <ReviewEstimate key={id} profile={id} taskId={run.id} />
+          ))}
           <p>{run.chain.description}</p>
           <dl>
             <dt>Conversation</dt>
@@ -235,6 +268,9 @@ export default function Detail({
             saved design and configured provider account.
           </p>
         </div>
+      )}
+      {run.state !== "draft" && (
+        <RecordedUsage id={run.id} revision={run.revision} />
       )}
       <div className="task-actions">
         {!run.missionId && (
@@ -293,6 +329,21 @@ export default function Detail({
             Check the completed work before retrying. The interrupted action may
             already have made changes that Pipeline could not record.
           </p>
+
+          {corrections.map((r) => (
+            <label key={r.address}>
+              Corrected paper for {r.label}
+              <textarea
+                value={correctedPapers[r.address] ?? ""}
+                onChange={(event) =>
+                  setCorrectedPapers({
+                    ...correctedPapers,
+                    [r.address]: event.target.value,
+                  })
+                }
+              />
+            </label>
+          ))}
           <div className="task-actions">
             <button disabled={busy} onClick={() => void control("reconcile")}>
               Check saved results and update status
@@ -303,7 +354,14 @@ export default function Detail({
             >
               Use current conversation context
             </button>
-            <button disabled={busy} onClick={() => void control("retry")}>
+            <button
+              disabled={
+                busy ||
+                groupExpired(run) ||
+                corrections.some((r) => !correctedPapers[r.address]?.trim())
+              }
+              onClick={() => void control("retry")}
+            >
               Retry unfinished actions
             </button>
           </div>
@@ -370,6 +428,7 @@ export default function Detail({
         <summary>Steps and limits</summary>
         <Outline steps={run.chain.steps} />
         <pre className="task-result">{JSON.stringify(run.chain, null, 2)}</pre>
+
         <div className="task-actions">
           <button
             onClick={() => {

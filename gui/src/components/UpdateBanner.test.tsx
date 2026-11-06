@@ -309,6 +309,26 @@ describe("UpdateBanner", () => {
       expect(invoke).toHaveBeenCalledWith("update_install_restart");
     });
 
+    it("keeps the app open if drafts cannot be retained before restart", async () => {
+      respond(status(installable()));
+      renderBanner();
+      await screen.findByRole("button", { name: "Install update" });
+      act(() => emitInstall(installing({ phase: "ready" })));
+      const block = (event: Event) => event.preventDefault();
+      window.addEventListener("pipeline:flush-drafts", block);
+      try {
+        await userEvent
+          .setup()
+          .click(screen.getByRole("button", { name: "Restart now" }));
+        expect(invoke).not.toHaveBeenCalledWith("update_install_restart");
+        expect(
+          screen.getByText(/Save your files before closing Pipeline/),
+        ).toBeInTheDocument();
+      } finally {
+        window.removeEventListener("pipeline:flush-drafts", block);
+      }
+    });
+
     it("stays put when the researcher declines the restart warning", async () => {
       confirmRestart.mockResolvedValue(false);
       respond(status(installable()));

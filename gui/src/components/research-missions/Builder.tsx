@@ -1,3 +1,4 @@
+import { AllowanceField, ReviewEstimate } from "../tasks/Budget";
 import { useEffect, useId, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { taskClient } from "../../lib/taskClient";
@@ -131,6 +132,11 @@ export default function MissionBuilder({
     patch({ policy: { ...draft.definition.policy, ...update } });
   }
   const d = draft.definition;
+  const actionsPerRound = d.policy.reviewProfileId ? 4 : 3;
+  const fullRounds = Math.min(
+    d.budget.maxRounds,
+    Math.floor(d.budget.maxActions / actionsPerRound),
+  );
   // Criteria keep their raw lines while typing; blank lines are not criteria.
   const criteria = d.criteria.map((c) => c.trim()).filter(Boolean);
   const blocked = !draft.sessionId
@@ -280,7 +286,22 @@ export default function MissionBuilder({
             onChange={(e) => patch({ criteria: e.target.value.split("\n") })}
           />
         </label>
+        <p>
+          One investigated and challenged result needs {actionsPerRound}{" "}
+          actions: plan, investigate,{" "}
+          {d.policy.reviewProfileId ? "Review, " : ""}and challenge.{" "}
+          {fullRounds < 1
+            ? "This action limit cannot reach that milestone."
+            : `Up to ${fullRounds} full ${fullRounds === 1 ? "round fits" : "rounds fit"} before retries or extra planning turns.`}
+        </p>
+        <ReviewEstimate profile={d.policy.reviewProfileId} />
         <div className="mission-budget-grid">
+          <AllowanceField
+            cents={d.budget.maxApiCostCents}
+            onChange={(maxApiCostCents) =>
+              patch({ budget: { ...d.budget, maxApiCostCents } })
+            }
+          />
           <label>
             Investigation rounds
             <input
@@ -445,7 +466,7 @@ export default function MissionBuilder({
                   ))
                 ) : (
                   <p className="task-muted">
-                    Configure and authorize checks in Analyze.
+                    Configure and authorize checks in Project tools.
                   </p>
                 )}
               </fieldset>
@@ -474,7 +495,8 @@ export default function MissionBuilder({
                   ))
                 ) : (
                   <p className="task-muted">
-                    Prepare a captured analysis or parameter grid in Analyze.
+                    Prepare a captured analysis or parameter grid in Project
+                    tools.
                   </p>
                 )}
               </fieldset>
@@ -497,7 +519,7 @@ export default function MissionBuilder({
                   ))
                 ) : (
                   <p className="task-muted">
-                    Create project monitors in Automate to enable
+                    Open Scheduled checks in Project tools to enable
                     change-triggered work.
                   </p>
                 )}

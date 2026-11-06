@@ -61,7 +61,7 @@ export default function DataConnectors({
         />
         <p className={muted}>
           Download the selected vintage in its original units. First allow data
-          downloads in Library. Pipeline uses the API key for this request only.
+          downloads in Sources. Pipeline uses the API key for this request only.
         </p>
         <ConnectorNotice connector="fred" />
         <button

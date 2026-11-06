@@ -366,8 +366,17 @@ pub async fn workbench_program(
     action: Action,
 ) -> WorkbenchResult<Value> {
     start(app);
+    let scheduling = matches!(
+        &action,
+        Action::ExperimentControl { .. }
+            | Action::SaveMonitor { .. }
+            | Action::MonitorControl { .. }
+    );
     let result = host::run_store(move |store| apply(&store, &workspace_id, action)).await;
     research::jobs::launch_pending();
+    if scheduling {
+        wake_scheduler();
+    }
     result
 }
 #[derive(Debug, Deserialize)]
@@ -514,6 +523,51 @@ pub fn choices(store: &Store, ws: &str) -> WorkbenchResult<Value> {
         json!({"objects":objects,"plans":desk::records(store,ws,"execution_plan")?,"profiles":research::list_execution_profiles(store,ws)?,"executions":research::list_executions(store,ws)?,"checkpoints":crate::workbench::project::records(store,ws,"checkpoint")?,"responses":crate::workbench::project::records(store,ws,"response")?,"theory":crate::workbench::project::records(store,ws,"theory")?}),
     )
 }
+fn schedule_readiness(
+    store: &Store,
+    time: i64,
+    force: bool,
+    observed: Option<i64>,
+    deadline: Option<i64>,
+) -> WorkbenchResult<(Option<i64>, Option<i64>, bool)> {
+    let version = store.scheduling_version();
+    if !force && version.is_some() && version == observed && deadline.is_none_or(|at| at > time) {
+        return Ok((version, deadline, false));
+    }
+    let conn = store.connection()?;
+    let next: Option<i64> = conn
+        .query_row(
+            "SELECT MIN(s.next_due_at) FROM scheduled_checks s JOIN desk_records d ON d.id=s.id
+         JOIN workspaces w ON w.id=d.workspace_id WHERE s.enabled=1 AND w.archived_at IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(err)?;
+    let grids: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM experiment_runs WHERE state='running'
+         OR (state IN ('paused','cancelled') AND active_execution_id IS NOT NULL))",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(err)?;
+    let deadline = if grids {
+        Some(next.unwrap_or(i64::MAX).min(time + 5))
+    } else {
+        next
+    };
+    Ok((
+        version,
+        deadline,
+        grids || next.is_some_and(|at| at <= time),
+    ))
+}
+
+static SCHEDULE_WAKE: tokio::sync::Notify = tokio::sync::Notify::const_new();
+pub(in crate::workbench) fn wake_scheduler() {
+    SCHEDULE_WAKE.notify_one();
+}
+
 static STARTED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 pub fn start(app: tauri::AppHandle) {
     if STARTED.set(()).is_err() {
@@ -526,67 +580,100 @@ pub fn start(app: tauri::AppHandle) {
         if let Err(e) = host::run_store(|s| research::jobs::reconcile_abandoned(&s)).await {
             eprintln!("Interrupted jobs could not be marked: {}", e.message);
         }
+        let mut observed = None;
+        let mut deadline: Option<i64> = None;
+        let mut force = true;
         loop {
-            if let Err(e) = host::run_store(|s| experiments::tick_due(&s)).await {
-                eprintln!("Experiment grids could not be read: {}", e.message);
+            let time = chrono::Utc::now().timestamp();
+            // Sample before reading due work so a concurrent commit cannot
+            // fall between the readiness scan and the recorded data version.
+            let readiness = host::run_store(move |store| {
+                schedule_readiness(&store, time, force, observed, deadline)
+            })
+            .await;
+            let run = match readiness {
+                Ok((version, next, run)) => {
+                    observed = version;
+                    deadline = next;
+                    run
+                }
+                Err(error) => {
+                    observed = None;
+                    eprintln!("Research schedule could not be checked: {}", error.message);
+                    true
+                }
+            };
+            if run {
+                if let Err(e) = host::run_store(|s| experiments::tick_due(&s)).await {
+                    eprintln!("Experiment grids could not be read: {}", e.message);
+                }
             }
+            // Detached research jobs can arrive independently of a grid.
             research::jobs::launch_pending();
-            if let Ok(checks) =
-                host::run_store(|s| monitors::due(&s, chrono::Utc::now().timestamp())).await
-            {
-                for (record, revision) in checks {
-                    let Ok(m) = serde_json::from_value::<monitors::Monitor>(record.body) else {
-                        continue;
-                    };
-                    let ws = record.workspace_id.clone();
-                    let id = record.id.clone();
-                    let result = if m.kind == "metadata_query" {
-                        let consent = m.network_consent;
-                        let allowed =
-                            host::run_store(move |s| acquisition_allowed(&s, &ws, consent))
-                                .await
-                                .unwrap_or(false);
-                        if allowed {
-                            crate::workbench::acquisition::crossref(&m.target)
-                                .await
-                                .map(|items| {
-                                    let mut works = items
+            if run {
+                if let Ok(checks) =
+                    host::run_store(|s| monitors::due(&s, chrono::Utc::now().timestamp())).await
+                {
+                    for (record, revision) in checks {
+                        let Ok(m) = serde_json::from_value::<monitors::Monitor>(record.body) else {
+                            continue;
+                        };
+                        let ws = record.workspace_id.clone();
+                        let id = record.id.clone();
+                        let result = if m.kind == "metadata_query" {
+                            let consent = m.network_consent;
+                            let allowed =
+                                host::run_store(move |s| acquisition_allowed(&s, &ws, consent))
+                                    .await
+                                    .unwrap_or(false);
+                            if allowed {
+                                crate::workbench::acquisition::crossref(&m.target)
+                                    .await
+                                    .map(|items| {
+                                        let mut works = items
                                         .into_iter()
                                         .map(|i| json!({"doi":i.doi,"title":i.title,"year":i.year}))
                                         .collect::<Vec<_>>();
-                                    works.sort_by_key(Value::to_string);
-                                    json!({"works":works})
-                                })
+                                        works.sort_by_key(Value::to_string);
+                                        json!({"works":works})
+                                    })
+                            } else {
+                                Err(WorkbenchError::invalid(
+                                    "Project network access or this query's consent is disabled",
+                                ))
+                            }
                         } else {
-                            Err(WorkbenchError::invalid(
-                                "Project network access or this query's consent is disabled",
-                            ))
+                            host::run_store(move |s| monitors::local(&s, &ws, &m)).await
+                        };
+                        let ws = record.workspace_id.clone();
+                        let notify = host::run_store(move |s| {
+                            monitors::record_outcome(
+                                &s,
+                                &ws,
+                                &id,
+                                revision,
+                                result,
+                                chrono::Utc::now().timestamp(),
+                            )
+                        })
+                        .await
+                        .unwrap_or(false);
+                        if notify {
+                            let _ = app.emit(
+                                "workbench-research-attention",
+                                json!({"workspaceId":record.workspace_id,"checkId":record.id}),
+                            );
                         }
-                    } else {
-                        host::run_store(move |s| monitors::local(&s, &ws, &m)).await
-                    };
-                    let ws = record.workspace_id.clone();
-                    let notify = host::run_store(move |s| {
-                        monitors::record_outcome(
-                            &s,
-                            &ws,
-                            &id,
-                            revision,
-                            result,
-                            chrono::Utc::now().timestamp(),
-                        )
-                    })
-                    .await
-                    .unwrap_or(false);
-                    if notify {
-                        let _ = app.emit(
-                            "workbench-research-attention",
-                            json!({"workspaceId":record.workspace_id,"checkId":record.id}),
-                        );
                     }
                 }
             }
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            let seconds = deadline.map_or(5, |at| {
+                (at - chrono::Utc::now().timestamp()).clamp(1, 5) as u64
+            });
+            force = tokio::select! {
+                _ = SCHEDULE_WAKE.notified() => true,
+                _ = tokio::time::sleep(std::time::Duration::from_secs(seconds)) => false,
+            };
         }
     });
 }

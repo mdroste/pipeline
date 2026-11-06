@@ -168,30 +168,39 @@ review designer. Different steps can use different providers. See
 
 Steps that don't depend on each other run at the same time. To see each
 step's inputs before anything starts, open **Steps and what each can read** in
-the run preview.
+the run preview. In an automatic Paper Review, specialists can search the web
+when the first enabled parallel model step permits **Web search**. Check the
+**Specialists** row to see whether they have that tool.
 
 You can queue reviews. **Settings → Reviews → Reviews at once** sets how many
 run at once: two by default, four at most. **Activity** at the bottom of the
 sidebar lists running and queued reviews. Stopping one review leaves the others
-running.
+running. A queued re-run keeps the design and settings approved when it was
+queued. Its source report stays available while it waits and runs. If a finished report cannot load, choose **Retry loading report** or
+**Open report** to read the saved copy in Review history.
 
 ## Estimated use and limits
 
 The run preview shows a rough range of model calls and tokens. For API
 connections, it also shows the cost at the provider's list price. The
 estimate comes from the document's length and the planned steps. Retries and
-the specialists Paper Review picks change the actual use.
+the specialists Paper Review picks change the actual use. The estimate uses
+each agent's selected model, including the model that combines results. Each
+repeated item includes its own combine call when several agents review it.
 
 **Settings → Reviews → Review limits** sets a cost, call, or time limit for
 each review. Enter 0 for no limit. When a review reaches a limit:
 
-- steps already running finish;
+- provider requests already in flight finish;
 - the remaining steps are marked as stopped at the limit; and
 - the results so far are saved as a partial report.
 
-The cost limit counts API connections at list prices. Subscription calls count
-toward the call and time limits. The preview warns you when the estimate could
-pass a limit.
+Each provider request uses a call slot, including retries, follow-up tool
+requests, and revision comparison. For a cost limit, Pipeline reserves an
+estimate from the request size and output allowance before sending it, then
+uses the provider's reported usage. If an API model has no known price,
+Pipeline stops before calling it under a cost limit. Subscription calls count
+toward the call and time limits.
 
 If you reach your account's usage or credit limit,
 **Settings → Reviews → Continue after an account usage limit** retries the call
@@ -217,6 +226,10 @@ review produces findings, you can accept, reject, or annotate each one. A
 decision applied to several selected findings adds its rationale after any
 note already there, and changes only the findings your filters are showing.
 
+Equations and mathematical symbols are typeset in reports and finding titles.
+Common Greek-letter formulas and subscripts in older reports are typeset too.
+Quoted evidence keeps the source's notation.
+
 Compare runs to see how the reports changed. In a project, a finding stays
 open across drafts until you resolve it, even if a later review doesn't
 repeat it.
@@ -241,10 +254,14 @@ Deleting a run moves it to Trash. You can restore it until you empty Trash.
 The report's **Export** menu creates files that open without Pipeline. Your
 saved run and your manuscript stay as they are.
 
+**Print / save as PDF…** opens the report in your browser's print dialog.
+Currency amounts stay as text. Wide equations shrink individually to fit the
+page while the surrounding text keeps its print size.
+
 | Format | What it contains | Notes |
 | --- | --- | --- |
 | **Export as HTML** | One file with the report, each finding's severity, confidence, category, and quoted evidence, plus filters | Opens offline in any browser. Equations appear as LaTeX source |
-| **Export as Word** | A new `.docx` with the report, findings, and quoted evidence | Works for any input. Simple formatting |
+| **Export as Word** | A new `.docx` with the report, findings, quoted evidence, and any revision comparison | Works for any input. Simple formatting |
 | **Word with comments on the original** | A copy of your `.docx` with each finding as a Word comment on the passage it quotes | For `.docx` inputs. Quotes in footnotes, text boxes, or headers are listed in one comment at the start |
 | **PDF with highlights** | A copy of your PDF with each quoted passage highlighted and a note attached | For PDF inputs. Scanned PDFs get notes only. Highlights are added as a new revision, so the original content and any signatures are left untouched |
 
@@ -316,6 +333,11 @@ effort, turn on tools, and choose what each step can read. A saved review can
 include conditional steps, structured responses, and steps that repeat over a
 set of files.
 
+Choose a review from the list at the top. Open **Review actions** (•••) beside
+it to duplicate, rename, or delete the design. In **Steps**, select a step
+name to edit it, or use its switch to turn it on or off. Each step’s **•••**
+menu lets you remove it. Sequential steps also offer **Move up** and **Move down**.
+
 Export a review as JSON to share it. Import one from a file or URL. The file
 is called a **workflow**. It contains steps and settings, never API keys. Before
 you run an imported review, check its prompts, providers, tools, and file access.
@@ -334,3 +356,15 @@ For batches, workflow files, and scripting, see the
 | The run was interrupted | Open the saved run, check which steps finished, and use the recovery options it offers. **Resume** always runs the review design saved with that run. **Regenerate** does too, unless that design is the one selected now, in which case your edits apply. Both use the agents you chose for that run, and Pipeline names them first. If the run used a secret variable, Pipeline asks for it again, because a run never keeps secret values |
 
 To report a bug, see [Support](../.github/SUPPORT.md).
+
+Resume and Regenerate compare the saved instructions, selected inputs, and
+upstream results before reusing work. A changed step and its dependents run
+again. A step that uses a secret variable runs again when you re-enter the
+secret. Under **Sources**, the effective workflow record lists reused steps
+and their parent run. Older runs without this record reuse the captured
+document and recompute the review.
+
+A missing or changed figure is listed in the rerun's quality notes. A
+workflow that promises findings can report an empty findings list. If its
+producer skips the step or returns an incompatible result, the report names
+the missing product and the step responsible.

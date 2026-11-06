@@ -1,3 +1,4 @@
+import { useSetupReads } from "./reviewSetupReads";
 import { useState, useEffect, useId } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { PipelineConfig, ProfileSummary } from "../lib/types";
@@ -25,15 +26,13 @@ export default function WorkflowPanel({
   const [error, setError] = useState<string | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
 
+  const reads = useSetupReads(refreshKey);
   useEffect(() => {
     let stale = false;
     setLoading(true);
     setError(null);
-    Promise.all([
-      invoke<PipelineConfig>("get_pipeline_config"),
-      invoke<ProfileSummary[]>("list_profiles"),
-      invoke<string>("get_active_profile"),
-    ])
+    reads
+      .workflow()
       .then(([c, p, active]) => {
         if (stale) return;
         setConfig(c);
@@ -50,7 +49,7 @@ export default function WorkflowPanel({
     return () => {
       stale = true;
     };
-  }, [refreshKey, loadAttempt]);
+  }, [reads, loadAttempt]);
 
   const handleSwitch = async (id: string) => {
     setSwitching(true);
@@ -72,7 +71,7 @@ export default function WorkflowPanel({
     return (
       <div
         role="status"
-        className="border-t border-gray-200 pt-4 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400"
+        className="border-t border-gray-200 pt-4 text-xs text-gray-500 dark:border-line dark:text-gray-400"
       >
         Loading workflow…
       </div>
@@ -82,7 +81,7 @@ export default function WorkflowPanel({
     return (
       <div
         role="alert"
-        className="border-t border-gray-200 pt-4 text-xs text-red-600 dark:border-gray-700 dark:text-red-400"
+        className="border-t border-gray-200 pt-4 text-xs text-red-600 dark:border-line dark:text-red-400"
       >
         <p>Workflow unavailable{error ? `: ${error}` : "."}</p>
         <button
@@ -98,7 +97,7 @@ export default function WorkflowPanel({
   }
 
   return (
-    <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+    <div className="border-t border-gray-200 dark:border-line pt-4">
       <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
         <label
           htmlFor={selectId}

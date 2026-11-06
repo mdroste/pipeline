@@ -405,7 +405,7 @@ export default function ExportControls({
             </p>
             <button
               onClick={() => void reveal()}
-              className="mt-2 rounded border border-green-300 px-2 py-1 hover:bg-green-100 dark:border-green-800 dark:hover:bg-green-900/40"
+              className="mt-2 rounded border border-line-strong bg-surface px-2 py-1 text-ink hover:bg-sunken dark:bg-transparent dark:text-green-200 dark:border-green-800 dark:hover:bg-green-900/40"
             >
               Reveal in folder
             </button>

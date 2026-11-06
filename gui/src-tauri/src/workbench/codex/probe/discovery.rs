@@ -1,5 +1,8 @@
 //! Exercise the production discovery profiles with no authenticated model turn.
 use super::*;
+use crate::agent_runtime::codex::invocation::NativeThreadStart;
+use crate::orchestration::store::Scope;
+use crate::workbench::{discovery, research, store::Store};
 
 pub(super) async fn verify(
     stdin: &mut tokio::process::ChildStdin,
@@ -9,11 +12,53 @@ pub(super) async fn verify(
     private: &Path,
     sibling: &Path,
 ) -> Result<(), String> {
+    let temporary = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let store = Store::open_at(&temporary.path().join("store")).map_err(|e| e.message)?;
+    let session =
+        discovery::source(&store, "probe", "Synthetic research", false).map_err(|e| e.message)?;
+    let source = Scope {
+        workspace_id: store
+            .session_snapshot(&session)
+            .map_err(|e| e.message)?
+            .session
+            .workspace_id,
+        session_id: Some(session),
+        ..Scope::default()
+    };
     for (profile, writer) in [("discovery-inspect", false), ("discovery-edit", true)] {
+        let (scope, _) = discovery::role(
+            &store,
+            &source,
+            "probe",
+            profile,
+            writer,
+            chrono::Utc::now().timestamp() + 3600,
+        )
+        .map_err(|e| e.message)?;
+        let harness = research::resolve_harness(&store, scope.session_id.as_deref().unwrap())
+            .map_err(|e| e.message)?;
         let id = json!(format!("{profile}-start"));
-        let mut request = thread_start_request(id.clone(), root);
-        request["params"]["permissions"] = json!(profile);
-        request["params"]["approvalPolicy"] = json!("never");
+        let params = serde_json::to_value(NativeThreadStart {
+            cwd: root,
+            runtime_workspace_roots: &[root.display().to_string()],
+            permissions: profile,
+            approval_policy: "never",
+            developer_instructions: Some(
+                "Synthetic discovery fixture. No model response requested.",
+            ),
+            base_instructions: None,
+            dynamic_tools: &harness.dynamic_tools,
+            model: None,
+            reasoning_effort: None,
+            ephemeral: false,
+            service_name: "pipeline_workbench",
+            config: None,
+        })
+        .map_err(|e| e.to_string())?;
+        let mut request = json!({"method":"thread/start","id":id,"params":params});
+        request["params"]["modelProvider"] = json!("openai");
+        request["params"]["allowProviderModelFallback"] = json!(false);
+        request["params"]["approvalsReviewer"] = json!("user");
         send(stdin, &request).await?;
         let started = response_for(reader, &id).await?;
         if started["approvalPolicy"] != "never"

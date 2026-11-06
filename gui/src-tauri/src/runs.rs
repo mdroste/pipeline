@@ -29,7 +29,8 @@ const MAX_MANIFEST_ARTIFACTS: usize = 5_000;
 /// holds what every run keeps: pages, figures, products, and the report.
 pub(crate) const MAX_RUN_PLANNED_ARTIFACTS: usize = MAX_MANIFEST_ARTIFACTS - 1_000;
 
-const MAX_REPORT_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_REPORT_BYTES: usize = crate::safety::MAX_RUN_OUTPUT_BYTES;
+const MAX_RECOVERY_CONTEXT_BYTES: usize = 64 * 1024 * 1024;
 const MAX_ANNOTATION_BYTES: usize = 1_000_000;
 const MAX_SOURCE_EVIDENCE_FILES: usize = 200;
 const MAX_SOURCE_EVIDENCE_FILE_BYTES: usize = 5 * 1024 * 1024;
@@ -43,17 +44,20 @@ mod history;
 mod identity;
 mod inspection;
 mod persistence;
+pub(crate) mod receipts;
 mod records;
 mod recovery;
 mod retention;
 mod trash;
 mod unlisted;
+mod visuals;
 mod writer;
 
 pub use artifacts::{
     open_artifact_stream, read_artifact, read_page_artifact, read_pdf_artifact_bytes,
     read_pdf_artifact_page,
 };
+pub(crate) use history::load_latest_report_for_lineage;
 pub use history::{created_before, list_runs, load_latest_report_for_input, update_run_meta};
 pub use identity::{
     input_identity, new_run_id, open_run_lock, run_lock_path, runs_dir, validate_run_id,
@@ -61,6 +65,7 @@ pub use identity::{
 pub use inspection::detect_kind;
 pub(crate) use inspection::sync_run_file;
 pub use persistence::load_manifest;
+pub(crate) use persistence::serialize_report;
 pub use records::{
     ArtifactContent, ArtifactEntry, InputIdentity, PageArtifactIndex, PdfArtifactPage,
     PrefetchedPdfArtifactPage, RunFinishMeta, RunManifest, RunPurgePreview, RunSummary,
@@ -98,9 +103,9 @@ use recovery::{
     store_walk, DELETE_TOMBSTONE,
 };
 #[cfg(test)]
-use retention::{
-    apply_retention_holds, retention_plan_from_state, trash_unheld, validate_annotation_content,
-};
+pub(crate) use retention::trash_unheld;
+#[cfg(test)]
+use retention::{apply_retention_holds, retention_plan_from_state, validate_annotation_content};
 #[cfg(test)]
 use trash::restore_trashed_run_at;
 #[cfg(test)]

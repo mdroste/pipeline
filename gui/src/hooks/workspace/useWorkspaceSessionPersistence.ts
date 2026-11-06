@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
+import { flushDrafts } from "../../lib/flushDrafts";
 import { conversationClient } from "../../lib/workbench/conversationClient";
 import {
   mergeSessionSnapshot,
@@ -48,20 +49,23 @@ export function useWorkspaceSessionPersistence({
   const selectionSaveRef = useRef<Promise<void>>(Promise.resolve());
   const sessionWriteRef = useRef<Promise<unknown>>(Promise.resolve());
   const draftSaveRef = useRef<Promise<unknown>>(Promise.resolve());
-  const persistDraft = useCallback((selectedSession: string, text: string) => {
-    // Navigation can flush a draft while its debounce save is in flight.
-    const pending = sessionWriteRef.current
-      .catch(() => undefined)
-      .then(() => saveWorkspaceDraft(selectedSession, text))
-      .then((next) => {
-        if (sessionRef.current === selectedSession)
-          setSnapshot((old) => mergeSessionSnapshot(old, next));
-        return next;
-      });
-    draftSaveRef.current = pending;
-    sessionWriteRef.current = pending;
-    return pending;
-  }, []);
+  const persistDraft = useCallback(
+    (selectedSession: string, text: string, expectedSent?: string) => {
+      // Navigation can flush a draft while its debounce save is in flight.
+      const pending = sessionWriteRef.current
+        .catch(() => undefined)
+        .then(() => saveWorkspaceDraft(selectedSession, text, expectedSent))
+        .then((next) => {
+          if (sessionRef.current === selectedSession)
+            setSnapshot((old) => mergeSessionSnapshot(old, next));
+          return next;
+        });
+      draftSaveRef.current = pending;
+      sessionWriteRef.current = pending;
+      return pending;
+    },
+    [],
+  );
 
   const editDraft = (text: string) => {
     draftEditRevision.current += 1;
@@ -90,6 +94,7 @@ export function useWorkspaceSessionPersistence({
   // Only sending depends on a selection save. Leaving must still work when
   // one failed, or that one failure would hold the researcher on this page.
   const saveCurrentDraft = useCallback(async () => {
+    flushDrafts();
     await selectionSaveRef.current.catch(() => undefined);
     const id = sessionRef.current;
     if (

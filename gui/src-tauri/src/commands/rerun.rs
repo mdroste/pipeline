@@ -2,7 +2,7 @@ use super::*;
 
 mod agents;
 mod document;
-mod files;
+pub(super) mod files;
 mod inputs;
 mod reuse;
 mod workflow;
@@ -44,17 +44,92 @@ pub async fn rerun_run(
     let bus = crate::emit::from_app(app);
     PipelineTask::spawn_future(run.scope().clone(), async move {
         let _guard = guard;
+        let parent = crate::runs::load_manifest(&run_id)?;
+        let plan = RerunPlan::prepare(&parent, only_failed)?;
         rerun_run_inner(
             &bus,
             &run_id,
             from_step,
             only_failed,
             variables.unwrap_or_default(),
+            plan,
         )
         .await
     })
     .join()
     .await
+}
+
+/// Execution choices captured before a re-run enters the queue. Device keys
+/// are loaded only by the worker, separate from the approved settings.
+pub(super) struct RerunPlan {
+    workflow: workflow::RerunWorkflow,
+    settings: crate::settings::Settings,
+    agent_overrides: Option<RunModelOverrides>,
+}
+
+impl RerunPlan {
+    pub(super) fn prepare(
+        parent: &crate::runs::RunManifest,
+        only_failed: bool,
+    ) -> Result<Self, String> {
+        let mut settings = crate::settings::load_persisted_required().map_err(|e| {
+            format!("Cannot re-run because settings could not be loaded safely: {e}")
+        })?;
+        let mut workflow = workflow::load_rerun_workflow(
+            &parent.run_id,
+            parent,
+            &settings.active_profile,
+            only_failed,
+        )?;
+        let agent_overrides = agents::saved_agent_overrides(&parent.run_id)?;
+        if let Some(overrides) = agent_overrides.as_ref() {
+            agents::reapply(overrides, &mut settings, &mut workflow.document.config)?;
+        }
+        settings.anthropic_api_key.clear();
+        settings.openai_api_key.clear();
+        settings.google_api_key.clear();
+        settings.local_api_key.clear();
+        Ok(Self {
+            settings,
+            workflow,
+            agent_overrides,
+        })
+    }
+
+    pub(super) fn fingerprint(&self) -> Result<String, String> {
+        super::run_context::stable_content_fingerprint(&(
+            &self.workflow.document.fingerprint,
+            &self.workflow.source,
+            &self.workflow.notice,
+            &self.agent_overrides,
+            super::run_context::settings_for_snapshot_fingerprint(&self.settings),
+        ))
+        .map_err(|e| e.to_string())
+    }
+
+    pub(super) fn verify(&self, expected: Option<&str>) -> Result<(), String> {
+        if let Some(expected) = expected {
+            if self.fingerprint()? != expected {
+                return Err("The review design or settings changed. Open the re-run again to confirm its current configuration.".into());
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(super) fn fixture() -> Self {
+        Self {
+            settings: Default::default(),
+            agent_overrides: None,
+            workflow: workflow::RerunWorkflow {
+                document: crate::pipeline_config::workflow_template().unwrap(),
+                profile_id: "a".into(),
+                source: "profile:a".into(),
+                notice: None,
+            },
+        }
+    }
 }
 
 /// A secret a re-run must ask for again before it can start.
@@ -67,6 +142,7 @@ pub struct RerunSecret {
 /// What the researcher must see or supply before a re-run can start.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RerunRequirements {
+    pub fingerprint: String,
     pub secrets: Vec<RerunSecret>,
     pub notice: Option<String>,
     /// The one-report agents this re-run uses again, when the run had any.
@@ -80,16 +156,14 @@ pub async fn rerun_requirements(
     run_id: String,
     only_failed: bool,
 ) -> Result<RerunRequirements, String> {
-    let settings = crate::settings::load_persisted_required()
-        .map_err(|e| format!("Cannot re-run because settings could not be loaded safely: {e}"))?;
     let parent = crate::runs::load_manifest(&run_id)?;
-    let mut workflow =
-        workflow::load_rerun_workflow(&run_id, &parent, &settings.active_profile, only_failed)?;
-    let agent_overrides = agents::saved_agent_overrides(&run_id)?;
-    if let Some(overrides) = agent_overrides.as_ref() {
-        let mut settings = settings.clone();
-        agents::reapply(overrides, &mut settings, &mut workflow.document.config)?;
-    }
+    let plan = RerunPlan::prepare(&parent, only_failed)?;
+    let fingerprint = plan.fingerprint()?;
+    let RerunPlan {
+        workflow,
+        agent_overrides,
+        ..
+    } = plan;
     let secrets = secrets_to_reenter(&workflow.document.config, &parent.variables)
         .into_iter()
         .map(|spec| RerunSecret {
@@ -102,8 +176,17 @@ pub async fn rerun_requirements(
         })
         .collect();
     Ok(RerunRequirements {
+        fingerprint,
         secrets,
-        notice: workflow.notice,
+        notice: {
+            let mut notices = workflow.notice.into_iter().collect::<Vec<_>>();
+            if super::run_contract::ExecutionContract::load(&crate::runs::runs_dir()?.join(&run_id))
+                .is_none()
+            {
+                notices.push("This run has no usable execution record. Pipeline will reuse the captured document and recompute orientation and the workflow steps.".into());
+            }
+            (!notices.is_empty()).then(|| notices.join(" "))
+        },
         agent_notice: agent_overrides.as_ref().map(agents::notice),
     })
 }
@@ -114,31 +197,35 @@ pub(super) async fn rerun_run_inner(
     from_step: Option<String>,
     only_failed: bool,
     secret_variables: std::collections::HashMap<String, String>,
+    plan: RerunPlan,
 ) -> Result<serde_json::Value, String> {
     let _run_state = begin_run_state();
     // Held for the whole re-run: another review's retention must not move the
     // parent to Trash while its files are being read.
     let _parent_hold = crate::runs::hold_from_retention(parent_run_id);
     let start = std::time::Instant::now();
-    let mut settings = crate::settings::load_persisted_required()
-        .map_err(|e| format!("Cannot re-run because settings could not be loaded safely: {e}"))?;
+    let RerunPlan {
+        mut settings,
+        workflow,
+        agent_overrides,
+    } = plan;
+    let device = crate::settings::load_persisted_required()
+        .map_err(|e| format!("Cannot read Review credentials: {e}"))?;
+    if !device.local_api_key.is_empty()
+        && settings.local_base_url.trim_end_matches('/')
+            != device.local_base_url.trim_end_matches('/')
+    {
+        return Err("The local model endpoint changed after this Review was queued. Prepare the re-run again.".into());
+    }
+    settings.anthropic_api_key = device.anthropic_api_key;
+    settings.openai_api_key = device.openai_api_key;
+    settings.google_api_key = device.google_api_key;
+    settings.local_api_key = device.local_api_key;
     // Store-wide recovery waits until no review is running, so a parent that
     // stopped since then may not have its report yet.
     let parent_recovery = crate::runs::recover_stopped_run(parent_run_id);
     let parent = crate::runs::load_manifest(parent_run_id)?;
     let author_note = crate::pipeline::author_note::normalize(parent.author_note.as_deref())?;
-    let mut workflow = workflow::load_rerun_workflow(
-        parent_run_id,
-        &parent,
-        &settings.active_profile,
-        only_failed,
-    )?;
-    // The workflow snapshot predates a one-report agent choice, so it comes
-    // back here, before Settings defaults could fill those steps in.
-    let agent_overrides = agents::saved_agent_overrides(parent_run_id)?;
-    if let Some(overrides) = agent_overrides.as_ref() {
-        agents::reapply(overrides, &mut settings, &mut workflow.document.config)?;
-    }
     // As for a one-off CLI run, the run records the workflow it executes
     // without changing the persisted active profile.
     settings.active_profile = workflow.profile_id.clone();
@@ -156,7 +243,7 @@ pub(super) async fn rerun_run_inner(
         Some(&parent.input_identity),
     );
     let document_rel = crate::runs::captured_document_rel_path(&parent_dir, &parent)?;
-    let document_text = read_run_file(parent_run_id, document_rel)?;
+    let document_text = files::read_captured_text(&parent, document_rel)?;
     let mut orientation_value: serde_json::Value = parent_report.orientation.clone();
 
     let workflow_notice = workflow.notice;
@@ -235,8 +322,30 @@ pub(super) async fn rerun_run_inner(
     // Regenerate may run an edited workflow, so a cached orientation is
     // reusable only when it still satisfies that workflow's schema and semantic
     // contract. Rebuilding it invalidates every downstream step.
+    let parent_contract = super::run_contract::ExecutionContract::load(&parent_dir);
+    let orientation_notes = parent_contract
+        .as_ref()
+        .map(|c| c.orientation_notes.clone())
+        .unwrap_or_else(|| parent_report.quality.extraction_notes.clone());
+    let source_record =
+        super::rerun::files::read_run_file_in(&parent_dir, "context/source-snapshot.json").ok();
+    let recipe = super::run_contract::OrientationRecipe::new(
+        &config,
+        &settings,
+        &parent.input_mode,
+        &document_text,
+        source_record.as_deref(),
+        author_note.as_deref(),
+        &orientation_notes,
+    )?;
     let orientation_error =
         orientation_contract_error(&config, &orientation_value, &parent.input_mode).err();
+    let same_recipe = parent_contract
+        .as_ref()
+        .map(|c| c.matches_orientation(&recipe.key, &orientation_value))
+        .transpose()?
+        .unwrap_or(false);
+    let orientation_error = orientation_error.or_else(|| (!same_recipe).then(|| "the orientation inputs or instructions changed, or the parent predates execution contracts".to_string()));
     let orientation_rebuilt = orientation_error.is_some();
     let usage_before_orientation = crate::pipeline::logging::run_usage();
     if let Some(contract_error) = orientation_error {
@@ -267,20 +376,13 @@ pub(super) async fn rerun_run_inner(
             method: "resumed-document".to_string(),
             source_path: parent.input_path.clone(),
             paper_hash: parent_report.paper_hash.clone(),
-            quality_notes: Vec::new(),
+            quality_notes: orientation_notes.clone(),
         };
-        let survey_template =
-            orient::resolve_survey_template(&config.orientation_prompt, &parent.input_mode);
-        let survey_schema = orient::resolve_survey_schema(
-            &config.orientation_prompt,
-            config.orientation_schema.as_ref(),
-            &parent.input_mode,
-        );
         orientation_value = orient::build_orientation_map(
             app,
             &extraction,
-            survey_template.as_deref(),
-            survey_schema.as_ref(),
+            Some(&recipe.template),
+            recipe.schema.as_ref(),
             scoped_source_read_root.as_deref(),
             author_note.as_deref(),
         )
@@ -311,17 +413,6 @@ pub(super) async fn rerun_run_inner(
         return Err("The expanded workflow requires source files that this run did not capture. Start a new run.".into());
     }
 
-    let preloaded = reuse::select_reusable_outputs(
-        app,
-        parent_run_id,
-        &parent_dir,
-        &execution_config,
-        &parent_report,
-        orientation_rebuilt,
-        from_step,
-        only_failed,
-    );
-
     let extra_input_sources = parent.extra_input_sources.clone();
     let (mut run_writer, artifact_write_dir) = create_run_workspace(
         app,
@@ -344,13 +435,6 @@ pub(super) async fn rerun_run_inner(
         },
         None,
     )?;
-    if let Some(root) = artifact_write_dir.as_deref() {
-        super::reuse_artifacts::restore_producers(
-            &parent_dir,
-            std::path::Path::new(root),
-            preloaded.keys().cloned(),
-        )?;
-    }
     if let Some(writer) = run_writer.as_mut() {
         crate::pipeline::author_note::save(writer, author_note.as_deref())?;
         super::reuse_artifacts::retain_source(&scoped_source, writer)?;
@@ -384,7 +468,7 @@ pub(super) async fn rerun_run_inner(
         rerun_document_text,
     } = document::restore_document_context(
         app,
-        parent_run_id,
+        &parent,
         &document_text,
         &orientation_value,
         &orientation_sampling,
@@ -392,6 +476,8 @@ pub(super) async fn rerun_run_inner(
         &scoped_source,
         &mut run_writer,
     )?;
+
+    document::require_visual_input(&execution_config, report_bundle.as_ref())?;
 
     // Document + orientation + named-input temp files for the steps to
     // Read, confined to the same private root as the staged source context.
@@ -441,6 +527,54 @@ pub(super) async fn rerun_run_inner(
         &mut run_writer,
     )?;
 
+    let writer = run_writer
+        .as_mut()
+        .ok_or("Missing durable re-run workspace")?;
+    let mut contract = super::run_contract::ExecutionContract::build(
+        &execution_config,
+        &settings,
+        &recipe,
+        &orientation_value,
+        orientation_notes,
+        author_note.as_deref(),
+        &variables,
+        &persisted_inputs,
+        writer,
+    )?;
+    let mut changed = contract.changed_steps(parent_contract.as_ref());
+    let preloaded = if !orientation_rebuilt && (only_failed || from_step.is_some()) {
+        let config = execution_config.clone();
+        let id = parent_run_id.to_owned();
+        let bus = app.clone();
+        let child_root = writer.dir().join("artifacts");
+        crate::run_scope::spawn_blocking(move || {
+            let parent_root = parent_dir.join("artifacts");
+            for step in config.steps.iter().filter(|step| step.enabled) {
+                if !changed.contains(&step.id) && !crate::runs::receipts::matches(&parent_root, &parent_root, &step.id, &parent_report.step_outputs) {
+                    changed.insert(step.id.clone());
+                }
+            }
+            let cached = reuse::select_reusable_outputs(&bus, &id, &parent_dir, &config, &parent_report, false, &changed, from_step, only_failed);
+            super::reuse_artifacts::restore_producers(&parent_dir, &child_root, cached.keys().cloned())?;
+            // Verify the copy as well as the parent. A replaced file between
+            // verification and copying cannot feed a consumer of cached work.
+            for (step, outputs) in &cached {
+                if !crate::runs::receipts::matches(&parent_root, &child_root, step, outputs) {
+                    return Err(format!("The retained files for step '{step}' changed during restoration. Regenerate the review."));
+                }
+            }
+            Ok::<_, String>(cached)
+        }).await.map_err(|e|e.to_string())??
+    } else {
+        Default::default()
+    };
+    contract.save(
+        writer,
+        preloaded
+            .keys()
+            .map(|id| (id.clone(), parent_run_id.to_owned())),
+    )?;
+
     let paper_type = crate::models::paper_view(&orientation_value)
         .map(|v| v.metadata.paper_type.to_string())
         .unwrap_or_default();
@@ -473,43 +607,17 @@ pub(super) async fn rerun_run_inner(
         return Err("Pipeline cancelled".into());
     }
 
-    let mut products = crate::findings::build_run_products(&execution_config, &result.outputs);
-    if let Some(writer) = run_writer.as_mut() {
-        for warning in
-            writer.capture_source_evidence(&mut products, std::path::Path::new(&scoped_source_path))
-        {
-            let _ = app.emit_event(
-                "pipeline:log",
-                serde_json::json!({ "line": format!("WARNING: {warning}") }),
-            );
-        }
-    }
-    crate::pipeline::analyzers::quotes::verify_run(
-        &mut products,
-        report_bundle.as_ref(),
-        &resumed_extraction,
-        run_writer.as_ref().map(|writer| writer.dir()),
-    );
-    let quality = output::build_report_quality(
-        &resumed_extraction,
-        report_bundle.as_ref(),
-        &orientation_sampling,
+    let report = super::run::report::assemble_report(
+        app,
+        &mut run_writer,
         &execution_config,
-        &result.outputs,
-        &result.failed_steps,
-        &products,
+        result,
+        &resumed_extraction,
+        &report_bundle,
+        &orientation_sampling,
+        orientation_value,
+        &scoped_source_path,
     );
-    let report = PipelineReport {
-        orientation: orientation_value,
-        step_outputs: result.outputs,
-        failed_steps: result.failed_steps,
-        products,
-        quality,
-        referee_reports: vec![],
-        editor: None,
-        report_date: chrono::Local::now().date_naive(),
-        paper_hash: parent_report.paper_hash.clone(),
-    };
     let elapsed = start.elapsed();
     let markdown = output::render_markdown(&report, None, elapsed, &settings);
 
@@ -537,4 +645,20 @@ pub(super) async fn rerun_run_inner(
             parent_run_id: Some(parent_run_id.to_string()),
         },
     )
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::*;
+    #[test]
+    fn approved_plan_rejects_design_edits_and_active_profile_switches() {
+        let mut plan = RerunPlan::fixture();
+        let approved = plan.fingerprint().unwrap();
+        plan.verify(Some(&approved)).unwrap();
+        plan.settings.active_profile = "b".into();
+        assert!(plan.verify(Some(&approved)).is_err());
+        let mut edited = RerunPlan::fixture();
+        edited.workflow.document.fingerprint = "edited".into();
+        assert!(edited.verify(Some(&approved)).is_err());
+    }
 }

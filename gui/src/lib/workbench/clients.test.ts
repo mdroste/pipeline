@@ -6,7 +6,7 @@ import { harnessClient } from "./harnessClient";
 import { researchClient } from "./researchClient";
 import { executionClient } from "./executionClient";
 import { recipeClient } from "./recipeClient";
-import { releaseClient } from "./releaseClient";
+import { listProjectReviewLinks, releaseClient } from "./releaseClient";
 import { runtimeClient } from "./runtimeClient";
 import { isSessionSnapshot, type SessionSnapshot } from "../workbenchTypes";
 
@@ -235,6 +235,7 @@ describe("Workbench DTO boundary", () => {
       workspaceId: null,
       includeArchived: false,
     });
+    invoke.mockResolvedValueOnce({ workspaces: [], sequence: 0 });
     await workspaceClient.listWorkspaces();
     expect(invoke).toHaveBeenLastCalledWith("workbench_list_workspaces", {
       includeArchived: false,
@@ -279,5 +280,23 @@ describe("Workbench DTO boundary", () => {
     const failure = { code: "native-error", detail: "unchanged" };
     invoke.mockRejectedValueOnce(failure);
     await expect(researchClient.listSources("workspace")).rejects.toBe(failure);
+  });
+});
+
+it("continues a full page of project handoffs with its last durable ID", async () => {
+  invoke.mockReset();
+  const page = Array.from({ length: 200 }, (_, index) => ({
+    id: String(index).padStart(3, "0"),
+    stagedPath: "",
+    contentHash: "hash",
+    externalReference: null,
+  }));
+  invoke
+    .mockResolvedValueOnce(page)
+    .mockResolvedValueOnce([{ ...page[0], id: "200" }]);
+  expect(await listProjectReviewLinks("ws")).toHaveLength(201);
+  expect(invoke).toHaveBeenNthCalledWith(2, "workbench_project_review_links", {
+    workspaceId: "ws",
+    after: "199",
   });
 });

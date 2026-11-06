@@ -76,7 +76,7 @@ pub(super) fn resolve_rerun_workflow(
     let damaged = match saved {
         SavedWorkflow::Missing => false,
         SavedWorkflow::Unreadable => true,
-        SavedWorkflow::Text(json) => match pipeline_config::parse_workflow_document_strict(&json) {
+        SavedWorkflow::Text(json) => match pipeline_config::parse_saved_workflow_document(&json) {
             Ok(document) => {
                 return Ok(RerunWorkflow {
                     document,

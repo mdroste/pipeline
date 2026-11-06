@@ -100,10 +100,7 @@ fn search_within(
         result.truncated |= partial;
         for (name, stat) in entries {
             visited += 1;
-            if visited > MAX_VISITED
-                || result.matches.len() >= MAX_MATCHES
-                || started.elapsed() > time_limit
-            {
+            if visited > MAX_VISITED || started.elapsed() > time_limit {
                 result.truncated = true;
                 break 'walk;
             }
@@ -137,14 +134,15 @@ fn search_within(
                     for (index, line) in text.lines().enumerate() {
                         let lowered = line.to_lowercase();
                         if lowered.contains(&query) {
+                            if result.matches.len() == MAX_MATCHES {
+                                result.truncated = true;
+                                break 'walk;
+                            }
                             result.matches.push(FileSearchMatch {
                                 path: path.clone(),
                                 line: index + 1,
                                 text: excerpt(line, &lowered, &query),
                             });
-                            if result.matches.len() >= MAX_MATCHES {
-                                break;
-                            }
                         }
                     }
                 }
@@ -216,5 +214,18 @@ mod tests {
         let shown = excerpt(&line, &line, "needle");
         assert!(shown.contains("needle"));
         assert_eq!(shown.chars().count(), MAX_LINE_CHARS);
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn search_limit_only_reports_truncation_after_an_extra_matching_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("notes.txt");
+    for n in [MAX_MATCHES, MAX_MATCHES + 1] {
+        fs::write(&file, "needle\n".repeat(n)).unwrap();
+        let result = search_files(dir.path(), "needle").unwrap();
+        assert_eq!(result.matches.len(), MAX_MATCHES);
+        assert_eq!(result.truncated, n > MAX_MATCHES);
     }
 }

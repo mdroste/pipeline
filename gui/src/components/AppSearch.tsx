@@ -11,7 +11,7 @@ import { workspaceClient } from "../lib/workbench/workspaceClient";
 import type { Workspace } from "../lib/workbenchTypes";
 import {
   workspaceDestinations,
-  workspaceSections,
+  sectionLabel,
   type WorkspaceDestination,
 } from "../lib/workspaceNavigation";
 import { useNavRailSlot } from "./nav-rail/navRailSlot";
@@ -99,7 +99,13 @@ export default function AppSearch({
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
   const { projects, runs, tasks } = useSearchSources();
-  const { conversations } = useConversationIndex(true, false, true);
+  const { conversations } = useConversationIndex(
+    true,
+    false,
+    query,
+    false,
+    true,
+  );
   const workspace = useNavRailSlot()?.workspace;
   const viewProject = workspace?.projectId ?? projects[0]?.id ?? null;
   const entries = useMemo<SearchEntry[]>(() => {
@@ -108,11 +114,7 @@ export default function AppSearch({
           (id) => ({
             id: `view:${id}`,
             label: workspaceDestinations[id].label,
-            hint: `Project view · ${
-              workspaceSections.find(
-                (section) => section.id === workspaceDestinations[id].section,
-              )!.label
-            }`,
+            hint: `Project view · ${sectionLabel(id)}`,
             run:
               workspace?.projectId === viewProject
                 ? () => workspace.openView(id)

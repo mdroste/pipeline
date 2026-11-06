@@ -3,7 +3,7 @@ use super::{
     open_run_lock, read_utf8_at_most, recovery_failure, register_recovered_artifact,
     register_recovered_directory, run_lock_path, runs_dir, validate_run_id, write_manifest,
     write_text_atomic, RunManifest, CURRENT_ARTIFACT_SCHEMA_VERSION, DOCUMENT_TEXT_PATH,
-    LEGACY_EXTRACTED_TEXT_PATH, MAX_MANIFEST_BYTES, MAX_REPORT_BYTES,
+    LEGACY_EXTRACTED_TEXT_PATH, MAX_MANIFEST_BYTES, MAX_RECOVERY_CONTEXT_BYTES, MAX_REPORT_BYTES,
 };
 use std::fs;
 use std::path::Path;
@@ -20,11 +20,11 @@ fn resumable_status(status: &str) -> bool {
 fn captured_workflow_config(dir: &Path) -> Option<crate::pipeline_config::PipelineConfig> {
     let json = read_utf8_at_most(
         &dir.join("context").join("workflow.json"),
-        MAX_REPORT_BYTES,
+        MAX_RECOVERY_CONTEXT_BYTES,
         "Workflow snapshot",
     )
     .ok()?;
-    crate::pipeline_config::parse_workflow_document_strict(&json)
+    crate::pipeline_config::parse_saved_workflow_document(&json)
         .ok()
         .map(|workflow| workflow.config)
 }
@@ -75,19 +75,14 @@ pub(super) fn recover_resumable_run_dir(
     let artifact_count_before = manifest.artifacts.len();
     register_recovered_directory(manifest, dir, "artifacts/agent-responses", "agent_response");
     let recovered_response_index = manifest.artifacts.len() > artifact_count_before;
-    // A completed run deleted its step checkpoints at finalization, so the
-    // rebuild below could only produce an empty report — and would replace a
-    // possibly-good report.md along with the unreadable report.json (for
-    // example one over the read cap, or damaged by an external tool). Leave
-    // completed runs untouched rather than destroying delivered output, which
-    // also means their reports need no reading here.
-    let completed = matches!(manifest.status.as_str(), "done" | "degraded");
-    if completed
-        || read_utf8_at_most(&dir.join("report.json"), MAX_REPORT_BYTES, "Run report")
-            .ok()
-            .and_then(|json| serde_json::from_str::<crate::models::PipelineReport>(&json).ok())
-            .is_some()
-    {
+    // Published reports may legitimately exceed the reader's limit. Recovery
+    // only creates missing reports, never replaces an existing publication.
+    let report_exists = match fs::symlink_metadata(dir.join("report.json")) {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(format!("Cannot inspect published report: {error}")),
+    };
+    if matches!(manifest.status.as_str(), "done" | "degraded") || report_exists {
         // The report can be durable while the final manifest never was.
         let interrupted = manifest.status == "running";
         if interrupted {
@@ -144,7 +139,8 @@ pub(super) fn recover_resumable_run_dir(
     let mut checkpoint_failures = Vec::new();
     let mut completed = std::collections::HashSet::<String>::new();
     for path in &checkpoints {
-        let Ok(json) = read_utf8_at_most(path, MAX_REPORT_BYTES, "Step checkpoint") else {
+        let Ok(json) = read_utf8_at_most(path, MAX_RECOVERY_CONTEXT_BYTES, "Step checkpoint")
+        else {
             continue;
         };
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&json) else {
@@ -202,7 +198,7 @@ pub(super) fn recover_resumable_run_dir(
 
     let orientation = read_utf8_at_most(
         &dir.join("context").join("orientation.json"),
-        MAX_REPORT_BYTES,
+        MAX_RECOVERY_CONTEXT_BYTES,
         "Orientation map",
     )
     .ok()
@@ -249,8 +245,7 @@ pub(super) fn recover_resumable_run_dir(
     } else {
         crate::findings::ensure_legacy_products(&mut report);
     }
-    let report_json = serde_json::to_vec_pretty(&report)
-        .map_err(|error| format!("Failed to serialize recovered report: {error}"))?;
+    let report_json = super::serialize_report(&report)?;
     write_text_atomic(dir, "report.json", &report_json)?;
     let settings = crate::settings::load();
     let markdown = crate::output::render_markdown(
@@ -259,7 +254,13 @@ pub(super) fn recover_resumable_run_dir(
         std::time::Duration::from_secs(manifest.duration_secs),
         &settings,
     );
-    write_text_atomic(dir, "report.md", markdown.as_bytes())?;
+    match fs::symlink_metadata(dir.join("report.md")) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            write_text_atomic(dir, "report.md", markdown.as_bytes())?;
+        }
+        Err(error) => return Err(format!("Cannot inspect published Markdown: {error}")),
+        Ok(_) => {}
+    }
 
     register_recovered_artifact(manifest, dir, "report.md", "Recovered report", "report");
     register_recovered_artifact(

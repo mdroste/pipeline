@@ -4,6 +4,13 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[tokio::test]
 async fn shared_requests_preserve_owner_authority_and_rpc_rejections() {
+    let tools = vec![
+        json!({"name":"project_read","description":"Read a project file.","inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}),
+        json!({"type":"function","name":"workbench_paper_read","description":"Read research text.","inputSchema":{"type":"object"},"deferLoading":true}),
+        json!({"type":"namespace","name":"research","description":"Research tools.","tools":[{"type":"function","name":"lookup","description":"Look up a record.","inputSchema":{"type":"object"}}]}),
+    ];
+    let mut canonical_tools = tools.clone();
+    canonical_tools[0]["type"] = "function".into();
     for (service, permissions, approval, roots, config, base, schema) in [
         (
             "pipeline_workflows",
@@ -30,6 +37,7 @@ async fn shared_requests_preserve_owner_authority_and_rpc_rejections() {
         let expected_roots = roots.clone();
         let expected_config = config.clone();
         let expected_schema = schema.clone();
+        let expected_tools = canonical_tools.clone();
         let server = tokio::spawn(async move {
             let (read, mut write) = tokio::io::split(server_io);
             let mut reader = BufReader::new(read);
@@ -50,7 +58,7 @@ async fn shared_requests_preserve_owner_authority_and_rpc_rejections() {
                     assert_eq!(params["config"], json!(expected_config));
                     assert_eq!(params["baseInstructions"], json!(base));
                     assert_eq!(params["developerInstructions"], "Literal supplement");
-                    assert_eq!(params["dynamicTools"], json!([{ "name":"owner_tool" }]));
+                    assert_eq!(params["dynamicTools"], json!(expected_tools));
                     assert_eq!(params["reasoningEffort"], "high");
                     write
                         .write_all(
@@ -80,7 +88,7 @@ async fn shared_requests_preserve_owner_authority_and_rpc_rejections() {
                 approval_policy: approval,
                 developer_instructions: Some("Literal supplement"),
                 base_instructions: base,
-                dynamic_tools: &[json!({"name":"owner_tool"})],
+                dynamic_tools: &tools,
                 model: Some("fixture"),
                 reasoning_effort: Some("high"),
                 ephemeral: false,
@@ -103,6 +111,7 @@ async fn shared_requests_preserve_owner_authority_and_rpc_rejections() {
         assert_eq!(error.rpc_code, Some(-32602));
         assert_eq!(error.message, "rejected fixture");
         server.await.unwrap();
+        assert!(tools[0].get("type").is_none());
     }
 }
 

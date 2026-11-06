@@ -18,6 +18,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 vi.mock("../ReportViewer", () => ({
   default: ({ markdown }: { markdown: string }) => <pre>{markdown}</pre>,
 }));
+vi.mock("./Activity", () => ({ default: () => null }));
 const run: DiscoveryRun = {
   id: "portfolio",
   revision: 3,
@@ -80,32 +81,143 @@ beforeEach(() => {
       ];
     if (name === "list_profiles" || name === "discovery_list") return [];
     if (name === "discovery_get") return run;
+    if (name === "discovery_activity")
+      return {
+        revision: run.revision,
+        observedAt: Math.floor(Date.now() / 1000),
+        lastActivityAt: null,
+        step: null,
+        entries: [],
+        agents: [],
+      };
     if (name === "discovery_candidates") return candidates;
     if (name === "discovery_start" || name === "discovery_select")
       return { ...run, state: "running" };
     return null;
   });
 });
+
+it("refreshes proposal assessments when the revision changes without changing candidate counts", async () => {
+  const props = { run, onUpdated: vi.fn(), onClose: vi.fn() };
+  const view = render(<Detail {...props} />);
+  await screen.findByText(/Project 1/);
+  mocks.invoke.mockImplementation(async (name: string) => {
+    if (name === "discovery_candidates")
+      return candidates.map((c) => ({
+        ...c,
+        proposal: { ...c.proposal, question: "A revised research question" },
+      }));
+    return null;
+  });
+  view.rerender(
+    <Detail {...props} run={{ ...run, revision: run.revision + 1 }} />,
+  );
+  await screen.findAllByText("A revised research question");
+  expect(
+    screen.queryByText("A historical research question"),
+  ).not.toBeInTheDocument();
+});
+
+it("refreshes an open paper without moving focus and ignores responses after closing", async () => {
+  const makePaper = (text: string) => ({
+    candidateId: 1,
+    state: "drafting",
+    reason: "",
+    rounds: [],
+    challenges: [],
+    evidence: {},
+    assessment: null,
+    versions: [
+      {
+        version: 1,
+        hash: "hash",
+        reviews: [],
+        manuscript: {
+          title: "Live paper",
+          abstractText: text,
+          markdown: text,
+          latex: "",
+          bibliography: "",
+          evidenceIds: [],
+          limitations: [],
+          responseToReview: [],
+          files: [],
+        },
+      },
+    ],
+  });
+  let pending: ((value: ReturnType<typeof makePaper>) => void) | undefined;
+  mocks.invoke.mockImplementation(async (name: string) =>
+    name === "discovery_paper" ? makePaper("First draft") : null,
+  );
+  const props = {
+    run: {
+      ...run,
+      state: "running",
+      papers: [
+        {
+          candidateId: 1,
+          title: "Live paper",
+          state: "drafting",
+          reason: "",
+          rounds: 1,
+          versions: 1,
+          reviewCount: 0,
+          hash: "hash",
+          assessment: null,
+        },
+      ],
+    },
+    onUpdated: vi.fn(),
+    onClose: vi.fn(),
+  };
+  const view = render(<Detail {...props} />);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Read paper and reviews" }),
+  );
+  await screen.findAllByText("First draft");
+  await waitFor(() =>
+    expect(
+      screen.getByRole("heading", { name: "Live paper", level: 3 }),
+    ).toHaveFocus(),
+  );
+  const close = screen.getByRole("button", { name: "Close paper reader" });
+  close.focus();
+  mocks.invoke.mockImplementation(async (name: string) =>
+    name === "discovery_paper" ? makePaper("Revised draft") : null,
+  );
+  view.rerender(
+    <Detail {...props} run={{ ...props.run, revision: run.revision + 1 }} />,
+  );
+  await screen.findAllByText("Revised draft");
+  expect(close).toHaveFocus();
+  mocks.invoke.mockImplementation((name: string) =>
+    name === "discovery_paper"
+      ? new Promise((resolve) => {
+          pending = resolve;
+        })
+      : Promise.resolve(null),
+  );
+  view.rerender(
+    <Detail {...props} run={{ ...props.run, revision: run.revision + 2 }} />,
+  );
+  await waitFor(() => expect(pending).toBeDefined());
+  fireEvent.click(close);
+  pending!(makePaper("Late draft"));
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("region", { name: "Paper reader" }),
+    ).not.toBeInTheDocument(),
+  );
+  expect(screen.queryByText("Late draft")).not.toBeInTheDocument();
+});
 it("starts prompt-only unsupervised research once with the exact name and default funnel", async () => {
   const started = vi.fn();
-  render(
-    <Builder
-      initialMode="unsupervised"
-      onStarted={started}
-      onClose={vi.fn()}
-    />,
-  );
-  expect(screen.getByLabelText("Mode")).toHaveValue("unsupervised");
+  render(<Builder initialMode="unsupervised" onStarted={started} />);
   expect(
-    screen.getByRole("option", {
-      name: "Research discovery — choose projects yourself",
-    }),
-  ).toBeInTheDocument();
-  expect(
-    screen.getByRole("option", {
-      name: "Research discovery — let Pipeline choose projects",
-    }),
-  ).toBeInTheDocument();
+    screen.getByRole("radio", { name: /Let Pipeline choose/ }),
+  ).toBeChecked();
+  expect(screen.getByRole("radio", { name: /I’ll choose/ })).not.toBeChecked();
   fireEvent.change(screen.getByLabelText("Research topics and questions"), {
     target: { value: "Study source transmission in medieval archives" },
   });
@@ -132,6 +244,70 @@ it("starts prompt-only unsupervised research once with the exact name and defaul
     screen.queryByRole("button", { name: "Develop selected projects" }),
   ).not.toBeInTheDocument();
 });
+it("preserves a customized setup through history and submits the chosen settings", async () => {
+  render(<SelfDiscovery onBack={vi.fn()} />);
+  await screen.findByRole("option", { name: /Source materials/ });
+  const change = (name: string, value: string) =>
+    fireEvent.change(screen.getByLabelText(name), { target: { value } });
+  change("Research topics and questions", "Study source transmission");
+  change("Project context", "source");
+  fireEvent.click(screen.getByRole("radio", { name: /Let Pipeline choose/ }));
+  fireEvent.click(screen.getByText("Sources & tools"));
+  expect(
+    screen.getByLabelText(
+      "Search public literature records and available abstracts",
+    ),
+  ).not.toBeChecked();
+  change("Research input files", "sources/archive.txt");
+  fireEvent.click(
+    screen.getByText("Allow code and computation in isolated paper folders"),
+  );
+  fireEvent.click(screen.getByText("Research & review"));
+  change("Idea subagents", "4");
+  change("Detailed proposal reviewers", "0");
+  change("Investigation rounds per paper", "6");
+  fireEvent.click(
+    screen.getByText("Challenge findings after each research round"),
+  );
+  fireEvent.click(screen.getByText("Models & ranking"));
+  change("Reviewer model", "reviewer-override");
+  change("Ranking priorities", "Strength of primary evidence.");
+  fireEvent.click(screen.getByText("Resource limits"));
+  change("Maximum time spent running (hours)", "3");
+  change("Minutes per action", "12");
+  fireEvent.click(screen.getByRole("button", { name: "Portfolio history" }));
+  expect(screen.queryByRole("form")).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Return to setup" }));
+  expect(screen.getByLabelText("Research topics and questions")).toHaveValue(
+    "Study source transmission",
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Start research discovery" }),
+  );
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("discovery_start", {
+      request: {
+        operationId: expect.any(String),
+        sessionId: "source",
+        definition: {
+          ...newDiscovery("unsupervised"),
+          prompt: "Study source transmission",
+          inputPaths: ["sources/archive.txt"],
+          acquireLiterature: false,
+          allowComputation: false,
+          ideaAgents: 4,
+          proposalReviewers: 0,
+          researchRounds: 6,
+          challengeResearch: false,
+          reviewerModel: "reviewer-override",
+          rankingPriorities: "Strength of primary evidence.",
+          activeSeconds: 10800,
+          actionTimeoutSeconds: 720,
+        },
+      },
+    }),
+  );
+});
 it("enforces fewer than ten papers and K no larger than N", () => {
   expect(
     discoveryError({ ...newDiscovery(), prompt: "Research", paperCount: 10 }),
@@ -150,9 +326,7 @@ it("retains the operation identity when a Start response is uncertain", async ()
     if (name === "discovery_start") throw new Error("Connection interrupted");
     return [];
   });
-  render(
-    <Builder initialMode="supervised" onStarted={vi.fn()} onClose={vi.fn()} />,
-  );
+  render(<Builder initialMode="supervised" onStarted={vi.fn()} />);
   fireEvent.change(screen.getByLabelText("Research topics and questions"), {
     target: { value: "A theoretical physics question" },
   });
@@ -327,7 +501,6 @@ it("keeps blank lines while typing input files and drops them at Start", async (
       initialMode="unsupervised"
       initialSessionId="source"
       onStarted={vi.fn()}
-      onClose={vi.fn()}
     />,
   );
   fireEvent.change(screen.getByLabelText("Research topics and questions"), {
@@ -349,13 +522,7 @@ it("keeps blank lines while typing input files and drops them at Start", async (
   );
 });
 it("says why Start is unavailable", () => {
-  render(
-    <Builder
-      initialMode="unsupervised"
-      onStarted={vi.fn()}
-      onClose={vi.fn()}
-    />,
-  );
+  render(<Builder initialMode="unsupervised" onStarted={vi.fn()} />);
   const start = screen.getByRole("button", {
     name: "Start research discovery",
   });
@@ -453,4 +620,62 @@ it("opens a paper in a bounded reader and focuses it", async () => {
   } finally {
     Element.prototype.scrollIntoView = original;
   }
+});
+
+it("keeps delivery separate from evidence and accepts only the displayed paper version", async () => {
+  const record = {
+    schemaVersion: 1,
+    subjectVersion: "paper-hash",
+    assessorRole: "Final paper assessor",
+    assessorChild: "child",
+    claims: [],
+    objections: ["Missing assumption"],
+    supported: false,
+    acceptedAt: null,
+  };
+  const p = {
+    candidateId: 2,
+    title: "Proposition",
+    state: "incomplete",
+    reason: "Draft written",
+    rounds: 1,
+    versions: 1,
+    reviewCount: 0,
+    hash: "paper-hash",
+    assessment: null,
+    draftDelivered: true,
+    claimRecord: record,
+  };
+  const props = { onUpdated: vi.fn(), onClose: vi.fn() };
+  const view = render(<Detail {...props} run={{ ...run, papers: [p] }} />);
+  expect(screen.getByText("Draft delivered.")).toBeInTheDocument();
+  expect(
+    screen.getByText("Evidence requirements unresolved"),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Accept this assessment" }),
+  ).toBeNull();
+  const next = {
+    ...p,
+    claimRecord: { ...record, objections: [], supported: true },
+  };
+  view.rerender(
+    <Detail {...props} run={{ ...run, revision: 6, papers: [next] }} />,
+  );
+  expect(
+    mocks.invoke.mock.calls.some(
+      ([cmd]) => cmd === "discovery_accept_assessment",
+    ),
+  ).toBe(false);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Accept this assessment" }),
+  );
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("discovery_accept_assessment", {
+      id: run.id,
+      revision: 6,
+      candidateId: 2,
+      subjectVersion: "paper-hash",
+    }),
+  );
 });

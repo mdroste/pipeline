@@ -559,3 +559,44 @@ fn history_lists_every_run_however_slow_the_folder_is() {
     assert_eq!(listed.len(), 1);
     assert!(listed[0].resumable);
 }
+
+#[test]
+fn recovery_keeps_large_published_partial_reports() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut writer = RunWriter::create_in(temp.path(), "large_partial").unwrap();
+    writer
+        .add_text(DOCUMENT_TEXT_PATH, "Captured", "document", "paper")
+        .unwrap();
+    let dir = writer.dir();
+    let mut manifest = writer.current_manifest();
+    manifest.status = "partial".into();
+    let path = dir.join("report.json");
+    let data = serde_json::to_vec(&empty_report()).unwrap();
+    fs::write(&path, &data).unwrap();
+    // Pad valid JSON using spaces to exercise the real reader cap.
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    let padding = vec![b' '; 1024 * 1024];
+    for _ in 0..64 {
+        file.write_all(&padding).unwrap();
+    }
+    fs::write(dir.join("report.md"), "Delivered findings").unwrap();
+    assert!(run_has_resume_files(dir, &manifest));
+    assert!(!recover_resumable_run_dir(dir, &mut manifest).unwrap());
+    assert_eq!(
+        fs::metadata(&path).unwrap().len(),
+        data.len() as u64 + (64 << 20)
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("report.md")).unwrap(),
+        "Delivered findings"
+    );
+    // A legacy report outside today's budget is still a published file.
+    file.set_len(MAX_REPORT_BYTES as u64 + 1).unwrap();
+    assert!(!run_has_resume_files(dir, &manifest));
+    assert!(!recover_resumable_run_dir(dir, &mut manifest).unwrap());
+    assert_eq!(
+        fs::metadata(path).unwrap().len(),
+        MAX_REPORT_BYTES as u64 + 1
+    );
+}

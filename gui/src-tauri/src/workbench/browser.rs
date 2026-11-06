@@ -43,6 +43,23 @@ fn root() -> Result<PathBuf, String> {
         .join("native")
         .join("conversation-browser"))
 }
+pub(crate) fn profile_path(session: &str) -> Result<PathBuf, String> {
+    use sha2::{Digest, Sha256};
+    Ok(root()?
+        .join("profiles")
+        .join(format!("{:x}", Sha256::digest(session))))
+}
+
+pub(crate) async fn close_session(session: &str) {
+    let mut guard = process().lock().await;
+    if guard.as_ref().is_some_and(|p| p.session == session) {
+        if let Some(mut browser) = guard.take() {
+            crate::commands::lifecycle::kill_independent_process(browser.pid);
+            let _ = browser.child.kill().await;
+            let _ = browser.child.wait().await;
+        }
+    }
+}
 fn err(e: impl std::fmt::Display) -> WorkbenchError {
     WorkbenchError::invalid(e.to_string())
 }
@@ -142,10 +159,7 @@ impl Process {
             ));
         }
         let root = root().map_err(err)?;
-        use sha2::{Digest, Sha256};
-        let profile = root
-            .join("profiles")
-            .join(format!("{:x}", Sha256::digest(session)));
+        let profile = profile_path(session).map_err(err)?;
         crate::agent_runtime::codex::session::private_directory(&profile).map_err(err)?;
         let mut command = std::process::Command::new(super::tool_setup::node().map_err(err)?);
         command

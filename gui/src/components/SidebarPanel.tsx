@@ -67,7 +67,7 @@ export function SidebarHeader({
   return (
     <header className="shrink-0 px-5 pb-5 pt-6">
       <div className="flex items-center justify-between gap-3">
-        <Heading className="min-w-0 text-xl font-semibold tracking-[-0.02em] text-gray-950 dark:text-gray-50">
+        <Heading className="min-w-0 text-xl font-semibold tracking-[-0.02em] text-gray-950 dark:text-ink">
           {title}
         </Heading>
         {actions && (

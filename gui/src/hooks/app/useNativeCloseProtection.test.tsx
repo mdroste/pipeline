@@ -1,3 +1,4 @@
+import { useDraftFlush } from "../useDraftFlush";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { useNativeCloseProtection } from "./useNativeCloseProtection";
@@ -177,4 +178,23 @@ it("does not queue duplicate quit confirmations and removes both listeners", asy
   unmount();
   expect(mocks.stopClose).toHaveBeenCalledOnce();
   expect(mocks.stopQuit).toHaveBeenCalledOnce();
+});
+
+it("flushes drafts before quitting and keeps the window open if retention fails", async () => {
+  const flush = vi.fn(() => false);
+  renderHook(() => useDraftFlush(flush));
+  await setup();
+  await closeWindow();
+  expect(flush).toHaveBeenCalledOnce();
+  expect(mocks.invoke).not.toHaveBeenCalledWith("complete_app_close", {
+    action: "quit",
+  });
+  expect(mocks.notify).toHaveBeenCalledWith(
+    expect.stringContaining("Save your files"),
+  );
+  flush.mockReturnValue(true);
+  await closeWindow();
+  expect(mocks.invoke).toHaveBeenCalledWith("complete_app_close", {
+    action: "quit",
+  });
 });

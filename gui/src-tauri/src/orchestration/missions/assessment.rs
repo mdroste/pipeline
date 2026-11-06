@@ -11,6 +11,7 @@ use crate::orchestration::store::{now, Result};
 /// so the instruction is excerpted; the full text stays in the round.
 pub(super) fn host_finding(c: &Candidate, outcome: &str) -> Finding {
     Finding {
+        execution_ids:vec![],
         summary: format!(
             "Executed the selected check: {}",
             prompts::short(&c.question, 3800)
@@ -33,6 +34,7 @@ pub(super) fn host_finding(c: &Candidate, outcome: &str) -> Finding {
 
 pub(crate) fn apply_challenge(m: &mut Mission, c: Challenge, child: &str) -> Result<()> {
     validate::challenge(m, &c)?;
+    super::upgrade_round_fingerprints(&mut m.rounds)?;
     let r = m.rounds.last().ok_or("Challenge round is missing")?;
     if r.challenge.is_some() {
         return Err("This investigation already has a retained challenge".into());
@@ -51,6 +53,61 @@ pub(crate) fn apply_challenge(m: &mut Mission, c: Challenge, child: &str) -> Res
                 .into(),
         );
     }
+    let evidence = m
+        .rounds
+        .iter()
+        .flat_map(|round| round.evidence.clone())
+        .collect();
+    let mut objections = c.unresolved.clone();
+    if r.review.as_ref().is_some_and(|v| {
+        v["complete"] != true
+            || v["highPriorityCount"].as_u64().unwrap_or(0) > 0
+            || v["unknownPriorityCount"].as_u64().unwrap_or(0) > 0
+    }) {
+        objections.push("The structured Review is incomplete or retains material findings.".into());
+    }
+    let no_round_objection = objections.is_empty();
+    for a in &c.criteria {
+        if a.status != super::model::CriterionStatus::Met {
+            objections.push(format!(
+                "{}: {}",
+                m.definition.criteria[a.criterion], a.explanation
+            ));
+        }
+    }
+    let record = crate::orchestration::claims::assess(
+        format!("round-{}", r.number),
+        ("Independent challenger", child),
+        &m.definition.criteria,
+        &c.claim_assessments,
+        &evidence,
+        objections,
+        matches!(c.outcome, Outcome::Supported | Outcome::Refuted)
+            && c.criteria
+                .iter()
+                .all(|a| a.status == super::model::CriterionStatus::Met),
+    )?;
+    if record
+        .claims
+        .iter()
+        .filter_map(|a| a.goal_id.as_ref())
+        .any(|id| !m.goals.iter().any(|g| g.spec.id == *id))
+    {
+        return Err("Claim names an unknown agenda goal".into());
+    }
+    let selected_supported = r.selected.as_ref().is_some_and(|candidate| {
+        let mut matching = record
+            .claims
+            .iter()
+            .filter(|a| a.goal_id.as_ref() == Some(&candidate.goal_id))
+            .peekable();
+        record.supported
+            || (no_round_objection
+                && matching.peek().is_some()
+                && matching.all(|a| a.meets_requirements))
+    });
+    let overall_infeasible = r.selected.is_none() && c.outcome == Outcome::Infeasible;
+    let infeasible = c.goal_resolved && c.outcome == Outcome::Infeasible;
     let repeated = r.result_fingerprint.as_ref().is_some_and(|f| {
         m.rounds
             .iter()
@@ -65,7 +122,7 @@ pub(crate) fn apply_challenge(m: &mut Mission, c: Challenge, child: &str) -> Res
     if let Some(candidate) = &r.selected {
         if let Some(goal) = m.goals.iter_mut().find(|g| g.spec.id == candidate.goal_id) {
             goal.assessment = c.summary.clone();
-            if c.goal_resolved {
+            if c.goal_resolved && (selected_supported || infeasible) {
                 goal.state = match c.outcome {
                     Outcome::Supported => "supported",
                     Outcome::Refuted => "refuted",
@@ -89,8 +146,10 @@ pub(crate) fn apply_challenge(m: &mut Mission, c: Challenge, child: &str) -> Res
         });
     }
     merge_questions(m, c.questions.clone())?;
-    let complete = c.mission_complete;
+    let requested_complete = c.mission_complete;
+    let complete = requested_complete && record.supported;
     let r = m.rounds.last_mut().unwrap();
+    r.claim_record = Some(record);
     r.challenge = Some(c);
     r.child_ids.push(child.into());
     m.phase = Phase::Plan;
@@ -100,6 +159,16 @@ pub(crate) fn apply_challenge(m: &mut Mission, c: Challenge, child: &str) -> Res
     if complete {
         m.state = "completed".into();
         m.reason="The challenger assessed every original criterion as met; review the evidence and its limitations".into();
+        m.due_at = None;
+    } else if overall_infeasible || (infeasible && m.goals.iter().all(|g| g.state != "open")) {
+        m.state = "stopped".into();
+        m.reason =
+            "Investigation stopped as infeasible; no supported completion is claimed.".into();
+        m.due_at = None;
+    } else if requested_complete {
+        m.state = "attention".into();
+        m.reason="The assessment has unresolved evidence requirements. Inspect the claims before continuing.".into();
+        m.attention_count += 1;
         m.due_at = None;
     } else if m.stagnant_rounds >= m.definition.budget.max_stagnant_rounds {
         m.state = "attention".into();

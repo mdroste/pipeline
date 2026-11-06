@@ -176,7 +176,7 @@ pub async fn repin_checks(scope: &mut Scope) -> Result<Vec<String>> {
     Ok(refused)
 }
 
-fn flatten<'a>(steps: &'a [Step], out: &mut Vec<&'a Step>) {
+pub(crate) fn flatten<'a>(steps: &'a [Step], out: &mut Vec<&'a Step>) {
     for step in steps {
         out.push(step);
         match &step.action {

@@ -454,8 +454,11 @@ const ASCII_PUNCTUATION_RE = /[!-/:-@[-`{-~]/g;
  * are text to Markdown, so a title cannot turn into a list or emphasis. A bare
  * URL still becomes a link, which `InlineMathText` renders as text.
  */
-export function mathOnlyMarkdown(text: string): string | null {
-  if (text.search(MATH_SPAN_RE) < 0) return null;
+export function mathOnlyMarkdown(
+  text: string,
+  repairBareMath = false,
+): string | null {
+  if (text.search(MATH_SPAN_RE) < 0 && !repairBareMath) return null;
   return normalizeMathDelimiters(
     mapMathSpans(
       text,

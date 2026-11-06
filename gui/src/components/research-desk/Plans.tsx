@@ -99,8 +99,8 @@ export default function Plans({
           ))}
         </select>
         <p className={muted}>
-          Set up profiles in Analyze → Command settings. Use relative script
-          paths and declare every input and package lockfile.
+          Set up profiles in Project settings → Command settings. Use relative
+          script paths and declare every input and package lockfile.
         </p>
         <fieldset className="space-y-1">
           <legend className="text-xs">

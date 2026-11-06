@@ -10,12 +10,12 @@ SELECT w.id, w.name, w.root, w.missing_root_at, w.updated_at,
    LIMIT 1),
   (SELECT json_object('id', s.id, 'title', substr(s.title, 1, 240),
                       'updatedAt', s.updated_at, 'kind', 'conversation')
-   FROM sessions s WHERE s.workspace_id = w.id AND s.archived_at IS NULL
+   FROM sessions s WHERE s.workspace_id = w.id AND s.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM discovery_roles d WHERE d.session_id=s.id)
    ORDER BY s.updated_at DESC, s.id LIMIT 1),
   (SELECT json_object('id', a.id, 'title', a.title, 'updatedAt', a.updated_at, 'kind', a.kind)
    FROM (
      SELECT id, substr(title, 1, 240) AS title, updated_at, 'conversation' AS kind
-       FROM sessions WHERE workspace_id = w.id AND archived_at IS NULL
+       FROM sessions s WHERE s.workspace_id = w.id AND s.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM discovery_roles d WHERE d.session_id=s.id)
      UNION ALL
      SELECT id, substr(title, 1, 240), updated_at, 'document'
        FROM papers WHERE workspace_id = w.id AND current_revision_id IS NOT NULL
@@ -36,6 +36,6 @@ SELECT w.id, w.name, w.root, w.missing_root_at, w.updated_at,
      AND json_extract(a.body_json, '$.state') IN ('applying', 'recovery_required'))
 FROM workspaces w
 LEFT JOIN project_records h ON h.workspace_id = w.id AND h.kind = 'home' AND h.id = 'home_' || w.id
-WHERE w.archived_at IS NULL
-ORDER BY w.updated_at DESC, w.id
+WHERE w.archived_at IS NULL AND w.id > ?2
+ORDER BY w.id
 LIMIT ?1

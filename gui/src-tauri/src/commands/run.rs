@@ -3,7 +3,7 @@ use super::*;
 mod document;
 mod inputs;
 mod orientation;
-mod report;
+pub(super) mod report;
 mod visuals;
 
 // This orchestration boundary carries the immutable launch snapshot together
@@ -36,6 +36,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     )?;
     validate_named_input_paths(&snapshot.config, &provided_inputs, true)?;
     let RunSnapshot {
+        review_handoff_id,
         author_note,
         settings,
         mut config,
@@ -181,12 +182,14 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     for note in &extraction.quality_notes {
         crate::pipeline::logging::emit(app, format!("WARNING: {note}"));
     }
-    let input_identity = crate::runs::input_identity(
+    let mut input_identity = crate::runs::input_identity(
         paper_path,
         input_interpretation,
         &extraction.paper_hash,
         None,
     );
+
+    input_identity.review_handoff_id = review_handoff_id;
 
     // Close/flush the preprocessing sink before copying it into the newly
     // addressable run directory.
@@ -296,6 +299,19 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         .read_root
         .as_deref()
         .and_then(|path| crate::pipeline::claude::normalize_cli_root(&path.to_string_lossy()));
+    let source_record = super::rerun::files::read_run_file_in(
+        run_writer.as_ref().ok_or("Missing Review workspace")?.dir(),
+        "context/source-snapshot.json",
+    )?;
+    let recipe = super::run_contract::OrientationRecipe::new(
+        &config,
+        &settings,
+        input_mode,
+        &extraction.text,
+        Some(&source_record),
+        author_note.as_deref(),
+        &extraction.quality_notes,
+    )?;
     let usage_before_orientation = crate::pipeline::logging::run_usage();
     let orientation::OrientedDocument {
         orientation,
@@ -304,8 +320,8 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         _orient_tmp,
     } = orientation::prepare_orientation(
         app,
+        &recipe,
         &config,
-        input_mode,
         &extraction,
         &scoped_source_read_root,
         &run_input_dir,
@@ -387,6 +403,19 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         return Err("Pipeline cancelled".into());
     }
 
+    let writer = run_writer.as_mut().ok_or("Missing Review workspace")?;
+    let mut contract = super::run_contract::ExecutionContract::build(
+        &execution_config,
+        &settings,
+        &recipe,
+        &orientation,
+        extraction.quality_notes.clone(),
+        author_note.as_deref(),
+        &variables,
+        &persisted_inputs,
+        writer,
+    )?;
+    contract.save(writer, std::iter::empty())?;
     let result = executor::budget::counted_from(
         budget_start,
         executor::execute_steps(
@@ -430,7 +459,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     );
 
     let diff_text = if diff || settings.auto_revision_reconciliation {
-        revision_diff(app, paper_path, &extraction.paper_hash, &mut report).await
+        revision_diff(app, &input_identity, &mut report).await
     } else {
         None
     };
@@ -468,11 +497,10 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
 /// a paper with nothing to compare.
 async fn revision_diff(
     app: &crate::emit::EventBus,
-    paper_path: &str,
-    paper_hash: &str,
+    identity: &crate::runs::InputIdentity,
     report: &mut crate::models::PipelineReport,
 ) -> Option<String> {
-    let compared = match crate::runs::load_latest_report_for_input(paper_path, paper_hash) {
+    let compared = match crate::runs::load_latest_report_for_lineage(identity) {
         Ok(None) => return None,
         Ok(Some(prior)) => reconcile::reconcile(app, &prior, report).await,
         Err(error) => Err(error),
@@ -492,6 +520,10 @@ fn record_failed_revision_diff(
     error: &str,
 ) {
     crate::pipeline::logging::emit(app, format!("WARNING: revision diff failed: {error}"));
+    if error.contains(crate::pipeline::executor::budget::BUDGET_STOP_PREFIX) {
+        report.quality.status = "partial".to_string();
+        report.quality.limitations.push(error.to_string());
+    }
     report.quality.limitations.push(
         "The comparison with the previous Review of this paper could not be completed, so this report has no revision diff."
             .to_string(),

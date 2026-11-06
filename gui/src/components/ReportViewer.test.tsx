@@ -473,6 +473,49 @@ describe("ReportViewer", () => {
     expect(container.querySelector(".math-fallback")).toBeNull();
   });
 
+  it("typesets undelimited Unicode equations in saved reports", () => {
+    const { container } = render(
+      <ReportViewer
+        markdown={[
+          "The conditions imply (r+δ)pK/(wL)=a/b here.",
+          "",
+          "β₁ ≈ −1.3",
+          "",
+          "| Parameter | Interpretation |",
+          "| --- | --- |",
+          "| χ^K | Share |",
+        ].join("\n")}
+      />,
+    );
+    expect(
+      [...container.querySelectorAll(".katex annotation")].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(["(r+δ)pK/(wL)=a/b", "β_{1} ≈ −1.3", "χ^K"]);
+    expect(container.querySelectorAll(".katex-display")).toHaveLength(1);
+    expect(container.querySelector(".math-fallback, .katex-error")).toBeNull();
+    expect(screen.getByText(/The conditions imply/)).toHaveTextContent(
+      /here\.$/,
+    );
+  });
+
+  it("leaves code, links, currency and ordinary prose literal", () => {
+    const { container } = render(
+      <ReportViewer
+        markdown={[
+          "Prices are $5 to $8. See `β₁` or [χ^K](https://example.org/x_i).",
+          "",
+          "```text",
+          "β₁ ≈ −1.3",
+          "```",
+        ].join("\n")}
+      />,
+    );
+    expect(container.querySelector(".katex")).toBeNull();
+    expect(container).toHaveTextContent("Prices are $5 to $8.");
+    expect(screen.getByRole("link", { name: "χ^K" })).toBeInTheDocument();
+  });
+
   it("shows an inspectable readable fallback for invalid LaTeX", () => {
     const { container } = render(
       <ReportViewer

@@ -31,6 +31,7 @@ pub mod safety;
 pub mod settings;
 pub mod storage;
 pub mod updates;
+mod usage_allowance;
 pub mod workbench;
 use tauri::Manager;
 
@@ -69,6 +70,13 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .on_page_load(|webview, payload| {
+            if webview.label() == "main"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Started)
+            {
+                file_stream::release_captures();
+            }
+        })
         .register_asynchronous_uri_scheme_protocol(
             file_stream::SCHEME,
             |context, request, responder| {
@@ -128,17 +136,23 @@ pub fn run() {
             orchestration::missions::commands::mission_events,
             orchestration::missions::commands::mission_methods,
             orchestration::missions::commands::mission_control,
+            orchestration::missions::commands::mission_accept_assessment,
             orchestration::missions::commands::mission_answer,
             orchestration::missions::commands::mission_retain_method,
             orchestration::missions::commands::mission_export,
             orchestration::missions::commands::mission_evidence,
+            orchestration::commands::automation_usage,
+            orchestration::commands::automation_review_estimate,
+            orchestration::discovery::commands::discovery_budget_preview,
             orchestration::discovery::commands::discovery_start,
             orchestration::discovery::commands::discovery_list,
             orchestration::discovery::commands::discovery_get,
+            orchestration::discovery::activity::discovery_activity,
             orchestration::discovery::commands::discovery_candidates,
             orchestration::discovery::commands::discovery_paper,
             orchestration::discovery::commands::discovery_select,
             orchestration::discovery::commands::discovery_control,
+            orchestration::discovery::commands::discovery_accept_assessment,
             orchestration::discovery::commands::discovery_export,
             orchestration::discovery::commands::discovery_events,
             orchestration::commands::task_list,
@@ -160,6 +174,9 @@ pub fn run() {
             orchestration::commands::task_proposals,
             orchestration::commands::task_prepare_proposal,
             orchestration::commands::task_export_artifact,
+            orchestration::commands::task_storage_issues,
+            orchestration::commands::task_delivered_files,
+            orchestration::commands::task_save_delivered_file,
             orchestration::commands::task_export_chain,
             orchestration::commands::task_step_output,
             commands::export::read_full_report,
@@ -239,6 +256,7 @@ pub fn run() {
             workbench::commands::workbench_get_title_preferences,
             workbench::commands::workbench_save_title_preferences,
             workbench::commands::workbench_generate_session_title,
+            workbench::commands::workbench_conversation_index,
             workbench::commands::workbench_list_sessions,
             workbench::commands::workbench_session_snapshot,
             workbench::commands::workbench_conversation_snapshot,
@@ -256,6 +274,7 @@ pub fn run() {
             workbench::commands::workbench_import_paper,
             workbench::commands::workbench_list_papers,
             workbench::commands::workbench_project_home,
+            workbench::commands::workbench_chat_brief,
             workbench::commands::workbench_project_tasks,
             workbench::commands::workbench_project_index,
             workbench::commands::workbench_repository_status,
@@ -371,6 +390,7 @@ pub fn run() {
             workbench::commands::workbench_record_performance,
             workbench::commands::workbench_record_research_evaluation,
             workbench::commands::workbench_list_research_evaluations,
+            workbench::commands::workbench_project_review_links,
             workbench::commands::workbench_prepare_review_handoff,
             workbench::commands::workbench_link_review_handoff,
             workbench::commands::workbench_missing_backup_files,

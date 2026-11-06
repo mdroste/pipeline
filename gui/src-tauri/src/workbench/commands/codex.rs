@@ -212,6 +212,7 @@ pub(crate) async fn submit_turn(
             return crate::workbench::api::submit(desktop(app)?, request, binding, prepared, automated, provider, control).await;
         }
         if crate::workbench::claude::selected(&runtime)? {
+            crate::usage_allowance::subscription_dispatch().map_err(WorkbenchError::invalid)?;
             return crate::workbench::claude::submit(desktop(app)?, request, binding, prepared, automated, control).await;
         }
         let app = desktop(app)?;
@@ -270,6 +271,7 @@ pub(crate) async fn submit_turn(
             store.set_binding_harness(&binding_for_snapshot, &fingerprint, &instruction_sources)
         })
         .await?;
+        crate::usage_allowance::subscription_dispatch().map_err(WorkbenchError::invalid)?;
         handed_off = true;
         dispatched_supervisor = Some(supervisor.clone());
         let turn_id = supervisor
@@ -415,6 +417,29 @@ const TURN_BUSY: &str = "turn_busy";
 
 #[tauri::command]
 pub async fn workbench_codex_interrupt_turn(
+    thread_id: String,
+    turn_id: String,
+) -> Result<(), crate::workbench::codex::RequestError> {
+    {
+        let state = active_turn_state()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if state.thread_id.as_deref() == Some(&thread_id)
+            && state.turn_id.as_deref() == Some(&turn_id)
+            && state
+                .owner
+                .as_ref()
+                .is_some_and(|owner| owner.origin == TurnOrigin::Automation)
+        {
+            return Err(crate::workbench::codex::RequestError::invalid(
+                "Stop this turn from its automation.",
+            ));
+        }
+    }
+    interrupt_runtime_turn(thread_id, turn_id).await
+}
+
+pub(crate) async fn interrupt_runtime_turn(
     thread_id: String,
     turn_id: String,
 ) -> Result<(), crate::workbench::codex::RequestError> {
@@ -646,15 +671,16 @@ pub async fn workbench_codex_resolve_server_request(
                 .unwrap_or_else(|| "The user declined this request".to_string()),
         ))
     };
-    claim_pending_request(
-        &mut pending_server_requests()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()),
-        &request,
-        supervisor.status().epoch,
-    )?;
     supervisor
-        .respond_to_server_request(request.request_id, response)
+        .respond_after_claim(request.request_id.clone(), response, || {
+            claim_pending_request(
+                &mut pending_server_requests()
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner()),
+                &request,
+                supervisor.status().epoch,
+            )
+        })
         .await?;
     Ok(())
 }
@@ -862,6 +888,7 @@ pub(super) fn ensure_event_bridge(
                     if refuse_unsupported_request(&supervisor, &event).await {
                         continue;
                     }
+                    crate::workbench::tasks::activity::observe(&event);
                     match &event {
                         crate::agent_runtime::events::NormalizedEvent::ServerRequest {
                             request_id,

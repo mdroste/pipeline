@@ -4,6 +4,36 @@ import WorkspaceConversationOutline, {
   type ConversationEntry,
 } from "./WorkspaceConversationOutline";
 
+it("distinguishes unread pages from a completed search and preserves the query on loading them", () => {
+  const older = vi.fn();
+  const props = {
+    entries: [],
+    selectedId: null,
+    onJump: vi.fn(),
+    onClose: vi.fn(),
+  };
+  const view = render(
+    <WorkspaceConversationOutline {...props} onOlder={older} />,
+  );
+  fireEvent.change(screen.getByLabelText("Search prompts and responses"), {
+    target: { value: "unique" },
+  });
+  expect(screen.getByText("No matches in loaded history.")).toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Search older messages" }),
+  );
+  expect(older).toHaveBeenCalledOnce();
+  view.rerender(
+    <WorkspaceConversationOutline
+      {...props}
+      entries={[{ id: "old", role: "You", text: "unique" }]}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: /Prompt.*unique/ }),
+  ).toBeInTheDocument();
+});
+
 it("pages a large outline and searches response bodies beyond the visible page", () => {
   const entries: ConversationEntry[] = Array.from(
     { length: 302 },

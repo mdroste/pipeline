@@ -152,6 +152,7 @@ pub(in crate::commands) fn select_reusable_outputs(
     execution_config: &crate::pipeline_config::PipelineConfig,
     parent_report: &PipelineReport,
     orientation_rebuilt: bool,
+    changed: &std::collections::HashSet<String>,
     from_step: Option<String>,
     only_failed: bool,
 ) -> std::collections::HashMap<String, Vec<crate::models::StepOutput>> {
@@ -171,8 +172,8 @@ pub(in crate::commands) fn select_reusable_outputs(
                 // by dependency graph, so a dependent of a re-run step can sit
                 // earlier in the list. Extend the positional set with graph
                 // dependents so no step is preloaded with stale upstream output.
-                let seeds: std::collections::HashSet<String> =
-                    enabled_ids[k..].iter().cloned().collect();
+                let mut seeds = resume_seed_ids(&enabled_ids, parent_report);
+                seeds.extend(enabled_ids[k..].iter().cloned());
                 let mut set = seeds.clone();
                 set.extend(crate::pipeline::executor::dependents_of(
                     execution_config,
@@ -198,6 +199,12 @@ pub(in crate::commands) fn select_reusable_outputs(
     // artifact produced under a different output mode or one that fails the
     // step's current schema. Its graph dependents are stale as well.
     let mut incompatible = incompatible_reuse_ids(execution_config, &parent_report.step_outputs);
+    incompatible.extend(changed.iter().cloned());
+    if !changed.is_empty() {
+        let mut ids: Vec<_> = changed.iter().collect();
+        ids.sort();
+        let _ = app.emit_event("pipeline:log", serde_json::json!({"line":format!("Re-run: inputs or execution instructions require recomputing {ids:?} and their dependents.")}));
+    }
     let skipped = skipped_step_ids(&parent_report.step_outputs);
     // Missing retained producer trees cannot satisfy a downstream file selector.
     // A skipped producer never had one, so nothing was lost.

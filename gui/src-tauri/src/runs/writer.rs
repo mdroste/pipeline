@@ -24,6 +24,13 @@ pub struct RunWriter {
 }
 
 impl RunWriter {
+    pub(crate) fn artifact_digest(&self, rel: &str) -> Option<&str> {
+        self.artifacts
+            .iter()
+            .find(|entry| entry.rel_path == rel)
+            .map(|entry| entry.sha256.as_str())
+    }
+
     fn ensure_artifact_capacity(&self) -> Result<(), String> {
         if self.artifacts.len() >= MAX_MANIFEST_ARTIFACTS {
             return Err(format!(
@@ -114,7 +121,7 @@ impl RunWriter {
         self.add_bytes(rel_path, label, group, content.as_bytes())
     }
 
-    pub(super) fn add_bytes(
+    pub(crate) fn add_bytes(
         &mut self,
         rel_path: &str,
         label: &str,

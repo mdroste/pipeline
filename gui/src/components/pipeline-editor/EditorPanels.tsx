@@ -55,7 +55,7 @@ export const MergeEditorPanel = memo(function MergeEditorPanel({
             onClick={() => onChange({ enabled: !merge.enabled })}
             className={`w-8 h-5 rounded-full relative transition-colors shrink-0 ${
               merge.enabled
-                ? "bg-green-600 dark:bg-neutral-200"
+                ? "bg-inverse dark:bg-neutral-200"
                 : "bg-gray-300 dark:bg-gray-600"
             }`}
           >
@@ -135,7 +135,7 @@ export function PipelineSettingsEditorPanel({
             }
             className={`w-8 h-5 rounded-full relative transition-colors shrink-0 mt-0.5 ${
               config.context_cache?.enabled
-                ? "bg-green-600 dark:bg-neutral-200"
+                ? "bg-inverse dark:bg-neutral-200"
                 : "bg-gray-300 dark:bg-gray-600"
             }`}
           >
@@ -331,15 +331,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
               className="w-full py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200 transition-colors"
             />
           </div>
-          <span
-            className={`mb-0.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
-              step.enabled
-                ? step.phase === "parallel"
-                  ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300"
-                  : "bg-orange-50 text-orange-700 dark:bg-orange-950/50 dark:text-orange-300"
-                : "bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"
-            }`}
-          >
+          <span className="mb-0.5 rounded-full bg-sunken px-2.5 py-1 text-ui-meta font-medium text-ink-muted">
             {step.enabled
               ? step.phase === "parallel"
                 ? "Parallel"
@@ -465,10 +457,8 @@ export const StepEditorPanel = memo(function StepEditorPanel({
                 onClick={() => onPhaseChange(step.id, phase)}
                 className={`px-3 py-1.5 text-xs rounded-full border transition-colors ${
                   step.phase === phase
-                    ? phase === "parallel"
-                      ? "bg-blue-700 text-white border-blue-700"
-                      : "bg-orange-700 text-white border-orange-700"
-                    : "bg-white dark:bg-gray-800 text-gray-500 border-gray-300 dark:border-gray-600 hover:border-gray-400"
+                    ? "border-inverse bg-inverse text-on-inverse"
+                    : "border-line bg-surface text-ink-muted hover:border-line-strong"
                 }`}
               >
                 {phase === "parallel"

@@ -74,6 +74,21 @@ export default function Literature({
     end: number;
     accessState: string;
   } | null>(null);
+  const sourceRequest = useRef(0);
+  const clearSource = () => {
+    sourceRequest.current++;
+    setSourceText(null);
+  };
+  const readSource = async (start?: number) => {
+    const id = note.sourceVersionId;
+    if (!id) return;
+    const version = ++sourceRequest.current;
+    const page =
+      start === undefined
+        ? await studioClient.source(workspaceId, id)
+        : await studioClient.source(workspaceId, id, start);
+    if (version === sourceRequest.current) setSourceText(page);
+  };
   const sourceElement = useRef<HTMLPreElement>(null);
   const noteForm = useReveal<HTMLElement>();
   const [sourceTitle, setSourceTitle] = useState("");
@@ -125,7 +140,7 @@ export default function Literature({
       noteGuard.markSaved(body);
       setNoteId(id);
       setNote(body);
-      setSourceText(null);
+      clearSource();
       noteForm.reveal();
     });
   const useSelection = () => {
@@ -547,7 +562,7 @@ export default function Literature({
                 quote: "",
                 support: "unsupported",
               }));
-              setSourceText(null);
+              clearSource();
               await refresh();
             })
           }
@@ -591,7 +606,7 @@ export default function Literature({
                 quote: "",
                 support: "unsupported",
               }));
-              setSourceText(null);
+              clearSource();
             }}
             options={sources.map((s) => ({
               value: s.versionId,
@@ -681,13 +696,7 @@ export default function Literature({
           <button
             className={button}
             disabled={!note.sourceVersionId || busy}
-            onClick={() =>
-              void run(async () =>
-                setSourceText(
-                  await studioClient.source(workspaceId, note.sourceVersionId!),
-                ),
-              )
-            }
+            onClick={() => void run(() => readSource())}
           >
             Read saved source text
           </button>
@@ -713,17 +722,7 @@ export default function Literature({
               <button
                 className={button}
                 disabled={busy || !sourceText.text}
-                onClick={() =>
-                  void run(async () =>
-                    setSourceText(
-                      await studioClient.source(
-                        workspaceId,
-                        note.sourceVersionId!,
-                        sourceText.end,
-                      ),
-                    ),
-                  )
-                }
+                onClick={() => void run(() => readSource(sourceText.end))}
               >
                 Next source segment
               </button>

@@ -567,6 +567,29 @@ pub async fn execute_steps(
                     .await
                     {
                         Ok(mut merged) => {
+                            for output in &merged {
+                                if let Some(reason) =
+                                    output.coverage_note.as_deref().filter(|note| {
+                                        note.starts_with(super::budget::BUDGET_STOP_PREFIX)
+                                    })
+                                {
+                                    let base = base_id(&output.step_id);
+                                    successful.remove(base);
+                                    let failure = StepFailure {
+                                        step_id: output.step_id.clone(),
+                                        step_label: output.step_label.clone(),
+                                        phase: "merge".into(),
+                                        error: reason.into(),
+                                    };
+                                    checkpoint_failures(
+                                        app,
+                                        write_dir,
+                                        std::slice::from_ref(&failure),
+                                    )
+                                    .await?;
+                                    failed_steps.push(failure);
+                                }
+                            }
                             enforce_merge_output_schemas(
                                 app,
                                 &to_run,

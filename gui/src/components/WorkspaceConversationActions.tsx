@@ -1,14 +1,18 @@
-// Per-conversation lifecycle controls for the Workspace sidebar: a small
+// Per-conversation lifecycle controls for the project and unfiled chat lists: a small
 // actions menu on each row, and the shared move dialog that the menu and the
 // research panel's unfiled notice both open.
 
-import { useId, useRef, useState } from "react";
+import { lazy, Suspense, useId, useRef, useState } from "react";
 import useModalDialog from "../hooks/useModalDialog";
 import type { WorkbenchSession, Workspace } from "../lib/workbenchTypes";
 import IconButton from "../ui/IconButton";
 import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
 import { Icon } from "../ui/icons";
 import ReportIssueLink from "./ReportIssueLink";
+
+const DeliveredAutomationFiles = lazy(
+  () => import("./DeliveredAutomationFiles"),
+);
 
 export function ConversationMenu({
   session,
@@ -30,6 +34,7 @@ export function ConversationMenu({
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   return (
     <>
@@ -57,6 +62,9 @@ export function ConversationMenu({
         {onRevealFiles && (
           <MenuItem onSelect={onRevealFiles}>Reveal working files</MenuItem>
         )}
+        <MenuItem onSelect={() => setFilesOpen(true)}>
+          Files from automations…
+        </MenuItem>
         <MenuItem onSelect={onArchive}>
           {session.archivedAt ? "Restore" : "Archive"}
         </MenuItem>
@@ -65,6 +73,15 @@ export function ConversationMenu({
           Delete…
         </MenuItem>
       </Menu>
+      {filesOpen && (
+        <Suspense fallback={null}>
+          <DeliveredAutomationFiles
+            key={session.id}
+            sessionId={session.id}
+            onClose={() => setFilesOpen(false)}
+          />
+        </Suspense>
+      )}
     </>
   );
 }
@@ -77,7 +94,7 @@ export function MoveConversationDialog({
   onMove,
   onClose,
 }: {
-  session: WorkbenchSession;
+  session: Pick<WorkbenchSession, "workspaceId" | "title">;
   workspaces: Pick<Workspace, "id" | "name" | "archivedAt">[];
   busy: boolean;
   error: string | null;

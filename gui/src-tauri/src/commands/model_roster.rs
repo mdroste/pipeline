@@ -203,34 +203,19 @@ pub fn model_roster(
             }
         }
         if phase == Phase::Parallel && config.merge.enabled && needs_merge {
-            // Mirrors pipeline::merge: a workflow Merge agent runs on its
-            // provider's default; an inherited one takes the Merge policy.
-            let pinned = config.merge.agents.first().cloned();
-            let provider = pinned
-                .clone()
-                .unwrap_or_else(|| settings.merge_agent().to_string());
-            let (model, effort) = if pinned.is_some() {
-                (
-                    settings.model_selection(&provider),
-                    settings.model_effort(&provider).to_string(),
-                )
-            } else {
-                (
-                    effective(
-                        settings,
-                        &provider,
-                        settings.merge_model_selection(&provider),
-                    ),
-                    settings.merge_effort(&provider),
-                )
-            };
+            let (provider, model, effort) = config.merge.call_policy(settings);
             push(RosterEntry {
                 stage: "merge",
                 label: "Combine results".into(),
                 step_ids: Vec::new(),
                 step_labels: Vec::new(),
                 transport: transport(&provider),
-                source: baseline.source(&provider, &model, &effort, pinned.is_some()),
+                source: baseline.source(
+                    &provider,
+                    &model,
+                    &effort,
+                    !config.merge.agents.is_empty(),
+                ),
                 provider,
                 model,
                 effort,

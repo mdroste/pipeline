@@ -410,6 +410,7 @@ pub(crate) fn launch_pending() {
                 .await
             }
             .await;
+            crate::workbench::programs::commands::wake_scheduler();
             if let Err(error) = result {
                 let failed_id = id.clone();
                 let _=super::super::commands::run_store_owned(job_store,move |store| {

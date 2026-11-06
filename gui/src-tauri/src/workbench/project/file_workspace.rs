@@ -28,6 +28,7 @@ pub struct FilePreview {
     pub kind: String,
     /// Opens a `pipeline-file` URL. Viewers fall back to `base64` without one.
     pub stream_token: Option<String>,
+    pub range_capture: bool,
     /// Compared with `workbench_file_stat` to notice changes on disk.
     pub stamp: Option<String>,
     pub modified_ms: Option<i64>,
@@ -135,21 +136,22 @@ pub fn read_workspace_file(
     store: &Store,
     request: FileReadRequest,
 ) -> WorkbenchResult<FilePreview> {
-    read_workspace_source(store, request).map(|(preview, _)| preview)
+    read_workspace_source(store, request, false).map(|(preview, _)| preview)
 }
 
-/// `read_workspace_file`, plus the folder and name of a captured file on disk.
+/// Return the verified file handle only when a captured PDF will use the file scheme.
 pub(super) fn read_workspace_source(
     store: &Store,
     request: FileReadRequest,
-) -> WorkbenchResult<(FilePreview, Option<(PathBuf, String)>)> {
+    stream_pdf: bool,
+) -> WorkbenchResult<(FilePreview, Option<super::file_open::CapturedPdf>)> {
     scope(store, &request.workspace_id)?;
     if request.checkpoint_id.is_some() && request.revision_id.is_some() {
         return Err(WorkbenchError::invalid(
             "Choose a working copy or a captured revision",
         ));
     }
-    let (bytes, path, external_path, scope_root, source) = if let Some(revision_id) =
+    let (bytes, path, external_path, scope_root, expected) = if let Some(revision_id) =
         &request.revision_id
     {
         let revision = documents::revision(store, &request.workspace_id, revision_id)?;
@@ -164,7 +166,8 @@ pub(super) fn read_workspace_source(
                 "Captured file is outside immutable storage",
             ));
         }
-        let (bytes, display_path, expected, source) = if revision.input_kind == "source_tree" {
+        let (display_path, expected, folder, source_path) = if revision.input_kind == "source_tree"
+        {
             files::relative(&request.path)?;
             let entry = revision.dependency_manifest["files"]
                 .as_array()
@@ -181,10 +184,10 @@ pub(super) fn read_workspace_source(
                 .ok_or_else(|| WorkbenchError::invalid("Missing captured file identity"))?
                 .to_string();
             (
-                files::SafeRoot::open(&storage)?.read(&request.path)?,
                 request.path.clone(),
                 expected,
-                (storage.clone(), request.path.clone()),
+                storage,
+                request.path.clone(),
             )
         } else {
             let name = Path::new(&revision.entrypoint)
@@ -203,18 +206,79 @@ pub(super) fn read_workspace_source(
                 .ok_or_else(|| WorkbenchError::invalid("Invalid captured file"))?;
             let blobs = store.root_path().join("blobs");
             (
-                files::SafeRoot::open(&blobs)?.read(disk_name)?,
                 name.to_string(),
                 revision.content_hash.clone(),
-                (blobs, disk_name.to_string()),
+                blobs,
+                disk_name.to_string(),
             )
         };
-        if hash(&bytes) != expected {
-            return Err(WorkbenchError::conflict(
-                "Captured file content no longer matches its revision",
+        let (mut file, stat) = files::SafeRoot::open(&folder)?
+            .open_read(&source_path)?
+            .ok_or_else(|| WorkbenchError::invalid("The captured file is unavailable"))?;
+        if stat.size > MAX_FILE {
+            return Err(WorkbenchError::invalid(
+                "Captured file exceeds its size limit",
             ));
         }
-        (bytes, display_path, None, None, Some(source))
+        let modified = file.metadata().and_then(|m| m.modified()).map_err(err)?;
+        let mut bytes = Vec::new();
+        Read::by_ref(&mut file)
+            .take(8192)
+            .read_to_end(&mut bytes)
+            .map_err(err)?;
+        if stream_pdf && super::file_open::classify(&display_path, &bytes).kind == "pdf" {
+            let mut digest = Sha256::new();
+            digest.update(&bytes);
+            let more = std::io::copy(
+                &mut Read::by_ref(&mut file).take(MAX_FILE + 1 - bytes.len() as u64),
+                &mut digest,
+            )
+            .map_err(err)?;
+            if more + bytes.len() as u64 != stat.size
+                || format!("{:x}", digest.finalize()) != expected
+            {
+                return Err(WorkbenchError::conflict(
+                    "Captured file content no longer matches its revision",
+                ));
+            }
+            let preview = FilePreview {
+                path: display_path,
+                hash: expected.clone(),
+                bytes: stat.size as usize,
+                text: None,
+                base64: None,
+                mime: "application/pdf".into(),
+                editable: false,
+                truncated: false,
+                external_path: None,
+                scope_root: None,
+                kind: "pdf".into(),
+                stream_token: None,
+                range_capture: false,
+                stamp: None,
+                modified_ms: None,
+                approximate_text: false,
+                text_bytes: None,
+            };
+            return Ok((
+                preview,
+                Some(super::file_open::CapturedPdf {
+                    file,
+                    modified,
+                    size: stat.size,
+                    hash: expected,
+                    reads: std::sync::Mutex::new(()),
+                }),
+            ));
+        }
+        Read::by_ref(&mut file)
+            .take(MAX_FILE + 1 - bytes.len() as u64)
+            .read_to_end(&mut bytes)
+            .map_err(err)?;
+        if bytes.len() as u64 != stat.size {
+            return Err(WorkbenchError::conflict("Captured file size changed"));
+        }
+        (bytes, display_path, None, None, Some(expected))
     } else {
         files::relative(&request.path)?;
         let base = match &request.checkpoint_id {
@@ -231,9 +295,14 @@ pub(super) fn read_workspace_source(
             None,
         )
     };
-    let mut preview = preview_from_bytes(path, bytes, external_path, source.is_some());
+    let mut preview = preview_from_bytes(path, bytes, external_path, expected.is_some());
+    if expected.is_some_and(|expected| expected != preview.hash) {
+        return Err(WorkbenchError::conflict(
+            "Captured file content no longer matches its revision",
+        ));
+    }
     preview.scope_root = scope_root;
-    Ok((preview, source))
+    Ok((preview, None))
 }
 
 fn preview_from_bytes(
@@ -292,6 +361,7 @@ fn preview_from_bytes(
         external_path,
         kind: kind.into(),
         stream_token: None,
+        range_capture: false,
         stamp: None,
         modified_ms: None,
         approximate_text: false,

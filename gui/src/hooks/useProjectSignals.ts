@@ -19,11 +19,12 @@ import {
   type MonitorState,
 } from "../lib/programClient";
 import { taskClient } from "../lib/taskClient";
+import { listProjectReviewLinks } from "../lib/workbench/releaseClient";
 import { repositoryClient } from "../lib/repositoryClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import {
   NO_SIGNALS,
-  underRoot,
+  reviewsForProject,
   type ProjectSignals,
 } from "../lib/projectOverview";
 
@@ -147,40 +148,37 @@ export default function useProjectSignals({
           })
         : null;
     }, set("campaign"));
-    load(async () => {
-      const tasks = await taskClient.list("session");
-      const own = new Set(sessions.current);
-      return tasks.filter((task) => task.sessionId && own.has(task.sessionId));
-    }, set("automations"));
+    load(
+      () => taskClient.projectActivity(sessions.current),
+      set("automations"),
+    );
     if (root)
       load(() => repositoryClient.status(workspaceId), set("repository"));
     // Reviews are scoped the way the project's Reviews page scopes them: runs
     // whose input lies under the attached folder, and collections holding them.
-    if (root)
-      load(async () => {
-        const [runs, collections] = await Promise.all([
-          invoke<RunSummary[]>("list_runs"),
-          invoke<ProjectsResponse>("list_projects"),
-        ]);
-        const own = runs.filter((run) => underRoot(run.input_path, root));
-        const ids = new Set(own.map((run) => run.run_id));
-        if (live()) set("runs")(own);
-        const ledgers = await Promise.allSettled(
-          collections.projects
-            .filter((collection) =>
-              collection.run_ids.some((id) => ids.has(id)),
-            )
-            .slice(0, LEDGER_LIMIT)
-            .map((collection) =>
-              invoke<ProjectIssueLedger>("sync_project_issue_ledger", {
-                projectId: collection.id,
-              }),
-            ),
-        );
-        return ledgers.flatMap((result) =>
-          result.status === "fulfilled" ? [result.value] : [],
-        );
-      }, set("ledgers"));
+    load(async () => {
+      const [runs, collections, links] = await Promise.all([
+        invoke<RunSummary[]>("list_runs"),
+        invoke<ProjectsResponse>("list_projects"),
+        listProjectReviewLinks(workspaceId),
+      ]);
+      const own = reviewsForProject(runs, root, links);
+      const ids = new Set(own.map((run) => run.run_id));
+      if (live()) set("runs")(own);
+      const ledgers = await Promise.allSettled(
+        collections.projects
+          .filter((collection) => collection.run_ids.some((id) => ids.has(id)))
+          .slice(0, LEDGER_LIMIT)
+          .map((collection) =>
+            invoke<ProjectIssueLedger>("sync_project_issue_ledger", {
+              projectId: collection.id,
+            }),
+          ),
+      );
+      return ledgers.flatMap((result) =>
+        result.status === "fulfilled" ? [result.value] : [],
+      );
+    }, set("ledgers"));
   }, [enabled, workspaceId, root, request, stamp]);
 
   return {

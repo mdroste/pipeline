@@ -51,6 +51,7 @@ export interface Chain {
   description: string;
   steps: Step[];
   limits: {
+    maxApiCostCents?: number;
     maxActions: number;
     deadlineHours: number;
     actionTimeoutSecs: number;
@@ -110,6 +111,7 @@ export interface TaskRun extends TaskSummary {
     outputs: Record<string, Json>;
     actions: number;
     limitReached: boolean;
+    groupDeadlines?: Record<string, number>;
   };
   deadlineAt: number;
 }
@@ -132,6 +134,7 @@ export interface TaskEvent {
   attempts?: Receipt[];
 }
 export interface SessionChoice {
+  connectionId?: import("./connections").ConnectionId;
   id: string;
   title: string;
   workspaceName: string | null;

@@ -279,7 +279,12 @@ pub(in crate::commands) fn build_print_report_html(
         "tr { break-inside: avoid; }\n",
         ".pipeline-display-equation, .katex-display { break-before: avoid; break-inside: avoid; }\n",
         ".katex { font-size: 1em; }\n",
-        ".katex-display { margin: 1.15rem 0; overflow: visible; }\n",
+        // The box bounds layout overflow even before fonts finish loading.
+        // The print script then fits the whole equation without clipping it.
+        ".pipeline-math { display: inline-block; max-width: 100%; min-width: 0; overflow: hidden; vertical-align: middle; padding: 0.2em 0; text-indent: 0; }\n",
+        ".pipeline-math-display { display: block; margin: 1.15rem 0; }\n",
+        ".pipeline-math .katex { display: inline-block; white-space: nowrap; }\n",
+        ".pipeline-math .katex-display { margin: 0; }\n",
         "img { max-width: 100%; height: auto; }\n",
         "@page { margin: 0 0 0.28in; }\n",
         "@page { @bottom-center { content: counter(page) \" / \" counter(pages); color: #7b838a; font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Arial, sans-serif; font-size: 8pt; font-variant-numeric: tabular-nums; } }\n",
@@ -326,9 +331,8 @@ pub(in crate::commands) fn build_print_report_html(
         "'\\\\Q':'\\\\mathbb{Q}','\\\\E':'\\\\mathbb{E}',",
         "'\\\\Var':'\\\\operatorname{Var}','\\\\Cov':'\\\\operatorname{Cov}',",
         "'\\\\diag':'\\\\operatorname{diag}'}});",
-        "var fontsReady=(document.fonts&&document.fonts.ready)?document.fonts.ready:Promise.resolve();",
-        "fontsReady.then(function(){requestAnimationFrame(function(){window.print();});});",
-        "</script>\n</body></html>",
     ));
+    html_doc.push_str(include_str!("print_math.js"));
+    html_doc.push_str("</script>\n</body></html>");
     Ok(html_doc)
 }

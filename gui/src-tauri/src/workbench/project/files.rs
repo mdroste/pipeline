@@ -164,7 +164,7 @@ impl SafeRoot {
         Err(WorkbenchError::invalid("Empty file path"))
     }
     #[cfg(unix)]
-    fn read_name(directory: &fs::File, name: &std::ffi::CStr) -> WorkbenchResult<Option<Vec<u8>>> {
+    fn open_name(directory: &fs::File, name: &std::ffi::CStr) -> WorkbenchResult<Option<fs::File>> {
         use std::os::fd::{AsRawFd, FromRawFd};
         let fd = unsafe {
             libc::openat(
@@ -188,6 +188,13 @@ impl SafeRoot {
                 "Only bounded regular files can be captured",
             ));
         }
+        Ok(Some(f))
+    }
+    #[cfg(unix)]
+    fn read_name(directory: &fs::File, name: &std::ffi::CStr) -> WorkbenchResult<Option<Vec<u8>>> {
+        let Some(f) = Self::open_name(directory, name)? else {
+            return Ok(None);
+        };
         let mut bytes = Vec::new();
         f.take(MAX_FILE + 1).read_to_end(&mut bytes).map_err(err)?;
         if bytes.len() as u64 > MAX_FILE {
@@ -300,32 +307,7 @@ impl SafeRoot {
                     "File permissions changed during the task",
                 ));
             }
-            let mut original_mode = 0o644;
-            if expected.is_some() {
-                let mut metadata = std::mem::MaybeUninit::<libc::stat>::uninit();
-                let result = unsafe {
-                    libc::fstatat(
-                        directory.as_raw_fd(),
-                        name.as_ptr(),
-                        metadata.as_mut_ptr(),
-                        libc::AT_SYMLINK_NOFOLLOW,
-                    )
-                };
-                if result != 0 {
-                    return Err(err(std::io::Error::last_os_error()));
-                }
-                original_mode = unsafe { metadata.assume_init() }.st_mode as libc::mode_t & 0o777;
-            }
-            let new_mode = (original_mode & 0o666)
-                | if is_executable {
-                    if original_mode & 0o111 != 0 {
-                        original_mode & 0o111
-                    } else {
-                        0o100
-                    }
-                } else {
-                    0
-                };
+            let mut original = None;
             if let Some(expected) = expected {
                 // Verify before claiming, then again after the rename. An editor
                 // racing either check cannot have its replacement overwritten.
@@ -351,12 +333,15 @@ impl SafeRoot {
                     return Err(err(std::io::Error::last_os_error()));
                 }
                 crate::safety::sync_landed(&directory);
-                if Self::read_name(&directory, &claim_name)?
-                    .as_deref()
-                    .map(hash)
-                    .as_deref()
-                    != Some(expected)
-                {
+                original = Self::open_name(&directory, &claim_name)?;
+                let mut claimed = Vec::new();
+                if let Some(source) = original.as_ref() {
+                    source
+                        .take(MAX_FILE + 1)
+                        .read_to_end(&mut claimed)
+                        .map_err(err)?;
+                }
+                if original.is_none() || hash(&claimed) != expected {
                     let _ = Self::restore_claim(&directory, &name, &claim_name);
                     return Err(WorkbenchError::conflict(format!(
                         "File changed while being accepted: {path}; recovery retained"
@@ -368,6 +353,21 @@ impl SafeRoot {
                 )));
             }
             if let Some(bytes) = bytes {
+                use std::os::unix::fs::PermissionsExt;
+                let original_mode = match original.as_ref() {
+                    Some(source) => source.metadata().map_err(err)?.permissions().mode() & 0o777,
+                    None => 0o644,
+                };
+                let new_mode = (original_mode & 0o666)
+                    | if is_executable {
+                        if original_mode & 0o111 != 0 {
+                            original_mode & 0o111
+                        } else {
+                            0o100
+                        }
+                    } else {
+                        0
+                    };
                 let temporary = std::ffi::CString::new(format!(".pipeline-apply-{}", id("write")?))
                     .map_err(err)?;
                 let fd = unsafe {
@@ -379,15 +379,54 @@ impl SafeRoot {
                             | libc::O_WRONLY
                             | libc::O_NOFOLLOW
                             | libc::O_CLOEXEC,
-                        new_mode as libc::c_uint,
+                        new_mode,
                     )
                 };
                 if fd < 0 {
                     return Err(err(std::io::Error::last_os_error()));
                 }
                 let mut file = unsafe { fs::File::from_raw_fd(fd) };
-                file.write_all(bytes).map_err(err)?;
-                crate::safety::sync_file(&file).map_err(err)?;
+                let prepare = (|| -> WorkbenchResult<()> {
+                    file.write_all(bytes).map_err(err)?;
+                    if let Some(source) = original.as_ref() {
+                        #[cfg(target_os = "macos")]
+                        if unsafe {
+                            libc::fcopyfile(
+                                source.as_raw_fd(),
+                                file.as_raw_fd(),
+                                std::ptr::null_mut(),
+                                libc::COPYFILE_ACL | libc::COPYFILE_XATTR,
+                            )
+                        } != 0
+                        {
+                            return Err(err(std::io::Error::last_os_error()));
+                        }
+                        #[cfg(target_os = "linux")]
+                        {
+                            use xattr::FileExt;
+                            for name in source.list_xattr().map_err(err)? {
+                                use std::os::unix::ffi::OsStrExt;
+                                if name.as_bytes().starts_with(b"user.")
+                                    || name == "system.posix_acl_access"
+                                {
+                                    if let Some(value) = source.get_xattr(&name).map_err(err)? {
+                                        file.set_xattr(&name, &value).map_err(err)?;
+                                    }
+                                }
+                            }
+                        }
+                        // Creation respects umask; a replacement keeps the existing mode.
+                        if crate::safety::volume_keeps_permissions(source) {
+                            file.set_permissions(fs::Permissions::from_mode(new_mode))
+                                .map_err(err)?;
+                        }
+                    }
+                    crate::safety::sync_file(&file).map_err(err)
+                })();
+                if let Err(error) = prepare {
+                    unsafe { libc::unlinkat(directory.as_raw_fd(), temporary.as_ptr(), 0) };
+                    return Err(error);
+                }
                 let placed = placement::move_no_clobber(&directory, &temporary, &name);
                 unsafe { libc::unlinkat(directory.as_raw_fd(), temporary.as_ptr(), 0) };
                 match placed {
@@ -615,5 +654,67 @@ impl SafeRoot {
             let _ = (path, claim);
             Ok(())
         }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_save_preserves_group_write_and_mac_attributes() {
+    use std::os::unix::fs::PermissionsExt;
+    let temp = tempfile::tempdir().unwrap();
+    let paper = temp.path().join("paper.tex");
+    fs::write(&paper, b"before").unwrap();
+    fs::set_permissions(&paper, fs::Permissions::from_mode(0o664)).unwrap();
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::fd::AsRawFd;
+        let f = fs::File::open(&paper).unwrap();
+        assert_eq!(
+            unsafe {
+                libc::fsetxattr(
+                    f.as_raw_fd(),
+                    c"user.pipeline.test".as_ptr(),
+                    b"paper".as_ptr().cast(),
+                    5,
+                    0,
+                    0,
+                )
+            },
+            0
+        );
+    }
+    let root = SafeRoot::open(temp.path()).unwrap();
+    root.replace(
+        "paper.tex",
+        Some(&hash(b"before")),
+        false,
+        Some(b"after"),
+        false,
+        "save",
+    )
+    .unwrap();
+    assert_eq!(
+        fs::metadata(&paper).unwrap().permissions().mode() & 0o777,
+        0o664
+    );
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::fd::AsRawFd;
+        let f = fs::File::open(&paper).unwrap();
+        let mut attr = [0u8; 5];
+        assert_eq!(
+            unsafe {
+                libc::fgetxattr(
+                    f.as_raw_fd(),
+                    c"user.pipeline.test".as_ptr(),
+                    attr.as_mut_ptr().cast(),
+                    5,
+                    0,
+                    0,
+                )
+            },
+            5
+        );
+        assert_eq!(&attr, b"paper");
     }
 }

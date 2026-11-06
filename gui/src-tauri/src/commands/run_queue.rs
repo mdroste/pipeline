@@ -77,11 +77,34 @@ enum Launch {
     Review(Box<ReviewLaunch>),
     Rerun {
         run_id: String,
+        /// The source must survive both the wait and the execution.
+        parent_hold: crate::runs::RetentionHold,
         from_step: Option<String>,
         only_failed: bool,
+        plan: Box<super::rerun::RerunPlan>,
         /// Secrets entered again for this re-run. Held only until it starts.
         secret_variables: std::collections::HashMap<String, String>,
     },
+}
+
+impl Launch {
+    fn rerun(
+        run_id: String,
+        parent_hold: crate::runs::RetentionHold,
+        from_step: Option<String>,
+        only_failed: bool,
+        secret_variables: std::collections::HashMap<String, String>,
+        plan: super::rerun::RerunPlan,
+    ) -> Self {
+        Self::Rerun {
+            plan: Box::new(plan),
+            parent_hold,
+            run_id,
+            from_step,
+            only_failed,
+            secret_variables,
+        }
+    }
 }
 
 struct Entry {
@@ -376,12 +399,22 @@ pub(crate) fn pump() {
                     }
                     Launch::Rerun {
                         run_id,
+                        parent_hold,
                         from_step,
                         only_failed,
                         secret_variables,
+                        plan,
                     } => {
-                        rerun_run_inner(&bus, &run_id, from_step, only_failed, secret_variables)
-                            .await
+                        let _parent_hold = parent_hold;
+                        rerun_run_inner(
+                            &bus,
+                            &run_id,
+                            from_step,
+                            only_failed,
+                            secret_variables,
+                            *plan,
+                        )
+                        .await
                     }
                 }
             })
@@ -504,10 +537,11 @@ pub async fn enqueue_run(
     expected_profile_snapshot_id: Option<String>,
     run_parallel_overrides: Option<RunModelOverrides>,
     author_note: Option<String>,
+    review_handoff_id: Option<String>,
 ) -> Result<QueuedRun, String> {
     let variables = variables.unwrap_or_default();
     let extra_inputs = extra_inputs.unwrap_or_default();
-    let snapshot = prepare_foreground_launch(
+    let mut snapshot = prepare_foreground_launch(
         &paper_path,
         input_interpretation.as_deref(),
         diff,
@@ -518,6 +552,8 @@ pub async fn enqueue_run(
         author_note.as_deref(),
     )
     .await?;
+    snapshot.review_handoff_id =
+        bind_review_handoff(review_handoff_id, vec![paper_path.clone()]).await?;
     let profile_name = snapshot.profile_name.clone();
     Ok(enqueue(
         crate::emit::from_app(app),
@@ -536,6 +572,21 @@ pub async fn enqueue_run(
     ))
 }
 
+async fn bind_review_handoff(
+    id: Option<String>,
+    paths: Vec<String>,
+) -> Result<Option<String>, String> {
+    let Some(id) = id else {
+        return Ok(None);
+    };
+    crate::workbench::commands::run_store(move |store| {
+        crate::workbench::release::validate_handoff_inputs(&store, &id, &paths)?;
+        Ok(Some(id))
+    })
+    .await
+    .map_err(|error| error.message)
+}
+
 /// Queue one review per document, all bound to one captured snapshot (the
 /// queued form of `start_batch`).
 #[tauri::command]
@@ -548,9 +599,10 @@ pub async fn enqueue_batch(
     expected_profile_config_snapshot_id: Option<String>,
     run_parallel_overrides: Option<RunModelOverrides>,
     author_note: Option<String>,
+    review_handoff_id: Option<String>,
     expected_profile_snapshot_id: Option<String>,
 ) -> Result<Vec<QueuedRun>, String> {
-    let launch = prepare_batch_launch(
+    let mut launch = prepare_batch_launch(
         paths,
         variables,
         extra_inputs,
@@ -560,6 +612,8 @@ pub async fn enqueue_batch(
         expected_profile_snapshot_id,
     )
     .await?;
+    launch.snapshot.review_handoff_id =
+        bind_review_handoff(review_handoff_id, launch.paths.clone()).await?;
     let bus = crate::emit::from_app(app);
     Ok(launch
         .paths
@@ -592,9 +646,21 @@ pub async fn enqueue_rerun(
     from_step: Option<String>,
     only_failed: bool,
     variables: Option<std::collections::HashMap<String, String>>,
+    expected_fingerprint: Option<String>,
 ) -> Result<QueuedRun, String> {
+    let parent_hold = crate::runs::hold_from_retention(&run_id);
     let _ = crate::runs::recover_resumable_runs();
     let parent = crate::runs::load_manifest(&run_id)?;
+    let plan = super::rerun::RerunPlan::prepare(&parent, only_failed)?;
+    plan.verify(expected_fingerprint.as_deref())?;
+    let launch = Launch::rerun(
+        run_id.clone(),
+        parent_hold,
+        from_step,
+        only_failed,
+        variables.unwrap_or_default(),
+        plan,
+    );
     let profile_name = parent.profile_name.clone();
     let title = if parent.title.trim().is_empty() {
         label_for(&parent.input_path, &profile_name)
@@ -607,12 +673,7 @@ pub async fn enqueue_rerun(
         format!("Re-run · {title}"),
         parent.input_path.clone(),
         profile_name,
-        Launch::Rerun {
-            run_id,
-            from_step,
-            only_failed,
-            secret_variables: variables.unwrap_or_default(),
-        },
+        launch,
     ))
 }
 
@@ -674,6 +735,34 @@ mod tests {
             launch: None,
             run: None,
             result: result.then(|| serde_json::json!({})),
+        }
+    }
+
+    #[test]
+    fn queued_rerun_protects_parent_until_cancel_or_worker_finishes() {
+        for start in [false, true] {
+            let parent = format!("queue-retention-parent-{start}");
+            let mut entry = finished("pending", 0, false);
+            entry.info.status = QueuedRunStatus::Queued;
+            entry.launch = Some(Launch::rerun(
+                parent.clone(),
+                crate::runs::hold_from_retention(&parent),
+                None,
+                false,
+                Default::default(),
+                super::super::rerun::RerunPlan::fixture(),
+            ));
+            let prune_parent = || crate::runs::trash_unheld(vec![parent.clone()], |_| Ok(()));
+            assert_eq!(prune_parent(), 0, "queued parents survive retention");
+            if start {
+                let worker = entry.launch.take().unwrap();
+                drop(entry);
+                assert_eq!(prune_parent(), 0, "handoff keeps the same hold alive");
+                drop(worker);
+            } else {
+                entry.launch = None; // The queued cancellation path.
+            }
+            assert_eq!(prune_parent(), 1, "terminal work releases its parent");
         }
     }
 

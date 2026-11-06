@@ -104,7 +104,7 @@ export function useWorkspaceSessionMutations({
   const deleteSession = async (session: WorkbenchSession) => {
     if (
       !(await confirmDialog(
-        `Delete “${session.title}”? Its transcript, working files, and provider history are removed permanently. Research records it produced stay with their project.`,
+        `Delete “${session.title}”? Pipeline deletes its local transcript, conversation working folder and browser profile. The provider may retain its own history. Research records stay with their project.`,
         {
           title: "Delete conversation",
           confirmLabel: "Delete",
@@ -113,10 +113,19 @@ export function useWorkspaceSessionMutations({
       ))
     )
       return;
-    await conversationClient.deleteSession({
-      sessionId: session.id,
-      operationId: newOperation("delete-session"),
-    });
+    let cleanupError: unknown;
+    try {
+      await conversationClient.deleteSession({
+        sessionId: session.id,
+        operationId: newOperation("delete-session"),
+      });
+    } catch (cause) {
+      if (
+        (cause as { code?: string } | null)?.code !== "session_cleanup_pending"
+      )
+        throw cause;
+      cleanupError = cause;
+    }
     appEvents.emit("conversations-changed", {});
     if (sessionRef.current === session.id) {
       setSnapshot(null);
@@ -124,6 +133,7 @@ export function useWorkspaceSessionMutations({
       setDraft("");
     }
     await reloadAfter(session);
+    if (cleanupError) throw cleanupError;
   };
 
   const moveSession = async (

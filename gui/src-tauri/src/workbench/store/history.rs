@@ -63,9 +63,15 @@ impl Store {
         let mut connection = self.connection()?;
         let tx = connection.transaction().map_err(error)?;
         load_session(&tx, session_id)?;
-        let mut statement = tx.prepare(&message_page_query()).map_err(error)?;
+        let mut first = tx.prepare(&message_page_query(false)).map_err(error)?;
+        let mut older = tx.prepare(&message_page_query(true)).map_err(error)?;
         let mut cursor: Option<TranscriptCursor> = None;
         loop {
+            let statement = if cursor.is_some() {
+                &mut older
+            } else {
+                &mut first
+            };
             let mut rows = statement
                 .query(params![
                     session_id,
@@ -101,22 +107,28 @@ impl Store {
 /// One page of a transcript. The page is chosen from the covering index alone
 /// and payloads are joined afterwards, so a long conversation costs one page of
 /// payloads rather than all of them.
-fn page_query(comparison: &str, direction: &str) -> String {
-    select_page("i.id,i.turn_id,i.provider_item_id,i.item_kind,i.payload_json,i.is_final,i.created_at,i.updated_at", comparison, direction)
+fn page_query(comparison: &str, direction: &str, has_cursor: bool) -> String {
+    select_page("i.id,i.turn_id,i.provider_item_id,i.item_kind,i.payload_json,i.is_final,i.created_at,i.updated_at", comparison, direction, has_cursor)
 }
 
 /// A page of every item kind, so its last row can carry the cursor. The index
 /// has no kind or final flag, and only final messages read their payloads.
-fn message_page_query() -> String {
+fn message_page_query(has_cursor: bool) -> String {
     select_page(
         "i.id,i.created_at,i.item_kind,CASE WHEN lower(i.item_kind) LIKE '%message%' AND i.is_final=1 THEN i.payload_json END",
         "<",
         "DESC",
+        has_cursor,
     )
 }
 
-fn select_page(columns: &str, comparison: &str, direction: &str) -> String {
-    format!("WITH page(item) AS (SELECT i.rowid FROM transcript_items i JOIN session_bindings b ON b.id=i.binding_id WHERE b.session_id=?1 AND (?2 IS NULL OR (i.created_at,i.id) {comparison} (?2,?3)) AND NOT EXISTS (SELECT 1 FROM transcript_items newer JOIN session_bindings nb ON nb.id=newer.binding_id WHERE nb.session_id=b.session_id AND nb.provider_thread_id=b.provider_thread_id AND newer.provider_item_id=i.provider_item_id AND nb.incarnation>b.incarnation) ORDER BY i.created_at {direction}, i.id {direction} LIMIT ?4) SELECT {columns} FROM page JOIN transcript_items i ON i.rowid=page.item ORDER BY i.created_at {direction}, i.id {direction}")
+fn select_page(columns: &str, comparison: &str, direction: &str, has_cursor: bool) -> String {
+    let cursor = if has_cursor {
+        format!("AND (i.created_at,i.id) {comparison} (?2,?3)")
+    } else {
+        String::new()
+    };
+    format!("WITH page(item) AS (SELECT i.rowid FROM transcript_items i JOIN session_bindings b ON b.id=i.binding_id WHERE b.session_id=?1 {cursor} AND NOT EXISTS (SELECT 1 FROM transcript_items newer JOIN session_bindings nb ON nb.id=newer.binding_id WHERE nb.session_id=b.session_id AND nb.provider_thread_id=b.provider_thread_id AND newer.provider_item_id=i.provider_item_id AND nb.incarnation>b.incarnation) ORDER BY i.created_at {direction}, i.id {direction} LIMIT ?4) SELECT {columns} FROM page JOIN transcript_items i ON i.rowid=page.item ORDER BY i.created_at {direction}, i.id {direction}")
 }
 
 pub(super) fn read_page(
@@ -136,7 +148,7 @@ pub(super) fn read_page(
     } else {
         ("<", "DESC")
     };
-    let sql = page_query(comparison, direction);
+    let sql = page_query(comparison, direction, cursor.is_some());
     let error = |e| WorkbenchError::storage("Failed to read transcript page", e);
     let mut statement = connection.prepare(&sql).map_err(error)?;
     let mut rows = statement

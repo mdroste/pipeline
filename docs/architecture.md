@@ -141,7 +141,7 @@ Each module's header comment has the details.
 | `engines/`, `deps/` | Managed local engines and dependency checks |
 | `gui/src/lib/` | Typed IPC clients and pure helpers |
 | `gui/src/hooks/workspace/` | Conversation runtime in the UI |
-| `gui/src/components/NavRail.tsx`, `nav-rail/` | Primary sidebar. The open Workspace page portals its project navigation into a slot here, so that page keeps its own gates |
+| `gui/src/components/NavRail.tsx`, `nav-rail/` | Primary sidebar. Global destinations and the current project have separate sections. WorkspacePage supplies project navigation through a slot and owns the save and busy checks |
 | `gui/src/components/pipeline-editor/` | **Review designer** |
 | `gui/src/ui/` | Shared controls; design tokens are in `App.css` |
 
@@ -161,6 +161,19 @@ the budget.
    Sequential steps run alone. Every finished step is checkpointed.
 5. **Persist.** The report, manifest, responses, and artifacts go to the run's
    folder under `runs/`.
+
+A new review records its expanded step instructions and selected input
+identities under `context/execution-contract.json`. Step checkpoints also
+record digests of the accepted output and producer files. Resume checks these
+records before reusing a step. Changed instructions, inputs, or products
+invalidate the step and its graph dependents. Runs that predate the records
+can resume from their captured document. The run store verifies the images
+it restores and records missing visual evidence in the child bundle.
+
+Every provider submission checks the review's call and elapsed-time limits.
+Direct API submissions reserve estimated list-price spend and settle it when
+the provider reports usage. Report publication checks explicitly declared
+products and attributes a missing result to its producer.
 
 PDF extraction methods are `llm`, `paddleocr-vl-full` (the managed PaddleOCR-VL
 Full Parser), and `pdftotext`. The `auto` setting picks the Full Parser when it
@@ -333,7 +346,24 @@ append-only events.
   review queue, not these actions.
 - `orchestration/adapters/execute.rs` is the one cancellation and publication
   envelope.
-- A response is written to its action journal before the coordinator advances.
+- A receipt identifies one action kind and operation. A durable dispatch marker
+  precedes the owner call; a new receipt without that marker proves no submission.
+  Recovery asks only the action’s owner or reads its result journal. A failed
+  coordinator write retries publication of the same attempt without repeating
+  the action. Earlier receipts use their saved definition to find the owner.
+- Group clocks are absolute deadlines keyed by iteration and branch. Admission
+  applies all enclosing action limits and the shortest remaining timeout.
+- Each runtime admits its own model requests through a narrow caller-supplied
+  meter. The Automations store reserves estimated API spend transactionally
+  across sibling Reviews and retries; missing usage keeps its reservation.
+  Subscription and local work have separate counters.
+- Delivered files are copied by verified digest into Workspace. Each file
+  belongs to its conversation exchange, with the bytes and receipt references
+  covered by Workspace retention, relocation, and research backups.
+- Automation file and folder snapshots resolve against the selected library.
+  A committed literature lookup can be recovered by its project and operation
+  without issuing another network request. An unreadable active record is
+  isolated from dispatch and keeps its original body for repair.
 - Settings are pinned at preparation. Review credentials are resolved only
   inside the review adapter.
 - A task keeps its review pinned until it adopts the result
@@ -354,9 +384,17 @@ append-only events.
 
 Research automations (`orchestration/missions/`) add planning and assessment
 on the same coordinator. Their completion is an assessment that never accepts
-edits or widens permissions. Research discovery (`orchestration/discovery/`)
+edits or widens permissions. `orchestration/claims.rs` grades inspections against
+host-retained evidence for an exact round or manuscript version. A model reply
+cannot grant researcher acceptance. The explicit researcher command checks the
+run revision and subject version before saving that decision. Older assessments
+without a claim record retain their original status. Research discovery (`orchestration/discovery/`)
 uses the same adapters. Its conversation roles in `workbench/discovery.rs` run
-without network access and never ask for approval.
+without network access and never ask for approval. Optional idea teams run
+inside a single discovery step and hold the Workspace turn permit. Workspace
+starts an isolated Codex app server or Claude Code process, verifies the
+native child events, and returns the lead's sketches through the task adapter.
+The coordinator journals that result before developing the proposals.
 
 ## Data on disk
 

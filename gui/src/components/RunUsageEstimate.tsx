@@ -67,6 +67,8 @@ export default function RunUsageEstimate({
           use.
           {estimate.subscriptionCallsHigh > 0 &&
             " Subscription calls count against your plan's limits and are not billed per token."}
+          {Boolean(estimate.localCallsHigh) &&
+            ` Up to ${estimate.localCallsHigh} local calls use the configured local model.`}
           {estimate.unpricedCalls > 0 &&
             ` ${estimate.unpricedCalls} API call${estimate.unpricedCalls === 1 ? " uses" : "s use"} a model without a known price.`}
         </p>

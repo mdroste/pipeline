@@ -1,3 +1,4 @@
+import { useWorkspacePaneVisible } from "./workspacePaneVisibility";
 import { useAppPreferences, shouldSendMessage } from "../lib/appPreferences";
 import { isMac } from "../lib/platform";
 import {
@@ -120,6 +121,7 @@ function LiveMessage({
     </article>
   );
 }
+
 export default function WorkspaceConversationView({
   assistantName = "ChatGPT",
   taskCards,
@@ -162,6 +164,7 @@ export default function WorkspaceConversationView({
   onNewer,
   followLatestRef,
 }: Props) {
+  const visible = useWorkspacePaneVisible();
   const streaming = useSyncExternalStore(streamStore.subscribe, () =>
     Boolean(streamStore.get()),
   );
@@ -190,12 +193,14 @@ export default function WorkspaceConversationView({
     if (!sessionId) return null;
     const workspaceId = snapshot?.workspace?.id;
     const checkpointId = snapshot.session.overrides?.projectCheckpointId;
-    const adapter = workspaceId
-      ? workspaceFileAdapter({
-          workspaceId,
-          checkpointId: typeof checkpointId === "string" ? checkpointId : null,
-        })
-      : null;
+    const adapter =
+      workspaceId && snapshot.workspace?.root && !checkpointId
+        ? workspaceFileAdapter({
+            workspaceId,
+            checkpointId:
+              typeof checkpointId === "string" ? checkpointId : null,
+          })
+        : null;
     return {
       path: "conversation.md",
       root: snapshot.workspace?.root ?? undefined,
@@ -215,7 +220,7 @@ export default function WorkspaceConversationView({
         conversationClient.openConversationFile(sessionId, path),
       image: async (path: string) => {
         const file = adapter
-          ? await adapter.read(path)
+          ? await adapter.readInline!(path)
           : await conversationClient.readConversationFile(sessionId, path);
         if (!file.base64 || !file.mime.startsWith("image/"))
           throw new Error("Image unavailable");
@@ -362,11 +367,13 @@ export default function WorkspaceConversationView({
               </div>
             </article>
           )}
-          <LiveMessage
-            store={streamStore}
-            assistantName={assistantName}
-            active={active}
-          />
+          {visible && (
+            <LiveMessage
+              store={streamStore}
+              assistantName={assistantName}
+              active={active}
+            />
+          )}
           {taskCards}
           {transcriptEnd < totalItems && (
             <button

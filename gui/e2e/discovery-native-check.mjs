@@ -21,14 +21,16 @@ try {
   if(await dismiss.isExisting())await dismiss.click();
   await app.$('button=Automations').click();
   await app.$('[role="tab"]=Research').click();
-  await app.$('button=Research discovery — choose projects yourself').click();
+  await app.$('.mission-discovery-entry').click();
   await field("Research topics and questions").setValue("Synthetic qualification: investigate historical source transmission");
   await field("Candidate projects").setValue("50");
   await field("Shortlisted projects").setValue("3");
   await field("Papers requested").setValue("2");
-  await app.$('summary=Research and review settings').click();
+  await app.$('summary*=Research & review').click();
+  await field("Idea subagents").setValue("4");
   await field("Detailed proposal reviewers").setValue("1");
   await field("Paper reviewers per round").setValue("1");
+  await app.$('summary*=Sources & tools').click();
   const acquisition=await app.$('//label[contains(. ,"Search public literature records")]/input');
   if(await acquisition.isSelected())await acquisition.click();
   await app.$('button=Start research discovery').scrollIntoView();
@@ -38,6 +40,7 @@ try {
   const id=(await invoke("discovery_list",{offset:0}))[0].id;
   const selection=await reached(id,r=>r.state==="awaitingSelection");
   assert.equal(selection.candidateCount,50);
+  assert.equal(selection.completedIdeaAgents,4);
   assert.equal(selection.papers.length,0);
   assert.equal(selection.selection.shortlist.length,3);
   await app.$('button=Develop selected projects').waitForEnabled({timeout:15000});
@@ -46,7 +49,7 @@ try {
   const finished=await reached(id,r=>r.state==="completed");
   assert.equal(finished.papers.length,2);
   assert.equal(finished.ranking.length,2);
-  assert.ok(finished.papers.every(p=>p.reviewCount===1));
+  assert.ok(finished.papers.every(p=>p.reviewCount===1 && p.draftDelivered && !p.claimRecord.supported && p.claimRecord.acceptedAt===null));
   const paper=await invoke("discovery_paper",{id,candidateId:finished.papers[0].candidateId});
   assert.ok(paper.versions[0].artifacts["paper.md"].hash);
   assert.equal(paper.versions[0].reviews.length,1);
@@ -57,7 +60,7 @@ try {
   await app.$('[aria-label="Paper reader"]').waitForDisplayed();
   await app.$('[aria-label="Paper reader"]').scrollIntoView();
   await app.saveScreenshot("/private/tmp/pipeline-discovery-paper.png");
-  const unsupervised=await invoke("discovery_start",{request:{definition:{...finished.definition,mode:"unsupervised",prompt:"Synthetic unsupervised qualification",proposalRevisionPasses:0},sessionId:null,operationId:`unsupervised-${Date.now()}`}});
+  const unsupervised=await invoke("discovery_start",{request:{definition:{...finished.definition,mode:"unsupervised",prompt:"Synthetic unsupervised qualification",proposalRevisionPasses:0,maxReplacements:0},sessionId:null,operationId:`unsupervised-${Date.now()}`}});
   const auto=await reached(unsupervised.id,r=>r.state==="completed");
   assert.equal(auto.selected.length,2);
   assert.equal(auto.ranking.length,2);

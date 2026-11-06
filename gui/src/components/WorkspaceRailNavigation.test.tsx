@@ -3,149 +3,65 @@ import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { expect, it, vi } from "vitest";
 import WorkspaceRailNavigation from "./WorkspaceRailNavigation";
-import type { WorkbenchSession, Workspace } from "../lib/workbenchTypes";
-
-const project = (id: string, name: string, extra: Partial<Workspace> = {}) =>
-  ({
-    id,
-    name,
-    root: `/papers/${id}`,
-    archivedAt: null,
-    ...extra,
-  }) as Workspace;
-const session = (id: string) =>
-  ({ id, title: `Conversation ${id}`, archivedAt: null }) as WorkbenchSession;
-
-function renderNavigation(
+import type { Workspace } from "../lib/workbenchTypes";
+import { saveProjectPins } from "../lib/projectIndex";
+const project = (id: string, name: string, archivedAt: string | null = null) =>
+  ({ id, name, root: "/research", updatedAt: id, archivedAt }) as Workspace;
+function mount(
   overrides: Partial<ComponentProps<typeof WorkspaceRailNavigation>> = {},
 ) {
-  const trade = project("trade", "Trade paper");
-  const props: ComponentProps<typeof WorkspaceRailNavigation> = {
-    project: trade,
+  const current = project("a", "Trade paper");
+  const props = {
+    project: current,
     projects: [
-      trade,
-      project("wages", "Minimum wages"),
-      project("old", "Old paper", { archivedAt: "2026-01-01" }),
+      current,
+      project("b", "Minimum wages"),
+      project("c", "Old paper", "archived"),
     ],
-    destination: "results",
-    sessions: ["1", "2", "3", "4", "5"].map(session),
-    sessionId: "1",
     chatOpen: false,
-    background: null,
     disabled: false,
+    destination: "theory" as const,
     onNavigate: vi.fn(),
-    onSelectSession: vi.fn(),
-    onCreateSession: vi.fn(),
     onSelectProject: vi.fn(),
     onNewProject: vi.fn(),
     onAllProjects: vi.fn(),
-    conversationActions: () => ({
-      onRename: vi.fn(),
-      onGenerateTitle: vi.fn(),
-      onMove: vi.fn(),
-      onArchive: vi.fn(),
-      onDelete: vi.fn(),
-    }),
+    onBrowseUnfiled: vi.fn(),
     ...overrides,
   };
   render(<WorkspaceRailNavigation {...props} />);
   return props;
 }
-
-it("shows the project's sections and opens the overview", async () => {
+it("searches pinned and recent projects without mixing in configuration", async () => {
+  saveProjectPins(["b"]);
   const user = userEvent.setup();
-  const props = renderNavigation();
-
-  const sections = within(
-    screen.getByRole("navigation", { name: "Project sections" }),
-  );
-  expect(sections.getByRole("button", { name: "Analyze" })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
-  await user.click(sections.getByRole("button", { name: "Overview" }));
-  expect(props.onNavigate).toHaveBeenCalledWith("overview");
-});
-
-it("lists a few conversations, keeps the open one, and shows the rest on request", async () => {
-  const user = userEvent.setup();
-  const props = renderNavigation({ sessionId: "5", chatOpen: true });
-  const list = within(
-    screen.getByRole("navigation", { name: "Conversations" }),
-  );
-
-  expect(list.getByRole("button", { name: "Conversation 5" })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
-  expect(list.queryByRole("button", { name: "Conversation 4" })).toBeNull();
-
-  await user.click(list.getByRole("button", { name: "Show all 5" }));
-  await user.click(list.getByRole("button", { name: "Conversation 4" }));
-  expect(props.onSelectSession).toHaveBeenCalledWith("4");
-  await user.click(screen.getByRole("button", { name: "New conversation" }));
-  expect(props.onCreateSession).toHaveBeenCalledOnce();
-});
-
-it("marks a conversation running elsewhere or waiting for approval", () => {
-  renderNavigation({ background: { sessionId: "2", waiting: 1 } });
-  expect(screen.getByLabelText("Needs your approval")).toBeVisible();
-});
-
-it("switches between active projects and reaches every project", async () => {
-  const user = userEvent.setup();
-  const props = renderNavigation();
-  const open = () =>
-    user.click(
-      screen.getByRole("button", { name: "Switch project: Trade paper" }),
-    );
-
-  await open();
-  expect(screen.queryByRole("menuitemradio", { name: "Old paper" })).toBeNull();
-  await user.click(
-    screen.getByRole("menuitemradio", { name: "Minimum wages" }),
-  );
-  expect(props.onSelectProject).toHaveBeenCalledWith("wages");
-
-  await open();
-  await user.click(screen.getByRole("menuitem", { name: "Project settings" }));
+  const props = mount();
+  const button = screen.getByRole("button", {
+    name: "Switch project: Trade paper",
+  });
+  await user.click(button);
+  const dialog = within(screen.getByRole("dialog", { name: "Switch project" }));
+  expect(dialog.getByRole("heading", { name: "Pinned" })).toBeVisible();
+  expect(dialog.queryByText("Old paper")).toBeNull();
+  expect(dialog.queryByText("Project settings")).toBeNull();
+  await user.type(dialog.getByRole("searchbox"), "wage");
+  expect(dialog.queryByText("Trade paper")).toBeNull();
+  await user.click(dialog.getByRole("button", { name: "Minimum wages" }));
+  expect(props.onSelectProject).toHaveBeenCalledWith("b");
+  await user.click(button);
+  await user.keyboard("{Escape}");
+  expect(button).toHaveFocus();
+  await user.click(screen.getByRole("button", { name: "Project settings" }));
   expect(props.onNavigate).toHaveBeenCalledWith("project-settings");
-
-  await open();
-  await user.click(screen.getByRole("menuitem", { name: "All projects" }));
-  expect(props.onAllProjects).toHaveBeenCalledOnce();
-
-  await open();
-  await user.click(screen.getByRole("menuitem", { name: "New project" }));
-  expect(props.onNewProject).toHaveBeenCalledOnce();
 });
-
-it("lists unfiled conversations without project controls", () => {
-  renderNavigation({ project: null, sessions: [] });
-  expect(screen.getByText("No conversations yet.")).toBeVisible();
+it("opens unfiled chats without inheriting project tools", async () => {
+  const props = mount({ project: null });
+  await userEvent.click(screen.getByRole("button", { name: "Chats" }));
+  expect(props.onBrowseUnfiled).toHaveBeenCalledOnce();
   expect(
     screen.queryByRole("navigation", { name: "Project sections" }),
   ).toBeNull();
-  expect(screen.queryByRole("button", { name: /^Switch project/ })).toBeNull();
 });
-
-it("holds every control while an editor is busy", () => {
-  renderNavigation({ disabled: true });
-  for (const name of ["Switch project: Trade paper", "Analyze"])
-    expect(screen.getByRole("button", { name })).toBeDisabled();
-});
-
-it("offers older conversations past the end of a long list", async () => {
-  const user = userEvent.setup();
-  const onLoadOlderSessions = vi.fn();
-  renderNavigation({ hasOlderSessions: true, onLoadOlderSessions });
-
-  expect(
-    screen.queryByRole("button", { name: "Show older conversations" }),
-  ).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Show all 5+" }));
-  await user.click(
-    screen.getByRole("button", { name: "Show older conversations" }),
-  );
-  expect(onLoadOlderSessions).toHaveBeenCalledOnce();
+it("disables project changes while an editor is busy", () => {
+  mount({ disabled: true });
+  for (const b of screen.getAllByRole("button")) expect(b).toBeDisabled();
 });

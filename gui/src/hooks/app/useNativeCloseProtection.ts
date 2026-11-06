@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { confirmDialog, notify } from "../../components/DialogService";
 import type { AppNavigation } from "./useAppNavigation";
+import { flushDrafts } from "../../lib/flushDrafts";
 
 export function useNativeCloseProtection(
   unsavedRef: AppNavigation["unsavedRef"],
@@ -39,6 +40,7 @@ export function useNativeCloseProtection(
         )
           return;
         if (!disposed) {
+          if (!hide) flushDrafts();
           await invoke("complete_app_close", {
             action: hide ? "hide" : "quit",
           });

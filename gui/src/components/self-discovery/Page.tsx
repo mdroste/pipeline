@@ -8,9 +8,11 @@ import {
   type DiscoveryRun,
   type DiscoverySummary,
 } from "../../lib/discoveryClient";
+import { Icon } from "../../ui/icons";
 import Builder from "./Builder";
 import Detail from "./Detail";
 import "./discovery.css";
+import "./setup.css";
 import ReportIssueLink from "../ReportIssueLink";
 
 export default function SelfDiscovery({
@@ -29,6 +31,8 @@ export default function SelfDiscovery({
   const [rows, setRows] = useState<DiscoverySummary[]>([]);
   const [run, setRun] = useState<DiscoveryRun | null>(null);
   const [creating, setCreating] = useState(!initialRunId);
+  // Keep the brief mounted while the researcher browses earlier portfolios.
+  const [hasDraft, setHasDraft] = useState(!initialRunId);
   const [error, setError] = useState("");
   const [offset, setOffset] = useState(0);
   const selected = useRef<string | null>(initialRunId ?? null);
@@ -43,7 +47,15 @@ export default function SelfDiscovery({
       ]);
       if (version !== generation.current) return;
       setRows(list);
-      if (id === selected.current) setRun(detail);
+      if (id === selected.current)
+        setRun((current) =>
+          current?.id === detail?.id &&
+          current &&
+          detail &&
+          current.revision > detail.revision
+            ? current
+            : detail,
+        );
     } catch (e) {
       if (version === generation.current) setError(String(e));
     }
@@ -64,17 +76,21 @@ export default function SelfDiscovery({
       listen("discovery:changed", queue),
       listen("tasks:changed", queue),
     ];
+    const fallback = setInterval(queue, 10000);
     return () => {
       live = false;
       generation.current++;
       if (timer) clearTimeout(timer);
+      clearInterval(fallback);
       for (const p of pending) void p.then((f) => f()).catch(() => undefined);
     };
   }, [refresh]);
   function update(r: DiscoveryRun) {
     selected.current = r.id;
     generation.current++;
-    setRun(r);
+    setRun((current) =>
+      current?.id === r.id && current.revision > r.revision ? current : r,
+    );
     setCreating(false);
     void refresh();
   }
@@ -83,79 +99,98 @@ export default function SelfDiscovery({
       className="research-missions discovery-page"
       aria-label="Research discovery"
     >
-      <div className="task-section-heading">
-        <div>
-          <button onClick={onBack}>← Research automations</button>
-          <h2>Research discovery</h2>
-          <p className="task-muted">
-            Explore research questions, develop papers, and review the results.
-          </p>
-        </div>
+      <nav className="ds-nav" aria-label="Research discovery navigation">
+        <button onClick={onBack}>
+          <Icon name="arrow-left" /> Research automations
+        </button>
         <button
           onClick={() => {
             selected.current = null;
             generation.current++;
             setRun(null);
-            setCreating(true);
+            if (creating) void refresh();
+            else setHasDraft(true);
+            setCreating(!creating);
           }}
         >
-          New research discovery
+          <Icon
+            name={creating ? "history" : hasDraft ? "arrow-left" : "plus"}
+          />
+          {creating
+            ? "Portfolio history"
+            : hasDraft
+              ? "Return to setup"
+              : "New research discovery"}
         </button>
-      </div>
+      </nav>
+      <header className="ds-heading">
+        <h1>{creating ? "Research discovery" : "Portfolio history"}</h1>
+        <p>
+          {creating
+            ? "Turn a research question into a shortlist of proposals and reviewed paper drafts."
+            : "Open a research portfolio to see its progress and results."}
+        </p>
+      </header>
       {error && (
         <p className="task-error" role="alert">
           {error}
           <ReportIssueLink />
         </p>
       )}
-      <div
-        className={`tasks-content ${creating || run ? "tasks-content--split" : ""}`}
-      >
-        <section className="task-list" aria-label="Research discovery history">
-          {rows.map((r) => (
-            <button
-              className={`task-list-row ${run?.id === r.id ? "is-selected" : ""}`}
-              key={r.id}
-              onClick={() => {
-                selected.current = r.id;
-                setCreating(false);
-                setRun(null);
-                void refresh();
-              }}
-            >
-              <div>
-                <strong>{r.prompt}</strong>
-                <span>{discoveryNames[r.mode]}</span>
-                <small>{r.reason}</small>
-              </div>
-              <span className="task-status">{discoveryStatus(r.state)}</span>
-            </button>
-          ))}
-          {!rows.length && (
-            <p className="task-empty">
-              Your research portfolios will appear here.
-            </p>
-          )}
-          <div className="task-actions">
-            {offset > 0 && (
-              <button onClick={() => setOffset((n) => Math.max(0, n - 25))}>
-                Previous
-              </button>
-            )}
-            {rows.length === 25 && (
-              <button onClick={() => setOffset((n) => n + 25)}>More</button>
-            )}
-          </div>
-        </section>
-        {creating ? (
+      {hasDraft && (
+        <div hidden={!creating}>
           <Builder
             initialMode={initialMode}
             initialSessionId={initialSessionId}
-            onStarted={update}
-            onClose={() => setCreating(false)}
+            onStarted={(r) => {
+              setHasDraft(false);
+              update(r);
+            }}
           />
-        ) : (
-          run && (
+        </div>
+      )}
+      {!creating && (
+        <div className={`tasks-content ${run ? "tasks-content--split" : ""}`}>
+          <section
+            className="task-list"
+            aria-label="Research discovery history"
+          >
+            {rows.map((r) => (
+              <button
+                className={`task-list-row ${run?.id === r.id ? "is-selected" : ""}`}
+                key={r.id}
+                onClick={() => {
+                  selected.current = r.id;
+                  setCreating(false);
+                  setRun(null);
+                  void refresh();
+                }}
+              >
+                <div>
+                  <strong>{r.prompt}</strong>
+                  <span>{discoveryNames[r.mode]}</span>
+                  <small>{r.reason}</small>
+                </div>
+                <span className="task-status">{discoveryStatus(r.state)}</span>
+              </button>
+            ))}
+            {!rows.length && (
+              <p className="task-empty">
+                Your research portfolios will appear here.
+              </p>
+            )}
+            <div className="task-actions">
+              {offset > 0 && (
+                <button onClick={() => setOffset((n) => Math.max(0, n - 25))}>
+                  Previous
+                </button>
+              )}
+              {rows.length === 25 && (
+                <button onClick={() => setOffset((n) => n + 25)}>More</button>
+              )}
+            </div>
+          </section>
+          {run && (
             <Detail
               key={run.id}
               run={run}
@@ -169,9 +204,9 @@ export default function SelfDiscovery({
               }}
               onConversation={onConversation}
             />
-          )
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </section>
   );
 }

@@ -90,6 +90,7 @@ pub(crate) fn child_chain(m: &Mission) -> Result<Chain> {
             action,
         }],
         limits: Limits {
+            max_api_cost_cents: m.definition.budget.max_api_cost_cents,
             max_actions: 1,
             deadline_hours: m.definition.budget.deadline_hours,
             action_timeout_secs: remaining,

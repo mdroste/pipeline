@@ -92,7 +92,10 @@ fn a_page_is_chosen_without_reading_payloads() {
     let (_t, s, id) = fixture();
     let c = s.connection().unwrap();
     let plan = c
-        .prepare(&format!("EXPLAIN QUERY PLAN {}", page_query("<", "DESC")))
+        .prepare(&format!(
+            "EXPLAIN QUERY PLAN {}",
+            page_query("<", "DESC", true)
+        ))
         .unwrap()
         .query_map(params![id, None::<String>, None::<String>, 10], |row| {
             row.get::<_, String>(3)
@@ -102,7 +105,8 @@ fn a_page_is_chosen_without_reading_payloads() {
         .unwrap();
     assert!(
         plan.iter()
-            .any(|row| row.contains("COVERING INDEX transcript_items_page")),
+            .any(|row| row.contains("COVERING INDEX transcript_items_page")
+                && row.contains("created_at")),
         "{plan:?}"
     );
 }
@@ -112,7 +116,7 @@ fn the_message_walk_reads_no_tool_payloads_and_chooses_pages_from_the_index() {
     let (_t, s, id) = fixture();
     let c = s.connection().unwrap();
     let plan = c
-        .prepare(&format!("EXPLAIN QUERY PLAN {}", message_page_query()))
+        .prepare(&format!("EXPLAIN QUERY PLAN {}", message_page_query(true)))
         .unwrap()
         .query_map(params![id, None::<String>, None::<String>, 10], |row| {
             row.get::<_, String>(3)
@@ -122,7 +126,8 @@ fn the_message_walk_reads_no_tool_payloads_and_chooses_pages_from_the_index() {
         .unwrap();
     assert!(
         plan.iter()
-            .any(|row| row.contains("COVERING INDEX transcript_items_page")),
+            .any(|row| row.contains("COVERING INDEX transcript_items_page")
+                && row.contains("created_at")),
         "{plan:?}"
     );
     for (item, kind, is_final) in [

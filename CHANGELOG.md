@@ -3,6 +3,70 @@
 Changes in each Pipeline release, newest first. Development before the first
 public release was not tracked as a stable release series.
 
+## 1.4.5 — 2026-11-06
+
+- Review recovery preserves published partial reports. Regenerated reviews use
+  the approved design even if a different design becomes active while queued.
+  Word exports include revision comparisons and protect the original manuscript.
+
+- A new chat started from selected sources opens with read-only access. Project
+  navigation checks unsaved file drafts before leaving the editor. Analysis
+  comparisons and source passages follow the selected results and documents.
+
+- **Review and revise** keeps instructions for existing manuscripts. A failed
+  revision can accept corrected text before retrying. Research discovery keeps
+  attachment paths in exported manuscripts.
+
+- Dark mode uses softer charcoal surfaces. **New review** has quieter step
+  cards and shows a single input picker when starting another review.
+
+- Research automations and Research discovery distinguish a delivered draft
+  from a claim supported by inspected evidence. Researchers can inspect open
+  objections and accept an assessment for a specific round or paper version.
+
+- Automations recover saved action results without repeating work, enforce group
+  deadlines and step timeouts, and can share one API allowance across Reviews
+  and retries. Research discovery previews the actions needed to reach the
+  requested shortlist and papers.
+
+- Research discovery shows a live activity feed, last-activity time, current-step
+  elapsed time, and individual idea-agent status. Open proposals and papers
+  refresh as assessments, drafts, and reviews arrive.
+
+- The **Review designer** groups steps under neutral phase headings. Select a
+  step name to edit it, use its switch to enable it, or open **•••** for more actions.
+
+- **Automations**, the sidebar, and the review editor use neutral light-mode
+  controls and selections. **Home** keeps its color splash, and green still
+  marks statuses such as completed reviews.
+
+- **Projects** opens the project list. A searchable switcher and eight named
+  views sit below the current project. **Chats** holds its conversations;
+  **Project tools** lists every view, including specialized research tools.
+
+- Printed reports keep currency amounts as text and fit wide equations to the
+  page without shrinking the surrounding report.
+
+- Review reports and findings use consistent LaTeX instructions. Common bare
+  mathematical notation in saved reports is also typeset in the report viewer.
+- The conversation model picker uses compact model rows, search for longer
+  lists, and dropdowns for the connection and thinking level. Account and usage
+  details expand on demand.
+
+- Write keeps the selected copy aligned with the open file and protects newer
+  edits during Discard. File drafts are retained before quit and update restart;
+  a storage failure keeps Pipeline open so the files can be saved.
+- Queued re-runs protect their source reports from retention cleanup. Review
+  progress survives a late queue response, and failed report reads offer retry
+  and access to the saved report.
+- Review estimates follow each agent's model selection and the model used to
+  combine results, including a separate combine call for each repeated item.
+- Resizing panels remains usable when local storage is unavailable. Reloading
+  media retries playback. Changed spreadsheets keep a valid worksheet and page
+  or open the first available one.
+- Project overviews find their automation results even when other projects have
+  more recent activity.
+
 ## 1.4.4 — 2026-11-05
 
 - Add an optional **Note from the author** when setting up a review. Every

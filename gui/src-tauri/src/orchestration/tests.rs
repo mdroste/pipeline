@@ -25,6 +25,7 @@ fn done(p: &mut state::Progress, ready: &state::Ready, value: Value) {
     p.receipts.insert(
         ready.address.clone(),
         Receipt {
+            action_kind: None,
             sequence: 0,
             address: ready.address.clone(),
             step_id: ready.step.id.clone(),
@@ -64,6 +65,7 @@ fn failed_attempt(s: &Store, status: &str) -> TaskRun {
     run.progress.receipts.insert(
         "action".into(),
         Receipt {
+            action_kind: None,
             sequence: 1,
             address: "action".into(),
             step_id: "action".into(),
@@ -118,6 +120,7 @@ pub(super) async fn settled(c: &Coordinator, id: &str) -> TaskRun {
     panic!("The dispatched action never settled");
 }
 
+mod contracts;
 mod coordinator;
 
 mod availability;
@@ -127,3 +130,7 @@ mod recovery;
 mod schedules;
 mod snapshots;
 mod turns;
+
+mod lists;
+
+mod delivery;

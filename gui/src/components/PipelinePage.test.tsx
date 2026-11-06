@@ -191,13 +191,9 @@ describe("PipelinePage", () => {
     render(<PipelinePage onClose={() => {}} />);
     await screen.findByRole("combobox", { name: "Active review" });
 
-    for (const [label, surface] of [
-      ["Review setup", "dark:bg-gray-800"],
-      ["Parallel", "dark:bg-blue-950"],
-      ["Sequential", "dark:bg-orange-950"],
-    ]) {
-      const header = screen.getByText(label).parentElement!;
-      expect(header).toHaveClass("sticky", surface);
+    for (const label of ["Review setup", "Parallel", "Sequential"]) {
+      const header = screen.getByRole("heading", { name: label });
+      expect(header).toHaveClass("sticky", "bg-surface");
       expect(header.nextElementSibling).not.toBeNull();
       // The section's own wrapper is what releases the header.
       expect(header.parentElement?.children[0]).toBe(header);
@@ -224,7 +220,8 @@ describe("PipelinePage", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent("New review name");
     expect(screen.getByRole("dialog")).not.toHaveTextContent(/profile/i);
     await user.keyboard("{Escape}");
-    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.click(screen.getByRole("button", { name: "Review actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
     expect(screen.getByRole("dialog")).toHaveTextContent("Rename review");
     expect(screen.getByRole("dialog")).not.toHaveTextContent(/profile/i);
   });
@@ -388,12 +385,14 @@ describe("PipelinePage", () => {
       name: "Active review",
     });
     expect(selector).toHaveValue("custom");
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(screen.getByRole("button", { name: "Review actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Delete" }));
 
     expect(selector).toBeDisabled();
     expect(screen.getByRole("button", { name: "New review" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Duplicate" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Rename" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Review actions" }),
+    ).toBeDisabled();
     expect(screen.getByRole("button", { name: "Reset" })).toBeDisabled();
     expect(
       invoke.mock.calls.some(([command]) => command === "switch_profile"),
@@ -769,8 +768,11 @@ describe("PipelinePage", () => {
     await screen.findAllByText("Technical");
 
     await user.click(
-      screen.getByRole("button", { name: "Move Consolidate Issues down" }),
+      screen.getByRole("button", { name: "Actions for Consolidate Issues" }),
     );
+    expect(screen.getByRole("menuitem", { name: "Move up" })).toBeDisabled();
+    expect(screen.getByRole("menuitem", { name: "Move down" })).toHaveFocus();
+    await user.keyboard("{Enter}");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => {
@@ -783,7 +785,7 @@ describe("PipelinePage", () => {
     });
   });
 
-  it("shows 24px reorder controls only for sequential steps and no drag handles", async () => {
+  it("offers reorder actions only for sequential steps", async () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
     const { container } = render(<PipelinePage onClose={() => {}} />);
@@ -792,19 +794,17 @@ describe("PipelinePage", () => {
     expect(
       screen.getByRole("combobox", { name: "Active review" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Move Technical up" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Move Technical down" }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByTitle("Drag to reorder")).not.toBeInTheDocument();
-    expect(container.querySelector('[draggable="true"]')).toBeNull();
-
-    const moveDown = screen.getByRole("button", {
-      name: "Move Consolidate Issues down",
+    const trigger = screen.getByRole("button", {
+      name: "Actions for Technical",
     });
-    expect(moveDown).toHaveClass("h-6", "w-6");
+    await user.click(trigger);
+    expect(
+      screen.queryByRole("menuitem", { name: "Move up" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Remove step" })).toBeVisible();
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    expect(container.querySelector('[draggable="true"]')).toBeNull();
 
     await user.click(screen.getAllByRole("button", { name: "Technical" })[0]);
     expect(
@@ -1312,7 +1312,8 @@ describe("PipelinePage", () => {
     expect(label).toHaveValue("Technical!");
 
     // A dialog over the editor keeps the workflow unchanged.
-    await user.click(screen.getByRole("button", { name: "Rename" }));
+    await user.click(screen.getByRole("button", { name: "Review actions" }));
+    await user.click(screen.getByRole("menuitem", { name: "Rename" }));
     const dialog = await screen.findByRole("dialog");
     fireEvent.keyDown(dialog, { key: "z", metaKey: true });
     fireEvent.keyDown(dialog, { key: "s", metaKey: true });

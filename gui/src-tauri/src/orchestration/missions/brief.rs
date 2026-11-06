@@ -7,13 +7,18 @@ pub fn render(m: &Mission) -> String {
         m.definition.name, m.definition.objective, m.state, m.reason
     );
     let _=writeln!(s,"## Resources\n\n{} of {} managed actions; {} of {} active execution seconds; {} of {} investigation rounds. {} interruptions requiring attention.\n",m.actions_reserved,m.definition.budget.max_actions,m.active_seconds,m.definition.budget.active_seconds,m.rounds.len(),m.definition.budget.max_rounds,m.attention_count);
+    s.push_str(if m.rounds.iter().any(|r| r.finding.is_some()) {
+        "Investigation brief retained.\n\n"
+    } else {
+        "No investigation result retained yet.\n\n"
+    });
     s.push_str("## Completion criteria\n\n");
     let last = m.rounds.iter().rev().find_map(|r| r.challenge.as_ref());
     for (i, criterion) in m.definition.criteria.iter().enumerate() {
         let assessment = last.and_then(|c| c.criteria.iter().find(|a| a.criterion == i));
         let state = assessment
             .map(|a| match a.status {
-                CriterionStatus::Met => "assessed met",
+                CriterionStatus::Met => "challenger reported met",
                 CriterionStatus::Unmet => "unmet",
                 CriterionStatus::Unknown => "unknown",
             })
@@ -66,6 +71,11 @@ pub fn render(m: &Mission) -> String {
             for l in &f.limitations {
                 let _ = writeln!(s, "- Limitation: {l}");
             }
+        }
+        if let Some(record) = &r.claim_record {
+            s.push_str(&record.describe());
+        } else if r.challenge.is_some() {
+            s.push_str("Earlier assessment: no claim-level evidence or researcher acceptance was recorded.\n");
         }
         if let Some(c) = &r.challenge {
             let _ = writeln!(

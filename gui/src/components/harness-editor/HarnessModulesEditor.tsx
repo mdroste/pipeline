@@ -57,7 +57,7 @@ function Switch({
       onClick={onToggle}
       className={`relative h-5 w-8 shrink-0 rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
         checked
-          ? "bg-green-600 dark:bg-neutral-200"
+          ? "bg-inverse dark:bg-neutral-200"
           : "bg-gray-300 dark:bg-gray-600"
       }`}
     >

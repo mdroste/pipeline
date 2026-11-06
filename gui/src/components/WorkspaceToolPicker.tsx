@@ -4,7 +4,7 @@ import useModalDialog from "../hooks/useModalDialog";
 import {
   loadWorkspacePins,
   workspaceDestinations,
-  workspaceSections,
+  sectionLabel,
   type WorkspaceDestination,
 } from "../lib/workspaceNavigation";
 import { router } from "../lib/router";
@@ -36,9 +36,7 @@ const entryLabel = (id: PickerEntry) =>
 const entryHint = (id: PickerEntry) =>
   isAction(id)
     ? PICKER_ACTIONS.find((action) => action.id === id)!.hint
-    : workspaceSections.find(
-        (section) => section.id === workspaceDestinations[id].section,
-      )!.label;
+    : sectionLabel(id);
 
 export default function WorkspaceToolPicker({
   workspaceId,
@@ -61,11 +59,9 @@ export default function WorkspaceToolPicker({
     const views = (Object.keys(workspaceDestinations) as WorkspaceDestination[])
       .filter((id) => {
         const item = workspaceDestinations[id];
-        const section = workspaceSections.find(
-          (section) => section.id === item.section,
-        )!;
+        const section = sectionLabel(id);
         return terms.every((term) =>
-          `${id} ${item.label} ${section.label}`.toLowerCase().includes(term),
+          `${id} ${item.label} ${section}`.toLowerCase().includes(term),
         );
       })
       .sort((a, b) => {

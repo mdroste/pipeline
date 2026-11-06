@@ -67,7 +67,22 @@ export default function Experiments({
   const [convert, setConvert] = useState(false);
   const [factor, setFactor] = useState(1);
   const [offset, setOffset] = useState(0);
-  const [comparison, setComparison] = useState<Comparison | null>(null);
+  const comparisonKey = JSON.stringify([
+    workspaceId,
+    left,
+    right,
+    rationale,
+    relative,
+    convert,
+    factor,
+    offset,
+  ]);
+  const [savedComparison, setComparison] = useState<{
+    key: string;
+    value: Comparison;
+  } | null>(null);
+  const comparison =
+    savedComparison?.key === comparisonKey ? savedComparison.value : null;
   const [experimentId, setExperimentId] = useState("");
   const [experiment, setExperiment] = useState<Experiment>(blankExperiment);
   const experimentGuard = useDraftGuard(experiment);
@@ -86,12 +101,23 @@ export default function Experiments({
   const [specRecord, setSpecRecord] = useState("");
   const [seriesLeft, setSeriesLeft] = useState("");
   const [seriesRight, setSeriesRight] = useState("");
-  const [seriesComparison, setSeriesComparison] = useState<{
-    comparable: boolean;
-    blockers: string[];
-    horizons: number[];
-    changes: (number | null)[];
+  const seriesKey = JSON.stringify([
+    workspaceId,
+    seriesLeft,
+    seriesRight,
+    rationale,
+  ]);
+  const [savedSeries, setSeriesComparison] = useState<{
+    key: string;
+    value: {
+      comparable: boolean;
+      blockers: string[];
+      horizons: number[];
+      changes: (number | null)[];
+    };
   } | null>(null);
+  const seriesComparison =
+    savedSeries?.key === seriesKey ? savedSeries.value : null;
   const refresh = async () => {
     const [r, p, e, s, irf] = await Promise.all([
       executionClient.listStructuredResults(workspaceId),
@@ -568,8 +594,9 @@ export default function Experiments({
                     rationale,
                   }
                 : null;
-              setComparison(
-                await studioClient.compare(
+              setComparison({
+                key: comparisonKey,
+                value: await studioClient.compare(
                   workspaceId,
                   resultRef(l!),
                   resultRef(r!),
@@ -577,7 +604,7 @@ export default function Experiments({
                   conversion,
                   relative,
                 ),
-              );
+              });
             })
           }
         >
@@ -725,14 +752,15 @@ export default function Experiments({
             disabled={!seriesLeft || !seriesRight || busy}
             onClick={() =>
               void run(async () =>
-                setSeriesComparison(
-                  await studioClient.compareSeries(
+                setSeriesComparison({
+                  key: seriesKey,
+                  value: await studioClient.compareSeries(
                     workspaceId,
                     seriesLeft,
                     seriesRight,
                     rationale,
                   ),
-                ),
+                }),
               )
             }
           >

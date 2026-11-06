@@ -175,7 +175,8 @@ export default function RunPreview({
         reads: (specialistDonor?.context.include ?? []).map((selector) =>
           selectorLabel(selector, stepLabels),
         ),
-        tools: [],
+        tools:
+          specialistDonor?.tools.filter((tool) => tool === "WebSearch") ?? [],
       });
     };
     for (const step of steps) {

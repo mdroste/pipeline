@@ -1,3 +1,4 @@
+import { useDraftFlush } from "../../hooks/useDraftFlush";
 // Open files and their drafts. Unsaved text survives tab switches, restarts and
 // eviction from memory; a clean file can always be read again.
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -78,13 +79,20 @@ export function useFileBuffers({
     [adapter.id],
   );
   const load = useCallback(
-    async (path: string, reload: boolean | "discard" = false) => {
+    async (
+      path: string,
+      reload: boolean | "discard" = false,
+      preview?: FilePreview,
+    ) => {
       recent.current = [...recent.current.filter((p) => p !== path), path];
       if (!reload && latest.current[path]) return;
-      if (pending.current.has(path)) return pending.current.get(path);
+      if (pending.current.has(path)) {
+        release(preview);
+        return pending.current.get(path);
+      }
       const before = latest.current[path];
       const operation = (async () => {
-        const file = await adapter.read(path);
+        const file = preview ?? (await adapter.read(path));
         let draft = file.text ?? "";
         let base = file;
         let status = "";
@@ -148,10 +156,16 @@ export function useFileBuffers({
     },
     [adapter, draftKey, release],
   );
+  const persisted = useRef(new WeakMap<Buffer, string>());
   const retain = useCallback(
-    (values: Record<string, Buffer>) => {
+    (values: Record<string, Buffer>, force = false) => {
+      let retained = true;
       for (const [path, buffer] of Object.entries(values)) {
-        if (!buffer.file.editable) continue;
+        if (
+          !buffer.file.editable ||
+          (!force && persisted.current.get(buffer) === draftKey(path))
+        )
+          continue;
         try {
           if (buffer.draft !== buffer.file.text)
             localStorage.setItem(
@@ -162,13 +176,17 @@ export function useFileBuffers({
               }),
             );
           else localStorage.removeItem(draftKey(path));
+          persisted.current.set(buffer, draftKey(path));
         } catch {
+          if (!isDirty(buffer)) continue;
+          retained = false;
           if (alive.current)
             setError(
               "Draft storage is full. Save your files before closing Pipeline.",
             );
         }
       }
+      return retained;
     },
     [draftKey, setError],
   );
@@ -177,14 +195,7 @@ export function useFileBuffers({
     retainTimer.current = timer;
     return () => clearTimeout(timer);
   }, [buffers, retain]);
-  useEffect(() => {
-    const flush = () => retain(latest.current);
-    window.addEventListener("pagehide", flush);
-    return () => {
-      flush();
-      window.removeEventListener("pagehide", flush);
-    };
-  }, [retain]);
+  useDraftFlush(() => retain(latest.current, true));
   /** Forget clean files beyond the limit. Dirty ones keep their drafts. */
   const evict = useCallback(
     (onScreen: (string | null | undefined)[]) => {

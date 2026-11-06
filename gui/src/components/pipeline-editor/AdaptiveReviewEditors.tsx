@@ -20,19 +20,16 @@ export function AdaptiveAgentsRow({
       type="button"
       aria-label={`Adaptive agents — ${count === null ? `Automatic, ${countLabel} agents` : `${count} agents`}`}
       onClick={onSelect}
-      className={`w-full border-b border-blue-100 px-4 py-2.5 text-left dark:border-blue-950/60 ${
-        selected
-          ? "bg-blue-100/80 dark:bg-blue-950/60"
-          : "bg-blue-50/40 hover:bg-blue-50 dark:bg-blue-950/15 dark:hover:bg-blue-950/35"
-      }`}
+      aria-pressed={selected}
+      className="designer-item designer-row"
+      data-selected={selected || undefined}
     >
-      <span className="flex items-center justify-between gap-2">
-        <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
-          Adaptive agents
-        </span>
-        <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900/60 dark:text-blue-200">
-          {countLabel} agents
-        </span>
+      <span className="min-w-0">
+        <span className="block text-ui-body font-medium">Adaptive agents</span>
+        <span className="designer-detail">Auto-filled from orientation</span>
+      </span>
+      <span className="shrink-0 text-ui-meta text-ink-muted tabular-nums">
+        {countLabel} agents
       </span>
     </button>
   );

@@ -4,8 +4,12 @@ use super::*;
 
 #[tauri::command]
 pub async fn workbench_project_index(
+    after_id: Option<String>,
 ) -> WorkbenchResult<Vec<crate::workbench::project::ProjectIndexItem>> {
-    run_store(move |store| crate::workbench::project::project_index(&store)).await
+    run_store(move |store| {
+        crate::workbench::project::project_index_page(&store, after_id.as_deref())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -14,6 +18,13 @@ pub async fn workbench_project_home(
 ) -> WorkbenchResult<crate::workbench::project::ProjectHome> {
     run_store(move |store| crate::workbench::project::home(&store, &workspace_id)).await
 }
+/// The assistant-only layout needs just the brief of a project without a
+/// folder or captured paper. Leave inventory, tasks and ledgers unopened.
+#[tauri::command]
+pub async fn workbench_chat_brief(workspace_id: String) -> WorkbenchResult<Option<String>> {
+    run_store(move |store| crate::workbench::project::chat_brief(&store, &workspace_id)).await
+}
+
 /// Git runs outside the database workers: a slow repository or remote must not
 /// hold one of them.
 async fn run_git<T, F>(operation: F) -> WorkbenchResult<T>

@@ -834,7 +834,7 @@ export default function HistoryPage({
                               {fmtTokens(freshInputTokens(r))} fresh
                             </span>
                             {(r.cached_input_tokens ?? 0) > 0 && (
-                              <span className="text-green-700 dark:text-green-400">
+                              <span className="text-ink dark:text-green-400">
                                 {" "}
                                 + {fmtTokens(r.cached_input_tokens)} cache read
                               </span>

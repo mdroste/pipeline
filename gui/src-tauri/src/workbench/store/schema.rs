@@ -122,6 +122,18 @@ const MIGRATIONS: [(&str, &str); CURRENT_SCHEMA_VERSION as usize] = [
         include_str!("../migrations/020_clear_finished_job_journals.sql"),
         "Failed to apply Workbench migration 20",
     ),
+    (
+        include_str!("../migrations/021_search_invalidation.sql"),
+        "Failed to narrow research search invalidation",
+    ),
+    (
+        include_str!("../migrations/022_delivered_automation_files.sql"),
+        "Failed to add delivered automation files",
+    ),
+    (
+        include_str!("../migrations/023_conversation_index.sql"),
+        "Failed to index project conversations",
+    ),
 ];
 
 fn apply_migrations(transaction: &Transaction<'_>, from: u32, through: u32) -> WorkbenchResult<()> {
@@ -152,6 +164,44 @@ pub(in crate::workbench) fn reference_schema(through: u32) -> WorkbenchResult<Co
         .commit()
         .map_err(|error| WorkbenchError::storage("Failed to finish reference schema", error))?;
     Ok(connection)
+}
+
+/// Seed an actual earlier schema with rows created by the current test API.
+/// This keeps upgrade fixtures independent of tables introduced later.
+#[cfg(test)]
+pub(in crate::workbench) fn historical_fixture(
+    source: &super::Store,
+    version: u32,
+    tables: &[&str],
+) -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    let c = reference_schema(version).unwrap();
+    c.execute(
+        "ATTACH DATABASE ?1 AS sample",
+        [source.database_path().to_str().unwrap()],
+    )
+    .unwrap();
+    for table in tables {
+        let columns: String = c
+            .query_row(
+                "SELECT group_concat(name, ',') FROM pragma_table_info(?1)",
+                [table],
+                |r| r.get(0),
+            )
+            .unwrap();
+        c.execute_batch(&format!(
+            "INSERT OR REPLACE INTO main.{table} ({columns}) SELECT {columns} FROM sample.{table}"
+        ))
+        .unwrap();
+    }
+    c.pragma_update(None, "user_version", version).unwrap();
+    c.backup(
+        rusqlite::MAIN_DB,
+        root.path().join("research.sqlite3"),
+        None,
+    )
+    .unwrap();
+    root
 }
 
 pub(in crate::workbench) fn migrate(connection: &mut Connection, from: u32) -> WorkbenchResult<()> {

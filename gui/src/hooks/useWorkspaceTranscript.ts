@@ -42,8 +42,10 @@ export default function useWorkspaceTranscript(
     () => allRenderedItems.slice(transcriptStart, transcriptEnd),
     [allRenderedItems, transcriptStart, transcriptEnd],
   );
-  const loadEarlier = async () => {
-    if (transcriptStart > 0) {
+  const loadEarlier = async (
+    source: "transcript" | "outline" = "transcript",
+  ) => {
+    if (source === "transcript" && transcriptStart > 0) {
       setTranscriptPage((page) => page + 1);
       return;
     }
@@ -75,7 +77,7 @@ export default function useWorkspaceTranscript(
       });
       // Fill a short window before advancing, so a tool-heavy page cannot
       // shift an unseen boundary message past the next displayed window.
-      if (renderedItems.length === TRANSCRIPT_WINDOW)
+      if (source === "transcript" && renderedItems.length === TRANSCRIPT_WINDOW)
         setTranscriptPage((value) => value + 1);
     } catch (cause) {
       if (current.current?.session.id === session)

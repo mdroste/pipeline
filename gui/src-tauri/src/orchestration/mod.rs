@@ -8,7 +8,9 @@
 //! Review credentials at dispatch. Leaf actions stay within the app-wide limits
 //! of one Workspace turn and one Review run.
 pub(crate) mod adapters;
+mod allowance;
 pub(crate) mod background;
+pub(crate) mod claims;
 pub mod commands;
 #[path = "coordinator/completion.rs"]
 mod completion;

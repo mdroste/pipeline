@@ -124,6 +124,9 @@ describe("RunPreview", () => {
       screen.getByText(label).parentElement as HTMLElement;
     expect(row("Orientation")).toHaveTextContent("ChatGPT · 1 call");
     expect(row("Specialists")).toHaveTextContent("Claude, Gemini");
+    expect(row("Specialists").closest("li")).toHaveTextContent(
+      "Tools: WebSearch",
+    );
     expect(screen.queryByText(/default provider/i)).not.toBeInTheDocument();
   });
 

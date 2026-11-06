@@ -60,6 +60,7 @@ beforeEach(() => {
     async (command: string, args: Record<string, unknown> = {}) => {
       switch (command) {
         case "task_list":
+        case "task_storage_issues":
         case "task_schedules":
         case "task_saved_chains":
         case "task_events":
@@ -164,7 +165,7 @@ it("surfaces preparation failures without launching or clearing the request", as
 });
 it("keeps recurring schedules separate from active occurrences", async () => {
   render(<TasksPage />);
-  await screen.findByText("Create your first automation.");
+  await screen.findByText("No active automations.");
   fireEvent.click(screen.getByRole("tab", { name: "Scheduled" }));
   await screen.findByText("Make time for recurring work.");
   expect(screen.getByRole("tab", { name: "Scheduled" })).toHaveAttribute(
@@ -175,7 +176,7 @@ it("keeps recurring schedules separate from active occurrences", async () => {
 });
 it("handles task errors emitted by the native coordinator", async () => {
   render(<TasksPage />);
-  await screen.findByText("Create your first automation.");
+  await screen.findByText("No active automations.");
   act(() =>
     mocks.listeners.get("tasks:error")?.({
       payload: "Another instance owns task execution",
@@ -269,7 +270,7 @@ it("inspects the retained operation for a prior attempt after retry", async () =
 it("roves tabs without loading until activation and associates every panel", async () => {
   const user = (await import("@testing-library/user-event")).default.setup();
   render(<TasksPage />);
-  await screen.findByText("Create your first automation.");
+  await screen.findByText("No active automations.");
   const active = screen.getByRole("tab", { name: "Active" });
   const scheduled = screen.getByRole("tab", { name: "Scheduled" });
   const calls = mocks.invoke.mock.calls.length;
@@ -501,4 +502,99 @@ it("does not record a run in progress as seen", async () => {
   expect(mocks.invoke).not.toHaveBeenCalledWith("task_mark_seen", {
     id: run.id,
   });
+});
+
+it("lists isolated records alongside healthy automations", async () => {
+  const normal = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation((command, args) =>
+    command === "task_storage_issues"
+      ? Promise.resolve([
+          { kind: "schedule", id: "broken", diagnostic: "invalid JSON" },
+        ])
+      : normal(command, args),
+  );
+  render(<TasksPage />);
+  expect(
+    await screen.findByText("Automation records needing repair (1)"),
+  ).toBeTruthy();
+  expect(screen.getByText(/schedule broken/)).toBeTruthy();
+});
+
+it.each([0, 49, 50, 51, 100])(
+  "paginates %i history entries using a lookahead",
+  async (count) => {
+    const original = mocks.invoke.getMockImplementation()!;
+    mocks.invoke.mockImplementation((command, args = {}) => {
+      if (command !== "task_list" || args.view !== "history")
+        return original(command, args);
+      const offset = Number(args.offset);
+      return Promise.resolve(
+        Array.from(
+          { length: Math.min(count - offset, args.lookahead ? 51 : 50) },
+          (_, i) => ({
+            ...run,
+            id: String(i + offset),
+            name: "Finished " + (i + offset),
+            state: "finished",
+          }),
+        ),
+      );
+    });
+    render(<TasksPage />);
+    fireEvent.click(await screen.findByRole("tab", { name: "History" }));
+    if (count) await screen.findByText("Finished 0");
+    else await screen.findByText("Completed work will appear here.");
+    const next = screen.queryByRole("button", { name: "Next" });
+    expect(Boolean(next)).toBe(count > 50);
+    if (next) {
+      fireEvent.click(next);
+      await screen.findByText("Finished 50");
+      expect(screen.queryByRole("button", { name: "Next" })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+      await screen.findByText("Finished 0");
+    }
+  },
+);
+
+it("requires replacement text before retrying an unchanged snapshot", async () => {
+  const original = mocks.invoke.getMockImplementation()!;
+  const receipt: Receipt = {
+    sequence: 2,
+    address: "reviewCycle/1/revisedPaper",
+    stepId: "revisedPaper",
+    label: "Capture paper",
+    state: "unknown",
+    operation: "snap",
+    startedAt: 1,
+    finishedAt: 2,
+    wakeAt: null,
+    output: null,
+    error:
+      "The revised artifact is unchanged. Inspect the revision before retrying.",
+  };
+  const blocked = {
+    ...run,
+    state: "attention",
+    progress: { ...run.progress, receipts: { [receipt.address]: receipt } },
+  };
+  mocks.invoke.mockImplementation((command, args = {}) =>
+    command === "task_get" ? Promise.resolve(blocked) : original(command, args),
+  );
+  render(<TasksPage initialTaskId={run.id} />);
+  const retry = await screen.findByRole("button", {
+    name: "Retry unfinished actions",
+  });
+  expect(retry).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Corrected paper for Capture paper"), {
+    target: { value: "Updated manuscript" },
+  });
+  fireEvent.click(retry);
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("task_control", {
+      id: run.id,
+      revision: 0,
+      action: "retry",
+      correctedPapers: { [receipt.address]: "Updated manuscript" },
+    }),
+  );
 });

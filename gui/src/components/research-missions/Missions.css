@@ -156,11 +156,8 @@
 }
 .mission-next {
   padding: 0 16px 12px;
-  border-left: 3px solid var(--accent-color, #547574);
+  border-left: 3px solid var(--ui-page-accent);
   margin-top: 20px;
-}
-.dark .mission-next {
-  border-left-color: var(--ui-page-accent);
 }
 .mission-evidence-link {
   font-size: 11px !important;
@@ -215,4 +212,41 @@
   .mission-metrics strong {
     font-size: 14px;
   }
+}
+
+.tasks-page .mission-discovery-entry {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 16px 18px;
+  margin-bottom: 16px;
+  text-align: left;
+  border-radius: var(--ui-radius-md);
+}
+.mission-discovery-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--ui-radius-md);
+  background: var(--ui-page-soft);
+  color: var(--ui-page-accent);
+}
+.mission-discovery-entry strong,
+.mission-discovery-entry small {
+  display: block;
+}
+.mission-discovery-entry strong {
+  font-size: var(--ui-text-body);
+}
+.mission-discovery-entry small {
+  margin-top: 2px;
+  font-size: var(--ui-text-meta);
+  color: var(--ui-page-muted);
+}
+.mission-discovery-entry > svg {
+  margin-left: auto;
+  flex: none;
+  color: var(--ui-page-muted);
 }

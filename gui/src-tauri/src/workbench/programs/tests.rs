@@ -5,6 +5,7 @@ use crate::workbench::{
 };
 #[cfg(unix)]
 mod capsule_unix;
+mod context_branch;
 #[cfg(unix)]
 mod figure_versions;
 #[cfg(unix)]

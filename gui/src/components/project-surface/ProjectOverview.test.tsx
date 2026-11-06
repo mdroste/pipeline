@@ -197,6 +197,7 @@ it("shows the draft's review state and what is out of sync, one action per row",
         title: "",
       },
     ],
+    workbench_project_review_links: [],
     list_projects: {
       projects: [{ id: "collection", name: "Reviews", run_ids: ["run"] }],
       warnings: [],

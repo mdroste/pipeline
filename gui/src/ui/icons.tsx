@@ -21,7 +21,12 @@ export type IconName =
   | "more"
   | "attach"
   | "file"
+  | "book"
+  | "notes"
+  | "manuscript"
+  | "grid"
   | "folder"
+  | "folder-open"
   | "data"
   | "result"
   | "import"
@@ -56,6 +61,41 @@ export function Icon({
   };
 
   switch (name) {
+    case "book":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinejoin="round"
+            d="M12 6c-3-2-6-2-9-1v14c3-1 6-1 9 1 3-2 6-2 9-1V5c-3-1-6-1-9 1Zm0 0v14"
+          />
+        </svg>
+      );
+    case "notes":
+      return (
+        <svg {...common}>
+          <rect x="5" y="3" width="15" height="18" rx="2" />
+          <path strokeLinecap="round" d="M3 7h4m-4 5h4m-4 5h4m4-10h5m-5 4h4" />
+        </svg>
+      );
+    case "manuscript":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            d="M19 7V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v15a1 1 0 0 0 1 1h11M8 8h6m-6 4h3m9-3 2 2-8 8-3 1 1-3Z"
+          />
+        </svg>
+      );
+    case "grid":
+      return (
+        <svg {...common}>
+          <rect x="3" y="3" width="7" height="7" rx="1.5" />
+          <rect x="14" y="3" width="7" height="7" rx="1.5" />
+          <rect x="3" y="14" width="7" height="7" rx="1.5" />
+          <rect x="14" y="14" width="7" height="7" rx="1.5" />
+        </svg>
+      );
     case "home":
       return (
         <svg {...common}>
@@ -257,6 +297,16 @@ export function Icon({
             strokeLinecap="round"
             strokeLinejoin="round"
             d="M3.75 7.25h6l1.5 2h9v8.5a2 2 0 0 1-2 2H5.75a2 2 0 0 1-2-2V7.25Z"
+          />
+        </svg>
+      );
+    case "folder-open":
+      return (
+        <svg {...common}>
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M3 18V6a1.5 1.5 0 0 1 1.5-1.5H9l2.25 2.75h6.25A1.5 1.5 0 0 1 19 8.75V10M3 18l3.5-8h15l-3.5 8a2.5 2.5 0 0 1-2.25 1.5H5A2 2 0 0 1 3 18Z"
           />
         </svg>
       );

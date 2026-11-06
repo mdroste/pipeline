@@ -477,6 +477,32 @@ fn materialization_inserts_only_selected_specialists_before_synthesis() {
 }
 
 #[test]
+fn specialists_require_authorized_search_and_a_parallel_model_donor() {
+    let mut config = configured_auto_review();
+    for step in &mut config.steps {
+        step.tools.clear();
+    }
+    let result = materialize_config(&config, &valid_orientation()).unwrap();
+    for id in ["formal_proofs", "subject_mathematics_pde"] {
+        assert!(result
+            .steps
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap()
+            .tools
+            .is_empty());
+    }
+    for step in config
+        .steps
+        .iter_mut()
+        .filter(|s| s.phase == Phase::Parallel)
+    {
+        step.kind = crate::pipeline_config::StepKind::Analyzer;
+    }
+    assert!(validate_auto_review_preflight(&config).is_err());
+}
+
+#[test]
 fn materialized_specialists_foreground_their_selection_reason() {
     let config = configured_auto_review();
     let materialized = materialize_config(&config, &valid_orientation()).unwrap();

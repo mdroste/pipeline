@@ -321,6 +321,22 @@ fn review_handoff_stages_one_immutable_revision_idempotently() {
     assert_eq!(first.input_interpretation, "document");
     assert!(Path::new(&first.staged_path).is_file());
     assert_ne!(first.staged_path, input.to_string_lossy());
+    validate_handoff_inputs(&store, &first.id, std::slice::from_ref(&first.staged_path)).unwrap();
+    assert!(
+        validate_handoff_inputs(&store, &first.id, &[input.to_string_lossy().into_owned()])
+            .is_err()
+    );
+    assert_eq!(
+        project_review_links(&store, &first.workspace_id, None)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        project_review_links(&store, &first.workspace_id, Some(first.id.clone()))
+            .unwrap()
+            .is_empty()
+    );
 
     let mismatch = prepare_review_handoff(
         &store,

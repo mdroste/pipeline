@@ -66,6 +66,37 @@ impl Control {
     }
 }
 
+/// Local API and Claude workers hold this lease from before submission is
+/// journaled until terminal projection finishes. A crash releases the OS lock.
+pub(super) fn session_lease(
+    store: &super::store::Store,
+    session: &str,
+) -> super::store::WorkbenchResult<Option<std::fs::File>> {
+    use super::store::WorkbenchError;
+    use sha2::{Digest, Sha256};
+    let key = format!("{:x}", Sha256::digest(session.as_bytes()));
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(store.root_path().join(format!(".turn-{key}.lock")))
+        .map_err(|e| WorkbenchError::storage("Failed to open conversation lease", e))?;
+    match fs2::FileExt::try_lock_exclusive(&file) {
+        Ok(()) => Ok(Some(file)),
+        Err(e)
+            if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+        {
+            Ok(None)
+        }
+        Err(e) => Err(WorkbenchError::storage(
+            "Failed to check conversation lease",
+            e,
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,3 +182,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod lease_tests;

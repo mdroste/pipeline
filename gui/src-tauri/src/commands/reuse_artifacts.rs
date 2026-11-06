@@ -1,5 +1,6 @@
 //! Immutable source and producer-file handoffs between Review runs.
 use crate::pipeline::extract::{plan_folder_copy, ScopedSourceContext, MAX_FOLDER_COPY_FILES};
+use crate::runs::receipts::source_fingerprint;
 use crate::safety::WalkBudget;
 use std::collections::HashMap;
 use std::path::Path;
@@ -306,53 +307,6 @@ async fn wait_for_blocking<T: Send + 'static>(
 struct SourceRecord {
     path: Option<String>,
     fingerprint: String,
-}
-
-fn source_fingerprint(root: &Path) -> Result<String, String> {
-    use sha2::{Digest, Sha256};
-    use std::io::Read;
-    let mut hash = Sha256::new();
-    let mut pending = vec![root.to_path_buf()];
-    let mut walk = WalkBudget::new("Captured source verification").without_time_limit();
-    let mut remaining = crate::safety::MAX_RUN_OUTPUT_BYTES as u64;
-    while let Some(path) = pending.pop() {
-        walk.entry()?;
-        let metadata = std::fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
-        if metadata.is_symlink() {
-            return Err("Captured source contains a symlink".into());
-        }
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|e| e.to_string())?
-            .to_string_lossy()
-            .replace('\\', "/");
-        hash.update((relative.len() as u64).to_le_bytes());
-        hash.update(relative.as_bytes());
-        if metadata.is_dir() {
-            walk.directory()?;
-            hash.update(b"directory");
-            let mut children = std::fs::read_dir(path)
-                .map_err(|e| e.to_string())?
-                .map(|e| e.map(|e| e.path()))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?;
-            children.sort();
-            pending.extend(children);
-        } else {
-            hash.update(b"file");
-            let mut bytes = Vec::new();
-            crate::safety::open_regular_file(&path)?
-                .take(remaining + 1)
-                .read_to_end(&mut bytes)
-                .map_err(|e| e.to_string())?;
-            remaining = remaining
-                .checked_sub(bytes.len() as u64)
-                .ok_or("Captured source exceeds 256 MiB")?;
-            hash.update((bytes.len() as u64).to_le_bytes());
-            hash.update(bytes);
-        }
-    }
-    Ok(format!("{:x}", hash.finalize()))
 }
 
 /// Whether a run's retained copy still has the fingerprint recorded when it

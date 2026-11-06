@@ -225,6 +225,7 @@ fn resume_selection(
         config,
         report,
         false,
+        &Default::default(),
         None,
         true,
     )
@@ -275,4 +276,37 @@ fn a_step_with_no_output_still_invalidates_its_dependents() {
     let report = parent_report(vec![resume_output("summary", "Completed summary", false)]);
 
     assert!(resume_selection(&config, &report).is_empty());
+}
+
+#[test]
+fn partial_regenerate_recomputes_changed_earlier_steps_and_their_dependents() {
+    let mut config = crate::pipeline_config::workflow_template().unwrap().config;
+    config.steps = vec![
+        resume_step("independent", &[]),
+        resume_step("edited", &[]),
+        resume_step("consumer", &["edited"]),
+        resume_step("selected", &[]),
+    ];
+    let parent = parent_report(
+        config
+            .steps
+            .iter()
+            .map(|s| resume_output(&s.id, "old result", false))
+            .collect(),
+    );
+    let app: crate::emit::EventBus = std::sync::Arc::new(crate::emit::NullEvents);
+    let dir = tempfile::tempdir().unwrap();
+    let changed = std::collections::HashSet::from(["edited".into()]);
+    let reused = select_reusable_outputs(
+        &app,
+        "parent",
+        dir.path(),
+        &config,
+        &parent,
+        false,
+        &changed,
+        Some("selected".into()),
+        false,
+    );
+    assert_eq!(reused.keys().collect::<Vec<_>>(), vec!["independent"]);
 }

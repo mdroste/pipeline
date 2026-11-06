@@ -110,7 +110,7 @@
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: #a2a79c;
+  background: var(--ui-page-muted);
 }
 .task-status--running i,
 .task-status--queued i {
@@ -418,13 +418,10 @@
   align-items: center;
   gap: 12px;
   text-align: left;
-  border: 1px solid #87988044;
+  border: 1px solid var(--ui-page-line);
   border-radius: 10px;
   padding: 10px 14px;
   font-size: 12px;
-}
-.dark .workspace-task-card {
-  border-color: var(--ui-page-line);
 }
 .workspace-task-card span {
   font-size: 11px;

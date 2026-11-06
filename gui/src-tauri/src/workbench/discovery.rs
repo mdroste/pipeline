@@ -5,6 +5,7 @@ use crate::orchestration::store::Scope;
 use rusqlite::{params, OptionalExtension};
 use serde_json::{json, Value};
 use std::path::PathBuf;
+pub(crate) mod idea_team;
 #[cfg(test)]
 mod tests;
 
@@ -292,29 +293,62 @@ pub fn role(
     };
     Ok((scope, missions::authority(store, &b.session_id)?))
 }
+/// Returns the same bounded lookup output whether adopted live or after restart.
+fn lookup_result(record: desk::DeskRecord) -> Value {
+    let candidates=record.body["candidates"].as_array().into_iter().flatten().take(10).map(|c|json!({
+        "title":super::search::prefix(c["title"].as_str().unwrap_or(""),500),"doi":c["doi"],"year":c["year"],
+        "abstractText":super::search::prefix(c["abstractText"].as_str().unwrap_or(""),1500)
+    })).collect::<Vec<_>>();
+    json!({"receiptId":record.id,"query":record.body["query"],"access":"Up to 10 metadata records and abstract excerpts per query; full-text claims remain unverified","state":record.body["state"],"error":record.body["error"],"candidates":candidates})
+}
+
+pub(crate) fn lookup_outcome(
+    store: &Store,
+    workspace: &str,
+    operation: &str,
+    query: &str,
+) -> WorkbenchResult<Option<Value>> {
+    let Some(record) = desk::operation_record(store, workspace, operation)? else {
+        return Ok(None);
+    };
+    if record.kind != "acquisition"
+        || record.body["provider"] != "crossref"
+        || record.body["query"] != query
+    {
+        return Err(WorkbenchError::conflict(
+            "Lookup receipt belongs to another action",
+        ));
+    }
+    Ok(Some(lookup_result(record)))
+}
+
 pub async fn acquire(workspace: String, query: String, operation: String) -> Result<Value, String> {
-    let ws = workspace.clone();
-    let (enabled, contact) = super::commands::run_store(move |s| {
+    let (ws, op, terms) = (workspace.clone(), operation.clone(), query.clone());
+    let (previous, enabled, contact) = super::commands::run_store(move |s| {
         Ok((
+            lookup_outcome(&s, &ws, &op, &terms)?,
             super::acquisition::network_enabled(&s, &ws)?,
             super::acquisition::crossref_contact(&s)?,
         ))
     })
     .await
     .map_err(|e| e.message)?;
+    if let Some(value) = previous {
+        return Ok(value);
+    }
     if !enabled {
         return Err("Project literature acquisition is disabled".into());
     }
     let result = super::acquisition::crossref_with_contact(&query, contact.as_deref()).await;
-    super::commands::run_store(move|s|{
-        if !super::acquisition::network_enabled(&s,&workspace)?{return Err(WorkbenchError::invalid("Acquisition access was revoked"));}
-        let record=super::acquisition::record_lookup(&s,&workspace,&query,result,&operation)?;
-        let candidates=record.body["candidates"].as_array().into_iter().flatten().take(10).map(|c|json!({
-            "title":super::search::prefix(c["title"].as_str().unwrap_or(""),500),"doi":c["doi"],"year":c["year"],
-            "abstractText":super::search::prefix(c["abstractText"].as_str().unwrap_or(""),1500)
-        })).collect::<Vec<_>>();
-        Ok(json!({"receiptId":record.id,"query":query,"access":"Up to 10 metadata records and abstract excerpts per query; full-text claims remain unverified","state":record.body["state"],"error":record.body["error"],"candidates":candidates}))
-    }).await.map_err(|e|e.message)
+    super::commands::run_store(move |s| {
+        if !super::acquisition::network_enabled(&s, &workspace)? {
+            return Err(WorkbenchError::invalid("Acquisition access was revoked"));
+        }
+        super::acquisition::record_lookup(&s, &workspace, &query, result, &operation)
+            .map(lookup_result)
+    })
+    .await
+    .map_err(|e| e.message)
 }
 
 /// Automation conversations never surface a research question or grant more access.

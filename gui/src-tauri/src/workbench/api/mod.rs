@@ -193,7 +193,10 @@ pub(crate) async fn submit(
     let turn_id = id.clone();
     let config = prepared.config_snapshot_id;
     let context = prepared.context_snapshot_id;
-    let bound = run_store(move |store| {
+    let (bound, lease) = run_store(move |store| {
+        let lease = super::submission::session_lease(&store, &session)?.ok_or_else(|| {
+            WorkbenchError::conflict("Another Pipeline instance owns this conversation's turn")
+        })?;
         let bound = store.bind_session(&session, NAMESPACE, &thread_copy)?;
         store.set_binding_harness(
             &bound.id,
@@ -202,7 +205,7 @@ pub(crate) async fn submit(
         )?;
         store.record_turn_submission(&bound.id, &submission, &turn_id)?;
         store.attach_turn_snapshots(&bound.id, &submission, &config, &context)?;
-        Ok(bound)
+        Ok((bound, lease))
     })
     .await?;
     let turn = Turn {
@@ -228,19 +231,24 @@ pub(crate) async fn submit(
         cancel,
     });
     let task_turn = turn.clone();
+    let meter = crate::usage_allowance::current();
     let original = request.text.clone();
     tokio::spawn(async move {
+        let _lease = lease;
         let result = control
-            .run(drive::run(
-                &client,
-                &connection,
-                &app,
-                &task_turn,
-                &instructions,
-                &prompt,
-                &tool_specs,
-                drive::turn_clock(),
-                receiver,
+            .run(crate::usage_allowance::CURRENT.scope(
+                meter,
+                drive::run(
+                    &client,
+                    &connection,
+                    &app,
+                    &task_turn,
+                    &instructions,
+                    &prompt,
+                    &tool_specs,
+                    drive::turn_clock(),
+                    receiver,
+                ),
             ))
             .await;
         if result.is_err() {
@@ -287,7 +295,7 @@ pub(crate) async fn submit(
         super::commands::finish_local_turn(epoch, &thread, &id);
         // The terminal event above went out while this turn still held the permit.
         super::commands::announce_active_turn(&app, None);
-        if status == "completed" {
+        if status == "completed" && !automated {
             super::commands::spawn_title_generation(
                 app,
                 super::commands::TitleRuntime::Api { epoch, connection },
@@ -345,6 +353,7 @@ pub(crate) async fn shutdown() {
 pub(crate) fn reconcile(store: Store, session: String) -> WorkbenchResult<bool> {
     // Keep the owner stable while reading persisted state. A finishing worker
     // must not clear its ownership between this snapshot and the liveness check.
+    let lease = super::submission::session_lease(&store, &session)?;
     let owner = running().lock().unwrap_or_else(|e| e.into_inner());
     let snapshot = store.conversation_snapshot(&session)?;
     let Some(binding) = snapshot
@@ -352,6 +361,9 @@ pub(crate) fn reconcile(store: Store, session: String) -> WorkbenchResult<bool> 
         .filter(|b| b.runtime_namespace == NAMESPACE)
     else {
         return Ok(false);
+    };
+    let Some(_lease) = lease else {
+        return Ok(true);
     };
     // Submission records the turn before installing its process owner. Check
     // setup after the snapshot so a newly recorded turn cannot look abandoned.

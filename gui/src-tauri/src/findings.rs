@@ -16,6 +16,9 @@ use std::collections::HashSet;
 use std::path::{Component, Path};
 use std::sync::LazyLock;
 
+mod publication;
+pub(crate) use publication::{check_publication, validate_declaration};
+
 pub const FINDING_SCHEMA_VERSION: u32 = 2;
 const MAX_FINDINGS: usize = 1_000;
 const MAX_EVIDENCE: usize = 50;
@@ -350,11 +353,14 @@ pub fn build_run_products(config: &PipelineConfig, outputs: &[StepOutput]) -> Ru
         .filter_map(|spec| {
             let output = declared_output(outputs, &spec.step)?;
             let content = if output.structured_json || spec.viewer == "json" {
-                crate::pipeline::structured::extract_json(&output.raw_text)
-                    .unwrap_or_else(|| Value::String(output.raw_text.clone()))
+                crate::pipeline::structured::extract_json(&output.raw_text)?
             } else {
                 Value::String(output.raw_text.clone())
             };
+            if let Some(schema) = &spec.schema {
+                let schema = crate::pipeline::structured::resolve_schema_reference(schema).ok()?;
+                crate::pipeline::structured::validate(&schema, &content).ok()?;
+            }
             Some(crate::models::NamedRunProduct {
                 key: spec.key.clone(),
                 source_step_id: output.step_id.clone(),

@@ -5,24 +5,24 @@ import { type SessionChoice } from "../../lib/taskTypes";
 import {
   discoveryClient,
   discoveryError,
-  discoveryNames,
   newDiscovery,
   type DiscoveryMode,
   type DiscoveryDefinition,
   type DiscoveryRun,
 } from "../../lib/discoveryClient";
+import { Icon } from "../../ui/icons";
+import BudgetPreview from "./BudgetPreview";
+import SetupOptions, { CountField } from "./SetupOptions";
 import ReportIssueLink from "../ReportIssueLink";
 
 export default function Builder({
   initialMode,
   initialSessionId,
   onStarted,
-  onClose,
 }: {
   initialMode: DiscoveryMode;
   initialSessionId?: string | null;
   onStarted: (run: DiscoveryRun) => void;
-  onClose: () => void;
 }) {
   const [definition, setDefinition] = useState(() => ({
     ...newDiscovery(initialMode),
@@ -36,6 +36,7 @@ export default function Builder({
   const [error, setError] = useState("");
   const mounted = useRef(true);
   const blockedId = useId();
+  const modeGroup = useId();
   useEffect(() => {
     mounted.current = true;
     let live = true;
@@ -61,7 +62,18 @@ export default function Builder({
     setDefinition((d) => ({ ...d, ...update }));
     setOperation(crypto.randomUUID());
   }
-  const invalid = discoveryError(definition);
+  const connection = sessions.find(
+    (choice) => choice.id === session,
+  )?.connectionId;
+  const invalid =
+    discoveryError(definition) ??
+    ((definition.ideaAgents ?? 0) > 0 &&
+    connection &&
+    connection !== "claude" &&
+    connection !== "codex"
+      ? "Choose a ChatGPT or Claude Code project for idea subagents, or set Idea subagents to 0."
+      : null);
+
   async function start() {
     if (invalid) {
       setError(invalid);
@@ -87,277 +99,151 @@ export default function Builder({
       if (mounted.current) setBusy(false);
     }
   }
-  const number = (
-    key: keyof DiscoveryDefinition,
-    label: string,
-    min: number,
-    max: number,
-  ) => (
-    <label key={key}>
-      {label}
-      <input
-        type="number"
-        min={min}
-        max={max}
-        required
-        value={Number(definition[key])}
-        onChange={(e) => patch({ [key]: Number(e.target.value) })}
-      />
-    </label>
-  );
   return (
     <form
-      className="task-detail discovery-builder"
+      className="discovery-builder"
       aria-label="New research discovery automation"
+      onInvalidCapture={(e) => {
+        // Reveal an invalid advanced field even if its section was closed after editing.
+        (e.target as HTMLInputElement)
+          .closest("details")
+          ?.setAttribute("open", "");
+      }}
       onSubmit={(e) => {
         e.preventDefault();
         void start();
       }}
     >
-      <div className="task-section-heading">
-        <h2>Discover and develop research</h2>
-        <button
-          type="button"
-          aria-label="Close research discovery builder"
-          onClick={onClose}
-        >
-          ×
-        </button>
-      </div>
-      <p className="task-muted">
-        Describe a research area in any academic field. Pipeline identifies the
-        relevant methods, evidence standards, and reviewers.
-      </p>
-      <fieldset disabled={busy} className="mission-fields">
-        <label>
-          Mode
-          <select
-            value={definition.mode}
-            onChange={(e) => patch({ mode: e.target.value as DiscoveryMode })}
-          >
-            {Object.entries(discoveryNames).map(([id, label]) => (
-              <option key={id} value={id}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Research topics and questions
-          <textarea
-            required
-            maxLength={16000}
-            rows={7}
-            value={definition.prompt}
-            placeholder="Describe the topics, questions, sources, constraints, and kinds of contribution you have in mind."
-            onChange={(e) => patch({ prompt: e.target.value })}
-          />
-        </label>
-        <label>
-          Project context
-          <select
-            value={session}
-            onChange={(e) => {
-              setSession(e.target.value);
-              setOperation(crypto.randomUUID());
-              patch({ acquireLiterature: !e.target.value, inputPaths: [] });
-            }}
-          >
-            <option value="">Create a project for this research</option>
-            {sessions.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.title} · {s.workspaceName}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="mission-budget-grid">
-          {number("candidateCount", "Candidate projects", 50, 100)}
-          {number("shortlistCount", "Shortlisted projects", 1, 25)}
-          {number("paperCount", "Papers requested", 1, 9)}
-        </div>
-        <p className="discovery-funnel">
-          Explore {definition.candidateCount} projects → assess and shortlist{" "}
-          {definition.shortlistCount} →{" "}
-          {definition.mode === "supervised"
-            ? "you choose"
-            : "automatically choose"}{" "}
-          {definition.paperCount} → research, write, review, and rank.
-        </p>
-        <details>
-          <summary>Research and review settings</summary>
-          <div className="mission-budget-grid">
-            {number("proposalReviewers", "Detailed proposal reviewers", 0, 4)}
-            {number("proposalRevisionPasses", "Proposal revision passes", 0, 2)}
-            {number("paperReviewers", "Paper reviewers per round", 0, 4)}
-            {number("revisionPasses", "Revision passes", 0, 5)}
-            {number("researchRounds", "Investigation rounds per paper", 1, 16)}
-            {number(
-              "maxReplacements",
-              "Maximum projects Pipeline can replace automatically",
-              0,
-              5,
-            )}
-          </div>
-          <label className="mission-check">
-            <input
-              type="checkbox"
-              checked={definition.challengeResearch}
-              onChange={(e) => patch({ challengeResearch: e.target.checked })}
-            />
-            Challenge findings after each research round
-          </label>
-          <label className="mission-check">
-            <input
-              type="checkbox"
-              checked={definition.allowComputation}
-              onChange={(e) => patch({ allowComputation: e.target.checked })}
-            />
-            Allow code and computation in isolated paper folders
-          </label>
-          <p className="task-muted">
-            Uses installed tools within the paper folder, with command
-            networking disabled. Original project files remain outside that
-            execution scope.
-          </p>
-          <label>
-            Research input files
+      <fieldset disabled={busy} className="ds-layout">
+        <div className="ds-brief">
+          <label className="ds-field ds-prompt">
+            Research topics and questions
             <textarea
+              required
+              maxLength={16000}
               rows={3}
-              disabled={!session}
-              value={definition.inputPaths.join("\n")}
-              placeholder="One file path per line, relative to the selected project folder"
-              // Raw lines round-trip while typing; blank lines are dropped at Start.
-              onChange={(e) =>
-                patch({ inputPaths: e.target.value.split("\n") })
-              }
+              value={definition.prompt}
+              placeholder="What would you like to investigate? Include any sources, methods, or constraints you have in mind."
+              onChange={(e) => patch({ prompt: e.target.value })}
             />
           </label>
-          <p className="task-muted">
-            These files are captured at Start and copied into each paper's
-            folder. Include only data and source material you want available to
-            the research models.
-          </p>
-          <label className="mission-check">
-            <input
-              type="checkbox"
-              checked={definition.acquireLiterature}
-              onChange={(e) => patch({ acquireLiterature: e.target.checked })}
-            />
-            Search public literature records and available abstracts
-          </label>
-          <p className="task-muted">
-            Allow literature searches for a new project. For an existing
-            project, enable this in Library first. Search results may include
-            citation details and abstracts without the full paper.
-          </p>
-          <label>
-            Additional structured Review
+          <label className="ds-field">
+            Project context
             <select
-              value={definition.reviewProfileId ?? ""}
-              onChange={(e) =>
-                patch({ reviewProfileId: e.target.value || null })
-              }
+              value={session}
+              onChange={(e) => {
+                setSession(e.target.value);
+                patch({ acquireLiterature: !e.target.value, inputPaths: [] });
+              }}
             >
-              <option value="">
-                Use built-in reviewers selected for the research field
-              </option>
-              {profiles.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
+              <option value="">Create a project for this research</option>
+              {sessions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.title} · {s.workspaceName}
                 </option>
               ))}
             </select>
           </label>
-          <label>
-            Author model
-            <input
-              value={definition.authorModel ?? ""}
-              placeholder="Current configured model"
-              onChange={(e) => patch({ authorModel: e.target.value || null })}
+          <fieldset className="ds-selection">
+            <legend>Who chooses the projects?</legend>
+            <div className="ds-mode-grid">
+              {(
+                [
+                  [
+                    "supervised",
+                    "I’ll choose",
+                    "Pause at the shortlist for my selection.",
+                  ],
+                  [
+                    "unsupervised",
+                    "Let Pipeline choose",
+                    "Continue from shortlist to papers automatically.",
+                  ],
+                ] as const
+              ).map(([mode, title, note]) => (
+                <label key={mode} className="ds-mode">
+                  <input
+                    type="radio"
+                    name={modeGroup}
+                    value={mode}
+                    checked={definition.mode === mode}
+                    onChange={() => patch({ mode })}
+                  />
+                  <span>
+                    <strong>{title}</strong>
+                    <small>{note}</small>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <SetupOptions
+            definition={definition}
+            patch={patch}
+            hasProject={Boolean(session)}
+            profiles={profiles}
+          />
+        </div>
+        <section className="ds-plan" aria-label="Portfolio plan">
+          <header>
+            <Icon name="grid" />
+            <h3>Portfolio plan</h3>
+          </header>
+          <div className="ds-targets">
+            <CountField
+              label="Candidate projects"
+              hint="Explore 50–100"
+              min={50}
+              max={100}
+              value={definition.candidateCount}
+              onChange={(candidateCount) => patch({ candidateCount })}
             />
-          </label>
-          <label>
-            Reviewer model
-            <input
-              value={definition.reviewerModel ?? ""}
-              placeholder="Current configured model"
-              onChange={(e) => patch({ reviewerModel: e.target.value || null })}
+            <CountField
+              label="Shortlisted projects"
+              hint="Keep 1–25 proposals"
+              min={1}
+              max={25}
+              value={definition.shortlistCount}
+              onChange={(shortlistCount) => patch({ shortlistCount })}
             />
-          </label>
-          <label>
-            Ranking priorities
-            <textarea
-              rows={3}
-              maxLength={4000}
-              value={definition.rankingPriorities}
-              onChange={(e) => patch({ rankingPriorities: e.target.value })}
+            <CountField
+              label="Papers requested"
+              hint="Develop up to 9"
+              min={1}
+              max={9}
+              value={definition.paperCount}
+              onChange={(paperCount) => patch({ paperCount })}
             />
-          </label>
-        </details>
-        <details>
-          <summary>Resource limits</summary>
-          <div className="mission-budget-grid">
-            {number("maxActions", "Maximum actions", 20, 2000)}
-            {number("deadlineHours", "Finish within (hours)", 1, 720)}
-            <label>
-              Maximum time spent running (hours)
-              <input
-                type="number"
-                min={1}
-                max={168}
-                value={definition.activeSeconds / 3600}
-                onChange={(e) =>
-                  patch({ activeSeconds: Number(e.target.value) * 3600 })
-                }
-              />
-            </label>
-            <label>
-              Minutes per action
-              <input
-                type="number"
-                min={1}
-                max={120}
-                value={definition.actionTimeoutSeconds / 60}
-                onChange={(e) =>
-                  patch({ actionTimeoutSeconds: Number(e.target.value) * 60 })
-                }
-              />
-            </label>
           </div>
-          <p className="task-muted">
-            Limits cover the entire portfolio, including revisions and
-            replacements. Action counts are not a dollar cap; provider charges
-            and account limits still apply.
+          <p className="ds-plan-note">
+            The final report ranks the drafts and lists unfinished work.
           </p>
-        </details>
+          <BudgetPreview definition={definition} />
+          {error && (
+            <p className="task-error" role="alert">
+              {error}
+              <ReportIssueLink />
+            </p>
+          )}
+          <button
+            type="submit"
+            className="task-primary ds-start"
+            disabled={busy || Boolean(invalid)}
+            aria-describedby={invalid ? blockedId : undefined}
+          >
+            {busy ? "Starting…" : "Start research discovery"}
+            <Icon name="arrow" />
+          </button>
+          {invalid && (
+            <p id={blockedId} className="ds-blocked">
+              {invalid}
+            </p>
+          )}
+          <p className="ds-runtime">
+            Keep Pipeline open and your computer awake during the run.
+          </p>
+        </section>
       </fieldset>
-      {error && (
-        <p className="task-error" role="alert">
-          {error}
-          <ReportIssueLink />
-        </p>
-      )}
-      <button
-        className="task-primary"
-        disabled={busy || Boolean(invalid)}
-        aria-describedby={invalid ? blockedId : undefined}
-      >
-        {busy ? "Starting…" : "Start research discovery"}
-      </button>
-      {invalid && (
-        <p id={blockedId} className="task-muted">
-          {invalid}
-        </p>
-      )}
-      <p className="task-muted">
-        {definition.mode === "supervised"
-          ? "The automation pauses for your project selection, then continues through the papers."
-          : "The automation makes research decisions without follow-up questions."}{" "}
-        Keep Pipeline open and the computer awake. Pipeline may finish fewer
-        papers than requested and will report missing evidence and unfinished
-        work.
-      </p>
     </form>
   );
 }

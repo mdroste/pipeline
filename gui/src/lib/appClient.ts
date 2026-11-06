@@ -19,6 +19,7 @@ export interface RerunSecret {
 }
 
 export interface RerunRequirements {
+  fingerprint: string;
   secrets: RerunSecret[];
   notice: string | null;
   agent_notice?: string | null;
@@ -36,6 +37,7 @@ export interface ExecutionPlanRequest {
 }
 
 export interface StartBatchRequest {
+  reviewHandoffId?: string;
   expectedProfileSnapshotId?: string;
   authorNote?: string | null;
   paths: string[];
@@ -46,6 +48,7 @@ export interface StartBatchRequest {
 }
 
 export interface EnqueueRunRequest {
+  reviewHandoffId?: string;
   authorNote?: string | null;
   paperPath: string;
   inputInterpretation: string | null;
@@ -80,12 +83,14 @@ export const appClient = {
     onlyFailed: boolean,
     fromStep?: string,
     variables?: Record<string, string>,
+    expectedFingerprint?: string,
   ) =>
     invoke<QueuedRun>("enqueue_rerun", {
       runId,
       fromStep: fromStep ?? null,
       onlyFailed,
       variables: variables ?? null,
+      expectedFingerprint: expectedFingerprint ?? null,
     }),
   rerunRequirements: (runId: string, onlyFailed: boolean) =>
     invoke<RerunRequirements>("rerun_requirements", { runId, onlyFailed }),

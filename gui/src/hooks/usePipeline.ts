@@ -50,7 +50,8 @@ export function usePipeline() {
   // into state in a single update.
   const logBuffer = useRef(new Map<string, LogEntry[]>());
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const requestedResults = useRef(new Set<string>());
+  const requestedResults = useRef(new Map<string, symbol>());
+  const queueGeneration = useRef(0);
 
   const updateView = useCallback(
     (key: string | undefined, update: (view: RunView) => RunView) => {
@@ -64,6 +65,7 @@ export function usePipeline() {
   );
 
   const applyQueue = useCallback((snapshot: RunQueueSnapshot) => {
+    queueGeneration.current++;
     setQueue(snapshot);
     // The queue is authoritative: views of dismissed or pruned runs go.
     setViews((previous) => {
@@ -73,6 +75,8 @@ export function usePipeline() {
       return next;
     });
     const live = new Set(snapshot.runs.map((run) => run.key));
+    for (const key of requestedResults.current.keys())
+      if (!live.has(key)) requestedResults.current.delete(key);
     for (const key of logBuffer.current.keys())
       if (!live.has(key)) logBuffer.current.delete(key);
   }, []);
@@ -188,10 +192,12 @@ export function usePipeline() {
       // Listeners first, then the snapshot, so a run that starts in between
       // is never missed. Reviews survive a window reload; their progress
       // resumes from the queue entry.
+      const initialGeneration = queueGeneration.current;
       appClient
         .runQueue()
         .then((snapshot) => {
-          if (mounted) applyQueue(snapshot);
+          if (mounted && queueGeneration.current === initialGeneration)
+            applyQueue(snapshot);
         })
         .catch((error: unknown) => {
           console.warn("Unable to load the review queue:", error);
@@ -213,37 +219,58 @@ export function usePipeline() {
 
     return () => {
       mounted = false;
+      requestedResults.current.clear();
       if (flushTimer.current) clearTimeout(flushTimer.current);
       flushTimer.current = null;
       setupPromise.then((fns) => fns.forEach((fn) => fn())).catch(() => {});
     };
   }, [applyQueue, updateView]);
 
-  // Finished reviews: load the full result the queue still holds.
+  const loadResult = useCallback((key: string) => {
+    if (requestedResults.current.has(key)) return;
+    const request = Symbol(key);
+    requestedResults.current.set(key, request);
+    const update = (change: (view: RunView) => RunView) => {
+      if (requestedResults.current.get(key) !== request) return;
+      setViews((old) => (old[key] ? { ...old, [key]: change(old[key]) } : old));
+    };
+    update((view) => ({ ...view, resultError: null }));
+    void appClient
+      .queuedRunResult(key)
+      .then((result) => {
+        if (!result)
+          throw new Error(
+            "This report is no longer in memory. Open it from Review history.",
+          );
+        update((view) => completeRun(view, result));
+      })
+      .catch((error: unknown) => {
+        update((view) => ({
+          ...view,
+          resultError: workbenchErrorMessage(error),
+        }));
+      });
+  }, []);
+
+  // Failures remain visible until an explicit retry; unrelated queue events
+  // must not repeatedly fetch a report whose read failed.
   useEffect(() => {
-    for (const run of queue.runs) {
-      if (
-        run.status !== "done" ||
-        !run.resultAvailable ||
-        requestedResults.current.has(run.key)
-      )
-        continue;
-      requestedResults.current.add(run.key);
-      appClient
-        .queuedRunResult(run.key)
-        .then((result) => {
-          if (result) updateView(run.key, (view) => completeRun(view, result));
-        })
-        .catch((error: unknown) => {
-          requestedResults.current.delete(run.key);
-          console.warn("Unable to load the finished review:", error);
-        });
-    }
-  }, [queue, updateView]);
+    for (const run of queue.runs)
+      if (run.status === "done" && run.resultAvailable) loadResult(run.key);
+  }, [queue, loadResult]);
+
+  const retryResult = useCallback(
+    (key: string) => {
+      requestedResults.current.delete(key);
+      loadResult(key);
+    },
+    [loadResult],
+  );
 
   /** Record a just-queued run before its first queue event arrives, so the
    *  caller can open it immediately. */
   const adopt = useCallback((runs: QueuedRun[]) => {
+    queueGeneration.current++;
     setQueue((previous) => {
       const known = new Set(previous.runs.map((run) => run.key));
       const added = runs.filter((run) => !known.has(run.key));
@@ -283,6 +310,7 @@ export function usePipeline() {
         fromStep?: string;
         onlyFailed?: boolean;
         variables?: Record<string, string>;
+        expectedFingerprint?: string;
       },
     ) => {
       const run = await appClient.enqueueRerun(
@@ -290,6 +318,7 @@ export function usePipeline() {
         opts?.onlyFailed ?? false,
         opts?.fromStep,
         opts?.variables,
+        opts?.expectedFingerprint,
       );
       adopt([run]);
       return run;
@@ -310,6 +339,7 @@ export function usePipeline() {
     views,
     listenersReady,
     setupError,
+    retryResult,
     enqueue,
     enqueueBatch,
     enqueueRerun,

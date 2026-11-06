@@ -320,14 +320,23 @@ async fn consume(coordinator: &Coordinator, m: &mut Mission, child: &TaskRun) ->
             validate::finding(&finding)?;
             let ws = m.workspace_id.clone();
             let refs = finding.sources.clone();
-            let retained = if refs.is_empty() {
-                Vec::new()
+            let checks = finding.execution_ids.clone();
+            let (retained, executions) = if refs.is_empty() && checks.is_empty() {
+                (Vec::new(), Vec::new())
             } else {
-                run_store(move |s| workspace::sources(&s, &ws, &refs))
-                    .await
-                    .map_err(|e| e.message)?
+                run_store(move |s| {
+                    Ok((
+                        workspace::sources(&s, &ws, &refs)?,
+                        workspace::execution_evidence(&s, &ws, checks)?,
+                    ))
+                })
+                .await
+                .map_err(|e| e.message)?
             };
             let mut evidence = BTreeMap::new();
+            for (i, check) in executions.into_iter().enumerate() {
+                evidence.insert(format!("r{number}-checked{}", i + 1), check);
+            }
             for (i, source) in retained.into_iter().enumerate() {
                 evidence.insert(format!("r{number}-source{}", i + 1), source);
             }
@@ -354,12 +363,26 @@ async fn consume(coordinator: &Coordinator, m: &mut Mission, child: &TaskRun) ->
                             .file_name()
                             .and_then(|p| p.to_str())
                             .ok_or("Evidence file name is invalid")?;
-                        let snapshot =
+                        let mut snapshot =
                             adapters::snapshot(&s, &scope, json!({"path":path}), filename)?;
                         bytes =
                             bytes.saturating_add(snapshot["bytes"].as_u64().unwrap_or(u64::MAX));
                         if bytes > 64 * 1024 * 1024 {
                             return Err("Investigation file evidence exceeds 64 MiB".into());
+                        }
+                        // Give the inspect-only challenger bounded text from the verified
+                        // version; the original path in the investigator’s copy can change.
+                        use std::io::Read;
+                        let path = adapters::artifact_path(&s, &snapshot)?;
+                        let mut excerpt = Vec::new();
+                        crate::safety::open_regular_file(std::path::Path::new(&path))?
+                            .take(1600)
+                            .read_to_end(&mut excerpt)
+                            .map_err(store::err)?;
+                        if let Ok(text) = std::str::from_utf8(&excerpt) {
+                            if !text.contains('\0') {
+                                snapshot["inspectionExcerpt"] = json!(text);
+                            }
                         }
                         snapshots.push(snapshot);
                     }
@@ -376,13 +399,7 @@ async fn consume(coordinator: &Coordinator, m: &mut Mission, child: &TaskRun) ->
                     snapshot,
                 );
             }
-            let signature = store::hash(&(
-                &finding,
-                evidence
-                    .values()
-                    .filter_map(|v| v.get("hash"))
-                    .collect::<Vec<_>>(),
-            ))?;
+            let signature = investigation_fingerprint(&finding, number, &evidence)?;
             let round = m.rounds.last_mut().unwrap();
             round.finding = Some(finding);
             round.evidence = evidence;
@@ -399,7 +416,9 @@ async fn consume(coordinator: &Coordinator, m: &mut Mission, child: &TaskRun) ->
         }
         Phase::Review => {
             let r = m.rounds.last_mut().ok_or("Review round is missing")?;
-            r.review = Some(prompts::retained_review(&output, child));
+            let review = prompts::retained_review(&output, child);
+            r.evidence.insert(format!("r{}-review",r.number),json!({"kind":"refereeAssessment","reviewRunId":review["runId"],"summary":review["report"]}));
+            r.review = Some(review);
             r.child_ids.push(child.id.clone());
             m.phase = Phase::Challenge;
             m.state = "queued".into();
@@ -435,4 +454,45 @@ pub(crate) async fn stop_child(coordinator: &Coordinator, id: &str) -> Result<()
             Ok(())
         })
         .await
+}
+
+fn investigation_fingerprint(
+    finding: &Finding,
+    number: u32,
+    evidence: &std::collections::BTreeMap<String, Value>,
+) -> Result<String> {
+    let memo = format!("r{number}-memo");
+    let review = format!("r{number}-review");
+    let mut identities = Vec::new();
+    for (id, value) in evidence {
+        if id != &memo && id != &review {
+            identities.push(store::hash(value.get("hash").unwrap_or(value))?);
+        }
+    }
+    identities.sort();
+    Ok(format!(
+        "investigation-v2:{}",
+        store::hash(&(finding, identities))?
+    ))
+}
+
+/// Older rounds included their numbered display memo. Recompute from the durable
+/// investigation, excluding the referee report collected after the investigation.
+fn upgrade_round_fingerprints(rounds: &mut [Round]) -> Result<()> {
+    for round in rounds {
+        if round
+            .result_fingerprint
+            .as_ref()
+            .is_some_and(|hash| !hash.starts_with("investigation-v2:"))
+        {
+            if let Some(finding) = &round.finding {
+                round.result_fingerprint = Some(investigation_fingerprint(
+                    finding,
+                    round.number,
+                    &round.evidence,
+                )?);
+            }
+        }
+    }
+    Ok(())
 }

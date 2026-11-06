@@ -102,24 +102,15 @@ pub(super) async fn run_parallel_wave(
             .for_each
             .as_ref()
             .and_then(|for_each| for_each.artifact.as_ref())
-            .and_then(|source| {
-                prior_outputs
-                    .iter()
-                    .rev()
-                    .find(|output| {
-                        !output.skipped
-                            && output.step_id.split('/').next().unwrap_or(&output.step_id)
-                                == source.step
-                    })
-                    .map(|output| output.raw_text.clone())
-            });
+            .map(|source| super::units::source_artifacts(prior_outputs, &source.step))
+            .unwrap_or_default();
         let discovery = crate::commands::await_or_cancel(
             crate::run_scope::spawn_blocking(move || {
                 build_units(
                     &step_owned,
                     &settings_owned,
                     &source_owned,
-                    artifact_source_owned.as_deref(),
+                    &artifact_source_owned,
                     &app_owned,
                 )
             }),

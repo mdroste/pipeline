@@ -550,7 +550,9 @@ fn an_older_archive_is_compared_at_its_own_schema_version() {
     let store = Store::open_at(target.path()).unwrap();
     let error = import(&store, &crafted).unwrap_err();
     assert!(
-        error.message.contains("store_location"),
+        error
+            .message
+            .contains("database doesn't match what Pipeline creates"),
         "{}",
         error.message
     );

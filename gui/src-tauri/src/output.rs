@@ -27,6 +27,12 @@ static APPARENT_REFUSAL_RE: LazyLock<Regex> = LazyLock::new(|| {
 const RUN_DETAILS_START: &str = "<!-- PIPELINE RUN DETAILS START -->";
 const RUN_DETAILS_END: &str = "<!-- PIPELINE RUN DETAILS END -->";
 
+// Native schemas constrain serialization, not the notation inside report text.
+// Keep this instruction in both contracts so merge and structured findings
+// retain the same math formatting as ordinary reviewer reports.
+const REPORT_MATH_FORMAT: &str = r"MATHEMATICAL NOTATION:
+In report prose and human-readable schema fields (including finding titles, explanations, and suggestions), write mathematical variables, Greek letters, subscripts, superscripts, and equations as LaTeX: `$\alpha_i$` for inline math and `$$` on separate lines around display equations. Use LaTeX commands rather than bare Unicode math or code spans. Preserve this notation when combining or validating earlier reviews. Keep verbatim evidence quotes, source code, identifiers, paths, and non-prose schema values exactly as required. Escape LaTeX backslashes correctly in serialized strings so the decoded text retains them.";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReportRejectionKind {
     Envelope,
@@ -125,7 +131,7 @@ pub fn structured_output_format(write_dir: Option<&str>) -> String {
         .unwrap_or_default();
     format!(
         "RESPONSE CONTRACT:\n\
-         Complete the requested primary artifact using every applicable field in the response schema supplied by Pipeline.{artifact_note}"
+         Complete the requested primary artifact using every applicable field in the response schema supplied by Pipeline.{artifact_note}\n\n{REPORT_MATH_FORMAT}"
     )
 }
 
@@ -160,7 +166,7 @@ pub fn text_artifact_output_format(write_dir: Option<&str>, content_kind: &str) 
     format!(
         "RESPONSE CONTRACT:\n\
          These instructions supersede any earlier output-only or report-file instructions. \
-         Complete the {content_kind} using the response schema supplied by Pipeline; do not create a second artifact envelope.{artifact_note}"
+         Complete the {content_kind} using the response schema supplied by Pipeline; do not create a second artifact envelope.{artifact_note}\n\n{REPORT_MATH_FORMAT}"
     )
 }
 
@@ -432,11 +438,12 @@ mod summary;
 pub use quality::{build_report_quality, review_is_complete, status_label, status_notes};
 pub(crate) use render::capitalize;
 pub use render::render_markdown;
+pub(crate) use summary::estimate_cost;
 pub use summary::{api_cost_of, model_price};
 use summary::{format_duration, render_run_summary};
 
 #[cfg(test)]
-use summary::{estimate_cost, format_cost, provider_in_api_mode};
+use summary::{format_cost, provider_in_api_mode};
 
 #[cfg(test)]
 mod tests;

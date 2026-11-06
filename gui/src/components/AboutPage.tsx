@@ -255,7 +255,7 @@ function HelpContent({
         </BadgeRow>
         <BadgeRow
           badge="Included"
-          badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
+          badgeColor="text-ink bg-sunken dark:text-green-300 dark:bg-green-900/30"
           title="PDF tools"
         >
           Pipeline can show PDFs and extract their plain text with nothing else
@@ -323,7 +323,8 @@ function HelpContent({
         <p>
           A project keeps a paper, its folder, your notes, and its conversations
           together. Create one with <Label>New project</Label> under{" "}
-          <Label>Projects</Label>. Every project has six areas:
+          <Label>Projects</Label>. Choose a view below the current project’s
+          name:
         </p>
         <TermList
           items={workspaceSections.map((section) => ({
@@ -333,7 +334,7 @@ function HelpContent({
         />
         <p>
           To review a saved version of a paper, open{" "}
-          <Label>Write → Send for review</Label>, choose the{" "}
+          <Label>Reviews & edits → Send for review</Label>, choose the{" "}
           <Label>Paper to review</Label>, then choose{" "}
           <Label>Review this revision…</Label> to open the preview. The review
           uses your Reviews settings and account. Project notes aren't sent.
@@ -475,7 +476,7 @@ function HelpContent({
           <div className="space-y-2">
             <BadgeRow
               badge="Included"
-              badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
+              badgeColor="text-ink bg-sunken dark:text-green-300 dark:bg-green-900/30"
               title="LaTeX and Word"
             >
               Read directly, so equations and tables come through intact. If a
@@ -501,7 +502,7 @@ function HelpContent({
             </BadgeRow>
             <BadgeRow
               badge="Included"
-              badgeColor="text-green-700 bg-green-50 dark:text-green-300 dark:bg-green-900/30"
+              badgeColor="text-ink bg-sunken dark:text-green-300 dark:bg-green-900/30"
               title="pdftotext"
             >
               The fastest option. It runs on your computer, flattens the layout,
@@ -545,7 +546,7 @@ function HelpContent({
             <li>
               A conversation sends your messages, recent history, and any
               material you select or an allowed tool reads to the provider you
-              chose. Papers in your Library stay on your computer until then.
+              chose. Your project’s papers stay on your computer until then.
             </li>
             <li>
               A review step sends its prompt and the material it can read to
@@ -726,7 +727,7 @@ function CheckItem({ text }: { text: string }) {
   return (
     <li className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
       <svg
-        className="w-4 h-4 text-green-700 dark:text-green-400 mt-0.5 shrink-0"
+        className="w-4 h-4 text-ink-muted dark:text-green-400 mt-0.5 shrink-0"
         viewBox="0 0 20 20"
         fill="currentColor"
       >

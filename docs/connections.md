@@ -24,6 +24,12 @@ Each conversation remembers its provider. New conversations start on your
 Switching providers gives the next provider recent conversation history. Automations use the conversation’s provider and saved model unless
 a step selects another model.
 
+In a conversation, open the model picker beside the message field. Choose a
+connection from the dropdown at the top, then select a model. Longer lists
+include **Search models**. Point to a model or use the arrow keys to read its
+description. Choose an effort level from **Thinking**. Expand **Account & usage**
+for ChatGPT account details, or **Claude usage** for Claude's usage reports.
+
 ChatGPT and Claude Code use your subscription. If you're signed out,
 Pipeline asks you to sign in again instead of switching to an API key.
 

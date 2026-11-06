@@ -137,6 +137,19 @@ fn published_outputs_require_a_runnable_sequential_producer() {
         "Published findings step 'final' must define an output JSON schema"
     );
 
+    profile.steps[0].output_schema = Some(
+        serde_json::json!({"type":"object","properties":{"score":{"type":"integer"}},"required":["score"]}),
+    );
+    let saved = WorkflowDocument::from_profile_data(profile.clone()).unwrap();
+    assert!(parse_workflow_document_strict(&saved.canonical_json)
+        .unwrap_err()
+        .contains("findings or issues array"));
+    assert_eq!(
+        parse_saved_workflow_document(&saved.canonical_json)
+            .unwrap()
+            .fingerprint,
+        saved.fingerprint
+    );
     profile.steps[0].output_schema = Some(crate::findings::output_schema());
     validate_profile_data(&profile).unwrap();
 

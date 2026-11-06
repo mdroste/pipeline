@@ -45,6 +45,7 @@ try {
   const finished = await invoke('mission_get', { id: draft.id });
   assert.equal(finished.actionsReserved, 3); assert.equal(finished.rounds.length, 1);
   assert.equal(finished.goals[0].state, 'refuted'); assert.equal(finished.rounds[0].challenge.missionComplete, true);
+  assert.equal(finished.rounds[0].claimRecord.supported, true); assert.equal(finished.rounds[0].claimRecord.acceptedAt, null);
   assert.equal(finished.activeChild, null); assert.equal(finished.methods[0].retained, false);
   for (const childId of finished.childIds) {
     const child = await invoke('task_get', { id: childId });

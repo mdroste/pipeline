@@ -22,7 +22,7 @@ it("finds tools across sections and opens the keyboard selection without sending
       .getAllByRole("option")
       .slice(0, 2)
       .map((item) => item.textContent),
-  ).toEqual(["ManuscriptWrite", "FilesLibrary"]);
+  ).toEqual(["ManuscriptManuscript", "FilesFiles"]);
   const search = screen.getByRole("combobox", { name: "Find a project view" });
   await waitFor(() => expect(search).toHaveFocus());
   fireEvent.change(search, { target: { value: "research" } });

@@ -103,6 +103,7 @@ export default function RunSetupPanel({
   return (
     <SidebarPanel
       data-testid="run-setup-panel"
+      className="dark:bg-surface"
       width={width}
       defaultWidth={288}
       min={240}
@@ -117,7 +118,7 @@ export default function RunSetupPanel({
       <div className="run-setup-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
         <div
           data-tauri-drag-region={isMac ? "deep" : undefined}
-          className="sticky top-0 z-10 shrink-0 select-none bg-white dark:bg-gray-900"
+          className="sticky top-0 z-10 shrink-0 select-none bg-white dark:bg-surface"
         >
           <SidebarHeader title="New review" heading="h1" />
         </div>
@@ -129,7 +130,7 @@ export default function RunSetupPanel({
               </p>
             ) : (
               <PaperSelector
-                key={selectionKey}
+                key={`input-${selectionKey}`}
                 inputMode={inputMode}
                 selection={inputSelection}
                 onPathChange={onPaperPathChange}
@@ -146,7 +147,7 @@ export default function RunSetupPanel({
             />
 
             <AuthorNoteField
-              key={selectionKey}
+              key={`note-${selectionKey}`}
               value={authorNote}
               onChange={onAuthorNoteChange}
               focusKey={authorNoteFocusKey}
@@ -269,8 +270,8 @@ export default function RunSetupPanel({
               className="flex w-full items-center justify-center gap-2 rounded-lg bg-gray-950 px-4 py-2.5 text-sm font-medium
                        text-white transition-colors hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2
                        focus-visible:ring-gray-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-gray-300
-                       dark:bg-gray-100 dark:text-gray-950 dark:hover:bg-white dark:focus-visible:ring-offset-gray-900
-                       dark:disabled:bg-gray-700 dark:disabled:text-gray-400"
+                       dark:bg-line-strong dark:text-ink dark:hover:bg-neutral-600 dark:focus-visible:ring-offset-gray-900
+                       dark:disabled:bg-sunken dark:disabled:text-ink-muted"
             >
               {preparingRun
                 ? "Preparing report…"

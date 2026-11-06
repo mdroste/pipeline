@@ -1,3 +1,5 @@
+import ClaimAssessment from "../tasks/ClaimAssessment";
+import { RecordedUsage } from "../tasks/Budget";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   discoveryClient,
@@ -11,6 +13,7 @@ import {
 
 import ResearchReaderBoundary from "../ResearchReaderBoundary";
 import ReportIssueLink from "../ReportIssueLink";
+import Activity from "./Activity";
 const ReportViewer = lazy(() => import("../ReportViewer"));
 
 export default function Detail({
@@ -28,6 +31,7 @@ export default function Detail({
   const [selected, setSelected] = useState<number[]>([]);
   const [showCandidates, setShowCandidates] = useState(false);
   const [paper, setPaper] = useState<DiscoveryPaper | null>(null);
+  const [paperId, setPaperId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const operation = useRef(crypto.randomUUID());
@@ -57,7 +61,30 @@ export default function Detail({
     return () => {
       live = false;
     };
-  }, [run.id, run.candidateCount, run.selectionHash, choosing, showCandidates]);
+  }, [
+    run.id,
+    run.revision,
+    run.candidateCount,
+    run.selectionHash,
+    choosing,
+    showCandidates,
+  ]);
+  useEffect(() => {
+    if (paperId == null) return;
+    let live = true;
+    const request = ++paperRequest.current;
+    void discoveryClient
+      .paper(run.id, paperId)
+      .then((next) => {
+        if (live && request === paperRequest.current) setPaper(next);
+      })
+      .catch((e) => {
+        if (live && request === paperRequest.current) setError(String(e));
+      });
+    return () => {
+      live = false;
+    };
+  }, [run.id, run.revision, paperId]);
   useEffect(
     () => () => {
       paperRequest.current++;
@@ -72,7 +99,7 @@ export default function Detail({
       behavior: "smooth",
     });
     paperHeading.current?.focus({ preventScroll: true });
-  }, [paper]);
+  }, [paper?.candidateId]);
   async function act(work: () => Promise<DiscoveryRun | unknown>) {
     setBusy(true);
     setError("");
@@ -165,6 +192,8 @@ export default function Detail({
           </button>
         )}
       </div>
+      <RecordedUsage id={run.id} revision={run.revision} />
+      <Activity run={run} onUpdated={onUpdated} />
       {error && (
         <p className="task-error" role="alert">
           {error}
@@ -364,30 +393,50 @@ export default function Detail({
                     {p.title || `Project ${p.candidateId}`}
                   </h4>
                   <p>
-                    {discoveryStatus(p.state)} · {p.rounds} investigations ·{" "}
-                    {p.versions} manuscript versions · {p.reviewCount ?? 0}{" "}
-                    final-version reviews
+                    {p.claimRecord
+                      ? p.claimRecord.supported
+                        ? "Assessed with support"
+                        : "Assessed with open claims"
+                      : discoveryStatus(p.state)}{" "}
+                    · {p.rounds} investigations · {p.versions} manuscript
+                    versions · {p.reviewCount ?? 0} final-version reviews
                   </p>
                   <p>{rank?.reason || p.reason}</p>
                   {rank && <p className="task-muted">{rank.uncertainty}</p>}
                   <button
                     onClick={(e) => {
-                      const request = ++paperRequest.current;
+                      paperRequest.current++;
                       paperOpener.current = e.currentTarget;
                       setError("");
-                      void discoveryClient
-                        .paper(run.id, p.candidateId)
-                        .then((paper) => {
-                          if (request === paperRequest.current) setPaper(paper);
-                        })
-                        .catch((e) => {
-                          if (request === paperRequest.current)
-                            setError(String(e));
-                        });
+                      if (paperId !== p.candidateId) setPaper(null);
+                      setPaperId(p.candidateId);
                     }}
                   >
                     Read paper and reviews
                   </button>
+                  {p.versions > 0 && (
+                    <p>
+                      {p.draftDelivered === true
+                        ? "Draft delivered."
+                        : p.draftDelivered === false
+                          ? "Draft retained; delivery pending."
+                          : "Earlier draft; delivery not separately recorded."}
+                    </p>
+                  )}
+                  <ClaimAssessment
+                    record={p.claimRecord}
+                    earlier={!!p.assessment}
+                    busy={busy}
+                    onAccept={() =>
+                      void act(() =>
+                        discoveryClient.accept(
+                          run,
+                          p.candidateId,
+                          p.claimRecord!.subjectVersion,
+                        ),
+                      )
+                    }
+                  />
                 </article>
               );
             })}
@@ -407,6 +456,7 @@ export default function Detail({
               onClick={() => {
                 paperRequest.current++;
                 setPaper(null);
+                setPaperId(null);
                 const opener = paperOpener.current;
                 paperOpener.current = null;
                 if (opener?.isConnected) opener.focus();

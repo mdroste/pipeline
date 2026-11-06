@@ -266,3 +266,33 @@ it("marks a sender's assessment and says when a list shows only its newest", asy
     screen.getByText(/most recently imported entries/),
   ).toBeInTheDocument();
 });
+
+it("ignores source A's late response after source B has been selected", async () => {
+  mocks.listSources.mockResolvedValue(
+    ["a", "b"].map((id) => ({ versionId: id, title: id, accessState: "full" })),
+  );
+  let resolve!: (page: unknown) => void;
+  mocks.source.mockImplementation(
+    () =>
+      new Promise((r) => {
+        resolve = r;
+      }),
+  );
+  render(view());
+  const field = await screen.findByLabelText("Exact source version");
+  await screen.findByRole("option", { name: /^a ·/ });
+  fireEvent.change(field, { target: { value: "a" } });
+  fireEvent.click(screen.getByText("Read saved source text"));
+  await waitFor(() => expect(mocks.source).toHaveBeenCalledWith("ws", "a"));
+  fireEvent.change(field, { target: { value: "b" } });
+  await act(async () =>
+    resolve({
+      text: "Paper A passage",
+      start: 0,
+      end: 15,
+      accessState: "full",
+    }),
+  );
+  expect(field).toHaveValue("b");
+  expect(screen.queryByText("Paper A passage")).not.toBeInTheDocument();
+});

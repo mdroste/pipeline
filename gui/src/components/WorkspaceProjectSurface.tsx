@@ -1,5 +1,7 @@
+import { flushDrafts } from "../lib/flushDrafts";
+import { notify } from "./DialogService";
 import {
-  destinationsInSection,
+  allProjectViews,
   isWorkspaceDestination,
   workspaceDestinations,
   workspaceSections,
@@ -9,6 +11,8 @@ import { appEvents } from "../lib/appEvents";
 import { router, type RouterSnapshot } from "../lib/router";
 import type { OpenResearchObject } from "../lib/deskClient";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { useWorkspacePaneVisible } from "./workspacePaneVisibility";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { workspaceClient } from "../lib/workbench/workspaceClient";
 import { researchClient } from "../lib/workbench/researchClient";
@@ -30,6 +34,9 @@ import { useProjectReadingState } from "./project-surface/useProjectReadingState
 import { useProjectSurfaceData } from "./project-surface/useProjectSurfaceData";
 import { useProjectSelectionActions } from "./project-surface/useProjectSelectionActions";
 import ProjectDestination from "./project-surface/ProjectDestination";
+import WorkspaceChatList, { ProjectChatsOutlet } from "./WorkspaceChatList";
+import ProjectTools from "./project-surface/ProjectTools";
+import "./project-surface/FocusedProject.css";
 import ProjectSubnav from "./project-surface/ProjectSubnav";
 import type { WorkspaceProjectSurfaceProps } from "./project-surface/types";
 import ReportIssueLink from "./ReportIssueLink";
@@ -74,6 +81,12 @@ function WorkspaceProjectSurface({
   );
   const setTab = useCallback(
     (next: ProjectTab) => {
+      try {
+        flushDrafts();
+      } catch (error) {
+        notify(error instanceof Error ? error.message : String(error));
+        return;
+      }
       setLocalTab(next);
       onDestination?.(next);
     },
@@ -291,10 +304,33 @@ function WorkspaceProjectSurface({
     if (entryTab.current === "overview" && tab === "overview")
       onConversationFirst?.();
   }, [thin, hasConversation]);
+  const paneVisible = useWorkspacePaneVisible();
   const thinBrief = data && thin ? (briefNotes(data)[0]?.body ?? null) : null;
   useEffect(() => {
-    onProjectBrief?.(thinBrief);
-  }, [thinBrief]);
+    if (paneVisible) {
+      onProjectBrief?.(thinBrief);
+      return;
+    }
+    let live = true,
+      revision = 0;
+    const refresh = () => {
+      const mine = ++revision;
+      void projectClient
+        .chatBrief(workspaceId)
+        .then((brief) => {
+          if (live && mine === revision) onProjectBrief?.(brief);
+        })
+        .catch(() => {});
+    };
+    refresh();
+    const off = listen<{ kind: string }>("workbench:event", ({ payload }) => {
+      if (payload.kind === "turnCompleted") refresh();
+    }).catch(() => null);
+    return () => {
+      live = false;
+      void off.then((stop) => stop?.());
+    };
+  }, [thinBrief, paneVisible, workspaceId, onProjectBrief]);
 
   const openObject = useCallback((value: OpenResearchObject) => {
     if (value.kind === "paper") {
@@ -319,6 +355,24 @@ function WorkspaceProjectSurface({
       }),
     [workspaceId, openObject],
   );
+  // The directory and conversation list remain usable if project metadata is unavailable.
+  const simpleView =
+    !object &&
+    (tab === "chats" ? (
+      <ProjectChatsOutlet
+        fallback={
+          <WorkspaceChatList
+            sessions={sessions}
+            sessionId={sessionId}
+            onSelectSession={(id) => void onResumeSession?.(id)}
+            onCreateSession={onStartConversation}
+          />
+        }
+      />
+    ) : tab === "project-tools" ? (
+      <ProjectTools onSelect={setTab} />
+    ) : null);
+  if (!data && simpleView) return simpleView;
   if (!data)
     return (
       <section className="flex-1 p-8">
@@ -404,7 +458,11 @@ function WorkspaceProjectSurface({
                 }
                 onClick={() => {
                   setObject(null);
-                  setTab(section.destination);
+                  setTab(
+                    section.id === "files" && !workspace?.root
+                      ? "documents"
+                      : section.destination,
+                  );
                 }}
               >
                 {section.label}
@@ -421,7 +479,7 @@ function WorkspaceProjectSurface({
                 setTab(event.target.value as ProjectTab);
               }}
             >
-              {destinationsInSection(tab).map((id) => (
+              {allProjectViews.map((id) => (
                 <option key={id} value={id}>
                   {workspaceDestinations[id].label}
                 </option>
@@ -449,13 +507,8 @@ function WorkspaceProjectSurface({
           </button>
         </div>
       )}
-      {/* Every destination in the section is at most two clicks away here, so
-          the palette is an accelerator, not the only map. */}
-      {!object &&
-        workspaceDestinations[tab].section !== "overview" &&
-        destinationsInSection(tab).length > 1 && (
-          <ProjectSubnav tab={tab} onSelect={setTab} />
-        )}
+      {!object && <ProjectSubnav tab={tab} onSelect={setTab} />}
+      {simpleView}
       <ProjectDestination
         api={api}
         reading={reading}

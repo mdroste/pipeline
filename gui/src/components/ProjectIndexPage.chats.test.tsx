@@ -22,7 +22,7 @@ const session = (
 
 const mocks = vi.hoisted(() => ({
   listWorkspaces: vi.fn(),
-  listSessions: vi.fn(),
+  index: vi.fn(),
   sessionSnapshot: vi.fn(),
   moveSession: vi.fn(),
 }));
@@ -76,23 +76,25 @@ beforeEach(() => {
   mocks.listWorkspaces.mockResolvedValue({
     workspaces: [{ id: "trade", name: "Trade paper" }],
   });
-  mocks.listSessions.mockImplementation(
-    async (workspaceId: string | null, archived: boolean) => ({
-      sessions:
-        workspaceId === "trade"
-          ? [session("2", "Elasticity priors", "trade")]
-          : [
-              session("3", "Bartik shares", null),
-              ...(archived
-                ? [
-                    session("1", "Old question", null, {
-                      archivedAt: "2026-10-02T10:00:00Z",
-                    }),
-                  ]
-                : []),
-            ],
-    }),
-  );
+  mocks.index.mockImplementation(async (archived: boolean) => {
+    const rows = archived
+      ? [
+          session("1", "Old question", null, {
+            archivedAt: "2026-10-02T10:00:00Z",
+          }),
+        ]
+      : [
+          session("3", "Bartik shares", null),
+          session("2", "Elasticity priors", "trade"),
+        ];
+    return {
+      items: rows.map((session) => ({
+        session,
+        projectName: session.workspaceId ? "Trade paper" : null,
+      })),
+      nextCursor: null,
+    };
+  });
 });
 
 it("lists conversations across projects, newest first", async () => {
@@ -137,7 +139,7 @@ it("filters to unfiled and archived conversations and by search", async () => {
 });
 
 it("reports a list that cannot load", async () => {
-  mocks.listWorkspaces.mockRejectedValue(new Error("store offline"));
+  mocks.index.mockRejectedValue(new Error("store offline"));
   renderPage();
   expect(await screen.findByRole("alert")).toHaveTextContent("store offline");
   expect(screen.getByRole("button", { name: "Trade paper" })).toBeVisible();
@@ -170,12 +172,15 @@ it("moves an unfiled chat into a project and refreshes its membership", async ()
     session: { ...chat, revision: 7 },
   });
   mocks.moveSession.mockImplementation(async () => {
-    mocks.listSessions.mockImplementation(
-      async (workspaceId: string | null) => ({
-        sessions:
-          workspaceId === "trade" ? [{ ...chat, workspaceId: "trade" }] : [],
-      }),
-    );
+    mocks.index.mockResolvedValue({
+      items: [
+        {
+          session: { ...chat, workspaceId: "trade" },
+          projectName: "Trade paper",
+        },
+      ],
+      nextCursor: null,
+    });
   });
   renderPage();
   await user.click(

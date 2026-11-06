@@ -3,7 +3,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import WorkspaceProjectNavigation from "./WorkspaceProjectNavigation";
 import { loadWorkspacePins } from "../lib/workspaceNavigation";
 beforeEach(() => localStorage.clear());
-it("exposes six stable project areas and routes each to its default view", () => {
+it("exposes stable project destinations and routes each to its default view", () => {
   const navigate = vi.fn();
   render(
     <WorkspaceProjectNavigation
@@ -16,22 +16,24 @@ it("exposes six stable project areas and routes each to its default view", () =>
     screen.getByRole("navigation", { name: "Project sections" }),
   );
   expect(
-    sections
-      .getAllByRole("button")
-      .map((button) => button.querySelector("span")?.textContent),
+    sections.getAllByRole("button").map((button) => button.textContent),
   ).toEqual([
     "Overview",
-    "Library",
-    "Analyze",
-    "Write",
-    "Automate",
-    "Activity",
+    "Chats",
+    "Files",
+    "Sources",
+    "Analysis",
+    "Manuscript",
+    "Reviews & edits",
+    "Notes",
+    "Project tools",
+    "Project settings",
   ]);
-  expect(sections.getByRole("button", { name: /Analyze/ })).toHaveAttribute(
+  expect(sections.getByRole("button", { name: "Analysis" })).toHaveAttribute(
     "aria-current",
     "page",
   );
-  fireEvent.click(sections.getByRole("button", { name: /Activity/ }));
+  fireEvent.click(sections.getByRole("button", { name: "Notes" }));
   expect(navigate).toHaveBeenCalledWith("memory");
 });
 it("rejects corrupt destinations, duplicates, and unsupported preference versions", () => {

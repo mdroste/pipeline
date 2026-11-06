@@ -9,8 +9,10 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { WorkspacePaneVisibility } from "./workspacePaneVisibility";
 import useContainerWidth from "../hooks/useContainerWidth";
 import usePersistentPanelWidth from "../hooks/usePersistentPanelWidth";
 import ResizeHandle from "./ResizeHandle";
@@ -32,6 +34,12 @@ function loadView(key: string): DeskView | null {
   }
   return null;
 }
+
+function subscribeVisibility(listener: () => void) {
+  document.addEventListener("visibilitychange", listener);
+  return () => document.removeEventListener("visibilitychange", listener);
+}
+const windowVisible = () => document.visibilityState !== "hidden";
 
 export default function WorkspaceDesk({
   project,
@@ -77,6 +85,7 @@ export default function WorkspaceDesk({
   onTools?: () => void;
   toolsDisabled?: boolean;
 }) {
+  const visible = useSyncExternalStore(subscribeVisibility, windowVisible);
   const [root, width] = useContainerWidth<HTMLDivElement>();
   const preferenceKey = `pipeline.workspace.view.${workspaceId ?? "unfiled"}`;
   const [preferred, setPreferred] = useState<DeskView>(
@@ -310,7 +319,11 @@ export default function WorkspaceDesk({
             onFocusCapture={() => setLastPane("project")}
             className="workspace-desk-project"
           >
-            {project}
+            <WorkspacePaneVisibility.Provider
+              value={visible && !hidden && effective !== "assistant"}
+            >
+              {project}
+            </WorkspacePaneVisibility.Provider>
           </div>
         )}
         <div
@@ -323,7 +336,11 @@ export default function WorkspaceDesk({
             effective === "split" ? { width: visibleAssistantWidth } : undefined
           }
         >
-          {children}
+          <WorkspacePaneVisibility.Provider
+            value={visible && !hidden && effective !== "project"}
+          >
+            {children}
+          </WorkspacePaneVisibility.Provider>
           {effective === "split" && (
             <ResizeHandle
               edge="left"

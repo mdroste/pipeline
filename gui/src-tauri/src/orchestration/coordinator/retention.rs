@@ -4,7 +4,7 @@
 //! with a result stays until the researcher has opened it, and runs that belong
 //! to a research automation or seed a schedule are never candidates. Blobs are
 //! shared by content, so one goes only when no surviving record names it.
-use super::store::{err, now, Result, Store, TaskRun};
+use super::store::{err, is_operation, now, Result, Store, TaskRun};
 use super::{adapters, Coordinator};
 use rusqlite::params;
 use serde_json::json;
@@ -19,10 +19,6 @@ const LAST_PASS: &str = "retentionAt";
 /// A blob this new may belong to work that isn't recorded yet.
 const BLOB_GRACE: Duration = Duration::from_secs(86_400);
 const JOURNAL_LIMIT: u64 = 16 * 1024 * 1024;
-
-fn is_operation(value: &str) -> bool {
-    value.len() == 32 && value.bytes().all(|b| b.is_ascii_hexdigit())
-}
 
 /// Every 64-digit hex token in `text`. Anything that merely looks like a digest
 /// only keeps a blob longer.
@@ -131,12 +127,11 @@ impl Store {
         Ok(removed.len())
     }
 
-    fn sweep_blobs(&self) -> Result<()> {
+    fn sweep_blobs(&self, mut named: HashSet<String>) -> Result<()> {
         let root = self.root.join("blobs");
         if !root.is_dir() {
             return Ok(());
         }
-        let mut named = HashSet::new();
         let c = self.connection()?;
         for sql in [
             "SELECT body FROM runs",
@@ -230,15 +225,50 @@ impl Coordinator {
                 s.old_runs(time)
             })
             .await?;
+        let pending = if old.is_empty() {
+            adapters::delivery::Backfill::default()
+        } else {
+            match adapters::delivery::backfill(Some(&self.store), None).await {
+                Ok(result) => result,
+                Err(e) => {
+                    self.db(move |s| s.set_preference(LAST_PASS, &json!(time)))
+                        .await?;
+                    return Err(e);
+                }
+            }
+        };
+        if let Some(warning) = &pending.warning {
+            eprintln!("Automation file recovery: {warning}");
+        }
+        let old = self
+            .db(move |s| {
+                let mut eligible = Vec::new();
+                for run in old {
+                    if pending.pending_operations.is_empty()
+                        || !s
+                            .run_operations(&run)?
+                            .iter()
+                            .any(|op| pending.pending_operations.contains(op))
+                    {
+                        eligible.push(run);
+                    }
+                }
+                Ok(eligible)
+            })
+            .await?;
         for run in &old {
-            if !run.progress.decisions.contains_key("occurrenceSession") {
+            if run.schedule_id.is_none() {
                 continue;
             }
             let Some(session) = run.scope.session_id.clone() else {
                 continue;
             };
+            let operation = run.id.clone();
             if let Err(error) = crate::workbench::commands::run_store(move |s| {
-                crate::workbench::tasks::archive_occurrence(&s, &session)
+                if crate::workbench::tasks::owns_occurrence(&s, &operation, &session)? {
+                    crate::workbench::tasks::archive_occurrence(&s, &session)?;
+                }
+                Ok(())
             })
             .await
             {
@@ -247,7 +277,7 @@ impl Coordinator {
         }
         self.db(move |s| {
             if s.remove_runs(&old)? > 0 {
-                s.sweep_blobs()?;
+                s.sweep_blobs(pending.pending_digests)?;
             }
             s.set_preference(LAST_PASS, &json!(time))
         })

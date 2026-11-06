@@ -186,16 +186,16 @@ pub(super) fn ensure_migrated() -> Result<(), String> {
     let renamed = RENAMED_BUILTIN_PROFILES
         .iter()
         .map(|renamed| (renamed.old_id, renamed.id));
-    for (id, replacement) in RETIRED_BUILTIN_PROFILES
+    let aliases: Vec<_> = RETIRED_BUILTIN_PROFILES
         .iter()
         .chain(V9_RETIRED_BUILTIN_PROFILES)
         .chain(V15_RETIRED_BUILTIN_PROFILES)
         .copied()
         .chain(renamed)
-    {
-        if !profiles.join(format!("{id}.json")).exists() {
-            let _ = crate::settings::replace_active_profile_if(id, replacement);
-        }
+        .filter(|(id, _)| !profiles.join(format!("{id}.json")).exists())
+        .collect();
+    if !aliases.is_empty() {
+        let _ = crate::settings::heal_active_profile(&aliases);
     }
 
     Ok(())

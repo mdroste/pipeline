@@ -767,7 +767,7 @@ export interface ReviewHandoff {
   contentHash: string;
   mediaKind: string;
   stagedPath: string;
-  inputInterpretation: "document" | "source_tree";
+  inputInterpretation: "document" | "source_tree" | "latex_project";
   metadata: Record<string, unknown>;
   externalReference: string | null;
   createdAt: string;

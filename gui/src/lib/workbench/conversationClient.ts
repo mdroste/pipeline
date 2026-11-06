@@ -14,7 +14,36 @@ import type {
   ConversationSnapshot,
 } from "../workbenchTypes";
 
+export interface ConversationIndexRow {
+  session: Pick<
+    WorkbenchSession,
+    "id" | "workspaceId" | "title" | "archivedAt" | "updatedAt"
+  >;
+  projectName: string | null;
+}
+export interface IndexCursor extends SessionCursor {
+  projectUpdatedAt: string;
+  workspaceId: string;
+}
 export const conversationClient = {
+  index(
+    archived: boolean,
+    unfiled: boolean,
+    query: string,
+    palette: boolean,
+    cursor: IndexCursor | null,
+  ) {
+    return invoke<{
+      items: ConversationIndexRow[];
+      nextCursor: IndexCursor | null;
+    }>("workbench_conversation_index", {
+      archived,
+      unfiled,
+      query,
+      palette,
+      cursor,
+    });
+  },
   createSession(request: CreateSessionRequest) {
     return invoke<Mutation<WorkbenchSession>>("workbench_create_session", {
       request,

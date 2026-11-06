@@ -21,6 +21,7 @@ export default function ProjectIndexPage({
   onOpenProject,
   onResumeConversation,
   onNewConversation,
+  creatingConversation = false,
 }: {
   onOpenProject: (
     id: string,
@@ -28,11 +29,17 @@ export default function ProjectIndexPage({
   ) => Promise<void>;
   onResumeConversation: (id: string) => Promise<unknown>;
   onNewConversation: () => void;
+  creatingConversation?: boolean;
 }) {
   const { projects, loading, error, refresh } = useProjectIndex();
   const [search, setSearch] = useState("");
   const [chatFilter, setChatFilter] = useState<ChatFilter>("all");
-  const chats = useConversationIndex(true, chatFilter === "archived", true);
+  const chats = useConversationIndex(
+    true,
+    chatFilter === "archived",
+    search,
+    chatFilter === "unfiled",
+  );
   const [pins, setPins] = useState(loadProjectPins);
   const [creating, setCreating] = useState(false);
   const [pending, setPending] = useState(false);
@@ -87,6 +94,7 @@ export default function ProjectIndexPage({
               <button
                 type="button"
                 className="ui-page-button primary"
+                disabled={creatingConversation}
                 onClick={onNewConversation}
               >
                 + New chat
@@ -296,6 +304,7 @@ export default function ProjectIndexPage({
             )}
           </section>
           <ProjectChats
+            loadMore={chats.more ? chats.loadMore : undefined}
             conversations={chats.conversations}
             loading={chats.loading}
             error={chats.error}

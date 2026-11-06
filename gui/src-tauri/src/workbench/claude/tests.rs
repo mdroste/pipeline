@@ -191,6 +191,14 @@ fn claude_recovery_keeps_history_and_interrupts_without_replay() {
     assert!(prompt.text.contains("Prior answer"));
     assert_eq!(prompt.user_text, "Next question");
     assert!(protocol::prompt(&f.store, &f.session, " ").is_err());
+    let lease = crate::workbench::submission::session_lease(&f.store, &f.session)
+        .unwrap()
+        .unwrap();
+    reconcile(f.store.clone(), f.session.clone()).unwrap();
+    assert!(f.store.conversation_snapshot(&f.session).unwrap().turns[0]
+        .terminal_at
+        .is_none());
+    drop(lease);
     reconcile(f.store.clone(), f.session.clone()).unwrap();
     reconcile(f.store.clone(), f.session.clone()).unwrap();
     let snapshot = f.store.conversation_snapshot(&f.session).unwrap();

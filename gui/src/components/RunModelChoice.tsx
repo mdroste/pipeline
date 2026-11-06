@@ -1,3 +1,4 @@
+import { useSetupReads } from "./reviewSetupReads";
 import { useEffect, useId, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type {
@@ -83,12 +84,13 @@ export default function RunModelChoice({
   const [roster, setRoster] = useState<RosterEntry[] | null>(null);
   const [open, setOpen] = useState(false);
 
+  const reads = useSetupReads(refreshKey);
   useEffect(() => {
     let live = true;
     setConfig(null);
     Promise.all([
       invoke<{ settings: Settings }>("get_settings"),
-      invoke<PipelineConfig>("get_pipeline_config"),
+      reads.config(),
     ])
       .then(([response, workflow]) => {
         if (!live) return;
@@ -102,7 +104,7 @@ export default function RunModelChoice({
     return () => {
       live = false;
     };
-  }, [refreshKey]);
+  }, [reads]);
 
   const providers = useMemo<Provider[]>(() => {
     if (!settings) return ["claude", "codex", "antigravity"];

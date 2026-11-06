@@ -23,7 +23,8 @@ use blobs::{blob, blob_read};
 pub(super) use home::home_record;
 use home::save_home;
 pub use home::{
-    excluded_notes, home, project_context, selected_manuscript, ProjectHome, ProjectHomeSettings,
+    chat_brief, excluded_notes, home, project_context, selected_manuscript, ProjectHome,
+    ProjectHomeSettings,
 };
 use inventory::{check_for_changes, ignored, inventory_at, refresh};
 pub(crate) use inventory::{materialize_research_files, task_capture};
@@ -45,7 +46,7 @@ mod file_search;
 mod file_workspace;
 mod files;
 mod index;
-pub use index::{project_index, ProjectIndexItem};
+pub use index::{project_index, project_index_page, ProjectIndexItem};
 pub mod relations;
 pub mod repository;
 pub mod version_control;

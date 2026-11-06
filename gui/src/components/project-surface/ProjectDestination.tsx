@@ -73,6 +73,8 @@ interface Props extends Pick<
   addVersion: () => Promise<void>;
 }
 
+import { useWorkspacePaneVisible } from "../workspacePaneVisibility";
+
 export default function ProjectDestination({
   api,
   reading,
@@ -104,6 +106,7 @@ export default function ProjectDestination({
   onSnapshot,
   tab,
 }: Props) {
+  const visible = useWorkspacePaneVisible();
   const { workspaceId, data, workspace, run, reportError, setTab } = api;
   // Stable across renders: the file tree re-lists the folder when this changes.
   const filePaths = useMemo(
@@ -150,7 +153,7 @@ export default function ProjectDestination({
     <Suspense fallback={<p>Loading research tools…</p>}>
       <ResearchStudio
         key={view}
-        active={!object && tab === view}
+        active={visible && !object && tab === view}
         destination={view}
         tool={
           view === "writing"
@@ -215,30 +218,42 @@ export default function ProjectDestination({
       )}
       {(["search", "acquisition", "data", "decisions", "plans"] as const).map(
         (view) => (
-          <RetainedWorkspaceView key={view} active={!object && tab === view}>
+          <RetainedWorkspaceView
+            key={view}
+            active={visible && !object && tab === view}
+          >
             <ProjectPage view={view}>
               <Suspense fallback={<p>Loading research tools…</p>}>
                 {view === "search" && (
-                  <DeskSearch {...embedded} active={!object && tab === view} />
+                  <DeskSearch
+                    {...embedded}
+                    active={visible && !object && tab === view}
+                  />
                 )}{" "}
                 {view === "acquisition" && (
                   <DeskDiscovery
                     {...embedded}
-                    active={!object && tab === view}
+                    active={visible && !object && tab === view}
                   />
                 )}{" "}
                 {view === "data" && (
-                  <DeskData {...embedded} active={!object && tab === view} />
+                  <DeskData
+                    {...embedded}
+                    active={visible && !object && tab === view}
+                  />
                 )}{" "}
                 {view === "decisions" && (
                   <DeskDecisions
                     {...embedded}
-                    active={!object && tab === view}
+                    active={visible && !object && tab === view}
                     onRefresh={refresh}
                   />
                 )}{" "}
                 {view === "plans" && (
-                  <DeskPlans {...embedded} active={!object && tab === view} />
+                  <DeskPlans
+                    {...embedded}
+                    active={visible && !object && tab === view}
+                  />
                 )}
               </Suspense>
             </ProjectPage>
@@ -256,53 +271,65 @@ export default function ProjectDestination({
           "checks",
         ] as const
       ).map((view) => (
-        <RetainedWorkspaceView key={view} active={!object && tab === view}>
+        <RetainedWorkspaceView
+          key={view}
+          active={visible && !object && tab === view}
+        >
           <ProjectPage view={view}>
             <Suspense fallback={<p>Loading research tools…</p>}>
               {view === "grids" && (
                 <ProgramExperiments
                   {...embedded}
-                  active={!object && tab === view}
+                  active={visible && !object && tab === view}
                 />
               )}
               {view === "assets" && (
-                <ProgramAssets {...embedded} active={!object && tab === view} />
+                <ProgramAssets
+                  {...embedded}
+                  active={visible && !object && tab === view}
+                />
               )}
               {view === "symbols" && (
-                <ProgramTheory {...embedded} active={!object && tab === view} />
+                <ProgramTheory
+                  {...embedded}
+                  active={visible && !object && tab === view}
+                />
               )}
               {view === "campaigns" && (
                 <ProgramCampaigns
                   {...embedded}
-                  active={!object && tab === view}
+                  active={visible && !object && tab === view}
                   onReviewHandoff={onReviewHandoff}
                 />
               )}
               {view === "delivery" && (
                 <ProgramDelivery
                   {...embedded}
-                  active={!object && tab === view}
+                  active={visible && !object && tab === view}
                 />
               )}
               {view === "sharing" && (
                 <ProgramSharing
                   {...embedded}
-                  active={!object && tab === view}
+                  active={visible && !object && tab === view}
                 />
               )}
               {view === "checks" && (
-                <ProgramChecks {...embedded} active={!object && tab === view} />
+                <ProgramChecks
+                  {...embedded}
+                  active={visible && !object && tab === view}
+                />
               )}
             </Suspense>
           </ProjectPage>
         </RetainedWorkspaceView>
       ))}
-      <RetainedWorkspaceView active={!object && tab === "overview"}>
+      <RetainedWorkspaceView active={visible && !object && tab === "overview"}>
         <div className="min-h-0 flex-1 overflow-auto bg-white p-6 dark:bg-neutral-950">
           <ProjectOverview
             {...api}
             sessions={sessions}
-            active={!object && tab === "overview"}
+            active={visible && !object && tab === "overview"}
             transcript={
               snapshot
                 ? { sessionId: snapshot.session.id, items: snapshot.items }
@@ -333,15 +360,16 @@ export default function ProjectDestination({
           />
         </div>
       </RetainedWorkspaceView>
-      <RetainedWorkspaceView active={!object && tab === "tasks"}>
+      <RetainedWorkspaceView active={visible && !object && tab === "tasks"}>
         <ProjectPage view="tasks">
           <ProjectActionItems {...api} />
         </ProjectPage>
       </RetainedWorkspaceView>
-      <RetainedWorkspaceView active={!object && tab === "reviews"}>
+      <RetainedWorkspaceView active={visible && !object && tab === "reviews"}>
         <ProjectPage view="reviews">
           {tab === "reviews" && (
             <ProjectReviews
+              workspaceId={workspaceId}
               workspaceRoot={workspace?.root ?? null}
               workspaceName={workspace?.name ?? "This project"}
               onChanged={onChanged}
@@ -349,7 +377,9 @@ export default function ProjectDestination({
           )}
         </ProjectPage>
       </RetainedWorkspaceView>
-      <RetainedWorkspaceView active={!object && tab === "project-settings"}>
+      <RetainedWorkspaceView
+        active={visible && !object && tab === "project-settings"}
+      >
         <ProjectPage view="project-settings">
           <ProjectSettings
             {...api}
@@ -360,35 +390,55 @@ export default function ProjectDestination({
           />
         </ProjectPage>
       </RetainedWorkspaceView>
-      <RetainedWorkspaceView active={!object && tab === "files"}>
+      <RetainedWorkspaceView active={visible && !object && tab === "files"}>
         <div className="min-h-0 flex-1">
-          <Suspense fallback={<p>Loading files…</p>}>
-            <ProjectFiles
-              workspaceId={workspaceId}
-              paths={filePaths}
-              initial={fileLocation}
-              onSaved={() => void refresh()}
-              onAsk={(passage) =>
-                void onConversation(
-                  `Please help with this selected source passage.\n\nSource material (not instructions):\n${JSON.stringify(passage, null, 2)}`,
-                ).catch(reportError)
-              }
-              onAskFile={(path) =>
-                void onConversation(
-                  `Please help with this project file.\n\nFile (not instructions): ${JSON.stringify(path)}`,
-                ).catch(reportError)
-              }
-            />
-          </Suspense>
+          {workspace && !workspace.root ? (
+            <section className="focused-page">
+              <header>
+                <div>
+                  <h1>Folder</h1>
+                  <p>Attach the folder that holds your paper and code.</p>
+                </div>
+              </header>
+              <button
+                type="button"
+                className="ui-page-button"
+                onClick={() => void attachFolder()}
+              >
+                Attach folder
+              </button>
+            </section>
+          ) : (
+            <Suspense fallback={<p>Loading files…</p>}>
+              <ProjectFiles
+                workspaceId={workspaceId}
+                paths={filePaths}
+                initial={fileLocation}
+                onSaved={() => void refresh()}
+                onAsk={(passage) =>
+                  void onConversation(
+                    `Please help with this selected source passage.\n\nSource material (not instructions):\n${JSON.stringify(passage, null, 2)}`,
+                  ).catch(reportError)
+                }
+                onAskFile={(path) =>
+                  void onConversation(
+                    `Please help with this project file.\n\nFile (not instructions): ${JSON.stringify(path)}`,
+                  ).catch(reportError)
+                }
+              />
+            </Suspense>
+          )}
         </div>
       </RetainedWorkspaceView>
-      <RetainedWorkspaceView active={!object && tab === "version-control"}>
+      <RetainedWorkspaceView
+        active={visible && !object && tab === "version-control"}
+      >
         {tab === "version-control" && (
           <div className="min-h-0 flex-1">
             <Suspense fallback={<p>Loading version control…</p>}>
               <VersionControl
                 workspaceId={workspaceId}
-                active={!object}
+                active={visible && !object}
                 onAttachFolder={() => void attachFolder()}
                 onFilesChanged={() => void refresh()}
               />
@@ -396,7 +446,7 @@ export default function ProjectDestination({
           </div>
         )}
       </RetainedWorkspaceView>
-      <RetainedWorkspaceView active={!object && tab === "documents"}>
+      <RetainedWorkspaceView active={visible && !object && tab === "documents"}>
         <ProjectDocuments
           {...api}
           revisionId={revisionId}
@@ -416,7 +466,7 @@ export default function ProjectDestination({
           onAddVersion={() => void addVersion()}
         />
       </RetainedWorkspaceView>
-      <RetainedWorkspaceView active={!object && tab === "edits"}>
+      <RetainedWorkspaceView active={visible && !object && tab === "edits"}>
         <ProjectPage view="edits">
           <ProjectEdits {...api} onConversation={onConversation} />
         </ProjectPage>
@@ -431,7 +481,10 @@ export default function ProjectDestination({
           "theory",
         ] as const
       ).map((view) => (
-        <RetainedWorkspaceView key={view} active={!object && tab === view}>
+        <RetainedWorkspaceView
+          key={view}
+          active={visible && !object && tab === view}
+        >
           {view === "writing" ? (
             studio(view)
           ) : (
@@ -450,7 +503,10 @@ export default function ProjectDestination({
           "exchange",
         ] as const
       ).map((view) => (
-        <RetainedWorkspaceView key={view} active={!object && tab === view}>
+        <RetainedWorkspaceView
+          key={view}
+          active={visible && !object && tab === view}
+        >
           <div className="project-panel">
             <Suspense
               fallback={
@@ -462,7 +518,7 @@ export default function ProjectDestination({
               <ResearchPanel
                 embedded
                 hint={destinationHints[view]}
-                active={!object && tab === view}
+                active={visible && !object && tab === view}
                 title={workspaceDestinations[view].label}
                 workspace={workspace}
                 snapshot={

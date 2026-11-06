@@ -112,15 +112,26 @@ pub fn list_executions(
     store: &Store,
     workspace_id: &str,
 ) -> WorkbenchResult<Vec<ResearchExecution>> {
+    list_executions_with_baseline(store, workspace_id, None)
+}
+
+pub(crate) fn list_executions_with_baseline(
+    store: &Store,
+    workspace_id: &str,
+    baseline: Option<&str>,
+) -> WorkbenchResult<Vec<ResearchExecution>> {
     validate_id("workspace id", workspace_id)?;
     let connection = open_connection(store)?;
     let mut statement = connection
         .prepare(&format!(
-            "{EXECUTION_LIST_SELECT} WHERE workspace_id = ?1 ORDER BY created_at DESC LIMIT 200"
+            "{EXECUTION_LIST_SELECT} WHERE workspace_id = ?1 ORDER BY (id IS ?2) DESC, created_at DESC,id LIMIT 200"
         ))
         .map_err(|error| WorkbenchError::storage("Failed to prepare execution list", error))?;
     let values = statement
-        .query_map([workspace_id], execution_from_row)
+        .query_map(
+            rusqlite::params![workspace_id, baseline],
+            execution_from_row,
+        )
         .map_err(|error| WorkbenchError::storage("Failed to list executions", error))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| WorkbenchError::storage("Failed to decode executions", error))?;

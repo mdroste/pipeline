@@ -29,19 +29,30 @@ describe("confirmRerunRequirements", () => {
   });
 
   it("asks nothing when the run needs nothing", async () => {
-    rerunRequirements.mockResolvedValue({ secrets: [], notice: null });
-    await expect(confirmRerunRequirements("run", true)).resolves.toEqual({});
+    rerunRequirements.mockResolvedValue({
+      fingerprint: "approved",
+      secrets: [],
+      notice: null,
+    });
+    await expect(confirmRerunRequirements("run", true)).resolves.toEqual({
+      variables: {},
+      expectedFingerprint: "approved",
+    });
     expect(confirmDialog).not.toHaveBeenCalled();
     expect(promptDialog).not.toHaveBeenCalled();
   });
 
   it("collects each secret in a concealed field", async () => {
-    rerunRequirements.mockResolvedValue({ secrets: twoSecrets, notice: null });
+    rerunRequirements.mockResolvedValue({
+      fingerprint: "approved",
+      secrets: twoSecrets,
+      notice: null,
+    });
     promptDialog.mockResolvedValueOnce("one").mockResolvedValueOnce("two");
 
     await expect(confirmRerunRequirements("run", true)).resolves.toEqual({
-      token: "one",
-      seed: "two",
+      variables: { token: "one", seed: "two" },
+      expectedFingerprint: "approved",
     });
     expect(rerunRequirements).toHaveBeenCalledWith("run", true);
     expect(promptDialog.mock.calls[0][1]).toMatchObject({
@@ -51,7 +62,11 @@ describe("confirmRerunRequirements", () => {
   });
 
   it("stops when the researcher cancels a secret", async () => {
-    rerunRequirements.mockResolvedValue({ secrets: twoSecrets, notice: null });
+    rerunRequirements.mockResolvedValue({
+      fingerprint: "approved",
+      secrets: twoSecrets,
+      notice: null,
+    });
     promptDialog.mockResolvedValueOnce(null);
 
     await expect(confirmRerunRequirements("run", false)).resolves.toBeNull();
@@ -88,9 +103,16 @@ describe("confirmRerunRequirements", () => {
   });
 
   it("continues when the researcher accepts the notice", async () => {
-    rerunRequirements.mockResolvedValue({ secrets: [], notice: "Notice" });
+    rerunRequirements.mockResolvedValue({
+      fingerprint: "approved",
+      secrets: [],
+      notice: "Notice",
+    });
     confirmDialog.mockResolvedValue(true);
 
-    await expect(confirmRerunRequirements("run", true)).resolves.toEqual({});
+    await expect(confirmRerunRequirements("run", true)).resolves.toEqual({
+      variables: {},
+      expectedFingerprint: "approved",
+    });
   });
 });

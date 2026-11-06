@@ -577,10 +577,10 @@ async fn call_claude_inner(
         .stderr(Stdio::piped());
 
     validate_cli_command_length(cmd.as_std(), cfg!(windows))?;
+    crate::pipeline::executor::budget_dispatch::reserve(None, true)?;
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn claude: {e}. Is Claude Code installed?"))?;
-    crate::pipeline::logging::record_provider_attempt();
 
     let (pid, start_time) = track_child_started(&child, app, label);
 

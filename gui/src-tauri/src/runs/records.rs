@@ -34,6 +34,9 @@ pub struct PageArtifactIndex {
 /// document, LaTeX project, source tree, or input-free workflow.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct InputIdentity {
+    /// Stable Workspace record id, checked against the staged input at admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_handoff_id: Option<String>,
     /// Canonical selection spelling plus its explicit interpretation.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub selection_key: String,
@@ -48,7 +51,7 @@ pub struct InputIdentity {
 }
 
 impl PageArtifactIndex {
-    pub(super) fn rel_path(&self, page: u32) -> Result<String, String> {
+    pub(crate) fn rel_path(&self, page: u32) -> Result<String, String> {
         if self.count == 0 || self.count as usize > MAX_MANIFEST_ARTIFACTS {
             return Err("Invalid page artifact count".to_string());
         }

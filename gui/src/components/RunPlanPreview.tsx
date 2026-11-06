@@ -1,6 +1,6 @@
+import { useSetupReads } from "./reviewSetupReads";
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import type { PipelineConfig, ProfileSummary } from "../lib/types";
+import type { PipelineConfig } from "../lib/types";
 import {
   adaptiveAgentCount,
   adaptiveAgentRange,
@@ -25,13 +25,11 @@ export default function RunPlanPreview({
   const [config, setConfig] = useState<PipelineConfig | null>(null);
   const [profileName, setProfileName] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const reads = useSetupReads(refreshKey);
   useEffect(() => {
     let stale = false;
-    Promise.all([
-      invoke<PipelineConfig>("get_pipeline_config"),
-      invoke<ProfileSummary[]>("list_profiles"),
-      invoke<string>("get_active_profile"),
-    ])
+    reads
+      .workflow()
       .then(([loaded, profiles, active]) => {
         if (stale) return;
         setConfig(loaded);
@@ -46,7 +44,7 @@ export default function RunPlanPreview({
     return () => {
       stale = true;
     };
-  }, [refreshKey]);
+  }, [reads]);
   if (error)
     return (
       <div className="flex min-h-full items-center justify-center p-8">
@@ -66,7 +64,7 @@ export default function RunPlanPreview({
       <div className="w-full max-w-2xl">
         <div className="mb-6 text-center">
           {profileName && (
-            <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
+            <h2 className="text-base font-semibold text-gray-900 dark:text-ink">
               {profileName}
             </h2>
           )}

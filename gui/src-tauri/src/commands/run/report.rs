@@ -4,11 +4,11 @@ use crate::models::PipelineReport;
 use crate::output;
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn assemble_report(
+pub(in crate::commands) fn assemble_report(
     app: &crate::emit::EventBus,
     run_writer: &mut Option<crate::runs::RunWriter>,
     execution_config: &crate::pipeline_config::PipelineConfig,
-    result: crate::pipeline::executor::ExecutionResult,
+    mut result: crate::pipeline::executor::ExecutionResult,
     extraction: &crate::models::ExtractionResult,
     document_bundle: &Option<crate::document_bundle::DocumentBundle>,
     orientation_sampling: &crate::pipeline::orient::OrientationSample,
@@ -16,6 +16,12 @@ pub(super) fn assemble_report(
     scoped_source_path: &str,
 ) -> PipelineReport {
     let mut products = crate::findings::build_run_products(execution_config, &result.outputs);
+    crate::findings::check_publication(
+        execution_config,
+        &result.outputs,
+        &products,
+        &mut result.failed_steps,
+    );
     if let Some(writer) = run_writer.as_mut() {
         for warning in
             writer.capture_source_evidence(&mut products, std::path::Path::new(scoped_source_path))

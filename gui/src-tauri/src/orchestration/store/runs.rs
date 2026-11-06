@@ -70,7 +70,37 @@ impl Store {
             .connection()?
             .query_row("SELECT body FROM runs WHERE id=?1", [id], |r| r.get(0))
             .map_err(err)?;
-        serde_json::from_str(&body).map_err(err)
+        self.decode_run(id, &body)?.ok_or_else(|| {
+            format!("Automation {id} cannot be read; its original record was preserved")
+        })
+    }
+
+    fn decode_run(&self, id: &str, body: &str) -> Result<Option<TaskRun>> {
+        match serde_json::from_str::<TaskRun>(body) {
+            Ok(run)
+                if run.id == id
+                    && run.chain.schema_version == crate::orchestration::definition::VERSION
+                    && run
+                        .progress
+                        .receipts
+                        .values()
+                        .all(|r| super::is_operation(&r.operation)) =>
+            {
+                Ok(Some(run))
+            }
+            Ok(_) => {
+                self.quarantine(
+                    "run",
+                    id,
+                    "Invalid run or receipt identity, or unsupported definition version",
+                )?;
+                Ok(None)
+            }
+            Err(error) => {
+                self.quarantine("run", id, &error.to_string())?;
+                Ok(None)
+            }
+        }
     }
 
     pub fn save(&self, run: &mut TaskRun, kind: &str, detail: &str) -> Result<()> {
@@ -117,19 +147,61 @@ impl Store {
     }
 
     pub fn list(&self, view: &str, session: Option<&str>, offset: u32) -> Result<Vec<Summary>> {
+        self.list_scoped(view, session, None, offset, 50)
+    }
+
+    /// Filter a project's conversation IDs before taking a page. Global
+    /// activity must not push that project's automations out of its overview.
+    pub fn project_activity(&self, sessions: &[String], offset: u32) -> Result<Vec<Summary>> {
+        self.list_scoped("projectActivity", None, Some(sessions), offset, 50)
+    }
+
+    pub(crate) fn list_with_lookahead(
+        &self,
+        view: &str,
+        session: Option<&str>,
+        offset: u32,
+    ) -> Result<Vec<Summary>> {
+        self.list_scoped(view, session, None, offset, 51)
+    }
+
+    fn list_scoped(
+        &self,
+        view: &str,
+        session: Option<&str>,
+        sessions: Option<&[String]>,
+        offset: u32,
+        limit: u32,
+    ) -> Result<Vec<Summary>> {
+        let sessions = sessions
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(err)?;
         let c = self.connection()?;
         let predicate = match view {
             "session" => "1=1",
+            "projectActivity" => "state IN ('finished','failed','cancelled','attention')",
             "history" => "state IN ('finished','cancelled','failed')",
             "drafts" => "state='draft'",
             "ready" => "state IN ('queued','running','waiting')",
             _ => "state NOT IN ('finished','cancelled','failed')",
         };
         // Bodies are parsed only for the page, not for every candidate row.
-        let sql=format!("SELECT r.id,r.revision,json_extract(r.body,'$.name'),r.state,json_extract(r.body,'$.reason'),json_extract(r.body,'$.createdAt'),r.updated_at,r.due_at,r.session_id,r.schedule_id FROM (SELECT id FROM runs WHERE {predicate} AND NOT EXISTS (SELECT 1 FROM mission_children mc WHERE mc.task_id=runs.id) AND NOT EXISTS (SELECT 1 FROM discovery_children dc WHERE dc.task_id=runs.id) AND (?1 IS NULL OR session_id=?1) ORDER BY updated_at DESC,id LIMIT 50 OFFSET ?2) page JOIN runs r ON r.id=page.id ORDER BY r.updated_at DESC,r.id");
+        let sql = format!(
+            "SELECT r.id,r.revision,json_extract(r.body,'$.name'),r.state,
+            json_extract(r.body,'$.reason'),json_extract(r.body,'$.createdAt'),
+            r.updated_at,r.due_at,r.session_id,r.schedule_id FROM (
+                SELECT id FROM runs WHERE {predicate} AND state<>'unreadable' AND json_valid(body)
+                AND NOT EXISTS (SELECT 1 FROM mission_children mc WHERE mc.task_id=runs.id)
+                AND NOT EXISTS (SELECT 1 FROM discovery_children dc WHERE dc.task_id=runs.id)
+                AND (?1 IS NULL OR session_id=?1)
+                AND (?3 IS NULL OR session_id IN (SELECT value FROM json_each(?3)))
+                ORDER BY updated_at DESC,id LIMIT ?4 OFFSET ?2
+            ) page JOIN runs r ON r.id=page.id ORDER BY r.updated_at DESC,r.id"
+        );
         let mut s = c.prepare(&sql).map_err(err)?;
         let result = s
-            .query_map(params![session, offset], |r| {
+            .query_map(params![session, offset, sessions, limit], |r| {
                 Ok(Summary {
                     id: r.get(0)?,
                     revision: r.get(1)?,
@@ -151,7 +223,7 @@ impl Store {
 
     pub fn ready_ids(&self, time: i64) -> Result<Vec<String>> {
         let c = self.connection()?;
-        let mut s=c.prepare("SELECT id FROM runs WHERE (state IN ('queued','running','waiting') AND due_at<=?1) OR (state IN ('queued','running','waiting') AND json_extract(body,'$.deadlineAt')<=?1) ORDER BY updated_at,id LIMIT 32").map_err(err)?;
+        let mut s=c.prepare("SELECT id FROM runs WHERE (state IN ('queued','running','waiting') AND due_at<=?1) OR (state IN ('queued','running','waiting') AND (CASE WHEN json_valid(body) THEN json_extract(body,'$.deadlineAt') ELSE 0 END)<=?1) ORDER BY updated_at,id LIMIT 32").map_err(err)?;
         let result = s
             .query_map([time], |r| r.get(0))
             .map_err(err)?
@@ -161,7 +233,7 @@ impl Store {
     }
 
     pub fn next_due(&self) -> Result<Option<i64>> {
-        self.connection()?.query_row("SELECT MIN(t) FROM (SELECT due_at t FROM runs WHERE state IN ('queued','running','waiting') UNION ALL SELECT json_extract(body,'$.deadlineAt') t FROM runs WHERE state IN ('queued','running','waiting') UNION ALL SELECT due_at t FROM missions WHERE state IN ('queued','running','waiting','paused','stopping') UNION ALL SELECT json_extract(body,'$.deadlineAt') t FROM missions WHERE state IN ('queued','running','waiting') UNION ALL SELECT due_at t FROM discovery_runs WHERE state IN ('running','awaitingSelection','paused','stopping') UNION ALL SELECT deadline_at t FROM discovery_runs WHERE state IN ('running','awaitingSelection','paused','stopping') AND json_extract(body,'$.selectionSince') IS NULL UNION ALL SELECT next_due_at t FROM schedules s WHERE enabled=1 AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.schedule_id=s.id AND r.state NOT IN ('finished','cancelled','failed')))",[],|r|r.get(0)).map_err(err)
+        self.connection()?.query_row("SELECT MIN(t) FROM (SELECT due_at t FROM runs WHERE state IN ('queued','running','waiting') UNION ALL SELECT CASE WHEN json_valid(body) THEN json_extract(body,'$.deadlineAt') ELSE 0 END t FROM runs WHERE state IN ('queued','running','waiting') UNION ALL SELECT due_at t FROM missions WHERE state IN ('queued','running','waiting','paused','stopping') UNION ALL SELECT json_extract(body,'$.deadlineAt') t FROM missions WHERE state IN ('queued','running','waiting') UNION ALL SELECT due_at t FROM discovery_runs WHERE state IN ('running','awaitingSelection','paused','stopping') UNION ALL SELECT deadline_at t FROM discovery_runs WHERE state IN ('running','awaitingSelection','paused','stopping') AND json_extract(body,'$.selectionSince') IS NULL UNION ALL SELECT next_due_at t FROM schedules s WHERE enabled=1 AND NOT EXISTS(SELECT 1 FROM runs r WHERE r.schedule_id=s.id AND r.state NOT IN ('finished','cancelled','failed')))",[],|r|r.get(0)).map_err(err)
     }
 
     /// One unreadable record must not keep the coordinator from starting, so
@@ -169,8 +241,8 @@ impl Store {
     /// run already over its budget is still marked.
     pub fn recover(&self) -> Result<()> {
         let c = self.connection()?;
-        let mut s=c.prepare("SELECT id FROM runs WHERE state NOT IN ('draft','finished','cancelled','failed') AND (state='cancelling' OR EXISTS(SELECT 1 FROM json_each(json_extract(body,'$.progress.receipts')) WHERE json_extract(value,'$.state')='running'))").map_err(err)?;
-        let ids = s
+        let mut q=c.prepare("SELECT id FROM runs WHERE state NOT IN ('draft','finished','cancelled','failed','unreadable')").map_err(err)?;
+        let ids = q
             .query_map([], |r| r.get::<_, String>(0))
             .map_err(err)?
             .collect::<std::result::Result<Vec<_>, _>>()
@@ -183,15 +255,47 @@ impl Store {
             .flatten()
             .and_then(|v| v.as_i64());
         for id in ids {
-            if let Err(error) = self.recover_run(&id, stopped) {
+            let body: String = c
+                .query_row("SELECT body FROM runs WHERE id=?1", [&id], |r| r.get(0))
+                .map_err(err)?;
+            let Some(mut run) = self.decode_run(&id, &body)? else {
+                continue;
+            };
+            let clocks = match self.restore_group_clocks(&mut run) {
+                Ok(changed) => changed,
+                Err(error) => {
+                    self.quarantine(
+                        "run",
+                        &id,
+                        &format!("Could not restore the group deadline from its attempts: {error}"),
+                    )?;
+                    continue;
+                }
+            };
+            if clocks {
+                if matches!(run.state.as_str(), "queued" | "running" | "waiting") {
+                    run.due_at = run.progress.next_wake(run.due_at);
+                }
+                self.write(
+                    &mut run,
+                    "groupClocks",
+                    "Restored group deadlines from earlier attempts",
+                )?;
+            }
+            if run.state != "cancelling"
+                && !run.progress.receipts.values().any(|r| r.state == "running")
+            {
+                continue;
+            }
+            if let Err(error) = self.recover_run(run, stopped) {
                 eprintln!("Interrupted automation {id} needs attention: {error}");
             }
         }
         Ok(())
     }
 
-    fn recover_run(&self, id: &str, stopped: Option<i64>) -> Result<()> {
-        let mut run = self.get(id)?;
+    fn recover_run(&self, mut run: TaskRun, stopped: Option<i64>) -> Result<()> {
+        let id = &run.id;
         // A run already in attention was announced, and one owned by an automation
         // is announced by that automation when it reads the interruption.
         let announce = run.state != "attention"

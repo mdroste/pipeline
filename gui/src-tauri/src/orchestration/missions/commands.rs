@@ -150,17 +150,34 @@ pub async fn mission_list(
     app: tauri::AppHandle,
     workspace_id: Option<String>,
     offset: Option<u32>,
+    lookahead: Option<bool>,
 ) -> Result<Vec<Summary>> {
     super::super::manager(app)
         .await?
-        .db(move |s| storage::list(&s, workspace_id.as_deref(), offset.unwrap_or(0)))
+        .db(move |s| {
+            storage::list(
+                &s,
+                workspace_id.as_deref(),
+                offset.unwrap_or(0),
+                lookahead.unwrap_or(false),
+            )
+        })
         .await
 }
 #[tauri::command]
 pub async fn mission_get(app: tauri::AppHandle, id: String) -> Result<Mission> {
     super::super::manager(app)
         .await?
-        .db(move |s| storage::get(&s, &id))
+        .db(move |s| {
+            let mut m = storage::get(&s, &id)?;
+            if m.rounds
+                .iter()
+                .any(|r| r.challenge.is_some() && r.claim_record.is_none())
+            {
+                m.brief = brief::render(&m);
+            }
+            Ok(m)
+        })
         .await
 }
 #[tauri::command]
@@ -409,6 +426,32 @@ async fn close_child(coordinator: &Coordinator, m: &mut Mission, child: &str) ->
 }
 
 pub(super) async fn retry(coordinator: &Coordinator, m: &mut Mission) -> Result<()> {
+    if let Some(id) = m.active_child.clone() {
+        let child = stopped_child(coordinator, id).await?;
+        if child
+            .progress
+            .receipts
+            .values()
+            .any(|r| r.state == "unknown")
+        {
+            coordinator.settle_turns(&child).await;
+            let mut recovered = child;
+            if coordinator.recover_results(&mut recovered).await? {
+                return Err(
+                    "The original action is still running. Check saved results before retrying."
+                        .into(),
+                );
+            }
+            if recovered
+                .progress
+                .receipts
+                .values()
+                .all(|r| r.state == "completed")
+            {
+                return reconcile(coordinator, m).await;
+            }
+        }
+    }
     if exhausted(m) {
         return Err(
             "This automation has used its budget. Start a new research automation to do more work."
@@ -549,6 +592,29 @@ pub async fn mission_retain_method(
         .retained = retained;
     save(&coordinator, &mut m, "method").await?;
     notify(&coordinator, &m, &m.state);
+    Ok(m)
+}
+#[tauri::command]
+pub async fn mission_accept_assessment(
+    app: tauri::AppHandle,
+    id: String,
+    revision: i64,
+    subject_version: String,
+) -> Result<Mission> {
+    let c = super::super::manager(app).await?;
+    let _gate = c.gate.lock().await;
+    let mut m = c.db(move |s| storage::get(&s, &id)).await?;
+    if m.revision != revision {
+        return Err("Assessment changed; reload before accepting".into());
+    }
+    let record = m
+        .rounds
+        .last_mut()
+        .and_then(|r| r.claim_record.as_mut())
+        .ok_or("No current claim assessment to accept")?;
+    record.accept(&subject_version)?;
+    save(&c, &mut m, "assessmentAccepted").await?;
+    notify(&c, &m, &m.state);
     Ok(m)
 }
 #[tauri::command]

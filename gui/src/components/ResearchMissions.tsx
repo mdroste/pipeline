@@ -14,6 +14,7 @@ import {
   type MissionSummary,
 } from "../lib/missionClient";
 import "./research-missions/Missions.css";
+import { Icon } from "../ui/icons";
 import ReportIssueLink from "./ReportIssueLink";
 const Builder = lazy(() => import("./research-missions/Builder"));
 const Detail = lazy(() => import("./research-missions/Detail"));
@@ -31,9 +32,7 @@ export default function ResearchMissions({
   onTask?: (id: string) => void | Promise<void>;
 }) {
   const [rows, setRows] = useState<MissionSummary[]>([]);
-  const [discovery, setDiscovery] = useState<
-    "supervised" | "unsupervised" | null
-  >(initialDiscoveryId ? "supervised" : null);
+  const [discovery, setDiscovery] = useState(Boolean(initialDiscoveryId));
   const [mission, setMission] = useState<Mission | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
@@ -46,7 +45,7 @@ export default function ResearchMissions({
     const id = selected.current;
     try {
       const [list, detail] = await Promise.all([
-        missionClient.list(offset),
+        missionClient.list(offset, null, true),
         id ? missionClient.get(id) : Promise.resolve(null),
       ]);
       if (version !== generation.current) return;
@@ -113,9 +112,8 @@ export default function ResearchMissions({
       >
         <SelfDiscovery
           initialRunId={initialDiscoveryId}
-          initialMode={discovery}
           initialSessionId={initialSessionId}
-          onBack={() => setDiscovery(null)}
+          onBack={() => setDiscovery(false)}
           onConversation={onConversation}
         />
       </Suspense>
@@ -134,14 +132,21 @@ export default function ResearchMissions({
           + New research automation
         </button>
       </div>
-      <div className="task-actions" aria-label="Research discovery">
-        <button onClick={() => setDiscovery("supervised")}>
-          Research discovery — choose projects yourself
-        </button>
-        <button onClick={() => setDiscovery("unsupervised")}>
-          Research discovery — let Pipeline choose projects
-        </button>
-      </div>
+      <button
+        className="mission-discovery-entry"
+        onClick={() => setDiscovery(true)}
+      >
+        <span className="mission-discovery-icon">
+          <Icon name="book" />
+        </span>
+        <span>
+          <strong>Research discovery</strong>
+          <small>
+            Explore a topic, shortlist projects, and develop papers.
+          </small>
+        </span>
+        <Icon name="chevron-right" />
+      </button>
       {error && (
         <p className="task-error" role="alert">
           {error}
@@ -154,9 +159,9 @@ export default function ResearchMissions({
         <section className="task-list" aria-label="Research automation list">
           {loading ? (
             <p className="task-empty">Loading research automations…</p>
-          ) : rows.length ? (
+          ) : rows.length || offset > 0 ? (
             <>
-              {rows.map((m) => (
+              {rows.slice(0, 50).map((m) => (
                 <button
                   className={`task-list-row ${mission?.id === m.id ? "is-selected" : ""}`}
                   key={m.id}
@@ -180,7 +185,7 @@ export default function ResearchMissions({
                     Previous
                   </button>
                 )}
-                {rows.length === 50 && (
+                {rows.length > 50 && (
                   <button onClick={() => setOffset(offset + 50)}>More</button>
                 )}
               </div>

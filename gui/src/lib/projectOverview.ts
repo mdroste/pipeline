@@ -905,3 +905,49 @@ export function targetSummary(
 /** The prompt behind "Draft a brief from the manuscript". */
 export const BRIEF_PROMPT =
   "Read the current version of the paper in this project and propose a short research brief as project notes for me to accept: the research question, the main contribution, and the key identifying assumptions (one note each, in my paper's own terms). Propose them as suggested notes; do not edit any files.";
+
+export interface ProjectReviewLink {
+  id: string;
+  stagedPath: string;
+  externalReference: string | null;
+  contentHash: string;
+}
+
+export function reviewsForProject(
+  runs: RunSummary[],
+  root: string | null,
+  links: ProjectReviewLink[],
+) {
+  const byId = new Map(links.map((link) => [link.id, link]));
+  const paths = new Set(
+    links.flatMap((link) =>
+      link.stagedPath ? [comparablePath(link.stagedPath)] : [],
+    ),
+  );
+  const ids = new Set(
+    links.flatMap((link) =>
+      link.externalReference ? [link.externalReference] : [],
+    ),
+  );
+  return runs.filter((run) => {
+    if (
+      ids.has(run.run_id) ||
+      (run.input_identity?.review_handoff_id &&
+        byId.has(run.input_identity.review_handoff_id))
+    )
+      return true;
+    const path = comparablePath(run.input_path);
+    if (!path) return false;
+    if (paths.has(path) || (root && underRoot(run.input_path, root)))
+      return true;
+    // Before the run stored a handoff id, the immutable staging layout named
+    // both the handoff and the content-addressed blob. Its root can relocate.
+    const [name, id, folder] = path.split("/").reverse();
+    const legacy = folder === "handoffs" ? byId.get(id) : undefined;
+    if (!legacy?.contentHash) return false;
+    return (
+      name === "source-tree-" + legacy.contentHash ||
+      name.split(".")[0] === legacy.contentHash
+    );
+  });
+}

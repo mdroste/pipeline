@@ -1,10 +1,9 @@
 # Projects and conversations
 
 A project keeps a paper, its folder, your notes, and the conversations about
-it together. This guide covers projects, conversations, and the **Overview**,
-**Library**, and **Activity** areas. [Analyze and write](analysis-and-writing.md)
-covers **Analyze** and **Write**, and [Automations](automations.md) covers
-**Automate**.
+it together. This guide covers projects, conversations, files, sources, and
+notes. [Analyze and write](analysis-and-writing.md) covers analysis, manuscripts,
+and review findings. [Automations](automations.md) covers scheduled work.
 
 ## Create a project
 
@@ -25,13 +24,22 @@ what needs you, such as an interrupted edit or suggested notes. Choose the
 name to open the Overview, or **Resume conversation** to go back to the last
 conversation. **Pin project** keeps a project at the top on this computer.
 
-Inside a project, the sidebar lists its six areas and its conversations.
-**Show all** opens the full list, and **Show older conversations** reads further
-back in a long one. Each area's main views are tabs at the top of the page, and the rest are under
-**More**. Choose the project's name in the sidebar to move to another project or
-open **Project settings**. Press Command/Ctrl+K, or choose
-**Search** in the sidebar, to find any project, conversation, review,
-automation, or view by name. The layout menu switches between **Project only**, **Conversation only**, and **Project + conversation**. Project areas
+Choose **Projects** to open the project list. Inside a project, choose its name
+under **Current project** to search pinned and recent projects or create one.
+Choose **Project settings** below the project views to manage its paper and folder.
+
+The sidebar has eight views: **Overview**, **Chats**, **Files**, **Sources**,
+**Analysis**, **Manuscript**, **Reviews & edits**, and **Notes**. In **Files**,
+choose **Folder**, **Imported documents**, or **Version control**. **Project
+tools** lists all views by topic; search it to find a tool such as **Theory** or
+**Scheduled checks**. Press Command/Ctrl+K, or choose **Search** in the sidebar,
+to find a project, conversation, review, automation, or view by name.
+
+**Reviews & edits** includes reviews started from papers in this project, even
+if the project has no attached folder. If you attach a folder, it also lists
+reviews of inputs selected from that folder.
+
+The layout menu switches between **Project only**, **Conversation only**, and **Project + conversation**. Project areas
 work without a model connection. Conversations and reviews need one. See
 [Connections](connections.md).
 
@@ -45,8 +53,13 @@ includes conversations across projects, with **No project** and **Archived**
 filters. Choose a chat to resume it, or its project name to open the project.
 **Move to project…** adds a standalone chat to a project; **Change project…**
 lets you move it elsewhere or choose **Unfiled** to remove its project.
-The transcript stays with the chat. Recent chats and the open conversation
-appear inside the **Projects** sidebar section.
+The transcript stays with the chat. Choose **Chats** in a project to search its conversations, open **Archived**,
+or **Show older conversations**. A chat’s actions menu offers rename, move,
+archive, restore, and delete. Choose **Browse chats** above a conversation to
+return to the list. Standalone conversations use a separate list marked **No project**.
+
+The conversation’s **Outline** searches the messages loaded so far. In a long
+chat, choose **Search older messages** to include the preceding page.
 
 ### Work with files outside a project
 
@@ -63,7 +76,10 @@ need **Allow edits** or an enabled tool. See
 
 Select a file the assistant names to open it, or choose **Reveal working files**
 from the conversation's actions menu. Deleting the conversation deletes its
-folder. **Move to project…** leaves the files in that folder, and the
+local transcript, working folder, and browser profile. Research records stay in
+the project. The provider can retain its own history. If file cleanup fails,
+restart Pipeline to retry.
+**Move to project…** leaves the files in that folder, and the
 conversation works in the project instead. A conversation that uses an agent
 profile or recipe made for its current project can't move until you switch it
 to a built-in or shared one, or disable the recipe.
@@ -83,7 +99,7 @@ for sign-in, keys, local servers, and command setup.
 
 ### Add sources
 
-A Library document reaches the assistant only when you add it as a source or
+An imported document reaches the assistant only when you add it as a source or
 an enabled tool reads it. Select an item and choose **Add to conversation**.
 Documents, search results, and datasets have their own versions of this
 button. Adding a source sends nothing until your next message.
@@ -193,7 +209,7 @@ Pipeline knows about the remote and leaves your files and branches as they
 are. It ignores the folder's own Git settings, as described under
 [Version control](#version-control), where you can also commit, push, and pull.
 
-## Library
+## Files and sources
 
 ### Documents
 
@@ -241,6 +257,11 @@ Files opens these types:
 
 Other files show their size, with **Open externally** and **Reveal in folder**.
 This includes Stata (.dta) files, which are usually too large to read here.
+A changed spreadsheet keeps its worksheet and page if both still exist. If the
+worksheet was removed, Pipeline opens the first one. **Reload table**
+retries a table that could not be read. Choose **Retry playback** if an audio
+or video file fails to play.
+
 Every open file has these in its **…** menu, along with **Reload**. Pipeline
 will not open a program or script with **Open externally** or **Open external
 editor**. On a Mac, that includes Python files. On an exFAT drive or a network
@@ -273,7 +294,7 @@ automations don't use this page.
 Choices here that change your files wait while a response is running, as they do
 in **Files**. They also wait for a local job, which the message names. A commit
 goes ahead if it leaves out the job's files. Git uses saved files, so Pipeline asks first if a file it would
-touch has an unsaved draft in **Files** or **Write**. Your commit message and a running push stay in place
+touch has an unsaved draft in **Files** or **Manuscript**. Your commit message and a running push stay in place
 when you leave the page and come back.
 
 A folder's own Git settings can name programs, such as filters or an SSH
@@ -440,7 +461,7 @@ it, and project packages leave it out.
 - **Literature note and source-support checklist.** Record what a source says
   about a question, with the exact passage and how you checked it.
 
-## Activity
+## Notes
 
 ### Research notes
 
@@ -485,7 +506,7 @@ Exports are copies, so export again to pass on later changes.
 | | Research backup (`.pwrx`) | Project package (`.pwex`) | Replication capsule (`.pwrc`) |
 | --- | --- | --- | --- |
 | Use it to | Restore all your projects and conversations | Send selected research to a coauthor | Let someone rerun your analysis and check its numbers |
-| Find it in | **Settings → Data & Storage** | **Write → Share project** | **Write → Coauthors & replication** |
+| Find it in | **Settings → Data & Storage** | **Project tools → Share project** | **Project tools → Coauthors & replication** |
 | Includes | Every project and conversation, notes, documents, imported data, and agent profiles | The records you select and everything they refer to | Up to 16 saved analysis plans with scripts, inputs, and expected numbers |
 | Leaves out | Project folders, reviews, automations, Trash, and sign-ins | Conversations, sign-ins, command settings, agent profiles, and raw data | Paths on your computer, sign-ins, and data files unless you allow them |
 | Largest size | 2 GB | 2 GB | 64 MB, with 8 MB per file |
@@ -518,7 +539,7 @@ A backup restores only into an empty research data folder:
 
 ### Project package
 
-To export, open **Write → Share project** and tick what to include, such as
+To export, open **Project tools → Share project** and tick what to include, such as
 **Research notes**, **Sources**, **All papers**, and
 **All completed executions**. Pipeline adds anything those items refer to.
 **Paper files** sends each paper's own file, so your coauthor can open its
@@ -548,7 +569,7 @@ plus the shared earlier version when there is one. Choose **Keep local** or
 ### Replication capsule
 
 Build a capsule under **Replication package** in
-**Write → Coauthors & replication**:
+**Project tools → Coauthors & replication**:
 
 1. Choose **Add captured plan in execution order** for each saved analysis
    plan.

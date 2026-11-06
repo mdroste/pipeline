@@ -217,6 +217,8 @@ export const projectClient = {
       workspaceId,
       path,
     }),
+  chatBrief: (workspaceId: string) =>
+    invoke<string | null>("workbench_chat_brief", { workspaceId }),
   home: (workspaceId: string) =>
     invoke<ProjectHome>("workbench_project_home", { workspaceId }),
   mutate: async <T = unknown>(

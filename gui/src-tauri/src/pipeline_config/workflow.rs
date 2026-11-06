@@ -282,6 +282,7 @@ fn validate_strict_shape(value: &serde_json::Value) -> Result<(), String> {
                 &[
                     "key",
                     "step",
+                    "required",
                     "media_type",
                     "viewer",
                     "export_policy",
@@ -350,6 +351,15 @@ fn validate_strict_shape(value: &serde_json::Value) -> Result<(), String> {
 /// and the CLI. Unlike the GUI's historical import path, this entry point is
 /// intentionally strict so misspelled generated fields cannot be ignored.
 pub fn parse_workflow_document_strict(json: &str) -> Result<WorkflowDocument, String> {
+    let document = parse_saved_workflow_document(json)?;
+    crate::findings::validate_declaration(
+        &document.config.steps,
+        document.config.outputs.findings_step.trim(),
+    )?;
+    Ok(document)
+}
+
+pub(crate) fn parse_saved_workflow_document(json: &str) -> Result<WorkflowDocument, String> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|error| format!("Invalid workflow JSON: {error}"))?;
     validate_strict_shape(&value)?;
@@ -636,7 +646,7 @@ pub fn workflow_json_schema() -> serde_json::Value {
             },
             "merge": { "type": "object", "additionalProperties": false, "required": ["enabled", "prompt"], "properties": { "enabled": { "type": "boolean" }, "prompt": { "type": "string" }, "agents": { "type": "array", "maxItems": 1, "items": { "$ref": "#/$defs/agent" } } } },
             "outputs": { "type": "object", "additionalProperties": false, "properties": { "primary_step": { "type": "string" }, "findings_step": { "type": "string" }, "named": { "type": "array", "items": { "$ref": "#/$defs/namedProduct" } } } },
-            "namedProduct": { "type": "object", "additionalProperties": false, "required": ["key", "step"], "properties": { "key": { "type": "string", "pattern": "^[A-Za-z0-9_]{1,64}$" }, "step": { "type": "string" }, "media_type": { "type": "string" }, "viewer": { "enum": ["", "text", "markdown", "json", "artifact"] }, "export_policy": { "enum": ["", "full", "redacted", "disabled"] }, "sensitivity": { "enum": ["", "public", "internal", "confidential", "secret"] }, "schema": { "oneOf": [{ "$ref": "#/$defs/artifactSchema" }, { "type": "null" }] } } },
+            "namedProduct": { "type": "object", "additionalProperties": false, "required": ["key", "step"], "properties": { "key": { "type": "string", "pattern": "^[A-Za-z0-9_]{1,64}$" }, "step": { "type": "string" }, "required": { "type": "boolean" }, "media_type": { "type": "string" }, "viewer": { "enum": ["", "text", "markdown", "json", "artifact"] }, "export_policy": { "enum": ["", "full", "redacted", "disabled"] }, "sensitivity": { "enum": ["", "public", "internal", "confidential", "secret"] }, "schema": { "oneOf": [{ "$ref": "#/$defs/artifactSchema" }, { "type": "null" }] } } },
             "contextCache": { "type": "object", "additionalProperties": false, "properties": { "enabled": { "type": "boolean" } } },
             "inputSlot": { "type": "object", "additionalProperties": false, "required": ["key"], "properties": { "key": { "type": "string" }, "label": { "type": "string" }, "mode": { "enum": ["document", "folder"] }, "required": { "type": "boolean" }, "extensions": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z0-9]+$" } }, "mime_types": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[^/]+/[^/]+$" } }, "max_bytes": { "type": "integer", "minimum": 0, "maximum": 268435456 }, "sensitivity": { "enum": ["", "public", "internal", "confidential", "secret"] } } },
             "extraction": { "type": "object", "additionalProperties": false, "properties": { "method": { "enum": ["", "auto", "llm", "paddleocr-vl-full", "pdftotext"] }, "input_mode": { "enum": ["", "document", "folder", "none"] }, "extra_inputs": { "type": "array", "maxItems": MAX_EXTRA_INPUTS, "items": { "$ref": "#/$defs/inputSlot" } } } },

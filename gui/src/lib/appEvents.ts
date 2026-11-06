@@ -6,6 +6,7 @@ import type { FileLocation } from "./fileLinks";
 import type { OpenResearchObject } from "./deskClient";
 
 export interface AppEventMap {
+  "project-pins-changed": Record<string, never>;
   /** Reveal a project destination tab inside an open workspace. */
   "workspace-destination": { workspaceId: string; tab: string };
   /** Open a project file at a location (from conversation file links). */

@@ -9,8 +9,12 @@ import { appClient } from "../../lib/appClient";
 export async function confirmRerunRequirements(
   runId: string,
   onlyFailed: boolean,
-): Promise<Record<string, string> | null> {
+): Promise<{
+  variables: Record<string, string>;
+  expectedFingerprint: string;
+} | null> {
   const {
+    fingerprint,
     secrets,
     notice,
     agent_notice: agentNotice,
@@ -47,5 +51,5 @@ export async function confirmRerunRequirements(
     if (value === null) return null;
     variables[secret.key] = value;
   }
-  return variables;
+  return { variables, expectedFingerprint: fingerprint };
 }

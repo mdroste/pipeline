@@ -46,7 +46,8 @@ doesn't count against it, so check any flagged quotes in the final report. The
 final paper is always the last version reviewed. **Save paper…** saves it.
 
 If a revision leaves the paper unchanged, the automation asks for your
-attention. The revision step can include the manuscript text only up to
+attention. Enter the revised text under **Corrected paper** and choose
+**Retry unfinished actions** to capture that version and continue. The revision step can include the manuscript text only up to
 about 20,000 words. For a longer paper, open **Definition (advanced)** and
 have the step revise the file in the conversation's folder instead.
 
@@ -103,7 +104,39 @@ the notice appears the next time you open Pipeline:
   **Wait for input** step. A check whose inputs changed runs only after you
   approve it again in the project's **Results** view.
 
-**Activity log** keeps every earlier attempt and its output.
+**Activity log** keeps every earlier attempt and its output. If a step times out
+while its result is being saved, the automation stops advancing. **Check saved
+results and update status** can adopt the original result. An action that is
+still running cannot be submitted a second time.
+
+A group’s deadline starts when the run enters that group. Pausing the run or
+closing Pipeline does not stop the clock. Each step uses the shortest active
+timeout and the time left in its enclosing groups. A retry uses another action
+and does not extend a group’s deadline; start a new run if more time is needed.
+
+**Budget preview** in Research discovery gives the minimum actions needed for
+the requested shortlist and ranked papers. It also shows how many actions
+extra research rounds, reviews and replacements could take. You can start a
+smaller budget and retain partial work. Reaching the minimum does not
+guarantee eligible proposals, sound papers, or completion by the deadline.
+
+Set **API allowance (USD)** to limit estimated list-price spending across the
+run, including model calls inside Reviews and retries. Leave it blank for no
+dollar limit, or enter zero to prevent paid calls. With an allowance, a model
+without a known price cannot start a paid request. **Recorded usage** separates
+priced requests, unpriced requests, subscription work and local calls. A
+request with no confirmed usage keeps its reservation. The allowance uses
+estimated tokens before dispatch and reported tokens afterward; the provider’s
+invoice can differ.
+
+### Retrieve delivered files
+
+When a step delivers a file to a conversation, the conversation keeps its own
+copy. Open the conversation’s actions menu in the chat list and choose **Files
+from automations…**, then choose the file to save. A delivered folder saves as
+a ZIP. These copies stay available after the automation leaves **History** and
+travel with a research backup. Earlier deliveries can be copied when their source files and original delivery
+records are still available. The file list explains when a copy could not be recovered.
 
 ## Research automations
 
@@ -135,6 +168,17 @@ one when the next step depends on what the investigation finds.
 | Activity | Role conversations, checks, and other actions |
 | Brief | A report with evidence links, limitations, and open questions |
 
+Under **Claims and inspected evidence**, each assessment names the claim,
+its scope, the records inspected, and any objections that remain. A proof
+needs stated assumptions and a checked derivation. A numerical result needs
+the data version, procedure, checked output, and the location and precision
+of the reported number. A sourced interpretation needs an inspected passage.
+A null result or counterexample can meet a criterion within its tested scope.
+
+**Accept this assessment** records your decision about that round. It does
+not accept manuscript edits. Earlier assessments remain available, with no
+claim-level support or acceptance inferred from their original status.
+
 **Export brief…** saves the brief as Markdown. **Export complete automation
 record…** on the Activity tab saves everything as JSON.
 
@@ -161,23 +205,43 @@ edits** on. Edits stay in the working copy until you accept them in
 Research discovery turns a topic into proposals, investigations, and reviewed
 paper drafts. It uses the same provider as the project conversation you
 choose, or ChatGPT for a new project. Open **Automations → Research** and
-choose:
+choose **Research discovery**. Describe your topic under **Research topics
+and questions**. Under **Project context**, choose a project conversation or
+**Create a project for this research**.
 
-- **Research discovery — choose projects yourself** pauses at a shortlist.
-  Pick proposals under **Choose projects to develop**, then choose **Develop
-  selected projects**. It waits as long as you need, and **Finish within
-  (hours)** doesn't count that time.
-- **Research discovery — let Pipeline choose projects** picks proposals itself
-  and continues without questions.
+Under **Who chooses the projects?**, choose one of two options:
 
-Describe your topic under **Research topics and questions**. Under **Project
-context**, choose a project conversation or **Create a project for this
-research**. Then choose **Start research discovery**.
+- **I’ll choose** pauses at the shortlist. Pick proposals under **Choose
+  projects to develop**, then choose **Develop selected projects**. Time
+  spent waiting for your selection does not count toward **Finish within
+  (hours)**.
+- **Let Pipeline choose** selects proposals and continues without questions.
+
+Use **Portfolio plan** to set how many projects to explore, shortlist, and
+develop into papers. Under **Optional settings**, expand **Sources & tools**,
+**Research & review**, **Models & ranking**, or **Resource limits** to change
+the defaults. Choose **Start research discovery** when ready. **Portfolio
+history** opens earlier runs; **Return to setup** brings you back to your draft.
+
+For a ChatGPT or Claude Code conversation, **Research & review → Idea
+subagents** lets you request 1–8 native subagents for the idea stage. For
+example, request four subagents and 100 candidate projects. The lead gives
+the four children different angles on the topic, waits for their results,
+and combines their sketches into 100 starting points. Pipeline develops and
+screens those proposals in batches. The team runs once per portfolio and
+uses one action per requested child plus one for the lead. Set the count to
+zero to use the usual proposal batches. A provider shortfall appears under
+**Needs attention**.
 
 Each chosen proposal gets its own author conversation and folder. Authors
 can create and edit drafts there using project file tools with any connection.
 Referees have read-only access to the research record and manuscript, without
 the author’s chat. The original project folder stays separate.
+
+While a run is open, **Activity feed** shows recent milestones, assistant updates,
+and tool activity. **Last activity** shows how recently work was observed.
+**Current step** shows elapsed time, and agent status lists each idea agent as
+it starts and finishes. Open proposals and papers refresh as results arrive.
 
 | Setting | Default | Range |
 | --- | --- | --- |
@@ -201,6 +265,16 @@ the author’s chat. The original project folder stays separate.
 These counts are targets. Missing data or unresolved objections can leave
 fewer papers. The final report compares the papers and lists unfinished work.
 
+A delivered draft can still have unresolved claims. **Evidence requirements
+met** means the assessor supplied the required inspections for the frozen
+version. Open **Claims and inspected evidence** to see what was checked. The
+record distinguishes an investigator’s account, a source version, a captured
+file and a completed check. Pipeline compares the number read from the cited execution with the value the
+assessor read from the table. It does not independently verify a proof or
+interpret a table. **Accept this
+assessment** records your decision about that paper version. The report and
+research export keep delivery, assessment, and acceptance separate.
+
 Each manuscript includes Markdown, LaTeX, BibTeX, evidence references, and a
 response to reviewers. **Export papers and research** saves a ZIP. **Export
 portfolio report** saves a Markdown summary.
@@ -213,7 +287,8 @@ recorded work stays available to export.
 
 ## In a project
 
-A project's **Automate** area has three views.
+Open **Project tools** and look under **Project work** for **Action items**,
+**Scheduled checks**, and **Revision automations**.
 
 ### Action items
 

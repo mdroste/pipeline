@@ -144,18 +144,30 @@ pub fn list_notes(
     workspace_id: &str,
     include_rejected: bool,
 ) -> WorkbenchResult<Vec<ResearchNote>> {
+    list_notes_with_selection(store, workspace_id, include_rejected, &[])
+}
+
+pub(crate) fn list_notes_with_selection(
+    store: &Store,
+    workspace_id: &str,
+    include_rejected: bool,
+    selected: &[String],
+) -> WorkbenchResult<Vec<ResearchNote>> {
     validate_id("workspace id", workspace_id)?;
     let connection = open_connection(store)?;
     let sql = if include_rejected {
-        "SELECT id, workspace_id, paper_id, kind, body, state, origin, pinned, revision, created_at, updated_at FROM research_notes WHERE workspace_id = ?1 ORDER BY pinned DESC, updated_at DESC LIMIT 500"
+        "SELECT id, workspace_id, paper_id, kind, body, state, origin, pinned, revision, created_at, updated_at FROM research_notes WHERE workspace_id = ?1 ORDER BY (id IN (SELECT value FROM json_each(?2))) DESC, pinned DESC, updated_at DESC,id LIMIT 500"
     } else {
-        "SELECT id, workspace_id, paper_id, kind, body, state, origin, pinned, revision, created_at, updated_at FROM research_notes WHERE workspace_id = ?1 AND state NOT IN ('rejected','retired') ORDER BY pinned DESC, updated_at DESC LIMIT 500"
+        "SELECT id, workspace_id, paper_id, kind, body, state, origin, pinned, revision, created_at, updated_at FROM research_notes WHERE workspace_id = ?1 AND state NOT IN ('rejected','retired') ORDER BY (id IN (SELECT value FROM json_each(?2))) DESC, pinned DESC, updated_at DESC,id LIMIT 500"
     };
     let mut statement = connection
         .prepare(sql)
         .map_err(|error| WorkbenchError::storage("Failed to prepare research note list", error))?;
     let notes = statement
-        .query_map([workspace_id], note_from_row)
+        .query_map(
+            params![workspace_id, json!(selected).to_string()],
+            note_from_row,
+        )
         .map_err(|error| WorkbenchError::storage("Failed to list research notes", error))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| WorkbenchError::storage("Failed to decode research notes", error))?;

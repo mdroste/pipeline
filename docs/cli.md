@@ -184,13 +184,14 @@ pipeline-cli run --input paper.pdf --max-cost 2 --max-minutes 30
 These replace **Settings → Reviews → Review limits** for that command. In a
 batch, they apply to each document. When a limit is reached:
 
-- steps already running finish;
+- provider requests already in flight finish;
 - the remaining steps are marked as stopped at the limit;
 - the partial report is saved; and
 - the command exits with a failure status.
 
-The cost limit counts API calls at list prices. Subscription calls count
-toward the call and time limits.
+The call limit includes retries and tool follow-ups. A cost limit reserves an
+estimated amount before each API request and requires a known model price.
+Subscription calls count toward the call and time limits.
 
 ## Create and share workflows
 
@@ -221,6 +222,11 @@ report. Older
 exports are converted to the current format, version 11, and read what they
 read when imported in the app. Validation also warns about a step that reads
 nothing from the run.
+
+A named product may set `required` to `true` if the workflow must deliver it.
+By default a conditional named product may be absent when its producer skips.
+A declared primary report or findings product must be delivered. An empty
+findings array counts as a delivered product.
 
 ### Give a step the document
 

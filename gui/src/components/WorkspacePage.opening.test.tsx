@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  within,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
 import WorkspacePage from "./WorkspacePage";
@@ -105,6 +111,7 @@ it("puts the cursor in the composer when a conversation opens", async () => {
     id === second.id ? { ...snapshot, session: second } : snapshot,
   );
   await mount();
+  fireEvent.click(screen.getByRole("button", { name: "Browse chats" }));
   fireEvent.click(screen.getByRole("button", { name: "Second chat" }));
   await screen.findByRole("heading", { name: "Second chat" });
   await waitFor(() => expect(screen.getByLabelText("Message")).toHaveFocus());
@@ -153,4 +160,26 @@ it("reveals a conversation in the project it opens, not the project left", async
   expect(localStorage.getItem(`pipeline.workspace.view.${workspace.id}`)).toBe(
     "project",
   );
+});
+
+it("browses unfiled chats without replacing the draft", async () => {
+  await mount();
+  const draft = screen.getByLabelText("Message");
+  fireEvent.change(draft, { target: { value: "Keep my working question" } });
+  fireEvent.click(screen.getByRole("button", { name: "Browse chats" }));
+  expect(
+    within(screen.getByRole("dialog", { name: "Unfiled chats" })).getByRole(
+      "button",
+      { name: /^Policy discussion/ },
+    ),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Close chats" }));
+  // No project is open, so its sections and switcher stay out of the way.
+  expect(
+    screen.queryByRole("navigation", { name: "Project sections" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Switch project" }),
+  ).not.toBeInTheDocument();
+  expect(draft).toHaveValue("Keep my working question");
 });

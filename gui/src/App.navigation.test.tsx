@@ -38,7 +38,10 @@ const { reset } = createAppTestFixture(mocks, appearance);
 async function openTools(user: {
   click: (element: Element) => Promise<unknown>;
 }) {
-  const expand = screen.queryByRole("button", { name: "Expand Reviews" });
+  const expand = screen.queryByRole("button", {
+    name: "Reviews",
+    expanded: false,
+  });
   if (expand) await user.click(expand);
 }
 
@@ -172,17 +175,19 @@ describe("App navigation", () => {
   it("says so when a listed conversation can't be opened", async () => {
     const user = userEvent.setup();
     localStorage.setItem("pipeline.ui.page", "home");
-    localStorage.setItem(
-      "pipeline.ui.navRailSections",
-      JSON.stringify({ projects: true }),
-    );
     const unhandled = invoke.getMockImplementation()!;
     invoke.mockImplementation((command: string, args?: unknown) => {
       if (command === "workbench_list_workspaces")
         return Promise.resolve({ workspaces: [] });
-      if (command === "workbench_list_sessions")
+      if (command === "workbench_conversation_index")
         return Promise.resolve({
-          sessions: [{ id: "gone", title: "Deleted", updatedAt: "now" }],
+          items: [
+            {
+              session: { id: "gone", title: "Deleted", updatedAt: "now" },
+              projectName: null,
+            },
+          ],
+          nextCursor: null,
         });
       if (command === "workbench_session_snapshot")
         return Promise.reject(new Error("Conversation not found"));
@@ -190,7 +195,8 @@ describe("App navigation", () => {
     });
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "Deleted" }));
+    await user.click(await screen.findByRole("button", { name: "Search" }));
+    await user.click(await screen.findByRole("option", { name: /Deleted/ }));
 
     await waitFor(() =>
       expect(mocks.notify).toHaveBeenCalledWith(
@@ -207,17 +213,19 @@ describe("App navigation", () => {
     async (word, failing) => {
       const user = userEvent.setup();
       localStorage.setItem("pipeline.ui.page", "home");
-      localStorage.setItem(
-        "pipeline.ui.navRailSections",
-        JSON.stringify({ projects: true }),
-      );
       const unhandled = invoke.getMockImplementation()!;
       invoke.mockImplementation((command: string, args?: unknown) => {
         if (command === "workbench_list_workspaces")
           return Promise.resolve({ workspaces: [] });
-        if (command === "workbench_list_sessions")
+        if (command === "workbench_conversation_index")
           return Promise.resolve({
-            sessions: [{ id: "gone", title: "Deleted", updatedAt: "now" }],
+            items: [
+              {
+                session: { id: "gone", title: "Deleted", updatedAt: "now" },
+                projectName: null,
+              },
+            ],
+            nextCursor: null,
           });
         if (command === failing)
           return Promise.reject({
@@ -230,11 +238,12 @@ describe("App navigation", () => {
       });
       render(<App />);
 
-      if (word === "opened")
+      if (word === "opened") {
+        await user.click(await screen.findByRole("button", { name: "Search" }));
         await user.click(
-          await screen.findByRole("button", { name: "Deleted" }),
+          await screen.findByRole("option", { name: /Deleted/ }),
         );
-      else {
+      } else {
         await user.click(await screen.findByRole("button", { name: "New" }));
         await user.click(
           await screen.findByRole("menuitem", { name: /New conversation/ }),

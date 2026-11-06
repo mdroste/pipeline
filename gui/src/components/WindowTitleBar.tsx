@@ -20,7 +20,7 @@ export default function WindowTitleBar({
     <div
       data-testid="window-title-bar"
       data-tauri-drag-region={isMac || isWindows ? "deep" : undefined}
-      className={`relative shrink-0 select-none border-b border-gray-200/80 bg-gray-100/90 dark:border-neutral-800 dark:bg-[#101010] ${isMac ? "h-7" : "h-8"}`}
+      className={`relative shrink-0 select-none border-b border-gray-200/80 bg-gray-100/90 dark:border-neutral-800 dark:bg-surface ${isMac ? "h-7" : "h-8"}`}
     >
       <IconButton
         ref={toggleRef}

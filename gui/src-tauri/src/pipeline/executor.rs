@@ -9,6 +9,7 @@
 mod analyzer_step;
 mod artifact_context;
 pub mod budget;
+pub(crate) mod budget_dispatch;
 mod checkpoints;
 mod findings;
 mod outputs;

@@ -16,6 +16,7 @@ pub(crate) struct NativeThreadStart<'a> {
     pub approval_policy: &'a str,
     pub developer_instructions: Option<&'a str>,
     pub base_instructions: Option<&'a str>,
+    #[serde(serialize_with = "serialize_dynamic_tools")]
     pub dynamic_tools: &'a [Value],
     pub model: Option<&'a str>,
     pub reasoning_effort: Option<&'a str>,
@@ -23,6 +24,23 @@ pub(crate) struct NativeThreadStart<'a> {
     pub service_name: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config: Option<Value>,
+}
+
+// Provider-neutral catalogs and saved harness snapshots can omit the function
+// tag. Codex requires the whole list to use one format, so normalize only the
+// outgoing request and preserve canonical functions and namespaces verbatim.
+fn serialize_dynamic_tools<S: serde::Serializer>(
+    tools: &[Value],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let mut tools = tools.to_vec();
+    for tool in &mut tools {
+        tool.as_object_mut()
+            .ok_or_else(|| serde::ser::Error::custom("Dynamic tool must be an object"))?
+            .entry("type")
+            .or_insert_with(|| "function".into());
+    }
+    tools.serialize(serializer)
 }
 
 #[derive(Serialize)]

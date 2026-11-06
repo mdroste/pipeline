@@ -1,3 +1,4 @@
+import { flushDrafts } from "../../lib/flushDrafts";
 // What a tab does when its file changes, leaves, or comes back underneath it.
 import {
   act,
@@ -145,15 +146,13 @@ it("keeps text typed while the poller reads a changed file", async () => {
   expect(await editor("a.py")).toHaveValue("My typing");
 });
 
-it("keeps text typed while a clean file is reloading", async () => {
+it("uses the changed preview without a third read", async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   let stamp = "stamp-1";
-  const slow = held<FilePreview>();
   const read = vi
     .fn<FileAdapter["read"]>()
     .mockResolvedValueOnce(file("a.py"))
     .mockResolvedValueOnce(changed)
-    .mockReturnValueOnce(slow.promise)
     .mockResolvedValue(changed);
   render(
     <FileWorkspace
@@ -165,12 +164,10 @@ it("keeps text typed while a clean file is reloading", async () => {
   await editor("a.py");
   stamp = "stamp-2";
   await tick();
-  expect(read).toHaveBeenCalledTimes(3);
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(await editor("a.py")).toHaveValue("From disk");
   fireEvent.change(await editor("a.py"), { target: { value: "My typing" } });
-  await act(async () => slow.resolve(changed));
-  expect(await editor("a.py")).toHaveValue("My typing");
   await tick();
-  expect(await screen.findByText(/changed on disk/)).toBeVisible();
   expect(await editor("a.py")).toHaveValue("My typing");
 });
 
@@ -448,4 +445,33 @@ it("keeps Load more text with the file and version it came from", async () => {
     expect(await editor("a.log")).toHaveValue("new head "),
   );
   vi.unstubAllGlobals();
+});
+
+it("retains file drafts before native quit without waiting for the debounce", async () => {
+  const adapter: FileAdapter = {
+    id: "exit",
+    read: vi.fn(async () => file("a.py")),
+  };
+  const { result } = renderHook(() =>
+    useFileBuffers({ adapter, onConflict: vi.fn(), setError: vi.fn() }),
+  );
+  await act(() => result.current.load("a.py"));
+  act(() =>
+    result.current.update("a.py", (old) => ({
+      ...old,
+      draft: "Last keystroke",
+    })),
+  );
+  act(() => flushDrafts());
+  expect(
+    JSON.parse(localStorage.getItem("pipeline.files.draft.exit.a.py")!),
+  ).toMatchObject({ draft: "Last keystroke" });
+  const write = vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+    throw new Error("Full");
+  });
+  try {
+    act(() => expect(() => flushDrafts()).toThrow("Save your files"));
+  } finally {
+    write.mockRestore();
+  }
 });

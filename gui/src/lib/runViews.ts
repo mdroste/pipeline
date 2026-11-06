@@ -18,6 +18,8 @@ import type { PipelineResult, QueuedRun, ToolCallCounts } from "./types";
 
 export interface RunView {
   state: PipelineState;
+  /** A report read failed; the review itself still finished successfully. */
+  resultError: string | null;
   logs: LogEntry[];
   usage: UsageState;
   runStartedAt: number | null;
@@ -59,6 +61,7 @@ export const EMPTY_USAGE: UsageState = { total: emptyTotals(), bySession: {} };
 export function emptyRunView(startedAt: number | null = null): RunView {
   return {
     state: { kind: "idle" },
+    resultError: null,
     logs: [],
     usage: EMPTY_USAGE,
     runStartedAt: startedAt,

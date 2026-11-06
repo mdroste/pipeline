@@ -35,6 +35,8 @@ pub enum Mode {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Budget {
     pub max_rounds: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_api_cost_cents: Option<u32>,
     pub max_actions: u32,
     pub active_seconds: u32,
     pub action_timeout_seconds: u32,
@@ -45,6 +47,7 @@ impl Default for Budget {
     fn default() -> Self {
         Self {
             max_rounds: 8,
+            max_api_cost_cents: None,
             max_actions: 32,
             active_seconds: 21600,
             action_timeout_seconds: 1800,
@@ -226,6 +229,8 @@ pub enum Disposition {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Finding {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub execution_ids: Vec<String>,
     pub summary: String,
     pub outcome: String,
     pub method: String,
@@ -254,6 +259,8 @@ pub enum CriterionStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Challenge {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub claim_assessments: Vec<crate::orchestration::claims::Submission>,
     pub summary: String,
     pub outcome: Outcome,
     pub goal_resolved: bool,
@@ -299,6 +306,8 @@ pub struct Method {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Round {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_record: Option<crate::orchestration::claims::Record>,
     pub number: u32,
     pub change_cursor: i64,
     pub plan: Plan,

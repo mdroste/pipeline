@@ -147,14 +147,14 @@ async fn pressing_stop_is_still_reported_as_a_stop() {
 }
 
 #[tokio::test]
-async fn a_result_that_arrives_after_the_limit_is_kept() {
+async fn late_success_cannot_automatically_advance_and_a_busy_slot_costs_nothing() {
     let (_parent, parent) = watch::channel(false);
     let result = scheduler::time_limited(Duration::from_millis(5), parent, |mut stop| async move {
         stop.changed().await.unwrap();
         Ok(json!({"answer":"Finished as it was stopped"}))
     })
     .await;
-    assert_eq!(result.unwrap()["answer"], "Finished as it was stopped");
+    assert_eq!(result.unwrap_err(), scheduler::TIME_LIMIT_REACHED);
     let (_parent, parent) = watch::channel(false);
     let busy = scheduler::time_limited(Duration::from_millis(5), parent, |mut stop| async move {
         stop.changed().await.unwrap();
@@ -269,7 +269,14 @@ async fn crashed_delivery(
 ) -> TaskRun {
     let operation = store::id();
     let session = crate::workbench::discovery::source(w, &operation, "Return", false).unwrap();
-    let plan = chain(vec![delay("step")]);
+    let plan = chain(vec![step(
+        "step",
+        Action::Deliver {
+            input: Binding::Literal {
+                value: json!({"report":"Delivered"}),
+            },
+        },
+    )]);
     let scope = adapters::prepare(&plan, Some(session.clone()), &json!({}))
         .await
         .unwrap();
@@ -430,4 +437,34 @@ async fn a_full_list_of_owed_notices_keeps_the_newest() {
     let owed = m.store.take_notices().unwrap();
     assert_eq!(owed.len(), 64);
     assert_eq!(owed[63].payload["id"], 69);
+}
+
+#[test]
+fn malformed_json_is_isolated_before_per_run_crash_recovery() {
+    let (_temp, m) = coordinator_fixture();
+    let good = in_flight(&m, "healthy", "running");
+    let bad = in_flight(&m, "damaged", "running");
+    m.store
+        .connection()
+        .unwrap()
+        .execute("UPDATE runs SET body='{' WHERE id=?1", [&bad.id])
+        .unwrap();
+    m.store.recover().unwrap();
+    assert_eq!(m.store.get(&good.id).unwrap().state, "attention");
+    assert!(m
+        .store
+        .list("active", None, 0)
+        .unwrap()
+        .iter()
+        .any(|r| r.id == good.id));
+    let (body, state): (String, String) = m
+        .store
+        .connection()
+        .unwrap()
+        .query_row("SELECT body,state FROM runs WHERE id=?1", [&bad.id], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .unwrap();
+    assert_eq!((body.as_str(), state.as_str()), ("{", "unreadable"));
+    assert_eq!(m.store.storage_issues().unwrap()[0]["id"], bad.id);
 }

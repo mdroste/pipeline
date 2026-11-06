@@ -6,10 +6,11 @@ import {
 } from "../lib/workspaceProviders";
 import { useEffect, useRef, useState } from "react";
 import Popover from "../ui/Popover";
-import SegmentedControl from "../ui/SegmentedControl";
+import Select from "../ui/Select";
+import WorkspaceModelList from "./WorkspaceModelList";
+import "./WorkspaceModelPicker.css";
 import Skeleton from "../ui/Skeleton";
 import { Icon } from "../ui/icons";
-import { moveFocusInList } from "../ui/listKeys";
 import { runtimeClient } from "../lib/workbench/runtimeClient";
 import type {
   ClaudeRateLimit,
@@ -133,14 +134,10 @@ export const claudeUsageLine = (
   return `Within your usage limit${resets}`;
 };
 
-const OPTION = '[role="option"]:not([aria-disabled="true"])';
-const optionClass =
-  "flex cursor-default items-start gap-2 rounded-ui-sm px-2.5 py-2 outline-none hover:bg-sunken focus:bg-sunken aria-disabled:opacity-50";
-
 /**
  * The conversation's model and thinking level, shared by Send and
- * follow-ups. One chip shows the current choice; its popover lists what the
- * catalog offers. Saved choices that are no longer offered stay visible as
+ * follow-ups. The compact catalog keeps connection and thinking choices in
+ * dropdowns and account details in a disclosure. Saved choices stay visible as
  * warnings and are never silently replaced.
  */
 export default function WorkspaceComposerControls({
@@ -220,9 +217,6 @@ export default function WorkspaceComposerControls({
     .filter(Boolean)
     .join(" · ");
 
-  const effortDescription = supported.find(
-    (item) => item.reasoningEffort === effort,
-  )?.description;
   const thinkingHint = !model
     ? "Uses your connection's default. Choose a model to set a level."
     : !supported.length
@@ -231,63 +225,12 @@ export default function WorkspaceComposerControls({
         : "Choose an available model to set a level."
       : unknownEffort
         ? `${effortLabel(effort)} is not offered for this model. Choose another level.`
-        : !effort
-          ? selected?.defaultReasoningEffort
-            ? `Uses the model's default: ${effortLabel(selected.defaultReasoningEffort)}.`
-            : "Uses the model's default."
-          : effortDescription && effortDescription !== effortLabel(effort)
-            ? effortDescription
-            : null;
+        : null;
 
   const account = accountLine(summary?.account ?? null);
   const usage = usageLine(summary?.limits ?? null);
   const choose = (next: string) => {
     if (!disabled && next !== model) onChange(next, "");
-  };
-  const option = (
-    value: string,
-    title: string,
-    description: string | null,
-    extra?: { tag?: string; warning?: boolean },
-  ) => {
-    const current = value === model;
-    return (
-      <div
-        key={value || "automatic"}
-        role="option"
-        tabIndex={-1}
-        aria-selected={current}
-        aria-disabled={disabled || undefined}
-        data-label={title}
-        data-autofocus={current ? "" : undefined}
-        onClick={() => choose(value)}
-        className={optionClass}
-      >
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
-            <span className="truncate font-medium">{title}</span>
-            {extra?.tag && (
-              <span className="shrink-0 rounded-full border border-line px-1.5 text-[11px] leading-4 text-ink-muted">
-                {extra.tag}
-              </span>
-            )}
-          </span>
-          {description && (
-            <span
-              className={`mt-0.5 block text-ui-meta ${extra?.warning ? "text-warning" : "text-ink-muted"}`}
-            >
-              {description}
-            </span>
-          )}
-        </span>
-        {current && (
-          <Icon
-            name={extra?.warning ? "warning" : "check"}
-            className={`mt-0.5 h-4 w-4 shrink-0 ${extra?.warning ? "text-warning" : ""}`}
-          />
-        )}
-      </div>
-    );
   };
 
   return (
@@ -315,11 +258,12 @@ export default function WorkspaceComposerControls({
         label="Model and thinking"
         side="top"
         align="start"
-        width={320}
+        width={360}
       >
-        {onRuntimeChange && (
-          <div className="border-b border-line p-3">
-            <SegmentedControl
+        <div className="workspace-model-picker-header">
+          <span className="font-medium">Model</span>
+          {onRuntimeChange ? (
+            <Select
               label="Conversation provider"
               value={runtime}
               disabled={disabled}
@@ -327,29 +271,95 @@ export default function WorkspaceComposerControls({
               onChange={(value) =>
                 onRuntimeChange(value as ConversationProvider)
               }
+              className="workspace-model-provider"
             />
-            {isApiProvider(runtime) && (
-              <p className="mt-2 text-ui-meta text-ink-muted">
-                Uses the saved connection in Settings → Connections. API
-                providers bill each call. Project tools require a model that
-                supports function calling.
-              </p>
-            )}
-            {runtime === "claude" && (
-              <p className="mt-2 text-ui-meta text-ink-muted">
-                Uses your Claude Code subscription sign-in. Claude can read
-                project files, use enabled research and web tools, and run
-                sandboxed commands. Edit access permits shell writes in working
-                copies.
-              </p>
-            )}
-          </div>
+          ) : (
+            <span className="text-ui-meta text-ink-muted">
+              {providerName(runtime)}
+            </span>
+          )}
+        </div>
+        {isApiProvider(runtime) && (
+          <p className="px-3 pb-2 text-ui-meta text-ink-muted">
+            Billed per call through your saved connection.
+          </p>
         )}
+        {disabled && (
+          <p
+            role="note"
+            className="border-b border-line px-3 py-2 text-ui-meta text-ink-muted"
+          >
+            These settings apply to your next message. You can change them when
+            the conversation is idle.
+          </p>
+        )}
+        {isApiProvider(runtime) && (
+          <label className="block px-3 py-2 text-ui-meta">
+            Model ID
+            <input
+              aria-label="Model ID"
+              className="mt-1 w-full rounded border border-line bg-surface px-2 py-1"
+              value={model}
+              disabled={disabled}
+              placeholder="Automatic"
+              onChange={(event) => onChange(event.target.value, "")}
+            />
+          </label>
+        )}
+        <WorkspaceModelList
+          key={runtime}
+          models={models}
+          model={model}
+          disabled={disabled}
+          unknownModel={unknownModel}
+          provider={providerName(runtime)}
+          onChange={choose}
+        />
+        <div className="border-t border-line px-3 py-2.5">
+          <div className="workspace-model-thinking">
+            <span className="text-ui-label font-medium">Thinking</span>
+            <Select
+              label="Thinking"
+              className="workspace-model-effort"
+              value={effort}
+              disabled={disabled || !supported.length}
+              onChange={(value) => onChange(model, value)}
+              options={[
+                {
+                  value: "",
+                  label: selected?.defaultReasoningEffort
+                    ? `Default · ${effortLabel(selected.defaultReasoningEffort)}`
+                    : "Default",
+                },
+                ...(unknownEffort
+                  ? [
+                      {
+                        value: effort,
+                        label: `${effortLabel(effort)} · unavailable`,
+                      },
+                    ]
+                  : []),
+                ...supported.map((item) => ({
+                  value: item.reasoningEffort,
+                  label: effortLabel(item.reasoningEffort),
+                  description:
+                    item.description !== effortLabel(item.reasoningEffort)
+                      ? item.description
+                      : undefined,
+                })),
+              ]}
+            />
+          </div>
+          {thinkingHint && (
+            <p className="mt-2 text-ui-meta text-ink-muted">{thinkingHint}</p>
+          )}
+        </div>
         {runtime === "claude" && loadClaudeUsage && (
-          <div className="border-b border-line px-3 py-2.5">
-            <div className="text-ui-meta font-medium text-ink-muted">
+          <details className="workspace-model-account">
+            <summary>
               Claude usage
-            </div>
+              <Icon name="chevron-down" className="h-3.5 w-3.5" />
+            </summary>
             {claudeUsage === undefined ? (
               <Skeleton label="Loading usage" lines={1} className="mt-2" />
             ) : claudeUsage ? (
@@ -376,15 +386,16 @@ export default function WorkspaceComposerControls({
                 after Claude&apos;s next reply.
               </div>
             )}
-          </div>
+          </details>
         )}
         {runtime === "codex" &&
           loadAccount &&
           (summaryState === "loading" || account || usage) && (
-            <div className="border-b border-line px-3 py-2.5">
-              <div className="text-ui-meta font-medium text-ink-muted">
-                ChatGPT account
-              </div>
+            <details className="workspace-model-account">
+              <summary>
+                Account &amp; usage
+                <Icon name="chevron-down" className="h-3.5 w-3.5" />
+              </summary>
               {summaryState === "loading" && !summary ? (
                 <Skeleton label="Loading account" lines={1} className="mt-2" />
               ) : (
@@ -404,85 +415,8 @@ export default function WorkspaceComposerControls({
                   )}
                 </>
               )}
-            </div>
+            </details>
           )}
-        {disabled && (
-          <p
-            role="note"
-            className="border-b border-line px-3 py-2 text-ui-meta text-ink-muted"
-          >
-            These settings apply to your next message. You can change them when
-            the conversation is idle.
-          </p>
-        )}
-        {isApiProvider(runtime) && (
-          <label className="block px-3 py-2 text-ui-meta">
-            Model ID
-            <input
-              aria-label="Model ID"
-              className="mt-1 w-full rounded border border-line bg-surface px-2 py-1"
-              value={model}
-              disabled={disabled}
-              placeholder="Automatic"
-              onChange={(event) => onChange(event.target.value, "")}
-            />
-          </label>
-        )}
-        <div
-          role="listbox"
-          aria-label="Model"
-          className="p-1.5"
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              (document.activeElement as HTMLElement | null)?.click();
-            } else moveFocusInList(event, OPTION);
-          }}
-        >
-          {option(
-            "",
-            "Automatic",
-            `Uses the default model from your ${providerName(runtime)} connection.`,
-          )}
-          {unknownModel &&
-            option(model, model, "No longer offered. Choose another model.", {
-              warning: true,
-            })}
-          {models.map((item) =>
-            option(item.model, item.displayName, item.description || null, {
-              tag: item.isDefault ? "Default" : undefined,
-            }),
-          )}
-        </div>
-        <div className="border-t border-line px-3 pb-3 pt-2.5">
-          <div className="mb-1.5 text-ui-meta font-medium text-ink-muted">
-            Thinking
-          </div>
-          <SegmentedControl
-            label="Thinking"
-            value={effort}
-            disabled={disabled || !supported.length}
-            onChange={(value) => onChange(model, value)}
-            options={[
-              { value: "", label: "Default" },
-              ...(unknownEffort
-                ? [
-                    {
-                      value: effort,
-                      label: `${effortLabel(effort)} · unavailable`,
-                    },
-                  ]
-                : []),
-              ...supported.map((item) => ({
-                value: item.reasoningEffort,
-                label: effortLabel(item.reasoningEffort),
-              })),
-            ]}
-          />
-          {thinkingHint && (
-            <p className="mt-2 text-ui-meta text-ink-muted">{thinkingHint}</p>
-          )}
-        </div>
       </Popover>
     </>
   );

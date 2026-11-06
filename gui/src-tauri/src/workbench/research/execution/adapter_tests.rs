@@ -877,33 +877,13 @@ fn migration_16_keeps_profiles_and_accepts_structured_adapters() {
         ),
     )
     .unwrap();
-    drop(store);
-    // Recreate the version 15 table definition around the existing row.
+    let old = crate::workbench::store::historical_fixture(
+        &store,
+        15,
+        &["workspaces", "execution_profiles"],
+    );
+    let store_root = old.path();
     let connection = rusqlite::Connection::open(store_root.join("research.sqlite3")).unwrap();
-    connection
-        .execute_batch(
-            "DROP INDEX transcript_items_page;
-             PRAGMA foreign_keys=OFF;
-             CREATE TABLE old_profiles AS SELECT * FROM execution_profiles;
-             DROP TABLE execution_profiles;
-             CREATE TABLE execution_profiles (
-                id TEXT PRIMARY KEY,
-                workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-                name TEXT NOT NULL,
-                adapter TEXT NOT NULL CHECK (adapter IN ('latex', 'stata', 'command')),
-                argv_json TEXT NOT NULL, cwd TEXT NOT NULL, environment_json TEXT NOT NULL,
-                inputs_json TEXT NOT NULL,
-                timeout_seconds INTEGER NOT NULL CHECK (timeout_seconds BETWEEN 1 AND 7200),
-                outputs_json TEXT NOT NULL, tested_at TEXT, test_status TEXT,
-                revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-                created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-             INSERT INTO execution_profiles SELECT * FROM old_profiles;
-             DROP TABLE old_profiles;
-             CREATE INDEX execution_profiles_workspace ON execution_profiles(workspace_id, name);
-             DROP TABLE conversation_tool_receipts;
-             PRAGMA user_version=15;",
-        )
-        .unwrap();
     assert!(connection
         .execute(
             "UPDATE execution_profiles SET adapter='python' WHERE id=?1",
@@ -912,7 +892,7 @@ fn migration_16_keeps_profiles_and_accepts_structured_adapters() {
         .is_err());
     drop(connection);
 
-    let store = Store::open_at(&store_root).unwrap();
+    let store = Store::open_at(store_root).unwrap();
     let profiles = list_execution_profiles(&store, &workspace_id).unwrap();
     assert_eq!(profiles, vec![legacy.clone()]);
     std::fs::write(root.join("analysis.py"), "print(1)\n").unwrap();

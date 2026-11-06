@@ -4,6 +4,8 @@
 // Pins are a device preference in localStorage; they change no research record
 // or permission.
 
+import { allProjectPages } from "./projectPages";
+import { appEvents } from "./appEvents";
 import { invoke } from "@tauri-apps/api/core";
 
 export interface ProjectIndexEntry {
@@ -28,7 +30,11 @@ export interface ProjectIndexItem {
 }
 
 export const listProjectIndex = () =>
-  invoke<ProjectIndexItem[]>("workbench_project_index");
+  allProjectPages((afterId) =>
+    afterId
+      ? invoke<ProjectIndexItem[]>("workbench_project_index", { afterId })
+      : invoke<ProjectIndexItem[]>("workbench_project_index"),
+  );
 
 export function projectDate(value: string) {
   const date = new Date(value);
@@ -65,4 +71,5 @@ export function loadProjectPins(): string[] {
 }
 export function saveProjectPins(pins: string[]) {
   localStorage.setItem(PIN_KEY, JSON.stringify(pins));
+  appEvents.emit("project-pins-changed", {});
 }

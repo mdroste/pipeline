@@ -8,6 +8,10 @@ import WorkspaceComposerControls, {
   loadClaudeUsage,
 } from "./WorkspaceComposerControls";
 import RetainedWorkspaceView from "./RetainedWorkspaceView";
+import WorkspaceChatList, {
+  ProjectChatsContext,
+  UnfiledChatsDialog,
+} from "./WorkspaceChatList";
 import WorkspaceRailNavigation from "./WorkspaceRailNavigation";
 import { useNavRailSlot } from "./nav-rail/navRailSlot";
 import {
@@ -95,6 +99,8 @@ export default function WorkspacePage({
       workspaceId,
       sessions,
       hasOlderSessions,
+      showArchived,
+      setShowArchived,
       loadOlderSessions,
       sessionId,
       tasksEnabled,
@@ -282,6 +288,62 @@ export default function WorkspacePage({
   );
   const reportError = (cause: unknown) =>
     setError(workbenchErrorMessage(cause));
+  const [browseUnfiled, setBrowseUnfiled] = useState(false);
+  const listedChats =
+    currentSession &&
+    currentSession.workspaceId === workspaceId &&
+    !paneSessions.some((s) => s.id === currentSession.id)
+      ? [currentSession, ...paneSessions]
+      : paneSessions;
+  const chats = (
+    <WorkspaceChatList
+      key={workspaceId ?? "unfiled"}
+      sessions={listedChats}
+      sessionId={sessionId}
+      background={backgroundTurn}
+      disabled={contextBusy || harnessEditor}
+      hasOlderSessions={hasOlderSessions}
+      onLoadOlderSessions={() => void loadOlderSessions()}
+      showArchived={showArchived}
+      onArchived={setShowArchived}
+      onSelectSession={(id) => {
+        setBrowseUnfiled(false);
+        void selectSession(id).catch(reportError);
+      }}
+      onCreateSession={() => {
+        setBrowseUnfiled(false);
+        void createSession().catch(reportError);
+      }}
+      conversationActions={(session) => ({
+        onRename: () => {
+          setBrowseUnfiled(false);
+          void renameSession(session).catch(reportError);
+        },
+        onGenerateTitle: () =>
+          void generateTitle(session).catch((cause) =>
+            setError(
+              `Title could not be generated: ${workbenchErrorMessage(cause)}`,
+            ),
+          ),
+        onMove: () => {
+          setBrowseUnfiled(false);
+          setMoveError(null);
+          setMoveTarget(session);
+        },
+        onRevealFiles: session.workspaceId
+          ? undefined
+          : () =>
+              void conversationClient
+                .revealConversationFolder(session.id)
+                .catch(reportError),
+        onArchive: () => void archiveSession(session).catch(reportError),
+        onDelete: () => {
+          setBrowseUnfiled(false);
+          void deleteSession(session).catch(reportError);
+        },
+      })}
+    />
+  );
   return (
     <div className="workspace-chat-shell flex h-full min-h-0 min-w-0 bg-white dark:bg-neutral-950">
       {rail?.slot &&
@@ -291,24 +353,15 @@ export default function WorkspacePage({
             project={currentWorkspace}
             projects={workspaces}
             destination={destination}
-            sessions={sessions}
-            hasOlderSessions={hasOlderSessions}
-            onLoadOlderSessions={() => void loadOlderSessions()}
-            sessionId={sessionId}
             chatOpen={surface === "chat"}
-            background={backgroundTurn}
             disabled={contextBusy || harnessEditor}
             onNavigate={(view) => {
               dismissRail();
               navigateProject(view);
             }}
-            onSelectSession={(id) => {
+            onBrowseUnfiled={() => {
               dismissRail();
-              void selectSession(id).catch(reportError);
-            }}
-            onCreateSession={() => {
-              dismissRail();
-              void createSession().catch(reportError);
+              setBrowseUnfiled(true);
             }}
             onSelectProject={(id) => {
               dismissRail();
@@ -322,30 +375,14 @@ export default function WorkspacePage({
               dismissRail();
               onAllProjects?.();
             }}
-            conversationActions={(session) => ({
-              onRename: () => void renameSession(session).catch(reportError),
-              onGenerateTitle: () =>
-                void generateTitle(session).catch((cause) =>
-                  setError(
-                    `Title could not be generated: ${workbenchErrorMessage(cause)}`,
-                  ),
-                ),
-              onMove: () => {
-                setMoveError(null);
-                setMoveTarget(session);
-              },
-              onRevealFiles: session.workspaceId
-                ? undefined
-                : () =>
-                    void conversationClient
-                      .revealConversationFolder(session.id)
-                      .catch(reportError),
-              onArchive: () => void archiveSession(session).catch(reportError),
-              onDelete: () => void deleteSession(session).catch(reportError),
-            })}
           />,
           rail.slot,
         )}
+      {!workspaceId && browseUnfiled && (
+        <UnfiledChatsDialog onClose={() => setBrowseUnfiled(false)}>
+          {chats}
+        </UnfiledChatsDialog>
+      )}
       {toolPickerOpen && workspaceId && (
         <WorkspaceToolPicker
           workspaceId={workspaceId}
@@ -443,29 +480,31 @@ export default function WorkspacePage({
                       </section>
                     }
                   >
-                    <WorkspaceProjectSurface
-                      key={workspaceId}
-                      workspaceId={workspaceId}
-                      sessionId={sessionId}
-                      sessions={paneSessions}
-                      onResumeSession={selectSession}
-                      onStartConversation={startConversation}
-                      onAllProjects={
-                        onAllProjects ? showAllProjects : undefined
-                      }
-                      destination={destination}
-                      onDestination={recordDestination}
-                      navigationInSidebar
-                      snapshot={snapshot}
-                      onSnapshot={acceptSnapshot}
-                      onConversation={openResearchConversation}
-                      onConversationFirst={openConversationFirst}
-                      onProjectBrief={setProjectBrief}
-                      onWorkspaceChanged={updateProjectWorkspace}
-                      onReviewHandoff={
-                        onReviewHandoff ? handOffReview : undefined
-                      }
-                    />
+                    <ProjectChatsContext.Provider value={chats}>
+                      <WorkspaceProjectSurface
+                        key={workspaceId}
+                        workspaceId={workspaceId}
+                        sessionId={sessionId}
+                        sessions={paneSessions}
+                        onResumeSession={selectSession}
+                        onStartConversation={startConversation}
+                        onAllProjects={
+                          onAllProjects ? showAllProjects : undefined
+                        }
+                        destination={destination}
+                        onDestination={recordDestination}
+                        navigationInSidebar
+                        snapshot={snapshot}
+                        onSnapshot={acceptSnapshot}
+                        onConversation={openResearchConversation}
+                        onConversationFirst={openConversationFirst}
+                        onProjectBrief={setProjectBrief}
+                        onWorkspaceChanged={updateProjectWorkspace}
+                        onReviewHandoff={
+                          onReviewHandoff ? handOffReview : undefined
+                        }
+                      />
+                    </ProjectChatsContext.Provider>
                   </Suspense>
                 </div>
               )}
@@ -531,6 +570,15 @@ export default function WorkspacePage({
                 </p>
               )}
             </div>
+            <IconButton
+              label="Browse chats"
+              disabled={contextBusy || harnessEditor}
+              onClick={() =>
+                workspaceId ? navigateProject("chats") : setBrowseUnfiled(true)
+              }
+            >
+              <Icon name="history" />
+            </IconButton>
             {workspaceId && (
               <IconButton
                 label="New conversation"
@@ -739,6 +787,12 @@ export default function WorkspacePage({
                     embedded
                     key={sessionId}
                     entries={outlineEntries}
+                    onOlder={
+                      snapshot?.olderCursor
+                        ? () => void loadEarlier("outline")
+                        : undefined
+                    }
+                    loadingOlder={loadingEarlier}
                     selectedId={selectedMessage}
                     onJump={(id) => {
                       closeInspector(false);

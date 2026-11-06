@@ -50,8 +50,14 @@ export function newOperation(prefix: string) {
 export async function saveWorkspaceDraft(
   selectedSession: string,
   text: string,
+  expectedSent?: string,
 ): Promise<SessionSnapshot> {
   const latest = await conversationClient.sessionSnapshot(selectedSession);
+  if (
+    expectedSent !== undefined &&
+    latest.session.draft.trim() !== expectedSent.trim()
+  )
+    return latest;
   let result = latest;
   if (latest.session.draft !== text) {
     const updated = await conversationClient.updateSession({

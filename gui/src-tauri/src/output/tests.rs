@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+fn schema_contracts_preserve_report_math_instructions() {
+    for directory in [None, Some("/runs/example/artifacts")] {
+        for contract in [
+            structured_output_format(directory),
+            text_artifact_output_format(directory, "Markdown report"),
+        ] {
+            assert!(contract.contains(r"$\alpha_i$"));
+            assert!(contract.contains("`$$` on separate lines"));
+            assert!(contract.contains("finding titles"));
+            assert!(contract.contains("verbatim evidence quotes"));
+            assert!(contract.contains("decoded text retains them"));
+        }
+    }
+}
+
+#[test]
 fn schema_backed_text_artifact_round_trips_without_transport_json() {
     let raw = serde_json::json!({"content": "# Report\n\nA result."}).to_string();
     assert_eq!(

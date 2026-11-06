@@ -1,211 +1,199 @@
-import { useRef, useState } from "react";
+// Project selection and project contents are separate controls. Their callbacks
+// stay with WorkspacePage so switching still passes through its save gates.
+import { useState } from "react";
+import { createPortal } from "react-dom";
+import useModalDialog from "../hooks/useModalDialog";
+import { loadProjectPins } from "../lib/projectIndex";
 import type { WorkspaceDestination } from "../lib/workspaceNavigation";
-import type { WorkbenchSession, Workspace } from "../lib/workbenchTypes";
+import type { Workspace } from "../lib/workbenchTypes";
 import Badge from "../ui/Badge";
-import IconButton from "../ui/IconButton";
 import { Icon } from "../ui/icons";
-import { Menu, MenuItem, MenuSeparator } from "../ui/Menu";
-import { NavChild } from "./nav-rail/NavRows";
-import { ConversationMenu } from "./WorkspaceConversationActions";
+import { NavRow } from "./nav-rail/NavRows";
 import WorkspaceProjectNavigation from "./WorkspaceProjectNavigation";
 
-/** Conversations listed before "Show all"; the open one always stays listed. */
-const SHOWN_SESSIONS = 3;
-
-/**
- * The open project's place in the primary sidebar: its six sections, its
- * conversations, and the way to another project. The Workspace page portals
- * this into the sidebar, so every action here runs through the page's own
- * save and busy gates. With no project, it lists unfiled conversations.
- */
+interface Props {
+  project: Workspace | null;
+  projects: Workspace[];
+  destination: WorkspaceDestination;
+  chatOpen: boolean;
+  disabled: boolean;
+  onNavigate: (view: WorkspaceDestination) => void;
+  onSelectProject: (id: string) => void;
+  onNewProject: () => void;
+  onAllProjects?: () => void;
+  onBrowseUnfiled: () => void;
+}
+function ProjectSwitcher({
+  project,
+  projects,
+  onSelectProject,
+  onNewProject,
+  onAllProjects,
+  onClose,
+}: Pick<
+  Props,
+  "projects" | "onSelectProject" | "onNewProject" | "onAllProjects"
+> & { project: Workspace; onClose: () => void }) {
+  const ref = useModalDialog<HTMLDivElement>(onClose, true, true);
+  const [query, setQuery] = useState("");
+  const [pins] = useState(loadProjectPins);
+  const matches = projects
+    .filter(
+      (p) =>
+        !p.archivedAt &&
+        p.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+    )
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const choose = (action?: () => void) => {
+    onClose();
+    action?.();
+  };
+  return createPortal(
+    <div
+      className="workspace-picker-backdrop"
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={ref}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Switch project"
+        tabIndex={-1}
+        className="workspace-tool-picker"
+      >
+        <div className="workspace-picker-heading">
+          <h2>Switch project</h2>
+          <button
+            type="button"
+            aria-label="Close project switcher"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </div>
+        <input
+          data-autofocus
+          type="search"
+          aria-label="Find a project"
+          placeholder="Find a project…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        <div className="focused-switch-results">
+          {["Pinned", "Recent projects"].map((group, i) => {
+            const items = matches.filter((p) =>
+              i ? !pins.includes(p.id) : pins.includes(p.id),
+            );
+            return (
+              items.length > 0 && (
+                <section key={group}>
+                  <h3>{group}</h3>
+                  {items.map((p) => (
+                    <button
+                      key={p.id}
+                      className="nav-row"
+                      type="button"
+                      onClick={() =>
+                        choose(() => {
+                          if (p.id !== project.id) onSelectProject(p.id);
+                        })
+                      }
+                    >
+                      <Icon name="folder" />
+                      <span className="nav-row-label" title={p.name}>
+                        {p.name}
+                      </span>
+                      {p.id === project.id && (
+                        <>
+                          <Icon name="check" />
+                          <span className="sr-only">Current project</span>
+                        </>
+                      )}
+                    </button>
+                  ))}
+                </section>
+              )
+            );
+          })}
+          {!matches.length && <p role="status">No matching projects.</p>}
+        </div>
+        <div className="focused-switch-actions">
+          <button type="button" onClick={() => choose(onAllProjects)}>
+            All projects
+          </button>
+          <button type="button" onClick={() => choose(onNewProject)}>
+            New project
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
 export default function WorkspaceRailNavigation({
   project,
   projects,
   destination,
-  sessions,
-  hasOlderSessions = false,
-  onLoadOlderSessions,
-  sessionId,
   chatOpen,
-  background,
   disabled,
   onNavigate,
-  onSelectSession,
-  onCreateSession,
   onSelectProject,
   onNewProject,
   onAllProjects,
-  conversationActions,
-}: {
-  project: Workspace | null;
-  projects: Workspace[];
-  destination: WorkspaceDestination;
-  sessions: WorkbenchSession[];
-  /** Older conversations remain past the list's last page. */
-  hasOlderSessions?: boolean;
-  onLoadOlderSessions?: () => void;
-  sessionId: string | null;
-  /** The conversation fills the page, so its row is the current location. */
-  chatOpen: boolean;
-  background: { sessionId: string; waiting: number } | null;
-  disabled: boolean;
-  onNavigate: (destination: WorkspaceDestination) => void;
-  onSelectSession: (id: string) => void;
-  onCreateSession: () => void;
-  onSelectProject: (id: string) => void;
-  onNewProject: () => void;
-  onAllProjects?: () => void;
-  conversationActions: (
-    session: WorkbenchSession,
-  ) => Pick<
-    Parameters<typeof ConversationMenu>[0],
-    | "onRename"
-    | "onGenerateTitle"
-    | "onMove"
-    | "onRevealFiles"
-    | "onArchive"
-    | "onDelete"
-  >;
-}) {
-  const [showAll, setShowAll] = useState(false);
+  onBrowseUnfiled,
+}: Props) {
   const [switching, setSwitching] = useState(false);
-  const switcher = useRef<HTMLButtonElement>(null);
-  const listed = showAll
-    ? sessions
-    : sessions.filter(
-        (session, index) => index < SHOWN_SESSIONS || session.id === sessionId,
-      );
+  if (!project)
+    return (
+      <>
+        <div className="focused-scope-label">No project</div>
+        <NavRow
+          icon="assistant"
+          label="Chats"
+          disabled={disabled}
+          onClick={onBrowseUnfiled}
+        />
+      </>
+    );
   return (
     <>
-      {project && (
-        <>
-          <NavChild
-            ref={switcher}
-            strong
-            label={project.name}
-            ariaLabel={`Switch project: ${project.name}`}
-            title={
-              project.missingRootAt
-                ? `${project.name} · Folder not found`
-                : (project.root ?? project.name)
-            }
-            disabled={disabled}
-            aria-haspopup="menu"
-            aria-expanded={switching}
-            onClick={() => setSwitching((value) => !value)}
-            suffix={
-              project.missingRootAt ? (
-                <Badge kind="attention" label="Folder not found" />
-              ) : (
-                <Icon name="chevron-down" className="nav-switch-mark" />
-              )
-            }
-          />
-          <Menu
-            open={switching}
-            onClose={() => setSwitching(false)}
-            anchorRef={switcher}
-            label="Switch project"
-            side="right"
-            align="start"
-            width={256}
-          >
-            {projects
-              .filter((item) => !item.archivedAt)
-              .map((item) => (
-                <MenuItem
-                  key={item.id}
-                  checked={item.id === project.id}
-                  onSelect={() => {
-                    if (item.id !== project.id) onSelectProject(item.id);
-                  }}
-                >
-                  {item.name}
-                </MenuItem>
-              ))}
-            <MenuSeparator />
-            <MenuItem onSelect={() => onNavigate("project-settings")}>
-              Project settings
-            </MenuItem>
-            <MenuItem onSelect={() => onAllProjects?.()}>All projects</MenuItem>
-            <MenuItem onSelect={onNewProject}>New project</MenuItem>
-          </Menu>
-          <WorkspaceProjectNavigation
-            key={project.id}
-            destination={destination}
-            disabled={disabled}
-            onNavigate={onNavigate}
-          />
-        </>
-      )}
-      <div className="nav-label">
-        <span>{project ? "Chats" : "No project"}</span>
-        <IconButton
-          size="sm"
-          className="!h-5 !w-5"
-          label="New conversation"
-          tooltipSide="right"
+      <div className="focused-project-header">
+        <div className="focused-scope-label">Current project</div>
+        <button
+          type="button"
+          className="focused-project-switch"
           disabled={disabled}
-          onClick={onCreateSession}
+          aria-label={"Switch project: " + project.name}
+          aria-haspopup="dialog"
+          aria-expanded={switching}
+          title={[project.name, project.root].filter(Boolean).join(" · ")}
+          onClick={() => setSwitching(true)}
         >
-          <Icon name="plus" className="h-3.5 w-3.5" />
-        </IconButton>
+          <span>{project.name}</span>
+          <Icon name="chevron-down" />
+        </button>
+        {project.missingRootAt && (
+          <Badge kind="attention" label="Folder not found" />
+        )}
       </div>
-      <nav aria-label="Conversations" className="nav-slot">
-        {!sessions.length && <p className="nav-empty">No conversations yet.</p>}
-        {listed.map((session) => {
-          const running = background?.sessionId === session.id;
-          return (
-            <div key={session.id} className="nav-session">
-              <NavChild
-                label={session.title}
-                current={session.id === sessionId && chatOpen}
-                disabled={disabled}
-                onClick={() => onSelectSession(session.id)}
-                suffix={
-                  running ? (
-                    <Badge
-                      kind={background.waiting ? "attention" : "running"}
-                      label={
-                        background.waiting
-                          ? "Needs your approval"
-                          : "Responding"
-                      }
-                    />
-                  ) : session.archivedAt ? (
-                    <span className="sr-only">Archived</span>
-                  ) : undefined
-                }
-              />
-              <span className="nav-session-menu">
-                <ConversationMenu
-                  session={session}
-                  disabled={disabled}
-                  {...conversationActions(session)}
-                />
-              </span>
-            </div>
-          );
-        })}
-        {sessions.length > SHOWN_SESSIONS && (
-          <NavChild
-            quiet
-            label={
-              showAll
-                ? "Show fewer"
-                : `Show all ${sessions.length}${hasOlderSessions ? "+" : ""}`
-            }
-            onClick={() => setShowAll((value) => !value)}
-          />
-        )}
-        {showAll && hasOlderSessions && (
-          <NavChild
-            quiet
-            label="Show older conversations"
-            onClick={() => onLoadOlderSessions?.()}
-          />
-        )}
-      </nav>
+      {switching && !disabled && (
+        <ProjectSwitcher
+          project={project}
+          projects={projects}
+          onSelectProject={onSelectProject}
+          onAllProjects={onAllProjects}
+          onNewProject={onNewProject}
+          onClose={() => setSwitching(false)}
+        />
+      )}
+      <WorkspaceProjectNavigation
+        destination={chatOpen ? "chats" : destination}
+        disabled={disabled}
+        onNavigate={onNavigate}
+        hasFolder={Boolean(project.root)}
+      />
     </>
   );
 }

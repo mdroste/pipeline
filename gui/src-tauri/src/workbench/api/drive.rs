@@ -131,17 +131,84 @@ pub(super) async fn model_call(
 ) -> Result<Value, String> {
     loop {
         wire::limit_output(connection.provider, body, wire::OUTPUT_LIMITS[*ceiling]);
+        let meter = crate::usage_allowance::current();
+        let hold = if meter.is_some() {
+            let class = if connection.provider == Provider::Local {
+                crate::usage_allowance::Class::Local
+            } else {
+                crate::usage_allowance::Class::Api
+            };
+            let bytes = serde_json::to_vec(body).map_err(|e| e.to_string())?.len();
+            crate::usage_allowance::Hold::reserve(
+                meter.as_ref(),
+                class,
+                &connection.model,
+                (bytes as u64).div_ceil(4),
+                wire::OUTPUT_LIMITS[*ceiling] as u64,
+            )?
+        } else {
+            None
+        };
         let attempt = wire::exchange(client, connection, body, emit.as_deref_mut()).await;
         match attempt {
             Err(error)
                 if error == wire::OUTPUT_LIMIT_REFUSED
                     && *ceiling + 1 < wire::OUTPUT_LIMITS.len() =>
             {
+                if let Some(hold) = hold {
+                    hold.settle(&connection.model, [0; 4]);
+                }
                 *ceiling += 1;
             }
-            result => return result,
+            result => {
+                if let (Some(hold), Ok(v)) = (hold, &result) {
+                    if let Some(tokens) = reported_tokens(connection.provider, v) {
+                        hold.settle(&connection.model, tokens);
+                    }
+                }
+                return result;
+            }
         }
     }
+}
+
+/// Missing or ambiguous provider usage keeps the estimate reserved.
+fn reported_tokens(provider: Provider, value: &Value) -> Option<[u64; 4]> {
+    let u = &value["usage"];
+    Some(match provider {
+        Provider::OpenAi | Provider::Local => [
+            u["prompt_tokens"].as_u64()?,
+            u["completion_tokens"].as_u64()?,
+            u["prompt_tokens_details"]["cached_tokens"]
+                .as_u64()
+                .unwrap_or(0),
+            0,
+        ],
+        Provider::Anthropic => {
+            let read = u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+            let write = u["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+            [
+                u["input_tokens"]
+                    .as_u64()?
+                    .saturating_add(read)
+                    .saturating_add(write),
+                u["output_tokens"].as_u64()?,
+                read,
+                write,
+            ]
+        }
+        Provider::Google => {
+            let u = &value["usageMetadata"];
+            [
+                u["promptTokenCount"].as_u64()?,
+                u["candidatesTokenCount"]
+                    .as_u64()?
+                    .saturating_add(u["thoughtsTokenCount"].as_u64().unwrap_or(0)),
+                u["cachedContentTokenCount"].as_u64().unwrap_or(0),
+                0,
+            ]
+        }
+    })
 }
 
 /// Whether the turn continues into this reply's tool calls. A reply cut off at
@@ -283,4 +350,62 @@ pub(crate) async fn title(connection: &Connection, prompt: &str) -> Result<Strin
     let reply = wire::parse(connection.provider, response)?;
     has_tool_calls(&reply)?;
     Ok(reply.text)
+}
+
+#[cfg(test)]
+mod allowance_tests {
+    use super::*;
+    #[tokio::test]
+    async fn workspace_checks_the_parent_allowance_before_http() {
+        use crate::usage_allowance::{Class, Meter, CURRENT};
+        struct Deny;
+        impl Meter for Deny {
+            fn reserve(
+                &self,
+                class: Class,
+                model: &str,
+                input: u64,
+                output: u64,
+            ) -> Result<i64, String> {
+                assert_eq!(class, Class::Api);
+                assert!(!model.is_empty() && input > 0 && output > 0);
+                Err("allowance already spent".into())
+            }
+            fn settle(&self, _: i64, _: &str, _: [u64; 4]) -> Result<(), String> {
+                panic!("Nothing was sent")
+            }
+        }
+        let conn = super::super::tests::connection(Provider::OpenAi);
+        let mut body = wire::body(&conn, "instructions", &[], &[]);
+        let client = wire::client().unwrap();
+        let err = CURRENT
+            .scope(
+                Some(std::sync::Arc::new(Deny)),
+                model_call(&client, &conn, &mut body, &mut 0, None),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err, "allowance already spent");
+    }
+    #[test]
+    fn missing_usage_stays_reserved_and_cached_tokens_use_owner_counts() {
+        assert_eq!(
+            reported_tokens(Provider::OpenAi, &json!({"usage":{"prompt_tokens":18}})),
+            None
+        );
+        assert_eq!(
+            reported_tokens(
+                Provider::Anthropic,
+                &json!({"usage":{"input_tokens":10,"output_tokens":2,"cache_read_input_tokens":4,"cache_creation_input_tokens":3}})
+            ),
+            Some([17, 2, 4, 3])
+        );
+        assert_eq!(
+            reported_tokens(
+                Provider::Google,
+                &json!({"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":4,"thoughtsTokenCount":5}})
+            ),
+            Some([10, 9, 0, 0])
+        );
+    }
 }

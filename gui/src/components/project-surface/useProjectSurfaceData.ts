@@ -18,10 +18,13 @@ import type { Workspace } from "../../lib/workbenchTypes";
 import { listen } from "@tauri-apps/api/event";
 import { appEvents } from "../../lib/appEvents";
 
+import { useWorkspacePaneVisible } from "../workspacePaneVisibility";
+
 export function useProjectSurfaceData(
   workspaceId: string,
   setRevisionId: Dispatch<SetStateAction<string | null>>,
 ) {
+  const visible = useWorkspacePaneVisible();
   const [data, setData] = useState<ProjectHome | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -52,11 +55,14 @@ export function useProjectSurfaceData(
     );
   }, [workspaceId]);
   useEffect(() => {
+    // Load on first display and reconcile any changes made while hidden.
+    if (!visible) return;
     void refresh().catch((e) => reportError(workbenchErrorMessage(e)));
-  }, [refresh, reportError]);
+  }, [refresh, reportError, visible]);
   // A chat can create and capture its copy while this surface remains mounted.
   // Refresh saved review data without rescanning or modifying the project folder.
   useEffect(() => {
+    if (!visible) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let live = true;
     const reload = () => {
@@ -85,7 +91,7 @@ export function useProjectSurfaceData(
       offNavigation();
       void offTurn.then((off) => off()).catch(() => {});
     };
-  }, [workspaceId, refresh, reportError]);
+  }, [workspaceId, refresh, reportError, visible]);
   const run = useCallback(
     async (operation: () => Promise<unknown>) => {
       if (busyRef.current) return;
@@ -114,13 +120,15 @@ export function useProjectSurfaceData(
   // quiet check, so an older answer cannot replace the newer one.
   const changed = useCallback(() => {
     const reloaded: Promise<void> = (background.current ?? Promise.resolve())
-      .then(() => refresh())
+      .then(() => {
+        if (visible) return refresh();
+      })
       .catch((e) => reportError(e))
       .finally(() => {
         if (background.current === reloaded) background.current = null;
       });
     background.current = reloaded;
-  }, [refresh, reportError]);
+  }, [refresh, reportError, visible]);
   const act = useCallback(
     async (action: ProjectAction) =>
       run(() => projectClient.mutate(workspaceId, action)),
@@ -144,7 +152,9 @@ export function useProjectSurfaceData(
     if (busyRef.current || background.current) return;
     background.current = projectClient
       .mutate(workspaceId, { action: "checkForChanges" })
-      .then(() => refresh())
+      .then(() => {
+        if (visible) return refresh();
+      })
       .catch((e) => {
         // Something else holds the project, such as a Git action. The next
         // check finds whatever it changed.
@@ -156,12 +166,12 @@ export function useProjectSurfaceData(
       .finally(() => {
         background.current = null;
       });
-  }, [refresh, workspaceId]);
+  }, [refresh, workspaceId, visible]);
 
   // Bounded polling is optional; a focus refresh handles the usual external-editor
   // round trip. Neither mechanism changes captured document revisions or selection.
   useEffect(() => {
-    if (!workspace?.root) return;
+    if (!workspace?.root || (!visible && !watch)) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const focus = () => {
       clearTimeout(timer);
@@ -178,7 +188,7 @@ export function useProjectSurfaceData(
       clearTimeout(timer);
       if (interval) clearInterval(interval);
     };
-  }, [backgroundRefresh, watch, workspace?.root]);
+  }, [backgroundRefresh, watch, workspace?.root, visible]);
 
   return {
     data,

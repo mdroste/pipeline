@@ -8,8 +8,12 @@ import type { Project, ProjectsResponse, RunSummary } from "../../lib/types";
 import type { ArtifactSelectionTarget } from "../../lib/artifactTypes";
 import { router } from "../../lib/router";
 import { useOpenHistoryRun } from "../../hooks/app/historyRunOpener";
-import { underRoot } from "../../lib/projectOverview";
+import {
+  reviewsForProject,
+  type ProjectReviewLink,
+} from "../../lib/projectOverview";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
+import { listProjectReviewLinks } from "../../lib/workbench/releaseClient";
 import ProjectIssueLedgerPanel from "../ProjectIssueLedgerPanel";
 import EmptyState from "../../ui/EmptyState";
 import Spinner from "../../ui/Spinner";
@@ -19,16 +23,19 @@ import { listedRunStatus, runFinished } from "../../lib/reportPresentation";
 import ReportIssueLink from "../ReportIssueLink";
 
 export default function ProjectReviews({
+  workspaceId,
   workspaceRoot,
   workspaceName = "This project",
   onChanged,
 }: {
+  workspaceId?: string;
   workspaceRoot: string | null;
   workspaceName?: string;
   /** Findings are counted on the Overview too. */
   onChanged?: () => void;
 }) {
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
+  const [links, setLinks] = useState<ProjectReviewLink[]>([]);
   const [collections, setCollections] = useState<Project[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [tracking, setTracking] = useState(false);
@@ -39,10 +46,12 @@ export default function ProjectReviews({
     void Promise.all([
       invoke<RunSummary[]>("list_runs"),
       invoke<ProjectsResponse>("list_projects"),
+      workspaceId ? listProjectReviewLinks(workspaceId) : Promise.resolve([]),
     ])
-      .then(([loadedRuns, loadedCollections]) => {
+      .then(([loadedRuns, loadedCollections, handoffs]) => {
         if (stale) return;
         setRuns(loadedRuns);
+        setLinks(handoffs);
         setCollections(loadedCollections.projects);
         setError(null);
       })
@@ -52,13 +61,10 @@ export default function ProjectReviews({
     return () => {
       stale = true;
     };
-  }, []);
+  }, [workspaceId]);
   const projectRuns = useMemo(
-    () =>
-      workspaceRoot && runs
-        ? runs.filter((run) => underRoot(run.input_path, workspaceRoot))
-        : [],
-    [runs, workspaceRoot],
+    () => reviewsForProject(runs ?? [], workspaceRoot, links),
+    [runs, workspaceRoot, links],
   );
   const projectRunIds = useMemo(
     () => new Set(projectRuns.map((run) => run.run_id)),
@@ -125,7 +131,7 @@ export default function ProjectReviews({
           <p className={`${muted} mt-1`}>
             {workspaceRoot
               ? "See reviews of this project’s documents and track findings across drafts."
-              : "Attach a folder to this project to connect its documents' reviews here."}
+              : "Reviews started from papers in this project appear here."}
           </p>
         </div>
         <Button

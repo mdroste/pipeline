@@ -67,6 +67,7 @@ pub use validation::{
     validate_dependencies, validate_enabled_sequential_step, validate_unique_step_ids,
     validate_workflow_semantics,
 };
+pub(crate) use workflow::parse_saved_workflow_document;
 pub use workflow::{
     parse_workflow_document_strict, steps_without_inputs, workflow_json_schema, workflow_template,
     WorkflowDocument,

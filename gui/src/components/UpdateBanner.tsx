@@ -1,3 +1,4 @@
+import { flushDrafts } from "../lib/flushDrafts";
 import { useEffect, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -121,6 +122,7 @@ export default function UpdateBanner({
   const runCommand = async (command: string) => {
     setActionError(null);
     try {
+      if (command === "update_install_restart") flushDrafts();
       await invoke(command);
     } catch (error) {
       setActionError(message(error));

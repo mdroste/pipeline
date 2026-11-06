@@ -1,6 +1,7 @@
 //! Per-Review spending and effort limits, and the preflight usage estimate.
 //!
-//! Limits are checked before each wave. Calls already in flight always
+//! The scheduler checks between waves. Dispatch additionally reserves each
+//! submission, including API retries and tool continuations. In-flight calls
 //! finish; steps not yet started are recorded as stopped at the limit, so the
 //! run still ends with a labeled partial report. Cost counts only direct-API
 //! calls at API list prices; subscription calls are limited by call count and
@@ -11,9 +12,7 @@
 
 use crate::models::{StepCallRecord, StepOutput};
 use crate::pipeline::logging::CallUsage;
-use crate::pipeline_config::{Phase, PipelineConfig};
 use crate::settings::Settings;
-use serde::Serialize;
 use std::time::Instant;
 
 /// Prefix of every failure recorded for a step the limit prevented.
@@ -196,7 +195,10 @@ impl BudgetLedger {
     /// Takes the run-wide usage total (`logging::run_usage`, reset when the
     /// run begins), so every provider invocation counts toward the call limit.
     pub(super) fn observe(&mut self, run_usage: &CallUsage) {
-        self.provider_attempts = self.provider_attempts.max(run_usage.provider_attempts);
+        self.provider_attempts = self
+            .provider_attempts
+            .max(run_usage.provider_attempts)
+            .max(super::budget_dispatch::admitted_attempts());
     }
 
     /// The limit reached, phrased to complete [`BUDGET_STOP_PREFIX`].
@@ -225,347 +227,12 @@ impl BudgetLedger {
     }
 }
 
-/// How a step's calls are priced in the estimate.
-#[derive(Debug, Clone)]
-pub struct ProviderPricing {
-    pub provider: String,
-    pub model: String,
-    pub api: bool,
-    /// Input and output US dollars per million tokens.
-    pub price: Option<(f64, f64)>,
-}
-
-/// A deliberately rough preflight range. Actual use depends on the document,
-/// tool reads, retries, and which specialists orientation selects.
-#[derive(Debug, Clone, Default, Serialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct UsageEstimate {
-    pub document_tokens: u64,
-    pub calls_low: u64,
-    pub calls_high: u64,
-    pub input_tokens_low: u64,
-    pub input_tokens_high: u64,
-    pub output_tokens_low: u64,
-    pub output_tokens_high: u64,
-    /// API list-price range for direct-API calls; None when no step uses a
-    /// direct API connection.
-    pub api_cost_low: Option<f64>,
-    pub api_cost_high: Option<f64>,
-    /// Direct-API calls whose model has no known price.
-    pub unpriced_calls: u64,
-    /// Calls through subscriptions, which are not billed per token.
-    pub subscription_calls_high: u64,
-    pub max_cost_usd: Option<f64>,
-    pub max_calls: Option<u32>,
-    pub max_minutes: Option<u32>,
-    pub exceeds_cost_limit: bool,
-    pub exceeds_call_limit: bool,
-}
-
-const PROMPT_TOKENS: u64 = 3_000;
-const REPORT_TOKENS: u64 = 3_000;
-const MAX_UPSTREAM_TOKENS: u64 = 40_000;
-const SPECIALISTS_LOW: u64 = 2;
-const SPECIALISTS_HIGH: u64 = 6;
-
-struct Calls {
-    low: u64,
-    high: u64,
-    input_low: u64,
-    input_high: u64,
-    output_low: u64,
-    output_high: u64,
-}
-
-/// Specialists Paper Review may add after orientation, from the orientation
-/// schema's item limits (the same source the preview UI reads).
-fn specialist_range(config: &PipelineConfig) -> (u64, u64) {
-    let Some(schema) = config.orientation_schema.as_ref() else {
-        return (SPECIALISTS_LOW, SPECIALISTS_HIGH);
-    };
-    let read = |field: &str, bound: &str| {
-        schema
-            .pointer(&format!(
-                "/properties/review_plan/properties/{field}/{bound}"
-            ))
-            .and_then(serde_json::Value::as_u64)
-    };
-    match (
-        read("subject_specialist_ids", "minItems"),
-        read("subject_specialist_ids", "maxItems"),
-        read("method_specialist_ids", "minItems"),
-        read("method_specialist_ids", "maxItems"),
-    ) {
-        (Some(subject_min), Some(subject_max), Some(method_min), Some(method_max)) => (
-            (subject_min + method_min).min(16),
-            (subject_max + method_max).clamp(subject_min + method_min, 16),
-        ),
-        _ => (SPECIALISTS_LOW, SPECIALISTS_HIGH),
-    }
-}
-
-fn add_cost(cost: &mut (f64, f64), price: Option<(f64, f64)>, calls: &Calls) -> bool {
-    let Some((input, output)) = price else {
-        return false;
-    };
-    cost.0 += (calls.input_low as f64 * input + calls.output_low as f64 * output) / 1_000_000.0;
-    cost.1 += (calls.input_high as f64 * input + calls.output_high as f64 * output) / 1_000_000.0;
-    true
-}
-
-/// Estimates one run of `config` over a document of `document_tokens`.
-/// `pricing` resolves a provider id to its model and transport.
-pub fn estimate_usage(
-    config: &PipelineConfig,
-    document_tokens: u64,
-    orientation_provider: &str,
-    pricing: &dyn Fn(&str) -> ProviderPricing,
-    budget: RunBudget,
-    author_note: Option<&str>,
-) -> UsageEstimate {
-    let mut estimate = UsageEstimate {
-        document_tokens,
-        max_cost_usd: budget.max_cost_usd,
-        max_calls: budget.max_calls,
-        max_minutes: budget.max_minutes,
-        ..Default::default()
-    };
-    let mut cost = (0f64, 0f64);
-    let mut any_api = false;
-    let note_tokens = crate::pipeline::author_note::prefix(author_note)
-        .len()
-        .div_ceil(4) as u64;
-    let mut account = |provider: &str, mut calls: Calls, estimate: &mut UsageEstimate| {
-        calls.input_low += note_tokens * calls.low;
-        calls.input_high += note_tokens * calls.high;
-        estimate.calls_low += calls.low;
-        estimate.calls_high += calls.high;
-        estimate.input_tokens_low += calls.input_low;
-        estimate.input_tokens_high += calls.input_high;
-        estimate.output_tokens_low += calls.output_low;
-        estimate.output_tokens_high += calls.output_high;
-        let resolved = pricing(provider);
-        if resolved.api {
-            any_api = true;
-            if !add_cost(&mut cost, resolved.price, &calls) {
-                estimate.unpriced_calls += calls.high;
-            }
-        } else {
-            estimate.subscription_calls_high += calls.high;
-        }
-    };
-
-    // Orientation reads the document once.
-    account(
-        orientation_provider,
-        Calls {
-            low: 1,
-            high: 1,
-            input_low: document_tokens + PROMPT_TOKENS,
-            input_high: (document_tokens + PROMPT_TOKENS) * 3 / 2,
-            output_low: 2_000,
-            output_high: 6_000,
-        },
-        &mut estimate,
-    );
-
-    // Analyzer steps run on this computer and make no model call.
-    let enabled: Vec<_> = config
-        .steps
-        .iter()
-        .filter(|step| step.enabled && step.kind.is_model())
-        .collect();
-    let parallel = enabled
-        .iter()
-        .filter(|step| step.phase == Phase::Parallel)
-        .count() as u64;
-    let (specialists_low, specialists_high) =
-        if crate::auto_review::uses_auto_review_contract(config) {
-            specialist_range(config)
-        } else {
-            (0, 0)
-        };
-    for step in &enabled {
-        let agents = step.agents.len().max(1) as u64;
-        // A fan-out runs once per matching item, up to its declared cap.
-        let units_high = step
-            .for_each
-            .as_ref()
-            .map_or(1, |fan_out| u64::from(fan_out.max.max(1)));
-        let merge = u64::from(agents > 1 && config.merge.enabled);
-        let (input, output_low, output_high) = if step.phase == Phase::Parallel {
-            (document_tokens + PROMPT_TOKENS, 3_000, 8_000)
-        } else {
-            let upstream = ((parallel + specialists_high) * REPORT_TOKENS).min(MAX_UPSTREAM_TOKENS);
-            (document_tokens + PROMPT_TOKENS + upstream, 6_000, 16_000)
-        };
-        let low = agents + merge;
-        let high = agents * units_high + merge;
-        let provider = step.agents.first().cloned().unwrap_or_default();
-        account(
-            &provider,
-            Calls {
-                low,
-                high,
-                input_low: input * low,
-                input_high: input * high * 3 / 2,
-                output_low: output_low * low,
-                output_high: output_high * high,
-            },
-            &mut estimate,
-        );
-    }
-    if specialists_high > 0 {
-        let donor = enabled
-            .iter()
-            .find(|step| step.phase == Phase::Parallel)
-            .and_then(|step| step.agents.first())
-            .cloned()
-            .unwrap_or_default();
-        let input = document_tokens + PROMPT_TOKENS;
-        account(
-            &donor,
-            Calls {
-                low: specialists_low,
-                high: specialists_high,
-                input_low: input * specialists_low,
-                input_high: input * specialists_high * 3 / 2,
-                output_low: 3_000 * specialists_low,
-                output_high: 8_000 * specialists_high,
-            },
-            &mut estimate,
-        );
-    }
-    if any_api {
-        estimate.api_cost_low = Some(cost.0);
-        estimate.api_cost_high = Some(cost.1);
-    }
-    estimate.exceeds_cost_limit = matches!(
-        (budget.max_cost_usd, estimate.api_cost_high),
-        (Some(limit), Some(high)) if high > limit
-    );
-    estimate.exceeds_call_limit = budget
-        .max_calls
-        .is_some_and(|limit| estimate.calls_high > u64::from(limit));
-    estimate
-}
-
-/// Rough token count of a run's primary input before extraction. PDFs use
-/// their page count; text formats their size; DOCX its compressed size.
-pub fn document_token_estimate(path: &str, pdf_pages: Option<u32>) -> u64 {
-    let lower = path.to_ascii_lowercase();
-    if lower.ends_with(".pdf") {
-        if let Some(pages) = pdf_pages {
-            return u64::from(pages) * 700;
-        }
-    }
-    let bytes = std::fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
-    if lower.ends_with(".docx") {
-        bytes / 5
-    } else if lower.ends_with(".pdf") {
-        bytes / 20
-    } else {
-        bytes / 4
-    }
-}
-
-/// Page count reported by Poppler's `pdfinfo`, if available. Blocking.
-pub fn pdf_page_count(path: &str) -> Option<u32> {
-    let bin = crate::deps::resolve_command("pdfinfo")?;
-    let mut command = bin.command([std::ffi::OsStr::new(path)]);
-    command.env("LC_ALL", "C");
-    let output =
-        crate::process::run_bounded(&mut command, std::time::Duration::from_secs(5), 16 * 1024)
-            .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .find_map(|line| {
-            line.strip_prefix("Pages:")
-                .and_then(|count| count.trim().parse::<u32>().ok())
-        })
-}
-
-/// Preflight estimate for the Review preview. Each provider's default model
-/// is resolved once with a short timeout; an unresolved model is unpriced.
-pub async fn preview_estimate(
-    config: &PipelineConfig,
-    settings: &Settings,
-    paper_path: Option<&str>,
-    author_note: Option<&str>,
-) -> UsageEstimate {
-    let document_tokens = match paper_path.filter(|path| !path.trim().is_empty()) {
-        Some(path) => {
-            let owned = path.to_string();
-            tokio::task::spawn_blocking(move || {
-                let pages = owned
-                    .to_ascii_lowercase()
-                    .ends_with(".pdf")
-                    .then(|| pdf_page_count(&owned))
-                    .flatten();
-                document_token_estimate(&owned, pages)
-            })
-            .await
-            .unwrap_or(0)
-        }
-        None => 0,
-    };
-    let mut providers: Vec<String> = config
-        .steps
-        .iter()
-        .filter(|step| step.enabled)
-        .flat_map(|step| step.agents.iter().cloned())
-        .chain(std::iter::once(settings.orientation_agent().to_string()))
-        .collect();
-    providers.sort();
-    providers.dedup();
-    let mut resolved = std::collections::HashMap::new();
-    for provider in providers {
-        let api = settings.model_transport(&provider) == "api";
-        let model = tokio::time::timeout(
-            std::time::Duration::from_secs(3),
-            crate::model_catalog::resolve(&provider, settings, None),
-        )
-        .await
-        .ok()
-        .and_then(Result::ok)
-        .map(|resolution| resolution.resolved_model)
-        .unwrap_or_default();
-        let price = (!model.is_empty())
-            .then(|| crate::output::model_price(&model))
-            .flatten();
-        resolved.insert(
-            provider.clone(),
-            ProviderPricing {
-                provider,
-                model,
-                api,
-                price,
-            },
-        );
-    }
-    let pricing = |provider: &str| {
-        resolved
-            .get(provider)
-            .cloned()
-            .unwrap_or_else(|| ProviderPricing {
-                provider: provider.to_string(),
-                model: String::new(),
-                api: settings.model_transport(provider) == "api",
-                price: None,
-            })
-    };
-    estimate_usage(
-        config,
-        document_tokens,
-        settings.orientation_agent(),
-        &pricing,
-        RunBudget::from_settings(settings),
-        author_note,
-    )
-}
+#[path = "budget_estimate.rs"]
+mod estimate;
+pub use estimate::{
+    document_token_estimate, estimate_usage, pdf_page_count, preview_estimate, ProviderPricing,
+    UsageEstimate,
+};
 
 #[cfg(test)]
 #[path = "budget_tests.rs"]

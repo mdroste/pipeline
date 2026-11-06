@@ -76,6 +76,31 @@
           "r1-memo"
         ]
       }
+    ],
+    "claimAssessments": [
+      {
+        "subject": 0,
+        "goalId": "g1",
+        "claim": "The conjectured identity fails with heterogeneity.",
+        "kind": "theory",
+        "scope": "Two equally weighted types x=0 and x=2",
+        "verdict": "refuted",
+        "inspections": [
+          {
+            "role": "assumptions",
+            "evidenceId": "r1-memo",
+            "location": "Tested domain",
+            "observed": "The two types each have mass one half."
+          },
+          {
+            "role": "derivation",
+            "evidenceId": "r1-memo",
+            "location": "Moment calculation",
+            "observed": "The mean of squares is 2 and the square of the mean is 1."
+          }
+        ],
+        "objections": []
+      }
     ]
   }
 }

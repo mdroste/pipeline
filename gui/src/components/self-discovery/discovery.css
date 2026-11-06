@@ -1,18 +1,6 @@
-.discovery-builder details,
 .discovery-detail > details {
   padding: 12px 0;
   border-top: 1px solid var(--ui-page-line);
-}
-.discovery-builder details > label {
-  display: grid;
-  gap: 6px;
-  margin: 12px 0;
-}
-.discovery-funnel {
-  padding: 12px;
-  border: 1px solid var(--ui-page-line);
-  border-radius: 8px;
-  line-height: 1.6;
 }
 .discovery-candidates {
   display: grid;
@@ -66,8 +54,7 @@
   min-height: 350px;
   overflow: hidden;
 }
-.discovery-detail summary,
-.discovery-builder summary {
+.discovery-detail summary {
   cursor: pointer;
 }
 .discovery-detail .task-actions {
@@ -78,4 +65,57 @@
   white-space: normal;
   text-align: right;
   max-width: 130px;
+}
+
+.discovery-activity {
+  margin: 16px 0;
+  padding: 12px 0;
+  border-block: 1px solid var(--ui-page-line);
+}
+.discovery-clocks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+}
+.discovery-clocks p {
+  margin: 0 0 12px;
+}
+.discovery-agents {
+  padding: 0;
+  list-style: none;
+}
+.discovery-agents li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 0;
+}
+.discovery-agents [data-state="running"] {
+  font-weight: 600;
+}
+.discovery-feed {
+  list-style: none;
+  max-height: 320px;
+  overflow: auto;
+  padding: 0;
+}
+.discovery-feed li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--ui-page-line);
+  overflow-wrap: anywhere;
+}
+.discovery-feed time,
+.discovery-feed small {
+  color: var(--ui-page-muted);
+}
+@media (max-width: 600px) {
+  .discovery-feed li {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .discovery-feed small {
+    grid-column: 2;
+  }
 }

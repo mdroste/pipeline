@@ -152,6 +152,9 @@ pub struct OutputConfig {
 pub struct NamedProductSpec {
     pub key: String,
     pub step: String,
+    /// Optional by default so older conditional producers may skip publication.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub media_type: String,
     /// `text`, `markdown`, `json`, or `artifact`.

@@ -49,19 +49,32 @@ function summary(table: FileTable, shownColumns: number) {
   return `${read} · ${columns}`;
 }
 
-export default function TableViewer({
-  adapter,
-  path,
-  version,
-}: {
+interface Props {
   adapter: FileAdapter;
   path: string;
   /** Changes when the file does. */
   version: string;
-}) {
+}
+
+export default function TableViewer(props: Props) {
+  // A different file starts with its own cursor; a new version of this
+  // file keeps the current sheet and page whenever they still exist.
+  return (
+    <TablePages
+      key={JSON.stringify([props.adapter.id, props.path])}
+      {...props}
+    />
+  );
+}
+
+function TablePages({ adapter, path, version }: Props) {
   const [table, setTable] = useState<FileTable | null>(null);
-  const [sheet, setSheet] = useState<string | null>(null);
-  const [start, setStart] = useState(0);
+  const cursor = useRef<{ sheet: string | null; start: number }>({
+    sheet: null,
+    start: 0,
+  });
+  const openedVersion = useRef<string | null>(null);
+  const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [moreError, setMoreError] = useState("");
@@ -74,23 +87,53 @@ export default function TableViewer({
     setError("");
     setMoreError("");
     setLoading(true);
-    adapter.table?.(path, sheet, start).then(
-      (value) => {
-        if (current !== run.current) return;
-        setTable(value);
-        setLoading(false);
-      },
-      (e) => {
-        if (current !== run.current) return;
-        setTable(null);
-        setLoading(false);
-        setError(workbenchErrorMessage(e));
-      },
-    );
+    const { sheet, start } = cursor.current;
+    const changed =
+      openedVersion.current !== null && openedVersion.current !== version;
+    const read = async () => {
+      if (!adapter.table) throw new Error("This table cannot be read here.");
+      let value: FileTable;
+      let message = "";
+      try {
+        value = await adapter.table(path, sheet, start);
+      } catch (cause) {
+        if (!changed || !sheet || current !== run.current) throw cause;
+        // Only recover if the new sheet list confirms the sheet is gone.
+        // A damaged but still-present worksheet must show its read error.
+        const first = await adapter.table(path, null, 0);
+        if (first.sheets.includes(sheet)) throw cause;
+        value = first;
+        message = `Worksheet ${sheet} is no longer in this file. Showing ${first.sheet ?? "the first worksheet"}.`;
+      }
+      if (current !== run.current) return;
+      if (!value.preview && value.start > 0 && value.start >= value.totalRows) {
+        value = await adapter.table(path, sheet, 0);
+        message = "The worksheet has fewer rows. Showing its first page.";
+      }
+      if (current !== run.current) return;
+      openedVersion.current = version;
+      cursor.current = {
+        sheet: sheet ? value.sheet : null,
+        start: value.start,
+      };
+      setTable(value);
+      setNotice(message);
+      setLoading(false);
+    };
+    void read().catch((e) => {
+      if (current !== run.current) return;
+      setTable(null);
+      setLoading(false);
+      setError(workbenchErrorMessage(e));
+    });
     return () => {
       run.current++;
     };
-  }, [adapter, path, version, sheet, start, restarts]);
+  }, [adapter, path, version, restarts]);
+  const goTo = (sheet: string | null, start: number) => {
+    cursor.current = { sheet, start };
+    setRestarts((value) => value + 1);
+  };
   const loadMore = () => {
     const offset = table?.preview?.nextOffset ?? null;
     if (loading || !table?.preview || offset === null) return;
@@ -124,6 +167,7 @@ export default function TableViewer({
     return (
       <p role="alert" className="file-error">
         {error}
+        <button onClick={() => goTo(null, 0)}>Reload table</button>
         <ReportIssueLink />
       </p>
     );
@@ -163,10 +207,7 @@ export default function TableViewer({
           <select
             aria-label="Worksheet"
             value={table.sheet ?? ""}
-            onChange={(event) => {
-              setStart(0);
-              setSheet(event.target.value);
-            }}
+            onChange={(event) => goTo(event.target.value, 0)}
           >
             {table.sheets.map((name) => (
               <option key={name}>{name}</option>
@@ -207,7 +248,10 @@ export default function TableViewer({
             <button
               disabled={table.start === 0}
               onClick={() =>
-                setStart(Math.max(0, table.start - table.pageSize))
+                goTo(
+                  cursor.current.sheet,
+                  Math.max(0, table.start - table.pageSize),
+                )
               }
             >
               Previous
@@ -219,13 +263,20 @@ export default function TableViewer({
             </span>
             <button
               disabled={last >= table.totalRows}
-              onClick={() => setStart(table.start + table.pageSize)}
+              onClick={() =>
+                goTo(cursor.current.sheet, table.start + table.pageSize)
+              }
             >
               Next
             </button>
           </>
         )}
       </div>
+      {notice && (
+        <p role="status" className="file-table-note">
+          {notice}
+        </p>
+      )}
       {moreError && (
         <p role="alert" className="file-error">
           {moreError}

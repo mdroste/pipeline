@@ -1,12 +1,10 @@
+import { useDraftFlush } from "../../hooks/useDraftFlush";
 import SourceEditor, {
   type SourceEditorHandle,
   type SourceLineRequest,
 } from "../file-workspace/SourceEditor";
 import SourceDiff from "../file-workspace/SourceDiff";
-import {
-  readCapturedPdf,
-  workspaceFileAdapter,
-} from "../../lib/fileWorkspaceClient";
+import { workspaceFileAdapter } from "../../lib/fileWorkspaceClient";
 const PdfReader = lazy(() => import("../file-workspace/PdfReader"));
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { confirmDialog } from "../DialogService";
@@ -220,37 +218,19 @@ export default function Manuscript({
         }
       }
     } catch {
-      setNotice(
+      if (!current.file || current.draft === current.file.content) return true;
+      setError(
         "Draft storage is full. Keep this editor open until the file is saved.",
       );
+      return false;
     }
+    return true;
   };
   useEffect(() => {
     const timer = setTimeout(persistDraft, 300);
     return () => clearTimeout(timer);
   }, [file, draft]);
-  useEffect(
-    () => () => {
-      const current = draftState.current;
-      try {
-        if (current.file && current.draft !== current.file.content) {
-          localStorage.setItem(draftKey, JSON.stringify(current));
-          localStorage.setItem(
-            `${draftKey}.${current.file.checkpointId ?? "working"}.${current.file.path}`,
-            JSON.stringify(current),
-          );
-        } else if (current.file) {
-          localStorage.removeItem(draftKey);
-          localStorage.removeItem(
-            `${draftKey}.${current.file.checkpointId ?? "working"}.${current.file.path}`,
-          );
-        }
-      } catch {
-        /* Current save state already discloses draft-storage failure. */
-      }
-    },
-    [draftKey],
-  );
+  useDraftFlush(persistDraft);
   const diff = useMemo(
     () =>
       file && showChanges && diffMode === "prose"
@@ -260,18 +240,16 @@ export default function Manuscript({
   );
   /** Keep the open draft so it returns when this file is opened again. */
   const stashDraft = () => {
-    if (dirty && file)
-      localStorage.setItem(
-        `${draftKey}.${file.checkpointId ?? "working"}.${file.path}`,
-        JSON.stringify({ file, draft }),
-      );
+    if (!persistDraft())
+      throw new Error("Save your draft before opening another file.");
   };
   const openFile = async (target: string, inCopy: string) => {
     const next = await studioClient.editor(workspaceId, target, inCopy || null);
     const retained =
       readDraft(`${draftKey}.${inCopy || "working"}.${target}`) ??
       cached.current;
-    setPath(target);
+    setPath(next.path);
+    setCheckpoint(next.checkpointId ?? "");
     if (
       retained?.file.path === next.path &&
       retained.file.checkpointId === next.checkpointId
@@ -299,37 +277,49 @@ export default function Manuscript({
       /* Current draft is still discarded. */
     }
   };
-  const load = async () => {
+  // A confirmation applies to the text and file the user saw. Never clear
+  // retained text until the replacement has arrived and both still match.
+  const discard = async (reload = false) => {
+    const { file: opened, draft: confirmed } = draftState.current;
     if (
-      dirty &&
+      !opened ||
       !(await confirmDialog(
-        `Reload ${path} from the project and discard your unsaved draft?`,
+        reload
+          ? `Reload ${opened.path} from the project and discard your unsaved draft?`
+          : `Discard your unsaved draft of ${opened.path}?`,
         {
           title: "Discard unsaved draft",
-          confirmLabel: "Discard and reload",
+          confirmLabel: reload ? "Discard and reload" : "Discard",
           destructive: true,
         },
       ))
     )
       return;
     await run(async () => {
-      if (dirty && file) {
-        const current = await studioClient.editor(
-          workspaceId,
-          file.path,
-          file.checkpointId,
-        );
-        forgetDraft();
-        setFile(current);
-        setDraft(current.content);
-        setFileState("current");
-        setNotice("Reloaded from the project");
-        return;
-      }
-      await openFile(path, checkpoint);
-      setNotice((old) => old || "Reloaded from the project");
+      const unchanged = () =>
+        draftState.current.file === opened &&
+        draftState.current.draft === confirmed;
+      if (!unchanged()) return;
+      const current = await studioClient.editor(
+        workspaceId,
+        opened.path,
+        opened.checkpointId,
+      );
+      if (!unchanged()) return;
+      forgetDraft();
+      setFile(current);
+      setDraft(current.content);
+      setFileState("current");
+      setNotice(reload ? "Reloaded from the project" : "Draft discarded");
     });
   };
+  const load = () =>
+    dirty
+      ? discard(true)
+      : run(async () => {
+          await openFile(path, checkpoint);
+          setNotice((old) => old || "Reloaded from the project");
+        });
   const switchFile = (target: string, inCopy = checkpoint) =>
     run(async () => {
       stashDraft();
@@ -362,8 +352,12 @@ export default function Manuscript({
       fileOptions.find((p) => /\.tex$/i.test(p)) ||
       fileOptions[0] ||
       "main.tex";
-    void openFile(target, checkpoint).catch(() => {
-      setPath(fileOptions.includes(target) ? target : "");
+    void run(async () => {
+      try {
+        await openFile(target, checkpoint);
+      } catch {
+        setPath(fileOptions.includes(target) ? target : "");
+      }
     });
   }, [buildsLoaded]);
   // A finished build's result opens by itself. inspectBuild returns the saved
@@ -408,20 +402,7 @@ export default function Manuscript({
       return;
     }
     stashDraft();
-    const next = await studioClient.editor(
-      workspaceId,
-      target,
-      checkpoint || null,
-    );
-    const retained = readDraft(
-      `${draftKey}.${checkpoint || "working"}.${target}`,
-    );
-    setPath(target);
-    setFile(retained?.file ?? next);
-    setDraft(retained?.draft ?? next.content);
-    setFileState(
-      retained && retained.file.hash !== next.hash ? "changed" : "current",
-    );
+    await openFile(target, checkpoint);
     revealLine(line);
     setNotice(
       "Opened the source location recorded in this build. The file may have changed since then. Unsaved drafts are still available for each file.",
@@ -521,26 +502,6 @@ export default function Manuscript({
       setNotice("Saved. Rebuild the manuscript to check the updated files.");
       await onRefresh();
     });
-  const discard = async () => {
-    if (
-      !(await confirmDialog(`Discard your unsaved draft of ${path}?`, {
-        title: "Discard unsaved draft",
-        confirmLabel: "Discard",
-        destructive: true,
-      }))
-    )
-      return;
-    forgetDraft();
-    const current =
-      file &&
-      (await studioClient
-        .editor(workspaceId, file.path, file.checkpointId)
-        .catch(() => null));
-    if (current) setFile(current);
-    setDraft(current?.content ?? file?.content ?? "");
-    setFileState("current");
-    setNotice("Draft discarded");
-  };
   /** Follow a click in the PDF back to its source line. */
   const fromPdf = (point: { page: number; x: number; y: number }) =>
     run(async () => {
@@ -569,6 +530,7 @@ export default function Manuscript({
       <div className="manuscript-bar">
         {shownFiles.length > 1 || !path ? (
           <select
+            disabled={busy}
             aria-label="File"
             className="manuscript-file"
             value={path}
@@ -584,17 +546,24 @@ export default function Manuscript({
         ) : (
           <strong className="manuscript-file">{path}</strong>
         )}
-        {workingCopies.length > 0 && (
+        {(workingCopies.length > 0 || checkpoint) && (
           <select
+            disabled={busy}
             aria-label="Edit in"
             className="manuscript-file"
             value={checkpoint}
             onChange={(e) => {
-              setCheckpoint(e.target.value);
               if (path) void switchFile(path, e.target.value);
+              else setCheckpoint(e.target.value);
             }}
           >
             <option value="">Project working copy</option>
+            {checkpoint &&
+              !workingCopies.some((copy) => copy.value === checkpoint) && (
+                <option value={checkpoint} disabled>
+                  {checkpoint} (no longer available)
+                </option>
+              )}
             {workingCopies.map((c) => (
               <option key={c.value} value={c.value}>
                 {c.label}
@@ -831,14 +800,10 @@ export default function Manuscript({
                       title="Exact build PDF"
                       compact
                       initialPage={pdfPage}
-                      load={() =>
-                        readCapturedPdf(
-                          workspaceFileAdapter({
-                            workspaceId,
-                            revisionId: receipt.pdf!.revision!.id,
-                          }),
-                        )
-                      }
+                      capture={workspaceFileAdapter({
+                        workspaceId,
+                        revisionId: receipt.pdf.revision.id,
+                      })}
                       onSource={(point) => void fromPdf(point)}
                     />
                   </Suspense>

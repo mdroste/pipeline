@@ -11,11 +11,16 @@ const mocks = vi.hoisted(() => ({
   saveExecutionProfile: vi.fn(),
   records: vi.fn(),
   compare: vi.fn(),
+  compareSeries: vi.fn(),
   getWorkspace: vi.fn(),
 }));
 vi.mock("../../lib/studioClient", async (original) => ({
   ...(await original<typeof import("../../lib/studioClient")>()),
-  studioClient: { records: mocks.records, compare: mocks.compare },
+  studioClient: {
+    records: mocks.records,
+    compare: mocks.compare,
+    compareSeries: mocks.compareSeries,
+  },
 }));
 vi.mock("../../lib/workbench/executionClient", () => ({
   executionClient: {
@@ -202,4 +207,40 @@ it("keeps a saved Stata profile a Stata profile", async () => {
       }),
     ),
   );
+});
+
+it("clears the previous pair's difference when inputs now select incompatible units", async () => {
+  const user = userEvent.setup();
+  mocks.records.mockImplementation(async (_w, kind) =>
+    kind === "series"
+      ? ["A", "B", "C"].map((id) => ({
+          id,
+          body: {
+            series: { variable: id, units: id === "C" ? "USD" : "index" },
+            executionId: "run" + id,
+          },
+        }))
+      : [],
+  );
+  mocks.compareSeries.mockResolvedValue({
+    comparable: true,
+    blockers: [],
+    horizons: [0],
+    changes: [3.75],
+  });
+  render(view());
+  const first = await screen.findByLabelText("Baseline series");
+  const alt = screen.getByLabelText("Alternative series");
+  await user.selectOptions(first, "A");
+  await user.selectOptions(alt, "B");
+  await user.click(screen.getByText("Compare series using rationale above"));
+  expect(await screen.findByText("3.75")).toBeInTheDocument();
+  await user.selectOptions(alt, "C");
+  expect(alt).toHaveValue("C");
+  expect(screen.queryByText("3.75")).not.toBeInTheDocument();
+  expect(
+    screen.queryByText(
+      /Variable, units, shock normalization and horizon axes match/,
+    ),
+  ).not.toBeInTheDocument();
 });

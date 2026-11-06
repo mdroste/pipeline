@@ -67,7 +67,7 @@ pub(super) fn build_units(
     step: &StepConfig,
     settings: &crate::settings::Settings,
     source_path: &str,
-    artifact_source: Option<&str>,
+    artifact_source: &[String],
     app: &crate::emit::EventBus,
 ) -> Result<UnitPlan, String> {
     let agents: Vec<String> = if step.agents.is_empty() {
@@ -189,7 +189,7 @@ pub(super) fn build_artifact_units(
     step: &StepConfig,
     source: &crate::pipeline_config::ForEachArtifact,
     fe: &crate::pipeline_config::ForEach,
-    artifact_source: Option<&str>,
+    artifact_source: &[String],
     agents: Vec<String>,
     multi: bool,
     app: &crate::emit::EventBus,
@@ -256,16 +256,24 @@ pub(super) fn build_artifact_units(
     })
 }
 
+pub(super) fn source_artifacts(outputs: &[crate::models::StepOutput], step: &str) -> Vec<String> {
+    outputs
+        .iter()
+        .filter(|out| !out.skipped && out.step_id.split('/').next() == Some(step))
+        .map(|out| out.raw_text.clone())
+        .collect()
+}
+
 /// The bounded dispatch list and the full count of the source list. Reassembly
 /// must instead read the complete source list.
 pub(super) fn artifact_fan_out_elements(
     step: &StepConfig,
     source: &crate::pipeline_config::ForEachArtifact,
     fe: &crate::pipeline_config::ForEach,
-    artifact_source: Option<&str>,
+    artifact_source: &[String],
     app: &crate::emit::EventBus,
 ) -> Result<(Vec<serde_json::Value>, usize), String> {
-    let Some(text) = artifact_source else {
+    if artifact_source.is_empty() {
         let _ = app.emit_event(
             "pipeline:log",
             serde_json::json!({ "line": format!(
@@ -275,38 +283,49 @@ pub(super) fn artifact_fan_out_elements(
         );
         return Ok((Vec::new(), 0));
     };
-    let value = serde_json::from_str::<serde_json::Value>(text.trim()).map_err(|error| {
-        format!(
-            "Fan-out step '{}' needs structured JSON from step '{}': {error}",
-            step.label, source.step
-        )
-    })?;
-    let target = if source.pointer.is_empty() {
-        &value
-    } else {
-        value.pointer(&source.pointer).ok_or_else(|| {
+    let max = fe.max.max(1) as usize;
+    let mut picked = Vec::new();
+    let mut total = 0;
+    for text in artifact_source {
+        let value = serde_json::from_str::<serde_json::Value>(text.trim()).map_err(|error| {
             format!(
-                "Fan-out step '{}' found no value at '{}' in the artifact from step '{}'",
+                "Fan-out step '{}' needs structured JSON from step '{}': {error}",
+                step.label, source.step
+            )
+        })?;
+        let target = if source.pointer.is_empty() {
+            &value
+        } else {
+            value.pointer(&source.pointer).ok_or_else(|| {
+                format!(
+                    "Fan-out step '{}' found no value at '{}' in the artifact from step '{}'",
+                    step.label, source.pointer, source.step
+                )
+            })?
+        };
+        let elements = target.as_array().ok_or_else(|| {
+            format!(
+                "Fan-out step '{}' expects an array at '{}' in the artifact from step '{}'",
                 step.label, source.pointer, source.step
             )
-        })?
-    };
-    let elements = target.as_array().ok_or_else(|| {
-        format!(
-            "Fan-out step '{}' expects an array at '{}' in the artifact from step '{}'",
-            step.label, source.pointer, source.step
-        )
-    })?;
-    let max = fe.max.max(1) as usize;
-    if elements.len() > max {
+        })?;
+        total += elements.len();
+        picked.extend(
+            elements
+                .iter()
+                .take(max.saturating_sub(picked.len()))
+                .cloned(),
+        );
+    }
+    if total > max {
         let _ = app.emit_event(
             "pipeline:log",
             serde_json::json!({ "line": format!(
                 "Fan-out step '{}' was bounded by its item cap at {max} of {} elements",
                 step.label,
-                elements.len()
+                total
             )}),
         );
     }
-    Ok((elements.iter().take(max).cloned().collect(), elements.len()))
+    Ok((picked, total))
 }

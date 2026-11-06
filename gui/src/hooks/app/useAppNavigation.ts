@@ -203,7 +203,17 @@ export function useAppNavigation() {
   };
 
   /** A new conversation outside any project. */
-  const startConversation = async () => {
+  const [creatingConversation, setCreatingConversation] = useState(false);
+  const startingConversation = useRef<Promise<boolean> | null>(null);
+  const startConversation = () => {
+    setCreatingConversation(true);
+    startingConversation.current ??= createUnfiledConversation().finally(() => {
+      startingConversation.current = null;
+      setCreatingConversation(false);
+    });
+    return startingConversation.current;
+  };
+  const createUnfiledConversation = async () => {
     // Asked first, so declining to leave this page creates nothing.
     if (!(await confirmLeaveCurrentPage("workspace"))) return false;
     const sequence = ++navigationSequence.current;
@@ -330,6 +340,7 @@ export function useAppNavigation() {
     openPaddleInstallSettings,
     openWorkspaceSession,
     startConversation,
+    creatingConversation,
     openTask,
     openHistoryRun,
     openActivityProject,

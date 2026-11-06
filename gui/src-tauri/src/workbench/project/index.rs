@@ -31,32 +31,42 @@ pub struct IndexEntry {
 const LIMIT: usize = 500;
 
 pub fn project_index(store: &Store) -> WorkbenchResult<Vec<ProjectIndexItem>> {
+    project_index_page(store, None)
+}
+
+pub fn project_index_page(
+    store: &Store,
+    after_id: Option<&str>,
+) -> WorkbenchResult<Vec<ProjectIndexItem>> {
     let connection = store.connection()?;
     let mut query = connection.prepare(include_str!("index.sql")).map_err(err)?;
     let rows = query
-        .query_map([LIMIT as i64 + 1], |row| {
-            Ok((
-                ProjectIndexItem {
-                    id: row.get(0)?,
-                    name: row.get(1)?,
-                    root: row.get(2)?,
-                    missing_root_at: row.get(3)?,
-                    updated_at: row.get(4)?,
-                    brief: None,
-                    conversation: None,
-                    activity: None,
-                    next_task: None,
-                    proposed_notes: row.get(9)?,
-                    interrupted_edits: row.get(10)?,
-                },
-                [
-                    row.get::<_, Option<String>>(5)?,
-                    row.get(6)?,
-                    row.get(7)?,
-                    row.get(8)?,
-                ],
-            ))
-        })
+        .query_map(
+            rusqlite::params![LIMIT as i64, after_id.unwrap_or("")],
+            |row| {
+                Ok((
+                    ProjectIndexItem {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        root: row.get(2)?,
+                        missing_root_at: row.get(3)?,
+                        updated_at: row.get(4)?,
+                        brief: None,
+                        conversation: None,
+                        activity: None,
+                        next_task: None,
+                        proposed_notes: row.get(9)?,
+                        interrupted_edits: row.get(10)?,
+                    },
+                    [
+                        row.get::<_, Option<String>>(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                        row.get(8)?,
+                    ],
+                ))
+            },
+        )
         .map_err(err)?;
     let mut projects = Vec::new();
     for row in rows {
@@ -77,11 +87,6 @@ pub fn project_index(store: &Store) -> WorkbenchResult<Vec<ProjectIndexItem>> {
             }
         }
         projects.push(project);
-    }
-    if projects.len() > LIMIT {
-        return Err(WorkbenchError::invalid(
-            "Project list exceeds its safety limit",
-        ));
     }
     projects.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.id.cmp(&b.id)));
     Ok(projects)

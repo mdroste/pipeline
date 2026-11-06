@@ -11,11 +11,23 @@ fn verified_status(status: &str) -> bool {
     matches!(status, "verified" | "verified_with_normalization")
 }
 
+fn read_export_text(source: &std::path::Path, name: &str, limit: usize) -> Result<String, String> {
+    use std::io::Read;
+    let file = super::files::open_export_source(source, std::path::Path::new(name))?;
+    let mut text = String::new();
+    file.take(limit as u64 + 1)
+        .read_to_string(&mut text)
+        .map_err(|e| e.to_string())?;
+    if text.len() > limit {
+        return Err(format!("{name} exceeds the export limit"));
+    }
+    Ok(text)
+}
+
 fn read_structured_report(
     source: &std::path::Path,
 ) -> Result<crate::models::PipelineReport, String> {
-    let report_json = std::fs::read_to_string(source.join("report.json"))
-        .map_err(|error| format!("Could not read structured report: {error}"))?;
+    let report_json = read_export_text(source, "report.json", crate::runs::MAX_REPORT_BYTES)?;
     serde_json::from_str(&report_json)
         .map_err(|error| format!("Could not parse structured report: {error}"))
 }
@@ -110,12 +122,7 @@ fn write_full_report(
     source: &std::path::Path,
     destination: &std::path::Path,
 ) -> Result<(), String> {
-    use std::io::Read as _;
-    let mut report = String::new();
-    crate::safety::open_regular_file(&source.join("report.md"))
-        .map_err(|error| format!("Could not export 'report.md': {error}"))?
-        .read_to_string(&mut report)
-        .map_err(|error| format!("Could not export 'report.md': {error}"))?;
+    let report = read_export_text(source, "report.md", crate::runs::MAX_REPORT_BYTES)?;
     std::fs::write(
         destination.join("report.md"),
         output::clean_export_markdown(&report),
@@ -208,7 +215,9 @@ fn custom_artifact_selected(
     if path.starts_with("logs/") {
         return selection.logs;
     }
-    if artifact.group == "document"
+    if artifact.group == "source"
+        || path.ends_with("context/source-snapshot.json")
+        || artifact.group == "document"
         || artifact.group == "pages"
         || artifact.group == "figures"
         || path.starts_with("context/source-evidence/")
@@ -239,24 +248,38 @@ pub(in crate::commands) fn write_custom_payload(
             selection.report,
         )?;
     }
+    let mut remaining = super::files::MAX_RUN_EXPORT_BYTES;
     for artifact in &manifest.artifacts {
         if custom_artifact_selected(artifact, selection) {
-            copy_export_file(source, destination, &artifact.rel_path)?;
+            copy_export_file(
+                source,
+                destination,
+                &artifact.rel_path,
+                Some(artifact),
+                &mut remaining,
+            )?;
         }
     }
     if selection.source_documents {
         if let Some(pages) = &manifest.page_artifacts {
             for page in 1..=pages.count {
-                let relative = format!(
-                    "artifacts/pages/page-{page:0width$}.{}",
-                    pages.extension,
-                    width = pages.digit_width as usize
-                );
-                copy_export_file(source, destination, &relative)?;
+                let relative = pages.rel_path(page)?;
+                copy_export_file(source, destination, &relative, None, &mut remaining)?;
             }
         }
     }
     Ok(())
+}
+
+fn verified_run_directory(root: &std::path::Path, id: &str) -> Result<std::path::PathBuf, String> {
+    let expected = root.join(id);
+    let source = expected
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve run '{id}': {e}"))?;
+    if source != expected || !source.is_dir() {
+        return Err("Run export source is invalid".into());
+    }
+    Ok(source)
 }
 
 /// Export a durable run under an explicit disclosure contract. Shareable is
@@ -270,19 +293,16 @@ pub async fn export_run_package(
 ) -> Result<ExportPackageResult, String> {
     tokio::task::spawn_blocking(move || {
         crate::runs::validate_run_id(&run_id)?;
-        let manifest = crate::runs::load_manifest(&run_id)?;
-        if manifest.status == "running" {
-            return Err("Wait for this run to finish before exporting it".to_string());
-        }
         let runs_root = crate::runs::runs_dir()?
             .canonicalize()
             .map_err(|error| format!("Failed to resolve run storage: {error}"))?;
-        let source = runs_root
-            .join(&run_id)
-            .canonicalize()
-            .map_err(|error| format!("Failed to resolve run '{run_id}': {error}"))?;
-        if !source.starts_with(&runs_root) || !source.is_dir() {
-            return Err("Run export source is invalid".to_string());
+        let source = verified_run_directory(&runs_root, &run_id)?;
+        let manifest = crate::runs::load_manifest(&run_id)?;
+        if manifest.run_id != run_id {
+            return Err("Review manifest belongs to a different run".into());
+        }
+        if manifest.status == "running" {
+            return Err("Wait for this run to finish before exporting it".into());
         }
         let destination = std::path::PathBuf::from(destination);
         std::fs::create_dir_all(&destination)
@@ -427,4 +447,43 @@ pub async fn save_all_artifacts(
 
     finish_export_stage(&stage, destination, "pipeline-core-export")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn sibling_run_cannot_replace_selected_run() {
+        let library = tempfile::tempdir().unwrap();
+        let root = library.path().canonicalize().unwrap();
+        std::fs::create_dir(root.join("other")).unwrap();
+        std::os::unix::fs::symlink(root.join("other"), root.join("selected")).unwrap();
+        assert!(verified_run_directory(&root, "selected").is_err());
+        assert!(verified_run_directory(&root, "other").is_ok());
+    }
+    #[test]
+    fn captured_sources_follow_only_the_source_documents_choice() {
+        for (path, group) in [
+            ("source-snapshot/paper.tex", "source"),
+            ("context/source-snapshot.json", "context"),
+        ] {
+            let artifact = crate::runs::ArtifactEntry {
+                rel_path: path.into(),
+                group: group.into(),
+                kind: "text".into(),
+                label: String::new(),
+                bytes: 0,
+                sha256: String::new(),
+            };
+            for selected in [true, false] {
+                let selection = ExportSelection {
+                    source_documents: selected,
+                    supporting_artifacts: !selected,
+                    ..Default::default()
+                };
+                assert_eq!(custom_artifact_selected(&artifact, &selection), selected);
+            }
+        }
+    }
 }

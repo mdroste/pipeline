@@ -65,12 +65,12 @@ pub fn condition_met(
 /// Text of a prior step by id: exact composite id, or the base id (joining all
 /// agents' outputs for a multi-agent step).
 fn resolve_step_text(step: &str, prior: &[StepOutput]) -> Option<String> {
-    if let Some(o) = prior.iter().find(|o| o.step_id == step) {
+    if let Some(o) = prior.iter().find(|o| !o.skipped && o.step_id == step) {
         return Some(o.raw_text.clone());
     }
     let joined: Vec<&str> = prior
         .iter()
-        .filter(|o| o.step_id.split('/').next() == Some(step))
+        .filter(|o| !o.skipped && o.step_id.split('/').next() == Some(step))
         .map(|o| o.raw_text.as_str())
         .collect();
     if joined.is_empty() {
@@ -99,6 +99,37 @@ mod tests {
             "metadata": { "paper_type": "empirical" },
             "flags": { "has_code": true }
         })
+    }
+
+    #[test]
+    fn skipped_placeholder_is_never_output_text() {
+        let skipped = StepOutput {
+            skipped: true,
+            ..out("review/a", "(skipped)")
+        };
+        for step in ["review/a", "review"] {
+            for negate in [false, true] {
+                let check = RunCondition::OutputMatches {
+                    step: step.into(),
+                    pattern: ".+".into(),
+                    negate,
+                };
+                assert_eq!(
+                    condition_met(&check, &survey(), std::slice::from_ref(&skipped)),
+                    negate
+                );
+                // Failed producers have no output row; an empty response has no match.
+                assert_eq!(condition_met(&check, &survey(), &[]), negate);
+                assert_eq!(
+                    condition_met(&check, &survey(), &[out("review/a", "")]),
+                    negate
+                );
+                assert_eq!(
+                    condition_met(&check, &survey(), &[out("review/a", "result")]),
+                    !negate
+                );
+            }
+        }
     }
 
     #[test]

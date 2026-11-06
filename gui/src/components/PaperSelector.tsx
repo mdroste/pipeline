@@ -184,9 +184,9 @@ export default function PaperSelector({
             type="button"
             onClick={handleFile}
             disabled={disabled || picking}
-            className="flex-1 py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
-                       text-gray-900 dark:text-gray-100
-                       hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors text-left truncate"
+            className="flex-1 py-2 px-3 border border-gray-300 dark:border-line rounded-lg text-sm
+                       text-gray-900 dark:text-ink
+                       hover:bg-gray-50 dark:hover:bg-sunken disabled:opacity-50 transition-colors text-left truncate"
           >
             {selection?.selectionKind === "file"
               ? selection.paths.length === 1
@@ -199,8 +199,8 @@ export default function PaperSelector({
           type="button"
           onClick={handleDir}
           disabled={disabled || picking}
-          className={`${inputMode === "folder" ? "flex-1 text-left" : ""} py-2 px-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-500 dark:text-gray-400
-                     hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors shrink-0`}
+          className={`${inputMode === "folder" ? "flex-1 text-left" : ""} py-2 px-2.5 border border-gray-300 dark:border-line rounded-lg text-gray-500 dark:text-gray-400
+                     hover:bg-gray-50 dark:hover:bg-sunken disabled:opacity-50 transition-colors shrink-0`}
           title="Select folder"
         >
           <svg
@@ -267,7 +267,7 @@ export default function PaperSelector({
               onChange={(event) =>
                 setInterpretation(event.target.value as InputInterpretation)
               }
-              className="mt-1 w-full py-2 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
+              className="mt-1 w-full py-2 px-3 border border-gray-300 dark:border-line rounded-lg text-sm
                          text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200
                          focus:outline-none focus:ring-2 focus:ring-gray-400 focus:border-transparent
                          transition-colors disabled:opacity-50"

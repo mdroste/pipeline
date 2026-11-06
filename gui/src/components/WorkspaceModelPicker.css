@@ -1,0 +1,117 @@
+/* The model list owns scrolling; connection and effort stay close to hand. */
+.workspace-model-picker-header,
+.workspace-model-thinking {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.workspace-model-picker-header {
+  padding: 10px 12px 8px;
+}
+.workspace-model-provider.ui-select-trigger,
+.workspace-model-effort.ui-select-trigger {
+  width: auto;
+  max-width: 75%;
+  min-height: 30px;
+  padding: 4px 8px;
+  font-size: var(--ui-text-label);
+}
+.workspace-model-provider.ui-select-trigger {
+  border-color: transparent;
+  background: var(--ui-sunken);
+  box-shadow: none;
+}
+.workspace-model-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 8px 6px;
+  padding: 7px 8px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  color: var(--ui-muted);
+}
+.workspace-model-search:focus-within {
+  border-color: var(--ui-accent);
+}
+.workspace-model-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ui-text);
+  font-size: var(--ui-text-label);
+}
+.workspace-model-list {
+  max-height: min(252px, 35vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 6px 6px;
+}
+.workspace-model-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 8px;
+  border-radius: var(--ui-radius-sm);
+  outline: none;
+  cursor: default;
+}
+.workspace-model-option:hover,
+.workspace-model-option:focus {
+  background: var(--ui-sunken);
+}
+.workspace-model-option:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ui-accent);
+}
+.workspace-model-option[aria-selected="true"] {
+  color: var(--ui-accent);
+}
+.workspace-model-option[aria-disabled="true"] {
+  opacity: 0.5;
+}
+.workspace-model-tag {
+  flex-shrink: 0;
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+}
+.workspace-model-description {
+  min-height: 48px;
+  max-height: 80px;
+  overflow-y: auto;
+  padding: 8px 14px;
+  background: var(--ui-sunken);
+  color: var(--ui-muted);
+  font-size: var(--ui-text-meta);
+  overflow-wrap: anywhere;
+}
+.workspace-model-account {
+  border-top: 1px solid var(--ui-border);
+  padding: 0 12px;
+  font-size: var(--ui-text-meta);
+  color: var(--ui-muted);
+}
+.workspace-model-account[open] {
+  padding-bottom: 12px;
+}
+.workspace-model-account summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 0;
+  list-style: none;
+  cursor: pointer;
+}
+.workspace-model-account summary::-webkit-details-marker {
+  display: none;
+}
+.workspace-model-account summary:hover {
+  color: var(--ui-text);
+}
+.workspace-model-account[open] summary svg {
+  transform: rotate(180deg);
+}

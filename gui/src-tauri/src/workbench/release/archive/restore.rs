@@ -301,11 +301,7 @@ pub fn import_archive(
         .iter()
         .map(|blob| blob.original_reference.as_str())
         .collect::<Vec<_>>();
-    for (table, column) in [
-        ("artifacts", "storage_reference"),
-        ("paper_revisions", "text_reference"),
-        ("source_versions", "text_reference"),
-    ] {
+    for (table, column) in super::omissions::FILE_COLUMNS {
         let mut statement = imported
             .prepare(&format!(
                 "SELECT {column} FROM {table} WHERE {column} IS NOT NULL"
@@ -438,11 +434,7 @@ pub fn import_archive(
         );
     }
     for (old, new) in &reference_map {
-        for (table, column) in [
-            ("artifacts", "storage_reference"),
-            ("paper_revisions", "text_reference"),
-            ("source_versions", "text_reference"),
-        ] {
+        for (table, column) in super::omissions::FILE_COLUMNS {
             imported
                 .execute(
                     &format!("UPDATE {table} SET {column}=?2 WHERE {column}=?1"),
@@ -453,11 +445,7 @@ pub fn import_archive(
                 })?;
         }
     }
-    for (table, column) in [
-        ("artifacts", "storage_reference"),
-        ("paper_revisions", "text_reference"),
-        ("source_versions", "text_reference"),
-    ] {
+    for (table, column) in super::omissions::FILE_COLUMNS {
         let mut statement = imported
             .prepare(&format!(
                 "SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL"

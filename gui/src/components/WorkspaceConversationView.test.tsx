@@ -1,11 +1,16 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { createRef, type ComponentProps } from "react";
+import { FileNavigationContext } from "./file-workspace/FileNavigation";
+import { useContext, createRef, type ComponentProps } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import WorkspaceConversationView from "./WorkspaceConversationView";
 import { createStreamStore } from "../hooks/workspace/streamStore";
 import type { TranscriptItem } from "../lib/workbenchTypes";
 import { appEvents } from "../lib/appEvents";
 
+const readers = vi.hoisted(() => ({ chat: vi.fn(), inline: vi.fn() }));
+vi.mock("../lib/fileWorkspaceClient", () => ({
+  workspaceFileAdapter: () => ({ readInline: readers.inline }),
+}));
 const markdown = vi.hoisted(() => ({ rendered: [] as string[] }));
 // Called once per message each time the conversation renders.
 const conversationRenders = vi.hoisted(() => ({ count: 0 }));
@@ -22,6 +27,13 @@ vi.mock("../lib/workspaceTranscript", async (importOriginal) => {
 });
 vi.mock("react-markdown", () => ({
   default: ({ children }: { children: string }) => {
+    const files = useContext(FileNavigationContext);
+    if (children === "![Chart](chart.png)")
+      return (
+        <button onClick={() => void files!.image("chart.png")}>
+          Load chat image
+        </button>
+      );
     markdown.rendered.push(children);
     return <div>{children}</div>;
   },
@@ -29,7 +41,7 @@ vi.mock("react-markdown", () => ({
 
 vi.mock("../lib/workbench/workspaceClient", () => ({ workspaceClient: {} }));
 vi.mock("../lib/workbench/conversationClient", () => ({
-  conversationClient: {},
+  conversationClient: { readConversationFile: readers.chat },
 }));
 vi.mock("../lib/workbench/harnessClient", () => ({ harnessClient: {} }));
 vi.mock("../lib/workbench/researchClient", () => ({ researchClient: {} }));
@@ -554,3 +566,40 @@ it("shows warnings beside the composer", () => {
     "Refresh the working copy before accepting.",
   );
 });
+
+it.each([
+  ["unfiled", null, null],
+  ["project without folder", { id: "w", root: null }, null],
+  ["attached folder", { id: "w", root: "/project" }, null],
+  ["working copy", { id: "w", root: "/project" }, "copy"],
+])(
+  "reads an inline chart from the right scope: %s",
+  async (label, workspace, checkpoint) => {
+    readers.inline
+      .mockReset()
+      .mockResolvedValue({ mime: "image/png", base64: "image" });
+    readers.chat
+      .mockReset()
+      .mockResolvedValue({ mime: "image/png", base64: "image" });
+    const item = { ...message(1), payload: { text: "![Chart](chart.png)" } };
+    render(
+      view({
+        snapshot: {
+          session: { id: "s", overrides: { projectCheckpointId: checkpoint } },
+          workspace,
+          turns: [],
+          items: [item],
+        } as never,
+        renderedItems: [item],
+        transcriptEnd: 1,
+        totalItems: 1,
+      }),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Load chat image" }),
+    );
+    if (label === "attached folder")
+      expect(readers.inline).toHaveBeenCalledWith("chart.png");
+    else expect(readers.chat).toHaveBeenCalledWith("s", "chart.png");
+  },
+);

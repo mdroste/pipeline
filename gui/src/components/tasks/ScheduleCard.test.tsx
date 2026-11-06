@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import ScheduleCard from "./ScheduleCard";
 import { type Schedule } from "../../lib/taskTypes";
@@ -137,4 +143,28 @@ it("deletes a schedule only after confirmation", async () => {
     id: "weekly",
     revision: 4,
   });
+});
+
+it("offers the blocking run when the due time passes with the card open", () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(1000000);
+    render(
+      <ScheduleCard
+        schedule={{
+          ...schedule,
+          nextDueAt: 1060,
+          blockingRun: { id: "prior", state: "waiting" },
+        }}
+        onUpdated={vi.fn()}
+        onError={vi.fn()}
+        onOpenRun={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText("Open previous run")).toBeNull();
+    act(() => vi.advanceTimersByTime(61000));
+    expect(screen.getByText("Open previous run")).toBeInTheDocument();
+  } finally {
+    vi.useRealTimers();
+  }
 });

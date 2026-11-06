@@ -113,3 +113,20 @@ describe("ReviewRunView", () => {
     expect(props.onOpenHistory).toHaveBeenCalledWith();
   });
 });
+
+it("offers retry and saved history after a finished report fails to load", async () => {
+  const props = renderView({
+    run: queuedRun("draft", "done", { resultAvailable: true, runId: "saved" }),
+    resultError: "Read failed",
+    onRetryResult: vi.fn(),
+  });
+  expect(
+    screen.getByText(/Could not load the report: Read failed/),
+  ).toBeVisible();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Retry loading report" }),
+  );
+  expect(props.onRetryResult).toHaveBeenCalledOnce();
+  await userEvent.click(screen.getByRole("button", { name: "Open report" }));
+  expect(props.onOpenHistory).toHaveBeenCalledWith("saved");
+});

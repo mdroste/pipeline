@@ -1,3 +1,4 @@
+import { allProjectPages } from "../projectPages";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   ClearWorkspaceRootRequest,
@@ -29,10 +30,17 @@ export const workspaceClient = {
   getWorkspace(workspaceId: string) {
     return invoke<Workspace>("workbench_get_workspace", { workspaceId });
   },
-  listWorkspaces(includeArchived = false) {
-    return invoke<WorkspaceList>("workbench_list_workspaces", {
-      includeArchived,
+  async listWorkspaces(includeArchived = false) {
+    let sequence = 0;
+    const workspaces = await allProjectPages<Workspace>(async (afterId) => {
+      const page = await invoke<WorkspaceList>("workbench_list_workspaces", {
+        includeArchived,
+        ...(afterId ? { afterId } : {}),
+      });
+      sequence = page.sequence;
+      return page.workspaces;
     });
+    return { sequence, workspaces };
   },
   updateWorkspace(request: UpdateWorkspaceRequest) {
     return invoke<Mutation<Workspace>>("workbench_update_workspace", {

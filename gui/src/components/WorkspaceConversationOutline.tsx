@@ -16,12 +16,16 @@ export default function WorkspaceConversationOutline({
   onJump,
   onClose,
   embedded = false,
+  onOlder,
+  loadingOlder = false,
 }: {
   entries: ConversationEntry[];
   selectedId: string | null;
   onJump: (id: string) => void;
   onClose: () => void;
   embedded?: boolean;
+  onOlder?: () => void;
+  loadingOlder?: boolean;
 }) {
   const [width, setWidth] = usePersistentPanelWidth(
     "pipeline.workspace.outlineWidth",
@@ -110,7 +114,13 @@ export default function WorkspaceConversationOutline({
         <p role="status" className="text-xs text-gray-500">
           {matches.length} {matches.length === 1 ? "message" : "messages"}
           {query ? " found" : ""}
+          {onOlder ? " in loaded history" : ""}
         </p>
+        {onOlder && (
+          <button disabled={loadingOlder} onClick={onOlder}>
+            Search older messages
+          </button>
+        )}
       </div>
       <nav
         aria-label="Prompts and responses"
@@ -137,9 +147,11 @@ export default function WorkspaceConversationOutline({
           ))}
         {!matches.length && (
           <p className="p-3 text-xs text-gray-500">
-            {entries.length
-              ? "No matching messages."
-              : "Prompts and responses will appear here."}
+            {onOlder
+              ? "No matches in loaded history."
+              : entries.length
+                ? "No matching messages."
+                : "Prompts and responses will appear here."}
           </p>
         )}
       </nav>

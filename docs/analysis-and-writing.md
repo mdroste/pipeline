@@ -1,13 +1,13 @@
 # Analyze and write
 
-This guide covers the **Analyze** and **Write** areas of a project. Running
+This guide covers **Analysis**, **Manuscript**, and **Reviews & edits**. Open **Project tools** to browse every analysis and writing view. Running
 your own code needs an attached project folder. See
 [Projects and conversations](projects.md) for creating projects and the other
 areas.
 
-## Analyze
+## Analysis
 
-Analyze runs your code on your computer and keeps the results with the
+Analysis runs your code on your computer and keeps the results with the
 project. A typical order:
 
 1. Set up a command in **Command settings**.
@@ -268,7 +268,7 @@ continue, it stops and shows why.
   accounting identity, comparative statics, dimensional check, or
   counterexample search, with the run that tested it.
 
-## Write
+## Manuscript and revisions
 
 ### Manuscript
 
@@ -280,6 +280,12 @@ a file changed elsewhere, Pipeline tells you when you come back to it, and stops
 any save. Choose **Compare with current file** to keep your draft and see it
 against the current file. A file with no draft updates by itself.
 **Source** and **Changes** appear once you have a draft.
+
+The file and **Edit in** menus wait until the chosen file finishes opening.
+If it cannot open, the current file stays selected. **Discard unsaved draft**
+keeps any edits made after you confirmed. Pipeline retains file drafts before
+quitting or restarting for an update. If draft storage is full, save the files
+before closing Pipeline.
 
 To build the manuscript:
 

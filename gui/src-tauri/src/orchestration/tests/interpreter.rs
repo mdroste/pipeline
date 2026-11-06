@@ -255,3 +255,33 @@ fn foreach_binds_each_input_once() {
         Advance::Finished
     ));
 }
+
+#[test]
+fn occurrence_session_is_a_valid_user_conditional_in_manual_and_scheduled_runs() {
+    for occurrence_session in [None, Some("scheduled-session".into())] {
+        for condition in [false, true] {
+            let plan = chain(vec![step(
+                "occurrenceSession",
+                Action::If {
+                    condition: Condition::Equals {
+                        left: Binding::Literal {
+                            value: json!(condition),
+                        },
+                        right: json!(true),
+                    },
+                    then_steps: vec![delay("yes")],
+                    else_steps: vec![delay("no")],
+                },
+            )]);
+            validate(&plan).unwrap();
+            let mut progress = state::Progress {
+                occurrence_session: occurrence_session.clone(),
+                ..Default::default()
+            };
+            let Advance::Ready(ready) = state::advance(&plan, &mut progress, &json!({})) else {
+                panic!("Expected branch")
+            };
+            assert_eq!(ready[0].step.id, if condition { "yes" } else { "no" });
+        }
+    }
+}

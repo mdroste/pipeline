@@ -135,6 +135,35 @@ impl FileSource for WorkspaceSource {
         }))
     }
 }
+/// Hold the authorized immutable file itself so unlinking or replacing its
+/// name cannot break a long-open reader. Cloned descriptors share a cursor.
+pub(super) struct CapturedPdf {
+    pub file: fs::File,
+    pub modified: std::time::SystemTime,
+    pub size: u64,
+    pub hash: String,
+    pub reads: std::sync::Mutex<()>,
+}
+impl FileSource for CapturedPdf {
+    fn open(&self) -> Result<Option<OpenedSource>, String> {
+        let meta = self.file.metadata().map_err(|e| e.to_string())?;
+        let unchanged = meta.len() == self.size && meta.modified().ok() == Some(self.modified);
+        Ok(Some(OpenedSource {
+            file: self.file.try_clone().map_err(|e| e.to_string())?,
+            size: meta.len(),
+            stamp: if unchanged {
+                self.hash.clone()
+            } else {
+                String::new()
+            },
+        }))
+    }
+    fn read(&self, file: &mut fs::File, start: u64, length: u64) -> std::io::Result<Vec<u8>> {
+        let _guard = self.reads.lock().unwrap_or_else(|e| e.into_inner());
+        file_stream::read_part(file, start, length)
+    }
+}
+
 /// Plain UTF-8 stays editable. Anything else is decoded for reading only, and
 /// the caller reports that the text is approximate.
 fn decode_text(bytes: &[u8]) -> (String, bool) {
@@ -154,20 +183,15 @@ fn utf8_prefix(bytes: &[u8]) -> &[u8] {
 /// A captured PDF reaches the reader over the file scheme, not as base64 in IPC.
 /// Reading the revision has just checked its bytes against the recorded hash.
 fn captured_preview(store: &Store, request: FileReadRequest) -> WorkbenchResult<FilePreview> {
-    let (mut preview, source) = read_workspace_source(store, request)?;
-    if let (true, Some((folder, path))) = (preview.kind == "pdf", source) {
-        let stat = SafeRoot::open(&folder)?
-            .stat(&path)?
-            .ok_or_else(|| WorkbenchError::invalid("The captured file is unavailable"))?;
-        let token = file_stream::issue(
-            Arc::new(WorkspaceSource { folder, path }),
-            "application/pdf",
-            stat.stamp(),
-            Presentation::Bytes,
-        )
-        .map_err(err)?;
+    let (mut preview, source) = read_workspace_source(store, request, true)?;
+    if let Some(source) = source {
+        let local =
+            crate::storage::local_root().is_ok_and(|local| store.root_path().starts_with(local));
+        let (token, pinned) =
+            file_stream::issue_capture(Arc::new(source), preview.hash.clone(), local)
+                .map_err(err)?;
         preview.stream_token = Some(token);
-        preview.base64 = None;
+        preview.range_capture = pinned;
     }
     Ok(preview)
 }
@@ -266,6 +290,7 @@ pub fn open_workspace_file(
         && editable_source(&request.path)
         && !ignored(&request.path, &[]);
     Ok(FilePreview {
+        range_capture: false,
         external_path: Some(folder.join(&request.path).to_string_lossy().into_owned()),
         scope_root: Some(folder.to_string_lossy().into_owned()),
         bytes: stat.size as usize,

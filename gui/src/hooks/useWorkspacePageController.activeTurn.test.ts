@@ -429,10 +429,18 @@ it("leaves the composer alone for a follow-up or automation preparing in this co
   followUp.unmount();
 });
 
-it("does not add Stop for an automation's running turn the transcript has not shown", async () => {
+it("does not add Stop for an automation even with a durable running turn", async () => {
   mocks.activeTurn.mockResolvedValue(
     hostTurn({ automated: true, composer: false }),
   );
+  saved.A.turns = [
+    {
+      id: "record",
+      bindingId: "binding-A",
+      providerTurnId: "turn-1",
+      terminalAt: null,
+    },
+  ];
   const { result, unmount } = await open("A");
   expect(result.current.conversation.active).toBeNull();
   expect(result.current.conversation.backgroundTurn).toMatchObject({
@@ -974,4 +982,36 @@ it("keeps an archived conversation opened from another project", async () => {
   expect(hook.result.current.conversation.snapshot?.session.id).toBe("Q");
   expect(hook.result.current.navigation.sessions).toEqual([saved.B.session]);
   hook.unmount();
+});
+
+it("preserves a newer durable composer draft when the host correctly refuses to clear it", async () => {
+  const { result, unmount } = await open("A");
+  act(() => result.current.persistence.editDraft("Original prompt"));
+  mocks.sendTurn.mockImplementationOnce(async () => {
+    // Another writer edits the persisted draft between submit and acknowledgement.
+    saved.A = {
+      ...saved.A,
+      session: {
+        ...saved.A.session,
+        revision: saved.A.session.revision + 1,
+        draft: "A newer unpublished thought",
+      },
+    };
+    return {
+      epoch: 1,
+      threadId: "thread-A",
+      turnId: "turn-1",
+      draftCleared: false,
+    };
+  });
+  await act(async () => {
+    await result.current.conversation.send();
+  });
+  await waitFor(() =>
+    expect(result.current.persistence.draft).toBe(
+      "A newer unpublished thought",
+    ),
+  );
+  expect(saved.A.session.draft).toBe("A newer unpublished thought");
+  unmount();
 });

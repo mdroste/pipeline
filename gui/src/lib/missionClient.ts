@@ -1,3 +1,4 @@
+import type { ClaimRecord } from "./claimRecord";
 import { invoke } from "@tauri-apps/api/core";
 import type { Json, Scope, TaskEvent } from "./taskTypes";
 import type { OpenResearchObject } from "./deskClient";
@@ -11,6 +12,7 @@ export type MissionMode =
   | "maintenance";
 export interface MissionBudget {
   maxRounds: number;
+  maxApiCostCents?: number;
   maxActions: number;
   activeSeconds: number;
   actionTimeoutSeconds: number;
@@ -129,6 +131,7 @@ export interface MissionChallenge {
   >[];
 }
 export interface MissionRound {
+  claimRecord?: ClaimRecord;
   number: number;
   changeCursor: number;
   plan: MissionPlan;
@@ -204,9 +207,19 @@ export const missionClient = {
     }),
   choices: (sessionId: string) =>
     invoke<MissionChoices>("mission_choices", { sessionId }),
-  list: (offset = 0, workspaceId: string | null = null) =>
-    invoke<MissionSummary[]>("mission_list", { offset, workspaceId }),
+  list: (offset = 0, workspaceId: string | null = null, lookahead = false) =>
+    invoke<MissionSummary[]>("mission_list", {
+      offset,
+      workspaceId,
+      ...(lookahead ? { lookahead } : {}),
+    }),
   get: (id: string) => invoke<Mission>("mission_get", { id }),
+  accept: (m: Mission, subjectVersion: string) =>
+    invoke<Mission>("mission_accept_assessment", {
+      id: m.id,
+      revision: m.revision,
+      subjectVersion,
+    }),
   control: (m: Mission, action: string) =>
     invoke<Mission>("mission_control", {
       id: m.id,

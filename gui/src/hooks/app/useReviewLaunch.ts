@@ -271,6 +271,7 @@ export function useReviewLaunch(
             extraInputs: prepared.extraInputs ?? null,
             expectedProfileConfigSnapshotId:
               prepared.plan.profileConfigSnapshotId,
+            reviewHandoffId: prepared.snapshot.inputSelection?.reviewHandoffId,
             ...overrides,
           })
         : [
@@ -283,6 +284,8 @@ export function useReviewLaunch(
               variables: prepared.variables ?? null,
               extraInputs: prepared.extraInputs ?? null,
               expectedProfileSnapshotId: prepared.plan.profileSnapshotId,
+              reviewHandoffId:
+                prepared.snapshot.inputSelection?.reviewHandoffId,
               ...overrides,
             }),
           ];
@@ -374,10 +377,11 @@ export function useReviewLaunch(
 
   const handleWorkspaceReviewHandoff = async (handoff: ReviewHandoff) => {
     const selection: PrimaryInputSelection = {
+      reviewHandoffId: handoff.id,
       paths: [handoff.stagedPath],
       interpretation: handoff.inputInterpretation,
       selectionKind:
-        handoff.inputInterpretation === "source_tree" ? "folder" : "file",
+        handoff.inputInterpretation === "document" ? "file" : "folder",
     };
     noteEditPreview.current = null;
     setAuthorNote("");
@@ -426,9 +430,9 @@ export function useReviewLaunch(
   /** Queue a re-run of a past run and open it. */
   const rerunReview = async (runId: string, onlyFailed: boolean) => {
     try {
-      const variables = await confirmRerunRequirements(runId, onlyFailed);
-      if (variables === null) return;
-      const run = await enqueueRerun(runId, { onlyFailed, variables });
+      const confirmed = await confirmRerunRequirements(runId, onlyFailed);
+      if (confirmed === null) return;
+      const run = await enqueueRerun(runId, { onlyFailed, ...confirmed });
       await openRun(run.key);
     } catch (error) {
       notify(`The re-run could not be queued: ${workbenchErrorMessage(error)}`);

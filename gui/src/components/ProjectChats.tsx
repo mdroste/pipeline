@@ -4,7 +4,6 @@ import { appEvents } from "../lib/appEvents";
 import { projectDate, type ProjectIndexItem } from "../lib/projectIndex";
 import { conversationClient } from "../lib/workbench/conversationClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
-import type { WorkbenchSession } from "../lib/workbenchTypes";
 import { newOperation } from "../lib/workspaceSessionState";
 import ReportIssueLink from "./ReportIssueLink";
 import { MoveConversationDialog } from "./WorkspaceConversationActions";
@@ -19,6 +18,7 @@ const FILTERS: Array<[ChatFilter, string]> = [
 /** Chats share the Projects home, but project membership is always optional. */
 export default function ProjectChats({
   conversations,
+  loadMore,
   projects,
   loading,
   error,
@@ -29,6 +29,7 @@ export default function ProjectChats({
   onOpenProject,
 }: {
   conversations: IndexedConversation[];
+  loadMore?: () => void;
   projects: ProjectIndexItem[];
   loading: boolean;
   error: string | null;
@@ -40,7 +41,9 @@ export default function ProjectChats({
 }) {
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [moveTarget, setMoveTarget] = useState<WorkbenchSession | null>(null);
+  const [moveTarget, setMoveTarget] = useState<
+    IndexedConversation["session"] | null
+  >(null);
   const [moveError, setMoveError] = useState<string | null>(null);
   const [moving, setMoving] = useState(false);
   const term = search.trim().toLocaleLowerCase();
@@ -174,6 +177,15 @@ export default function ProjectChats({
           </button>
         </article>
       ))}
+      {loadMore && (
+        <button
+          className="ui-page-button"
+          disabled={loading}
+          onClick={loadMore}
+        >
+          Load more chats
+        </button>
+      )}
       {moveTarget && (
         <MoveConversationDialog
           session={moveTarget}

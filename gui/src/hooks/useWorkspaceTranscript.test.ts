@@ -135,3 +135,17 @@ it("reads back past tool-only pages until a message appears", async () => {
   await waitFor(() => expect(result.current.renderedItems).toHaveLength(1));
   expect(mocks.transcriptPage).toHaveBeenCalledTimes(2);
 });
+
+it("fetches the earlier persisted page for outline search without moving the displayed page", async () => {
+  mocks.transcriptPage.mockResolvedValue({ items: items(0), nextCursor: null });
+  const { result } = renderHook(() => {
+    const [snapshot, setSnapshot] = useState<ConversationSnapshot | null>({
+      ...initial,
+      items: [...items(200), ...items(400)],
+    });
+    return useWorkspaceTranscript(snapshot, setSnapshot, vi.fn());
+  });
+  await act(() => result.current.loadEarlier("outline"));
+  expect(result.current.renderedItems[0].id).toBe("400");
+  expect(result.current.allRenderedItems[0].id).toBe("0");
+});

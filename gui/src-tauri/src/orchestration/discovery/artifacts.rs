@@ -78,13 +78,14 @@ fn capture_manuscript(
     ] {
         out.insert(name.into(), capture_text(s, scope, text, name)?);
     }
+    let supplied_root_tex = v.files.iter().any(|path| path == "paper.tex");
     for (i, path) in v.files.into_iter().enumerate() {
         let name = std::path::Path::new(&path)
             .file_name()
             .and_then(|p| p.to_str())
             .ok_or("Artifact name missing")?;
         let artifact = adapters::capture(s, scope, json!({"path":path}), name)?;
-        if let Some(canonical) = out.get(name) {
+        if let Some(canonical) = out.get(&path) {
             if canonical["hash"] != artifact["hash"] {
                 return Err(Rejection::Response(format!(
                     "Listed {name} differs from the returned manuscript source"
@@ -93,11 +94,7 @@ fn capture_manuscript(
         }
         out.insert(format!("attachment-{i}-{name}"), artifact);
     }
-    if out.keys().any(|k| k.ends_with(".pdf"))
-        && !out
-            .keys()
-            .any(|k| k.starts_with("attachment-") && k.ends_with("-paper.tex"))
-    {
+    if out.keys().any(|k| k.ends_with(".pdf")) && !supplied_root_tex {
         return Err("A PDF attachment must include its matching paper.tex source".into());
     }
     check_artifacts(&out)?;
@@ -117,17 +114,24 @@ pub(super) async fn consume(
         validate::investigation(&v)?;
         let ws = p.run.workspace_id.clone();
         let refs = v.sources.clone();
-        let sources = run_store(move |s| research::sources(&s, &ws, &refs))
-            .await
-            .map_err(|e| {
-                // A source the reply named wrongly is refused as invalid input.
-                if e.code == "invalid_input" {
-                    Rejection::Response(e.message)
-                } else {
-                    Rejection::Host(e.message)
-                }
-            })?;
+        let ids = v.execution_ids.clone();
+        let (sources, checks) = run_store(move |s| {
+            let checks = research::execution_evidence(&s, &ws, ids)?;
+            Ok((research::sources(&s, &ws, &refs)?, checks))
+        })
+        .await
+        .map_err(|e| {
+            // A source the reply named wrongly is refused as invalid input.
+            if e.code == "invalid_input" {
+                Rejection::Response(e.message)
+            } else {
+                Rejection::Host(e.message)
+            }
+        })?;
         let round = p.papers[paper].rounds.len() + 1;
+        for (i, check) in checks.into_iter().enumerate() {
+            evidence.insert(format!("r{round}-execution{i}"), check);
+        }
         for (i, source) in sources.into_iter().enumerate() {
             evidence.insert(format!("r{round}-source{i}"), source);
         }

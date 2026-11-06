@@ -173,3 +173,27 @@ pub(super) fn recovery_failure(manifest: &RunManifest) -> Vec<crate::models::Ste
         error: error.to_string(),
     }]
 }
+
+/// The structured report must remain readable after its checkpoints retire.
+pub(crate) fn serialize_report(report: &crate::models::PipelineReport) -> Result<Vec<u8>, String> {
+    struct ReportBytes(Vec<u8>);
+    impl std::io::Write for ReportBytes {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > super::MAX_REPORT_BYTES.saturating_sub(self.0.len()) {
+                return Err(std::io::Error::other(format!(
+                    "Structured report exceeds {} MiB. The step checkpoints are retained.",
+                    super::MAX_REPORT_BYTES >> 20
+                )));
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut bytes = ReportBytes(Vec::new());
+    serde_json::to_writer_pretty(&mut bytes, report)
+        .map_err(|error| format!("Failed to serialize report: {error}"))?;
+    Ok(bytes.0)
+}

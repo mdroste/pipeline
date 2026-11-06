@@ -247,9 +247,8 @@ pub(super) fn finalize_run(
     }
     // Structured report, so a re-run can reload prior step outputs. It must be
     // fsynced before the checkpoint directory below is removed.
-    serde_json::to_string_pretty(report)
-        .map_err(|error| format!("Failed to serialize report data: {error}"))
-        .and_then(|json| w.add_text("report.json", "Report data", "context", &json))
+    crate::runs::serialize_report(report)
+        .and_then(|json| w.add_bytes("report.json", "Report data", "context", &json))
         .and_then(|()| crate::runs::sync_run_file(&w.dir().join("report.json")))
         .map_err(|error| format!("Could not durably save report.json: {error}"))?;
     // Structured checkpoints are only needed until report.json is durable.

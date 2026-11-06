@@ -250,7 +250,6 @@ pub async fn call_google_api(
             )?;
             warm_request.generation_config = Some(serde_json::json!({ "maxOutputTokens": 32 }));
             let warm_label = format!("{label} · cache warm-up");
-            super::logging::record_provider_attempt();
             match google_tool_loop(
                 GoogleToolLoopContext {
                     app,
@@ -286,7 +285,6 @@ pub async fn call_google_api(
 
     let mut fallback_request = request.clone();
     let hosted_search_enabled = has_hosted_search(&request);
-    super::logging::record_provider_attempt();
     let result = google_tool_loop(
         GoogleToolLoopContext {
             app,
@@ -314,7 +312,6 @@ pub async fn call_google_api(
                 ),
             );
             remove_hosted_search(&mut fallback_request);
-            super::logging::record_provider_attempt();
             google_tool_loop(
                 GoogleToolLoopContext {
                     app,

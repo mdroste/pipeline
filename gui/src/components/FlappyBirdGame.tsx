@@ -542,11 +542,11 @@ export default function FlappyBirdGame({ onClose }: Props) {
         aria-modal="true"
         aria-labelledby="flappy-pipeline-title"
         tabIndex={-1}
-        className="w-full max-w-2xl overflow-hidden rounded-2xl border border-emerald-950/20 bg-[#f8fbfa] shadow-2xl dark:border-white/10 dark:bg-gray-950"
+        className="w-full max-w-2xl overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl dark:border-white/10 dark:bg-gray-950"
       >
-        <header className="flex items-start justify-between gap-4 border-b border-emerald-950/10 px-4 py-3 dark:border-white/10 sm:px-5">
+        <header className="flex items-start justify-between gap-4 border-b border-line px-4 py-3 dark:border-white/10 sm:px-5">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-400">
+            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-ink dark:text-emerald-400">
               Classified appendix
             </p>
             <h2
@@ -569,7 +569,7 @@ export default function FlappyBirdGame({ onClose }: Props) {
               </div>
               <div>
                 Best{" "}
-                <span className="tabular-nums text-emerald-700 dark:text-emerald-400">
+                <span className="tabular-nums text-ink dark:text-emerald-400">
                   {highScore}
                 </span>
               </div>
@@ -578,7 +578,7 @@ export default function FlappyBirdGame({ onClose }: Props) {
               type="button"
               onClick={onClose}
               aria-label="Close Flappy Pipeline"
-              className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-200 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:hover:bg-gray-800 dark:hover:text-white"
+              className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-200 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-muted dark:focus-visible:ring-emerald-500 dark:hover:bg-gray-800 dark:hover:text-white"
             >
               ✕
             </button>
@@ -589,10 +589,10 @@ export default function FlappyBirdGame({ onClose }: Props) {
           {!skin ? (
             <section
               aria-labelledby="choose-pilot-title"
-              className="rounded-xl border border-emerald-950/15 bg-[#edf6f3] px-4 py-6 dark:border-white/10 dark:bg-gray-900 sm:px-8 sm:py-8"
+              className="rounded-xl border border-line bg-sunken px-4 py-6 dark:border-white/10 dark:bg-gray-900 sm:px-8 sm:py-8"
             >
               <div className="text-center">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-400">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-ink dark:text-emerald-400">
                   New round
                 </p>
                 <h3
@@ -619,10 +619,10 @@ export default function FlappyBirdGame({ onClose }: Props) {
                     data-autofocus={pilot === "dario" ? true : undefined}
                     aria-label={`Choose ${pilot.toUpperCase()}`}
                     onClick={() => choosePilot(pilot)}
-                    className="group flex flex-col items-center rounded-2xl border border-gray-200 bg-white px-3 py-4 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-500 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-gray-700 dark:bg-gray-950 dark:hover:border-emerald-400"
+                    className="group flex flex-col items-center rounded-2xl border border-gray-200 bg-white px-3 py-4 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-ink-muted hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-muted dark:focus-visible:ring-emerald-500 dark:border-gray-700 dark:bg-gray-950 dark:hover:border-emerald-400"
                   >
                     <PilotPortrait skin={pilot} />
-                    <span className="mt-2 text-sm font-black tracking-[0.12em] text-gray-950 group-hover:text-emerald-800 dark:text-white dark:group-hover:text-emerald-300">
+                    <span className="mt-2 text-sm font-black tracking-[0.12em] text-gray-950 group-hover:text-ink dark:text-white dark:group-hover:text-emerald-300">
                       {pilot.toUpperCase()}
                     </span>
                   </button>
@@ -638,7 +638,7 @@ export default function FlappyBirdGame({ onClose }: Props) {
                 tabIndex={0}
                 aria-label={`Flappy Pipeline game board. ${status === "over" ? "Game over." : status === "playing" ? "Game in progress." : "Ready to play."}`}
                 onPointerDown={flap}
-                className="block aspect-[4/3] w-full cursor-pointer rounded-xl border border-emerald-950/20 bg-[#dff2ef] shadow-inner outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:border-white/10"
+                className="block aspect-[4/3] w-full cursor-pointer rounded-xl border border-line bg-sunken shadow-inner outline-none focus-visible:ring-2 focus-visible:ring-ink-muted dark:focus-visible:ring-emerald-500 dark:border-white/10"
               />
 
               <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -646,14 +646,14 @@ export default function FlappyBirdGame({ onClose }: Props) {
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     Pilot
                   </span>
-                  <span className="rounded-full bg-emerald-700 px-3 py-1.5 text-xs font-bold tracking-wide text-white dark:bg-emerald-400 dark:text-gray-950">
+                  <span className="rounded-full bg-inverse px-3 py-1.5 text-xs font-bold tracking-wide text-on-inverse dark:bg-emerald-400 dark:text-gray-950">
                     {skin.toUpperCase()}
                   </span>
                   {status !== "playing" && (
                     <button
                       type="button"
                       onClick={changeCharacter}
-                      className="rounded px-2 py-1 text-[11px] font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:hover:bg-gray-800 dark:hover:text-white"
+                      className="rounded px-2 py-1 text-[11px] font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-muted dark:focus-visible:ring-emerald-500 dark:hover:bg-gray-800 dark:hover:text-white"
                     >
                       Change character
                     </button>
@@ -669,7 +669,7 @@ export default function FlappyBirdGame({ onClose }: Props) {
                       type="button"
                       data-autofocus
                       onClick={startGame}
-                      className="rounded-lg bg-gray-950 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:bg-gray-100 dark:text-gray-950 dark:hover:bg-emerald-300"
+                      className="rounded-lg bg-gray-950 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-muted dark:focus-visible:ring-emerald-500 dark:bg-gray-100 dark:text-gray-950 dark:hover:bg-emerald-300"
                     >
                       Start flight
                     </button>
@@ -678,7 +678,7 @@ export default function FlappyBirdGame({ onClose }: Props) {
                     <button
                       type="button"
                       onClick={startGame}
-                      className="rounded-lg bg-gray-950 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:bg-gray-100 dark:text-gray-950 dark:hover:bg-emerald-300"
+                      className="rounded-lg bg-gray-950 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-muted dark:focus-visible:ring-emerald-500 dark:bg-gray-100 dark:text-gray-950 dark:hover:bg-emerald-300"
                     >
                       Try again
                     </button>

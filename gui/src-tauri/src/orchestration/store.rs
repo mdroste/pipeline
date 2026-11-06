@@ -9,6 +9,9 @@ pub const RECORD_RETRY_SECS: i64 = 60;
 pub fn now() -> i64 {
     chrono::Utc::now().timestamp()
 }
+pub fn is_operation(value: &str) -> bool {
+    value.len() == 32 && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
 pub fn id() -> String {
     let mut bytes = [0u8; 16];
     getrandom::fill(&mut bytes).expect("OS random source unavailable");
@@ -25,6 +28,8 @@ pub fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 mod chains;
+mod damaged;
+mod group_clocks;
 mod notices;
 mod receipts;
 mod records;
@@ -59,7 +64,7 @@ impl Store {
         let version: i64 = c
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .map_err(err)?;
-        if version > 3 {
+        if version > 5 {
             return Err("Task store was written by a newer Pipeline version".into());
         }
         if version == 0 {
@@ -95,6 +100,28 @@ impl Store {
             }
             c.execute_batch(include_str!("discovery/schema.sql"))
                 .map_err(err)?;
+        }
+        if version < 4 {
+            if version > 0 {
+                let backup = root.join("tasks-before-repair-v4.sqlite3");
+                if !backup.exists() {
+                    c.backup(rusqlite::MAIN_DB, &backup, None).map_err(err)?;
+                }
+            }
+            c.execute_batch("BEGIN IMMEDIATE; CREATE TABLE damaged_records(kind TEXT NOT NULL,id TEXT NOT NULL,diagnostic TEXT NOT NULL,PRIMARY KEY(kind,id)); PRAGMA user_version=4; COMMIT;").map_err(err)?;
+        }
+        if version < 5 {
+            if version > 0 {
+                let backup = root.join("tasks-before-usage-v5.sqlite3");
+                if !backup.exists() {
+                    c.backup(rusqlite::MAIN_DB, &backup, None).map_err(err)?;
+                }
+            }
+            c.execute_batch("BEGIN IMMEDIATE;
+                CREATE TABLE usage_calls(id INTEGER PRIMARY KEY,task_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,owner_id TEXT NOT NULL,address TEXT NOT NULL,operation TEXT NOT NULL,class TEXT NOT NULL,charge INTEGER,settled INTEGER NOT NULL DEFAULT 0,input_tokens INTEGER,output_tokens INTEGER);
+                CREATE INDEX usage_owner ON usage_calls(owner_id);
+                CREATE INDEX usage_task ON usage_calls(task_id);
+                PRAGMA user_version=5; COMMIT;").map_err(err)?;
         }
         Ok(store)
     }

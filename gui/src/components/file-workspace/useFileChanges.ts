@@ -19,7 +19,11 @@ export default function useFileChanges({
   adapter: FileAdapter;
   root: RefObject<HTMLElement | null>;
   latest: RefObject<Record<string, Buffer>>;
-  load: (path: string, reload?: boolean) => Promise<void>;
+  load: (
+    path: string,
+    reload?: boolean,
+    preview?: Buffer["file"],
+  ) => Promise<void>;
   update: (path: string, change: (buffer: Buffer) => Buffer) => void;
   release: (file: Buffer["file"] | undefined) => void;
 }) {
@@ -87,8 +91,7 @@ export default function useFileChanges({
                   "The file changed on disk. Compare with the current file to keep your draft, or reload to discard it.",
               }));
             } else {
-              release(current);
-              await load(path, true);
+              await load(path, true, current);
             }
           } catch {
             /* One unreadable file waits for the next check; the rest go on. */

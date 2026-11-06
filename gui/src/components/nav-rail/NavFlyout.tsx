@@ -9,12 +9,16 @@ import Popover from "../../ui/Popover";
  */
 export default function NavFlyout({
   label,
+  heading = label,
+  openLabel = "Open",
   anchorRef,
   onClose,
   onOpenPage,
   children,
 }: {
   label: string;
+  heading?: string;
+  openLabel?: string;
   anchorRef: RefObject<HTMLElement | null>;
   onClose: () => void;
   onOpenPage: () => void;
@@ -36,6 +40,10 @@ export default function NavFlyout({
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
+      const dialog = (event.target as Element | null)?.closest?.(
+        '[role="dialog"]',
+      );
+      if (dialog && !dialog.contains(body.current)) return;
       if ((event.target as Element | null)?.closest?.('[role="menu"]')) return;
       anchorRef.current?.focus();
       closeRef.current();
@@ -61,9 +69,9 @@ export default function NavFlyout({
     >
       <div ref={body}>
         <div className="nav-flyout-heading">
-          <span>{label}</span>
+          <span>{heading}</span>
           <button type="button" onClick={onOpenPage}>
-            Open
+            {openLabel}
           </button>
         </div>
         <div className="nav-flyout-body">{children}</div>

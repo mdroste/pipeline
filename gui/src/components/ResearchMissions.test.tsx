@@ -118,6 +118,31 @@ it("shows missions without starting a model or loading research configuration", 
     "mission_list",
   ]);
 });
+it("previews whether the action limit reaches a challenged result with the selected Review", async () => {
+  render(<ResearchMissions initialSessionId="source" />);
+  fireEvent.click(
+    await screen.findByRole("button", { name: "+ New research automation" }),
+  );
+  const limit = await screen.findByLabelText("Maximum actions");
+  fireEvent.change(limit, {
+    target: { value: "3" },
+  });
+  expect(screen.getByText(/Up to 1 full round fits/)).toBeInTheDocument();
+  await screen.findByRole("option", { name: "Paper review" });
+  fireEvent.change(screen.getByLabelText("Additional review"), {
+    target: { value: "review" },
+  });
+  expect(
+    screen.getByText(/This action limit cannot reach that milestone/),
+  ).toBeInTheDocument();
+  fireEvent.change(limit, {
+    target: { value: "4" },
+  });
+  expect(screen.getByText(/Up to 1 full round fits/)).toBeInTheDocument();
+  expect(
+    mocks.invoke.mock.calls.some(([name]) => name === "mission_control"),
+  ).toBe(false);
+});
 it("prepares an inspect-only mission and shows its concrete scope before start", async () => {
   render(<ResearchMissions initialSessionId="source" />);
   fireEvent.click(
@@ -631,4 +656,115 @@ it("ignores blank criteria lines and says why preview is unavailable", async () 
       }),
     ),
   );
+});
+
+it("requires an explicit decision about the displayed assessment round", async () => {
+  const record = {
+    schemaVersion: 1,
+    subjectVersion: "round-1",
+    assessorRole: "Independent challenger",
+    assessorChild: "check-1",
+    claims: [],
+    objections: [],
+    supported: true,
+    acceptedAt: null,
+  };
+  const round: Mission["rounds"][number] = {
+    number: 1,
+    changeCursor: 0,
+    plan: {
+      summary: "Plan",
+      selectionReason: "Test the hypothesis",
+      selectedId: null,
+      newGoals: [],
+      candidates: [],
+      questions: [],
+      disposition: "assessCompletion",
+    },
+    selected: null,
+    finding: null,
+    evidence: {},
+    review: null,
+    challenge: {
+      summary: "Scoped result",
+      outcome: "supported",
+      goalResolved: true,
+      missionComplete: true,
+      progressMade: true,
+      testedDomain: "Frozen sample",
+      limitations: [],
+      unresolved: [],
+      criteria: [],
+      questions: [],
+      methods: [],
+    },
+    claimRecord: record,
+    childIds: ["check-1"],
+    resultFingerprint: null,
+  };
+  const current = {
+    ...mission,
+    revision: 8,
+    state: "completed",
+    rounds: [round],
+  };
+  const updated = vi.fn();
+  const view = render(
+    <MissionDetail mission={current} onUpdated={updated} onClose={vi.fn()} />,
+  );
+  expect(screen.getByText("Evidence requirements met")).toBeInTheDocument();
+  expect(
+    mocks.invoke.mock.calls.some(
+      ([cmd]) => cmd === "mission_accept_assessment",
+    ),
+  ).toBe(false);
+  const accepted = {
+    ...current,
+    revision: 9,
+    rounds: [{ ...round, claimRecord: { ...record, acceptedAt: 123 } }],
+  };
+  mocks.invoke.mockResolvedValueOnce(accepted);
+  fireEvent.click(
+    screen.getByRole("button", { name: "Accept this assessment" }),
+  );
+  await waitFor(() =>
+    expect(mocks.invoke).toHaveBeenCalledWith("mission_accept_assessment", {
+      id: mission.id,
+      revision: 8,
+      subjectVersion: "round-1",
+    }),
+  );
+  await waitFor(() => expect(updated).toHaveBeenCalledWith(accepted));
+  view.rerender(
+    <MissionDetail mission={accepted} onUpdated={updated} onClose={vi.fn()} />,
+  );
+  expect(
+    screen.queryByRole("button", { name: "Accept this assessment" }),
+  ).toBeNull();
+  expect(screen.getByText(/Accepted by researcher/)).toBeInTheDocument();
+});
+
+it("offers another Research page only when a lookahead result exists", async () => {
+  const original = mocks.invoke.getMockImplementation()!;
+  mocks.invoke.mockImplementation(async (command, args = {}) => {
+    if (command !== "mission_list") return original(command, args);
+    const offset = Number(args.offset);
+    return Array.from(
+      { length: Math.min(100 - offset, args.lookahead ? 51 : 50) },
+      (_, i) => ({
+        id: String(i + offset),
+        name: "Mission " + (i + offset),
+        state: "finished",
+        reason: "Done",
+        rounds: 1,
+        openQuestions: 0,
+      }),
+    );
+  });
+  render(<ResearchMissions />);
+  fireEvent.click(await screen.findByRole("button", { name: "More" }));
+  await screen.findByText("Mission 50");
+  expect(screen.queryByRole("button", { name: "More" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+  await screen.findByText("Mission 0");
 });

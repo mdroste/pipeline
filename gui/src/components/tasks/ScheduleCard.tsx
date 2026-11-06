@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { taskClient } from "../../lib/taskClient";
 import { stateLabel, taskTime } from "../../lib/taskPresentation";
 import { type Schedule, type Trigger } from "../../lib/taskTypes";
@@ -56,10 +56,28 @@ export default function ScheduleCard({
       setBusy(false);
     }
   }
+  const [clock, setClock] = useState(Date.now);
+  useEffect(() => {
+    let timer: number | undefined;
+    const refresh = () => {
+      window.clearTimeout(timer);
+      const now = Date.now();
+      setClock(now);
+      const remaining = (schedule.nextDueAt ?? 0) * 1000 - now;
+      if (schedule.enabled && schedule.blockingRun && remaining > 0)
+        timer = window.setTimeout(refresh, Math.min(remaining, 2147483647));
+    };
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [schedule.enabled, schedule.nextDueAt, schedule.blockingRun]);
   const held =
     schedule.enabled &&
     schedule.blockingRun &&
-    (schedule.nextDueAt ?? 0) * 1000 <= Date.now()
+    (schedule.nextDueAt ?? 0) * 1000 <= clock
       ? schedule.blockingRun
       : null;
   return (

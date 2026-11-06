@@ -5,6 +5,7 @@ const REDACTED_SECRET: &str = "[redacted secret; re-enter to rerun]";
 
 #[derive(Clone)]
 pub(super) struct RunSnapshot {
+    pub(super) review_handoff_id: Option<String>,
     pub(super) author_note: Option<String>,
     pub(super) settings: crate::settings::Settings,
     pub(super) config: PipelineConfig,
@@ -100,6 +101,12 @@ pub(super) fn settings_for_snapshot_fingerprint(
 pub(super) fn stable_snapshot_fingerprint<T: serde::Serialize>(
     value: &T,
 ) -> Result<String, serde_json::Error> {
+    stable_content_fingerprint(value).map(|digest| digest[..16].to_owned())
+}
+
+pub(super) fn stable_content_fingerprint<T: serde::Serialize>(
+    value: &T,
+) -> Result<String, serde_json::Error> {
     use sha2::{Digest as _, Sha256};
 
     fn sort_object_keys(value: &mut serde_json::Value) {
@@ -125,7 +132,7 @@ pub(super) fn stable_snapshot_fingerprint<T: serde::Serialize>(
     sort_object_keys(&mut canonical);
     let encoded = serde_json::to_vec(&canonical)?;
     let digest = format!("{:x}", Sha256::digest(encoded));
-    Ok(digest[..16].to_string())
+    Ok(digest)
 }
 
 pub(super) fn load_run_snapshot() -> Result<RunSnapshot, String> {
@@ -200,6 +207,7 @@ pub(super) fn load_run_snapshot_for_workflow(
     ))
     .map_err(|e| format!("Could not fingerprint run configuration: {e}"))?;
     Ok(RunSnapshot {
+        review_handoff_id: None,
         author_note: None,
         settings,
         config,

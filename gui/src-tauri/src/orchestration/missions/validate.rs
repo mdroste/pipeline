@@ -279,6 +279,7 @@ pub fn questions(qs: &[QuestionSpec], goals: &BTreeSet<String>) -> Result<()> {
     Ok(())
 }
 pub fn finding(f: &Finding) -> Result<()> {
+    strings(&f.execution_ids, 4, 200)?;
     text(&f.summary, 32000)?;
     text(&f.outcome, 8000)?;
     text(&f.method, 4000)?;

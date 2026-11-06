@@ -204,6 +204,7 @@ Object.assign(window, {
         return {
           workspaces: projects.map((project) => ({ ...workspace, ...project })),
         };
+      if (command === "workbench_conversation_index") return {items:sessions.filter(chat=>Boolean(chat.archivedAt)===args.archived).map(session=>({session,projectName:projects.find(p=>p.id===session.workspaceId)?.name ?? null})),nextCursor:null};
       if (command === "workbench_list_sessions")
         return {
           sessions: sessions.filter(

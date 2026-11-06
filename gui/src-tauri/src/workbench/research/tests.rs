@@ -887,14 +887,9 @@ fn schema_13_custom_profiles_migrate_to_inheriting_the_native_default() {
         },
     )
     .unwrap();
-    let connection = fixture.store.connection().unwrap();
-    connection
-        .execute_batch(
-            "DROP INDEX transcript_items_page; DROP TABLE conversation_tool_receipts; DROP TABLE discovery_roles; ALTER TABLE presets DROP COLUMN base_instructions; PRAGMA user_version = 13;",
-        )
-        .unwrap();
-    drop(connection);
-    let migrated = Store::open_at(fixture.store.root_path()).unwrap();
+    let old =
+        crate::workbench::store::historical_fixture(&fixture.store, 13, &["workspaces", "presets"]);
+    let migrated = Store::open_at(old.path()).unwrap();
     assert_eq!(find_preset(&migrated, None, &copy.id).unwrap(), copy);
 }
 

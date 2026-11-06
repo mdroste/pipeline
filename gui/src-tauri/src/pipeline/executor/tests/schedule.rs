@@ -214,7 +214,7 @@ fn zero_match_fan_out_is_terminal_and_unblocks_dependent_step() {
         &steps[0],
         &settings,
         temp.path().to_str().unwrap(),
-        None,
+        &[],
         &bus
     )
     .unwrap()

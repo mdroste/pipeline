@@ -88,7 +88,7 @@ fn model_cache_prices(model: &str, input_price: f64) -> (f64, f64) {
 /// Estimated cache-adjusted API list price of a call, or None when the model
 /// is unknown. Cached/cache-write counts partition logical input; they are not
 /// added on top of it.
-pub(super) fn estimate_cost(
+pub(crate) fn estimate_cost(
     model: &str,
     input_tokens: u64,
     output_tokens: u64,
@@ -117,7 +117,10 @@ pub fn api_cost_of(output: &crate::models::StepOutput, settings: &Settings) -> (
     let mut cost = 0f64;
     let mut unpriced = 0u32;
     if output.calls.is_empty() {
-        if output.skipped || !provider_in_api_mode(settings, &output.provider) {
+        if output.skipped
+            || output.provider == "local"
+            || !provider_in_api_mode(settings, &output.provider)
+        {
             return (0.0, 0);
         }
         match estimate_cost(
@@ -133,7 +136,7 @@ pub fn api_cost_of(output: &crate::models::StepOutput, settings: &Settings) -> (
         return (cost, unpriced);
     }
     for call in &output.calls {
-        if call.model_transport != "api" {
+        if call.model_transport != "api" || call.provider == "local" {
             continue;
         }
         match estimate_cost(

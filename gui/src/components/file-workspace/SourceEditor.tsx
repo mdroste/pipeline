@@ -222,8 +222,14 @@ const SourceEditor = forwardRef<SourceEditorHandle, Props>(
                 current.current.onSelection?.({
                   text: update.state.sliceDoc(s.from, s.to),
                   // Callers consume offsets in the original serialized source.
-                  start: update.state.sliceDoc(0, s.from).length,
-                  end: update.state.sliceDoc(0, s.to).length,
+                  start:
+                    s.from +
+                    (update.state.doc.lineAt(s.from).number - 1) *
+                      (update.state.lineBreak.length - 1),
+                  end:
+                    s.to +
+                    (update.state.doc.lineAt(s.to).number - 1) *
+                      (update.state.lineBreak.length - 1),
                   line: update.state.doc.lineAt(s.from).number,
                 });
               }
