@@ -572,10 +572,10 @@ fn recovery_keeps_large_published_partial_reports() {
     manifest.status = "partial".into();
     let path = dir.join("report.json");
     let data = serde_json::to_vec(&empty_report()).unwrap();
-    fs::write(&path, &data).unwrap();
-    // Pad valid JSON using spaces to exercise the real reader cap.
+    // Use a writable handle for both padding and the later resize on Windows.
     use std::io::Write;
-    let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    let mut file = fs::File::create(&path).unwrap();
+    file.write_all(&data).unwrap();
     let padding = vec![b' '; 1024 * 1024];
     for _ in 0..64 {
         file.write_all(&padding).unwrap();
