@@ -2,38 +2,45 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import ProjectSubnav from "./ProjectSubnav";
 
-it("shows a section's main views and keeps the rest under More", () => {
+const labels = () =>
+  screen.getAllByRole("button").map((button) => button.textContent);
+
+it("shows every view in the section as a tab, with no menu", () => {
   const onSelect = vi.fn();
-  render(<ProjectSubnav tab="files" onSelect={onSelect} />);
-  expect(
-    screen.getAllByRole("button").map((button) => button.textContent),
-  ).toEqual([
-    "Documents",
-    "Files",
-    "Version control",
-    "Papers & sources",
-    "More",
+  render(<ProjectSubnav tab="edits" onSelect={onSelect} />);
+  expect(labels()).toEqual(["Review edits", "Version control"]);
+  expect(screen.getByRole("button", { name: "Review edits" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Version control" }));
+  expect(onSelect).toHaveBeenCalledWith("version-control");
+});
+
+it("offers Responses once the paper is past drafting", () => {
+  const { rerender } = render(
+    <ProjectSubnav tab="reviews" stage="drafting" onSelect={vi.fn()} />,
+  );
+  expect(labels()).toEqual(["Reviews & findings", "Send for review"]);
+  rerender(<ProjectSubnav tab="reviews" stage="revising" onSelect={vi.fn()} />);
+  expect(labels()).toEqual([
+    "Reviews & findings",
+    "Responses",
+    "Send for review",
   ]);
-  expect(screen.getByRole("button", { name: "Files" })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
-  fireEvent.click(screen.getByRole("button", { name: "More" }));
-  fireEvent.click(screen.getByRole("menuitem", { name: "Reading inbox" }));
-  expect(onSelect).toHaveBeenCalledWith("acquisition");
+  // A project with no stage hides nothing.
+  rerender(<ProjectSubnav tab="reviews" onSelect={vi.fn()} />);
+  expect(labels()).toContain("Responses");
+  // The open view always keeps its tab.
+  rerender(<ProjectSubnav tab="responses" stage="idea" onSelect={vi.fn()} />);
+  expect(labels()).toContain("Responses");
 });
 
-it("shows the open view as a tab even when it normally sits under More", () => {
+it("groups project setup pages apart from the overview", () => {
   render(<ProjectSubnav tab="exchange" onSelect={vi.fn()} />);
-  expect(screen.getByRole("button", { name: "Share project" })).toHaveAttribute(
-    "aria-current",
-    "page",
-  );
-  fireEvent.click(screen.getByRole("button", { name: "More" }));
-  expect(screen.queryByRole("menuitem", { name: "Share project" })).toBeNull();
-});
-
-it("has no More menu when every view in the section is a tab", () => {
-  render(<ProjectSubnav tab="tasks" onSelect={vi.fn()} />);
-  expect(screen.queryByRole("button", { name: "More" })).toBeNull();
+  expect(labels()).toEqual([
+    "Project settings",
+    "Command settings",
+    "Share project",
+  ]);
 });

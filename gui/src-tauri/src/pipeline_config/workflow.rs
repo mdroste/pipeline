@@ -350,6 +350,7 @@ fn validate_strict_shape(value: &serde_json::Value) -> Result<(), String> {
 /// and the CLI. Unlike the GUI's historical import path, this entry point is
 /// intentionally strict so misspelled generated fields cannot be ignored.
 pub fn parse_workflow_document_strict(json: &str) -> Result<WorkflowDocument, String> {
+    let json = json.strip_prefix('\u{feff}').unwrap_or(json);
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|error| format!("Invalid workflow JSON: {error}"))?;
     validate_strict_shape(&value)?;

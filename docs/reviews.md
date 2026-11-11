@@ -159,12 +159,22 @@ runs and sent to their review providers, but are not part of exported workflows.
 The CLI accepts `--author-note "Prioritize critiques of the model"` with `run`,
 `check`, and `batch`.
 
-## Run several reviews
+## Choose models for this review
 
-Reviews use your [default model](settings.md#default-model). To use another,
-choose one for a stage under **Settings → Reviews**, or for a step in the
-review designer. Different steps can use different providers. See
-[Connections](connections.md) for the options.
+Reviews start with your [default model](settings.md#default-model). Use
+**Models for this review** on the setup screen to choose a provider, model,
+and thinking level for this review. This leaves your saved defaults unchanged.
+
+Stages assigned another model under **Settings → Reviews → Model defaults**,
+and steps pinned in the review designer, keep their choices. Use the control
+to apply the review model everywhere when you want to replace those exceptions
+too. Check the model list in the launch preview before starting.
+
+Different steps can use different providers. See [Connections](connections.md)
+for the options. Change the defaults in Settings only when you want future
+reviews to use the new choice.
+
+## Run several reviews
 
 Steps that don't depend on each other run at the same time. To see each
 step's inputs before anything starts, open **Steps and what each can read** in
@@ -185,13 +195,17 @@ the specialists Paper Review picks change the actual use.
 **Settings → Reviews → Review limits** sets a cost, call, or time limit for
 each review. Enter 0 for no limit. When a review reaches a limit:
 
-- steps already running finish;
+- model calls already running finish;
 - the remaining steps are marked as stopped at the limit; and
 - the results so far are saved as a partial report.
 
 The cost limit counts API connections at list prices. Subscription calls count
 toward the call and time limits. The preview warns you when the estimate could
 pass a limit.
+
+Limits cover model extraction, orientation, review steps, and revision
+comparison. If a limit stops document preparation, the partial report explains
+what is incomplete. Start a new review with a higher limit to finish it.
 
 If you reach your account's usage or credit limit,
 **Settings → Reviews → Continue after an account usage limit** retries the call

@@ -69,7 +69,7 @@ const imported = {
     extraction: { status: "complete" },
   },
 };
-const view = (destination: "sources" | "documents" | "overview") => (
+const view = (destination: "project-settings" | "documents" | "overview") => (
   <WorkspaceProjectSurface
     workspaceId="workspace"
     destination={destination}
@@ -97,8 +97,8 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-it("reloads the project after Papers & sources imports a paper, without a folder", async () => {
-  const page = render(view("sources"));
+it("reloads the project after Project settings imports a paper, without a folder", async () => {
+  const page = render(view("project-settings"));
   const importButton = await screen.findByRole("button", {
     name: "Import paper",
   });
@@ -114,7 +114,7 @@ it("reloads the project after Papers & sources imports a paper, without a folder
 });
 
 it("clears the banner when a retried action succeeds", async () => {
-  render(view("sources"));
+  render(view("project-settings"));
   const importButton = await screen.findByRole("button", {
     name: "Import paper",
   });
@@ -126,17 +126,6 @@ it("clears the banner when a retried action succeeds", async () => {
   fireEvent.click(importButton);
   await waitFor(() => expect(mocks.importPaper).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
-});
-
-it("reports a possible duplicate as a notice, not a failure", async () => {
-  mocks.importSource.mockResolvedValue({ duplicateCandidates: [{}] });
-  mocks.prompt.mockResolvedValue("A source");
-  render(view("sources"));
-  fireEvent.click(await screen.findByRole("button", { name: "Import source" }));
-  await waitFor(() => expect(mocks.notify).toHaveBeenCalledOnce());
-  expect(mocks.notify.mock.calls[0][0]).toContain("possible duplicate");
-  expect(mocks.notify.mock.calls[0][1]).toBe("info");
-  expect(screen.queryByRole("alert")).toBeNull();
 });
 
 it("opens a Search hit at its saved place with nothing selected", async () => {

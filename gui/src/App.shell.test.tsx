@@ -237,7 +237,7 @@ describe("App shell", () => {
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Choose test paper" }));
-    await user.click(screen.getByRole("button", { name: "Start review" }));
+    await user.click(screen.getByRole("button", { name: "Preview" }));
     expect(
       await screen.findByRole("dialog", { name: "Ready to start" }),
     ).toBeVisible();
@@ -273,7 +273,7 @@ describe("App shell", () => {
       await screen.findByRole("heading", { name: "test-paper.pdf is queued" }),
     ).toBeVisible();
     expect(router.route).toEqual({ page: "main", runKey: "test-paper" });
-    await user.click(screen.getByRole("button", { name: /^Activity/ }));
+    await user.click(screen.getByRole("button", { name: /^All activity/ }));
     expect(
       screen.getByRole("button", { name: /^test-paper\.pdf/ }),
     ).toHaveAttribute("aria-current", "page");
@@ -284,7 +284,7 @@ describe("App shell", () => {
   it("keeps batch selection in New run instead of the left navigation", async () => {
     render(<App />);
 
-    await screen.findByRole("button", { name: "Start review" });
+    await screen.findByRole("button", { name: "Preview" });
     expect(
       screen.queryByRole("button", { name: "Batch" }),
     ).not.toBeInTheDocument();
@@ -294,7 +294,7 @@ describe("App shell", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await screen.findByRole("button", { name: "Start review" });
+    await screen.findByRole("button", { name: "Preview" });
     expect(
       screen.queryByRole("button", { name: "Gallery" }),
     ).not.toBeInTheDocument();

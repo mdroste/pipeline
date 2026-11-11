@@ -125,6 +125,12 @@ are ready. It doesn't call a model or extract the document. It also prints a
 rough range of model calls and, for API connections, the cost at list price.
 For a folder, it notes any files too large for the review's private copy.
 
+Pass the same model and limit options you will use with `run` or `batch`:
+
+```bash
+pipeline-cli check --input paper.pdf --model chatgpt --max-calls 8 --json
+```
+
 Add `--json` to see the planned stages, the workflow's fingerprint, the most steps and provider calls the run can use, and the usage
 estimate with the review limits that apply.
 
@@ -159,7 +165,7 @@ started with, even if you change them in the app.
 
 ## Limit cost, calls, or time
 
-`run` and `batch` accept `--model` to choose the review model for that
+`run`, `check`, and `batch` accept `--model` to choose the review model for that
 command, in the form `PROVIDER[:MODEL[:THINKING]]`:
 
 ```bash
@@ -169,12 +175,33 @@ pipeline-cli run --input paper.pdf --model claude:claude-opus-5-5:max
 `PROVIDER` is `claude`, `chatgpt`, `gemini`, or `local`. Leave `MODEL` empty to
 let the provider choose. Every call that follows your default model uses the
 review model: orientation, parallel and sequential steps, combining results,
-LLM PDF extraction, and revision comparison. Stages that **Settings → Model
+LLM PDF extraction, and revision comparison. Stages that **Settings → Reviews → Model
 defaults** assigns to another model, and steps the workflow assigns to a
 model, keep their own models. Add `--model-everywhere` to use the review model
 for those too. The usage-limit backup is unchanged.
 
-`run` and `batch` accept `--max-cost <USD>`, `--max-calls <N>`, and
+For an exact model ID containing colons, use `--model-id` with a provider-only
+`--model`, and set thinking separately:
+
+```bash
+pipeline-cli run --input paper.tex --model local --model-id qwen2.5:14b --thinking high
+```
+
+The local shorthand `--model local:qwen2.5:14b` also preserves the complete
+model ID. All colons after `local:` belong to the ID; use `--thinking` for its
+thinking level. Cloud providers retain the `PROVIDER:MODEL:THINKING` shorthand.
+
+Use `--author-note` to share priorities with every review agent:
+
+```bash
+pipeline-cli run --input paper.pdf --author-note "Focus on the model assumptions"
+```
+
+`check` and `batch` accept the same note. A batch uses it for each document.
+Notes are limited to 4,000 characters, saved with the run, and excluded from
+exported workflows. See the [review guide](reviews.md) for their scope and reuse.
+
+`run`, `check`, and `batch` accept `--max-cost <USD>`, `--max-calls <N>`, and
 `--max-minutes <N>`:
 
 ```bash
@@ -184,13 +211,15 @@ pipeline-cli run --input paper.pdf --max-cost 2 --max-minutes 30
 These replace **Settings → Reviews → Review limits** for that command. In a
 batch, they apply to each document. When a limit is reached:
 
-- steps already running finish;
+- model calls already running finish;
 - the remaining steps are marked as stopped at the limit;
 - the partial report is saved; and
 - the command exits with a failure status.
 
 The cost limit counts API calls at list prices. Subscription calls count
-toward the call and time limits.
+toward the call and time limits. Limits include model extraction, orientation,
+review steps, and revision comparison. A limit reached during document
+preparation saves a partial outcome explaining what could not finish.
 
 ## Create and share workflows
 

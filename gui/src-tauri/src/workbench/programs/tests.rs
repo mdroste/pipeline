@@ -75,6 +75,7 @@ fn profile(f: &Fixture, script: &str, timeout: u64) -> research::ExecutionProfil
     )
     .unwrap()
 }
+#[cfg(unix)]
 fn capture(f: &Fixture, p: &research::ExecutionProfile) -> DeskRecord {
     research::execution_plan::capture(
         &f.store,
@@ -443,6 +444,7 @@ fn checked_artifacts_and_task_staging_refuse_cross_project_and_external_changes(
     let other = fixture(false);
     assert!(read_artifact(&f.store, &other.ws, id).is_err());
 }
+#[cfg(unix)]
 fn grid_request(f: &Fixture, plan: &DeskRecord) -> experiments::Prepare {
     experiments::Prepare {
         workspace_id: f.ws.clone(),
@@ -739,6 +741,7 @@ fn remote_monitor_requires_both_explicit_consents() {
     crate::workbench::acquisition::set_network(&f.store, &f.ws, true).unwrap();
     assert!(monitors::save(&f.store, &f.ws, "Query", m, "monitor").is_ok());
 }
+#[cfg(unix)]
 fn capsule_request(f: &Fixture, plan: &DeskRecord, include: bool) -> capsule::Export {
     capsule::Export {
         workspace_id: f.ws.clone(),

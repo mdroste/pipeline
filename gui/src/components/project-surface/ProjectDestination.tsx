@@ -19,28 +19,21 @@ import type { SurfaceApi, ProjectTab } from "./shared";
 import type { ProjectReadingState } from "./useProjectReadingState";
 import type { ProjectSelectionActions } from "./useProjectSelectionActions";
 import type { WorkspaceProjectSurfaceProps } from "./types";
-const DeskSearch = lazy(() => import("../research-desk/Search"));
-const DeskDiscovery = lazy(() => import("../research-desk/Discovery"));
-const DeskData = lazy(() => import("../research-desk/Data"));
-const DeskDecisions = lazy(() => import("../research-desk/Decisions"));
-const DeskPlans = lazy(() => import("../research-desk/Plans"));
-const ProgramExperiments = lazy(
-  () => import("../research-programs/Experiments"),
-);
-const ProgramAssets = lazy(() => import("../research-programs/Assets"));
-const ProgramTheory = lazy(() => import("../research-programs/Theory"));
-const ProgramCampaigns = lazy(() => import("../research-programs/Campaigns"));
-const ProgramDelivery = lazy(() => import("../research-programs/Delivery"));
-const ProgramSharing = lazy(() => import("../research-programs/Sharing"));
-const ProgramChecks = lazy(() => import("../research-programs/Checks"));
 const ProjectFiles = lazy(() => import("../file-workspace/ProjectFiles"));
 const VersionControl = lazy(() => import("../version-control/VersionControl"));
 const ResearchStudio = lazy(() => import("../WorkspaceResearchStudio"));
 const ResearchPanel = lazy(() => import("../WorkspaceResearchPanel"));
 
+/** The research panel tab each panel-backed view shows. */
+const panelTab = {
+  memory: "memory",
+  execution: "results",
+  review: "release",
+  exchange: "release",
+} as const;
+
 interface Props extends Pick<
   WorkspaceProjectSurfaceProps,
-  | "sessionId"
   | "sessions"
   | "onResumeSession"
   | "onStartConversation"
@@ -61,7 +54,6 @@ interface Props extends Pick<
   comparison: OpenResearchObject | null;
   setComparison: (object: OpenResearchObject | null) => void;
   fileLocation: FileLocation | null;
-  openObject: (object: OpenResearchObject) => void;
   refresh: () => Promise<void>;
   /** Reloads project data after a write in an embedded view. */
   onChanged: () => void;
@@ -83,7 +75,6 @@ export default function ProjectDestination({
   comparison,
   setComparison,
   fileLocation,
-  openObject,
   refresh,
   onChanged,
   clearError,
@@ -92,7 +83,6 @@ export default function ProjectDestination({
   attachFolder,
   importPaper,
   addVersion,
-  sessionId,
   sessions = [],
   onResumeSession,
   onStartConversation,
@@ -129,36 +119,12 @@ export default function ProjectDestination({
     submitSelection,
     openAnchors,
   } = selectionActions;
-  // What every desk and program view needs to report back to the project.
-  const embedded = {
-    workspaceId,
-    sessionId,
-    onOpen: openObject,
-    onError: reportError,
-    onChanged,
-    onActionStart: clearError,
-  };
-  const studio = (
-    view:
-      | "research"
-      | "writing"
-      | "literature"
-      | "responses"
-      | "bindings"
-      | "theory",
-  ) => (
+  const studio = (view: "writing" | "responses") => (
     <Suspense fallback={<p>Loading research tools…</p>}>
       <ResearchStudio
         key={view}
         active={!object && tab === view}
-        destination={view}
-        tool={
-          view === "writing"
-            ? "manuscript"
-            : view === "research"
-              ? "experiments"
-              : view
-        }
+        tool={view === "writing" ? "manuscript" : view}
         workspaceId={workspaceId}
         data={data}
         onRefresh={refresh}
@@ -213,90 +179,6 @@ export default function ProjectDestination({
           )}
         </div>
       )}
-      {(["search", "acquisition", "data", "decisions", "plans"] as const).map(
-        (view) => (
-          <RetainedWorkspaceView key={view} active={!object && tab === view}>
-            <ProjectPage view={view}>
-              <Suspense fallback={<p>Loading research tools…</p>}>
-                {view === "search" && (
-                  <DeskSearch {...embedded} active={!object && tab === view} />
-                )}{" "}
-                {view === "acquisition" && (
-                  <DeskDiscovery
-                    {...embedded}
-                    active={!object && tab === view}
-                  />
-                )}{" "}
-                {view === "data" && (
-                  <DeskData {...embedded} active={!object && tab === view} />
-                )}{" "}
-                {view === "decisions" && (
-                  <DeskDecisions
-                    {...embedded}
-                    active={!object && tab === view}
-                    onRefresh={refresh}
-                  />
-                )}{" "}
-                {view === "plans" && (
-                  <DeskPlans {...embedded} active={!object && tab === view} />
-                )}
-              </Suspense>
-            </ProjectPage>
-          </RetainedWorkspaceView>
-        ),
-      )}
-      {(
-        [
-          "grids",
-          "assets",
-          "symbols",
-          "campaigns",
-          "delivery",
-          "sharing",
-          "checks",
-        ] as const
-      ).map((view) => (
-        <RetainedWorkspaceView key={view} active={!object && tab === view}>
-          <ProjectPage view={view}>
-            <Suspense fallback={<p>Loading research tools…</p>}>
-              {view === "grids" && (
-                <ProgramExperiments
-                  {...embedded}
-                  active={!object && tab === view}
-                />
-              )}
-              {view === "assets" && (
-                <ProgramAssets {...embedded} active={!object && tab === view} />
-              )}
-              {view === "symbols" && (
-                <ProgramTheory {...embedded} active={!object && tab === view} />
-              )}
-              {view === "campaigns" && (
-                <ProgramCampaigns
-                  {...embedded}
-                  active={!object && tab === view}
-                  onReviewHandoff={onReviewHandoff}
-                />
-              )}
-              {view === "delivery" && (
-                <ProgramDelivery
-                  {...embedded}
-                  active={!object && tab === view}
-                />
-              )}
-              {view === "sharing" && (
-                <ProgramSharing
-                  {...embedded}
-                  active={!object && tab === view}
-                />
-              )}
-              {view === "checks" && (
-                <ProgramChecks {...embedded} active={!object && tab === view} />
-              )}
-            </Suspense>
-          </ProjectPage>
-        </RetainedWorkspaceView>
-      ))}
       <RetainedWorkspaceView active={!object && tab === "overview"}>
         <div className="min-h-0 flex-1 overflow-auto bg-white p-6 dark:bg-neutral-950">
           <ProjectOverview
@@ -421,16 +303,7 @@ export default function ProjectDestination({
           <ProjectEdits {...api} onConversation={onConversation} />
         </ProjectPage>
       </RetainedWorkspaceView>
-      {(
-        [
-          "research",
-          "writing",
-          "literature",
-          "responses",
-          "bindings",
-          "theory",
-        ] as const
-      ).map((view) => (
+      {(["writing", "responses"] as const).map((view) => (
         <RetainedWorkspaceView key={view} active={!object && tab === view}>
           {view === "writing" ? (
             studio(view)
@@ -439,17 +312,7 @@ export default function ProjectDestination({
           )}
         </RetainedWorkspaceView>
       ))}
-      {(
-        [
-          "sources",
-          "memory",
-          "evidence",
-          "results",
-          "execution",
-          "review",
-          "exchange",
-        ] as const
-      ).map((view) => (
+      {(["memory", "execution", "review", "exchange"] as const).map((view) => (
         <RetainedWorkspaceView key={view} active={!object && tab === view}>
           <div className="project-panel">
             <Suspense
@@ -475,25 +338,9 @@ export default function ProjectDestination({
                 onChanged={onChanged}
                 onActionStart={clearError}
                 onClose={() => setTab("overview")}
-                initialTab={
-                  view === "sources"
-                    ? "documents"
-                    : view === "execution"
-                      ? "results"
-                      : view === "review" || view === "exchange"
-                        ? "release"
-                        : view
-                }
-                allowedTabs={[
-                  view === "sources"
-                    ? "documents"
-                    : view === "execution"
-                      ? "results"
-                      : view === "review" || view === "exchange"
-                        ? "release"
-                        : view,
-                ]}
-                resultsView={view === "execution" ? "profiles" : "runs"}
+                initialTab={panelTab[view]}
+                allowedTabs={[panelTab[view]]}
+                resultsView="profiles"
                 releaseView={view === "exchange" ? "share" : "review"}
                 onReviewHandoff={onReviewHandoff}
               />

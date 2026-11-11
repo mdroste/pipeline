@@ -59,7 +59,7 @@ export default function PromptEditor({
       className={fillHeight ? "flex flex-col h-full min-h-0" : "flex flex-col"}
     >
       {placeholders.length > 0 && (
-        <div className="flex items-center gap-1.5 flex-wrap mb-2 text-[10px]">
+        <div className="flex items-center gap-1.5 flex-wrap mb-2 text-[0.625rem]">
           <span className="text-gray-500 dark:text-gray-400 mr-1">Insert:</span>
           {placeholders.map((p) => (
             <button
@@ -92,7 +92,7 @@ export default function PromptEditor({
       {lintHits.length > 0 && (
         <div
           className="mt-2 px-2 py-1.5 rounded border border-amber-300 dark:border-amber-700
-                        bg-amber-50 dark:bg-amber-950/40 text-[11px] text-amber-800 dark:text-amber-300"
+                        bg-amber-50 dark:bg-amber-950/40 text-[0.6875rem] text-amber-800 dark:text-amber-300"
         >
           <span className="font-medium">
             {lintHits.length === 1

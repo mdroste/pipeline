@@ -31,7 +31,7 @@ use rendering::rendered_page_limit;
 use structured::*;
 
 pub use core::MAX_RENDERED_PDF_PAGES;
-pub(crate) use core::{find_main_tex, ScopedSourceContext};
+pub(crate) use core::{compute_hash, find_main_tex, ScopedSourceContext};
 pub use dispatch::extract;
 pub use folder::{effective_input_mode, ingest_folder, ingest_folder_async, ingest_none};
 #[cfg(test)]

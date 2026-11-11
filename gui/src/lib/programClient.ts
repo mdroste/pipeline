@@ -38,46 +38,6 @@ export interface CapturedPlan {
   randomSeed: string | null;
   toolchainVersion: string;
 }
-export interface Factor {
-  name: string;
-  values: (string | number | boolean)[];
-}
-export interface Exclusion {
-  matches: Record<string, string | number | boolean>;
-  reason: string;
-}
-export interface GridPlan {
-  question: string;
-  specifications: {
-    ordinal: number;
-    factors: Record<string, unknown>;
-    planId: string | null;
-    excludedReason: string | null;
-  }[];
-  totalRuns: number;
-  timeoutBudgetSeconds: number;
-  capturedInputBytes: number;
-  interpretation: string;
-  selectedOutputs: string[];
-}
-export interface GridStatus {
-  basePlan: DeskRecord<CapturedPlan>;
-  record: DeskRecord<GridPlan>;
-  plan: GridPlan;
-  run: {
-    state: string;
-    revision: number;
-    nextIndex: number;
-    activeExecutionId: string | null;
-    reason: string | null;
-  };
-  attempts: {
-    ordinal: number;
-    executionId: string | null;
-    state: string;
-    receipt: Partial<ResearchExecution>;
-  }[];
-}
 export interface Entry {
   label: string;
   source: OpenResearchObject;
@@ -104,15 +64,6 @@ export interface Publication {
   sources: OpenResearchObject[];
   executionId: string | null;
 }
-export interface SymbolRecord {
-  notation: string;
-  scope: string;
-  definition: string;
-  domain: string;
-  units: string;
-  aliases: string[];
-  sources: OpenResearchObject[];
-}
 export interface Section {
   heading: string;
   text: string;
@@ -123,80 +74,6 @@ export interface Outline {
   title: string;
   template: string;
   sections: Section[];
-}
-export interface Deliverable {
-  outline: Outline;
-  artifacts: Artifact[];
-  attachments: { path: string; artifact: Artifact }[];
-  sources: OpenResearchObject[];
-}
-export interface Kit {
-  id: string;
-  version: number;
-  title: string;
-  instructions: string;
-  sections: string[];
-  tasks: string[];
-  recipeSuggestions: string[];
-}
-export interface Campaign {
-  round: number;
-  manuscript: OpenResearchObject;
-  comments: {
-    response: OpenResearchObject;
-    requiredOutputs: OpenResearchObject[];
-    researcherAddressed: boolean;
-    judgment: string;
-  }[];
-  changeSummary: string;
-  reviewScope: string;
-  broadChange: boolean;
-  previousRound: string | null;
-}
-export interface CampaignStatus {
-  record: DeskRecord<Campaign>;
-  comments: {
-    response: OpenResearchObject;
-    number: string;
-    draft: string;
-    disposition: string;
-    taskDone: boolean;
-    fileAcceptedAndCurrent: boolean;
-    checkExecuted: boolean;
-    linkChecksPass: boolean;
-    researcherAddressed: boolean;
-    judgment: string;
-    flags: string[];
-    requiredOutputs: { source: OpenResearchObject; state: string }[];
-  }[];
-  reviewRecommendation: string;
-  notice: string;
-}
-export interface Monitor {
-  kind: string;
-  target: string;
-  intervalSeconds: number;
-  notify: boolean;
-  networkConsent: boolean;
-}
-export interface MonitorState {
-  checks: {
-    id: string;
-    title: string;
-    spec: Monitor;
-    enabled: boolean;
-    revision: number;
-    nextDueAt: number;
-    lastCheckedAt: number | null;
-    lastOutcome: unknown;
-  }[];
-  attention: {
-    id: string;
-    body: { title: string; outcome: unknown };
-    createdAt: string;
-    acknowledgedAt: string | null;
-  }[];
-  lifecycle: string;
 }
 export interface Followup {
   id: string;
@@ -239,45 +116,6 @@ export interface Expected {
   value: number;
   absoluteTolerance: number;
   relativeTolerance: number;
-}
-export interface CapsuleSelection {
-  planId: string;
-  includedPaths: string[];
-  externalRequirements: Record<string, string>;
-  expected: Expected[];
-}
-export interface CapsuleRequest {
-  workspaceId: string;
-  title: string;
-  selections: CapsuleSelection[];
-  path: string;
-}
-export interface CapsuleManifest {
-  title: string;
-  plans: {
-    label: string;
-    environment: {
-      variables: Record<string, string>;
-      externalVariables: string[];
-      platform: string;
-      lockfiles: string[];
-      coverage: string;
-    };
-    inputs: {
-      path: string;
-      hash: string;
-      included: boolean;
-      externalRequirement: string | null;
-    }[];
-    outputs: string[];
-    expected: Expected[];
-  }[];
-  limitations: string;
-}
-export interface CapsulePreview {
-  manifest: CapsuleManifest;
-  fingerprint: string;
-  includedBytes: number;
 }
 export const programClient = {
   call: <T = unknown>(workspaceId: string, action: ProgramAction) =>

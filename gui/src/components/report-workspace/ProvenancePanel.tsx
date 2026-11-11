@@ -10,7 +10,7 @@ import { reportStatusDisplay } from "../../lib/reportPresentation";
 import type { ReportQuality } from "../../lib/types";
 
 const METADATA_LABEL =
-  "text-[11px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400";
+  "text-[0.6875rem] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400";
 const METADATA_VALUE =
   "mt-1 break-words text-sm text-gray-800 dark:text-gray-200";
 
@@ -44,7 +44,7 @@ export default function ProvenancePanel({
       >
         <div className="flex items-start justify-between gap-6">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">
+            <p className="text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-gray-500 dark:text-gray-400">
               {display.heading}
             </p>
             <h2 className="mt-1 text-2xl font-semibold tracking-[-0.025em] text-gray-950 dark:text-gray-50">
@@ -94,7 +94,7 @@ export default function ProvenancePanel({
               )}
             </div>
           </dl>
-          <p className="break-all border-t border-gray-200 px-5 py-2.5 font-mono text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400">
+          <p className="break-all border-t border-gray-200 px-5 py-2.5 font-mono text-[0.6875rem] text-gray-500 dark:border-gray-800 dark:text-gray-400">
             Report ID: {provenance.run_id || "Unsaved"}
           </p>
         </div>
@@ -140,7 +140,7 @@ export default function ProvenancePanel({
                   key={label}
                   className="rounded-xl border border-gray-200 p-4 dark:border-gray-800"
                 >
-                  <dt className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  <dt className="text-[0.625rem] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                     {label}
                   </dt>
                   <dd className="mt-1 text-sm text-gray-800 dark:text-gray-200">
@@ -163,7 +163,7 @@ export default function ProvenancePanel({
                 No limitations were reported by the automatic checks.
               </p>
             )}
-            <p className="mt-3 break-all font-mono text-[11px] text-gray-500 dark:text-gray-400">
+            <p className="mt-3 break-all font-mono text-[0.6875rem] text-gray-500 dark:text-gray-400">
               Reproducibility hash:{" "}
               {quality.reproducibility_hash || "Unavailable"}
             </p>
@@ -188,7 +188,7 @@ export default function ProvenancePanel({
                 ["Cached", provenance.totals.cached_input_tokens],
               ].map(([label, value]) => (
                 <div key={label}>
-                  <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  <p className="text-[0.625rem] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
                     {label}
                   </p>
                   <p className="text-sm font-semibold tabular-nums text-gray-900 dark:text-gray-100">
@@ -201,7 +201,7 @@ export default function ProvenancePanel({
 
           <div className="mt-4 overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800">
             <table className="w-full min-w-[52rem] border-collapse text-left text-sm">
-              <thead className="bg-gray-50 text-[11px] uppercase tracking-wide text-gray-500 dark:bg-gray-900 dark:text-gray-400">
+              <thead className="bg-gray-50 text-[0.6875rem] uppercase tracking-wide text-gray-500 dark:bg-gray-900 dark:text-gray-400">
                 <tr>
                   <th className="px-4 py-2.5 font-medium">Step</th>
                   <th className="px-4 py-2.5 font-medium">Provider</th>
@@ -229,7 +229,7 @@ export default function ProvenancePanel({
                       <td className="px-4 py-3 font-medium text-gray-800 dark:text-gray-200">
                         {row.provider}
                         {row.transports.length > 0 && (
-                          <span className="ml-2 text-[10px] font-semibold text-gray-400">
+                          <span className="ml-2 text-[0.625rem] font-semibold text-gray-400">
                             {row.transports.join(" + ")}
                           </span>
                         )}

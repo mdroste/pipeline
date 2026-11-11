@@ -231,9 +231,7 @@ describe("App launch", () => {
       await screen.findByRole("button", { name: "Choose test paper" }),
     );
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Start review" }),
-      ).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Preview" })).toBeEnabled(),
     );
     await waitFor(() =>
       expect(
@@ -246,7 +244,7 @@ describe("App launch", () => {
       screen.getByRole("button", { name: "Change report agents" }),
     );
 
-    expect(screen.getByRole("button", { name: "Start review" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Preview" })).toBeEnabled();
     expect(
       screen.queryByRole("button", { name: "Loading workflow…" }),
     ).not.toBeInTheDocument();
@@ -262,7 +260,7 @@ describe("App launch", () => {
     await user.click(
       await screen.findByRole("button", { name: "Choose two papers" }),
     );
-    await user.click(screen.getByRole("button", { name: "Start review" }));
+    await user.click(screen.getByRole("button", { name: "Preview" }));
     expect(await screen.findByText(/2 documents · document/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Queue 2 reviews" }));
 
@@ -280,7 +278,7 @@ describe("App launch", () => {
     expect(
       await screen.findByRole("heading", { name: "a.pdf is queued" }),
     ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: /^Activity/ }));
+    await user.click(screen.getByRole("button", { name: /^All activity/ }));
     expect(screen.getByRole("button", { name: /^b\.pdf/ })).toBeVisible();
     await user.keyboard("{Escape}");
     expect(screen.getByRole("button", { name: "New review" })).toBeEnabled();
@@ -345,9 +343,7 @@ describe("App launch", () => {
       await screen.findByRole("button", { name: "Choose DOCX" }),
     );
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Start review" }),
-      ).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Preview" })).toBeEnabled(),
     );
     expect(
       invoke.mock.calls.filter(
@@ -361,7 +357,7 @@ describe("App launch", () => {
       screen.queryByRole("button", { name: "Refresh" }),
     ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Dismiss" }));
-    await user.click(screen.getByRole("button", { name: "Start review" }));
+    await user.click(screen.getByRole("button", { name: "Preview" }));
     expect(
       await screen.findByRole("dialog", { name: "Ready to start" }),
     ).toBeVisible();
@@ -412,9 +408,7 @@ describe("App launch", () => {
     );
 
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Start review" }),
-      ).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Preview" })).toBeEnabled(),
     );
     expect(
       invoke.mock.calls.filter(
@@ -447,7 +441,7 @@ describe("App launch", () => {
     );
 
     expect(await screen.findByText("Primary mode: folder")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Start review" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Preview" })).toBeDisabled();
     expect(invoke).toHaveBeenCalledWith("get_run_setup");
     expect(
       invoke.mock.calls.filter(
@@ -461,7 +455,7 @@ describe("App launch", () => {
   it("reloads the new settings snapshot without comparing it to the old fingerprint", async () => {
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByRole("button", { name: "Start review" });
+    await screen.findByRole("button", { name: "Preview" });
 
     await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(
@@ -661,7 +655,7 @@ describe("App launch", () => {
     await user.click(
       await screen.findByRole("button", { name: "Choose test paper" }),
     );
-    await user.click(screen.getByRole("button", { name: "Start review" }));
+    await user.click(screen.getByRole("button", { name: "Preview" }));
 
     expect(
       await screen.findByRole("dialog", { name: "Dependencies" }),
@@ -709,7 +703,7 @@ describe("App launch", () => {
     await user.click(
       await screen.findByRole("button", { name: "Choose test paper" }),
     );
-    await user.click(screen.getByRole("button", { name: "Start review" }));
+    await user.click(screen.getByRole("button", { name: "Preview" }));
 
     expect(
       (await screen.findAllByText(/active profile changed/)).length,
@@ -730,7 +724,7 @@ describe("App launch", () => {
     await user.click(
       await screen.findByRole("button", { name: "Choose test paper" }),
     );
-    await user.click(screen.getByRole("button", { name: "Start review" }));
+    await user.click(screen.getByRole("button", { name: "Preview" }));
     await user.click(
       within(
         await screen.findByRole("dialog", { name: "Ready to start" }),
@@ -763,11 +757,9 @@ describe("App launch", () => {
       await screen.findByText("Shown input: /tmp/test-paper.pdf"),
     ).toBeVisible();
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "Start review" }),
-      ).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Preview" })).toBeEnabled(),
     );
-    await user.click(screen.getByRole("button", { name: "Start review" }));
+    await user.click(screen.getByRole("button", { name: "Preview" }));
     await user.click(
       within(
         await screen.findByRole("dialog", { name: "Ready to start" }),
@@ -807,7 +799,7 @@ describe("App launch", () => {
     await user.click(
       await screen.findByRole("button", { name: "Choose test paper" }),
     );
-    await user.click(screen.getByRole("button", { name: "Start review" }));
+    await user.click(screen.getByRole("button", { name: "Preview" }));
     const dialog = await screen.findByRole("dialog", {
       name: "Report options",
     });
@@ -828,11 +820,11 @@ describe("App launch", () => {
     );
 
     await user.click(within(reopened).getByRole("button", { name: "Cancel" }));
-    expect(screen.getByText("The review could not be started.")).toBeVisible();
+    expect(screen.getByText(/Couldn.t prepare the review/)).toBeVisible();
     expect(
       screen.queryByText("Workflow setup could not be loaded."),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Start review" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Preview" })).toBeEnabled();
     expect(enqueue).not.toHaveBeenCalled();
   });
 
@@ -874,7 +866,7 @@ describe("App launch", () => {
     await user.click(
       await screen.findByRole("button", { name: "Choose test paper" }),
     );
-    await user.click(screen.getByRole("button", { name: "Start review" }));
+    await user.click(screen.getByRole("button", { name: "Preview" }));
     const dialog = await screen.findByRole("dialog", {
       name: "Report options",
     });

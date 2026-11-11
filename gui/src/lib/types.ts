@@ -872,6 +872,8 @@ export interface ReviewModelChoice {
  * merge fields choose Parallel and Merge agents for this report.
  */
 export interface RunModelOverrides {
+  /** PDF reading method for this review only. */
+  extraction_method?: string;
   review?: ReviewModelChoice;
   /** Settings stage exceptions use the review model for this report. */
   clear_settings_exceptions?: boolean;

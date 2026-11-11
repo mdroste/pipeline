@@ -150,12 +150,12 @@ function AdvancedStepOptions({
         <button
           type="button"
           onClick={() => setOpen(!open)}
-          className="text-[11px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 flex items-center gap-1"
+          className="text-[0.6875rem] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 flex items-center gap-1"
         >
           <span>{open ? "▾" : "▸"}</span>
           <span>Files, inputs & run conditions</span>
           {hasAny && !open && (
-            <span className="text-[10px] text-gray-600 dark:text-gray-400 ml-1">
+            <span className="text-[0.625rem] text-gray-600 dark:text-gray-400 ml-1">
               set
             </span>
           )}
@@ -200,7 +200,7 @@ function AdvancedStepOptions({
                   }
                   placeholder="Optional role, evidence standards, and writing instructions"
                 />
-                <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                <p className="mt-1 text-[0.6875rem] text-gray-500 dark:text-gray-400">
                   Trusted instructions supplied separately from the task. Codex
                   App Server uses developer instructions. Text is literal;
                   variables are not expanded.
@@ -209,10 +209,10 @@ function AdvancedStepOptions({
 
               {/* Order-only dependencies */}
               <div>
-                <label className="block text-[10px] font-medium text-gray-500 mb-0.5">
+                <label className="block text-[0.625rem] font-medium text-gray-500 mb-0.5">
                   Wait for (order only)
                 </label>
-                <p className="text-[10px] text-gray-600 dark:text-gray-400 mb-1">
+                <p className="text-[0.625rem] text-gray-600 dark:text-gray-400 mb-1">
                   Wait for selected steps to finish without giving this step
                   access to their files.
                 </p>
@@ -223,7 +223,7 @@ function AdvancedStepOptions({
                       return (
                         <label
                           key={producer.id}
-                          className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-md border cursor-pointer ${
+                          className={`flex items-center gap-1 text-[0.625rem] px-2 py-1 rounded-md border cursor-pointer ${
                             checked
                               ? "border-gray-500 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200"
                               : "border-gray-200 dark:border-gray-700 text-gray-500"
@@ -249,7 +249,7 @@ function AdvancedStepOptions({
                     })}
                   </div>
                 ) : (
-                  <p className="text-[10px] text-gray-600 dark:text-gray-400">
+                  <p className="text-[0.625rem] text-gray-600 dark:text-gray-400">
                     No other steps.
                   </p>
                 )}
@@ -257,7 +257,7 @@ function AdvancedStepOptions({
 
               {/* run_if condition */}
               <div>
-                <label className="block text-[10px] font-medium text-gray-500 mb-0.5">
+                <label className="block text-[0.625rem] font-medium text-gray-500 mb-0.5">
                   Run only if…
                 </label>
                 <select
@@ -279,7 +279,7 @@ function AdvancedStepOptions({
                 </select>
                 {cond?.kind === "output_matches" && (
                   <div className="mt-1.5 space-y-1.5">
-                    <p className="text-[11px] italic text-gray-600 dark:text-gray-400">
+                    <p className="text-[0.6875rem] italic text-gray-600 dark:text-gray-400">
                       Runs only when the report from “{stepLabel(cond.step)}”{" "}
                       {cond.negate ? "does not " : ""}
                       {textMode
@@ -362,7 +362,7 @@ function AdvancedStepOptions({
                         className={inputClass}
                       />
                     </div>
-                    <label className="flex items-center gap-1.5 text-[10px] text-gray-500">
+                    <label className="flex items-center gap-1.5 text-[0.625rem] text-gray-500">
                       <input
                         type="checkbox"
                         checked={!!cond.negate}
@@ -430,7 +430,7 @@ function AdvancedStepOptions({
                       placeholder='array contains (optional), e.g. "formal_proofs"'
                       className={inputClass}
                     />
-                    <p className="text-[10px] text-gray-600 dark:text-gray-400">
+                    <p className="text-[0.625rem] text-gray-600 dark:text-gray-400">
                       Set either an exact value or an array member. Leave both
                       blank to require only that the pointer exists.
                     </p>
@@ -440,7 +440,7 @@ function AdvancedStepOptions({
 
               {/* Fan-out (map) */}
               <div>
-                <label className="flex items-center gap-1.5 text-[10px] font-medium text-gray-500 mb-1">
+                <label className="flex items-center gap-1.5 text-[0.625rem] font-medium text-gray-500 mb-1">
                   <input
                     type="checkbox"
                     checked={!!step.for_each}
@@ -456,7 +456,7 @@ function AdvancedStepOptions({
                   Run once for each item
                 </label>
                 {step.phase === "sequential" && (
-                  <p className="pl-4 text-[10px] text-gray-600 dark:text-gray-400">
+                  <p className="pl-4 text-[0.625rem] text-gray-600 dark:text-gray-400">
                     Only a step that runs independently can repeat for each
                     item.
                   </p>
@@ -568,7 +568,7 @@ function AdvancedStepOptions({
                         className={inputClass}
                       />
                     )}
-                    <label className="flex items-center gap-2 text-[10px] text-gray-500">
+                    <label className="flex items-center gap-2 text-[0.625rem] text-gray-500">
                       {step.for_each.artifact ? "Max items" : "Max files"}
                       <MaxItemsField
                         value={step.for_each.max}
@@ -578,7 +578,7 @@ function AdvancedStepOptions({
                         className={`${inputClass} w-20`}
                       />
                     </label>
-                    <p className="text-[10px] text-gray-600 dark:text-gray-400">
+                    <p className="text-[0.625rem] text-gray-600 dark:text-gray-400">
                       Bind <code className="font-mono">{"{item}"}</code> in the
                       prompt to each{" "}
                       {step.for_each.artifact ? "array item" : "file"}. Outputs

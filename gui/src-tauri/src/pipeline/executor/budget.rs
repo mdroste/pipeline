@@ -1,18 +1,16 @@
 //! Per-Review spending and effort limits, and the preflight usage estimate.
 //!
-//! Limits are checked before each wave. Calls already in flight always
-//! finish; steps not yet started are recorded as stopped at the limit, so the
-//! run still ends with a labeled partial report. Cost counts only direct-API
-//! calls at API list prices; subscription calls are limited by call count and
-//! elapsed time instead. The call count includes every provider invocation of
-//! the run (orientation, retries, failed units, merges). Cost includes the
-//! orientation call and every attempt of a parallel unit, kept or not. Time
-//! runs from the start of the run, so document preparation counts.
+//! Normal runs use `review_budget` to admit every provider invocation, from
+//! extraction through revision comparison. The scheduler also checks before
+//! each wave and records unstarted steps in a labeled partial report. Calls
+//! already in flight finish. Direct-API usage is charged at known list prices;
+//! subscription calls count toward call and elapsed-time limits. The local
+//! ledger below supports executor-only callers without a shared run budget.
 
 use crate::models::{StepCallRecord, StepOutput};
 use crate::pipeline::logging::CallUsage;
 use crate::pipeline_config::{Phase, PipelineConfig};
-use crate::settings::Settings;
+use crate::settings::{ModelSelection, Settings};
 use serde::Serialize;
 use std::time::Instant;
 
@@ -201,28 +199,41 @@ impl BudgetLedger {
 
     /// The limit reached, phrased to complete [`BUDGET_STOP_PREFIX`].
     pub(super) fn exhausted(&self) -> Option<String> {
-        if let Some(limit) = self.budget.max_cost_usd {
-            if self.api_cost >= limit {
-                return Some(format!(
-                    "cost limit of ${limit:.2} (estimated API list-price spend so far: ${:.2})",
-                    self.api_cost
-                ));
-            }
-        }
-        if let Some(limit) = self.budget.max_calls {
-            let calls = self.calls.max(self.provider_attempts);
-            if calls >= u64::from(limit) {
-                return Some(format!("limit of {limit} model calls ({calls} made)"));
-            }
-        }
-        if let Some(limit) = self.budget.max_minutes {
-            let minutes = self.started.elapsed().as_secs() / 60;
-            if minutes >= u64::from(limit) {
-                return Some(format!("time limit of {limit} minutes"));
-            }
-        }
-        None
+        limit_reason(
+            self.budget,
+            self.started,
+            self.api_cost,
+            self.calls.max(self.provider_attempts),
+        )
     }
+}
+
+pub(crate) fn limit_reason(
+    budget: RunBudget,
+    started: Instant,
+    api_cost: f64,
+    calls: u64,
+) -> Option<String> {
+    if let Some(limit) = budget.max_cost_usd {
+        if api_cost >= limit {
+            return Some(format!(
+                "cost limit of ${limit:.2} (estimated API list-price spend so far: ${api_cost:.2})"
+            ));
+        }
+    }
+    if let Some(limit) = budget.max_calls {
+        if calls >= u64::from(limit) {
+            return Some(format!(
+                "limit of {limit} model calls ({calls} made or reserved)"
+            ));
+        }
+    }
+    if let Some(limit) = budget.max_minutes {
+        if started.elapsed().as_secs() / 60 >= u64::from(limit) {
+            return Some(format!("time limit of {limit} minutes"));
+        }
+    }
+    None
 }
 
 /// How a step's calls are priced in the estimate.
@@ -313,13 +324,28 @@ fn add_cost(cost: &mut (f64, f64), price: Option<(f64, f64)>, calls: &Calls) -> 
     true
 }
 
+// The same merge inheritance used by pipeline::merge and the model roster.
+fn merge_selection(
+    config: &PipelineConfig,
+    settings: &Settings,
+) -> (String, Option<ModelSelection>) {
+    match config.merge.agents.first() {
+        Some(provider) => (provider.clone(), None),
+        None => {
+            let provider = settings.merge_agent().to_string();
+            let selection = settings.merge_model_selection(&provider);
+            (provider, selection)
+        }
+    }
+}
+
 /// Estimates one run of `config` over a document of `document_tokens`.
-/// `pricing` resolves a provider id to its model and transport.
+/// `pricing` resolves each effective selection to its model and transport.
 pub fn estimate_usage(
     config: &PipelineConfig,
     document_tokens: u64,
-    orientation_provider: &str,
-    pricing: &dyn Fn(&str) -> ProviderPricing,
+    settings: &Settings,
+    pricing: &dyn Fn(&str, Option<&ModelSelection>) -> ProviderPricing,
     budget: RunBudget,
     author_note: Option<&str>,
 ) -> UsageEstimate {
@@ -335,7 +361,10 @@ pub fn estimate_usage(
     let note_tokens = crate::pipeline::author_note::prefix(author_note)
         .len()
         .div_ceil(4) as u64;
-    let mut account = |provider: &str, mut calls: Calls, estimate: &mut UsageEstimate| {
+    let mut account = |provider: &str,
+                       selection: Option<ModelSelection>,
+                       mut calls: Calls,
+                       estimate: &mut UsageEstimate| {
         calls.input_low += note_tokens * calls.low;
         calls.input_high += note_tokens * calls.high;
         estimate.calls_low += calls.low;
@@ -344,7 +373,7 @@ pub fn estimate_usage(
         estimate.input_tokens_high += calls.input_high;
         estimate.output_tokens_low += calls.output_low;
         estimate.output_tokens_high += calls.output_high;
-        let resolved = pricing(provider);
+        let resolved = pricing(provider, selection.as_ref());
         if resolved.api {
             any_api = true;
             if !add_cost(&mut cost, resolved.price, &calls) {
@@ -357,7 +386,8 @@ pub fn estimate_usage(
 
     // Orientation reads the document once.
     account(
-        orientation_provider,
+        settings.orientation_agent(),
+        settings.orientation_model_selection(settings.orientation_agent()),
         Calls {
             low: 1,
             high: 1,
@@ -386,55 +416,101 @@ pub fn estimate_usage(
             (0, 0)
         };
     for step in &enabled {
-        let agents = step.agents.len().max(1) as u64;
+        let providers: Vec<&str> = if step.agents.is_empty() {
+            vec![settings.preferred_provider.as_str()]
+        } else if step.phase == Phase::Sequential {
+            vec![step.agents[0].as_str()]
+        } else {
+            step.agents.iter().map(String::as_str).collect()
+        };
+        let agents = providers.len() as u64;
         // A fan-out runs once per matching item, up to its declared cap.
-        let units_high = step
-            .for_each
-            .as_ref()
-            .map_or(1, |fan_out| u64::from(fan_out.max.max(1)));
-        let merge = u64::from(agents > 1 && config.merge.enabled);
+        let units_high = if step.phase == Phase::Parallel {
+            step.for_each
+                .as_ref()
+                .map_or(1, |fan_out| u64::from(fan_out.max.max(1)))
+        } else {
+            1
+        };
+        let merge = agents > 1 && config.merge.enabled && step.phase == Phase::Parallel;
         let (input, output_low, output_high) = if step.phase == Phase::Parallel {
             (document_tokens + PROMPT_TOKENS, 3_000, 8_000)
         } else {
             let upstream = ((parallel + specialists_high) * REPORT_TOKENS).min(MAX_UPSTREAM_TOKENS);
             (document_tokens + PROMPT_TOKENS + upstream, 6_000, 16_000)
         };
-        let low = agents + merge;
-        let high = agents * units_high + merge;
-        let provider = step.agents.first().cloned().unwrap_or_default();
-        account(
-            &provider,
-            Calls {
-                low,
-                high,
-                input_low: input * low,
-                input_high: input * high * 3 / 2,
-                output_low: output_low * low,
-                output_high: output_high * high,
-            },
-            &mut estimate,
-        );
+        for provider in providers {
+            account(
+                provider,
+                step.model_selection_for(settings, provider),
+                Calls {
+                    low: 1,
+                    high: units_high,
+                    input_low: input,
+                    input_high: input * units_high * 3 / 2,
+                    output_low,
+                    output_high: output_high * units_high,
+                },
+                &mut estimate,
+            );
+        }
+        if merge {
+            let (provider, selection) = merge_selection(config, settings);
+            account(
+                &provider,
+                selection,
+                Calls {
+                    low: 1,
+                    high: units_high,
+                    input_low: input,
+                    input_high: input * units_high * 3 / 2,
+                    output_low,
+                    output_high: output_high * units_high,
+                },
+                &mut estimate,
+            );
+        }
     }
     if specialists_high > 0 {
-        let donor = enabled
-            .iter()
-            .find(|step| step.phase == Phase::Parallel)
-            .and_then(|step| step.agents.first())
-            .cloned()
-            .unwrap_or_default();
-        let input = document_tokens + PROMPT_TOKENS;
-        account(
-            &donor,
-            Calls {
-                low: specialists_low,
-                high: specialists_high,
-                input_low: input * specialists_low,
-                input_high: input * specialists_high * 3 / 2,
-                output_low: 3_000 * specialists_low,
-                output_high: 8_000 * specialists_high,
-            },
-            &mut estimate,
-        );
+        if let Some(donor) = enabled.iter().find(|step| step.phase == Phase::Parallel) {
+            let input = document_tokens + PROMPT_TOKENS;
+            let providers = if donor.agents.is_empty() {
+                std::slice::from_ref(&settings.preferred_provider)
+            } else {
+                donor.agents.as_slice()
+            };
+            for provider in providers {
+                account(
+                    provider,
+                    donor.model_selection_for(settings, provider),
+                    Calls {
+                        low: specialists_low,
+                        high: specialists_high,
+                        input_low: input * specialists_low,
+                        input_high: input * specialists_high * 3 / 2,
+                        output_low: 3_000 * specialists_low,
+                        output_high: 8_000 * specialists_high,
+                    },
+                    &mut estimate,
+                );
+            }
+            if donor.agents.len() > 1 && config.merge.enabled {
+                let (provider, selection) = merge_selection(config, settings);
+                account(
+                    &provider,
+                    selection,
+                    Calls {
+                        low: specialists_low,
+                        high: specialists_high,
+                        input_low: input * specialists_low,
+                        input_high: input * specialists_high * 3 / 2,
+                        output_low: 3_000 * specialists_low,
+                        output_high: 8_000 * specialists_high,
+                    },
+                    &mut estimate,
+                );
+            }
+        }
     }
     if any_api {
         estimate.api_cost_low = Some(cost.0);
@@ -512,55 +588,63 @@ pub async fn preview_estimate(
         }
         None => 0,
     };
-    let mut providers: Vec<String> = config
-        .steps
-        .iter()
-        .filter(|step| step.enabled)
-        .flat_map(|step| step.agents.iter().cloned())
-        .chain(std::iter::once(settings.orientation_agent().to_string()))
-        .collect();
-    providers.sort();
-    providers.dedup();
-    let mut resolved = std::collections::HashMap::new();
-    for provider in providers {
-        let api = settings.model_transport(&provider) == "api";
+    // Collect through the estimator itself, so every reviewer, stage override,
+    // and merge is resolved with exactly the policy that will be priced.
+    let selections = {
+        let selections = std::cell::RefCell::new(Vec::<(String, Option<ModelSelection>)>::new());
+        let unpriced = |provider: &str, selection: Option<&ModelSelection>| {
+            let entry = (provider.to_string(), selection.cloned());
+            if !selections.borrow().contains(&entry) {
+                selections.borrow_mut().push(entry);
+            }
+            ProviderPricing {
+                provider: provider.into(),
+                model: String::new(),
+                api: settings.model_transport(provider) == "api",
+                price: None,
+            }
+        };
+        estimate_usage(
+            config,
+            document_tokens,
+            settings,
+            &unpriced,
+            RunBudget::from_settings(settings),
+            author_note,
+        );
+        selections.into_inner()
+    };
+    let mut resolved = Vec::new();
+    for (provider, selection) in selections {
         let model = tokio::time::timeout(
             std::time::Duration::from_secs(3),
-            crate::model_catalog::resolve(&provider, settings, None),
+            crate::model_catalog::resolve(&provider, settings, selection.as_ref()),
         )
         .await
         .ok()
         .and_then(Result::ok)
-        .map(|resolution| resolution.resolved_model)
+        .map(|r| r.resolved_model)
         .unwrap_or_default();
-        let price = (!model.is_empty())
-            .then(|| crate::output::model_price(&model))
-            .flatten();
-        resolved.insert(
-            provider.clone(),
-            ProviderPricing {
-                provider,
-                model,
-                api,
-                price,
-            },
-        );
+        let price = crate::output::model_price(&model);
+        let pricing = ProviderPricing {
+            api: settings.model_transport(&provider) == "api",
+            provider: provider.clone(),
+            model,
+            price,
+        };
+        resolved.push((provider, selection, pricing));
     }
-    let pricing = |provider: &str| {
+    let pricing = |provider: &str, selection: Option<&ModelSelection>| {
         resolved
-            .get(provider)
-            .cloned()
-            .unwrap_or_else(|| ProviderPricing {
-                provider: provider.to_string(),
-                model: String::new(),
-                api: settings.model_transport(provider) == "api",
-                price: None,
-            })
+            .iter()
+            .find(|(p, s, _)| p == provider && s.as_ref() == selection)
+            .map(|(_, _, price)| price.clone())
+            .expect("every estimated invocation was resolved")
     };
     estimate_usage(
         config,
         document_tokens,
-        settings.orientation_agent(),
+        settings,
         &pricing,
         RunBudget::from_settings(settings),
         author_note,

@@ -66,12 +66,6 @@ export function useAppController() {
     NAV_RAIL_WIDTH.max,
   );
   const navRail = useNavRailCollapse();
-  const [runSetupWidth, setRunSetupWidth] = usePersistentPanelWidth(
-    "pipeline.ui.runSetupWidth",
-    288,
-    240,
-    440,
-  );
   // Release smoke tests set a private environment variable and wait for this
   // IPC round trip. Normal app launches take the no-op path in Rust.
   useEffect(() => {
@@ -97,7 +91,6 @@ export function useAppController() {
   ).length;
   const isRunning = activeRuns.length > 0 || batchActive;
   const hasCurrentRun = selectedRunKey !== null;
-  const showRunSetup = page === "main" && selectedRunKey === null;
   // Home's "continue" target: a running review, else the next queued one,
   // else the newest finished one not yet opened.
   const continueRunKey =
@@ -129,7 +122,8 @@ export function useAppController() {
             page: "workspace",
             projectId: notice.workspaceId,
             surface: "project",
-            destination: "checks",
+            // Scheduled checks have no view of their own any more.
+            destination: "overview",
           }),
       });
     void import("../lib/workbench/workspaceClient")
@@ -164,8 +158,6 @@ export function useAppController() {
       navRailCollapsed: navRail.collapsed,
       toggleNavRail: navRail.toggle,
       navRailToggleRef: navRail.toggleRef,
-      runSetupWidth,
-      setRunSetupWidth,
     },
     projects,
     closePipeline,
@@ -179,7 +171,6 @@ export function useAppController() {
       continueRunKey,
       hasCurrentRun,
       isRunning,
-      showRunSetup,
       listenersReady,
       batchActive,
       dismissRuns,

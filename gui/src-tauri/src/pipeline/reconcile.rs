@@ -154,8 +154,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    /// A local model server that answers every request with `body` as a 400.
-    fn serve_rejection(requests: Arc<AtomicUsize>, body: &'static str) -> String {
+    /// A local model server; no account or paid provider is contacted.
+    fn serve_response(requests: Arc<AtomicUsize>, body: &'static str, status: u16) -> String {
         use std::io::{BufRead as _, Read as _, Write as _};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -175,7 +175,7 @@ mod tests {
                 let _ = reader.read_exact(&mut request);
                 let _ = write!(
                     reader.into_inner(),
-                    "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 {status} Fixture\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 );
             }
@@ -198,24 +198,39 @@ mod tests {
     }
 
     async fn requests_for(body: &'static str) -> (usize, String) {
+        let (requests, result) = response_for(body, 400, 0, false).await;
+        (requests, result.unwrap_err())
+    }
+
+    async fn response_for(
+        body: &'static str,
+        status: u16,
+        limit: u32,
+        consumed: bool,
+    ) -> (usize, Result<String, String>) {
         let requests = Arc::new(AtomicUsize::new(0));
         let settings = crate::settings::Settings {
             preferred_provider: "local".into(),
-            local_base_url: serve_rejection(requests.clone(), body),
+            local_base_url: serve_response(requests.clone(), body, status),
             local_model: "fixture".into(),
+            review_max_calls: limit,
             max_retries: 2,
             ..Default::default()
         };
         let app: crate::emit::EventBus = Arc::new(crate::emit::NullEvents);
         // A private run scope, so the frozen settings reach only this call.
         let run = crate::run_scope::ActiveScope::begin(format!("reconcile-test-{}", body.len()));
-        let error = crate::run_scope::scoped(run.scope().clone(), async {
+        let result = crate::run_scope::scoped(run.scope().clone(), async {
+            let _budget =
+                crate::pipeline::review_budget::begin(&settings, std::time::Instant::now());
+            if consumed {
+                crate::pipeline::logging::record_provider_attempt().unwrap();
+            }
             let _settings = crate::settings::freeze_for_run(settings);
             reconcile(&app, &report("2026-01-01"), &report("2026-02-01")).await
         })
-        .await
-        .unwrap_err();
-        (requests.load(Ordering::SeqCst), error)
+        .await;
+        (requests.load(Ordering::SeqCst), result)
     }
 
     #[tokio::test]
@@ -228,5 +243,33 @@ mod tests {
                 .await;
         assert!(error.contains("[codex-outcome-unknown]"), "{error}");
         assert_eq!(every_attempt, one_attempt * 3);
+    }
+
+    #[tokio::test]
+    async fn comparison_respects_exhausted_limits_and_stops_between_retries() {
+        let body = r#"{"error":{"message":"malformed request"}}"#;
+        let (all_attempts, _) = requests_for(body).await;
+        let (limited, result) = response_for(body, 400, 1, false).await;
+        assert!(crate::pipeline::review_budget::stopped(
+            &result.unwrap_err()
+        ));
+        assert!(limited > 0);
+        assert_eq!(all_attempts, limited * 3);
+        let (exhausted, result) = response_for(body, 400, 1, true).await;
+        assert_eq!(
+            exhausted, 0,
+            "comparison must not call an exhausted provider"
+        );
+        assert!(crate::pipeline::review_budget::stopped(
+            &result.unwrap_err()
+        ));
+    }
+
+    #[tokio::test]
+    async fn comparison_with_available_budget_still_returns_its_report() {
+        let body = r###"{"model":"fixture","choices":[{"message":{"role":"assistant","content":"{\"content\":\"## Revision Diff\\nConcern remains.\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":20}}"###;
+        let (requests, result) = response_for(body, 200, 1, false).await;
+        assert!(requests > 0);
+        assert_eq!(result.unwrap(), "## Revision Diff\nConcern remains.");
     }
 }

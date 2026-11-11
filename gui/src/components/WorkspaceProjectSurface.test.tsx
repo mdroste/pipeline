@@ -88,7 +88,6 @@ it("opens signed-out project state without a model call or choosing reference re
   const conversation = vi.fn();
   await mount(conversation);
   fireEvent.click(screen.getByRole("button", { name: "Project settings" }));
-  expect(screen.getByLabelText("Reference results run")).toHaveValue("");
   expect(screen.getByLabelText("Current version of the paper")).toHaveValue("");
   expect(screen.getByText("research")).toBeInTheDocument();
   expect(mocks.mutate).not.toHaveBeenCalled();
@@ -98,11 +97,11 @@ it("uses plain-language section names instead of provenance vocabulary", async (
   await mount();
   for (const label of [
     "Overview",
-    "Library",
-    "Analyze",
-    "Write",
-    "Automate",
-    "Activity",
+    "Paper",
+    "Files",
+    "Reviews",
+    "Changes",
+    "Notes",
   ])
     expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
   expect(screen.queryByText(/accepted research state/i)).toBeNull();
@@ -111,7 +110,8 @@ it("uses plain-language section names instead of provenance vocabulary", async (
 });
 it("records the task and user-specified outputs and checks", async () => {
   await mount();
-  fireEvent.click(screen.getByRole("button", { name: "Automate" }));
+  fireEvent.click(screen.getByRole("button", { name: "Notes" }));
+  fireEvent.click(screen.getByRole("button", { name: "Action items" }));
   fireEvent.change(screen.getByLabelText("New action item"), {
     target: { value: "Check the envelope condition" },
   });
@@ -137,7 +137,8 @@ it("starts an edit from a task and copies only the explicitly selected files", a
   data.tasks = [openTask];
   mocks.home.mockResolvedValue(data);
   await mount();
-  fireEvent.click(screen.getByRole("button", { name: "Automate" }));
+  fireEvent.click(screen.getByRole("button", { name: "Notes" }));
+  fireEvent.click(screen.getByRole("button", { name: "Action items" }));
   fireEvent.click(screen.getByRole("button", { name: "Start an edit" }));
   expect(screen.getByLabelText("Action item for this edit")).toHaveValue(
     "task",
@@ -167,10 +168,7 @@ it("explains that a folder is needed before an edit can start", async () => {
   });
   await mount();
   expect(screen.getByText("No folder attached")).toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Write" }));
-  fireEvent.change(screen.getByLabelText("Project view"), {
-    target: { value: "edits" },
-  });
+  fireEvent.click(screen.getByRole("button", { name: "Changes" }));
   expect(
     screen.getByText(/Attach a folder in Project settings first/),
   ).toBeInTheDocument();
@@ -210,7 +208,7 @@ it("keeps an unsaved project note when changing project destinations", async () 
     screen.getByText("Project notes", { selector: "summary", exact: false }),
   );
   expect(draft).toHaveValue("Retain the aggregation assumptions");
-  fireEvent.click(screen.getByRole("button", { name: "Automate" }));
+  fireEvent.click(screen.getByRole("button", { name: "Notes" }));
   expect(draft).not.toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Overview" }));
   expect(draft).toBeVisible();

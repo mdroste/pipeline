@@ -174,9 +174,7 @@ pub fn write_file_for_tool(
     // Reserve only once validation and the fallible data write have
     // succeeded. The reservation rolls back if the atomic commit fails.
     let reservation = WriteReservation::reserve(content.len())?;
-    staged
-        .into_temp_path()
-        .persist(&dest)
+    crate::safety::persist_file(staged, &dest)
         .map_err(|e| format!("Failed to commit {path}: {}", e.error))?;
     reservation.commit();
 

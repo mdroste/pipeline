@@ -44,7 +44,9 @@ async fn scenario(mode: &'static str) {
     let (read, write) = tokio::io::split(client_io);
     let c = Connection::simulated(root.path(), AppServerClient::from_io(7, read, write));
     let cwd = c.cwd.clone();
+    let (ready, active_turn) = tokio::sync::oneshot::channel();
     let server = tokio::spawn(async move {
+        let mut ready = Some(ready);
         let (read, mut write) = tokio::io::split(server_io);
         let mut read = BufReader::new(read);
         let mut starts = 0;
@@ -68,6 +70,12 @@ async fn scenario(mode: &'static str) {
                     json!({"data":[{"id":"fixture","model":"fixture","displayName":"Fixture","description":"Test","isDefault":true,"defaultReasoningEffort":"high","supportedReasoningEfforts":[{"reasoningEffort":"high","description":"High"}]}],"nextCursor":null})
                 }
                 "thread/start" => {
+                    if mode == "cancel_before_start" {
+                        // Hold the reply: the call has a prepared receipt but
+                        // cannot possibly submit a turn yet.
+                        ready.take().unwrap().send(()).unwrap();
+                        continue;
+                    }
                     assert_eq!(
                         request["params"]["developerInstructions"],
                         "Review evidence carefully."
@@ -102,6 +110,15 @@ async fn scenario(mode: &'static str) {
                         return;
                     }
                     if mode == "cancel" {
+                        // A tool acknowledgement proves the caller processed
+                        // turn/start and owns the exact active turn before it
+                        // is dropped. Server-side send alone is not enough.
+                        send(&mut write, json!({"id":"ready-tool","method":"item/tool/call","params":{"threadId":"thread-1","turnId":"turn-1","callId":"ready-call","tool":"Write","arguments":{"file_path":"note.txt","content":"Evidence"}}})).await;
+                        assert_eq!(
+                            receive_reply(&mut read, &mut write).await["result"]["success"],
+                            true
+                        );
+                        ready.take().unwrap().send(()).unwrap();
                         continue;
                     }
                     // Replayed dynamic requests produce the same acknowledgement,
@@ -162,15 +179,23 @@ async fn scenario(mode: &'static str) {
         &[],
         &overrides,
     );
-    let result = tokio::time::timeout(
-        if mode == "cancel" {
-            Duration::from_millis(100)
-        } else {
-            Duration::from_secs(5)
-        },
-        operation,
-    )
-    .await;
+    let result = if mode == "cancel" || mode == "cancel_before_start" {
+        let mut operation = Box::pin(operation);
+        tokio::select! {
+            result = &mut operation => panic!("turn completed before cancellation: {result:?}"),
+            ready = tokio::time::timeout(Duration::from_secs(20), active_turn) => {
+                ready.expect("active turn never acknowledged").unwrap();
+            }
+        }
+        drop(operation);
+        None
+    } else {
+        Some(
+            tokio::time::timeout(Duration::from_secs(20), operation)
+                .await
+                .unwrap(),
+        )
+    };
     match mode {
         "success" | "lagged" => {
             assert_eq!(result.unwrap().unwrap(), "Report");
@@ -182,13 +207,23 @@ async fn scenario(mode: &'static str) {
         "disconnect" => assert!(crate::pipeline::provider_error::is_non_retryable_error(
             &result.unwrap().unwrap_err()
         )),
-        "cancel" => assert!(result.is_err()),
+        "cancel" | "cancel_before_start" => assert!(result.is_none()),
         _ => unreachable!(),
     }
-    tokio::time::timeout(Duration::from_secs(5), server)
-        .await
-        .unwrap()
-        .unwrap();
+    if mode != "cancel_before_start" {
+        tokio::time::timeout(Duration::from_secs(5), server)
+            .await
+            .unwrap()
+            .unwrap();
+    } else {
+        // Dropping a prepared call releases ownership without inventing a
+        // turn/interrupt for a turn that has not been submitted.
+        let _released = tokio::time::timeout(Duration::from_secs(5), c.activity.write())
+            .await
+            .unwrap();
+        server.abort();
+        assert!(server.await.unwrap_err().is_cancelled());
+    }
     // Cleanup retains ownership until interruption/reconciliation is finished.
     let _released = tokio::time::timeout(Duration::from_secs(5), c.activity.write())
         .await
@@ -199,6 +234,11 @@ async fn scenario(mode: &'static str) {
         serde_json::from_slice(&std::fs::read(records[0].as_ref().unwrap().path()).unwrap())
             .unwrap();
     assert_eq!(record["instructions"], "Review evidence carefully.");
+    if mode == "cancel_before_start" {
+        assert!(record["turn_id"].is_null());
+        assert_eq!(record["state"], "not_submitted");
+        return;
+    }
     assert_eq!(record["turn_id"], "turn-1");
     if mode == "success" {
         assert_eq!(record["output"], "Report");
@@ -226,6 +266,10 @@ async fn accepted_disconnect_is_durable_and_not_retryable() {
 #[tokio::test]
 async fn dropping_a_call_interrupts_its_exact_turn() {
     scenario("cancel").await;
+}
+#[tokio::test]
+async fn dropping_before_turn_submission_records_no_turn_to_interrupt() {
+    scenario("cancel_before_start").await;
 }
 #[tokio::test]
 async fn lagged_event_stream_reconciles_instead_of_failing_the_turn() {

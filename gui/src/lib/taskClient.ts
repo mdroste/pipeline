@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { FileListing } from "./fileWorkspaceClient";
 import type {
   TaskSummary,
   TaskRun,
@@ -62,6 +63,13 @@ export const taskClient = {
       after: Math.floor(Date.now() / 1000) - 1,
     }),
   sessions: () => invoke<SessionChoice[]>("task_sessions"),
+  inputFiles: (sessionId: string, directory: string) =>
+    invoke<FileListing>("task_input_files", { sessionId, directory }),
+  validateInputFile: (sessionId: string, path: string) =>
+    invoke<{ root: string; path: string; name: string }>(
+      "task_validate_input_file",
+      { sessionId, path },
+    ),
   proposals: (sessionId: string) =>
     invoke<TaskProposal[]>("task_proposals", { sessionId }),
   prepareProposal: (sessionId: string, proposalId: string) =>

@@ -54,7 +54,7 @@ export default function ReportContents({
           style={{ width: compact ? "100%" : contentsWidth }}
         >
           <div className="mb-4 flex items-center justify-between gap-2">
-            <h4 className="text-[11px] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
+            <h4 className="text-[0.6875rem] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
               Contents
             </h4>
             <button

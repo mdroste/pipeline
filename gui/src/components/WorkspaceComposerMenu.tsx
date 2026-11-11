@@ -1,12 +1,13 @@
-import { lazy, Suspense, useRef, useState } from "react";
+import AttachProjectPicker from "./AttachProjectPicker";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import IconButton from "../ui/IconButton";
 import Popover from "../ui/Popover";
-import Button from "../ui/Button";
 import Skeleton from "../ui/Skeleton";
 import { Menu, MenuItem } from "../ui/Menu";
 import { Icon } from "../ui/icons";
 import type {
   ConversationSnapshot,
+  Workspace,
   SessionSnapshot,
 } from "../lib/workbenchTypes";
 
@@ -22,7 +23,12 @@ export default function WorkspaceComposerMenu({
   disabled,
   onSnapshot,
   onBusy,
-  onBrowseProjects,
+  onMoveToProject,
+  onProjectCreated,
+  moveError,
+  pendingFiles,
+  resumeView,
+  onPendingFilesConsumed,
   onTasks,
 }: {
   snapshot: ConversationSnapshot | null;
@@ -30,14 +36,27 @@ export default function WorkspaceComposerMenu({
   onSnapshot: (next: SessionSnapshot) => void;
   onBusy: (busy: boolean) => void;
   /** Open project navigation, for a conversation that has no project yet. */
-  onBrowseProjects: () => void;
+  onBrowseProjects?: () => void;
+  onMoveToProject: (
+    id: string,
+    view: "import" | "documents",
+  ) => Promise<boolean>;
+  onProjectCreated: (project: Workspace) => void;
+  moveError?: string | null;
+  pendingFiles?: string[];
+  resumeView?: "import" | "documents";
+  onPendingFilesConsumed?: () => void;
   onTasks?: () => void;
 }) {
   const [view, setView] = useState<View>(null);
+  useEffect(() => {
+    if (resumeView) setView(resumeView);
+  }, [resumeView]);
   const [busy, setBusy] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const close = () => {
     setView(null);
+    onPendingFilesConsumed?.();
     trigger.current?.focus();
   };
   const panel = view === "import" || view === "documents" ? view : null;
@@ -58,7 +77,7 @@ export default function WorkspaceComposerMenu({
       </IconButton>
       <Menu
         open={view === "menu"}
-        onClose={() => setView(null)}
+        onClose={close}
         anchorRef={trigger}
         label="Add to message"
         side="top"
@@ -94,7 +113,7 @@ export default function WorkspaceComposerMenu({
       </Menu>
       <Popover
         open={panel !== null}
-        onClose={() => setView(null)}
+        onClose={close}
         anchorRef={trigger}
         label={panel ? titles[panel] : "Add to message"}
         side="top"
@@ -135,6 +154,8 @@ export default function WorkspaceComposerMenu({
                 <WorkspaceAttachmentsPanel
                   key={panel}
                   mode={panel}
+                  pendingFiles={pendingFiles}
+                  onPendingFilesConsumed={onPendingFilesConsumed}
                   snapshot={snapshot}
                   onSnapshot={onSnapshot}
                   onBusy={(value) => {
@@ -146,18 +167,21 @@ export default function WorkspaceComposerMenu({
               </Suspense>
             ) : (
               <div className="space-y-3">
-                <p className="text-ui-meta text-ink-muted">
-                  Files are saved in projects. Choose or create a project, then
-                  open a conversation there to add files.
-                </p>
-                <Button
-                  onClick={() => {
-                    setView(null);
-                    onBrowseProjects();
+                {pendingFiles?.length ? (
+                  <p className="text-ui-meta">
+                    {pendingFiles.length} dropped{" "}
+                    {pendingFiles.length === 1 ? "file" : "files"} ready to add.
+                  </p>
+                ) : null}
+                <AttachProjectPicker
+                  onMove={(id) => onMoveToProject(id, panel)}
+                  onCreated={onProjectCreated}
+                  moveError={moveError}
+                  onBusy={(value) => {
+                    setBusy(value);
+                    onBusy(value);
                   }}
-                >
-                  Choose a project
-                </Button>
+                />
               </div>
             )}
           </>

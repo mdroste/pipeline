@@ -168,23 +168,23 @@ function ArtifactContextEditor({
 
   const checkboxClass = "rounded border-gray-300 dark:border-gray-600";
   const chipClass =
-    "text-[10px] px-2 py-1 rounded-md border border-gray-200 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500";
+    "text-[0.625rem] px-2 py-1 rounded-md border border-gray-200 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-500";
 
   return (
     <div className="space-y-2.5">
       <div>
         <div className="flex items-center justify-between gap-2">
-          <label className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+          <label className="text-[0.625rem] font-semibold uppercase tracking-wide text-gray-500">
             What this step can read
           </label>
           <span
-            className="text-[10px] text-gray-600 dark:text-gray-400 truncate"
+            className="text-[0.625rem] text-gray-600 dark:text-gray-400 truncate"
             title={artifactContextSummary(step.context)}
           >
             {artifactContextSummary(step.context)}
           </span>
         </div>
-        <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-0.5 leading-relaxed">
+        <p className="text-[0.625rem] text-gray-600 dark:text-gray-400 mt-0.5 leading-relaxed">
           {step.phase === "parallel"
             ? "This step can read only the items you select. Parallel steps run independently and cannot read each other’s results."
             : "This step can read only the items you select. If you select another step’s result, it will wait for that step to finish."}
@@ -232,7 +232,7 @@ function ArtifactContextEditor({
 
       <div className="rounded-md border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-800">
         <div className="p-2">
-          <p className="text-[10px] font-medium text-gray-600 dark:text-gray-300 mb-1">
+          <p className="text-[0.625rem] font-medium text-gray-600 dark:text-gray-300 mb-1">
             Primary input
           </p>
           {availablePrimary.length ? (
@@ -249,7 +249,7 @@ function ArtifactContextEditor({
                 .map(([part, label]) => (
                   <label
                     key={part}
-                    className="flex items-center gap-1 text-[10px] text-gray-600 dark:text-gray-300"
+                    className="flex items-center gap-1 text-[0.625rem] text-gray-600 dark:text-gray-300"
                   >
                     <input
                       type="checkbox"
@@ -264,13 +264,13 @@ function ArtifactContextEditor({
                 ))}
             </div>
           ) : (
-            <p className="text-[10px] text-gray-600 dark:text-gray-400">
+            <p className="text-[0.625rem] text-gray-600 dark:text-gray-400">
               This review has no primary input.
             </p>
           )}
         </div>
 
-        <label className="flex items-center gap-2 p-2 text-[10px] text-gray-600 dark:text-gray-300">
+        <label className="flex items-center gap-2 p-2 text-[0.625rem] text-gray-600 dark:text-gray-300">
           <input
             type="checkbox"
             className={checkboxClass}
@@ -295,7 +295,7 @@ function ArtifactContextEditor({
           );
           return (
             <div key={slot.key} className="p-2">
-              <p className="text-[10px] font-medium text-gray-600 dark:text-gray-300 mb-1">
+              <p className="text-[0.625rem] font-medium text-gray-600 dark:text-gray-300 mb-1">
                 {slot.label || slot.key}{" "}
                 <span className="font-mono text-gray-600 dark:text-gray-400">
                   ({slot.key})
@@ -310,7 +310,7 @@ function ArtifactContextEditor({
                 ).map(([part, label]) => (
                   <label
                     key={part}
-                    className="flex items-center gap-1 text-[10px] text-gray-600 dark:text-gray-300"
+                    className="flex items-center gap-1 text-[0.625rem] text-gray-600 dark:text-gray-300"
                   >
                     <input
                       type="checkbox"
@@ -329,7 +329,7 @@ function ArtifactContextEditor({
         })}
 
         {step.phase === "parallel" && otherSteps.length > 0 && (
-          <p className="p-2 text-[10px] text-gray-600 dark:text-gray-400">
+          <p className="p-2 text-[0.625rem] text-gray-600 dark:text-gray-400">
             Step reports and supporting files become selectable only in
             Sequential steps.
           </p>
@@ -344,7 +344,7 @@ function ArtifactContextEditor({
             return (
               <div key={producer.id} className="p-2">
                 <div className="flex items-center justify-between gap-2">
-                  <p className="text-[10px] font-medium text-gray-600 dark:text-gray-300 truncate">
+                  <p className="text-[0.625rem] font-medium text-gray-600 dark:text-gray-300 truncate">
                     {producer.label}{" "}
                     <span className="font-mono text-gray-600 dark:text-gray-400">
                       ({producer.id})
@@ -359,7 +359,7 @@ function ArtifactContextEditor({
                     ).map(([part, label]) => (
                       <label
                         key={part}
-                        className="flex items-center gap-1 text-[10px] text-gray-600 dark:text-gray-300"
+                        className="flex items-center gap-1 text-[0.625rem] text-gray-600 dark:text-gray-300"
                       >
                         <input
                           type="checkbox"
@@ -383,7 +383,7 @@ function ArtifactContextEditor({
                       setStepGlob(producer.id, event.target.value)
                     }
                     placeholder="All files, or filter with a glob such as **/*.csv"
-                    className="mt-1.5 w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-[10px] font-mono text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
+                    className="mt-1.5 w-full py-1 px-2 border border-gray-300 dark:border-gray-600 rounded text-[0.625rem] font-mono text-gray-900 bg-white dark:bg-gray-800 dark:text-gray-200"
                   />
                 )}
               </div>

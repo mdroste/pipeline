@@ -22,7 +22,6 @@ describe("researcher-facing copy", () => {
     ["ProjectIssueLedgerPanel.tsx", /All workflows/],
     ["harness-editor/harnessHelpers.ts", /label: "Workspace"/],
     ["harness-editor/HarnessPresetPanel.tsx", /additional Workspace/],
-    ["research-studio/Experiments.tsx", /oldstata/],
   ])("keeps implementation terms out of %s", (file, terms) => {
     expect(readFileSync(join(root, file), "utf8")).not.toMatch(terms);
   });

@@ -1,28 +1,25 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import useConversationIndex from "../hooks/useConversationIndex";
 import useModalDialog from "../hooks/useModalDialog";
-import { reviewHistoryClient } from "../lib/reviewHistoryClient";
+import useSearchSources from "../hooks/useSearchSources";
 import { router, type AppRoute } from "../lib/router";
-import { taskClient } from "../lib/taskClient";
-import type { TaskSummary } from "../lib/taskTypes";
-import type { RunSummary } from "../lib/types";
-import { workspaceClient } from "../lib/workbench/workspaceClient";
-import type { Workspace } from "../lib/workbenchTypes";
 import {
+  openDestinations,
   workspaceDestinations,
   workspaceSections,
-  type WorkspaceDestination,
 } from "../lib/workspaceNavigation";
 import { useNavRailSlot } from "./nav-rail/navRailSlot";
 import "./WorkspaceNavigation.css";
 
-const SHOWN_RESULTS = 40;
+const GROUP_LIMIT = 6;
 
 interface SearchEntry {
   id: string;
   label: string;
   hint: string;
+  group: string;
+  current?: boolean;
   run: () => void;
 }
 
@@ -35,54 +32,18 @@ const PAGES: SearchEntry[] = (
     ["New review", { page: "main" }],
     ["Review history", { page: "history" }],
     ["Review designer", { page: "pipeline" }],
-    ["Automations", { page: "tasks" }],
-    ["Activity", { page: "activity" }],
+    ["All automations", { page: "tasks" }],
+    ["All activity", { page: "activity" }],
     ["Settings", { page: "settings" }],
     ["Help", { page: "help" }],
   ] as const
 ).map(([label, route]) => ({
   id: `page:${route.page}`,
+  group: "Pages",
   label,
   hint: route.page === "project-index" ? "Projects and chats" : "Go to",
   run: goTo(route),
 }));
-
-/** Reads what each source can offer; one failed source leaves the others. */
-function useSearchSources() {
-  const [projects, setProjects] = useState<Workspace[]>([]);
-  const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [tasks, setTasks] = useState<TaskSummary[]>([]);
-  useEffect(() => {
-    let live = true;
-    void workspaceClient
-      .listWorkspaces(false)
-      .then(({ workspaces }) => {
-        if (live)
-          setProjects(
-            [...workspaces].sort((a, b) =>
-              b.updatedAt.localeCompare(a.updatedAt),
-            ),
-          );
-      })
-      .catch(() => undefined);
-    void reviewHistoryClient
-      .list()
-      .then((listed) => {
-        if (live) setRuns(listed);
-      })
-      .catch(() => undefined);
-    void taskClient
-      .list()
-      .then((listed) => {
-        if (live) setTasks(listed);
-      })
-      .catch(() => undefined);
-    return () => {
-      live = false;
-    };
-  }, []);
-  return { projects, runs, tasks };
-}
 
 /** Find any project, conversation, review, automation, or project view. */
 export default function AppSearch({
@@ -98,16 +59,22 @@ export default function AppSearch({
   const title = useId();
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
-  const { projects, runs, tasks } = useSearchSources();
-  const { conversations } = useConversationIndex(true, false, true);
+  const { projects, runs, tasks, states, retry } = useSearchSources();
+  const chats = useConversationIndex(true, false, true);
+  const { conversations } = chats;
+  const [expanded, setExpanded] = useState<string[]>([]);
   const workspace = useNavRailSlot()?.workspace;
   const viewProject = workspace?.projectId ?? projects[0]?.id ?? null;
+  const projectName =
+    workspace?.projectName ?? projects.find((p) => p.id === viewProject)?.name;
   const entries = useMemo<SearchEntry[]>(() => {
-    const views = viewProject
-      ? (Object.keys(workspaceDestinations) as WorkspaceDestination[]).map(
-          (id) => ({
+    const views =
+      viewProject && projectName
+        ? openDestinations.map((id) => ({
             id: `view:${id}`,
-            label: workspaceDestinations[id].label,
+            label: `${workspaceDestinations[id].label} · ${projectName}`,
+            group: "Project tools",
+            current: !!workspace?.projectId,
             hint: `Project view · ${
               workspaceSections.find(
                 (section) => section.id === workspaceDestinations[id].section,
@@ -122,12 +89,13 @@ export default function AppSearch({
                     surface: "project",
                     destination: id,
                   }),
-          }),
-        )
-      : [];
+          }))
+        : [];
     return [
       ...projects.map((project) => ({
         id: `project:${project.id}`,
+        group: "Projects",
+        current: project.id === workspace?.projectId,
         label: project.name,
         hint: "Project",
         run: goTo({
@@ -139,6 +107,9 @@ export default function AppSearch({
       })),
       ...conversations.map(({ session, projectName }) => ({
         id: `conversation:${session.id}`,
+        group: "Chats",
+        current:
+          !!workspace?.projectId && session.workspaceId === workspace.projectId,
         label: session.title,
         hint: projectName ? `Conversation · ${projectName}` : "Conversation",
         run: () => onOpenConversation(session.id),
@@ -147,12 +118,14 @@ export default function AppSearch({
       ...views,
       ...runs.map((run) => ({
         id: `review:${run.run_id}`,
-        label: run.input_name,
+        group: "Reviews",
+        label: run.title || run.input_name,
         hint: `Review · ${run.profile_name}`,
         run: () => onOpenRun(run.run_id),
       })),
       ...tasks.map((task) => ({
         id: `automation:${task.id}`,
+        group: "Automations",
         label: task.name,
         hint: "Automation",
         run: goTo({ page: "tasks", taskId: task.id }),
@@ -166,18 +139,42 @@ export default function AppSearch({
     runs,
     tasks,
     viewProject,
+    projectName,
     workspace,
   ]);
-  const matches = useMemo(() => {
-    const terms = query.toLocaleLowerCase().trim().split(/\s+/);
-    return entries
+  const groups = useMemo(() => {
+    const needle = query.toLocaleLowerCase().trim();
+    const terms = needle.split(/\s+/);
+    const score = (entry: SearchEntry) =>
+      (entry.label.toLocaleLowerCase() === needle
+        ? 100
+        : entry.label.toLocaleLowerCase().startsWith(needle)
+          ? 40
+          : 0) + (entry.current ? 10 : 0);
+    const filtered = entries
       .filter((entry) =>
         terms.every((term) =>
-          `${entry.label} ${entry.hint}`.toLocaleLowerCase().includes(term),
+          (entry.label + " " + entry.hint).toLocaleLowerCase().includes(term),
         ),
       )
-      .slice(0, SHOWN_RESULTS);
-  }, [entries, query]);
+      .sort((a, b) => score(b) - score(a));
+    const byGroup = new Map<string, SearchEntry[]>();
+    for (const entry of filtered)
+      byGroup.set(entry.group, [...(byGroup.get(entry.group) ?? []), entry]);
+    return [...byGroup].map(([label, items]) => ({
+      label,
+      items,
+      visible: expanded.includes(label) ? items : items.slice(0, GROUP_LIMIT),
+    }));
+  }, [entries, query, expanded]);
+  const matches = groups.flatMap((group) => group.visible);
+  const loading = chats.loading || Object.values(states).includes("loading");
+  const failures = [
+    ...Object.entries(states)
+      .filter(([, state]) => state === "error")
+      .map(([name]) => name),
+    ...(chats.error ? ["Chats"] : []),
+  ];
   const selected = Math.min(index, matches.length - 1);
   useEffect(() => {
     root.current
@@ -216,7 +213,7 @@ export default function AppSearch({
           aria-expanded="true"
           aria-autocomplete="list"
           aria-label="Search Pipeline"
-          placeholder="Find a project, conversation, review, or view…"
+          placeholder="Find a project, chat, review, or tool…"
           value={query}
           aria-controls={`${title}-results`}
           aria-activedescendant={
@@ -225,6 +222,7 @@ export default function AppSearch({
           onChange={(event) => {
             setQuery(event.target.value);
             setIndex(0);
+            setExpanded([]);
           }}
           onKeyDown={(event) => {
             // WebKit reports the Enter that confirms an IME composition with
@@ -248,6 +246,28 @@ export default function AppSearch({
             }
           }}
         />
+        <p className="px-4 pb-2 text-ui-meta text-ink-muted">
+          Searches names and titles. To search document text, open its project.
+        </p>
+        {loading && (
+          <p role="status" className="px-4 pb-2 text-ui-label">
+            Loading saved work…
+          </p>
+        )}
+        {failures.length > 0 && (
+          <div role="status" className="px-4 pb-2 text-ui-label">
+            Couldn't load {failures.join(", ")}. Results may be incomplete.{" "}
+            <button
+              className="underline"
+              onClick={() => {
+                retry();
+                chats.refresh();
+              }}
+            >
+              Retry search
+            </button>
+          </div>
+        )}
         <div
           id={`${title}-results`}
           role="listbox"
@@ -255,21 +275,46 @@ export default function AppSearch({
           className="workspace-picker-results"
         >
           {matches.map((entry, row) => (
-            <button
-              type="button"
-              role="option"
-              aria-selected={row === selected}
-              tabIndex={-1}
-              id={`${title}-${entry.id}`}
-              key={entry.id}
-              data-highlighted={row === selected}
-              onClick={() => choose(entry)}
-            >
-              <span>{entry.label}</span>
-              <small>{entry.hint}</small>
-            </button>
+            <Fragment key={entry.id}>
+              {matches[row - 1]?.group !== entry.group && (
+                <div
+                  role="presentation"
+                  className="px-3 pt-3 pb-1 text-ui-label font-semibold"
+                >
+                  {entry.group}
+                </div>
+              )}
+              <button
+                type="button"
+                role="option"
+                aria-selected={row === selected}
+                tabIndex={-1}
+                id={`${title}-${entry.id}`}
+                key={entry.id}
+                data-highlighted={row === selected}
+                onClick={() => choose(entry)}
+              >
+                <span>{entry.label}</span>
+                <small>{entry.hint}</small>
+              </button>
+            </Fragment>
           ))}
-          {!matches.length && <p>Nothing matches “{query}”.</p>}
+          {!matches.length && !loading && !failures.length && (
+            <p>Nothing matches “{query}”.</p>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2 px-4 py-2">
+          {groups
+            .filter((g) => g.items.length > g.visible.length)
+            .map((g) => (
+              <button
+                key={g.label}
+                className="text-ui-label underline"
+                onClick={() => setExpanded((old) => [...old, g.label])}
+              >
+                Show all {g.items.length} {g.label.toLowerCase()}
+              </button>
+            ))}
         </div>
         <footer>↑ ↓ to browse · Enter to open · Esc to close</footer>
       </div>

@@ -67,6 +67,7 @@ interface Props {
   theme: ThemePreference;
   onThemeChange: (theme: ThemePreference) => void;
   onSystemChange?: () => void;
+  onOpenDiagnostics?: () => void;
   initialSection?: SettingsSection;
   targetId?: string;
   navigationKey?: number;
@@ -87,6 +88,7 @@ export default function SettingsPage({
   theme,
   onThemeChange,
   onSystemChange,
+  onOpenDiagnostics,
   initialSection = "general",
   targetId,
   navigationKey = 0,
@@ -98,6 +100,7 @@ export default function SettingsPage({
     setSettings: setReviewSettings,
     loading,
     loadError,
+    retryLoad,
     saving,
     saved,
     dirty,
@@ -233,10 +236,31 @@ export default function SettingsPage({
     );
   if (loadError || !settings)
     return (
-      <div className="p-8">
-        <p>Failed to load settings{loadError ? `: ${loadError}` : "."}</p>
-        <button onClick={handleClose}>Go back</button>
-      </div>
+      <main className="ui-page">
+        <header className="settings-page-header">
+          <h1>Settings</h1>
+        </header>
+        <section
+          className="settings-card"
+          aria-labelledby="settings-load-error"
+        >
+          <h2 id="settings-load-error">Settings could not be loaded</h2>
+          <p role="alert">{loadError || "Settings are unavailable."}</p>
+          <div className="flex flex-wrap gap-3 mt-4">
+            <button className="ui-page-button" onClick={() => void retryLoad()}>
+              Retry settings
+            </button>
+            {onOpenDiagnostics && (
+              <button className="ui-page-button" onClick={onOpenDiagnostics}>
+                Open diagnostics
+              </button>
+            )}
+            <button className="ui-page-button" onClick={handleClose}>
+              Go back
+            </button>
+          </div>
+        </section>
+      </main>
     );
   const pageInfo = SECTION_INFO[section];
   const results = searchSettings(

@@ -127,7 +127,7 @@ export default function WorkspaceConversationOutline({
               onClick={() => onJump(entry.id)}
               className={`mb-1 block w-full rounded-lg px-2 py-3 text-left transition-colors hover:bg-gray-50 dark:hover:bg-gray-800/60 ${selectedId === entry.id ? "bg-gray-100 dark:bg-gray-800" : ""}`}
             >
-              <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+              <span className="mb-1 block text-[0.625rem] font-semibold uppercase tracking-wide text-gray-500">
                 {entry.number} · {entry.role === "You" ? "Prompt" : "Response"}
               </span>
               <span className="line-clamp-2 break-words text-xs">

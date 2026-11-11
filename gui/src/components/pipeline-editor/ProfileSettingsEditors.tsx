@@ -128,7 +128,7 @@ function CalibrateSection({
                 Append &amp; keep
               </button>
             </div>
-            <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-2">
+            <p className="text-[0.625rem] text-gray-600 dark:text-gray-400 mt-2">
               Save the review design to keep this change.
             </p>
           </div>
@@ -199,7 +199,7 @@ function ExtraInputsEditor({
       <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
         Extra inputs
       </label>
-      <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-2 leading-relaxed">
+      <p className="text-[0.6875rem] text-gray-500 dark:text-gray-400 mb-2 leading-relaxed">
         Additional files/folders Start review asks for. A step can select the
         extracted text, original source, or both; selected text is available as{" "}
         <code className="font-mono">{"{input:key}"}</code>. Useful for a
@@ -236,7 +236,7 @@ function ExtraInputsEditor({
               <option value="document">document</option>
               <option value="folder">folder</option>
             </select>
-            <label className="flex items-center gap-1 text-[10px] text-gray-500">
+            <label className="flex items-center gap-1 text-[0.625rem] text-gray-500">
               <input
                 type="checkbox"
                 aria-label={`Require extra input ${s.label || s.key || i + 1}`}
@@ -378,7 +378,7 @@ function VariablesEditor({
               placeholder="default"
               className={`${inputClass} w-24`}
             />
-            <label className="flex items-center gap-1 text-[10px] text-gray-500">
+            <label className="flex items-center gap-1 text-[0.625rem] text-gray-500">
               <input
                 type="checkbox"
                 checked={!!v.required}
@@ -386,7 +386,7 @@ function VariablesEditor({
               />
               required
             </label>
-            <label className="flex items-center gap-1 text-[10px] text-gray-500">
+            <label className="flex items-center gap-1 text-[0.625rem] text-gray-500">
               <input
                 type="checkbox"
                 checked={!!v.secret}

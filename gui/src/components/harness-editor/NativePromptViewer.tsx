@@ -119,7 +119,7 @@ export default function NativePromptViewer({
                   ))}
                 </select>
               </label>
-              <p className="break-all text-[10px] text-gray-500">
+              <p className="break-all text-[0.625rem] text-gray-500">
                 Source field: {model.templateField}
               </p>
               <pre

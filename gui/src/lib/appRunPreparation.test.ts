@@ -15,6 +15,30 @@ const step = (id: string, patch: Partial<StepConfig>): StepConfig => ({
 });
 
 describe("configForRunPreview", () => {
+  it("keeps workflow model and thinking pins when only PDF reading changes", () => {
+    const config = {
+      merge: { agents: [] },
+      steps: [
+        step("review", {
+          phase: "parallel",
+          model: "pinned-model",
+          effort: "high",
+        }),
+      ],
+    } as unknown as PipelineConfig;
+    const preview = configForRunPreview(config, ["codex"], {
+      agents: [],
+      model_overrides: {},
+      effort_overrides: {},
+      extraction_method: "pdftotext",
+    });
+    expect(preview.steps[0]).toMatchObject({
+      agents: ["codex"],
+      model: "pinned-model",
+      effort: "high",
+    });
+    expect(config.steps[0].agents).toEqual([]);
+  });
   it("fills inherited steps with the providers they will run on", () => {
     const config = {
       merge: { enabled: true, prompt: "", agents: [] },

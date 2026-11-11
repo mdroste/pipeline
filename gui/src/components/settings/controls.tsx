@@ -56,7 +56,7 @@ export function CatalogStatus({
   onRefresh: () => void;
 }) {
   return (
-    <div className="mt-1.5 flex items-start justify-between gap-3 text-[11px] text-gray-500 dark:text-neutral-400">
+    <div className="mt-1.5 flex items-start justify-between gap-3 text-[0.6875rem] text-gray-500 dark:text-neutral-400">
       <span>
         {loading
           ? "Loading models…"

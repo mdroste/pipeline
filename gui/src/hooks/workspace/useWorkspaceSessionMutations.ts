@@ -154,8 +154,10 @@ export function useWorkspaceSessionMutations({
       } else {
         await reloadAfter(session);
       }
+      return true;
     } catch (cause) {
       setMoveError(workbenchErrorMessage(cause));
+      return false;
     } finally {
       setMoving(false);
     }

@@ -126,10 +126,12 @@ pub(crate) use command::{
     find_on_path, find_working_git, resolve_command, resolve_command_at, ResolvedCommand,
 };
 
+#[cfg(all(test, unix))]
+use checks::check_claude_auth;
 #[cfg(test)]
 use checks::{
-    check_claude_auth, cli_auth_status, google_dependency, parse_host_port,
-    pdf_dependency_requirements, pdf_extraction_may_run, required_providers,
+    cli_auth_status, google_dependency, parse_host_port, pdf_dependency_requirements,
+    pdf_extraction_may_run, required_providers,
 };
 #[cfg(test)]
 use command::{resolve_command_in, windows_pathexts};

@@ -333,7 +333,7 @@ function HelpContent({
         />
         <p>
           To review a saved version of a paper, open{" "}
-          <Label>Write → Send for review</Label>, choose the{" "}
+          <Label>Reviews → Send for review</Label>, choose the{" "}
           <Label>Paper to review</Label>, then choose{" "}
           <Label>Review this revision…</Label> to open the preview. The review
           uses your Reviews settings and account. Project notes aren't sent.
@@ -755,7 +755,7 @@ function BadgeRow({
   return (
     <div className="flex items-start gap-3">
       <span
-        className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded shrink-0 mt-0.5 whitespace-nowrap ${badgeColor}`}
+        className={`text-[0.625rem] font-semibold uppercase px-1.5 py-0.5 rounded shrink-0 mt-0.5 whitespace-nowrap ${badgeColor}`}
       >
         {badge}
       </span>

@@ -66,7 +66,7 @@ pub fn import_exchange(
                 )));
             }
             crate::safety::sync_file(tmp.as_file()).map_err(err)?;
-            tmp.persist(&destination).map_err(|e| err(e.error))?;
+            crate::safety::persist_file(tmp, &destination).map_err(|e| err(e.error))?;
         }
         blob_paths.insert(
             b.archive_path.clone(),

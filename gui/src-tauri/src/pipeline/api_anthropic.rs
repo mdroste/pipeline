@@ -303,7 +303,7 @@ pub async fn call_anthropic_api(
                 }],
             );
             let warm_label = format!("{label} · cache warm-up");
-            super::logging::record_provider_attempt();
+            super::logging::record_provider_attempt()?;
             match anthropic_tool_loop(
                 app,
                 client,
@@ -336,7 +336,7 @@ pub async fn call_anthropic_api(
 
     let mut fallback_request = request.clone();
     let hosted_search_enabled = has_hosted_search(&request);
-    super::logging::record_provider_attempt();
+    super::logging::record_provider_attempt()?;
     let result = anthropic_tool_loop(
         app,
         client,
@@ -361,7 +361,7 @@ pub async fn call_anthropic_api(
                 ),
             );
             remove_hosted_search(&mut fallback_request);
-            super::logging::record_provider_attempt();
+            super::logging::record_provider_attempt()?;
             anthropic_tool_loop(
                 app,
                 client,
@@ -390,7 +390,7 @@ pub async fn call_anthropic_api(
                 ),
             );
             fallback_request.max_tokens = FALLBACK_MAX_OUTPUT_TOKENS;
-            super::logging::record_provider_attempt();
+            super::logging::record_provider_attempt()?;
             anthropic_tool_loop(
                 app,
                 client,

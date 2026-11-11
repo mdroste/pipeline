@@ -498,7 +498,7 @@ pub fn export_archive_without(
     crate::safety::sync_file(&file)
         .map_err(|error| WorkbenchError::storage("Failed to sync research archive", error))?;
     drop(file);
-    temporary_archive.persist(&target).map_err(|error| {
+    crate::safety::persist_file(temporary_archive, &target).map_err(|error| {
         WorkbenchError::storage("Failed to publish research archive", error.error)
     })?;
     let bytes = fs::metadata(&target)

@@ -1,3 +1,10 @@
+import { workflowDescription } from "../lib/workflowDescriptions";
+import {
+  adaptiveAgentCountLabel,
+  adaptiveAgentCount,
+  adaptiveAgentRange,
+  isAutoReview,
+} from "../lib/autoReview";
 import { useState, useEffect, useId } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { PipelineConfig, ProfileSummary } from "../lib/types";
@@ -132,10 +139,77 @@ export default function WorkflowPanel({
           </option>
         ))}
       </select>
+      {profiles.find((p) => p.id === activeId) && (
+        <div className="mt-3 space-y-1 text-ui-meta text-ink-muted">
+          <p>
+            {
+              workflowDescription(profiles.find((p) => p.id === activeId)!)
+                .outcome
+            }
+          </p>
+          <p>
+            {config.extraction?.input_mode === "none"
+              ? "No document needed"
+              : config.extraction?.input_mode === "folder"
+                ? "Folder input"
+                : workflowDescription(profiles.find((p) => p.id === activeId)!)
+                    .inputs}{" "}
+            · {config.steps.filter((step) => step.enabled).length} configured
+            steps
+            {isAutoReview(config)
+              ? " + " +
+                adaptiveAgentCountLabel(
+                  adaptiveAgentCount(config),
+                  adaptiveAgentRange(config),
+                ) +
+                " specialists"
+              : ""}
+          </p>
+          <p>
+            Preview shows the model calls and estimated use for your choices.
+          </p>
+        </div>
+      )}
+      <details className="mt-3 text-ui-meta">
+        <summary className="cursor-pointer font-medium">
+          Compare workflows
+        </summary>
+        {Array.from(
+          new Set(profiles.map((p) => workflowDescription(p).category)),
+        ).map((category) => (
+          <section key={category} className="mt-3">
+            <h3 className="mb-1 font-medium text-ink-muted">{category}</h3>
+            {profiles
+              .filter((p) => workflowDescription(p).category === category)
+              .map((profile) => (
+                <button
+                  key={profile.id}
+                  type="button"
+                  disabled={disabled || switching || !!profile.invalid}
+                  aria-pressed={profile.id === activeId}
+                  onClick={() => void handleSwitch(profile.id)}
+                  className="mb-2 block w-full rounded-lg border border-line p-3 text-left hover:bg-sunken aria-pressed:bg-sunken disabled:opacity-50"
+                >
+                  <span className="font-medium">
+                    {profile.name}
+                    {profile.id === activeId ? " · Selected" : ""}
+                  </span>
+                  <span className="mt-1 block text-ink-muted">
+                    {workflowDescription(profile).outcome}
+                  </span>
+                  <span className="mt-1 block text-ink-muted">
+                    {workflowDescription(profile).inputs} · {profile.step_count}{" "}
+                    configured steps{profile.invalid ? " · Needs repair" : ""}
+                  </span>
+                </button>
+              ))}
+          </section>
+        ))}
+      </details>
       {profiles.find((p) => p.id === activeId)?.invalid && (
         <p
           role="alert"
-          className="mt-1 text-[11px] text-amber-800 dark:text-amber-200"
+          className="mt-1 text-[0.6875rem] text-amber-800 dark:text-amber-200"
         >
           {profiles.find((p) => p.id === activeId)?.invalid}
         </p>
@@ -143,7 +217,7 @@ export default function WorkflowPanel({
       {switching && (
         <p
           role="status"
-          className="mt-1 text-[11px] text-gray-500 dark:text-gray-400"
+          className="mt-1 text-[0.6875rem] text-gray-500 dark:text-gray-400"
         >
           Switching workflow…
         </p>

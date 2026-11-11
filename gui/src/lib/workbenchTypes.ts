@@ -551,28 +551,6 @@ export interface PaperSearchHit {
   excerpt: string;
 }
 
-export interface SourceRecord {
-  id: string;
-  workspaceId: string;
-  title: string;
-  citationKey: string | null;
-  identifiers: Record<string, unknown>;
-  versionId: string;
-  versionLabel: string | null;
-  locator: string | null;
-  accessState: "metadata" | "abstract" | "partial" | "full" | "unavailable";
-  acquiredVia: string;
-  accessedAt: string | null;
-  contentHash: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface SourceImportResult {
-  source: SourceRecord;
-  duplicateCandidates: SourceRecord[];
-}
-
 export interface ClaimRecord {
   id: string;
   workspaceId: string;
@@ -679,27 +657,6 @@ export interface ResearchResultV1 {
   uncertaintyMethod: string | null;
   sourceExecutionId: string;
   artifactLocator: string;
-}
-
-export interface ResultComparison {
-  comparable: boolean;
-  passed: boolean;
-  absoluteDifference: number | null;
-  tolerance: number;
-  incompatibilities: string[];
-  limitations: string;
-}
-
-export interface VerificationRecord {
-  id: string;
-  evidenceLinkId: string;
-  method: string;
-  checkerIdentity: string;
-  inputHashes: Record<string, unknown>;
-  observedResult: Record<string, unknown>;
-  limitations: string;
-  passed: boolean;
-  createdAt: string;
 }
 
 export interface ResearchRecipe {

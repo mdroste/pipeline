@@ -306,6 +306,17 @@ async fn execute_provider_once(
     label: &str,
     timeout_secs: u64,
 ) -> ProviderCallResult {
+    let permit = match super::review_budget::admit() {
+        Ok(permit) => permit,
+        Err(error) => {
+            return ProviderCallResult {
+                output: Err(error),
+                usage: Default::default(),
+                duration_secs: 0,
+                reported_model: None,
+            }
+        }
+    };
     let tool_refs: Vec<&str> = request.tools.iter().map(String::as_str).collect();
     let read_dirs: Vec<&str> = request.read_dirs.iter().map(String::as_str).collect();
     let started = Instant::now();
@@ -360,7 +371,20 @@ async fn execute_provider_once(
     // future and grow rapidly in debug builds.
     let observed: BoxObservedCallFuture<'_> =
         Box::pin(super::logging::observe_reported_model(bounded));
-    let ((output, reported_model), usage) = super::logging::measure_usage(observed).await;
+    let (((output, reported_model), resolved_model), usage) = permit
+        .scope(super::logging::measure_usage(
+            super::logging::observe_resolved_model(observed),
+        ))
+        .await;
+    permit.complete(
+        provider.unwrap_or(&request.settings.preferred_provider),
+        reported_model
+            .as_deref()
+            .or(resolved_model.as_deref())
+            .unwrap_or(""),
+        usage,
+        &request.settings,
+    );
 
     ProviderCallResult {
         output,

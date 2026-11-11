@@ -12,12 +12,9 @@ import type {
   EffectiveHarness,
   ExecutionProfile,
   HarnessCatalog,
-  PaperSearchHit,
   PaperWithRevision,
   ResearchExecution,
-  ResearchLedger,
   ResearchNote,
-  SourceRecord,
   Workspace,
 } from "../../lib/workbenchTypes";
 import type { ResearchTab } from "./types";
@@ -66,9 +63,7 @@ export function useResearchPanelController({
   const [effective, setEffective] = useState<EffectiveHarness | null>(null);
   const [papers, setPapers] = useState<PaperWithRevision[]>([]);
   const [projectPaperId, setProjectPaperId] = useState<string | null>(null);
-  const [sources, setSources] = useState<SourceRecord[]>([]);
   const [notes, setNotes] = useState<ResearchNote[]>([]);
-  const [ledger, setLedger] = useState<ResearchLedger | null>(null);
   const [profiles, setProfiles] = useState<ExecutionProfile[]>([]);
   const [executions, setExecutions] = useState<ResearchExecution[]>([]);
   const [busy, setBusy] = useState(false);
@@ -103,11 +98,8 @@ export function useResearchPanelController({
       clearInterval(timer);
     };
   }, [active, busy, hasActiveExecution, tab, workspaceId]);
-  const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<PaperSearchHit[]>([]);
   const [noteBody, setNoteBody] = useState("");
   const [noteKind, setNoteKind] = useState<ResearchNote["kind"]>("next_step");
-  const [claim, setClaim] = useState("");
   const [profileName, setProfileName] = useState("Research command");
   const [adapter, setAdapter] =
     useState<ExecutionProfile["adapter"]>("command");
@@ -128,24 +120,13 @@ export function useResearchPanelController({
   const loadTab = useCallback(async () => {
     if (!workspaceId) {
       setPapers([]);
-      setSources([]);
       setNotes([]);
-      setLedger(null);
       setProfiles([]);
       setExecutions([]);
       return;
     }
-    if (tab === "documents") {
-      const [nextPapers, nextSources] = await Promise.all([
-        researchClient.listPapers(workspaceId),
-        researchClient.listSources(workspaceId),
-      ]);
-      setPapers(nextPapers);
-      setSources(nextSources);
-    } else if (tab === "memory") {
+    if (tab === "memory") {
       setNotes(await researchClient.listNotes(workspaceId, true));
-    } else if (tab === "evidence") {
-      setLedger(await researchClient.researchLedger(workspaceId));
     } else if (tab === "results") {
       const [nextProfiles, nextExecutions] = await Promise.all([
         executionClient.listExecutionProfiles(workspaceId),
@@ -217,9 +198,6 @@ export function useResearchPanelController({
     papers.find(
       (item) => item.paper.id === (projectPaperId ?? snapshot?.session.paperId),
     ) ?? null;
-  // Search hits belong to the version they were found in.
-  const searchedRevision = selectedPaper?.revision?.id;
-  useEffect(() => setHits([]), [searchedRevision]);
   const successor = Boolean(
     snapshot?.activeBinding?.harnessFingerprint &&
     effective &&
@@ -227,10 +205,8 @@ export function useResearchPanelController({
   );
   const tabs: Array<[ResearchTab, string]> = [
     ["setup", "Assistant settings"],
-    ["documents", "Documents"],
     ["recipes", "Recipes"],
     ["memory", "Notes"],
-    ["evidence", "Evidence"],
     ["results", "Results"],
     ["release", "Sharing & backup"],
   ];
@@ -250,27 +226,17 @@ export function useResearchPanelController({
     setPapers,
     projectPaperId,
     setProjectPaperId,
-    sources,
-    setSources,
     notes,
     setNotes,
-    ledger,
-    setLedger,
     profiles,
     setProfiles,
     executions,
     setExecutions,
     busy,
-    query,
-    setQuery,
-    hits,
-    setHits,
     noteBody,
     setNoteBody,
     noteKind,
     setNoteKind,
-    claim,
-    setClaim,
     profileName,
     setProfileName,
     adapter,

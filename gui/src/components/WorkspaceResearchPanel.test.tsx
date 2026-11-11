@@ -4,7 +4,6 @@ import {
   fireEvent,
   render,
   screen,
-  waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceResearchPanel from "./WorkspaceResearchPanel";
@@ -13,15 +12,12 @@ import { CATALOG } from "./harness-editor/harnessHelpers.test";
 
 const mocks = vi.hoisted(() => ({
   listPapers: vi.fn(),
-  paperSearch: vi.fn(),
   prepareReviewHandoff: vi.fn(),
   harnessCatalog: vi.fn(),
   effectiveHarness: vi.fn(),
   listRecipes: vi.fn(),
   listRecipeRuns: vi.fn(),
-  listSources: vi.fn(),
   listNotes: vi.fn(),
-  researchLedger: vi.fn(),
   listExecutionProfiles: vi.fn(),
   listExecutions: vi.fn(),
 }));
@@ -72,14 +68,7 @@ function snapshot(): ConversationSnapshot {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.listPapers.mockResolvedValue([]);
-  mocks.listSources.mockResolvedValue([]);
   mocks.listNotes.mockResolvedValue([]);
-  mocks.researchLedger.mockResolvedValue({
-    claims: [],
-    evidence: [],
-    unsupportedAcceptedClaims: [],
-    staleClaims: [],
-  });
   mocks.listExecutionProfiles.mockResolvedValue([]);
   mocks.listExecutions.mockResolvedValue([]);
   mocks.harnessCatalog.mockResolvedValue({
@@ -198,7 +187,7 @@ it("requires an explicit paper choice for a project review without a conversatio
   );
 });
 
-function projectPanel(initialTab: "documents" | "results") {
+function projectPanel(initialTab: "memory" | "results") {
   return (
     <WorkspaceResearchPanel
       workspace={
@@ -224,23 +213,13 @@ async function selectTab(name: string) {
 }
 
 it("loads only the selected research tab and retains its drafts across tabs", async () => {
-  render(projectPanel("documents"));
-  await vi.waitFor(() => expect(mocks.listSources).toHaveBeenCalledTimes(1));
-  expect(mocks.listPapers).toHaveBeenCalledTimes(1);
-  expect(mocks.listNotes).not.toHaveBeenCalled();
-  expect(mocks.researchLedger).not.toHaveBeenCalled();
-  expect(mocks.listExecutions).not.toHaveBeenCalled();
-  expect(mocks.harnessCatalog).not.toHaveBeenCalled();
-
-  await selectTab("Notes");
+  render(projectPanel("memory"));
   await vi.waitFor(() => expect(mocks.listNotes).toHaveBeenCalledTimes(1));
+  expect(mocks.listExecutions).not.toHaveBeenCalled();
+  expect(mocks.listPapers).not.toHaveBeenCalled();
+  expect(mocks.harnessCatalog).not.toHaveBeenCalled();
   fireEvent.change(screen.getByPlaceholderText(/Question, assumption/), {
     target: { value: "An unsaved note" },
-  });
-  await selectTab("Evidence");
-  await vi.waitFor(() => expect(mocks.researchLedger).toHaveBeenCalledTimes(1));
-  fireEvent.change(screen.getByPlaceholderText("Record a claim for review…"), {
-    target: { value: "An unsaved claim" },
   });
   await selectTab("Results");
   await vi.waitFor(() => expect(mocks.listExecutions).toHaveBeenCalledTimes(1));
@@ -251,16 +230,10 @@ it("loads only the selected research tab and retains its drafts across tabs", as
   expect(screen.getByPlaceholderText(/Question, assumption/)).toHaveValue(
     "An unsaved note",
   );
-  await selectTab("Evidence");
-  expect(screen.getByPlaceholderText("Record a claim for review…")).toHaveValue(
-    "An unsaved claim",
-  );
   await selectTab("Results");
   expect(screen.getByLabelText("Argument vector JSON")).toHaveValue(
     '["custom", "argument"]',
   );
-  expect(mocks.listPapers).toHaveBeenCalledTimes(1);
-  expect(mocks.listSources).toHaveBeenCalledTimes(1);
 });
 
 it("polls visible running results every 500 ms without overlapping requests", async () => {
@@ -394,45 +367,4 @@ it("still closes the side panel on Escape", async () => {
     key: "Escape",
   });
   expect(onClose).toHaveBeenCalledOnce();
-});
-
-it("clears search hits when another paper is chosen", async () => {
-  const paper = (id: string) => ({
-    paper: { id, title: `Paper ${id}`, role: "manuscript" },
-    revision: {
-      id: `revision-${id}`,
-      contentHash: "abc123",
-      inputKind: "pdf",
-      extraction: { status: "complete" },
-    },
-  });
-  mocks.listPapers.mockResolvedValue([paper("a"), paper("b")]);
-  mocks.paperSearch.mockResolvedValue([
-    { start: 1, end: 2, page: 1, line: 1, excerpt: "Found in the first paper" },
-  ]);
-  render(
-    <WorkspaceResearchPanel
-      embedded
-      workspace={
-        { id: "project", name: "Project" } as ConversationSnapshot["workspace"]
-      }
-      snapshot={null}
-      initialTab="documents"
-      allowedTabs={["documents"]}
-      onSnapshot={vi.fn()}
-      onClose={vi.fn()}
-      onError={vi.fn()}
-    />,
-  );
-  fireEvent.click(await screen.findByRole("button", { name: /Paper a/ }));
-  fireEvent.change(await screen.findByLabelText("Search this version"), {
-    target: { value: "wages" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "Search" }));
-  await screen.findByText("Found in the first paper");
-
-  fireEvent.click(screen.getByRole("button", { name: /Paper b/ }));
-  await waitFor(() =>
-    expect(screen.queryByText("Found in the first paper")).toBeNull(),
-  );
 });

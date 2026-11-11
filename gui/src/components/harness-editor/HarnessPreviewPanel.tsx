@@ -48,7 +48,7 @@ function HarnessPreviewPanel({ effective, catalog, snapshot }: Props) {
       <dl className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-xl border border-gray-200 bg-white p-3 text-xs dark:border-gray-700 dark:bg-gray-900 sm:grid-cols-3">
         {facts.map(([label, value]) => (
           <div key={label} className="min-w-0">
-            <dt className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            <dt className="text-[0.625rem] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
               {label}
             </dt>
             <dd
@@ -61,14 +61,14 @@ function HarnessPreviewPanel({ effective, catalog, snapshot }: Props) {
         ))}
       </dl>
       <section>
-        <h3 className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+        <h3 className="text-[0.625rem] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
           Modules
         </h3>
         <div className="mt-1 flex flex-wrap gap-1">
           {effective.enabledModules.map((id) => (
             <span
               key={id}
-              className="rounded bg-emerald-100 px-2 py-0.5 text-[11px] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
+              className="rounded bg-emerald-100 px-2 py-0.5 text-[0.6875rem] text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
             >
               {name(id)}
             </span>
@@ -76,7 +76,7 @@ function HarnessPreviewPanel({ effective, catalog, snapshot }: Props) {
           {effective.unavailableModules.map((id) => (
             <span
               key={id}
-              className="rounded bg-gray-200 px-2 py-0.5 text-[11px] text-gray-500 dark:bg-neutral-800"
+              className="rounded bg-gray-200 px-2 py-0.5 text-[0.6875rem] text-gray-500 dark:bg-neutral-800"
             >
               {name(id)} · unavailable
             </span>
@@ -84,7 +84,7 @@ function HarnessPreviewPanel({ effective, catalog, snapshot }: Props) {
           {effective.enabledModules.length +
             effective.unavailableModules.length ===
             0 && (
-            <span className="text-[11px] text-gray-500">
+            <span className="text-[0.6875rem] text-gray-500">
               No research modules selected.
             </span>
           )}
@@ -99,7 +99,7 @@ function HarnessPreviewPanel({ effective, catalog, snapshot }: Props) {
         </p>
       ))}
       <section className="space-y-2">
-        <h3 className="text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+        <h3 className="text-[0.625rem] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
           Developer instructions, in order
         </h3>
         {instructionSections(effective).map((section) => (
@@ -107,17 +107,17 @@ function HarnessPreviewPanel({ effective, catalog, snapshot }: Props) {
             key={section.id}
             className="rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
           >
-            <h4 className="border-b border-gray-100 px-3 py-1.5 text-[11px] font-semibold text-gray-700 dark:border-gray-800 dark:text-gray-300">
+            <h4 className="border-b border-gray-100 px-3 py-1.5 text-[0.6875rem] font-semibold text-gray-700 dark:border-gray-800 dark:text-gray-300">
               {section.label}
             </h4>
-            <pre className="max-h-64 overflow-auto whitespace-pre-wrap p-3 text-[11px] leading-relaxed text-gray-700 dark:text-gray-300">
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap p-3 text-[0.6875rem] leading-relaxed text-gray-700 dark:text-gray-300">
               {section.text}
             </pre>
           </article>
         ))}
       </section>
-      <section className="text-[11px] text-gray-500 dark:text-gray-400">
-        <h3 className="text-[10px] font-semibold uppercase tracking-wide">
+      <section className="text-[0.6875rem] text-gray-500 dark:text-gray-400">
+        <h3 className="text-[0.625rem] font-semibold uppercase tracking-wide">
           Other instruction sources
         </h3>
         <p className="mt-1">

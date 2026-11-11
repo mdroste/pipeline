@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import useModalDialog from "../hooks/useModalDialog";
 import {
   loadWorkspacePins,
+  openDestinations,
   workspaceDestinations,
   workspaceSections,
   type WorkspaceDestination,
@@ -58,7 +59,7 @@ export default function WorkspaceToolPicker({
   const pins = useMemo(() => loadWorkspacePins(workspaceId), [workspaceId]);
   const matches = useMemo<PickerEntry[]>(() => {
     const terms = query.toLowerCase().trim().split(/\s+/);
-    const views = (Object.keys(workspaceDestinations) as WorkspaceDestination[])
+    const views = openDestinations
       .filter((id) => {
         const item = workspaceDestinations[id];
         const section = workspaceSections.find(
@@ -126,7 +127,7 @@ export default function WorkspaceToolPicker({
           aria-expanded="true"
           aria-autocomplete="list"
           aria-label="Find a project view"
-          placeholder="Search files, notes, results…"
+          placeholder="Find a project tool…"
           value={query}
           aria-controls={`${title}-results`}
           aria-activedescendant={

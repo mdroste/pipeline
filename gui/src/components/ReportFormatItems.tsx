@@ -88,6 +88,7 @@ function placementSummary(
 
 interface Props {
   runId: string;
+  inDialog?: boolean;
   inputPath?: string | null;
   busy: boolean;
   onStart: (progress: string) => void;
@@ -97,6 +98,7 @@ interface Props {
 /** Report-format export choices for a saved run. */
 export default function ReportFormatItems({
   runId,
+  inDialog = false,
   inputPath,
   busy,
   onStart,
@@ -130,7 +132,7 @@ export default function ReportFormatItems({
         return (
           <button
             key={item.format}
-            role="menuitem"
+            role={inDialog ? undefined : "menuitem"}
             disabled={!available || busy}
             onClick={() => void save(item)}
             className="w-full rounded px-3 py-2 text-left hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent dark:hover:bg-gray-800"
@@ -144,7 +146,7 @@ export default function ReportFormatItems({
           </button>
         );
       })}
-      <p className="px-3 pb-1 pt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+      <p className="px-3 pb-1 pt-0.5 text-[0.6875rem] text-gray-500 dark:text-gray-400">
         These files contain quotations from the manuscript and model-written
         text.
       </p>

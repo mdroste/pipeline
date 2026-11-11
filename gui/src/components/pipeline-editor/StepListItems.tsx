@@ -59,7 +59,7 @@ function StepRow({
               onClick={onMoveUp}
               disabled={!canMoveUp}
               aria-label={`Move ${step.label} up`}
-              className="flex h-6 w-6 items-center justify-center text-[10px] leading-none text-gray-600
+              className="flex h-6 w-6 items-center justify-center text-[0.625rem] leading-none text-gray-600
                          hover:text-gray-900 disabled:opacity-25 dark:text-gray-400 dark:hover:text-gray-100"
             >
               ▲
@@ -69,7 +69,7 @@ function StepRow({
               onClick={onMoveDown}
               disabled={!canMoveDown}
               aria-label={`Move ${step.label} down`}
-              className="flex h-6 w-6 items-center justify-center text-[10px] leading-none text-gray-600
+              className="flex h-6 w-6 items-center justify-center text-[0.625rem] leading-none text-gray-600
                          hover:text-gray-900 disabled:opacity-25 dark:text-gray-400 dark:hover:text-gray-100"
             >
               ▼
@@ -105,7 +105,7 @@ function StepRow({
           </span>
           {summary && (
             <span
-              className="mt-0.5 block truncate text-[11px] font-normal text-gray-500 dark:text-gray-400"
+              className="mt-0.5 block truncate text-[0.6875rem] font-normal text-gray-500 dark:text-gray-400"
               title={summary}
             >
               {summary}
@@ -131,7 +131,7 @@ function StepRow({
           {badges.map((b) => (
             <span
               key={b}
-              className={`text-[10px] px-1.5 py-0.5 rounded ${
+              className={`text-[0.625rem] px-1.5 py-0.5 rounded ${
                 b === "web search"
                   ? "bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
                   : ["Claude", "Codex", "Antigravity"].includes(b)

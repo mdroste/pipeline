@@ -10,9 +10,15 @@ pub async fn prepare(chain: &Chain, session: Option<String>, inputs: &Value) -> 
     crate::orchestration::definition::validate(chain)?;
     let mut scope = Scope::default();
     if let Some(session) = session {
-        let binding = run_store(move |s| tasks::binding(&s, &session))
-            .await
-            .map_err(|e| e.message)?;
+        let (binding, display) = run_store(move |s| {
+            let binding = tasks::binding(&s, &session)?;
+            let snapshot = s.session_snapshot(&session)?;
+            Ok((binding, snapshot))
+        })
+        .await
+        .map_err(|e| e.message)?;
+        scope.conversation_title = Some(display.session.title);
+        scope.project_name = display.workspace.map(|workspace| workspace.name);
         scope.root_identity = Some(binding.root_identity);
         scope.session_id = Some(binding.session_id);
         scope.workspace_id = binding.workspace_id;
@@ -64,6 +70,22 @@ pub async fn prepare(chain: &Chain, session: Option<String>, inputs: &Value) -> 
                         return Err("Secret Review variables cannot be stored in task definitions. Configure them in Review settings.".into());
                     }
                 }
+                let document =
+                    crate::pipeline_config::parse_workflow_document_strict(&pin.workflow_json)?;
+                let mut config = document.config.clone();
+                crate::pipeline_config::apply_agent_defaults(&mut config, &pin.settings);
+                let roster = crate::commands::model_roster::model_roster(
+                    &pin.settings,
+                    &config,
+                    &document.config,
+                    false,
+                    false,
+                    false,
+                );
+                scope.review_models.insert(
+                    profile_id.clone(),
+                    serde_json::to_value(roster).map_err(err)?,
+                );
                 scope.profiles.insert(profile_id.clone(), pin);
             }
             Action::Check { profile_id } => {

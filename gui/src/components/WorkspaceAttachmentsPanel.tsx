@@ -10,7 +10,10 @@ import {
   paperSource,
   RESEARCH_FILE_EXTENSIONS,
 } from "../lib/workspaceAttachments";
-import { addContextObject } from "./WorkspaceContextTray";
+import {
+  addContextObject,
+  addContextObjectsWhenReady,
+} from "./WorkspaceContextTray";
 import Button from "../ui/Button";
 import Skeleton from "../ui/Skeleton";
 import type {
@@ -33,12 +36,16 @@ export default function WorkspaceAttachmentsPanel({
   onSnapshot,
   onBusy,
   onClose,
+  pendingFiles,
+  onPendingFilesConsumed,
 }: {
   mode: "import" | "documents";
   snapshot: ConversationSnapshot;
   onSnapshot: (next: SessionSnapshot) => void;
   onBusy: (busy: boolean) => void;
   onClose: () => void;
+  pendingFiles?: string[];
+  onPendingFilesConsumed?: () => void;
 }) {
   const [papers, setPapers] = useState<PaperWithRevision[]>([]);
   const [loading, setLoading] = useState(mode === "documents");
@@ -89,6 +96,41 @@ export default function WorkspaceAttachmentsPanel({
       onBusy(false);
     }
   };
+  const pendingStarted = useRef(false);
+  const [retryFiles, setRetryFiles] = useState<string[]>([]);
+  const importPending = (paths: string[]) =>
+    act(async () => {
+      if (!workspaceId) return;
+      setRetryFiles(paths);
+      const { imported, failures, failedPaths } = await importResearchFiles(
+        workspaceId,
+        paths,
+      );
+      setPapers((old) => [
+        ...old.filter(
+          (item) => !imported.some((next) => next.paper.id === item.paper.id),
+        ),
+        ...imported,
+      ]);
+      const sources = imported
+        .map(paperSource)
+        .filter((source) => source !== null);
+      if (sources.length) addContextObjectsWhenReady(workspaceId, sources);
+      setRetryFiles(failedPaths);
+      if (failures.length) setError(failures.join("\n"));
+      onPendingFilesConsumed?.();
+    });
+  useEffect(() => {
+    if (
+      !harness ||
+      !workspaceId ||
+      !pendingFiles?.length ||
+      pendingStarted.current
+    )
+      return;
+    pendingStarted.current = true;
+    void importPending(pendingFiles);
+  }, [harness, workspaceId, pendingFiles]);
   const importFiles = (directory: boolean) =>
     act(async () => {
       if (!workspaceId) return;
@@ -183,6 +225,11 @@ export default function WorkspaceAttachmentsPanel({
           {error}
           <ReportIssueLink />
         </p>
+      )}
+      {retryFiles.length > 0 && !busy && (
+        <Button onClick={() => void importPending(retryFiles)}>
+          Retry failed files
+        </Button>
       )}
       {loading ? (
         <Skeleton label="Loading documents" lines={3} />

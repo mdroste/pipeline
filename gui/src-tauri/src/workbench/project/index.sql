@@ -33,7 +33,12 @@ SELECT w.id, w.name, w.root, w.missing_root_at, w.updated_at,
    ORDER BY (json_extract(t.body_json, '$.status') = 'deferred'), t.updated_at DESC, t.id LIMIT 1),
   (SELECT count(*) FROM research_notes n WHERE n.workspace_id = w.id AND n.state = 'proposed'),
   (SELECT count(*) FROM project_records a WHERE a.workspace_id = w.id AND a.kind = 'application'
-     AND json_extract(a.body_json, '$.state') IN ('applying', 'recovery_required'))
+     AND json_extract(a.body_json, '$.state') IN ('applying', 'recovery_required')),
+  json_extract(h.body_json, '$.kind'),
+  json_extract(h.body_json, '$.stage'),
+  substr(json_extract(h.body_json, '$.venue'), 1, 120),
+  json_extract(h.body_json, '$.targetDate'),
+  substr(json_extract(h.body_json, '$.targetLabel'), 1, 80)
 FROM workspaces w
 LEFT JOIN project_records h ON h.workspace_id = w.id AND h.kind = 'home' AND h.id = 'home_' || w.id
 WHERE w.archived_at IS NULL

@@ -33,6 +33,12 @@ export interface HomeSettings {
   /** One optional milestone as YYYY-MM-DD; absent on records saved before it existed. */
   targetDate?: string | null;
   targetLabel?: string;
+  /** What sort of paper this is (`projectKinds`); absent until chosen. */
+  kind?: string | null;
+  /** Where the paper stands (`projectStages`); absent until chosen. */
+  stage?: string | null;
+  /** The journal, conference, or funder the paper is meant for. */
+  venue?: string;
 }
 export interface FileEntry {
   path: string;
@@ -207,7 +213,25 @@ export interface ProjectCapabilities {
   qualification: string;
   record: string;
 }
+/** Records kept by project views that have since been retired. */
+export interface EarlierRecords {
+  kinds: { kind: string; label: string; count: number }[];
+  total: number;
+}
+export interface EarlierRecordsExport {
+  directory: string;
+  files: string[];
+  records: number;
+  notesCreated: number;
+}
 export const projectClient = {
+  earlierRecords: (workspaceId: string) =>
+    invoke<EarlierRecords>("workbench_earlier_records", { workspaceId }),
+  exportEarlierRecords: (workspaceId: string, destination: string) =>
+    invoke<EarlierRecordsExport>("workbench_export_earlier_records", {
+      workspaceId,
+      destination,
+    }),
   taskPage: (workspaceId: string, before: TaskCursor) =>
     invoke<TaskPage>("workbench_project_tasks", { workspaceId, before }),
   capabilities: () =>

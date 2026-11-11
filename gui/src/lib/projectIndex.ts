@@ -25,6 +25,12 @@ export interface ProjectIndexItem {
   nextTask: ProjectIndexEntry | null;
   proposedNotes: number;
   interruptedEdits: number;
+  /** The paper's kind, stage, venue, and deadline from project settings. */
+  kind?: string | null;
+  stage?: string | null;
+  venue?: string | null;
+  targetDate?: string | null;
+  targetLabel?: string | null;
 }
 
 export const listProjectIndex = () =>

@@ -1,6 +1,7 @@
+import PreparedModelTable from "./PreparedModelTable";
 import AuthorNoteSummary from "./AuthorNoteSummary";
 import { useMemo } from "react";
-import type { PipelineConfig, StepConfig } from "../lib/types";
+import type { PipelineConfig, StepConfig, RosterEntry } from "../lib/types";
 import type { ExecutionPlanStage } from "../lib/pipelineHelpers";
 import useModalDialog from "../hooks/useModalDialog";
 import {
@@ -25,6 +26,7 @@ export interface RunPreviewPlan {
   /** The usage-limit backup, when it couldn't run right now. */
   backupUnavailable?: string | null;
   usageEstimate?: UsageEstimate;
+  modelRoster?: RosterEntry[];
   hostChecks?: HostCheck[];
   /** Files in the selected folders that won’t fit in the Review’s copy. */
   inputNotices?: string[];
@@ -268,7 +270,7 @@ export default function RunPreview({
         aria-modal="true"
         aria-labelledby="run-preview-title"
         tabIndex={-1}
-        className="flex max-h-[88vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900"
+        className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900"
       >
         <div className="min-h-0 flex-1 overflow-auto px-6 pb-2 pt-6">
           <h1
@@ -332,6 +334,8 @@ export default function RunPreview({
             )}
           </dl>
 
+          <PreparedModelTable entries={plan.modelRoster} />
+
           {!authorNote && onEditAuthorNote && (
             <button
               type="button"
@@ -362,6 +366,17 @@ export default function RunPreview({
             </section>
           )}
 
+          <section
+            aria-label="Data and privacy"
+            className="mt-5 rounded-xl bg-sunken p-4 text-sm text-ink-muted"
+          >
+            <h2 className="font-medium text-ink">Data and privacy</h2>
+            <p className="mt-1">
+              Each provider receives the document and files its steps can read.
+              Web searches send queries to external services. Reports and
+              supporting files stay on this computer until you delete them.
+            </p>
+          </section>
           <details className="mt-6 border-t border-gray-200 py-3 dark:border-gray-800">
             <summary className="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-300">
               Steps and what each can read

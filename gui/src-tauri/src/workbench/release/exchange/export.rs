@@ -275,8 +275,7 @@ pub fn export_exchange(
     let file = zip.finish().map_err(err)?;
     crate::safety::sync_file(&file).map_err(err)?;
     drop(file);
-    temporary
-        .persist(&target)
+    crate::safety::persist_file(temporary, &target)
         .map_err(|e| WorkbenchError::storage("Failed to publish package", e.error))?;
     let (package_hash, bytes) = hash_file(&target)?;
     Ok(ExchangeReport {

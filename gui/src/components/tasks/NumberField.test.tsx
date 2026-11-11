@@ -64,11 +64,12 @@ it("lets the interval be retyped instead of snapping a cleared field to 1", () =
   const trigger: Trigger = { kind: "interval", seconds: 3600, anchor: 100 };
   render(<Timing value={trigger} onChange={onChange} />);
   const input = screen.getByRole("spinbutton", {
-    name: "Interval in minutes",
+    name: "Interval amount",
   });
   fireEvent.change(input, { target: { value: "" } });
   fireEvent.change(input, { target: { value: "15" } });
   expect(onChange).not.toHaveBeenCalled();
   fireEvent.blur(input);
-  expect(onChange).toHaveBeenCalledWith({ ...trigger, seconds: 900 });
+  expect(screen.getByLabelText("Interval unit")).toHaveValue("3600");
+  expect(onChange).toHaveBeenCalledWith({ ...trigger, seconds: 54000 });
 });

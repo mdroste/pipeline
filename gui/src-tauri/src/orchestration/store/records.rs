@@ -11,6 +11,12 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Scope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_name: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub review_models: BTreeMap<String, Value>,
     pub session_id: Option<String>,
     pub workspace_id: Option<String>,
     pub session_cursor: Option<String>,

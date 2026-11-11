@@ -298,7 +298,11 @@ pub async fn execute_steps(
 
     while !remaining.is_empty() {
         ledger.observe(&crate::pipeline::logging::run_usage());
-        if let Some(reason) = ledger.exhausted() {
+        if let Some(reason) = if crate::pipeline::review_budget::active() {
+            crate::pipeline::review_budget::reason()
+        } else {
+            ledger.exhausted()
+        } {
             emit_unstarted_waves(
                 app,
                 config.merge.enabled,

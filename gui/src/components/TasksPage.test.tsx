@@ -114,7 +114,7 @@ it("still lists automations when the saved run has been removed", async () => {
 it("titles the page without repeating the product name", async () => {
   render(<TasksPage />);
   expect(
-    await screen.findByRole("heading", { level: 1, name: "Automations" }),
+    await screen.findByRole("heading", { level: 1, name: "All automations" }),
   ).toBeInTheDocument();
   expect(screen.queryByText("PIPELINE")).not.toBeInTheDocument();
 });
@@ -247,7 +247,9 @@ it("inspects the retained operation for a prior attempt after retry", async () =
   );
   const priorDetails = prior.closest("details")!;
   fireEvent.click(prior);
-  const output = within(priorDetails).getByText("Output").closest("details")!;
+  const output = within(priorDetails)
+    .getByText("Output details")
+    .closest("details")!;
   output.open = true;
   fireEvent(output, new Event("toggle"));
   await waitFor(() =>

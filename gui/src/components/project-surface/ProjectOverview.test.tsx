@@ -159,13 +159,13 @@ it("stays silent about sources that fail or have nothing to report", async () =>
   await waitFor(() =>
     expect(screen.queryByText("Checking the state of the draft…")).toBeNull(),
   );
-  const draft = screen.getByRole("region", { name: "State of the draft" });
+  const draft = screen.getByRole("region", { name: "The paper" });
   expect(within(draft).getByText("Minimum wage draft")).toBeVisible();
   for (const name of [
     "Out of sync",
     "Revision round",
     "Since you were last here",
-    "Needs your decision",
+    "Needs you",
     "Other conversations",
   ])
     expect(screen.queryByRole("region", { name })).toBeNull();
@@ -207,41 +207,31 @@ it("shows the draft's review state and what is out of sync, one action per row",
         { id: "2", title: "Clustering", severity: "low", status: "open" },
       ],
     },
-    workbench_binding_coverage: [
-      {
-        state: "stale",
-        reasons: ["Declared execution inputs changed"],
-        record: { body: { printed: "0.042" } },
-      },
-    ],
   });
   const data = home();
   data.ledger.staleClaims = ["claim"];
-  const handlers = mount(data);
+  mount(data);
 
   const draft = await screen.findByRole("region", {
-    name: "State of the draft",
+    name: "The paper",
   });
+  // Outstanding findings are something to do, so they lead the page.
+  const next = await screen.findByRole("region", { name: "Next" });
   expect(
-    await within(draft).findByText(
-      "2 review findings outstanding, 1 regressed",
-    ),
+    within(next).getByText("2 review findings outstanding, 1 regressed"),
   ).toBeVisible();
+  expect(within(draft).queryByText(/review findings outstanding/)).toBeNull();
   expect(within(draft).getByText("Last review: Paper review")).toBeVisible();
   fireEvent.click(within(draft).getByRole("button", { name: "Open report →" }));
   expect(navigate).toHaveBeenCalledWith({ page: "history", runId: "run" });
 
-  const sync = screen.getByRole("region", { name: "Out of sync" });
-  expect(
-    await within(sync).findByText(
-      "1 number in the draft is out of date with its results",
-    ),
-  ).toBeVisible();
-  fireEvent.click(
-    within(sync).getByRole("button", { name: "Inspect evidence →" }),
+  // Result links and claims are retired: nothing loads or reports them.
+  expect(screen.queryByRole("region", { name: "Out of sync" })).toBeNull();
+  expect(invoke).not.toHaveBeenCalledWith(
+    "workbench_binding_coverage",
+    expect.anything(),
   );
-  expect(handlers.setTab).toHaveBeenCalledWith("evidence");
-  for (const row of sync.querySelectorAll(".project-overview-row"))
+  for (const row of next.querySelectorAll(".project-overview-row"))
     expect(within(row as HTMLElement).getAllByRole("button")).toHaveLength(1);
 });
 
@@ -275,12 +265,10 @@ it("keeps a conversation-only project to its conversations and loads nothing", (
     ],
   });
   expect(invoke).not.toHaveBeenCalled();
-  expect(
-    screen.queryByRole("region", { name: "State of the draft" }),
-  ).toBeNull();
+  expect(screen.queryByRole("region", { name: "The paper" })).toBeNull();
   expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
   expect(
-    screen.getByText(/this page will track\s+the state of the draft/),
+    screen.getByText(/this page will track\s+the state of the paper/),
   ).toBeVisible();
   const left = screen.getByRole("region", { name: "Where you left off" });
   expect(within(left).getByText("Latest thread")).toBeVisible();
@@ -343,7 +331,12 @@ it("checks the Git remote only when asked and shows what a coauthor pushed", asy
   });
   mount(home());
   const block = await screen.findByRole("region", { name: "Repository" });
-  expect(within(block).getByText("1 uncommitted change")).toBeVisible();
+  // Uncommitted work is something to do, so it sits under Next.
+  expect(
+    within(screen.getByRole("region", { name: "Next" })).getByText(
+      "1 uncommitted change",
+    ),
+  ).toBeVisible();
   expect(invoke).not.toHaveBeenCalledWith(
     "workbench_repository_fetch",
     expect.anything(),

@@ -193,6 +193,11 @@ export default function WorkspacePage({
     setContextBusy(value);
     if (value) setInspector(null);
   };
+  const [pendingAttachment, setPendingAttachment] = useState<{
+    sessionId: string;
+    paths: string[];
+    view: "import" | "documents";
+  } | null>(null);
   const dropState = useComposerFileDrop({
     targetRef: assistantPane,
     workspaceId:
@@ -201,6 +206,9 @@ export default function WorkspacePage({
     blocked: submitting || Boolean(active) || contextBusy || harnessEditor,
     onBusy: setComposerBusy,
     onError: setError,
+    onNeedsProject: (paths) => {
+      if (sessionId) setPendingAttachment({ sessionId, paths, view: "import" });
+    },
   });
   const [projectBrief, setProjectBrief] = useState<string | null>(null);
 
@@ -902,7 +910,31 @@ export default function WorkspacePage({
                 disabled={submitting || Boolean(active) || contextBusy}
                 onSnapshot={acceptSnapshot}
                 onBusy={setComposerBusy}
-                onBrowseProjects={() => onAllProjects?.()}
+                onMoveToProject={(id, view) => {
+                  if (!snapshot) return Promise.resolve(false);
+                  setPendingAttachment((current) => ({
+                    sessionId: snapshot.session.id,
+                    paths:
+                      current?.sessionId === snapshot.session.id
+                        ? current.paths
+                        : [],
+                    view,
+                  }));
+                  return moveSession(snapshot.session, id);
+                }}
+                onProjectCreated={updateProjectWorkspace}
+                moveError={moveError}
+                resumeView={
+                  pendingAttachment?.sessionId === sessionId
+                    ? pendingAttachment.view
+                    : undefined
+                }
+                pendingFiles={
+                  pendingAttachment?.sessionId === sessionId
+                    ? pendingAttachment.paths
+                    : undefined
+                }
+                onPendingFilesConsumed={() => setPendingAttachment(null)}
                 onTasks={
                   sessionId && onTasks ? () => onTasks(sessionId) : undefined
                 }

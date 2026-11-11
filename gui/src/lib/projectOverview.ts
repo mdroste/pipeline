@@ -12,14 +12,7 @@ import type {
   Workspace,
 } from "./workbenchTypes";
 import type { ProjectIssue, ProjectIssueLedger, RunSummary } from "./types";
-import type {
-  BindingCoverage,
-  BuildReceipt,
-  BuildRecord,
-  ResponseRecord,
-} from "./studioClient";
-import type { ImpactReport } from "./deskClient";
-import type { CampaignStatus, MonitorState } from "./programClient";
+import type { BuildReceipt, BuildRecord, ResponseRecord } from "./studioClient";
 import { listedRunStatus, runFinished } from "./reportPresentation";
 import type { TaskSummary } from "./taskTypes";
 import type { WorkspaceDestination } from "./workspaceNavigation";
@@ -30,12 +23,8 @@ import { severityRank } from "./issues";
 export interface ProjectSignals {
   runs: RunSummary[] | null;
   ledgers: ProjectIssueLedger[] | null;
-  coverage: BindingCoverage[] | null;
-  impact: ImpactReport | null;
   builds: ProjectRecord<BuildRecord | BuildReceipt>[] | null;
   responses: ProjectRecord<ResponseRecord>[] | null;
-  campaign: CampaignStatus | null;
-  monitors: MonitorState | null;
   automations: TaskSummary[] | null;
   /** Null when the project folder is not a Git repository. */
   repository: RepositoryStatus | null;
@@ -43,12 +32,8 @@ export interface ProjectSignals {
 export const NO_SIGNALS: ProjectSignals = {
   runs: null,
   ledgers: null,
-  coverage: null,
-  impact: null,
   builds: null,
   responses: null,
-  campaign: null,
-  monitors: null,
   automations: null,
   repository: null,
 };
@@ -64,16 +49,32 @@ export type OverviewAction =
   /** Opens a page in the researcher's browser. */
   | { kind: "link"; label: string; url: string }
   /** Asks the project's Git remote for new commits. Changes no files. */
-  | { kind: "fetch"; label: string };
+  | { kind: "fetch"; label: string }
+  /** Opens the project's notes on the overview. */
+  | { kind: "notes"; label: string };
 export interface OverviewRow {
   id: string;
   text: string;
   detail?: string;
   attention?: boolean;
+  /**
+   * A row that calls for something: "next" rows can lead the overview when
+   * the paper's stage makes them the thing to do, and "needs" rows wait on a
+   * decision from the researcher whatever the stage.
+   */
+  lane?: "next" | "needs";
   action: OverviewAction;
 }
 export interface OverviewBlock {
-  id: "draft" | "sync" | "round" | "repository" | "since";
+  id:
+    | "next"
+    | "needs"
+    | "draft"
+    | "documents"
+    | "sync"
+    | "round"
+    | "repository"
+    | "since";
   title: string;
   rows: OverviewRow[];
 }
@@ -208,6 +209,7 @@ export function draftBlock(
       text: failed ? "The last build failed" : "The last build succeeded",
       detail: errors[0] ? `${counts} · ${clip(errors[0].message)}` : counts,
       attention: failed,
+      lane: failed ? "next" : undefined,
       action: failed
         ? {
             kind: "ask",
@@ -254,6 +256,7 @@ export function draftBlock(
           .filter(Boolean)
           .join(" · "),
         attention: regressed > 0,
+        lane: outstanding ? "next" : undefined,
         action: { kind: "tab", label: "Open findings", tab: "reviews" },
       });
     }
@@ -267,6 +270,7 @@ export function draftBlock(
       rows.push({
         id: "review",
         text: "This draft has not been reviewed",
+        lane: "next",
         action: { kind: "review", label: "Start a review" },
       });
     else if (
@@ -279,6 +283,7 @@ export function draftBlock(
         text: "The current version has not been reviewed",
         detail: `The last review (${overviewDay(last.created)}) covered an earlier version`,
         attention: true,
+        lane: "next",
         action: { kind: "review", label: "Start a review" },
       });
     else
@@ -298,14 +303,11 @@ export function draftBlock(
         action: { kind: "run", label: "Open report", runId: last.run_id },
       });
   }
-  return block("draft", "State of the draft", rows);
+  return block("draft", "The paper", rows);
 }
 
 /** Out of sync: what in the draft no longer matches what it was derived from. */
-export function syncBlock(
-  data: ProjectHome,
-  signals: ProjectSignals,
-): OverviewBlock | null {
+export function syncBlock(data: ProjectHome): OverviewBlock | null {
   const rows: OverviewRow[] = [];
   if (
     data.applications.some((item) =>
@@ -316,6 +318,7 @@ export function syncBlock(
       id: "recovery",
       text: "An accepted edit was interrupted",
       attention: true,
+      lane: "needs",
       action: { kind: "tab", label: "Inspect edit recovery", tab: "edits" },
     });
   if (currentManuscript(data).superseded)
@@ -338,69 +341,6 @@ export function syncBlock(
       attention: true,
       action: { kind: "tab", label: "Open documents", tab: "documents" },
     });
-
-  const coverage = signals.coverage ?? [];
-  const stale = coverage.filter((item) => item.state === "stale");
-  if (stale.length) {
-    const reasons = [...new Set(stale.flatMap((item) => item.reasons))];
-    const printed = stale
-      .slice(0, 3)
-      .map((item) => `“${item.record.body.printed}”`)
-      .join(", ");
-    rows.push({
-      id: "numbers",
-      text: `${plural(stale.length, "number")} in the draft ${stale.length === 1 ? "is" : "are"} out of date with ${stale.length === 1 ? "its" : "their"} results`,
-      detail: [printed, clip(reasons.slice(0, 2).join("; "))]
-        .filter(Boolean)
-        .join(" · "),
-      attention: true,
-      action: { kind: "tab", label: "Open result links", tab: "bindings" },
-    });
-  }
-  const unverified = coverage.filter((item) =>
-    ["unknown", "unavailable"].includes(item.state),
-  );
-  if (unverified.length)
-    rows.push({
-      id: "numbers-unverified",
-      text: `${plural(unverified.length, "linked number")} could not be verified`,
-      detail: "Unconfirmed links or unavailable results",
-      action: { kind: "tab", label: "Open result links", tab: "bindings" },
-    });
-
-  if (data.ledger.staleClaims.length)
-    rows.push({
-      id: "stale-claims",
-      text: `${plural(data.ledger.staleClaims.length, "claim")} ${data.ledger.staleClaims.length === 1 ? "relies" : "rely"} on evidence that is out of date`,
-      attention: true,
-      action: { kind: "tab", label: "Inspect evidence", tab: "evidence" },
-    });
-  if (data.ledger.unsupportedAcceptedClaims.length)
-    rows.push({
-      id: "unsupported-claims",
-      text: `${plural(data.ledger.unsupportedAcceptedClaims.length, "accepted claim")} ${data.ledger.unsupportedAcceptedClaims.length === 1 ? "has" : "have"} no confirmed supporting evidence`,
-      action: { kind: "tab", label: "Inspect evidence", tab: "evidence" },
-    });
-
-  const impacts = signals.impact?.impacts ?? [];
-  if (impacts.length) {
-    const upstream = impacts.filter((item) => item.path.length <= 1);
-    const downstream = impacts.length - upstream.length;
-    rows.push({
-      id: "impact",
-      text: downstream
-        ? `${plural(downstream, "linked item")} ${downstream === 1 ? "needs" : "need"} rechecking after ${plural(upstream.length, "upstream change")}`
-        : `${plural(upstream.length, "linked input")} changed`,
-      detail: [
-        clip((upstream[0] ?? impacts[0]).reason),
-        signals.impact?.complete ? "" : "partial scan",
-      ]
-        .filter(Boolean)
-        .join(" · "),
-      attention: true,
-      action: { kind: "tab", label: "Open change impact", tab: "decisions" },
-    });
-  }
   return block("sync", "Out of sync", rows);
 }
 
@@ -426,6 +366,7 @@ export function roundBlock(signals: ProjectSignals): OverviewBlock | null {
       ]
         .filter(Boolean)
         .join(" · "),
+      lane: pending.length ? "next" : undefined,
       action: { kind: "tab", label: "Open responses", tab: "responses" },
     });
     const undrafted = pending.filter((r) => !r.body.decision.draft.trim());
@@ -433,6 +374,7 @@ export function roundBlock(signals: ProjectSignals): OverviewBlock | null {
       rows.push({
         id: "undrafted",
         text: `${plural(undrafted.length, "comment")} ${undrafted.length === 1 ? "has" : "have"} no drafted reply`,
+        lane: "next",
         action: {
           kind: "ask",
           label: "Ask the assistant to draft replies",
@@ -454,6 +396,7 @@ export function roundBlock(signals: ProjectSignals): OverviewBlock | null {
         text: `${plural(waiting.length, "comment")} ${waiting.length === 1 ? "names" : "name"} a check that has not been run`,
         detail: clip(waiting[0].body.decision.resolvingCheck),
         attention: true,
+        lane: "next",
         action: { kind: "tab", label: "Open responses", tab: "responses" },
       });
     const flagged = responses.filter((r) => r.body.flags.length);
@@ -463,18 +406,9 @@ export function roundBlock(signals: ProjectSignals): OverviewBlock | null {
         text: `${plural(flagged.length, "response")} ${flagged.length === 1 ? "is" : "are"} flagged`,
         detail: clip(flagged[0].body.flags[0]),
         attention: true,
+        lane: "next",
         action: { kind: "tab", label: "Open responses", tab: "responses" },
       });
-  }
-  if (signals.campaign) {
-    const { record, comments, reviewRecommendation } = signals.campaign;
-    const done = comments.filter((c) => c.researcherAddressed).length;
-    rows.push({
-      id: "campaign",
-      text: `Round ${record.body.round}: ${done} of ${plural(comments.length, "comment")} marked addressed`,
-      detail: clip(reviewRecommendation),
-      action: { kind: "tab", label: "Open revision round", tab: "campaigns" },
-    });
   }
   return block("round", "Revision round", rows);
 }
@@ -523,6 +457,7 @@ export function repositoryBlock(
       id: "conflicts",
       text: `${plural(repository.conflicts, "file")} ${repository.conflicts === 1 ? "has" : "have"} merge conflicts`,
       attention: true,
+      lane: "needs",
       action: { kind: "tab", label: "Resolve", tab: "version-control" },
     });
   if (repository.changed || repository.untracked)
@@ -539,6 +474,7 @@ export function repositoryBlock(
         .filter(Boolean)
         .join(", "),
       detail: clip(repository.changedPaths.join(", "), 110),
+      lane: "next",
       action: { kind: "tab", label: "Review changes", tab: "version-control" },
     });
   if (repository.behind)
@@ -574,6 +510,7 @@ export function repositoryBlock(
           repository.ahead && checked !== null
             ? `Last checked ${overviewDay(repository.fetchedAt)}`
             : undefined,
+        lane: repository.ahead ? "next" : undefined,
         action: { kind: "fetch", label: `Check ${host}` },
       });
   }
@@ -781,28 +718,6 @@ export function sinceBlock(
       action: { kind: "automation", label: "Open", taskId: task.id },
     });
 
-  const checks = (signals.monitors?.attention ?? []).filter(
-    (item) => !item.acknowledgedAt,
-  );
-  if (checks.length)
-    rows.push({
-      id: "checks",
-      text: `${plural(checks.length, "scheduled check")} ${checks.length === 1 ? "needs" : "need"} attention`,
-      detail: clip(checks[0].body.title),
-      attention: true,
-      action: { kind: "tab", label: "Open scheduled checks", tab: "checks" },
-    });
-
-  const finished = data.executions.filter((run) => after(run.endedAt, since));
-  if (finished.length) {
-    const failed = finished.filter((run) => run.outcome !== "completed");
-    rows.push({
-      id: "executions",
-      text: `${plural(finished.length, "run")} finished${failed.length ? `, ${failed.length} unsuccessfully` : ""}`,
-      attention: failed.length > 0,
-      action: { kind: "tab", label: "Open results", tab: "results" },
-    });
-  }
   return block("since", "Since you were last here", rows);
 }
 
@@ -884,10 +799,150 @@ export function briefNotes(data: ProjectHome): ResearchNote[] {
     .slice(0, 3);
 }
 
+// ---- Stage ----------------------------------------------------------------
+
+const ROLE_LABELS: Record<string, string> = {
+  manuscript: "Main paper",
+  appendix: "Appendix",
+};
+
+/** Documents in this project: every imported paper with its role, once there is more than one. */
+export function documentsBlock(data: ProjectHome): OverviewBlock | null {
+  const papers = data.papers.filter((paper) => paper.revision);
+  if (papers.length < 2) return null;
+  return block(
+    "documents",
+    "Documents in this project",
+    papers.map((paper) => ({
+      id: `document-${paper.paper.id}`,
+      text: paper.paper.title,
+      detail: [
+        ROLE_LABELS[paper.paper.role] ?? "Supporting document",
+        `saved ${overviewDay(paper.revision!.capturedAt)}`,
+      ].join(" · "),
+      action: {
+        kind: "document",
+        label: "Open",
+        revisionId: paper.revision!.id,
+      },
+    })),
+  );
+}
+
+/**
+ * Which outstanding rows lead the overview at each stage, most pressing
+ * first. A project with no stage uses a general order.
+ */
+const NEXT_BY_STAGE: Record<string, string[]> = {
+  idea: [],
+  drafting: ["build", "review", "findings"],
+  ready: ["review", "findings", "build", "uncommitted"],
+  under_review: ["uncommitted", "remote"],
+  revising: [
+    "progress",
+    "undrafted",
+    "waiting",
+    "flagged",
+    "findings",
+    "review",
+  ],
+  accepted: ["uncommitted", "remote", "build"],
+};
+const NEXT_DEFAULT = [
+  "build",
+  "progress",
+  "undrafted",
+  "findings",
+  "review",
+  "uncommitted",
+];
+export const NEXT_LIMIT = 3;
+
+export interface ArrangedOverview {
+  /** At most three things to do now, chosen by the paper's stage. */
+  next: OverviewBlock | null;
+  /** Everything waiting on a decision from the researcher. */
+  needs: OverviewBlock | null;
+  /** The remaining blocks, without the rows that moved up. */
+  blocks: OverviewBlock[];
+  /** Open action items beyond the ones listed under needs. */
+  moreTasks: number;
+}
+
+/**
+ * Splits the derived blocks into what to do next, what waits on the
+ * researcher, and the rest, so no row appears twice.
+ */
+export function arrangeOverview(
+  data: ProjectHome,
+  blocks: OverviewBlock[],
+  stage: string | null | undefined,
+): ArrangedOverview {
+  const rows = blocks.flatMap((item) => item.rows);
+  const order = (stage && NEXT_BY_STAGE[stage]) || NEXT_DEFAULT;
+  const next = order
+    .map((id) => rows.find((row) => row.id === id && row.lane === "next"))
+    .filter((row): row is OverviewRow => Boolean(row))
+    .slice(0, NEXT_LIMIT);
+
+  const needs = rows.filter((row) => row.lane === "needs");
+  const pending = data.changes.filter((item) => item.body.state === "review");
+  if (pending.length)
+    needs.push({
+      id: "edits",
+      text: `${plural(pending.length, "proposed edit")} ${pending.length === 1 ? "awaits" : "await"} your decision`,
+      detail: clip(pending[0].body.instruction, 110) || undefined,
+      attention: true,
+      action: { kind: "tab", label: "Review edits", tab: "edits" },
+    });
+  const proposed = data.notes.filter((note) => note.state === "proposed");
+  if (proposed.length)
+    needs.push({
+      id: "notes",
+      text: `${plural(proposed.length, "suggested note")} ${proposed.length === 1 ? "awaits" : "await"} your decision`,
+      attention: true,
+      action: { kind: "notes", label: "Review suggested notes" },
+    });
+  const tasks = data.tasks
+    .filter((task) => !["completed", "rejected"].includes(task.body.status))
+    .sort(
+      (a, b) =>
+        Number(a.body.status === "deferred") -
+          Number(b.body.status === "deferred") ||
+        b.updatedAt.localeCompare(a.updatedAt),
+    );
+  for (const task of tasks.slice(0, NEXT_LIMIT))
+    needs.push({
+      id: `task-${task.id}`,
+      text: task.body.objective,
+      detail: `Action item · ${
+        task.body.status === "deferred"
+          ? "Later"
+          : task.body.status === "investigating"
+            ? "In progress"
+            : "Open"
+      }`,
+      action: { kind: "tab", label: "Open", tab: "tasks" },
+    });
+
+  const moved = new Set([...next, ...needs]);
+  return {
+    next: block("next", "Next", next),
+    needs: block("needs", "Needs you", needs),
+    blocks: blocks
+      .map((item) => ({
+        ...item,
+        rows: item.rows.filter((row) => !moved.has(row)),
+      }))
+      .filter((item) => item.rows.length),
+    moreTasks: Math.max(0, tasks.length - NEXT_LIMIT),
+  };
+}
+
 // ---- Target date ----------------------------------------------------------
 
 export function targetSummary(
-  settings: { targetDate?: string | null; targetLabel?: string },
+  settings: { targetDate?: string | null; targetLabel?: string | null },
   now: Date,
 ): { label: string; date: string; days: number } | null {
   if (!settings.targetDate) return null;

@@ -7,7 +7,7 @@ import type {
 import { open } from "@tauri-apps/plugin-dialog";
 import { useMemo, useRef, useState } from "react";
 import type { PipelineReport } from "../lib/types";
-import { Menu, Popover } from "../ui";
+import ExportDialog from "./ExportDialog";
 import { confirmDialog, notify } from "./DialogService";
 import ReportFormatItems from "./ReportFormatItems";
 
@@ -59,6 +59,7 @@ export default function ExportControls({
 }: Props) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [purpose, setPurpose] = useState<"read" | "share" | "archive">("read");
   const [customOpen, setCustomOpen] = useState(false);
   const [selection, setSelection] = useState<ExportSelection>(SAFE_SELECTION);
   const [progress, setProgress] = useState<string | null>(null);
@@ -206,169 +207,230 @@ export default function ExportControls({
       <button
         ref={trigger}
         type="button"
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         aria-expanded={menuOpen}
-        onClick={() => setMenuOpen((open) => !open)}
+        onClick={() => {
+          setMenuOpen((open) => !open);
+          setCustomOpen(false);
+        }}
         disabled={Boolean(progress)}
         className="py-1.5 px-3 border border-gray-300 dark:border-gray-600 rounded-lg text-sm
                    text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors
                    disabled:cursor-wait disabled:opacity-50"
       >
-        {progress ?? "Export ▾"}
+        {progress ?? "Export"}
       </button>
 
-      <Menu
-        open={menuOpen}
-        onClose={() => setMenuOpen(false)}
-        anchorRef={trigger}
-        label="Export options"
-        width={320}
-      >
-        {runId && (
-          <>
-            <ReportFormatItems
-              runId={runId}
-              inputPath={inputPath}
-              busy={Boolean(progress)}
-              onStart={(next) => {
-                setMenuOpen(false);
-                setProgress(next);
-              }}
-              onFinish={() => setProgress(null)}
-            />
-            <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
-            <button
-              role="menuitem"
-              onClick={() => void runPackageExport("shareable", SAFE_SELECTION)}
-              className="w-full rounded px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
-            >
-              <span className="block text-sm font-medium text-gray-900 dark:text-gray-100">
-                Shareable report
-              </span>
-              <span className="block text-xs text-gray-500 dark:text-gray-400">
-                Verified findings, limitations, and report details with private
-                information removed. Excludes unverified findings, source
-                documents, and raw model responses.
-              </span>
-            </button>
-            <button
-              role="menuitem"
-              onClick={() => void runPackageExport("forensic", SAFE_SELECTION)}
-              className="w-full rounded px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
-            >
-              <span className="block text-sm font-medium text-amber-700 dark:text-amber-300">
-                Complete review archive · Includes private material
-              </span>
-              <span className="block text-xs text-gray-500 dark:text-gray-400">
-                All review files, including source documents, raw model
-                responses, logs, the review design, settings, and file list.
-              </span>
-            </button>
-            <button
-              role="menuitem"
-              onClick={() => {
-                setMenuOpen(false);
-                setCustomOpen(true);
-              }}
-              className="w-full rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
-            >
-              Custom selection…
-            </button>
-            <div className="my-1 border-t border-gray-200 dark:border-gray-700" />
-          </>
-        )}
-        {!runId && report && extractedText !== undefined && (
-          <button
-            role="menuitem"
-            onClick={() => void handleLegacyCore()}
-            className="w-full rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
+      {menuOpen && (
+        <ExportDialog
+          onClose={() => {
+            setMenuOpen(false);
+            setCustomOpen(false);
+          }}
+        >
+          <div
+            aria-label="Export purpose"
+            className="mb-5 grid grid-cols-3 gap-2"
           >
-            Export current report files…
-          </button>
-        )}
-        <button
-          role="menuitem"
-          onClick={() => void handleSaveMd()}
-          className="w-full rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
-        >
-          Save Markdown…
-        </button>
-        <button
-          role="menuitem"
-          onClick={() => void handlePrint()}
-          className="w-full rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
-        >
-          Print / save as PDF…
-        </button>
-      </Menu>
-
-      <Popover
-        open={customOpen}
-        onClose={() => setCustomOpen(false)}
-        anchorRef={trigger}
-        label="Custom export selection"
-        align="end"
-        width={320}
-        className="p-4"
-      >
-        <div className="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
-              Custom export
-            </h3>
-            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              Choose the types of files to export. Pipeline includes a file list
-              and checksums to help detect changes.
-            </p>
+            {(["read", "share", "archive"] as const).map((value) => (
+              <button
+                key={value}
+                aria-pressed={purpose === value}
+                className="rounded-lg border border-line px-3 py-3 text-sm font-medium aria-pressed:bg-inverse aria-pressed:text-on-inverse"
+                onClick={() => {
+                  setPurpose(value);
+                  setCustomOpen(false);
+                }}
+              >
+                {value === "read"
+                  ? "Read or print"
+                  : value === "share"
+                    ? "Share findings"
+                    : "Keep an archive"}
+              </button>
+            ))}
           </div>
-          <button
-            aria-label="Close custom export"
-            onClick={() => setCustomOpen(false)}
-            className="text-gray-500 hover:text-gray-900 dark:hover:text-gray-100"
-          >
-            ✕
-          </button>
-        </div>
-        <div className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
-          {(
-            [
-              ["report", "Full report · Includes unverified findings"],
-              ["verifiedFindings", "Verified findings and limitations"],
-              ["provenance", "Report details with private information removed"],
-              ["workflow", "Saved review design"],
-              [
-                "supportingArtifacts",
-                "Supporting files · May contain private information",
-              ],
-              ["sourceDocuments", "Source documents · Sensitive"],
-              ["rawResponses", "Raw responses and step outputs · Sensitive"],
-              ["logs", "Console logs · Sensitive"],
-            ] as [keyof ExportSelection, string][]
-          ).map(([key, label]) => (
-            <label key={key} className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={selection[key]}
-                onChange={(event) => setCustomItem(key, event.target.checked)}
-              />
-              {label}
-            </label>
-          ))}
-        </div>
-        {customSensitive && (
-          <p className="mt-3 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-            This selection includes private material. Check the files before
-            sharing them.
-          </p>
-        )}
-        <button
-          onClick={() => void runPackageExport("custom", selection)}
-          disabled={!Object.values(selection).some(Boolean)}
-          className="mt-4 w-full rounded-lg bg-gray-900 px-3 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900"
-        >
-          Export selected items…
-        </button>
-      </Popover>
+          {purpose === "read" ? (
+            <>
+              <p className="mb-3 text-sm text-ink-muted">
+                Choose a report format or add findings to a copy of your
+                document.
+              </p>
+              {runId && (
+                <>
+                  {" "}
+                  <ReportFormatItems
+                    inDialog
+                    runId={runId}
+                    inputPath={inputPath}
+                    busy={Boolean(progress)}
+                    onStart={(next) => {
+                      setMenuOpen(false);
+                      setProgress(next);
+                    }}
+                    onFinish={() => setProgress(null)}
+                  />
+                </>
+              )}
+              {!runId && report && extractedText !== undefined && (
+                <button
+                  onClick={() => void handleLegacyCore()}
+                  className="w-full rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
+                >
+                  Export current report files…
+                </button>
+              )}
+              <button
+                onClick={() => void handleSaveMd()}
+                className="w-full rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
+              >
+                Save Markdown…
+              </button>
+              <button
+                onClick={() => void handlePrint()}
+                className="w-full rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
+              >
+                Print / save as PDF…
+              </button>
+            </>
+          ) : purpose === "share" ? (
+            <>
+              <p className="mb-3 text-sm text-ink-muted">
+                Create a folder of verified findings and report details for
+                collaborators.
+              </p>
+              {runId ? (
+                <>
+                  {" "}
+                  <button
+                    onClick={() =>
+                      void runPackageExport("shareable", SAFE_SELECTION)
+                    }
+                    className="w-full rounded px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
+                  >
+                    <span className="block text-sm font-medium text-gray-900 dark:text-gray-100">
+                      Shareable report
+                    </span>
+                    <span className="block text-xs text-gray-500 dark:text-gray-400">
+                      Verified findings, limitations, and report details with
+                      private information removed. Excludes unverified findings,
+                      source documents, and raw model responses.
+                    </span>
+                  </button>
+                </>
+              ) : (
+                <p>
+                  Sharing a findings package is available for saved reviews.
+                </p>
+              )}
+            </>
+          ) : customOpen ? (
+            <>
+              {" "}
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    Custom export
+                  </h3>
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Choose the types of files to export. Pipeline includes a
+                    file list and checksums to help detect changes.
+                  </p>
+                </div>
+                <button
+                  aria-label="Close custom export"
+                  onClick={() => setCustomOpen(false)}
+                  className="text-gray-500 hover:text-gray-900 dark:hover:text-gray-100"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
+                {(
+                  [
+                    ["report", "Full report · Includes unverified findings"],
+                    ["verifiedFindings", "Verified findings and limitations"],
+                    [
+                      "provenance",
+                      "Report details with private information removed",
+                    ],
+                    ["workflow", "Saved review design"],
+                    [
+                      "supportingArtifacts",
+                      "Supporting files · May contain private information",
+                    ],
+                    ["sourceDocuments", "Source documents · Sensitive"],
+                    [
+                      "rawResponses",
+                      "Raw responses and step outputs · Sensitive",
+                    ],
+                    ["logs", "Console logs · Sensitive"],
+                  ] as [keyof ExportSelection, string][]
+                ).map(([key, label]) => (
+                  <label key={key} className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={selection[key]}
+                      onChange={(event) =>
+                        setCustomItem(key, event.target.checked)
+                      }
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+              {customSensitive && (
+                <p className="mt-3 rounded bg-amber-50 px-2 py-1.5 text-xs text-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
+                  This selection includes private material. Check the files
+                  before sharing them.
+                </p>
+              )}
+              <button
+                onClick={() => void runPackageExport("custom", selection)}
+                disabled={!Object.values(selection).some(Boolean)}
+                className="mt-4 w-full rounded-lg bg-gray-900 px-3 py-2 text-sm text-white disabled:cursor-not-allowed disabled:opacity-40 dark:bg-gray-100 dark:text-gray-900"
+              >
+                Export selected items…
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="mb-3 text-sm text-ink-muted">
+                Keep the full review, or choose which files to include.
+              </p>
+              {runId ? (
+                <>
+                  <button
+                    onClick={() =>
+                      void runPackageExport("forensic", SAFE_SELECTION)
+                    }
+                    className="w-full rounded px-3 py-2 text-left hover:bg-gray-100 dark:hover:bg-gray-800"
+                  >
+                    <span className="block text-sm font-medium text-amber-700 dark:text-amber-300">
+                      Complete review archive · Includes private material
+                    </span>
+                    <span className="block text-xs text-gray-500 dark:text-gray-400">
+                      All review files, including source documents, raw model
+                      responses, logs, the review design, settings, and file
+                      list.
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCustomOpen(true);
+                    }}
+                    className="w-full rounded px-3 py-2 text-left text-sm text-gray-800 hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
+                  >
+                    Custom selection…
+                  </button>
+                </>
+              ) : (
+                <p>Archives are available for saved reviews.</p>
+              )}
+            </>
+          )}
+        </ExportDialog>
+      )}
 
       {/* Floats over the report so the header keeps its height. */}
       <div

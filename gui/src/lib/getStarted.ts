@@ -7,6 +7,9 @@ export interface GetStartedRecord {
   version: 1;
   /** When the sheet was last closed; null while it has never been closed. */
   dismissedAt: string | null;
+  step?: number;
+  goal?: "review" | "project";
+  pendingSettings?: boolean;
 }
 
 export type GetStartedView = "setup" | "example";
@@ -25,6 +28,17 @@ export function parseGetStarted(raw: string | null): GetStartedRecord | null {
     const record = value as Record<string, unknown>;
     return {
       version: 1,
+      ...(typeof record.step === "number" &&
+      record.step >= 0 &&
+      record.step <= 2
+        ? { step: record.step }
+        : {}),
+      ...(record.goal === "review" || record.goal === "project"
+        ? { goal: record.goal }
+        : {}),
+      ...(typeof record.pendingSettings === "boolean"
+        ? { pendingSettings: record.pendingSettings }
+        : {}),
       dismissedAt:
         typeof record.dismissedAt === "string" && record.dismissedAt
           ? record.dismissedAt

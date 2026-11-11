@@ -324,9 +324,14 @@ describe("App navigation", () => {
       screen.getByRole("button", { name: "See an example review" }),
     );
     expect(
-      await screen.findByRole("dialog", {
-        name: "Example review",
-      }),
+      // This opens the lazily loaded report reader, including Markdown/math.
+      await screen.findByRole(
+        "dialog",
+        {
+          name: "Example review",
+        },
+        { timeout: 5000 },
+      ),
     ).toBeVisible();
     expect(invoke).not.toHaveBeenCalledWith(
       "save_annotations",
@@ -355,32 +360,26 @@ describe("App navigation", () => {
     expect(localStorage.getItem("pipeline.ui.page")).toBe("project-index");
   });
 
-  it("shows the first-run data notice once and remembers acknowledgement", async () => {
-    const user = userEvent.setup();
-    const firstRender = render(<App />);
-
-    expect(
-      screen.getByRole("note", { name: "Data and privacy" }),
-    ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Got it" }));
-    expect(
-      screen.queryByRole("note", { name: "Data and privacy" }),
-    ).not.toBeInTheDocument();
-    await screen.findByRole("button", { name: "Start review" });
-
-    firstRender.unmount();
+  it("keeps a concise privacy link beside Preview without an acknowledgement step", async () => {
     render(<App />);
+    await screen.findByRole("button", { name: "Preview" });
     expect(
-      screen.queryByRole("note", { name: "Data and privacy" }),
+      screen.getByText(
+        /The preview shows which providers receive your document/,
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Data and privacy" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Got it" }),
     ).not.toBeInTheDocument();
-    await screen.findByRole("heading", { name: "What would you like to do?" });
   });
 
-  it("links the first-run notice to the detailed privacy explanation", async () => {
+  it("links review setup to the detailed privacy explanation", async () => {
     const user = userEvent.setup();
     render(<App />);
-
-    await user.click(screen.getByRole("button", { name: "Privacy details" }));
+    await user.click(screen.getByRole("button", { name: "Data and privacy" }));
     const summary = await screen.findByText("Data & privacy");
     expect(summary).toBeVisible();
     expect(summary.closest("details")).toHaveAttribute("open");
@@ -435,7 +434,7 @@ describe("App navigation", () => {
       await screen.findByRole("button", { name: "Make settings dirty" }),
     );
     // Activity is a destination now; the leave guard runs before it opens.
-    await user.click(screen.getByRole("button", { name: "Activity" }));
+    await user.click(screen.getByRole("button", { name: "All activity" }));
     await user.click(screen.getByRole("button", { name: "See all activity" }));
 
     expect(confirmDialog).toHaveBeenCalledWith(

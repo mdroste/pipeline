@@ -682,7 +682,7 @@ async fn call_codex_inner(
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn codex: {e}. Is Codex CLI installed?"))?;
-    super::logging::record_provider_attempt();
+    super::logging::record_provider_attempt()?;
 
     let (pid, start_time) = track_child_started(&child, app, label);
     let mut prompt_stdin = child

@@ -163,7 +163,7 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
             >
               <div className="flex items-start gap-4">
                 <div className="min-w-0 flex-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-gray-500 dark:text-gray-400">
+                  <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.1em] text-gray-500 dark:text-gray-400">
                     {item.category}
                   </span>
                   <h2
@@ -173,7 +173,7 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
                     {item.name}
                   </h2>
                 </div>
-                <span className="rounded-full bg-gray-100 px-2 py-1 text-[10px] font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                <span className="rounded-full bg-gray-100 px-2 py-1 text-[0.625rem] font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                   {item.config.steps.length} steps
                 </span>
               </div>
@@ -200,7 +200,7 @@ export default function WorkflowGalleryPage({ onInstalled }: Props) {
               </dl>
               <div className="mt-auto flex items-center gap-3 pt-6">
                 {previouslyInstalled && (
-                  <span className="text-[11px] text-gray-500 dark:text-gray-400">
+                  <span className="text-[0.6875rem] text-gray-500 dark:text-gray-400">
                     Installed locally
                   </span>
                 )}

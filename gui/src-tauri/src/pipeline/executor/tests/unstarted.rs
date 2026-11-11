@@ -149,15 +149,15 @@ async fn a_review_limit_reached_before_any_wave_skips_every_wave_first() {
     };
     let (result, events) = crate::run_scope::scoped(scope.scope().clone(), async {
         // Orientation and one retry happen before the first wave.
-        crate::pipeline::logging::record_provider_attempt();
-        crate::pipeline::logging::record_provider_attempt();
+        crate::pipeline::logging::record_provider_attempt().unwrap();
+        crate::pipeline::logging::record_provider_attempt().unwrap();
         run(&workflow, "", &settings).await
     })
     .await;
 
     assert_eq!(
         result.budget_stop.as_deref(),
-        Some("limit of 2 model calls (2 made)")
+        Some("limit of 2 model calls (2 made or reserved)")
     );
     assert!(result.outputs.is_empty());
     assert_eq!(result.failed_steps.len(), 3);

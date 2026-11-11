@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { lintCrossStepReferences } from "../../lib/pipelineHelpers";
 import WaveDiagram from "../WaveDiagram";
+import WorkflowWarnings from "./WorkflowWarnings";
 
 import SidebarPanel from "../SidebarPanel";
 import usePersistentPanelWidth from "../../hooks/usePersistentPanelWidth";
@@ -30,6 +31,7 @@ export function WorkflowNavigator({
   onClose,
   onOpenGallery,
   showBack,
+  leaveGuardedByShell,
 }: {
   editor: WorkflowEditor;
   operations: ProfileOperations;
@@ -38,6 +40,7 @@ export function WorkflowNavigator({
   onClose: () => void;
   onOpenGallery?: () => void;
   showBack: boolean;
+  leaveGuardedByShell: boolean;
 }) {
   const {
     config,
@@ -125,7 +128,7 @@ export function WorkflowNavigator({
                   if (mode === "basic" && navigatorView === "schemas")
                     setNavigatorView("steps");
                 }}
-                className={`rounded-md px-2.5 py-1 text-[11px] font-medium ${editorMode === mode ? "bg-white shadow-sm dark:bg-gray-700" : "text-gray-500 dark:text-gray-400"}`}
+                className={`rounded-md px-2.5 py-1 text-[0.6875rem] font-medium ${editorMode === mode ? "bg-white shadow-sm dark:bg-gray-700" : "text-gray-500 dark:text-gray-400"}`}
               >
                 {mode === "basic" ? "Basic" : "Advanced"}
               </button>
@@ -136,6 +139,10 @@ export function WorkflowNavigator({
           <button
             onClick={() =>
               void (async () => {
+                if (leaveGuardedByShell) {
+                  onClose();
+                  return;
+                }
                 if (
                   dirty &&
                   !(await confirmDialog(
@@ -150,7 +157,7 @@ export function WorkflowNavigator({
             }
             className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
           >
-            Back
+            Back to review
           </button>
         )}
       </div>
@@ -189,7 +196,7 @@ export function WorkflowNavigator({
         {activeInvalid && (
           <p
             role="alert"
-            className="rounded-lg bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+            className="rounded-lg bg-amber-50 px-2 py-1.5 text-[0.6875rem] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
           >
             This saved review design can't run until it is repaired. Fix it here
             and save, or export it to keep a copy. Reason: {activeInvalid}
@@ -199,14 +206,14 @@ export function WorkflowNavigator({
           <button
             onClick={handleDuplicateProfile}
             disabled={profileMutationPending}
-            className="flex-1 py-1 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-800 rounded transition-colors disabled:opacity-40"
+            className="flex-1 py-1 text-[0.6875rem] text-gray-500 hover:text-gray-700 hover:bg-gray-50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-800 rounded transition-colors disabled:opacity-40"
           >
             Duplicate
           </button>
           <button
             onClick={handleRenameProfile}
             disabled={profileMutationPending}
-            className="flex-1 py-1 text-[11px] text-gray-500 hover:text-gray-700 hover:bg-gray-50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-800 rounded transition-colors disabled:opacity-40"
+            className="flex-1 py-1 text-[0.6875rem] text-gray-500 hover:text-gray-700 hover:bg-gray-50 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-800 rounded transition-colors disabled:opacity-40"
           >
             Rename
           </button>
@@ -216,7 +223,7 @@ export function WorkflowNavigator({
               profileMutationPending ||
               profiles.find((profile) => profile.id === activeProfile)?.builtin
             }
-            className="flex-1 py-1 text-[11px] text-gray-500 hover:text-red-600 hover:bg-red-50
+            className="flex-1 py-1 text-[0.6875rem] text-gray-500 hover:text-red-600 hover:bg-red-50
                          dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-red-950/40
                          rounded transition-colors disabled:opacity-30 disabled:hover:text-gray-500
                          disabled:hover:bg-transparent"
@@ -226,35 +233,18 @@ export function WorkflowNavigator({
         </div>
       </div>
 
-      {crossStepWarnings.length > 0 && (
-        <div className="mx-4 mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/30">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-800 dark:text-amber-200">
-            Cross-step references
-          </p>
-          <ul className="mt-1 space-y-0.5">
-            {crossStepWarnings.slice(0, 6).map((warning, index) => (
-              <li
-                key={`${warning.stepId}-${index}`}
-                className="text-[11px] leading-snug text-amber-800 dark:text-amber-200"
-              >
-                <button
-                  type="button"
-                  className="font-medium underline underline-offset-2"
-                  onClick={() => setEditing(warning.stepId)}
-                >
-                  {warning.stepId}
-                </button>
-                : {warning.message}
-              </li>
-            ))}
-            {crossStepWarnings.length > 6 && (
-              <li className="text-[11px] text-amber-700 dark:text-amber-300">
-                +{crossStepWarnings.length - 6} more
-              </li>
-            )}
-          </ul>
-        </div>
-      )}
+      <WorkflowWarnings
+        warnings={crossStepWarnings}
+        steps={config.steps}
+        onSelect={(warning) => {
+          setEditing(warning.stepId);
+          setNavigatorView("steps");
+          view.setWarningTarget((last) => ({
+            ...warning,
+            request: (last?.request ?? 0) + 1,
+          }));
+        }}
+      />
       <div className="px-4 pb-2">
         <div
           role="tablist"
@@ -314,16 +304,16 @@ export function WorkflowNavigator({
           <div>
             <div className="sticky top-0 z-[1] border-b border-gray-100 bg-white px-4 py-3 dark:border-gray-800 dark:bg-gray-900">
               <div className="flex items-center justify-between gap-3">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-300">
+                <span className="text-[0.625rem] font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-300">
                   Output formats
                 </span>
-                <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
+                <span className="rounded-full bg-violet-50 px-2 py-0.5 text-[0.625rem] font-medium text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
                   {config.steps.filter((step) => !!step.output_schema).length +
                     (config.orientation_schema ? 1 : 0)}{" "}
                   configured
                 </span>
               </div>
-              <p className="mt-1 text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
+              <p className="mt-1 text-[0.6875rem] leading-relaxed text-gray-500 dark:text-gray-400">
                 Select a stage to inspect its effective provider schema.
               </p>
             </div>
@@ -342,12 +332,12 @@ export function WorkflowNavigator({
                   <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">
                     Orientation map
                   </span>
-                  <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
+                  <span className="mt-0.5 block text-[0.6875rem] text-gray-500 dark:text-gray-400">
                     Preprocessing JSON survey
                   </span>
                 </span>
                 <span
-                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[0.625rem] font-medium ${
                     config.orientation_schema
                       ? "bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300"
                       : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
@@ -361,7 +351,7 @@ export function WorkflowNavigator({
                 </span>
               </span>
             </button>
-            <div className="bg-gray-50 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
+            <div className="bg-gray-50 px-4 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
               Step outputs
             </div>
             {config.steps.map((step) => (
@@ -381,13 +371,13 @@ export function WorkflowNavigator({
                     <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">
                       {step.label}
                     </span>
-                    <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
+                    <span className="mt-0.5 block text-[0.6875rem] text-gray-500 dark:text-gray-400">
                       {step.phase === "parallel" ? "Parallel" : "Sequential"}
                       {!step.enabled ? " · Disabled" : ""}
                     </span>
                   </span>
                   <span
-                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[0.625rem] font-medium ${
                       step.output_schema
                         ? "bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300"
                         : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
@@ -408,7 +398,7 @@ export function WorkflowNavigator({
             {/* Each section holds its header, which lets go at the section's end. */}
             <div>
               <div className="px-4 py-1.5 bg-gray-50 dark:bg-gray-800 sticky top-0 z-[1]">
-                <span className="text-[10px] uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium">
+                <span className="text-[0.625rem] uppercase tracking-wider text-gray-500 dark:text-gray-400 font-medium">
                   Review setup
                 </span>
               </div>
@@ -427,7 +417,7 @@ export function WorkflowNavigator({
                 <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">
                   Input &amp; extraction
                 </span>
-                <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
+                <span className="mt-0.5 block text-[0.6875rem] text-gray-500 dark:text-gray-400">
                   Input type and PDF extraction
                 </span>
               </button>
@@ -452,7 +442,7 @@ export function WorkflowNavigator({
                     ? "Orientation & classification"
                     : "Orientation map"}
                 </span>
-                <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
+                <span className="mt-0.5 block text-[0.6875rem] text-gray-500 dark:text-gray-400">
                   {autoReview
                     ? "Maps the paper and picks reviewers"
                     : "Maps the input before review"}
@@ -463,7 +453,7 @@ export function WorkflowNavigator({
             {/* Parallel section */}
             <div>
               <div className="px-4 py-1.5 bg-blue-50 dark:bg-blue-950 sticky top-0 z-[1]">
-                <span className="text-[10px] uppercase tracking-wider text-blue-700 dark:text-blue-300 font-medium">
+                <span className="text-[0.625rem] uppercase tracking-wider text-blue-700 dark:text-blue-300 font-medium">
                   Parallel
                 </span>
               </div>
@@ -484,7 +474,7 @@ export function WorkflowNavigator({
               ))}
               {autoReview && (
                 <div className="border-t border-blue-100 dark:border-blue-950/60">
-                  <div className="bg-blue-50/60 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-blue-700 dark:bg-blue-950/25 dark:text-blue-300">
+                  <div className="bg-blue-50/60 px-4 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider text-blue-700 dark:bg-blue-950/25 dark:text-blue-300">
                     Auto-filled from orientation
                   </div>
                   <AdaptiveAgentsRow
@@ -512,7 +502,7 @@ export function WorkflowNavigator({
                       : "bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800"
                   }`}
                 >
-                  <span className="text-[10px] uppercase tracking-wider text-amber-700 dark:text-amber-300 font-medium">
+                  <span className="text-[0.625rem] uppercase tracking-wider text-amber-700 dark:text-amber-300 font-medium">
                     Merge (auto)
                   </span>
                 </button>
@@ -522,7 +512,7 @@ export function WorkflowNavigator({
             {/* Sequential section */}
             <div>
               <div className="px-4 py-1.5 bg-orange-50 dark:bg-orange-950 sticky top-0 z-[1]">
-                <span className="text-[10px] uppercase tracking-wider text-orange-700 dark:text-orange-300 font-medium">
+                <span className="text-[0.625rem] uppercase tracking-wider text-orange-700 dark:text-orange-300 font-medium">
                   Sequential
                 </span>
               </div>
@@ -612,7 +602,7 @@ export function WorkflowNavigator({
             Reset
           </button>
         </div>
-        <div className="flex items-center justify-between text-[11px] text-gray-500 dark:text-gray-400">
+        <div className="flex items-center justify-between text-[0.6875rem] text-gray-500 dark:text-gray-400">
           <span>
             {!schemaDraftValid
               ? "Cannot save: fix the invalid schema draft."

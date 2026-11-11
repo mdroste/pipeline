@@ -5,7 +5,7 @@
 //! user-installed tool directories. We fix this by asking the user's
 //! login shell for its PATH.
 //!
-//! On Windows, GUI apps inherit the full user PATH, so no fixup is needed.
+//! Explicit dependency checks refresh Windows user/system PATH additions too.
 //!
 //! We also bundle `pdftoppm` and `pdftotext` (from poppler) inside the app.
 //! At startup, `set_bundled_poppler_dir` is called with the resolved
@@ -18,6 +18,8 @@ use std::sync::{Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 #[cfg(test)]
 mod resource_tests;
+#[cfg(windows)]
+mod windows_path;
 
 /// Successful base-PATH resolution, cached for the app session. A failed
 /// probe is retried, but only after `PROBE_RETRY_INTERVAL`: each probe costs
@@ -127,6 +129,26 @@ pub fn full_path() -> String {
         }
         None => base,
     }
+}
+
+/// Re-read the user's environment for an explicit dependency check. Ordinary
+/// provider launches continue to use the cache rather than probing a shell.
+pub fn refresh_path() {
+    let mut failed_at = PROBE_FAILED_AT.lock().unwrap_or_else(|e| e.into_inner());
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    #[cfg(windows)]
+    let refreshed = Some(windows_path::refresh(&inherited));
+    #[cfg(not(windows))]
+    let refreshed = {
+        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+        probe_login_shell_path(&shell).map(|path| merge_paths(&path, &inherited))
+    };
+    *FULL_PATH.write().unwrap_or_else(|e| e.into_inner()) = refreshed;
+    *failed_at = FULL_PATH
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_none()
+        .then(Instant::now);
 }
 
 fn cached_base_path() -> String {
@@ -262,6 +284,38 @@ fn merge_paths(primary: &str, fallback: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn explicit_refresh_replaces_an_already_cached_path() {
+        const CHILD: &str = "PIPELINE_PATH_REFRESH_CHILD";
+        const NEW_TOOL: &str = r"C:\pipeline-path-refresh-fixture";
+        if std::env::var_os(CHILD).is_some() {
+            // Only this isolated process touches the session-wide cache.
+            *FULL_PATH.write().unwrap() = Some(r"C:\obsolete-path-cache".into());
+            assert!(!full_path().contains(NEW_TOOL));
+            refresh_path();
+            assert!(full_path().contains(NEW_TOOL));
+            assert!(!full_path().contains("obsolete-path-cache"));
+            return;
+        }
+        let inherited = std::env::var("PATH").unwrap_or_default();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "env::tests::explicit_refresh_replaces_an_already_cached_path",
+            ])
+            .env(CHILD, "1")
+            .env("PATH", format!("{inherited};{NEW_TOOL}"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 
     #[test]
     fn probe_output_takes_last_non_empty_line() {

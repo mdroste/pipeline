@@ -54,13 +54,25 @@ fn read_text_candidate(safe: &SafeRoot, path: &str) -> WorkbenchResult<Option<Ve
     Ok(Some(bytes))
 }
 /// The line around the match, so a long minified line still shows it.
-fn excerpt(line: &str, lowered: &str, query: &str) -> String {
+fn excerpt(line: &str, query: &str) -> String {
     let line = line.trim();
     if line.chars().count() <= MAX_LINE_CHARS {
         return line.to_string();
     }
+    let lowered = line.to_lowercase();
     let at = lowered.find(query).unwrap_or(0);
-    let before = lowered[..at].chars().count().saturating_sub(40);
+    // Map a byte offset in the lowercase text back to original characters.
+    // One source character can expand when lowercased (for example U+0130).
+    let mut folded_bytes = 0;
+    let before = line
+        .chars()
+        .take_while(|ch| {
+            let before_match = folded_bytes <= at;
+            folded_bytes += ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+            before_match
+        })
+        .count()
+        .saturating_sub(41);
     line.chars().skip(before).take(MAX_LINE_CHARS).collect()
 }
 pub fn search_files(folder: &Path, query: &str) -> WorkbenchResult<FileSearchResult> {
@@ -100,10 +112,7 @@ fn search_within(
         result.truncated |= partial;
         for (name, stat) in entries {
             visited += 1;
-            if visited > MAX_VISITED
-                || result.matches.len() >= MAX_MATCHES
-                || started.elapsed() > time_limit
-            {
+            if visited > MAX_VISITED || started.elapsed() > time_limit {
                 result.truncated = true;
                 break 'walk;
             }
@@ -137,14 +146,15 @@ fn search_within(
                     for (index, line) in text.lines().enumerate() {
                         let lowered = line.to_lowercase();
                         if lowered.contains(&query) {
+                            if result.matches.len() == MAX_MATCHES {
+                                result.truncated = true;
+                                break 'walk;
+                            }
                             result.matches.push(FileSearchMatch {
                                 path: path.clone(),
                                 line: index + 1,
-                                text: excerpt(line, &lowered, &query),
+                                text: excerpt(line, &query),
                             });
-                            if result.matches.len() >= MAX_MATCHES {
-                                break;
-                            }
                         }
                     }
                 }
@@ -213,8 +223,31 @@ mod tests {
     #[test]
     fn long_lines_keep_the_match_visible() {
         let line = format!("{}needle{}", "a".repeat(1000), "b".repeat(1000));
-        let shown = excerpt(&line, &line, "needle");
+        let shown = excerpt(&line, "needle");
         assert!(shown.contains("needle"));
         assert_eq!(shown.chars().count(), MAX_LINE_CHARS);
+    }
+
+    #[test]
+    fn the_last_file_reports_matches_past_the_cap() {
+        let temp = tempfile::tempdir().unwrap();
+        for count in [499, 500, 501] {
+            fs::write(temp.path().join("only.txt"), "needle\n".repeat(count)).unwrap();
+            let result = search_files(temp.path(), "needle").unwrap();
+            assert_eq!(result.matches.len(), count.min(MAX_MATCHES));
+            assert_eq!(result.truncated, count > MAX_MATCHES, "{count} matches");
+        }
+        fs::write(temp.path().join("another.txt"), "needle\n").unwrap();
+        assert!(search_files(temp.path(), "needle").unwrap().truncated);
+    }
+
+    #[test]
+    fn excerpts_keep_matches_after_whitespace_and_expanding_lowercase() {
+        for prefix in [" ".repeat(300), "\t".repeat(300), "İ".repeat(300)] {
+            let line = format!("{prefix}needle{}", "x".repeat(500));
+            let shown = excerpt(&line, "needle");
+            assert!(shown.contains("needle"), "{shown}");
+            assert_eq!(shown.chars().count(), MAX_LINE_CHARS);
+        }
     }
 }

@@ -30,7 +30,7 @@ interface Props {
 }
 
 const chipClass = (active: boolean) =>
-  `rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 ${
+  `rounded-full border px-2.5 py-1 text-[0.6875rem] font-medium transition-colors disabled:opacity-50 ${
     active
       ? "border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900"
       : "border-gray-300 bg-white text-gray-700 hover:border-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
@@ -93,7 +93,7 @@ function HarnessModulesEditor({
       </p>
 
       <div>
-        <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+        <div className="mb-1.5 text-[0.625rem] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
           Capabilities
         </div>
         <div className="flex flex-wrap gap-1.5">
@@ -111,7 +111,7 @@ function HarnessModulesEditor({
             </button>
           ))}
         </div>
-        <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+        <p className="mt-1 text-[0.6875rem] text-gray-500 dark:text-gray-400">
           Choose a group of sources, tools, and research panels, then select
           research instructions below.
         </p>
@@ -126,7 +126,7 @@ function HarnessModulesEditor({
             <h4 className="text-xs font-semibold text-gray-800 dark:text-gray-200">
               {group.label}
             </h4>
-            <p className="text-[11px] text-gray-500 dark:text-gray-400">
+            <p className="text-[0.6875rem] text-gray-500 dark:text-gray-400">
               {group.hint}
             </p>
           </header>
@@ -154,20 +154,20 @@ function HarnessModulesEditor({
                       <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
                         {moduleName(module)}
                       </span>
-                      <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+                      <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[0.625rem] text-gray-600 dark:bg-gray-800 dark:text-gray-300">
                         {module.capability}
                       </span>
                       {module.requiresWorkspace && (
-                        <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
+                        <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[0.625rem] font-medium text-blue-700 dark:bg-blue-950/60 dark:text-blue-300">
                           Project
                         </span>
                       )}
                     </div>
-                    <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                    <p className="text-[0.6875rem] text-gray-500 dark:text-gray-400">
                       {moduleDescription(module)}
                     </p>
                     {enabled && !state.available && (
-                      <div className="mt-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+                      <div className="mt-1.5 rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[0.6875rem] text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
                         <span className="font-medium">
                           In this conversation:
                         </span>{" "}
@@ -177,7 +177,7 @@ function HarnessModulesEditor({
                             type="button"
                             disabled={busy}
                             onClick={onSwitchToEdit}
-                            className="ml-2 rounded border border-amber-400 bg-white px-2 py-0.5 text-[11px] font-medium text-amber-900 hover:bg-amber-100 dark:bg-transparent dark:text-amber-200"
+                            className="ml-2 rounded border border-amber-400 bg-white px-2 py-0.5 text-[0.6875rem] font-medium text-amber-900 hover:bg-amber-100 dark:bg-transparent dark:text-amber-200"
                           >
                             Switch this conversation to Edit
                           </button>

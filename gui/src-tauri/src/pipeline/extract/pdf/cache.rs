@@ -18,14 +18,14 @@ pub(in crate::pipeline::extract) fn llm_extraction_cache_path(
     let identity = serde_json::json!({
         "schema": EXTRACTION_CACHE_SCHEMA,
         "app_version": env!("CARGO_PKG_VERSION"),
-        "engine": "llm-pdf-bounded-v2",
+        "engine": "llm-pdf-bounded-v3",
         "provider": settings.preferred_provider,
         "transport": if provider_uses_direct_api(settings) { "api" } else { "cli" },
         "model_policy": match settings.default_model.as_str() {
             "" => "automatic",
             model => model,
         },
-        "effort_policy": "provider_default",
+        "effort_policy": settings.model_effort(&settings.preferred_provider),
         "chunk_pages": LLM_CHUNK_MAX_PAGES,
         "chunk_chars": LLM_CHUNK_TARGET_BASELINE_CHARS,
         "max_output_tokens": EXTRACTION_MAX_OUTPUT_TOKENS,
@@ -87,4 +87,27 @@ pub(in crate::pipeline::extract) fn activate_paddle_full_cache(
         &serde_json::to_vec_pretty(&active)
             .map_err(|error| format!("Failed to serialize parser cache activation: {error}"))?,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn thinking_changes_the_cache_but_credentials_and_ui_settings_do_not() {
+        let mut settings = crate::settings::Settings {
+            preferred_provider: "claude".into(),
+            default_effort: "low".into(),
+            ..Default::default()
+        };
+        let original = llm_extraction_cache_path("1234567890abcdef", &settings).unwrap();
+        settings.default_effort = "high".into();
+        let changed = llm_extraction_cache_path("1234567890abcdef", &settings).unwrap();
+        assert_ne!(original, changed);
+        settings.anthropic_api_key = "another credential".into();
+        settings.max_saved_runs += 1;
+        assert_eq!(
+            changed,
+            llm_extraction_cache_path("1234567890abcdef", &settings).unwrap()
+        );
+    }
 }

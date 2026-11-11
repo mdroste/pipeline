@@ -27,7 +27,7 @@ function renderNavigation(
       project("wages", "Minimum wages"),
       project("old", "Old paper", { archivedAt: "2026-01-01" }),
     ],
-    destination: "results",
+    destination: "reviews",
     sessions: ["1", "2", "3", "4", "5"].map(session),
     sessionId: "1",
     chatOpen: false,
@@ -59,7 +59,7 @@ it("shows the project's sections and opens the overview", async () => {
   const sections = within(
     screen.getByRole("navigation", { name: "Project sections" }),
   );
-  expect(sections.getByRole("button", { name: "Analyze" })).toHaveAttribute(
+  expect(sections.getByRole("button", { name: "Reviews" })).toHaveAttribute(
     "aria-current",
     "page",
   );
@@ -131,7 +131,7 @@ it("lists unfiled conversations without project controls", () => {
 
 it("holds every control while an editor is busy", () => {
   renderNavigation({ disabled: true });
-  for (const name of ["Switch project: Trade paper", "Analyze"])
+  for (const name of ["Switch project: Trade paper", "Reviews"])
     expect(screen.getByRole("button", { name })).toBeDisabled();
 });
 

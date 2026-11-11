@@ -149,7 +149,7 @@ describe("WorkflowPanel", () => {
     );
   });
 
-  it("keeps the selector and edit action without the step summary", async () => {
+  it("shows workflow choices with outcomes and step counts", async () => {
     mockLoad(makeConfig());
     renderPanel();
 
@@ -157,9 +157,11 @@ describe("WorkflowPanel", () => {
     expect(screen.queryByText(/steps.*the full plan/)).not.toBeInTheDocument();
     // No per-step rows or toggles: the plan preview owns that.
     expect(screen.queryByText("Contribution")).not.toBeInTheDocument();
-    const buttons = screen.getAllByRole("button");
-    expect(buttons).toHaveLength(1);
-    expect(buttons[0]).toHaveTextContent(/edit workflow/i);
+    expect(
+      screen.getByRole("button", { name: /edit workflow/i }),
+    ).toBeVisible();
+    expect(screen.getByText("Compare workflows")).toBeVisible();
+    expect(screen.getAllByText(/configured steps/).length).toBeGreaterThan(0);
   });
 
   it("switches profile via switch_profile and notifies the parent", async () => {

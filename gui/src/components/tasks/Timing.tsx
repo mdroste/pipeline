@@ -1,6 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { taskClient } from "../../lib/taskClient";
-import { taskTime } from "../../lib/taskPresentation";
+import {
+  intervalUnit,
+  localZone as zone,
+  scheduledTime,
+  schedulePreset,
+  zoneLabel,
+} from "./schedulePresentation";
 import { type Trigger } from "../../lib/taskTypes";
 import {
   localDateTime,
@@ -9,7 +15,6 @@ import {
 } from "../../lib/localDateTime";
 import { NumberField } from "./NumberField";
 
-const zone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 export function Timing({
   value,
   onChange,
@@ -19,16 +24,51 @@ export function Timing({
 }) {
   const [times, setTimes] = useState<number[]>([]);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [unit, setUnit] = useState(
+    value.kind === "interval" ? intervalUnit(value.seconds) : 86400,
+  );
+  const zoneList = useId();
+  const zones = useMemo(
+    () =>
+      [
+        ...new Set([
+          zone(),
+          "UTC",
+          ...((
+            Intl as typeof Intl & {
+              supportedValuesOf?: (key: string) => string[];
+            }
+          ).supportedValuesOf?.("timeZone") ?? []),
+        ]),
+      ].map((name) => ({
+        name,
+        label: `${zoneLabel(name)}${name === zone() ? " · This computer" : ""}`,
+      })),
+    [],
+  );
+  useEffect(() => {
+    if (value.kind === "interval" && value.seconds % unit !== 0)
+      setUnit(intervalUnit(value.seconds));
+  }, [value, unit]);
   useEffect(() => {
     let current = true;
     setError("");
+    setTimes([]);
+    setLoading(true);
     void taskClient
       .times(value)
       .then((v) => {
-        if (current) setTimes(v);
+        if (current) {
+          setTimes(v);
+          setLoading(false);
+        }
       })
       .catch((e) => {
-        if (current) setError(String(e));
+        if (current) {
+          setError(String(e));
+          setLoading(false);
+        }
       });
     return () => {
       current = false;
@@ -37,6 +77,31 @@ export function Timing({
   return (
     <fieldset className="task-timing">
       <legend>When</legend>
+      <div className="task-actions" aria-label="Schedule presets">
+        {(["hourly", "daily", "weekdays", "weekly"] as const).map((preset) => (
+          <button
+            type="button"
+            key={preset}
+            onClick={() => {
+              const next = schedulePreset(
+                preset,
+                value.kind === "calendar" ? value.timezone : zone(),
+              );
+              if (next.kind === "interval") setUnit(3600);
+              onChange(next);
+            }}
+          >
+            {
+              {
+                hourly: "Hourly",
+                daily: "Daily",
+                weekdays: "Weekdays",
+                weekly: "Weekly",
+              }[preset]
+            }
+          </button>
+        ))}
+      </div>
       <div className="task-timing-fields">
         <label className="sr-only" htmlFor="task-timing-kind">
           Start rule
@@ -102,16 +167,34 @@ export function Timing({
             <label>
               Every{" "}
               <NumberField
-                aria-label="Interval in minutes"
+                aria-label="Interval amount"
                 min={1}
-                max={525600}
-                value={value.seconds / 60}
-                onChange={(minutes) =>
-                  onChange({ ...value, seconds: minutes * 60 })
+                max={31536000 / unit}
+                value={value.seconds / unit}
+                onChange={(amount) =>
+                  onChange({ ...value, seconds: amount * unit })
                 }
               />{" "}
-              minutes
             </label>
+            <select
+              aria-label="Interval unit"
+              value={unit}
+              onChange={(e) => {
+                const next = Number(e.target.value);
+                onChange({
+                  ...value,
+                  seconds: Math.min(
+                    31536000,
+                    Math.max(next, Math.round(value.seconds / unit) * next),
+                  ),
+                });
+                setUnit(next);
+              }}
+            >
+              <option value={60}>minutes</option>
+              <option value={3600}>hours</option>
+              <option value={86400}>days</option>
+            </select>
             <label>
               First run{" "}
               <input
@@ -145,9 +228,21 @@ export function Timing({
             />
             <input
               aria-label="Time zone"
+              list={zoneList}
               value={value.timezone}
               onChange={(e) => onChange({ ...value, timezone: e.target.value })}
             />
+            <datalist id={zoneList}>
+              {zones.map(({ name, label }) => (
+                <option key={name} value={name}>
+                  {label}
+                </option>
+              ))}
+            </datalist>
+            <p className="task-muted">
+              {zoneLabel(value.timezone)}
+              {value.timezone === zone() ? " · This computer’s time zone" : ""}
+            </p>
             <div className="task-weekdays" aria-label="Days of the week">
               {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(
                 (day, i) => (
@@ -174,9 +269,24 @@ export function Timing({
       </div>
       {error ? (
         <p role="alert">{error}</p>
+      ) : loading ? (
+        <p className="task-muted" role="status">
+          Checking upcoming times…
+        </p>
       ) : (
         times.length > 0 && (
-          <p className="task-muted">Next: {times.map(taskTime).join(" · ")}</p>
+          <p className="task-muted">
+            Next:{" "}
+            {times
+              .map((at) =>
+                scheduledTime(
+                  at,
+                  value.kind === "calendar" ? value.timezone : zone(),
+                ),
+              )
+              .join(" · ")}{" "}
+            · {value.kind === "calendar" ? value.timezone : zone()}
+          </p>
         )
       )}
       {value.kind !== "now" && (

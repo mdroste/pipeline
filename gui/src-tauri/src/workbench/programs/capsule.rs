@@ -335,7 +335,7 @@ pub fn export(store: &Store, r: Export, fingerprint: &str) -> WorkbenchResult<Va
         zip.finish().map_err(err)?;
     }
     crate::safety::sync_file(temp.as_file()).map_err(err)?;
-    temp.persist(path).map_err(|e| err(e.error))?;
+    crate::safety::persist_file(temp, path).map_err(|e| err(e.error))?;
     Ok(json!({"path":r.path,"fingerprint":digest,"manifest":m}))
 }
 fn read(path: &str) -> WorkbenchResult<(Manifest, BTreeMap<String, Vec<u8>>)> {

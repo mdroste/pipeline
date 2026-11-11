@@ -15,6 +15,12 @@ pub struct ProjectIndexItem {
     pub next_task: Option<IndexEntry>,
     pub proposed_notes: u32,
     pub interrupted_edits: u32,
+    /// The paper's kind, stage, venue, and deadline, as saved in project settings.
+    pub kind: Option<String>,
+    pub stage: Option<String>,
+    pub venue: Option<String>,
+    pub target_date: Option<String>,
+    pub target_label: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,6 +54,11 @@ pub fn project_index(store: &Store) -> WorkbenchResult<Vec<ProjectIndexItem>> {
                     next_task: None,
                     proposed_notes: row.get(9)?,
                     interrupted_edits: row.get(10)?,
+                    kind: row.get(11)?,
+                    stage: row.get(12)?,
+                    venue: row.get(13)?,
+                    target_date: row.get(14)?,
+                    target_label: row.get(15)?,
                 },
                 [
                     row.get::<_, Option<String>>(5)?,

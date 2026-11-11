@@ -25,6 +25,8 @@ interface Props {
   reviewRouting: ReviewRoutingSummary | null;
   onCancel: () => void;
   onNewReview: () => void;
+  onResume?: (runId: string) => void;
+  onConnections?: () => void;
   onOpenHistory: (runId?: string) => void;
 }
 
@@ -54,6 +56,8 @@ export default function ReviewRunView({
   reviewRouting,
   onCancel,
   onNewReview,
+  onResume,
+  onConnections,
   onOpenHistory,
 }: Props) {
   if (!run) {
@@ -86,7 +90,7 @@ export default function ReviewRunView({
           </h2>
           <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-neutral-400">
             {queuedExplanation(run, runs, limit)} You can keep working or set up
-            another review; this one stays in Activity until it finishes.
+            another review; this one stays in All activity until it finishes.
           </p>
           <p className="mt-1 text-xs text-gray-400 dark:text-neutral-500">
             Workflow: {run.profileName || "Active workflow"}
@@ -159,6 +163,26 @@ export default function ReviewRunView({
             {state.message}
             {run.status !== "cancelled" && <ReportIssueLink />}
           </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {run.runId && onResume && (
+              <Button variant="primary" onClick={() => onResume(run.runId!)}>
+                Resume unfinished steps
+              </Button>
+            )}
+            {run.runId && (
+              <Button onClick={() => onOpenHistory(run.runId!)}>
+                Open saved outputs
+              </Button>
+            )}
+            {onConnections && (
+              <Button onClick={onConnections}>Check connections</Button>
+            )}
+          </div>
+          {run.runId && (
+            <p className="mt-2 text-xs text-ink-muted">
+              Resume uses saved results and checks what still needs to run.
+            </p>
+          )}
           <button
             type="button"
             onClick={onNewReview}
@@ -172,11 +196,7 @@ export default function ReviewRunView({
       ) : (
         <>
           <p className="mt-6 text-center text-xs leading-relaxed text-gray-500 dark:text-neutral-400">
-            This may take 15–60 minutes depending on
-            <br />
-            paper length, number of reviewers, and provider response times.
-            <br />
-            It keeps running if you leave this page.
+            Your review keeps running while you work elsewhere in Pipeline.
           </p>
           <button
             type="button"

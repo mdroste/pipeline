@@ -67,7 +67,7 @@ export default function LocalSources({
   return (
     <div className="flex h-full min-h-0">
       <nav className="w-56 shrink-0 overflow-y-auto border-r border-gray-200 p-3 dark:border-gray-800">
-        <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
+        <p className="mb-2 px-2 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
           Sources
         </p>
         {options.map((option) => (

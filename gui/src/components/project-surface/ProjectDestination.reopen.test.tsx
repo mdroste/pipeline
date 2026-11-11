@@ -1,10 +1,4 @@
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceProjectSurface from "../WorkspaceProjectSurface";
 import { makeProjectHome } from "../../test/projectSurfaceFixtures";
@@ -85,52 +79,6 @@ beforeEach(() => {
   mocks.listExecutionProfiles.mockResolvedValue([profile("old", "First")]);
 });
 afterEach(cleanup);
-
-it("lists a profile saved elsewhere when Saved analysis plans is reopened", async () => {
-  const view = render(surface("plans"));
-  await screen.findByRole("option", { name: "First" });
-  expect(mocks.listExecutionProfiles).toHaveBeenCalledTimes(1);
-
-  view.rerender(surface("execution"));
-  await screen.findByRole("heading", { name: "Command settings" });
-  mocks.listExecutionProfiles.mockResolvedValue([
-    profile("old", "First"),
-    profile("new", "Second"),
-  ]);
-
-  view.rerender(surface("plans"));
-  expect(await screen.findByRole("option", { name: "Second" })).toBeVisible();
-  expect(mocks.listExecutionProfiles).toHaveBeenCalledTimes(2);
-});
-
-it("reloads a saved list on return, keeps its draft, and does not reload otherwise", async () => {
-  const view = render(surface("plans"));
-  await screen.findByRole("option", { name: "First" });
-  const parameters = screen.getByLabelText(/parameters/i);
-  fireEvent.change(parameters, { target: { value: '{"draft":true}' } });
-
-  // Rerendering a visible view, or moving between other views, loads nothing.
-  view.rerender(surface("plans"));
-  view.rerender(surface("execution"));
-  await screen.findByRole("heading", { name: "Command settings" });
-  view.rerender(surface("sources"));
-  expect(mocks.listExecutionProfiles).toHaveBeenCalledTimes(1);
-
-  view.rerender(surface("plans"));
-  await waitFor(() =>
-    expect(mocks.listExecutionProfiles).toHaveBeenCalledTimes(2),
-  );
-  expect(screen.getByLabelText(/parameters/i)).toHaveValue('{"draft":true}');
-});
-
-it("reloads program views on return through their shared loader", async () => {
-  const view = render(surface("grids"));
-  await waitFor(() => expect(mocks.programCall).toHaveBeenCalledTimes(1));
-  view.rerender(surface("execution"));
-  await screen.findByRole("heading", { name: "Command settings" });
-  view.rerender(surface("grids"));
-  await waitFor(() => expect(mocks.programCall).toHaveBeenCalledTimes(2));
-});
 
 it("loads a view's own records only after that view is opened", async () => {
   render(surface("overview"));

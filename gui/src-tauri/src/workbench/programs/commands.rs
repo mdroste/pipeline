@@ -526,6 +526,13 @@ pub fn start(app: tauri::AppHandle) {
         if let Err(e) = host::run_store(|s| research::jobs::reconcile_abandoned(&s)).await {
             eprintln!("Interrupted jobs could not be marked: {}", e.message);
         }
+        // Abandoned theory approaches reach the assistant as notes now that
+        // theory records have no view. Idempotent, so every launch may run it.
+        let _ = host::run_store(|s| {
+            crate::workbench::project::earlier_records::convert_all_abandoned_approaches(&s);
+            Ok(())
+        })
+        .await;
         loop {
             if let Err(e) = host::run_store(|s| experiments::tick_due(&s)).await {
                 eprintln!("Experiment grids could not be read: {}", e.message);

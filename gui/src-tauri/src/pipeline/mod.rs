@@ -22,5 +22,6 @@ pub(crate) mod provider_error;
 pub mod providers;
 pub mod reconcile;
 pub(crate) mod response_journal;
+pub(crate) mod review_budget;
 pub mod structured;
 pub(crate) mod unit_files;

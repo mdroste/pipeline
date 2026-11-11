@@ -162,7 +162,7 @@ export const PageBrowser = memo(function PageBrowser({
           className="min-w-0 flex-1 bg-transparent px-2 py-1 text-right text-xs tabular-nums text-gray-700
                      outline-none placeholder:text-gray-400 dark:text-gray-200 dark:placeholder:text-gray-600"
         />
-        <span className="shrink-0 pr-2 text-[11px] tabular-nums text-gray-400 dark:text-gray-500">
+        <span className="shrink-0 pr-2 text-[0.6875rem] tabular-nums text-gray-400 dark:text-gray-500">
           / {lastPage}
         </span>
       </form>

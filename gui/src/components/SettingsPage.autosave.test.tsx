@@ -53,6 +53,44 @@ describe("SettingsPage autosave", () => {
     ).toBeInTheDocument();
   });
 
+  it("retries Settings in place after a load failure", async () => {
+    const user = userEvent.setup();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockLoad(makeSettings());
+    const normal = invoke.getMockImplementation()!;
+    let fail = true;
+    invoke.mockImplementation((command, ...args) => {
+      if (command === "get_settings" && fail) {
+        fail = false;
+        return Promise.reject(new Error("Settings file is busy"));
+      }
+      return normal(command, ...args);
+    });
+    const close = vi.fn();
+    const diagnostics = vi.fn();
+    render(
+      <SettingsPage
+        onClose={close}
+        onOpenDiagnostics={diagnostics}
+        theme="light"
+        onThemeChange={vi.fn()}
+      />,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Settings file is busy",
+    );
+    expect(
+      screen.getByRole("button", { name: "Open diagnostics" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Open diagnostics" }));
+    expect(diagnostics).toHaveBeenCalledOnce();
+    await user.click(screen.getByRole("button", { name: "Retry settings" }));
+    await screen.findByLabelText("Step time limit");
+    expect(screen.queryByText("Settings file is busy")).toBeNull();
+    expect(close).not.toHaveBeenCalled();
+    errorLog.mockRestore();
+  });
+
   it("automatically saves changes and shows the saved indicator", async () => {
     const user = userEvent.setup();
     mockLoad(makeSettings());
@@ -185,7 +223,7 @@ describe("SettingsPage autosave", () => {
     );
 
     expect(
-      await screen.findByText(/Failed to load settings/),
+      await screen.findByText(/Settings could not be loaded/),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Go back" }));
     expect(onClose).toHaveBeenCalled();

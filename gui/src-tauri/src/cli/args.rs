@@ -43,9 +43,39 @@ pub(super) struct RunArgs {
 pub(super) struct ModelArgs {
     pub(super) review: Option<pipeline_gui_lib::commands::ReviewModelChoice>,
     pub(super) everywhere: bool,
+    model_id: Option<String>,
+    thinking: Option<String>,
 }
 
 impl ModelArgs {
+    fn finish(&mut self, command: &str) -> Result<(), String> {
+        let Some(review) = self.review.as_mut() else {
+            if self.everywhere || self.model_id.is_some() || self.thinking.is_some() {
+                return Err(format!(
+                    "{command}: --model-everywhere, --model-id, and --thinking require --model"
+                ));
+            }
+            return Ok(());
+        };
+        if let Some(id) = &self.model_id {
+            if !review.model.is_empty() {
+                return Err(format!(
+                    "{command}: specify the model ID in --model or --model-id, not both"
+                ));
+            }
+            review.model = id.clone();
+        }
+        if let Some(thinking) = &self.thinking {
+            if !review.effort.is_empty() {
+                return Err(format!(
+                    "{command}: specify thinking in --model or --thinking, not both"
+                ));
+            }
+            review.effort = thinking.clone();
+        }
+        Ok(())
+    }
+
     pub(super) fn overrides(&self) -> Option<pipeline_gui_lib::commands::RunModelOverrides> {
         self.review
             .clone()
@@ -69,8 +99,8 @@ fn parse_model(
     match flag {
         "--model" => {
             let value = next_value(args, index, "--model")?;
-            let mut parts = value.splitn(3, ':').map(str::trim);
-            let provider = match parts.next().unwrap_or("").to_ascii_lowercase().as_str() {
+            let (provider, rest) = value.split_once(':').unwrap_or((&value, ""));
+            let provider = match provider.trim().to_ascii_lowercase().as_str() {
                 "claude" => "claude",
                 "chatgpt" | "codex" | "openai" => "codex",
                 "gemini" | "antigravity" | "google" => "antigravity",
@@ -81,12 +111,27 @@ fn parse_model(
                     ))
                 }
             };
+            // Local tags contain colons. Thinking is always a separate flag
+            // there; cloud callers retain the legacy three-field shorthand.
+            let (id, effort) = if provider == "local" {
+                (rest, "")
+            } else {
+                rest.split_once(':').unwrap_or((rest, ""))
+            };
             let choice = pipeline_gui_lib::commands::ReviewModelChoice {
                 provider: provider.to_string(),
-                model: parts.next().unwrap_or("").to_string(),
-                effort: parts.next().unwrap_or("").to_ascii_lowercase(),
+                model: id.trim().to_string(),
+                effort: effort.trim().to_ascii_lowercase(),
             };
             set_limit(&mut model.review, choice, "--model")?;
+        }
+        "--model-id" => {
+            let value = next_value(args, index, flag)?;
+            set_limit(&mut model.model_id, value, flag)?;
+        }
+        "--thinking" => {
+            let value = next_value(args, index, flag)?.trim().to_ascii_lowercase();
+            set_limit(&mut model.thinking, value, flag)?;
         }
         "--model-everywhere" if !model.everywhere => model.everywhere = true,
         "--model-everywhere" => {
@@ -191,6 +236,8 @@ pub(super) struct CheckArgs {
     pub(super) variables: HashMap<String, String>,
     pub(super) extra_inputs: HashMap<String, String>,
     pub(super) json: bool,
+    pub(super) limits: LimitArgs,
+    pub(super) model: ModelArgs,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -289,6 +336,8 @@ fn parse_check(args: &[String]) -> Result<ParseAction, String> {
             }
             "--json" if !parsed.json => parsed.json = true,
             "--json" => return Err("check: --json may be specified only once".to_string()),
+            flag if parse_limit(flag, args, &mut index, &mut parsed.limits, "check")? => {}
+            flag if parse_model(flag, args, &mut index, &mut parsed.model, "check")? => {}
             unknown => return Err(format!("check: unknown argument '{unknown}'")),
         }
         index += 1;
@@ -297,6 +346,7 @@ fn parse_check(args: &[String]) -> Result<ParseAction, String> {
         return Err("check: --interpret-as requires --input".to_string());
     }
     reject_profile_and_workflow("check", &parsed.profile_id, &parsed.workflow_path)?;
+    parsed.model.finish("check")?;
     Ok(ParseAction::Execute(Command::Check(parsed)))
 }
 
@@ -350,9 +400,7 @@ fn parse_run(args: &[String]) -> Result<ParseAction, String> {
     if parsed.input_interpretation.is_some() && parsed.input.is_none() {
         return Err("run: --interpret-as requires --input".to_string());
     }
-    if parsed.model.everywhere && parsed.model.review.is_none() {
-        return Err("run: --model-everywhere requires --model".to_string());
-    }
+    parsed.model.finish("run")?;
     if parsed.force && matches!(parsed.out.as_deref(), None | Some("-")) {
         return Err("run: --force requires a file destination in --out".to_string());
     }
@@ -404,9 +452,7 @@ fn parse_batch(args: &[String]) -> Result<ParseAction, String> {
         index += 1;
     }
     parsed.input_dir = input_dir.ok_or("batch: --input-dir <DIR> is required")?;
-    if parsed.model.everywhere && parsed.model.review.is_none() {
-        return Err("batch: --model-everywhere requires --model".to_string());
-    }
+    parsed.model.finish("batch")?;
     if parsed.force && parsed.out_dir.is_none() {
         return Err("batch: --force requires --out-dir".to_string());
     }

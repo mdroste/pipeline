@@ -93,7 +93,7 @@ export default function WorkspaceContextInspector({
               {harness.contextTruncated ? " (truncated to budget)" : ""}
             </h3>
             {harness.contextPreview ? (
-              <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded border border-gray-200 bg-gray-50 p-2 font-mono text-[11px] leading-4 text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
+              <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap rounded border border-gray-200 bg-gray-50 p-2 font-mono text-[0.6875rem] leading-4 text-gray-700 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-300">
                 {harness.contextPreview}
               </pre>
             ) : (

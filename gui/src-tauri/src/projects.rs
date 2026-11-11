@@ -153,9 +153,9 @@ fn load_project_path(path: &Path, id: &str) -> Result<Project, String> {
     Ok(project)
 }
 
-fn sync_dir(path: &Path) -> Result<(), String> {
+fn sync_dir(_path: &Path) -> Result<(), String> {
     #[cfg(unix)]
-    if let Ok(directory) = fs::File::open(path) {
+    if let Ok(directory) = fs::File::open(_path) {
         crate::safety::sync_landed(&directory);
     }
     Ok(())
@@ -201,7 +201,7 @@ fn write_project_to(dir: &Path, project: &Project) -> Result<(), String> {
         .map_err(|error| format!("Failed to stage project: {error}"))?;
     crate::safety::sync_file(temp.as_file())
         .map_err(|error| format!("Failed to flush project: {error}"))?;
-    temp.persist(destination)
+    crate::safety::persist_file(temp, destination)
         .map_err(|error| format!("Failed to save project: {}", error.error))?;
     Ok(())
 }

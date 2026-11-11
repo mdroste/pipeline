@@ -58,7 +58,7 @@ describe("ReviewRunView", () => {
 
     expect(screen.getByText("draft.pdf")).toBeVisible();
     expect(
-      screen.getByText(/keeps running if you leave this page/),
+      screen.getByText(/keeps running while you work elsewhere/),
     ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Cancel review" }));
     expect(props.onCancel).toHaveBeenCalledOnce();
@@ -112,4 +112,21 @@ describe("ReviewRunView", () => {
     );
     expect(props.onOpenHistory).toHaveBeenCalledWith();
   });
+});
+
+it("offers saved outputs and resumes the failed review without creating a fresh one", async () => {
+  const props = renderView({
+    run: queuedRun("draft", "failed", { runId: "saved" }),
+    state: { kind: "error", message: "Connection lost" },
+    onResume: vi.fn(),
+    onConnections: vi.fn(),
+  });
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", { name: "Resume unfinished steps" }),
+  );
+  expect(props.onResume).toHaveBeenCalledWith("saved");
+  expect(props.onNewReview).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Open saved outputs" }));
+  expect(props.onOpenHistory).toHaveBeenCalledWith("saved");
 });

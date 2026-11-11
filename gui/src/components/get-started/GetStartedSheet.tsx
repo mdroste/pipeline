@@ -1,20 +1,21 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef } from "react";
 import useModalDialog from "../../hooks/useModalDialog";
 import type { DepsReport } from "../../lib/types";
-import { WORKFLOW_GALLERY } from "../../lib/workflowGallery";
 import { Button, IconButton } from "../../ui";
 import { Icon } from "../../ui/icons";
 import ConnectionsStep from "./ConnectionsStep";
 import ToolsStep from "./ToolsStep";
-import { STARTER_TEMPLATES, type StarterTemplate } from "./guide";
+import { type StarterTemplate } from "./guide";
 
 export const GET_STARTED_STEPS = [
+  "Your task",
   "Connections",
-  "Tools",
-  "Next steps",
+  "Optional tools",
 ] as const;
 
 export interface GetStartedSheetProps {
+  goal?: "review" | "project";
+  onGoalChange?: (goal: "review" | "project") => void;
   step: number;
   onStepChange: (step: number) => void;
   dependencies: DepsReport | null;
@@ -27,89 +28,6 @@ export interface GetStartedSheetProps {
   onNewReview: () => void;
   onOpenTemplate: (id: StarterTemplate) => void;
   onNewProject: () => void;
-}
-
-function Action({
-  title,
-  detail,
-  children,
-}: {
-  title: string;
-  detail: string;
-  children: ReactNode;
-}) {
-  return (
-    <li className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-ui-md border border-line px-3 py-2.5">
-      <div className="min-w-[12rem] flex-1">
-        <p className="text-ui-label font-medium">{title}</p>
-        <p className="text-ui-meta text-ink-muted">{detail}</p>
-      </div>
-      {children}
-    </li>
-  );
-}
-
-function NextStepsStep({
-  headingId,
-  onOpenExample,
-  onNewReview,
-  onOpenTemplate,
-  onNewProject,
-}: Pick<
-  GetStartedSheetProps,
-  "onOpenExample" | "onNewReview" | "onOpenTemplate" | "onNewProject"
-> & { headingId: string }) {
-  const templates = STARTER_TEMPLATES.flatMap((id) => {
-    const item = WORKFLOW_GALLERY.find((candidate) => candidate.id === id);
-    return item ? [{ ...item, id }] : [];
-  });
-  return (
-    <section aria-labelledby={headingId} className="space-y-4">
-      <h3
-        id={headingId}
-        tabIndex={-1}
-        className="text-ui-body font-semibold outline-none"
-      >
-        Next steps
-      </h3>
-      <ul aria-label="Suggested next steps" className="space-y-2">
-        <Action
-          title="See an example review"
-          detail="A sample Review of a fictional paper. No connection or model call is needed."
-        >
-          <Button variant="primary" onClick={onOpenExample}>
-            Open the example
-          </Button>
-        </Action>
-        <Action
-          title="Start your first Review"
-          detail="Choose a PDF, Word file, .tex file, or folder. LaTeX source keeps equations and structure."
-        >
-          <Button onClick={onNewReview}>New review</Button>
-        </Action>
-        {templates.map((item) => (
-          <Action
-            key={item.id}
-            title={`Template: ${item.name}`}
-            detail={item.description}
-          >
-            <Button
-              aria-label={`View ${item.name} in the gallery`}
-              onClick={() => onOpenTemplate(item.id)}
-            >
-              View in gallery
-            </Button>
-          </Action>
-        ))}
-        <Action
-          title="Create a project"
-          detail="Projects keep conversations, files, notes, and local checks together."
-        >
-          <Button onClick={onNewProject}>New project</Button>
-        </Action>
-      </ul>
-    </section>
-  );
 }
 
 /** First-run guide. It reads status and links to Settings; it never saves settings. */
@@ -151,8 +69,8 @@ export default function GetStartedSheet(props: GetStartedSheetProps) {
                 id={descriptionId}
                 className="mt-0.5 text-ui-label text-ink-muted"
               >
-                Check what is ready on this computer and choose a first step.
-                You can reopen this guide from Home or Settings.
+                Choose what you want to do. You can add connections and tools as
+                you need them.
               </p>
             </div>
             <IconButton label="Close setup guide" onClick={onClose}>
@@ -181,6 +99,52 @@ export default function GetStartedSheet(props: GetStartedSheetProps) {
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5">
           {step === 0 ? (
+            <section aria-labelledby={headingId} className="space-y-4">
+              <h3
+                id={headingId}
+                tabIndex={-1}
+                className="font-semibold outline-none"
+              >
+                Choose your first task
+              </h3>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {(["review", "project"] as const).map((goal) => (
+                  <button
+                    type="button"
+                    key={goal}
+                    aria-pressed={(props.goal ?? "review") === goal}
+                    onClick={() => {
+                      props.onGoalChange?.(goal);
+                      onStepChange(1);
+                    }}
+                    className="rounded-xl border border-line p-4 text-left hover:bg-sunken aria-pressed:bg-sunken"
+                  >
+                    <span className="block font-medium">
+                      {goal === "review"
+                        ? "Review a document"
+                        : "Start a project"}
+                    </span>
+                    <span className="mt-2 block text-ui-label text-ink-muted">
+                      {goal === "review"
+                        ? "Get feedback on a paper, proposal, or presentation."
+                        : "Keep files, chats, and notes together."}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="text-ui-label underline"
+                onClick={props.onOpenExample}
+              >
+                Explore an example review
+              </button>
+              <p className="text-ui-meta text-ink-muted">
+                The example uses a saved report. No account or model call is
+                needed.
+              </p>
+            </section>
+          ) : step === 1 ? (
             <ConnectionsStep
               dependencies={props.dependencies}
               dependenciesLoading={props.dependenciesLoading}
@@ -188,19 +152,12 @@ export default function GetStartedSheet(props: GetStartedSheetProps) {
               onOpenConnections={props.onOpenConnections}
               headingId={headingId}
             />
-          ) : step === 1 ? (
+          ) : (
             <ToolsStep
+              goal={props.goal ?? "review"}
               dependencies={props.dependencies}
               onOpenPdfSettings={props.onOpenPdfSettings}
               headingId={headingId}
-            />
-          ) : (
-            <NextStepsStep
-              headingId={headingId}
-              onOpenExample={props.onOpenExample}
-              onNewReview={props.onNewReview}
-              onOpenTemplate={props.onOpenTemplate}
-              onNewProject={props.onNewProject}
             />
           )}
         </div>
@@ -211,20 +168,32 @@ export default function GetStartedSheet(props: GetStartedSheetProps) {
           </Button>
           <span className="ml-auto" />
           {step > 0 && (
+            <Button
+              variant="primary"
+              onClick={
+                (props.goal ?? "review") === "review"
+                  ? props.onNewReview
+                  : props.onNewProject
+              }
+            >
+              {(props.goal ?? "review") === "review"
+                ? "Continue to review"
+                : "Create project"}
+            </Button>
+          )}
+          {step > 0 && (
             <Button onClick={() => onStepChange(step - 1)}>Back</Button>
           )}
           {step < last ? (
             <Button
-              variant="primary"
+              variant={step === 0 ? "primary" : "default"}
               data-autofocus
               onClick={() => onStepChange(step + 1)}
             >
-              Next
+              {step === 0 ? "Check connections" : "See optional tools"}
             </Button>
           ) : (
-            <Button variant="primary" onClick={onClose}>
-              Done
-            </Button>
+            <Button onClick={onClose}>Close guide</Button>
           )}
         </footer>
       </div>

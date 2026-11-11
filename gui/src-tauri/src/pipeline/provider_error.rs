@@ -64,6 +64,7 @@ pub fn is_non_retryable_error(error: &str) -> bool {
         "[codex-capability]",
         "[codex-auth]",
         ARTIFACT_LIMIT_PREFIX,
+        super::executor::budget::BUDGET_STOP_PREFIX,
     ]
     .iter()
     .any(|marker| error.contains(marker))

@@ -1,3 +1,4 @@
+import ReportNotices from "./report-workspace/ReportNotices";
 import {
   reportTitle,
   splitUnexpectedPreamble,
@@ -49,9 +50,6 @@ interface Props {
   /** Shown above the report header; receives the open tab. */
   notice?: (tab: WorkspaceTab) => ReactNode;
 }
-
-const TRUNCATED_REPORT_NOTICE =
-  "This report is too long to show in full. Export it to read the rest.";
 
 const TAB_LABELS = Object.fromEntries(
   REPORT_WORKSPACE_TABS.map((tab) => [tab.id, tab.label]),
@@ -117,6 +115,9 @@ export default function ReportWorkspace({
     report,
     markdown,
     markdownTruncated,
+    fullLoading,
+    fullError,
+    loadRemaining,
     loading,
     reportError,
     markdownError,
@@ -242,12 +243,7 @@ export default function ReportWorkspace({
     setPanels({ ...panels, visited: [...panels.visited, activeTab] });
   }
 
-  const reportViewer = (
-    <ReportViewer
-      markdown={visibleMarkdown}
-      truncationNotice={markdownTruncated ? TRUNCATED_REPORT_NOTICE : undefined}
-    />
-  );
+  const reportViewer = <ReportViewer markdown={visibleMarkdown} />;
   const panelContent = (id: WorkspaceTab) => {
     if (id === "issues")
       return (
@@ -302,34 +298,6 @@ export default function ReportWorkspace({
     return (
       <div className="h-full overflow-hidden">
         <div className="flex h-full min-h-0 flex-col">
-          {presentation.preamble && (
-            <div
-              role="status"
-              className="flex shrink-0 items-center gap-3 border-b border-amber-200 bg-amber-50/80 px-6 py-2
-                               text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300"
-            >
-              <span className="font-semibold">Output-quality warning</span>
-              <span className="min-w-0 flex-1 truncate">
-                Clean view hides the model’s process commentary.
-              </span>
-              <div className="flex rounded-md border border-amber-300/80 p-0.5 dark:border-amber-800">
-                {(["clean", "raw"] as OutputView[]).map((view) => (
-                  <button
-                    key={view}
-                    type="button"
-                    onClick={() => setOutputView(view)}
-                    className={`rounded px-2 py-0.5 text-[11px] font-medium ${
-                      outputView === view
-                        ? "bg-amber-900 text-white dark:bg-amber-200 dark:text-amber-950"
-                        : "hover:bg-amber-100 dark:hover:bg-amber-900/50"
-                    }`}
-                  >
-                    {view === "clean" ? "Clean view" : "Raw output"}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
           <div className="min-h-0 flex-1 overflow-hidden">
             {reportProblem ? (
               <div className="flex h-full items-center justify-center p-8 text-center">
@@ -461,63 +429,30 @@ export default function ReportWorkspace({
         extractedText={extractedText}
       />
 
-      {loadProblem && (
-        <div className="flex shrink-0 items-center gap-3 border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-300">
-          <span className="min-w-0 flex-1 truncate">
-            <span className="font-semibold">
-              The final report is incomplete.
-            </span>{" "}
-            {loadProblem} Agent reports and other report artifacts remain
-            available.
-          </span>
-          <button
-            type="button"
-            onClick={openAgentReports}
-            className="shrink-0 rounded border border-amber-300 px-2 py-1 font-medium hover:bg-amber-100 dark:border-amber-800 dark:hover:bg-amber-900/40"
-          >
-            View agent reports
-          </button>
-        </div>
-      )}
-
-      {report?.failed_steps && report.failed_steps.length > 0 && (
-        <div
-          role="alert"
-          className="shrink-0 border-b border-amber-200 bg-amber-50 px-6 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-300"
-        >
-          <div>
-            <span className="font-semibold">Incomplete report.</span>{" "}
-            {report.failed_steps
-              .map((failure) => failure.step_label)
-              .join(", ")}{" "}
-            did not complete.
-            {runId && (
-              <button
-                type="button"
-                onClick={openAgentReports}
-                className="ml-2 font-semibold underline underline-offset-2"
-              >
-                View agent reports
-              </button>
-            )}
-          </div>
-          <details className="mt-1">
-            <summary className="cursor-pointer font-medium">
-              Show failure details
-            </summary>
-            <ul className="mt-1 max-h-40 list-disc space-y-0.5 overflow-y-auto pl-4">
-              {report.failed_steps.map((failure) => (
-                <li key={`${failure.step_id}-${failure.step_label}`}>
-                  <span className="font-medium">{failure.step_label}:</span>{" "}
-                  <span className="break-words">{failure.error}</span>
-                </li>
-              ))}
-            </ul>
-          </details>
-          <ReportIssueLink />
-        </div>
-      )}
-
+      <ReportNotices
+        notes={Array.from(
+          new Set([
+            ...(loadProblem
+              ? ["The report is incomplete. " + loadProblem]
+              : []),
+            ...(report?.failed_steps ?? []).map(
+              (failure) =>
+                failure.step_label + " did not complete. " + failure.error,
+            ),
+            ...(report?.quality?.limitations ?? []),
+            ...(report?.quality?.coverage_notes ?? []),
+            ...(report?.quality?.extraction_notes ?? []),
+          ]),
+        )}
+        truncated={markdownTruncated}
+        fullLoading={fullLoading}
+        fullError={fullError}
+        onLoadFull={() => void loadRemaining()}
+        onSources={runId ? openAgentReports : undefined}
+        preamble={!!presentation.preamble}
+        raw={outputView === "raw"}
+        onRaw={(raw) => setOutputView(raw ? "raw" : "clean")}
+      />
       <div
         role="tablist"
         aria-label="Report workspace"

@@ -40,7 +40,7 @@ const ArtifactList = memo(function ArtifactList({
         <button
           type="button"
           onClick={() => setExpanded((value) => !value)}
-          className="mt-1 w-full rounded px-2 py-1 text-left text-[11px] text-gray-600 hover:bg-gray-100
+          className="mt-1 w-full rounded px-2 py-1 text-left text-[0.6875rem] text-gray-600 hover:bg-gray-100
                      hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
         >
           {expanded ? "Show fewer" : `Show ${items.length - 10} more`}
@@ -71,7 +71,7 @@ const AgentReportList = memo(function AgentReportList({
       {groups.map((group) => (
         <section key={group.key}>
           <h5
-            className="mb-1 truncate px-2 text-[11px] font-medium text-gray-700 dark:text-gray-300"
+            className="mb-1 truncate px-2 text-[0.6875rem] font-medium text-gray-700 dark:text-gray-300"
             title={group.label}
           >
             {group.label}
@@ -121,7 +121,7 @@ export default function ArtifactTree({
         >
           <div className="h-full space-y-4 overflow-y-auto p-3">
             <div className="flex items-center justify-between gap-2 px-1">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-600 dark:text-gray-400">
+              <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-gray-600 dark:text-gray-400">
                 Artifacts
               </span>
               <button
@@ -155,11 +155,11 @@ export default function ArtifactTree({
               if (items.length === 0 && !compactPages?.count) return null;
               return (
                 <div key={g.id}>
-                  <h4 className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
+                  <h4 className="mb-1.5 text-[0.625rem] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
                     {g.label}
                   </h4>
                   {g.description && (
-                    <p className="mb-1.5 px-0.5 text-[10px] leading-snug text-gray-500 dark:text-gray-500">
+                    <p className="mb-1.5 px-0.5 text-[0.625rem] leading-snug text-gray-500 dark:text-gray-500">
                       {g.description}
                     </p>
                   )}
@@ -189,7 +189,7 @@ export default function ArtifactTree({
             })}
             {otherArtifacts.length > 0 && (
               <div>
-                <h4 className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
+                <h4 className="mb-1.5 text-[0.625rem] font-semibold uppercase tracking-widest text-gray-600 dark:text-gray-400">
                   Other files
                 </h4>
                 <ArtifactList

@@ -6,7 +6,12 @@ use crate::workbench::{research, store as workbench};
 /// A mission whose three role conversations are real, in a project with a folder.
 struct Roles {
     w: workbench::Store,
+    #[cfg_attr(
+        not(unix),
+        expect(dead_code, reason = "keeps the fixture folder alive")
+    )]
     folder: tempfile::TempDir,
+    #[cfg_attr(not(unix), expect(dead_code, reason = "execution checks run on Unix"))]
     profile: Option<String>,
 }
 
@@ -127,6 +132,7 @@ async fn reconsidering_takes_up_every_roles_conversation_not_only_the_planners()
 }
 
 /// An Investigate round on a check, with its action stopped at the check's gate.
+#[cfg(unix)]
 fn stuck_on_check(s: &Store, m: &mut Mission, roles: &Roles) -> TaskRun {
     let id = roles.profile.clone().unwrap();
     let mut selected = plan();
@@ -333,6 +339,7 @@ fn an_interrupted_child_is_announced_by_its_automation_alone() {
 }
 
 /// The planner's turn ended and the agenda needs another one.
+#[cfg(unix)]
 fn plan_again(s: &Store, m: &mut Mission) {
     m.active_child = None;
     m.state = "queued".into();
@@ -340,6 +347,7 @@ fn plan_again(s: &Store, m: &mut Mission) {
     storage::save(s, m, "fixture", "Planner finished").unwrap();
 }
 
+#[cfg(unix)]
 fn planner_prompt(s: &Store, m: &Mission) -> String {
     let child = s.get(m.active_child.as_ref().unwrap()).unwrap();
     child.inputs["missionPrompt"].as_str().unwrap().to_string()

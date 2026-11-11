@@ -267,7 +267,7 @@ export default function WorkspaceComposerControls({
           <span className="flex items-center gap-2">
             <span className="truncate font-medium">{title}</span>
             {extra?.tag && (
-              <span className="shrink-0 rounded-full border border-line px-1.5 text-[11px] leading-4 text-ink-muted">
+              <span className="shrink-0 rounded-full border border-line px-1.5 text-[0.6875rem] leading-4 text-ink-muted">
                 {extra.tag}
               </span>
             )}

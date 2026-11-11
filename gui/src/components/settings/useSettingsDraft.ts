@@ -35,10 +35,15 @@ export function useSettingsDraft(onSystemChange?: () => void) {
     return () => clearTimeout(timer);
   }, [saved]);
 
-  const load = () =>
-    settingsClient
+  const loadGeneration = useRef(0);
+  const load = () => {
+    const generation = ++loadGeneration.current;
+    setLoading(true);
+    setLoadError(null);
+    return settingsClient
       .load()
       .then((resp) => {
+        if (generation !== loadGeneration.current) return;
         providerCatalogs.initialize(resp.settings);
         setSettings(resp.settings);
         const snapshot = JSON.stringify(resp.settings);
@@ -49,12 +54,17 @@ export function useSettingsDraft(onSystemChange?: () => void) {
         setLoading(false);
       })
       .catch((e) => {
+        if (generation !== loadGeneration.current) return;
         console.error("Failed to load settings:", e);
         setLoadError(workbenchErrorMessage(e));
         setLoading(false);
       });
+  };
   useEffect(() => {
     void load();
+    return () => {
+      loadGeneration.current++;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -147,6 +157,7 @@ export function useSettingsDraft(onSystemChange?: () => void) {
     undecryptableKeys,
     discardStoredKey,
     retrySave,
+    retryLoad: load,
     providerCatalogs,
   };
 }

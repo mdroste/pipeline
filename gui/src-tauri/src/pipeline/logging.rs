@@ -91,6 +91,7 @@ tokio::task_local! {
     // provider says it ran, which can differ from what Pipeline requested
     // (or be the only record of it when the CLI chose the model itself).
     static REPORTED_MODEL: Arc<Mutex<Option<String>>>;
+    static RESOLVED_MODEL: Arc<Mutex<Option<String>>>;
     // The pipeline pass (step key, e.g. "technical/claude") currently running on
     // this task. `register_child_pid` reads it so a specific pass's subprocess
     // can be cancelled by name. Set by the executor around each `call_llm`.
@@ -147,6 +148,21 @@ pub async fn observe_reported_model<F: Future>(fut: F) -> (F::Output, Option<Str
     let out = REPORTED_MODEL.scope(cell.clone(), fut).await;
     let model = cell.lock().unwrap_or_else(|e| e.into_inner()).take();
     (out, model)
+}
+
+/// Preserve dispatch resolution for pricing even when a provider returns no
+/// model identity (including failed calls with reported token usage).
+pub async fn observe_resolved_model<F: Future>(fut: F) -> (F::Output, Option<String>) {
+    let cell = Arc::new(Mutex::new(None));
+    let out = RESOLVED_MODEL.scope(cell.clone(), fut).await;
+    let model = cell.lock().unwrap_or_else(|e| e.into_inner()).take();
+    (out, model)
+}
+
+pub fn record_resolved_model(model: &str) {
+    let _ = RESOLVED_MODEL.try_with(|cell| {
+        *cell.lock().unwrap_or_else(|e| e.into_inner()) = Some(model.to_string());
+    });
 }
 
 /// Record the model the provider says ran the current call. Outside an
@@ -225,11 +241,13 @@ fn record_usage(usage: CallUsage) {
 
 /// Record one provider invocation before dispatch. Keeping this separate from
 /// token reporting counts failed calls and CLI calls that expose no usage.
-pub fn record_provider_attempt() {
+pub fn record_provider_attempt() -> Result<(), String> {
+    super::review_budget::before_attempt()?;
     record_usage(CallUsage {
         provider_attempts: 1,
         ..Default::default()
     });
+    Ok(())
 }
 
 /// Map provider-specific tool names into the stable categories persisted in a

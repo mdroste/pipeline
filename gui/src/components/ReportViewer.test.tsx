@@ -576,3 +576,24 @@ it("collapses contents by the reader's own width and keeps a local outline avail
     geometry.mockRestore();
   }
 });
+
+it("reads and searches beyond the old display limit without exporting", async () => {
+  const user = userEvent.setup();
+  const markdown =
+    "# Start\n\n" +
+    "A paragraph of evidence.\n\n".repeat(4000) +
+    "## Last finding\n\nA unique late finding.";
+  render(<ReportViewer markdown={markdown} />);
+  expect(screen.queryByText("A unique late finding.")).not.toBeInTheDocument();
+  await user.type(
+    screen.getByRole("searchbox", { name: "Find across report" }),
+    "unique late",
+  );
+  const result = screen.getByRole("button", { name: /Part \d+: Last finding/ });
+  await user.click(result);
+  expect(screen.getByText("unique late", { selector: "mark" })).toBeVisible();
+  expect(screen.getByLabelText("Find in report")).toHaveValue("unique late");
+  expect(screen.getByRole("combobox", { name: "Report part" })).not.toHaveValue(
+    "0",
+  );
+});

@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import ReportViewer from "../ReportViewer";
 import type { PipelineReport } from "../../lib/types";
 import LocalSources from "./LocalSources";
@@ -63,13 +63,34 @@ it("says so when a cited page is not in the extracted text", () => {
 });
 
 it("adds no notice for a page it can show", () => {
-  render(
-    <LocalSources
-      ReportViewer={ReportViewer}
-      extractedText={"## Page 12\n\nText"}
-      report={report}
-      selectionRequest={{ key: 1, page: 12 }}
-    />,
+  const previous = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    "scrollIntoView",
   );
-  expect(screen.queryByText(/not in the extracted text/)).toBeNull();
+  const scroll = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: scroll,
+  });
+  const errors = vi.spyOn(console, "error");
+  try {
+    render(
+      <LocalSources
+        ReportViewer={ReportViewer}
+        extractedText={"## Page 12\n\nText"}
+        report={report}
+        selectionRequest={{ key: 1, page: 12 }}
+      />,
+    );
+    const heading = screen.getByRole("heading", { name: "Page 12" });
+    expect(scroll).toHaveBeenCalledWith({ block: "start" });
+    expect(scroll.mock.instances.at(-1)).toBe(heading);
+    expect(screen.queryByText(/not in the extracted text/)).toBeNull();
+    expect(errors).not.toHaveBeenCalled();
+  } finally {
+    errors.mockRestore();
+    if (previous)
+      Object.defineProperty(HTMLElement.prototype, "scrollIntoView", previous);
+    else delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
+  }
 });

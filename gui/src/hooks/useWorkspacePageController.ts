@@ -529,7 +529,7 @@ export function useWorkspacePageController({
   }, [sessionId, workspaceId, openResearchConversation]);
   const updateProjectWorkspace = useCallback(
     (next: Workspace) =>
-      setWorkspaces((old) => old.map((w) => (w.id === next.id ? next : w))),
+      setWorkspaces((old) => [next, ...old.filter((w) => w.id !== next.id)]),
     [],
   );
 

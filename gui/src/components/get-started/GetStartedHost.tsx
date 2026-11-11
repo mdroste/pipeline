@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import {
   onGetStartedRequest,
   saveGetStarted,
+  readGetStarted,
   shouldOfferGetStarted,
   type GetStartedView,
 } from "../../lib/getStarted";
@@ -47,21 +48,52 @@ export default function GetStartedHost({
   const [view, setView] = useState<GetStartedView | null>(() =>
     import.meta.env.MODE !== "e2e" && shouldOfferGetStarted() ? "setup" : null,
   );
-  const [step, setStep] = useState(0);
+  const [step, setStepState] = useState(() => readGetStarted()?.step ?? 0);
+  const [goal, setGoalState] = useState<"review" | "project">(
+    () => readGetStarted()?.goal ?? "review",
+  );
+  const [pendingSettings, setPendingSettings] = useState(
+    () => !!readGetStarted()?.pendingSettings,
+  );
+  const setStep = (value: number) => {
+    setStepState(value);
+    saveGetStarted({ step: value });
+  };
+  const setGoal = (value: "review" | "project") => {
+    setGoalState(value);
+    saveGetStarted({ goal: value });
+  };
+  const openSettings = async (section: string, targetId?: string) => {
+    setView(null);
+    const allowed = await router.navigate({
+      page: "settings",
+      section,
+      targetId,
+    });
+    if (allowed) {
+      setPendingSettings(true);
+      saveGetStarted({ pendingSettings: true, step, goal });
+    } else setView("setup");
+  };
   const [returnToSetup, setReturnToSetup] = useState(false);
 
   useEffect(
     () =>
       onGetStartedRequest((next) => {
         setReturnToSetup(false);
-        if (next === "setup") setStep(0);
+        setPendingSettings(false);
+        saveGetStarted({ pendingSettings: false });
         setView(next);
       }),
     [],
   );
 
   const close = () => {
-    saveGetStarted({ dismissedAt: new Date().toISOString() });
+    saveGetStarted({
+      dismissedAt: new Date().toISOString(),
+      pendingSettings: false,
+    });
+    setPendingSettings(false);
     setView(null);
   };
   // Close first, so a navigation guard's confirmation is not hidden behind
@@ -83,10 +115,36 @@ export default function GetStartedHost({
         />
       </Suspense>
     );
-  if (view !== "setup") return null;
+  if (view !== "setup")
+    return pendingSettings ? (
+      <aside
+        aria-label="Continue setup"
+        className="fixed bottom-5 right-5 z-40 flex items-center gap-3 rounded-xl border border-line bg-raised p-3 text-ui-label shadow-ui-2"
+      >
+        <span>
+          Continue setting up your {goal === "review" ? "review" : "project"}.
+        </span>
+        <button
+          className="rounded-md bg-inverse px-3 py-2 text-on-inverse"
+          onClick={() => {
+            setPendingSettings(false);
+            saveGetStarted({ pendingSettings: false });
+            onCheckDependencies();
+            setView("setup");
+          }}
+        >
+          Return to setup
+        </button>
+        <button aria-label="Dismiss setup reminder" onClick={close}>
+          ×
+        </button>
+      </aside>
+    ) : null;
   return (
     <Suspense fallback={null}>
       <GetStartedSheet
+        goal={goal}
+        onGoalChange={setGoal}
         step={step}
         onStepChange={setStep}
         dependencies={dependencies}
@@ -94,24 +152,10 @@ export default function GetStartedHost({
         onCheckDependencies={onCheckDependencies}
         onClose={close}
         onOpenConnections={(targetId) =>
-          leave(
-            () =>
-              void router.navigate({
-                page: "settings",
-                section: "providers",
-                ...(targetId ? { targetId } : {}),
-              }),
-          )
+          void openSettings("providers", targetId)
         }
         onOpenPdfSettings={() =>
-          leave(
-            () =>
-              void router.navigate({
-                page: "settings",
-                section: "extraction",
-                targetId: "workflow-extraction",
-              }),
-          )
+          void openSettings("extraction", "workflow-extraction")
         }
         onOpenExample={() => {
           setReturnToSetup(true);

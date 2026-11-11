@@ -42,7 +42,7 @@ interface Props {
 }
 
 const chipClass =
-  "rounded-full border px-2.5 py-1 text-[13px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
+  "rounded-full border px-2.5 py-1 text-[0.8125rem] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50";
 const chipOn =
   "border-gray-900 bg-gray-900 text-white dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-950";
 const chipMissing =
@@ -126,7 +126,7 @@ export default function AgentDefaultsControl({
             className={
               stacked
                 ? "mt-1 text-ui-meta leading-5 text-ink-muted"
-                : "mt-0.5 text-[13px] leading-4 text-gray-500 dark:text-neutral-500"
+                : "mt-0.5 text-[0.8125rem] leading-4 text-gray-500 dark:text-neutral-500"
             }
           >
             {help}
@@ -236,7 +236,7 @@ export default function AgentDefaultsControl({
                     className={
                       stacked
                         ? "min-h-9 w-full min-w-0 rounded-ui-sm border border-line bg-surface px-2 py-1.5 text-ui-label text-ink focus:border-line-strong focus:outline-none focus:ring-2 focus:ring-accent-soft disabled:opacity-50"
-                        : "min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[13px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                        : "min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[0.8125rem] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
                     }
                   >
                     <option value="inherit">
@@ -285,7 +285,7 @@ export default function AgentDefaultsControl({
                       className={
                         stacked
                           ? "min-h-9 w-full min-w-0 rounded-ui-sm border border-line bg-surface px-2 py-1.5 text-ui-label text-ink focus:border-line-strong focus:outline-none focus:ring-2 focus:ring-accent-soft disabled:opacity-50"
-                          : "min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[13px] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
+                          : "min-w-0 rounded border border-gray-300 bg-white px-1.5 py-1 text-[0.8125rem] text-gray-800 disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200"
                       }
                     >
                       <option value="">

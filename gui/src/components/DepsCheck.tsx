@@ -291,7 +291,7 @@ function DependencyRow({
             {dep.name}
           </span>
           <span
-            className={`rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 ${styles.badge}`}
+            className={`rounded-full px-2 py-0.5 text-[0.6875rem] font-medium leading-4 ${styles.badge}`}
           >
             {available ? "installed" : missingDependencyLabel(dep)}
           </span>
@@ -316,7 +316,7 @@ function SectionStatus({
   const tone = checking ? "neutral" : ready ? "success" : "danger";
   return (
     <span
-      className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${TONE_STYLES[tone].badge}`}
+      className={`shrink-0 rounded-full px-2.5 py-1 text-[0.6875rem] font-semibold ${TONE_STYLES[tone].badge}`}
     >
       {checking ? "Checking" : ready ? "Ready" : "Needs attention"}
     </span>

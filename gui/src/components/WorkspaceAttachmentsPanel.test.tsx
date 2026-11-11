@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import WorkspaceAttachmentsPanel from "./WorkspaceAttachmentsPanel";
 import { appEvents } from "../lib/appEvents";
@@ -7,6 +7,7 @@ import type { ConversationSnapshot } from "../lib/workbenchTypes";
 const mocks = vi.hoisted(() => ({
   listPapers: vi.fn(),
   effectiveHarness: vi.fn(),
+  importPaper: vi.fn(),
 }));
 vi.mock("../lib/workbench/harnessClient", () => ({ harnessClient: mocks }));
 vi.mock("../lib/workbench/researchClient", () => ({ researchClient: mocks }));
@@ -89,4 +90,38 @@ it("imports without first loading the whole document list", async () => {
     await screen.findByRole("button", { name: "Choose files…" }),
   ).toBeEnabled();
   expect(mocks.listPapers).not.toHaveBeenCalled();
+});
+
+it("retains dropped files after choosing a project and retries only failed imports", async () => {
+  const consumed = vi.fn();
+  mocks.importPaper.mockImplementation(async ({ path }: { path: string }) => {
+    if (path === "/scan.pdf") throw new Error("File is busy");
+    return paper("Draft", "complete");
+  });
+  render(
+    <WorkspaceAttachmentsPanel
+      mode="import"
+      snapshot={snapshot}
+      onSnapshot={vi.fn()}
+      onBusy={vi.fn()}
+      onClose={vi.fn()}
+      pendingFiles={["/draft.pdf", "/scan.pdf"]}
+      onPendingFilesConsumed={consumed}
+    />,
+  );
+  expect(await screen.findByText(/File is busy/)).toBeVisible();
+  expect(consumed).toHaveBeenCalledOnce();
+  expect(mocks.importPaper).toHaveBeenCalledTimes(2);
+  mocks.importPaper.mockResolvedValue(paper("Scan", "complete"));
+  fireEvent.click(screen.getByRole("button", { name: "Retry failed files" }));
+  await screen.findByText("Scan");
+  expect(mocks.importPaper).toHaveBeenCalledTimes(3);
+  expect(mocks.importPaper).toHaveBeenLastCalledWith(
+    expect.objectContaining({ workspaceId: "project", path: "/scan.pdf" }),
+  );
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", { name: "Retry failed files" }),
+    ).not.toBeInTheDocument(),
+  );
 });

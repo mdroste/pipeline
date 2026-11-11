@@ -1,3 +1,5 @@
+import PagedReport from "./report-viewer/PagedReport";
+import { REPORT_CHUNK_CHARS } from "../lib/reportChunks";
 import {
   buildNavigationIndex,
   navigationIdPlugin,
@@ -8,7 +10,6 @@ import {
   ReportRenderErrorBoundary,
   MathErrorBoundary,
 } from "./report-viewer/RenderBoundaries";
-import { MAX_RENDER_CHARS } from "./report-viewer/limits";
 import ReportContents from "./report-viewer/ReportContents";
 import { useAppPreferences } from "../lib/appPreferences";
 import useContainerWidth from "../hooks/useContainerWidth";
@@ -50,6 +51,7 @@ interface Props {
   scrollRequest?: { key: number; heading: string } | null;
   /** Says what to do when `markdown` was already cut before it got here. */
   truncationNotice?: string;
+  findRequest?: { key: number; query: string };
 }
 
 /**
@@ -158,6 +160,7 @@ function ReportViewerContent({
   initialContentsOpen = true,
   scrollRequest = null,
   truncationNotice,
+  findRequest,
 }: Props) {
   const contentRef = useRef<HTMLDivElement>(null);
   const instanceId = useId();
@@ -190,19 +193,20 @@ function ReportViewerContent({
     184,
     360,
   );
-  const previewTruncated = markdown.length > MAX_RENDER_CHARS;
-  const boundedMarkdown = useMemo(
-    () => markdown.slice(0, MAX_RENDER_CHARS),
-    [markdown],
-  );
   const normalizedMarkdown = useMemo(
     () =>
       normalizeMathDelimiters(
-        stripPresentationalHtml(stripInternalReportMarkers(boundedMarkdown)),
+        stripPresentationalHtml(stripInternalReportMarkers(markdown)),
       ),
-    [boundedMarkdown],
+    [markdown],
   );
   const find = useFindBar(contentRef, normalizedMarkdown);
+  useEffect(() => {
+    if (findRequest) {
+      find.setOpen(true);
+      find.setQuery(findRequest.query);
+    }
+  }, [findRequest, find.setOpen, find.setQuery]);
 
   const requestedHeading = scrollRequest?.heading;
   const requestKey = scrollRequest?.key;
@@ -387,16 +391,18 @@ function ReportViewerContent({
           key={normalizedMarkdown}
           className="report-content"
           ref={contentRef}
-          style={{
-            fontSize: `${fontScale}%`,
-            lineHeight: relaxedLeading ? 1.75 : 1.5,
-            maxWidth: wideReading ? "68rem" : "52rem",
-          }}
+          style={
+            {
+              fontSize: `${(16 * fontScale) / 100}px`,
+              "--report-unit": `${fontScale / 100}px`,
+              lineHeight: relaxedLeading ? 1.75 : 1.5,
+              maxWidth: wideReading ? "68em" : "52em",
+            } as React.CSSProperties
+          }
         >
-          {(previewTruncated || truncationNotice) && (
+          {truncationNotice && (
             <div className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200">
-              {truncationNotice ??
-                "This response is too long to show in full. Open the saved file to read the rest."}
+              {truncationNotice}
             </div>
           )}
           <ReportMarkdown
@@ -413,7 +419,22 @@ function ReportViewerContent({
 function ReportViewer(props: Props) {
   return (
     <ReportRenderErrorBoundary markdown={props.markdown}>
-      <ReportViewerContent {...props} />
+      {props.markdown.length > REPORT_CHUNK_CHARS ? (
+        <PagedReport
+          markdown={props.markdown}
+          scrollRequest={props.scrollRequest}
+          render={(markdown, scrollRequest, findRequest) => (
+            <ReportViewerContent
+              {...props}
+              markdown={markdown}
+              scrollRequest={scrollRequest}
+              findRequest={findRequest}
+            />
+          )}
+        />
+      ) : (
+        <ReportViewerContent {...props} />
+      )}
     </ReportRenderErrorBoundary>
   );
 }

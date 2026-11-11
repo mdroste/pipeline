@@ -119,12 +119,12 @@ function ModelOverrides({
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="text-[11px] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 flex items-center gap-1"
+        className="text-[0.6875rem] text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 flex items-center gap-1"
       >
         <span>{open ? "▾" : "▸"}</span>
         <span>Model overrides</span>
         {hasOverride && !open && (
-          <span className="text-[10px] text-gray-600 dark:text-gray-400 font-mono ml-1">
+          <span className="text-[0.625rem] text-gray-600 dark:text-gray-400 font-mono ml-1">
             {[
               step.model,
               step.effort,
@@ -140,7 +140,7 @@ function ModelOverrides({
       </button>
       {open && (
         <div className="mt-2 space-y-2 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
-          <p className="text-[10px] text-gray-600 dark:text-gray-400 leading-relaxed">
+          <p className="text-[0.625rem] text-gray-600 dark:text-gray-400 leading-relaxed">
             Keep what this step inherits, or choose a model role or a model by
             name.
           </p>
@@ -170,7 +170,7 @@ function ModelOverrides({
             );
             return (
               <div key={key} className="space-y-1.5">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                <div className="text-[0.625rem] font-semibold uppercase tracking-wide text-gray-500">
                   {reviewConnectionLabel(provider, transportFor(provider))}
                 </div>
                 <select

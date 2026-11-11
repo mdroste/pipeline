@@ -13,14 +13,12 @@ import Spinner from "../ui/Spinner";
  * what will actually run, replacing the former static explainer. */
 export default function RunPlanPreview({
   refreshKey,
-  inputMode,
-  hasInput,
   onOpenDesigner,
 }: {
   refreshKey: number;
   inputMode: string;
   hasInput: boolean;
-  onOpenDesigner: () => void;
+  onOpenDesigner: (stageId?: string) => void;
 }) {
   const [config, setConfig] = useState<PipelineConfig | null>(null);
   const [profileName, setProfileName] = useState("");
@@ -62,7 +60,7 @@ export default function RunPlanPreview({
       </div>
     );
   return (
-    <div className="flex min-h-full justify-center px-8 py-10">
+    <div className="pt-4">
       <div className="w-full max-w-2xl">
         <div className="mb-6 text-center">
           {profileName && (
@@ -70,15 +68,6 @@ export default function RunPlanPreview({
               {profileName}
             </h2>
           )}
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            {inputMode === "none"
-              ? "This workflow needs no input — start it when ready."
-              : hasInput
-                ? "Input selected. Start the review when ready."
-                : inputMode === "folder"
-                  ? "Select a folder on the left to begin."
-                  : "Select a document on the left to begin."}
-          </p>
         </div>
         <WaveDiagram
           steps={config.steps}

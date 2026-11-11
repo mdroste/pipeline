@@ -2,90 +2,82 @@
 export const workspaceDestinations = {
   overview: { label: "Project overview", section: "overview" },
   "project-settings": { label: "Project settings", section: "overview" },
-  decisions: { label: "Decisions & impact", section: "activity" },
-  documents: { label: "Documents", section: "library" },
-  files: { label: "Files", section: "library" },
-  "version-control": { label: "Version control", section: "library" },
-  sources: { label: "Papers & sources", section: "library" },
-  search: { label: "Search & collections", section: "library" },
-  acquisition: { label: "Reading inbox", section: "library" },
-  literature: { label: "Literature notes", section: "library" },
-  results: { label: "Results", section: "analyze" },
-  research: { label: "Experiments", section: "analyze" },
-  bindings: { label: "Result links", section: "analyze" },
-  data: { label: "Data & samples", section: "analyze" },
-  plans: { label: "Saved analysis plans", section: "analyze" },
-  execution: { label: "Command settings", section: "analyze" },
-  grids: { label: "Specification grids", section: "analyze" },
-  theory: { label: "Theory", section: "analyze" },
-  symbols: { label: "Symbols & assumptions", section: "analyze" },
-  writing: { label: "Manuscript", section: "write" },
-  reviews: { label: "Reviews & findings", section: "write" },
-  responses: { label: "Responses", section: "write" },
-  edits: { label: "Review edits", section: "write" },
-  assets: { label: "Tables & figures", section: "write" },
-  delivery: { label: "Drafts & templates", section: "write" },
-  sharing: { label: "Coauthors & replication", section: "write" },
-  review: { label: "Send for review", section: "write" },
-  exchange: { label: "Share project", section: "write" },
-  campaigns: { label: "Revision automations", section: "automate" },
-  tasks: { label: "Action items", section: "automate" },
-  checks: { label: "Scheduled checks", section: "automate" },
-  memory: { label: "Research notes", section: "activity" },
-  evidence: { label: "Claims & evidence", section: "activity" },
+  execution: { label: "Command settings", section: "overview" },
+  exchange: { label: "Share project", section: "overview" },
+  writing: { label: "Manuscript", section: "paper" },
+  documents: { label: "Saved versions", section: "paper" },
+  files: { label: "Files", section: "files" },
+  reviews: { label: "Reviews & findings", section: "reviews" },
+  responses: { label: "Responses", section: "reviews" },
+  review: { label: "Send for review", section: "reviews" },
+  edits: { label: "Review edits", section: "changes" },
+  "version-control": { label: "Version control", section: "changes" },
+  memory: { label: "Notes", section: "notes" },
+  tasks: { label: "Action items", section: "notes" },
 } as const;
 export type WorkspaceDestination = keyof typeof workspaceDestinations;
+
+/** Every view a researcher can open, in section order. */
+export const openDestinations = Object.keys(
+  workspaceDestinations,
+) as WorkspaceDestination[];
+
 export const workspaceSections = [
   {
     id: "overview",
     label: "Overview",
-    description: "Resume work, research brief, and next steps",
+    description: "Where the paper stands and what to do next",
     destination: "overview",
     icon: "project",
   },
   {
-    id: "library",
-    label: "Library",
-    description: "Documents, files, papers, and search",
-    destination: "documents",
-    icon: "attachment",
-  },
-  {
-    id: "analyze",
-    label: "Analyze",
-    description: "Data, experiments, theory, and results",
-    destination: "results",
-    icon: "research",
-  },
-  {
-    id: "write",
-    label: "Write",
-    description: "Manuscript, revisions, review, and delivery",
+    id: "paper",
+    label: "Paper",
+    description: "Write and build the manuscript, and keep its versions",
     destination: "writing",
     icon: "message",
   },
   {
-    id: "automate",
-    label: "Automate",
-    description: "Action items, recurring checks, and revision work",
-    destination: "tasks",
+    id: "files",
+    label: "Files",
+    description: "Everything in the project folder",
+    destination: "files",
+    icon: "attachment",
+  },
+  {
+    id: "reviews",
+    label: "Reviews",
+    description: "Reviews, their findings, and replies to referees",
+    destination: "reviews",
+    icon: "research",
+  },
+  {
+    id: "changes",
+    label: "Changes",
+    description: "Edits the assistant proposed, and version control",
+    destination: "edits",
     icon: "check",
   },
   {
-    id: "activity",
-    label: "Activity",
-    description: "Notes, decisions, evidence, and change impact",
+    id: "notes",
+    label: "Notes",
+    description: "Notes the assistant can use, and action items",
     destination: "memory",
     icon: "outline",
   },
 ] as const;
+/**
+ * A saved or linked value that names a view the project still offers. Views
+ * retired in the projects overhaul (Theory, Experiments, Claims and the rest)
+ * fail this check, so a layout, pin or link that names one opens the overview.
+ */
 export const isWorkspaceDestination = (
   value: unknown,
 ): value is WorkspaceDestination =>
   typeof value === "string" &&
   Object.prototype.hasOwnProperty.call(workspaceDestinations, value);
 export const destinationsInSection = (destination: WorkspaceDestination) =>
-  (Object.keys(workspaceDestinations) as WorkspaceDestination[]).filter(
+  openDestinations.filter(
     (id) =>
       workspaceDestinations[id].section ===
       workspaceDestinations[destination].section,
@@ -94,69 +86,67 @@ export const destinationsInSection = (destination: WorkspaceDestination) =>
 /** One line on what a view is for, shown at the top of its page. Views that
  * fill the pane with their own work, such as Files, have none. */
 export const destinationHints: Partial<Record<WorkspaceDestination, string>> = {
-  sources: "Papers and sources saved in this project, with their versions.",
-  search: "Search everything in this project and keep reading collections.",
-  acquisition: "Papers waiting to be read, and ways to find more.",
-  literature:
-    "Your bibliography, citation notes, and comparisons across papers.",
-  results: "Runs and the numbers they produced.",
-  research: "Local commands, experiment notes, and saved results.",
-  bindings: "Connect numbers in the manuscript to the results behind them.",
-  data: "Datasets, data dictionaries, and analysis samples.",
-  plans: "Analysis plans you have saved, ready to review and run.",
   execution: "The local commands Pipeline may run for this project.",
-  grids: "Run one analysis across a set of specifications.",
-  theory: "Theory notes, proofs, and the checks behind them.",
-  symbols: "Notation and assumptions used across the project.",
   reviews: "Reviews of this project's documents and their findings.",
   responses: "Replies to referees and editors, comment by comment.",
   edits: "Proposed changes to accept or decline.",
-  assets: "Tables and figures, and where each one comes from.",
-  delivery: "Build drafts from templates and starter kits.",
-  sharing: "Coauthor review and replication packages.",
   review: "Send a chosen version out for review.",
   exchange: "Package this project to share with someone else.",
-  campaigns: "Revision rounds that run across several sessions.",
   tasks: "What still needs doing in this project.",
-  checks: "Checks that run on a schedule and report back.",
   memory: "Notes the assistant can use in this project.",
-  evidence: "Claims, and the evidence behind each one.",
-  decisions: "Decisions, their reasons, and what each change affects.",
 };
 
-/** The views each section shows as tabs. The rest stay one click away in the
- * section's More menu and in project search. */
-const sectionTabViews: ReadonlySet<WorkspaceDestination> = new Set([
-  "documents",
-  "files",
-  "version-control",
-  "sources",
-  "results",
-  "data",
-  "research",
-  "writing",
-  "reviews",
-  "assets",
-  "tasks",
-  "checks",
-  "campaigns",
-  "memory",
-  "decisions",
-  "evidence",
-]);
-export function sectionTabs(destination: WorkspaceDestination) {
-  const views = destinationsInSection(destination);
-  return {
-    // The open view always shows, so the page never loses its own label.
-    tabs: views.filter((id) => sectionTabViews.has(id) || id === destination),
-    more: views.filter((id) => !sectionTabViews.has(id) && id !== destination),
-  };
+// ---- Kind and stage -------------------------------------------------------
+
+/** What sort of paper the project is. Sets defaults; never changes navigation. */
+export const projectKinds = [
+  { id: "empirical", label: "Empirical" },
+  { id: "theory", label: "Theory" },
+  { id: "survey", label: "Review or survey" },
+  { id: "methods", label: "Methods" },
+  { id: "essay", label: "Essay or humanities" },
+  { id: "grant", label: "Grant proposal" },
+  { id: "thesis", label: "Thesis chapter" },
+  { id: "other", label: "Other" },
+] as const;
+export type ProjectKind = (typeof projectKinds)[number]["id"];
+/** Where the paper is on its way to publication. Decides what the overview leads with. */
+export const projectStages = [
+  { id: "idea", label: "Idea" },
+  { id: "drafting", label: "Drafting" },
+  { id: "ready", label: "Ready to submit" },
+  { id: "under_review", label: "Under review" },
+  { id: "revising", label: "Revising" },
+  { id: "accepted", label: "Accepted" },
+] as const;
+export type ProjectStage = (typeof projectStages)[number]["id"];
+export const kindLabel = (id: string | null | undefined) =>
+  projectKinds.find((kind) => kind.id === id)?.label ?? null;
+export const stageLabel = (id: string | null | undefined) =>
+  projectStages.find((stage) => stage.id === id)?.label ?? null;
+
+/**
+ * The tabs under a project section, always in the same order. Project setup
+ * pages appear only once one of them is open, and Responses waits until the
+ * paper is past drafting.
+ */
+export function sectionTabs(
+  destination: WorkspaceDestination,
+  stage?: string | null,
+): WorkspaceDestination[] {
+  if (destination === "overview") return ["overview"];
+  return destinationsInSection(destination).filter(
+    (id) =>
+      id === destination ||
+      (id !== "overview" &&
+        !(id === "responses" && (stage === "idea" || stage === "drafting"))),
+  );
 }
 
 export const defaultWorkspacePins: WorkspaceDestination[] = [
   "files",
   "writing",
-  "results",
+  "reviews",
 ];
 export function loadWorkspacePins(workspaceId: string): WorkspaceDestination[] {
   try {

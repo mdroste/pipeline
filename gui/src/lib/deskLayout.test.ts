@@ -4,7 +4,7 @@ beforeEach(() => localStorage.clear());
 it("restores the exact revision, comparison and subpage independently for each project", () => {
   const layout = {
     ...loadDeskLayout("a"),
-    tab: "data",
+    tab: "files",
     revisionId: "old-revision",
     pinnedRevision: "older-revision",
     assistantWidth: 47,

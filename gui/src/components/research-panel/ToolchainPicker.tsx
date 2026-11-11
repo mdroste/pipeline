@@ -51,12 +51,12 @@ export default function ToolchainPicker({
             .catch((error) => onError(workbenchErrorMessage(error)))
             .finally(() => setDetecting(false));
         }}
-        className="rounded border px-2 py-1 text-[11px]"
+        className="rounded border px-2 py-1 text-[0.6875rem]"
       >
         {detecting ? "Looking for installed tools…" : "Detect installed tools"}
       </button>
       {report && matching.length === 0 && (
-        <p className="text-[11px] text-gray-500">
+        <p className="text-[0.6875rem] text-gray-500">
           {NO_MATCH[adapter] ??
             "No matching tool was found in the standard folders or on PATH. Enter its path yourself."}
         </p>
@@ -66,18 +66,18 @@ export default function ToolchainPicker({
           {matching.map((tool) => (
             <li
               key={`${tool.kind}:${tool.path}`}
-              className="flex items-start justify-between gap-2 rounded border bg-white p-2 text-[11px] dark:bg-neutral-950"
+              className="flex items-start justify-between gap-2 rounded border bg-white p-2 text-[0.6875rem] dark:bg-neutral-950"
             >
               <span className="min-w-0">
                 <span className="font-medium">{tool.label}</span>
                 {tool.version && (
                   <span className="text-gray-500"> · {tool.version}</span>
                 )}
-                <span className="block break-all font-mono text-[10px] text-gray-500">
+                <span className="block break-all font-mono text-[0.625rem] text-gray-500">
                   {tool.path}
                 </span>
                 {tool.note && (
-                  <span className="block text-[10px] text-gray-500">
+                  <span className="block text-[0.625rem] text-gray-500">
                     {tool.note}
                   </span>
                 )}
@@ -99,12 +99,14 @@ export default function ToolchainPicker({
         </ul>
       )}
       {environmentFiles && environmentFiles.length > 0 && (
-        <p className="text-[11px] text-gray-500">
+        <p className="text-[0.6875rem] text-gray-500">
           Environment files in this project: {environmentFiles.join(", ")}. Runs
           record their hashes so you can tell when the environment changed.
         </p>
       )}
-      {report && <p className="text-[10px] text-gray-500">{report.boundary}</p>}
+      {report && (
+        <p className="text-[0.625rem] text-gray-500">{report.boundary}</p>
+      )}
     </div>
   );
 }

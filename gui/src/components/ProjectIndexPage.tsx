@@ -9,13 +9,34 @@ import {
   saveProjectPins,
   type ProjectIndexItem,
 } from "../lib/projectIndex";
-import type { WorkspaceDestination } from "../lib/workspaceNavigation";
+import {
+  stageLabel,
+  type WorkspaceDestination,
+} from "../lib/workspaceNavigation";
+import { targetSummary } from "../lib/projectOverview";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import PageHeader from "../ui/PageHeader";
 import "./project-surface/ProjectHome.css";
 import ReportIssueLink from "./ReportIssueLink";
 
 const ProjectDialog = lazy(() => import("./WorkspaceProjectDialog"));
+
+/** Stage, venue, and deadline on one line; empty when none is set. */
+function paperLine(project: ProjectIndexItem) {
+  const target = targetSummary(project, new Date());
+  return [
+    stageLabel(project.stage),
+    project.venue?.trim(),
+    target &&
+      `${target.label} ${target.date}${
+        target.days >= 0
+          ? ` · ${target.days === 0 ? "today" : target.days === 1 ? "tomorrow" : `in ${target.days} days`}`
+          : ` · ${-target.days === 1 ? "yesterday" : `${-target.days} days ago`}`
+      }`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
 
 export default function ProjectIndexPage({
   onOpenProject,
@@ -34,6 +55,7 @@ export default function ProjectIndexPage({
   const [chatFilter, setChatFilter] = useState<ChatFilter>("all");
   const chats = useConversationIndex(true, chatFilter === "archived", true);
   const [pins, setPins] = useState(loadProjectPins);
+  const [byDeadline, setByDeadline] = useState(false);
   const [creating, setCreating] = useState(false);
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -65,10 +87,21 @@ export default function ProjectIndexPage({
       .toLocaleLowerCase()
       .includes(search.trim().toLocaleLowerCase()),
   );
+  const sorted = byDeadline
+    ? [...visible].sort(
+        (a, b) =>
+          (a.targetDate ?? "9999").localeCompare(b.targetDate ?? "9999") ||
+          b.updatedAt.localeCompare(a.updatedAt),
+      )
+    : visible;
   const groups: Array<[string, ProjectIndexItem[]]> = [
-    ["Pinned", visible.filter((p) => pins.includes(p.id))],
-    ["Recently active", visible.filter((p) => !pins.includes(p.id))],
+    ["Pinned", sorted.filter((p) => pins.includes(p.id))],
+    [
+      byDeadline ? "By deadline" : "Recently active",
+      sorted.filter((p) => !pins.includes(p.id)),
+    ],
   ];
+  const hasDeadlines = projects.some((p) => p.targetDate);
   return (
     <div className="project-home project-index-page">
       <div className="ui-page">
@@ -116,6 +149,16 @@ export default function ProjectIndexPage({
           >
             Refresh
           </button>
+          {hasDeadlines && (
+            <button
+              type="button"
+              className="ui-page-button"
+              aria-pressed={byDeadline}
+              onClick={() => setByDeadline(!byDeadline)}
+            >
+              {byDeadline ? "Sort by recent activity" : "Sort by deadline"}
+            </button>
+          )}
         </div>
         <div className="project-index-layout">
           <section
@@ -197,6 +240,11 @@ export default function ProjectIndexPage({
                                     .filter(Boolean)
                                     .pop()
                                 : "Conversations and research notes"}
+                            </p>
+                          )}
+                          {paperLine(project) && (
+                            <p className="project-home-meta">
+                              {paperLine(project)}
                             </p>
                           )}
                           <p className="project-home-meta">

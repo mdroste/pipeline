@@ -35,7 +35,7 @@ function Row({
         </p>
         <p className="text-ui-meta text-ink-muted">{detail}</p>
         {path && (
-          <p className="mt-0.5 break-all font-mono text-[11px] text-ink-muted">
+          <p className="mt-0.5 break-all font-mono text-[0.6875rem] text-ink-muted">
             {path}
           </p>
         )}
@@ -62,10 +62,12 @@ export default function ToolsStep({
   dependencies,
   onOpenPdfSettings,
   headingId,
+  goal = "project",
 }: {
   dependencies: DepsReport | null;
   onOpenPdfSettings: () => void;
   headingId: string;
+  goal?: "review" | "project";
 }) {
   const [report, setReport] = useState<ToolchainReport | null>(null);
   const [detecting, setDetecting] = useState(false);
@@ -106,50 +108,61 @@ export default function ToolsStep({
           tabIndex={-1}
           className="text-ui-body font-semibold outline-none"
         >
-          Tools on this computer
+          {goal === "review"
+            ? "Reading your document"
+            : "Tools on this computer"}
         </h3>
         <p className="mt-1 text-ui-label text-ink-muted">
-          In a project, Pipeline can run your own scripts as local checks and
-          record the software versions they used. {REPLICATION_NOTE}
-        </p>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="primary" disabled={detecting} onClick={detect}>
-          {detecting
-            ? "Checking this computer…"
-            : report
-              ? "Check again"
-              : "Check this computer"}
-        </Button>
-        {!report && (
-          <span className="text-ui-meta text-ink-muted">
-            Looks in standard install folders and on your PATH. Installs nothing
-            and does not start Stata or MATLAB.
-          </span>
-        )}
-      </div>
-      {error && (
-        <p role="alert" className="text-ui-label text-danger">
-          The check did not finish: {error}
-          <ReportIssueLink />
-        </p>
-      )}
-      {report && (
-        <div className="space-y-3" aria-live="polite">
-          {report.tools.length > 0 && (
-            <ul aria-label="Tools found" className="space-y-2">
-              {report.tools.map((tool) => (
-                <ToolRow key={`${tool.kind}:${tool.path}`} tool={tool} />
-              ))}
-            </ul>
+          {goal === "review" ? (
+            "Choose a PDF reading method during review setup. Preview a page to check equations, tables, or scans before starting."
+          ) : (
+            <>
+              Pipeline can run scripts in a project and record the software
+              versions they used. {REPLICATION_NOTE}
+            </>
           )}
-          <p className="text-ui-label text-ink-muted">
-            {report.tools.length > 0
-              ? "If a program is missing, you can still enter its path when you set up a local check."
-              : "No research tools were found. You can still enter a program's path when you set up a local check."}
-          </p>
-          <p className="text-ui-meta text-ink-muted">{report.boundary}</p>
-        </div>
+        </p>
+      </div>
+      {goal === "project" && (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="primary" disabled={detecting} onClick={detect}>
+              {detecting
+                ? "Checking this computer…"
+                : report
+                  ? "Check again"
+                  : "Check this computer"}
+            </Button>
+            {!report && (
+              <span className="text-ui-meta text-ink-muted">
+                Finds installed programs for optional script checks.
+              </span>
+            )}
+          </div>
+          {error && (
+            <p role="alert" className="text-ui-label text-danger">
+              The check did not finish: {error}
+              <ReportIssueLink />
+            </p>
+          )}
+          {report && (
+            <div className="space-y-3" aria-live="polite">
+              {report.tools.length > 0 && (
+                <ul aria-label="Tools found" className="space-y-2">
+                  {report.tools.map((tool) => (
+                    <ToolRow key={`${tool.kind}:${tool.path}`} tool={tool} />
+                  ))}
+                </ul>
+              )}
+              <p className="text-ui-label text-ink-muted">
+                {report.tools.length > 0
+                  ? "If a program is missing, you can still enter its path when you set up a local check."
+                  : "No research tools were found. You can still enter a program's path when you set up a local check."}
+              </p>
+              <p className="text-ui-meta text-ink-muted">{report.boundary}</p>
+            </div>
+          )}
+        </>
       )}
       <div>
         <h4 className="text-ui-label font-semibold">Reading PDFs</h4>
@@ -165,7 +178,7 @@ export default function ToolsStep({
           </p>
         )}
         <Button variant="link" className="mt-2" onClick={onOpenPdfSettings}>
-          Open PDF extraction settings
+          PDF reading settings
         </Button>
       </div>
     </section>

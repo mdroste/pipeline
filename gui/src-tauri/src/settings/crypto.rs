@@ -247,7 +247,7 @@ pub(super) fn atomic_write(path: &std::path::Path, content: &str) -> Result<(), 
             )
         })?;
     }
-    tmp.persist(path)
+    crate::safety::persist_file(tmp, path)
         .map_err(|e| format!("Failed to save {}: {}", path.display(), e.error))?;
     #[cfg(unix)]
     if let Ok(directory) = fs::File::open(dir) {

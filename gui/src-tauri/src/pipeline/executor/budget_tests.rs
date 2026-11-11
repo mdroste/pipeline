@@ -108,7 +108,7 @@ fn call_limit_counts_every_call_including_subscriptions() {
     ledger.record(&[subscription_output()], &settings);
     assert_eq!(
         ledger.exhausted().as_deref(),
-        Some("limit of 2 model calls (2 made)")
+        Some("limit of 2 model calls (2 made or reserved)")
     );
 }
 
@@ -132,7 +132,7 @@ fn call_limit_counts_attempts_that_leave_no_output() {
     });
     assert_eq!(
         ledger.exhausted().as_deref(),
-        Some("limit of 5 model calls (5 made)")
+        Some("limit of 5 model calls (5 made or reserved)")
     );
 }
 
@@ -254,7 +254,7 @@ fn orientation_spend_is_priced_only_for_direct_api_orientation() {
     );
 }
 
-fn priced(provider: &str) -> ProviderPricing {
+fn priced(provider: &str, _selection: Option<&ModelSelection>) -> ProviderPricing {
     ProviderPricing {
         provider: provider.into(),
         model: "model".into(),
@@ -275,7 +275,10 @@ fn estimate_spans_a_range_and_flags_limits() {
     let estimate = estimate_usage(
         &workflow,
         20_000,
-        "claude",
+        &Settings {
+            default_orientation_agent: "claude".into(),
+            ..Default::default()
+        },
         &priced,
         RunBudget {
             max_cost_usd: Some(0.10),
@@ -308,7 +311,10 @@ fn subscription_steps_have_no_cost_and_unknown_prices_are_counted() {
     let estimate = estimate_usage(
         &workflow,
         1_000,
-        "codex",
+        &Settings {
+            default_orientation_agent: "codex".into(),
+            ..Default::default()
+        },
         &priced,
         RunBudget::default(),
         None,
@@ -333,14 +339,17 @@ fn fan_out_and_multi_agent_steps_widen_the_range() {
     let estimate = estimate_usage(
         &workflow,
         1_000,
-        "codex",
+        &Settings {
+            default_orientation_agent: "codex".into(),
+            ..Default::default()
+        },
         &priced,
         RunBudget::default(),
         None,
     );
-    // Orientation 1 + (2 agents + merge) low; 2 agents x 8 units + merge high.
+    // Orientation 1 + (2 agents + merge) low; (2 agents + merge) x 8 units high.
     assert_eq!(estimate.calls_low, 1 + 3);
-    assert_eq!(estimate.calls_high, 1 + 17);
+    assert_eq!(estimate.calls_high, 1 + 24);
 }
 
 #[test]
@@ -362,7 +371,10 @@ fn author_note_estimate_counts_each_model_call_without_changing_document_size() 
     let base = estimate_usage(
         &workflow,
         1_000,
-        "claude",
+        &Settings {
+            default_orientation_agent: "claude".into(),
+            ..Default::default()
+        },
         &priced,
         RunBudget::default(),
         None,
@@ -370,7 +382,10 @@ fn author_note_estimate_counts_each_model_call_without_changing_document_size() 
     let noted = estimate_usage(
         &workflow,
         1_000,
-        "claude",
+        &Settings {
+            default_orientation_agent: "claude".into(),
+            ..Default::default()
+        },
         &priced,
         RunBudget::default(),
         Some("Model assumptions"),
@@ -389,4 +404,114 @@ fn author_note_estimate_counts_each_model_call_without_changing_document_size() 
         tokens * noted.calls_high
     );
     assert!(noted.api_cost_high.unwrap() > base.api_cost_high.unwrap());
+}
+
+#[test]
+fn mixed_provider_estimates_are_independent_of_reviewer_order() {
+    let settings = Settings {
+        default_orientation_agent: "codex".into(),
+        ..Default::default()
+    };
+    let mut workflow = config(vec![step("review", Phase::Parallel, &["codex", "claude"])]);
+    workflow.merge.enabled = false;
+    let first = estimate_usage(
+        &workflow,
+        1_000,
+        &settings,
+        &priced,
+        RunBudget::default(),
+        None,
+    );
+    workflow.steps[0].agents.reverse();
+    let second = estimate_usage(
+        &workflow,
+        1_000,
+        &settings,
+        &priced,
+        RunBudget::default(),
+        None,
+    );
+    assert_eq!(first, second);
+    assert_eq!(first.subscription_calls_high, 2);
+    assert!(first.api_cost_high.unwrap() > 0.0);
+}
+
+#[test]
+fn estimates_follow_default_agents_and_sequential_first_agent_behavior() {
+    let settings = Settings {
+        preferred_provider: "claude".into(),
+        default_orientation_agent: "codex".into(),
+        ..Default::default()
+    };
+    let workflow = config(vec![
+        step("default", Phase::Parallel, &[]),
+        step("sequential", Phase::Sequential, &["codex", "claude"]),
+    ]);
+    let estimate = estimate_usage(
+        &workflow,
+        1_000,
+        &settings,
+        &priced,
+        RunBudget::default(),
+        None,
+    );
+    assert_eq!(estimate.calls_high, 3);
+    assert_eq!(estimate.subscription_calls_high, 2);
+    assert!(estimate.api_cost_high.unwrap() > 0.0);
+}
+
+#[test]
+fn estimates_resolve_orientation_merge_and_distinct_step_models() {
+    let pinned = |model: &str| ModelSelection::Pinned {
+        model: model.into(),
+    };
+    let mut settings = Settings {
+        default_orientation_agent: "claude".into(),
+        default_merge_agent: "antigravity".into(),
+        ..Default::default()
+    };
+    settings
+        .default_orientation_model_overrides
+        .insert("claude".into(), pinned("orientation"));
+    settings
+        .default_merge_model_overrides
+        .insert("antigravity".into(), pinned("merge"));
+    let mut first = step("first", Phase::Parallel, &["claude", "codex"]);
+    first.model = "first-model".into();
+    let mut second = step("second", Phase::Sequential, &["claude"]);
+    second.model = "second-model".into();
+    let mut workflow = config(vec![first, second]);
+    workflow.merge.enabled = true;
+    let seen = std::cell::RefCell::new(Vec::new());
+    let resolver = |provider: &str, selection: Option<&ModelSelection>| {
+        seen.borrow_mut()
+            .push((provider.to_string(), selection.cloned()));
+        priced(provider, selection)
+    };
+    let estimate = estimate_usage(
+        &workflow,
+        1_000,
+        &settings,
+        &resolver,
+        RunBudget::default(),
+        None,
+    );
+    let seen = seen.into_inner();
+    for (provider, model) in [
+        ("claude", "orientation"),
+        ("claude", "first-model"),
+        ("codex", "first-model"),
+        ("claude", "second-model"),
+        ("antigravity", "merge"),
+    ] {
+        assert!(
+            seen.contains(&(provider.to_string(), Some(pinned(model)))),
+            "{provider} {model}: {seen:?}"
+        );
+    }
+    assert_eq!(estimate.calls_high, 5);
+    assert_eq!(
+        estimate.unpriced_calls, 1,
+        "the distinct merge provider has no price in this fixture"
+    );
 }

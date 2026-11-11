@@ -1,16 +1,8 @@
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useState, type ReactNode } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import {
-  deskClient,
   operation,
   reference,
-  type DeskRecord,
   type OpenResearchObject,
 } from "../../lib/deskClient";
 import {
@@ -18,10 +10,8 @@ import {
   type Artifact,
   type Choices,
   type ObjectChoice,
-  type ProgramAction,
 } from "../../lib/programClient";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
-import useReopenCount from "../../hooks/useReopenCount";
 import {
   button,
   input,
@@ -36,72 +26,8 @@ export const lines = (s: string) =>
     .split("\n")
     .map((v) => v.trim())
     .filter(Boolean);
-export const exactRecord = (r: {
-  id: string;
-  revision: number;
-}): OpenResearchObject => ({
-  kind: "record",
-  id: r.id,
-  revision: String(r.revision),
-});
 export const key = (r: OpenResearchObject) =>
   JSON.stringify([r.kind, r.id, r.revision, r.start ?? null, r.end ?? null]);
-export function useProgram(
-  { workspaceId, onError, onChanged, onActionStart, active }: DeskProps,
-  kinds: string[],
-) {
-  const [choices, setChoices] = useState<Choices | null>(null),
-    [records, setRecords] = useState<Record<string, DeskRecord<unknown>[]>>({}),
-    [busy, setBusy] = useState(false);
-  const gate = useRef(false);
-  const kindKey = kinds.join(",");
-  const refresh = useCallback(async () => {
-    const [c, ...lists] = await Promise.all([
-      programClient.call<Choices>(workspaceId, { action: "choices" }),
-      ...kindKey
-        .split(",")
-        .filter(Boolean)
-        .map((k) => deskClient.records<unknown>(workspaceId, k)),
-    ]);
-    setChoices(c as Choices);
-    setRecords(
-      Object.fromEntries(
-        kindKey
-          .split(",")
-          .filter(Boolean)
-          .map((k, i) => [k, lists[i]]),
-      ),
-    );
-  }, [workspaceId, kindKey]);
-  const reopened = useReopenCount(active);
-  useEffect(() => {
-    let alive = true;
-    void refresh().catch((e) => {
-      if (alive) onError(workbenchErrorMessage(e));
-    });
-    return () => {
-      alive = false;
-    };
-  }, [refresh, onError, reopened]);
-  const run = async (fn: () => Promise<unknown>) => {
-    if (gate.current) return;
-    gate.current = true;
-    setBusy(true);
-    onActionStart?.();
-    try {
-      await fn();
-      onChanged?.();
-      await refresh();
-    } catch (e) {
-      onError(workbenchErrorMessage(e));
-    } finally {
-      gate.current = false;
-      setBusy(false);
-    }
-  };
-  const call = <T,>(a: ProgramAction) => programClient.call<T>(workspaceId, a);
-  return { choices, records, busy, run, call, refresh };
-}
 export function Field({
   label,
   children,

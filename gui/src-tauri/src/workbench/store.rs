@@ -5,7 +5,6 @@ use rusqlite::{params, Connection, OptionalExtension as _, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 #[cfg(not(unix))]
-use sha2::{Digest as _, Sha256};
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -238,11 +237,11 @@ fn secure_directory(path: &Path) -> WorkbenchResult<()> {
     Ok(())
 }
 
-fn secure_file(path: &Path) -> WorkbenchResult<()> {
+fn secure_file(_path: &Path) -> WorkbenchResult<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(
+        std::fs::set_permissions(_path, std::fs::Permissions::from_mode(0o600)).map_err(
             |error| WorkbenchError::storage("Failed to secure Workbench database", error),
         )?;
     }

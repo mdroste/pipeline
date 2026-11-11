@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import AutoReviewCatalogDialog from "./AutoReviewCatalogDialog";
 
 import PromptDialog from "./pipeline-editor/PromptDialog";
@@ -33,6 +34,8 @@ interface Props {
   onOpenGallery?: () => void;
   onProfileChange?: (config?: PipelineConfig) => void;
   showBack?: boolean;
+  initialStageId?: string;
+  leaveGuardedByShell?: boolean;
 }
 
 import { DEFAULT_EXTRACTION } from "./pipeline-editor/editorState";
@@ -49,6 +52,8 @@ export default function PipelinePage({
   onOpenGallery,
   onProfileChange,
   showBack = true,
+  initialStageId,
+  leaveGuardedByShell = false,
 }: Props) {
   const editor = useWorkflowEditor(onDirtyChange);
   const { settings, catalogs } = useWorkflowCatalogs();
@@ -92,6 +97,28 @@ export default function PipelinePage({
     resetParallelTemplate,
     addStep,
   } = actions;
+  const selectedEntry = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (
+      loading ||
+      !config ||
+      !initialStageId ||
+      selectedEntry.current === initialStageId
+    )
+      return;
+    const known = [
+      "extraction",
+      "orientation",
+      "merge",
+      "auto_adaptive_agents",
+      "pipeline_settings",
+      ...config.steps.map((step) => step.id),
+    ];
+    if (known.includes(initialStageId)) {
+      setEditing(initialStageId);
+      selectedEntry.current = initialStageId;
+    }
+  }, [loading, config, initialStageId, setEditing]);
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full text-gray-400">
@@ -183,6 +210,7 @@ export default function PipelinePage({
         onClose={onClose}
         onOpenGallery={onOpenGallery}
         showBack={showBack}
+        leaveGuardedByShell={leaveGuardedByShell}
       />
       {/* Right panel — independently memoizable editors */}
       <div className="flex-1 flex flex-col min-h-0 min-w-0">
@@ -299,6 +327,7 @@ export default function PipelinePage({
             catalogs={catalogs}
             conditionStepIds={conditionStepIds}
             advanced={editorMode === "advanced"}
+            warningTarget={view.warningTarget}
             onUpdate={updateStep}
             onPhaseChange={updateStepPhase}
             onOutputRoleChange={updateOutputRole}

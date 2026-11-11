@@ -274,7 +274,7 @@ describe("PipelineProgress", () => {
         runStartedAt={Date.now()}
       />,
     );
-    const elapsed = screen.getByText("0s");
+    const elapsed = screen.getByText("0s elapsed");
     expect(elapsed).toHaveClass("text-gray-500", "dark:text-gray-400");
     expect(elapsed).not.toHaveClass("text-gray-400", "dark:text-gray-600");
   });
@@ -292,12 +292,12 @@ describe("PipelineProgress", () => {
       const status = screen.getByRole("status");
       expect(status).toHaveTextContent("Prepare document bundle in progress.");
       expect(document.querySelector("[aria-live]")).toBeNull();
-      expect(status).not.toContainElement(screen.getByText("0s"));
+      expect(status).not.toContainElement(screen.getByText("0s elapsed"));
 
       act(() => {
         vi.advanceTimersByTime(3_000);
       });
-      expect(screen.getByText("3s")).toBeInTheDocument();
+      expect(screen.getByText("3s elapsed")).toBeInTheDocument();
       expect(screen.getByRole("status")).toHaveTextContent(
         "Prepare document bundle in progress.",
       );

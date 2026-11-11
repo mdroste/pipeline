@@ -1,86 +1,37 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense } from "react";
 import Jobs from "./research-studio/Jobs";
-import { button, type StudioProps } from "./research-studio/shared";
+import type { StudioProps } from "./research-studio/shared";
 const Manuscript = lazy(() => import("./research-studio/Manuscript"));
 const Responses = lazy(() => import("./research-studio/Responses"));
-const Experiments = lazy(() => import("./research-studio/Experiments"));
-const Bindings = lazy(() => import("./research-studio/Bindings"));
-const Literature = lazy(() => import("./research-studio/Literature"));
-const Theory = lazy(() => import("./research-studio/Theory"));
+
+/** The manuscript editor or the response workspace, with their build jobs. */
 export default function WorkspaceResearchStudio(
   props: StudioProps & {
     active?: boolean;
-    destination?: string;
-    tool?:
-      | "manuscript"
-      | "responses"
-      | "experiments"
-      | "bindings"
-      | "literature"
-      | "theory";
+    tool: "manuscript" | "responses";
   },
 ) {
-  const [selected, setTab] = useState(() =>
-    props.destination === "research"
-      ? "experiments"
-      : props.destination === "literature"
-        ? "literature"
-        : "manuscript",
-  );
-  const tab = props.tool ?? selected;
+  const { tool } = props;
   return (
     <div
       className={
-        tab === "manuscript" ? "flex min-h-0 flex-1 flex-col" : "space-y-5"
+        tool === "manuscript" ? "flex min-h-0 flex-1 flex-col" : "space-y-5"
       }
     >
-      {!props.tool && (
-        <nav aria-label="Research tools" className="flex flex-wrap gap-2">
-          {[
-            ["manuscript", "Manuscript"],
-            ["responses", "Responses"],
-            ["experiments", "Experiments"],
-            ["bindings", "Result links"],
-            ["literature", "Literature"],
-            ["theory", "Theory"],
-          ]
-            .filter(
-              ([id]) =>
-                !props.destination ||
-                (props.destination === "research"
-                  ? ["experiments", "bindings", "theory"]
-                  : props.destination === "literature"
-                    ? ["literature"]
-                    : ["manuscript", "responses"]
-                ).includes(id),
-            )
-            .map(([id, label]) => (
-              <button
-                key={id}
-                className={button}
-                aria-current={tab === id ? "page" : undefined}
-                onClick={() => setTab(id)}
-              >
-                {label}
-              </button>
-            ))}
-        </nav>
-      )}
       <Jobs
         visible={props.active}
-        quiet={tab === "manuscript"}
+        quiet={tool === "manuscript"}
         workspaceId={props.workspaceId}
         onCompleted={() => void props.onRefresh()}
       />
       <Suspense
         fallback={<p className="p-4 text-sm">Loading research tools…</p>}
       >
-        {tab === "manuscript" && <Manuscript {...props} />}{" "}
-        {tab === "responses" && <Responses {...props} />}{" "}
-        {tab === "experiments" && <Experiments {...props} />}{" "}
-        {tab === "bindings" && <Bindings {...props} />}{" "}
-        {tab === "literature" && <Literature {...props} />}{" "}
-        {tab === "theory" && <Theory {...props} />}
+        {tool === "manuscript" ? (
+          <Manuscript {...props} />
+        ) : (
+          <Responses {...props} />
+        )}
       </Suspense>
     </div>
   );

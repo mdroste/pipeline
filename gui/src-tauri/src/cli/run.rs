@@ -116,8 +116,8 @@ pub(super) async fn cmd_check(args: CheckArgs) -> i32 {
         input_interpretation: args.input_interpretation,
         variables: args.variables,
         extra_inputs,
-        limits: Default::default(),
-        models: None,
+        limits: args.limits.overrides(),
+        models: args.model.overrides(),
     };
     let plan = match commands::check_headless_plan(&options).await {
         Ok(report) => report,

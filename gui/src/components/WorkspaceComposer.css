@@ -3,12 +3,12 @@
   flex-shrink: 0;
   max-height: 60%;
   overflow-y: auto;
-  padding: 8px 14px 12px;
+  padding: 0.5rem 0.875rem 0.75rem;
   background: var(--ui-surface);
 }
 .workspace-composer {
   position: relative;
-  padding: 8px;
+  padding: 0.5rem;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-lg);
   background: var(--ui-surface);
@@ -35,8 +35,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 12px;
+  gap: 0.5rem;
+  padding: 0.75rem;
   border-radius: inherit;
   background: var(--ui-surface);
   color: var(--ui-text);
@@ -50,9 +50,9 @@
 .workspace-composer-input {
   display: block;
   width: 100%;
-  min-height: 38px;
-  max-height: 196px;
-  padding: 8px 8px 6px;
+  min-height: 2.375rem;
+  max-height: 12.25rem;
+  padding: 0.5rem 0.5rem 0.375rem;
   border: 0;
   background: transparent;
   color: inherit;
@@ -72,14 +72,14 @@
 .workspace-composer-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 0.5rem;
 }
 .workspace-composer-leading {
   display: flex;
   flex: 1;
   min-width: 0;
   align-items: center;
-  gap: 2px;
+  gap: 0.125rem;
 }
 
 /* Send and Stop are one control in one place, so the row never shifts. */
@@ -88,9 +88,9 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: 999px;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 62.4375rem;
   background: var(--ui-inverse);
   color: var(--ui-on-inverse);
   transition: opacity 0.15s;
@@ -108,9 +108,9 @@
   flex: 0 1 auto;
   min-width: 0;
   align-items: center;
-  gap: 4px;
-  height: 32px;
-  padding: 0 8px;
+  gap: 0.25rem;
+  height: 2rem;
+  padding: 0 0.5rem;
   border-radius: var(--ui-radius-sm);
   color: var(--ui-muted);
   font-size: var(--ui-text-label);
@@ -140,16 +140,16 @@
 .workspace-source-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 0.375rem;
   min-width: 0;
-  padding: 2px 2px 6px;
+  padding: 0.125rem 0.125rem 0.375rem;
 }
 .workspace-source-chip {
   display: inline-flex;
   flex: 0 1 auto;
   min-width: 0;
   align-items: center;
-  height: 28px;
+  height: 1.75rem;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-sm);
   background: var(--ui-sunken);
@@ -161,9 +161,9 @@
   flex: 1;
   min-width: 0;
   align-items: center;
-  gap: 6px;
+  gap: 0.375rem;
   height: 100%;
-  padding: 0 4px 0 8px;
+  padding: 0 0.25rem 0 0.5rem;
   border-radius: inherit;
 }
 .workspace-source-chip-main > span {
@@ -178,7 +178,7 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 24px;
+  width: 1.5rem;
   height: 100%;
   border-radius: inherit;
   color: var(--ui-muted);
@@ -193,8 +193,8 @@
 }
 .workspace-source-more {
   flex-shrink: 0;
-  height: 28px;
-  padding: 0 8px;
+  height: 1.75rem;
+  padding: 0 0.5rem;
   border-radius: var(--ui-radius-sm);
   color: var(--ui-muted);
   font-size: var(--ui-text-meta);
@@ -209,8 +209,8 @@
 .workspace-source-overflow {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px;
+  gap: 0.375rem;
+  padding: 0.5rem;
 }
 .workspace-source-overflow .workspace-source-chip-main > span {
   max-width: none;
@@ -218,7 +218,7 @@
 
 @media (max-height: 800px) {
   .workspace-composer-dock {
-    padding-top: 6px;
-    padding-bottom: 8px;
+    padding-top: 0.375rem;
+    padding-bottom: 0.5rem;
   }
 }

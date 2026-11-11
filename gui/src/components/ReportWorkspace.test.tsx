@@ -206,9 +206,9 @@ describe("ReportWorkspace", () => {
       />,
     );
 
-    expect(await screen.findByRole("status")).toHaveTextContent(
-      "Output-quality warning",
-    );
+    expect(
+      await screen.findByRole("region", { name: "Report notices" }),
+    ).toHaveTextContent("Model process notes");
     expect(
       screen.queryByText("I will now prepare the requested report."),
     ).not.toBeInTheDocument();
@@ -272,8 +272,8 @@ describe("ReportWorkspace", () => {
       { step_id: "a", step_label: "Technical", error: "provider error body" },
     ];
     render(<ReportWorkspace markdown="# Report" report={report} />);
-    const error = await screen.findByText("provider error body");
-    expect(error.closest("ul")).toHaveClass("max-h-40", "overflow-y-auto");
+    const error = await screen.findByText(/provider error body/);
+    expect(error.closest("ul")).toHaveClass("max-h-48", "overflow-auto");
   });
 
   it("labels the run's recorded time as its start", async () => {
@@ -587,9 +587,7 @@ describe("ReportWorkspace", () => {
 
     render(<ReportWorkspace runId="broken_run" />);
 
-    expect(
-      await screen.findByText("The final report is incomplete."),
-    ).toBeVisible();
+    expect(await screen.findByText(/Report limitations/)).toBeVisible();
     expect(screen.getByRole("tab", { name: "Sources" })).toHaveAttribute(
       "aria-selected",
       "true",
@@ -767,9 +765,7 @@ describe("reports written since the quality ledger", () => {
       screen.getByText("The results hold in every specification."),
     ).toBeVisible();
     expect(screen.queryByText("Tokens: 100")).not.toBeInTheDocument();
-    expect(
-      screen.queryByText("Output-quality warning"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Model process notes")).not.toBeInTheDocument();
   });
 
   it("still cleans a report from before the ledger", async () => {
@@ -797,9 +793,9 @@ describe("reports written since the quality ledger", () => {
     );
 
     expect(await screen.findByText("Substantive content.")).toBeVisible();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Output-quality warning",
-    );
+    expect(
+      screen.getByRole("region", { name: "Report notices" }),
+    ).toHaveTextContent("Model process notes");
     expect(screen.queryByText("Tokens: 100")).not.toBeInTheDocument();
   });
 
@@ -866,17 +862,34 @@ describe("a report too long to read in one piece", () => {
     const user = userEvent.setup();
     render(<ReportWorkspace runId="saved_run" />);
     await screen.findByText(
-      "This report is too long to show in full. Export it to read the rest.",
+      "The first part of this report is loaded.",
       undefined,
       lazyPanelWait,
     );
-    await user.click(screen.getByRole("button", { name: "Export ▾" }));
+    await user.click(screen.getByRole("button", { name: "Export" }));
     return user;
   }
 
+  it("loads the rest into the reader without exporting", async () => {
+    render(<ReportWorkspace runId="saved_run" />);
+    await userEvent
+      .setup()
+      .click(await screen.findByRole("button", { name: "Load full report" }));
+    expect(
+      await screen.findByRole("heading", { name: "Last section" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByText("The first part of this report is loaded."),
+    ).not.toBeInTheDocument();
+    expect(invoke).not.toHaveBeenCalledWith(
+      "save_report_md",
+      expect.anything(),
+    );
+  });
+
   it("says so, and saves the whole file as Markdown", async () => {
     const user = await openExports();
-    await user.click(screen.getByRole("menuitem", { name: "Save Markdown…" }));
+    await user.click(screen.getByRole("button", { name: "Save Markdown…" }));
 
     await vi.waitFor(() =>
       expect(invoke).toHaveBeenCalledWith(
@@ -892,7 +905,7 @@ describe("a report too long to read in one piece", () => {
   it("prints the whole report", async () => {
     const user = await openExports();
     await user.click(
-      screen.getByRole("menuitem", { name: "Print / save as PDF…" }),
+      screen.getByRole("button", { name: "Print / save as PDF…" }),
     );
 
     await vi.waitFor(() =>
@@ -917,9 +930,9 @@ describe("a report too long to read in one piece", () => {
     const user = userEvent.setup();
     render(<ReportWorkspace runId="saved_run" />);
     await user.click(
-      await screen.findByRole("button", { name: "Export ▾" }, lazyPanelWait),
+      await screen.findByRole("button", { name: "Export" }, lazyPanelWait),
     );
-    await user.click(screen.getByRole("menuitem", { name: "Save Markdown…" }));
+    await user.click(screen.getByRole("button", { name: "Save Markdown…" }));
 
     await vi.waitFor(() =>
       expect(invoke).toHaveBeenCalledWith(

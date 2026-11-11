@@ -30,7 +30,7 @@ export function NetworkDisclosure({
         />
         <span>
           <span className="font-medium">Look up at {services}</span>
-          <span className="mt-0.5 block text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
+          <span className="mt-0.5 block text-[0.6875rem] leading-relaxed text-amber-800 dark:text-amber-300">
             Sends: {info.networkPayload} Without lookups, the check runs only
             local tests on this computer.
           </span>
@@ -108,10 +108,10 @@ export default function AnalyzerChoice({
                 <span className="block text-xs font-medium text-gray-800 dark:text-gray-200">
                   {info.label}
                 </span>
-                <span className="mt-0.5 block text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
+                <span className="mt-0.5 block text-[0.6875rem] leading-relaxed text-gray-500 dark:text-gray-400">
                   {info.description}
                 </span>
-                <span className="mt-1 block text-[11px] text-gray-500 dark:text-gray-400">
+                <span className="mt-1 block text-[0.6875rem] text-gray-500 dark:text-gray-400">
                   Reads: {info.reads.join("; ")}
                 </span>
               </span>

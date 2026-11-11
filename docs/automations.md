@@ -213,38 +213,8 @@ recorded work stays available to export.
 
 ## In a project
 
-A project's **Automate** area has three views.
-
-### Action items
-
-**Action items** is the project's to-do list. Type a task and choose **Add
-action item**. **Start an edit** opens **Review edits** for that item.
-
-### Scheduled checks
-
-A scheduled check watches a project record and tells you when it changes. It
-can watch an accepted file, a tracked dataset, new local results, a command's
-status, or a saved Crossref search. Choose what to watch under **What to
-check**, set the **Check interval (minutes)**, and choose **Save and enable
-check**.
-
-The first check records a starting point. Later checks report changes, which
-you clear with **Mark as seen**. Checks run only while Pipeline is open, and
-missed checks are combined into one. A Crossref check needs literature search
-turned on for the project. After three failures in a row, Pipeline
-tells you and checks less often until one succeeds. Restoring a research
-backup turns checks off; see [Back up and share](projects.md#back-up-and-share).
-
-### Revision automations
-
-**Revision rounds** keeps a manuscript version, reviewer comments, your
-responses, and evidence together for each submission round. Add comments from
-your [response letter](analysis-and-writing.md), link the results each one
-needs, and choose **Save round snapshot**.
-
-Each comment then shows whether its task is done, its results are current,
-and you marked it addressed. A comment marked addressed is still flagged if
-its linked results are missing or out of date.
+A project keeps its to-do list under **Notes → Action items**. See
+[Action items](projects.md#action-items).
 
 ## Limits
 

@@ -137,22 +137,22 @@ function HarnessPresetPanel({
             />
           )}
           <span
-            className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${readOnly ? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300" : "bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300"}`}
+            className={`rounded-full px-2 py-0.5 text-[0.625rem] font-medium ${readOnly ? "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300" : "bg-violet-100 text-violet-700 dark:bg-violet-950/60 dark:text-violet-300"}`}
           >
             {readOnly ? "Built-in" : "Custom"}
           </span>
           {!readOnly && sourcePreset && (
-            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[0.625rem] text-gray-600 dark:bg-gray-800 dark:text-gray-300">
               based on {sourcePreset.name}
             </span>
           )}
           {inUse && (
-            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
+            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[0.625rem] font-medium text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200">
               In use by this conversation
             </span>
           )}
           {dirty && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[0.625rem] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-200">
               Unsaved
             </span>
           )}
@@ -164,7 +164,7 @@ function HarnessPresetPanel({
           {summary}
         </p>
         {!readOnly && (
-          <p className="text-[11px] text-gray-500">
+          <p className="text-[0.6875rem] text-gray-500">
             {preset.workspaceId
               ? "Available in this project."
               : "Available in all conversations."}{" "}
@@ -242,7 +242,7 @@ function HarnessPresetPanel({
           )}
         </div>
         {readOnly && (
-          <p className="text-[11px] text-gray-500 dark:text-gray-400">
+          <p className="text-[0.6875rem] text-gray-500 dark:text-gray-400">
             Built-in profiles are read-only. Duplicate a profile to make an
             independent copy that Pipeline updates never overwrite.
           </p>

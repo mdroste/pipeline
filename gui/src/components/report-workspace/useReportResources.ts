@@ -1,5 +1,12 @@
+import { reportExportClient } from "../../lib/reportExportClient";
 import { reviewHistoryClient } from "../../lib/reviewHistoryClient";
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
+import {
+  useEffect,
+  useState,
+  useRef,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 import { artifactClient } from "../../lib/artifactClient";
 import type {
   ArtifactSelectionRequest,
@@ -31,6 +38,26 @@ export default function useReportResources({
   setTab,
   setOutputView,
 }: Props) {
+  const generation = useRef(0);
+  const [fullLoading, setFullLoading] = useState(false);
+  const [fullError, setFullError] = useState<string | null>(null);
+  const loadRemaining = async () => {
+    if (!runId || fullLoading) return;
+    const key = generation.current;
+    setFullLoading(true);
+    setFullError(null);
+    try {
+      const full = await reportExportClient.fullReport({ runId });
+      if (generation.current === key) {
+        setMarkdown(full);
+        setMarkdownTruncated(false);
+      }
+    } catch (cause) {
+      if (generation.current === key) setFullError(String(cause));
+    } finally {
+      if (generation.current === key) setFullLoading(false);
+    }
+  };
   const [report, setReport] = useState<PipelineReport | null>(initialReport);
   const [markdown, setMarkdown] = useState(initialMarkdown);
   const [loading, setLoading] = useState(
@@ -65,6 +92,9 @@ export default function useReportResources({
   }, [initialSourceSelection, runId]);
 
   useEffect(() => {
+    generation.current++;
+    setFullLoading(false);
+    setFullError(null);
     setReport(initialReport);
     setMarkdown(initialMarkdown);
     setTab(initialSourceSelection ? "sources" : "report");
@@ -119,10 +149,14 @@ export default function useReportResources({
       });
     return () => {
       live = false;
+      generation.current++;
     };
   }, [initialMarkdown, initialReport, initialSourceSelection, runId]);
 
   return {
+    fullLoading,
+    fullError,
+    loadRemaining,
     report,
     markdown,
     markdownTruncated,

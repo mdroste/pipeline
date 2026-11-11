@@ -119,7 +119,7 @@ describe("NavRail", () => {
     expect(screen.queryByRole("button", { name: "Conversations" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Projects" }));
     expect(props.onNavigate).toHaveBeenCalledWith("project-index");
-    await user.click(screen.getByRole("button", { name: "Automations" }));
+    await user.click(screen.getByRole("button", { name: "All automations" }));
     expect(props.onNavigate).toHaveBeenCalledWith("tasks");
     await user.click(screen.getByRole("button", { name: "Reviews" }));
     expect(props.onNavigate).toHaveBeenCalledWith("history");
@@ -271,7 +271,7 @@ describe("NavRail", () => {
       onDismissRuns,
     });
 
-    const activity = screen.getByRole("button", { name: /^Activity/ });
+    const activity = screen.getByRole("button", { name: /^All activity/ });
     expect(activity).toHaveTextContent("1 running · 1 for you");
     await user.click(activity);
     expect(screen.getByRole("status")).toHaveTextContent(
@@ -314,7 +314,7 @@ describe("NavRail", () => {
 
     await user.click(list.getByRole("button", { name: /^finished\.pdf/ }));
     expect(onOpenRun).toHaveBeenCalledWith("finished");
-    expect(screen.queryByRole("dialog", { name: "Activity" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "All activity" })).toBeNull();
   });
 
   it("collects conversation and automation attention in Activity", async () => {
@@ -330,7 +330,7 @@ describe("NavRail", () => {
       onActivity,
     });
     const open = () =>
-      user.click(screen.getByRole("button", { name: /^Activity/ }));
+      user.click(screen.getByRole("button", { name: /^All activity/ }));
 
     await open();
     await user.click(
@@ -350,7 +350,7 @@ describe("NavRail", () => {
   it("says so when nothing is running", async () => {
     const user = userEvent.setup();
     renderRail({ onOpenRun: vi.fn() });
-    await user.click(screen.getByRole("button", { name: "Activity" }));
+    await user.click(screen.getByRole("button", { name: "All activity" }));
     expect(screen.getByText("Nothing is running.")).toBeVisible();
     expect(
       screen.queryByRole("list", { name: /Reviews in progress/ }),

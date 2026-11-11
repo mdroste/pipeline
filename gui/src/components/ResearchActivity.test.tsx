@@ -33,7 +33,7 @@ it("titles the Activity destination with the standard page header", async () => 
     />,
   );
   expect(
-    screen.getByRole("heading", { level: 1, name: "Activity" }),
+    screen.getByRole("heading", { level: 1, name: "All activity" }),
   ).toBeInTheDocument();
   expect(
     await screen.findByText("Nothing is running right now."),

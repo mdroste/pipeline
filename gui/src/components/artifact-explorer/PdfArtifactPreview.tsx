@@ -75,7 +75,7 @@ export function PdfView({
           <p className="truncate text-xs font-medium text-gray-700 dark:text-gray-200">
             {entry?.label ?? "PDF artifact"}
           </p>
-          <p className="text-[11px] text-gray-500 dark:text-gray-400">
+          <p className="text-[0.6875rem] text-gray-500 dark:text-gray-400">
             {formatBytes(content.bytes)} · rendered in Pipeline
           </p>
         </div>

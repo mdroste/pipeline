@@ -279,7 +279,7 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
                       manifest?.profile_name ||
                       "Untitled report"}
                   </p>
-                  <p className="mt-1 break-all font-mono text-[11px] text-gray-500 dark:text-gray-400">
+                  <p className="mt-1 break-all font-mono text-[0.6875rem] text-gray-500 dark:text-gray-400">
                     {id}
                   </p>
                   <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
@@ -352,12 +352,12 @@ export default function ComparePage({ runA, runB, onBack }: Props) {
                       {label}
                     </span>
                     {!a && (
-                      <span className="text-[10px] text-green-700 dark:text-green-400">
+                      <span className="text-[0.625rem] text-green-700 dark:text-green-400">
                         only in newer
                       </span>
                     )}
                     {!b && (
-                      <span className="text-[10px] text-red-700 dark:text-red-400">
+                      <span className="text-[0.625rem] text-red-700 dark:text-red-400">
                         only in older
                       </span>
                     )}

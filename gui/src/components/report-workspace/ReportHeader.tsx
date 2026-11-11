@@ -76,7 +76,7 @@ export default function ReportHeader({
                       : "bg-red-500"
               }`}
             />
-            <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
+            <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-gray-500 dark:text-gray-400">
               {display.heading}
             </span>
             {display.notes.length > 0 && (

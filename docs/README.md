@@ -7,8 +7,8 @@ review. The [changelog](../CHANGELOG.md) lists what changed in each version.
 | --- | --- |
 | [Connections](connections.md) | Subscription, API, and local connections; conversation tools and command setup |
 | [Reviews](reviews.md) | Inputs, PDF extraction, results, exports, and custom reviews |
-| [Projects and conversations](projects.md) | Conversations, the Overview, Library, and Activity areas, and backup and sharing |
-| [Analyze and write](analysis-and-writing.md) | Data, local commands, results, the manuscript, and responses to reviewers |
+| [Projects and conversations](projects.md) | Conversations, the Overview, Files, and Notes areas, and backup and sharing |
+| [Write and review](analysis-and-writing.md) | The manuscript, reviews, responses to reviewers, proposed edits, version control, and local commands |
 | [Automations](automations.md) | Review and revise, schedules, research automations, and research discovery |
 | [Settings](settings.md) | Appearance, the research data folder, storage, notifications, and updates |
 | [Command line](cli.md) | Running and sharing workflows without the desktop app |

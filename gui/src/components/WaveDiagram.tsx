@@ -181,7 +181,7 @@ function StageMarker({
       : "border-line bg-sunken text-ink-muted";
   return (
     <span
-      className={`relative z-[1] mt-2 grid h-6 w-6 place-items-center rounded-full border text-[12px] font-semibold tabular-nums transition-colors ${tone}`}
+      className={`relative z-[1] mt-2 grid h-6 w-6 place-items-center rounded-full border text-[0.75rem] font-semibold tabular-nums transition-colors ${tone}`}
     >
       {stage.number ?? <Icon name="merge" className="h-3.5 w-3.5" />}
     </span>

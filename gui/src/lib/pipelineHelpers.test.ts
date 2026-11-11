@@ -332,9 +332,11 @@ describe("lintCrossStepReferences", () => {
       },
     ]);
     const warnings = lintCrossStepReferences(config);
-    expect(warnings.some((w) => w.message.includes("canonical JSON"))).toBe(
-      true,
-    );
+    expect(
+      warnings.some(
+        (w) => w.field === "condition" && w.message.includes("JSON"),
+      ),
+    ).toBe(true);
   });
 
   it("accepts analyzer steps as fan-out sources but flags Markdown steps", () => {
@@ -349,8 +351,8 @@ describe("lintCrossStepReferences", () => {
       { id: "per_check", for_each: fanOut("check") },
       { id: "per_note", for_each: fanOut("notes") },
     ]);
-    const warnings = lintCrossStepReferences(config).filter((w) =>
-      w.message.includes("fans out over"),
+    const warnings = lintCrossStepReferences(config).filter(
+      (w) => w.field === "iteration",
     );
     expect(warnings).toHaveLength(1);
     expect(warnings[0].stepId).toBe("per_note");

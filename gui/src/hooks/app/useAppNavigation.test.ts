@@ -123,7 +123,7 @@ it("leaves a project's saved tab alone when opening its conversation", async () 
   renderNavigation();
   localStorage.setItem(
     "pipeline.desk.project",
-    JSON.stringify({ tab: "plans", object: null }),
+    JSON.stringify({ tab: "reviews", object: null }),
   );
   await act(() =>
     router.navigate({
@@ -133,7 +133,7 @@ it("leaves a project's saved tab alone when opening its conversation", async () 
       surface: "chat",
     }),
   );
-  expect(loadDeskLayout("project").tab).toBe("plans");
+  expect(loadDeskLayout("project").tab).toBe("reviews");
 
   // A route that names no conversation still opens where it says.
   await act(() => router.navigate({ page: "workspace", projectId: "project" }));

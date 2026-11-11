@@ -4,7 +4,7 @@ use super::inventory::Inventory;
 use super::records::{decode, put, record, records, ProjectRecord};
 use super::task_pages::{self, task_page, TaskCursor};
 use super::tasks::ResearchTask;
-use super::{documents, err, files, scope, studio};
+use super::{documents, err, files, scope};
 use crate::workbench::research;
 use crate::workbench::store::{Store, WorkbenchError, WorkbenchResult};
 use serde::{Deserialize, Serialize};
@@ -29,7 +29,34 @@ pub struct ProjectHomeSettings {
     pub target_date: Option<String>,
     #[serde(default)]
     pub target_label: String,
+    /// What sort of paper the project is, one of `PROJECT_KINDS`.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Where the paper stands, one of `PROJECT_STAGES`.
+    #[serde(default)]
+    pub stage: Option<String>,
+    /// The journal, conference, or funder the paper is meant for.
+    #[serde(default)]
+    pub venue: String,
 }
+const PROJECT_KINDS: [&str; 8] = [
+    "empirical",
+    "theory",
+    "survey",
+    "methods",
+    "essay",
+    "grant",
+    "thesis",
+    "other",
+];
+const PROJECT_STAGES: [&str; 6] = [
+    "idea",
+    "drafting",
+    "ready",
+    "under_review",
+    "revising",
+    "accepted",
+];
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectHome {
@@ -114,7 +141,6 @@ pub fn project_context(store: &Store, workspace_id: &str) -> WorkbenchResult<Str
         let t: ResearchTask = decode(&task)?;
         text.push_str(&format!("\nOpen task {}: {}\n", task.id, t.objective));
     }
-    text.push_str(&studio::rejected_approach_context(store, workspace_id)?);
     if text.len() > 24 * 1024 {
         let mut end = 24 * 1024;
         while !text.is_char_boundary(end) {
@@ -266,6 +292,20 @@ pub(super) fn save_home(
     {
         return Err(WorkbenchError::invalid(
             "The target date must be a calendar date with a label of at most 80 characters",
+        ));
+    }
+    if settings.venue.chars().count() > 120
+        || settings
+            .kind
+            .as_deref()
+            .is_some_and(|kind| !PROJECT_KINDS.contains(&kind))
+        || settings
+            .stage
+            .as_deref()
+            .is_some_and(|stage| !PROJECT_STAGES.contains(&stage))
+    {
+        return Err(WorkbenchError::invalid(
+            "Choose a listed kind and stage, with a venue of at most 120 characters",
         ));
     }
     if let Some(id) = &settings.manuscript_revision_id {

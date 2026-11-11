@@ -1,6 +1,6 @@
 import {
-  destinationsInSection,
   isWorkspaceDestination,
+  sectionTabs,
   workspaceDestinations,
   workspaceSections,
 } from "../lib/workspaceNavigation";
@@ -50,9 +50,12 @@ const PAPER_EXTENSIONS = [
   "tsv",
 ];
 
+/** A saved or linked view the project no longer offers opens the overview. */
+const offered = (tab: string): ProjectTab =>
+  isWorkspaceDestination(tab) ? tab : "overview";
+
 function WorkspaceProjectSurface({
   workspaceId,
-  sessionId,
   sessions = [],
   onResumeSession,
   onStartConversation,
@@ -69,11 +72,12 @@ function WorkspaceProjectSurface({
   onProjectBrief,
 }: WorkspaceProjectSurfaceProps) {
   const [layout] = useState(() => loadDeskLayout(workspaceId));
-  const [tab, setLocalTab] = useState<ProjectTab>(
-    destination ?? (layout.tab as ProjectTab),
+  const [tab, setLocalTab] = useState<ProjectTab>(() =>
+    offered(destination ?? layout.tab),
   );
   const setTab = useCallback(
-    (next: ProjectTab) => {
+    (requested: ProjectTab) => {
+      const next = offered(requested);
       setLocalTab(next);
       onDestination?.(next);
     },
@@ -91,8 +95,12 @@ function WorkspaceProjectSurface({
     });
   }, [workspaceId]);
   useEffect(() => {
-    if (destination && destination !== tab) {
-      setLocalTab(destination);
+    if (!destination) return;
+    const next = offered(destination);
+    // A link to a retired view lands on the overview, and the sidebar follows.
+    if (next !== destination) onDestination?.(next);
+    if (next !== tab) {
+      setLocalTab(next);
       setObject(null);
     }
   }, [destination]);
@@ -421,7 +429,7 @@ function WorkspaceProjectSurface({
                 setTab(event.target.value as ProjectTab);
               }}
             >
-              {destinationsInSection(tab).map((id) => (
+              {sectionTabs(tab, data.settings.body.stage).map((id) => (
                 <option key={id} value={id}>
                   {workspaceDestinations[id].label}
                 </option>
@@ -449,13 +457,15 @@ function WorkspaceProjectSurface({
           </button>
         </div>
       )}
-      {/* Every destination in the section is at most two clicks away here, so
-          the palette is an accelerator, not the only map. */}
-      {!object &&
-        workspaceDestinations[tab].section !== "overview" &&
-        destinationsInSection(tab).length > 1 && (
-          <ProjectSubnav tab={tab} onSelect={setTab} />
-        )}
+      {/* Every view in the section is a tab here, so the palette is an
+          accelerator, not the only map. */}
+      {!object && sectionTabs(tab, data.settings.body.stage).length > 1 && (
+        <ProjectSubnav
+          tab={tab}
+          stage={data.settings.body.stage}
+          onSelect={setTab}
+        />
+      )}
       <ProjectDestination
         api={api}
         reading={reading}
@@ -466,7 +476,6 @@ function WorkspaceProjectSurface({
         comparison={comparison}
         setComparison={setComparison}
         fileLocation={fileLocation}
-        openObject={openObject}
         refresh={refresh}
         onChanged={changed}
         clearError={clearError}
@@ -475,7 +484,6 @@ function WorkspaceProjectSurface({
         attachFolder={attachFolder}
         importPaper={importPaper}
         addVersion={addVersion}
-        sessionId={sessionId}
         sessions={sessions}
         onResumeSession={onResumeSession}
         onStartConversation={onStartConversation}

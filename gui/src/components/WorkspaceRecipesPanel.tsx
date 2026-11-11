@@ -156,7 +156,7 @@ export default function WorkspaceRecipesPanel({
             {selected.expectedChecks.map((check) => (
               <span
                 key={check}
-                className="rounded bg-gray-100 px-2 py-1 text-[10px] dark:bg-neutral-800"
+                className="rounded bg-gray-100 px-2 py-1 text-[0.625rem] dark:bg-neutral-800"
               >
                 {check.replaceAll("_", " ")}
               </span>
@@ -175,7 +175,9 @@ export default function WorkspaceRecipesPanel({
               {check.available ? "Ready" : "Missing"}:{" "}
               {check.input.replaceAll("_", " ")}
             </span>
-            <span className="block text-[11px] opacity-80">{check.detail}</span>
+            <span className="block text-[0.6875rem] opacity-80">
+              {check.detail}
+            </span>
           </div>
         ))}
       </div>
@@ -344,12 +346,12 @@ export default function WorkspaceRecipesPanel({
               <div className="flex items-center gap-2">
                 <span className="font-medium">{run.recipe.name}</span>
                 <span
-                  className={`text-[11px] ${run.status === "completed" ? "text-emerald-600 dark:text-emerald-400" : run.status === "incomplete" ? "text-amber-600 dark:text-amber-400" : "text-blue-600 dark:text-blue-400"}`}
+                  className={`text-[0.6875rem] ${run.status === "completed" ? "text-emerald-600 dark:text-emerald-400" : run.status === "incomplete" ? "text-amber-600 dark:text-amber-400" : "text-blue-600 dark:text-blue-400"}`}
                 >
                   {run.status}
                 </span>
               </div>
-              <p className="mt-1 text-[11px] text-gray-500">
+              <p className="mt-1 text-[0.6875rem] text-gray-500">
                 {run.artifacts.length} artifact(s) · {run.checks.length} check
                 record(s) · {run.unresolvedIssues.length} unresolved ·{" "}
                 {run.missingEvidence.length} missing evidence
@@ -357,7 +359,7 @@ export default function WorkspaceRecipesPanel({
               {run.status === "active" && (
                 <div className="mt-2 space-y-2">
                   {run.recipe.expectedChecks.map((check) => (
-                    <label key={check} className="block text-[11px]">
+                    <label key={check} className="block text-[0.6875rem]">
                       <input
                         type="checkbox"
                         checked={(recordedChecks[run.id] ?? []).includes(check)}
@@ -377,7 +379,7 @@ export default function WorkspaceRecipesPanel({
                       {check.replaceAll("_", " ")} actually checked
                     </label>
                   ))}
-                  <label className="block text-[11px]">
+                  <label className="block text-[0.6875rem]">
                     Unresolved issues, one per line
                     <textarea
                       rows={3}
@@ -446,7 +448,7 @@ export default function WorkspaceRecipesPanel({
                         );
                       })
                     }
-                    className="rounded border px-2 py-1 text-[11px]"
+                    className="rounded border px-2 py-1 text-[0.6875rem]"
                   >
                     Record completion
                   </button>
@@ -454,7 +456,7 @@ export default function WorkspaceRecipesPanel({
               )}
               {(run.unresolvedIssues.length > 0 ||
                 run.missingEvidence.length > 0) && (
-                <ul className="mt-2 list-disc pl-4 text-[11px] text-warning">
+                <ul className="mt-2 list-disc pl-4 text-[0.6875rem] text-warning">
                   {[...run.unresolvedIssues, ...run.missingEvidence].map(
                     (item, index) => (
                       <li key={`${item}-${index}`}>{item}</li>

@@ -355,6 +355,7 @@ fn with_older_steps_wired(
 
 /// Auto-detect and parse an export file, handling legacy formats.
 pub fn import_envelope(json: &str) -> Result<ExportEnvelope, String> {
+    let json = json.strip_prefix('\u{feff}').unwrap_or(json);
     let parsed = serde_json::from_str::<ExportEnvelope>(json);
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| format!("Invalid JSON: {e}"))?;
@@ -506,6 +507,7 @@ pub fn install_workflow_document(workflow: &WorkflowDocument) -> Result<ProfileS
 }
 
 pub fn import_bundle(json: &str) -> Result<(), String> {
+    let json = json.strip_prefix('\u{feff}').unwrap_or(json);
     let raw: serde_json::Value =
         serde_json::from_str(json).map_err(|e| format!("Invalid bundle: {e}"))?;
     let envelope: ExportEnvelope =
@@ -666,7 +668,7 @@ pub(super) fn restore_profile_bytes(path: &Path, bytes: &[u8]) -> std::io::Resul
     temp.write_all(bytes)?;
     temp.flush()?;
     crate::safety::sync_file(temp.as_file())?;
-    temp.persist(path).map_err(|error| error.error)?;
+    crate::safety::persist_file(temp, path).map_err(|error| error.error)?;
     #[cfg(unix)]
     if let Ok(directory) = fs::File::open(parent) {
         crate::safety::sync_landed(&directory);

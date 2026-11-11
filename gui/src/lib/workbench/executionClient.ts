@@ -1,11 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type {
-  ExecutionProfile,
-  ResearchExecution,
-  ResearchResultV1,
-  ResultComparison,
-  VerificationRecord,
-} from "../workbenchTypes";
+import type { ExecutionProfile, ResearchExecution } from "../workbenchTypes";
 import type { ToolchainReport } from "./toolchains";
 
 export const executionClient = {
@@ -61,42 +55,6 @@ export const executionClient = {
   cancelExecution(executionId: string) {
     return invoke<void>("workbench_cancel_execution", {
       request: { executionId },
-    });
-  },
-  compareResults(
-    left: ResearchResultV1,
-    right: ResearchResultV1,
-    absoluteTolerance: number,
-    rationale: string | null,
-  ) {
-    return invoke<ResultComparison>("workbench_compare_results", {
-      request: { left, right, absoluteTolerance, rationale },
-    });
-  },
-  recordStructuredResult(
-    workspaceId: string,
-    result: ResearchResultV1,
-    operationId: string,
-  ) {
-    return invoke<ResearchResultV1>("workbench_record_structured_result", {
-      request: { workspaceId, result, operationId },
-    });
-  },
-  listStructuredResults(workspaceId: string) {
-    return invoke<ResearchResultV1[]>("workbench_list_structured_results", {
-      workspaceId,
-    });
-  },
-  verifyEvidenceResults(request: {
-    evidenceId: string;
-    leftResultId: string;
-    rightResultId: string;
-    absoluteTolerance: number;
-    rationale: string | null;
-    operationId: string;
-  }) {
-    return invoke<VerificationRecord>("workbench_verify_evidence_results", {
-      request,
     });
   },
 };

@@ -6,6 +6,7 @@ import type { RepositoryStatus } from "./repositoryClient";
 import {
   NO_SIGNALS,
   VISIT_GAP_MS,
+  arrangeOverview,
   briefNotes,
   currentManuscript,
   diffFiles,
@@ -142,7 +143,7 @@ describe("silence and single actions", () => {
   it("renders nothing for a project with nothing to derive", () => {
     const data = home();
     expect(draftBlock(data, NO_SIGNALS)).toBeNull();
-    expect(syncBlock(data, NO_SIGNALS)).toBeNull();
+    expect(syncBlock(data)).toBeNull();
     expect(roundBlock(NO_SIGNALS)).toBeNull();
     expect(
       sinceBlock(data, NO_SIGNALS, { since: null, baseline: null }),
@@ -316,58 +317,19 @@ describe("state of the draft", () => {
 });
 
 describe("out of sync", () => {
-  it("surfaces stale numbers, claims, changed files, and change impact", () => {
+  it("surfaces changed files and ignores retired claim and result-link state", () => {
     const data = withManuscript();
     data.workingCopyChanged = 2;
     data.ledger.staleClaims = ["claim"];
-    const block = syncBlock(
-      data,
-      signals({
-        coverage: [
-          {
-            state: "stale",
-            reasons: ["Declared execution inputs changed"],
-            record: { body: { printed: "0.042" } },
-          },
-          { state: "current", reasons: [], record: { body: { printed: "1" } } },
-          { state: "unknown", reasons: [], record: { body: { printed: "2" } } },
-        ] as never,
-        impact: {
-          impacts: [
-            { status: "input_changed", reason: "Input changed", path: [{}] },
-            {
-              status: "review_needed",
-              reason: "Input changed via binding",
-              path: [{}, {}],
-            },
-          ],
-          relations: [],
-          complete: true,
-          limitations: [],
-        } as never,
-      }),
-    );
-    expect(block?.rows.map((item) => item.id)).toEqual([
-      "working-copy",
-      "numbers",
-      "numbers-unverified",
-      "stale-claims",
-      "impact",
-    ]);
-    expect(row(block, "numbers")?.text).toBe(
-      "1 number in the draft is out of date with its results",
-    );
-    expect(row(block, "numbers")?.detail).toContain("“0.042”");
-    expect(row(block, "impact")?.text).toBe(
-      "1 linked item needs rechecking after 1 upstream change",
-    );
+    const block = syncBlock(data);
+    expect(block?.rows.map((item) => item.id)).toEqual(["working-copy"]);
     for (const item of block!.rows) expect(item.action.label).toBeTruthy();
   });
 
   it("notices an earlier version still marked current", () => {
     const data = home({ papers: [paper("new", "2026-09-20T10:00:00Z")] });
     data.settings.body.manuscriptRevisionId = "old";
-    expect(row(syncBlock(data, NO_SIGNALS), "superseded")).toBeDefined();
+    expect(row(syncBlock(data), "superseded")).toBeDefined();
   });
 });
 
@@ -836,5 +798,66 @@ describe("repository", () => {
         baseline: null,
       }),
     ).toBeNull();
+  });
+});
+
+describe("arranging by stage", () => {
+  const rows = (ids: string[]) =>
+    ids.map((id) => ({
+      id,
+      text: id,
+      lane: "next" as const,
+      action: { kind: "review" as const, label: "Open" },
+    }));
+  const blocks = () => [
+    {
+      id: "draft" as const,
+      title: "The paper",
+      rows: rows(["build", "findings", "review"]),
+    },
+    {
+      id: "round" as const,
+      title: "Revision round",
+      rows: rows(["progress", "undrafted"]),
+    },
+  ];
+  const ids = (block: { rows: { id: string }[] } | null) =>
+    block?.rows.map((item) => item.id) ?? null;
+
+  it("leads with at most three rows chosen by the paper's stage", () => {
+    const revising = arrangeOverview(home(), blocks(), "revising");
+    expect(ids(revising.next)).toEqual(["progress", "undrafted", "findings"]);
+    // A row that moved up is not repeated where it came from.
+    expect(revising.blocks.map(ids)).toEqual([["build", "review"]]);
+    expect(ids(arrangeOverview(home(), blocks(), "drafting").next)).toEqual([
+      "build",
+      "review",
+      "findings",
+    ]);
+    const idea = arrangeOverview(home(), blocks(), "idea");
+    expect(idea.next).toBeNull();
+    expect(idea.blocks).toHaveLength(2);
+    // With no stage set, a general order still applies.
+    expect(ids(arrangeOverview(home(), blocks(), null).next)).toEqual([
+      "build",
+      "progress",
+      "undrafted",
+    ]);
+  });
+
+  it("gathers everything waiting on the researcher in one list", () => {
+    const data = home();
+    data.applications = [{ body: { state: "recovery_required" } }] as never;
+    data.changes = [
+      { body: { state: "review", instruction: "Tighten the introduction" } },
+      { body: { state: "isolated", instruction: "Not ready" } },
+    ] as never;
+    const arranged = arrangeOverview(data, [syncBlock(data)!], "drafting");
+    expect(ids(arranged.needs)).toEqual(["recovery", "edits"]);
+    expect(arranged.needs?.rows[1].text).toBe(
+      "1 proposed edit awaits your decision",
+    );
+    expect(arranged.blocks).toEqual([]);
+    expect(arrangeOverview(home(), [], "drafting").needs).toBeNull();
   });
 });

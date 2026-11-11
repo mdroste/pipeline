@@ -1,7 +1,11 @@
 import { useState } from "react";
+import type { WorkflowLintWarning } from "../../lib/pipelineHelpers";
 
 export function useWorkflowView() {
   const [addStepOpen, setAddStepOpen] = useState(false);
+  const [warningTarget, setWarningTarget] = useState<
+    (WorkflowLintWarning & { request: number }) | null
+  >(null);
   const [navigatorView, setNavigatorView] = useState<
     "steps" | "overview" | "schemas"
   >("steps");
@@ -10,6 +14,8 @@ export function useWorkflowView() {
     null,
   );
   return {
+    warningTarget,
+    setWarningTarget,
     addStepOpen,
     setAddStepOpen,
     navigatorView,

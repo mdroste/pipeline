@@ -21,6 +21,7 @@ export default function useComposerFileDrop({
   blocked,
   onBusy,
   onError,
+  onNeedsProject,
 }: {
   targetRef: RefObject<HTMLElement | null>;
   workspaceId: string | null | undefined;
@@ -29,10 +30,25 @@ export default function useComposerFileDrop({
   blocked: boolean;
   onBusy: (busy: boolean) => void;
   onError: (message: string) => void;
+  onNeedsProject?: (paths: string[]) => void;
 }): FileDropState {
   const [state, setState] = useState<FileDropState>("idle");
-  const latest = useRef({ workspaceId, sessionId, blocked, onBusy, onError });
-  latest.current = { workspaceId, sessionId, blocked, onBusy, onError };
+  const latest = useRef({
+    workspaceId,
+    sessionId,
+    blocked,
+    onBusy,
+    onError,
+    onNeedsProject,
+  });
+  latest.current = {
+    workspaceId,
+    sessionId,
+    blocked,
+    onBusy,
+    onError,
+    onNeedsProject,
+  };
   const importing = useRef(false);
   useEffect(() => {
     let disposed = false;
@@ -43,13 +59,23 @@ export default function useComposerFileDrop({
       return Boolean(target && hit && target.contains(hit));
     };
     const receive = async (paths: string[]) => {
-      const { workspaceId, sessionId, blocked, onBusy, onError } =
-        latest.current;
+      const {
+        workspaceId,
+        sessionId,
+        blocked,
+        onBusy,
+        onError,
+        onNeedsProject,
+      } = latest.current;
       if (blocked || importing.current) {
         notify("Wait for the current response or change to finish.", "info");
         return;
       }
       if (!workspaceId) {
+        if (onNeedsProject) {
+          onNeedsProject(paths);
+          return;
+        }
         notify(
           "Files are saved in projects. Open or create a project, then add files there.",
           "info",

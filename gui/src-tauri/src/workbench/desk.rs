@@ -38,7 +38,7 @@ pub(crate) fn write_blob_atomic(
     let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
     temporary.write_all(bytes)?;
     crate::safety::sync_file(temporary.as_file())?;
-    temporary.persist(path).map_err(|e| e.error)?;
+    crate::safety::persist_file(temporary, path).map_err(|e| e.error)?;
     Ok(())
 }
 pub(crate) fn now() -> String {

@@ -31,9 +31,14 @@ export async function importResearchFiles(
   workspaceId: string,
   paths: string[],
   onImported?: (item: PaperWithRevision) => void,
-): Promise<{ imported: PaperWithRevision[]; failures: string[] }> {
+): Promise<{
+  imported: PaperWithRevision[];
+  failures: string[];
+  failedPaths: string[];
+}> {
   const imported: PaperWithRevision[] = [];
   const failures: string[] = [];
+  const failedPaths: string[] = [];
   for (const path of paths) {
     const name = fileName(path);
     try {
@@ -48,10 +53,11 @@ export async function importResearchFiles(
       imported.push(item);
       onImported?.(item);
     } catch (cause) {
+      failedPaths.push(path);
       failures.push(`${name}: ${workbenchErrorMessage(cause)}`);
     }
   }
-  return { imported, failures };
+  return { imported, failures, failedPaths };
 }
 
 export const isReadable = (item: PaperWithRevision) =>

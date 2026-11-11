@@ -104,7 +104,7 @@ export function ExtractionSection({
                   <span className="text-sm font-medium text-gray-900 dark:text-neutral-100">
                     Automatic
                   </span>
-                  <span className="rounded bg-gray-900 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white dark:bg-neutral-200 dark:text-neutral-900">
+                  <span className="rounded bg-gray-900 px-1.5 py-0.5 text-[0.625rem] font-semibold uppercase tracking-wide text-white dark:bg-neutral-200 dark:text-neutral-900">
                     Recommended
                   </span>
                 </div>
@@ -116,10 +116,10 @@ export function ExtractionSection({
             </label>
 
             <div className="mb-1.5 mt-3 flex items-center justify-between gap-3 px-1">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-neutral-400">
+              <span className="text-[0.625rem] font-semibold uppercase tracking-wider text-gray-500 dark:text-neutral-400">
                 Manual methods
               </span>
-              <span className="text-[10px] font-medium uppercase tracking-wider text-gray-500 dark:text-neutral-400">
+              <span className="text-[0.625rem] font-medium uppercase tracking-wider text-gray-500 dark:text-neutral-400">
                 Best to basic ↓
               </span>
             </div>
@@ -159,7 +159,7 @@ export function ExtractionSection({
                           {label}
                         </span>
                         <span
-                          className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${qualityClass}`}
+                          className={`shrink-0 rounded px-1.5 py-0.5 text-[0.625rem] font-semibold uppercase tracking-wide ${qualityClass}`}
                         >
                           {quality}
                         </span>

@@ -8,6 +8,9 @@ use std::path::Path;
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
+mod persist;
+pub use persist::persist_file;
+
 static SPAN_TAG_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
     regex::Regex::new(r#"(?is)<\s*/?\s*span\b(?:[^>"']|"[^"]*"|'[^']*')*>"#)
         .expect("span-tag regex must compile")

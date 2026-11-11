@@ -4,11 +4,6 @@ import type {
   PaperWithRevision,
   PaperReadResult,
   PaperSearchHit,
-  SourceRecord,
-  SourceImportResult,
-  ResearchLedger,
-  ClaimRecord,
-  EvidenceRecord,
 } from "../workbenchTypes";
 
 export const researchClient = {
@@ -75,57 +70,5 @@ export const researchClient = {
       query,
       limit,
     });
-  },
-  importSource(request: {
-    workspaceId: string;
-    title: string;
-    citationKey: string | null;
-    identifiers: Record<string, unknown>;
-    versionLabel: string | null;
-    path: string | null;
-    locator: string | null;
-    accessState: SourceRecord["accessState"];
-    acquiredVia: string;
-    operationId: string;
-  }) {
-    return invoke<SourceImportResult>("workbench_import_source", { request });
-  },
-  listSources(workspaceId: string) {
-    return invoke<SourceRecord[]>("workbench_list_sources", { workspaceId });
-  },
-  proposeClaim(request: {
-    workspaceId: string;
-    paperId: string | null;
-    claim: string;
-    kind: string;
-    origin: string;
-    operationId: string;
-  }) {
-    return invoke<ClaimRecord>("workbench_propose_claim", { request });
-  },
-  setClaimState(request: {
-    claimId: string;
-    state: ClaimRecord["workflowState"];
-    operationId: string;
-  }) {
-    return invoke<ClaimRecord>("workbench_set_claim_state", { request });
-  },
-  proposeEvidence(request: {
-    workspaceId: string;
-    claimVersionId: string;
-    targetType: string;
-    targetId: string;
-    locator: Record<string, unknown> | null;
-    relation: EvidenceRecord["relation"];
-    assessor: string;
-    operationId: string;
-  }) {
-    return invoke<EvidenceRecord>("workbench_propose_evidence", { request });
-  },
-  confirmEvidence(request: { evidenceId: string; operationId: string }) {
-    return invoke<EvidenceRecord>("workbench_confirm_evidence", { request });
-  },
-  researchLedger(workspaceId: string) {
-    return invoke<ResearchLedger>("workbench_research_ledger", { workspaceId });
   },
 };

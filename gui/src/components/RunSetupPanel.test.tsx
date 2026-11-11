@@ -9,6 +9,8 @@ vi.mock("./PaperSelector", () => ({
   ),
 }));
 vi.mock("./WorkflowPanel", () => ({ default: () => null }));
+vi.mock("./RunPlanPreview", () => ({ default: () => null }));
+vi.mock("./ReviewPdfOptions", () => ({ default: () => null }));
 vi.mock("./RunModelChoice", () => ({ default: () => null }));
 
 const selection: PrimaryInputSelection = {
@@ -35,7 +37,6 @@ function renderPanel(props: Partial<Parameters<typeof RunSetupPanel>[0]> = {}) {
       preparingRun={false}
       parallelOverrides={null}
       selectionKey={0}
-      width={288}
       onConfigureWorkflow={vi.fn()}
       onGenerate={vi.fn()}
       onPaperPathChange={vi.fn()}
@@ -45,7 +46,6 @@ function renderPanel(props: Partial<Parameters<typeof RunSetupPanel>[0]> = {}) {
       onProfileChange={vi.fn()}
       onRetryConfig={vi.fn()}
       onRetryDependencies={vi.fn()}
-      onResize={vi.fn()}
       {...props}
     />,
   );
@@ -65,27 +65,25 @@ describe("RunSetupPanel", () => {
         "The workflow execution plan could not be prepared: code is invalid",
     });
     const alert = screen.getByRole("alert");
-    expect(alert).toHaveTextContent("The review could not be started.");
+    expect(alert).toHaveTextContent("Couldn't prepare the review.");
     expect(alert).toHaveTextContent("code is invalid");
     expect(alert).not.toHaveTextContent("could not be loaded");
     expect(
       screen.queryByRole("button", { name: "Retry workflow" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Start review/ })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Preview/ })).toBeEnabled();
   });
 
-  it("still blocks Start review when the workflow setup failed to load", () => {
+  it("still blocks Preview when the workflow setup failed to load", () => {
     renderPanel({ configError: "profile unreadable" });
-    expect(
-      screen.getByText("Workflow setup could not be loaded."),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Start review/ })).toBeDisabled();
+    expect(screen.getByText(/Couldn.t load the workflow/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Preview/ })).toBeDisabled();
   });
 });
 
 it("prevents launching an over-limit author note without discarding it", () => {
   renderPanel({ authorNote: "x".repeat(4001) });
-  expect(screen.getByRole("button", { name: /Start review/ })).toBeDisabled();
+  expect(screen.getByRole("button", { name: /Preview/ })).toBeDisabled();
   expect(screen.getByRole("textbox")).toHaveValue("x".repeat(4001));
   expect(screen.getByRole("alert")).toHaveTextContent("4,000");
 });

@@ -292,7 +292,7 @@ pub fn write_annotations(run_id: &str, content: &str) -> Result<(), String> {
         .map_err(|e| format!("Cannot flush annotations: {e}"))?;
     crate::safety::sync_file(temp.as_file())
         .map_err(|e| format!("Cannot sync annotations: {e}"))?;
-    temp.persist(destination)
+    crate::safety::persist_file(temp, destination)
         .map_err(|e| format!("Cannot save annotations: {}", e.error))?;
     #[cfg(unix)]
     fs::File::open(&dir)

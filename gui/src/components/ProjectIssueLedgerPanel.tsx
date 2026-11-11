@@ -501,7 +501,7 @@ export default function ProjectIssueLedgerPanel({
               }
               className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${statusFilter === status ? "border-gray-500 ring-1 ring-gray-400" : "border-gray-200 dark:border-gray-800"}`}
             >
-              <span className="block text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+              <span className="block text-[0.625rem] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
                 {status}
               </span>
               <span className="mt-1 block text-xl font-semibold text-gray-950 dark:text-gray-50">
@@ -605,17 +605,17 @@ export default function ProjectIssueLedgerPanel({
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${STATUS_STYLES[issue.status]}`}
+                      className={`rounded-full px-2 py-0.5 text-[0.625rem] font-semibold uppercase ${STATUS_STYLES[issue.status]}`}
                     >
                       {issue.status}
                     </span>
                     {issue.severity && (
-                      <span className="text-[10px] font-medium uppercase text-gray-500 dark:text-gray-400">
+                      <span className="text-[0.625rem] font-medium uppercase text-gray-500 dark:text-gray-400">
                         {issue.severity}
                       </span>
                     )}
                     {issue.section && (
-                      <span className="truncate text-[11px] text-gray-500 dark:text-gray-400">
+                      <span className="truncate text-[0.6875rem] text-gray-500 dark:text-gray-400">
                         {issue.section}
                       </span>
                     )}
@@ -623,7 +623,7 @@ export default function ProjectIssueLedgerPanel({
                   <h3 className="mt-1.5 text-sm font-medium text-gray-950 dark:text-gray-50">
                     {issue.title}
                   </h3>
-                  <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                  <p className="mt-1 text-[0.6875rem] text-gray-500 dark:text-gray-400">
                     {issue.occurrences.length} observation
                     {issue.occurrences.length === 1 ? "" : "s"} · first{" "}
                     {formatDate(issueFirstObserved(issue))} · last{" "}
@@ -642,7 +642,7 @@ export default function ProjectIssueLedgerPanel({
                     <div>
                       <label
                         htmlFor={`project-issue-note-${issue.id}`}
-                        className="text-[11px] font-medium text-gray-700 dark:text-gray-300"
+                        className="text-[0.6875rem] font-medium text-gray-700 dark:text-gray-300"
                       >
                         Collection note or decision rationale
                       </label>
@@ -678,7 +678,7 @@ export default function ProjectIssueLedgerPanel({
                       </button>
                     </div>
                     <div className="space-y-3">
-                      <label className="block text-[11px] font-medium text-gray-700 dark:text-gray-300">
+                      <label className="block text-[0.6875rem] font-medium text-gray-700 dark:text-gray-300">
                         Lifecycle
                         <select
                           aria-label={`Lifecycle for ${issue.title}`}
@@ -702,7 +702,7 @@ export default function ProjectIssueLedgerPanel({
                           <option value="regressed">Regressed</option>
                         </select>
                       </label>
-                      <p className="text-[10px] leading-4 text-gray-500 dark:text-gray-400">
+                      <p className="text-[0.625rem] leading-4 text-gray-500 dark:text-gray-400">
                         {issue.decision_updated
                           ? `Collection decision updated ${formatDate(issue.decision_updated, true)}.`
                           : "Based on your accept, reject, and done choices in the reports."}
@@ -710,7 +710,7 @@ export default function ProjectIssueLedgerPanel({
                       {ledger && ledger.issues.length > 1 && (
                         <div>
                           <label
-                            className="text-[11px] font-medium text-gray-700 dark:text-gray-300"
+                            className="text-[0.6875rem] font-medium text-gray-700 dark:text-gray-300"
                             htmlFor={`merge-${issue.id}`}
                           >
                             Combine duplicate into
@@ -751,7 +751,7 @@ export default function ProjectIssueLedgerPanel({
                   </div>
 
                   <div className="mt-5 space-y-3">
-                    <h4 className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                    <h4 className="text-[0.6875rem] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                       Report observations
                     </h4>
                     {[...issue.occurrences].reverse().map((occurrence) => {
@@ -766,7 +766,7 @@ export default function ProjectIssueLedgerPanel({
                               <p className="truncate text-xs font-medium text-gray-900 dark:text-gray-100">
                                 {occurrenceLabel(occurrence, run)}
                               </p>
-                              <p className="mt-0.5 text-[10px] text-gray-500 dark:text-gray-400">
+                              <p className="mt-0.5 text-[0.625rem] text-gray-500 dark:text-gray-400">
                                 {formatDate(occurrence.observed_at, true)} ·{" "}
                                 {occurrence.profile_name} ·{" "}
                                 {occurrence.step_label}
@@ -778,7 +778,7 @@ export default function ProjectIssueLedgerPanel({
                             <button
                               type="button"
                               onClick={() => onOpenRun(occurrence.run_id)}
-                              className="rounded-md border border-gray-300 px-2 py-1 text-[10px] dark:border-gray-700"
+                              className="rounded-md border border-gray-300 px-2 py-1 text-[0.625rem] dark:border-gray-700"
                             >
                               Open report
                             </button>
@@ -789,7 +789,7 @@ export default function ProjectIssueLedgerPanel({
                             </p>
                           )}
                           {occurrence.annotation_status && (
-                            <p className="mt-2 text-[10px] text-gray-500 dark:text-gray-400">
+                            <p className="mt-2 text-[0.625rem] text-gray-500 dark:text-gray-400">
                               Report annotation: {occurrence.annotation_status}
                               {occurrence.annotation_note
                                 ? ` — ${occurrence.annotation_note}`
@@ -809,7 +809,7 @@ export default function ProjectIssueLedgerPanel({
                                     onClick={() =>
                                       onOpenRun(occurrence.run_id, target)
                                     }
-                                    className="rounded-md bg-gray-100 px-2 py-1 text-[10px] text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
+                                    className="rounded-md bg-gray-100 px-2 py-1 text-[0.625rem] text-gray-700 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
                                   >
                                     {label}
                                   </button>
@@ -819,7 +819,7 @@ export default function ProjectIssueLedgerPanel({
                                     title={
                                       evidence.description || evidence.quote
                                     }
-                                    className="rounded-md bg-gray-100 px-2 py-1 text-[10px] text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+                                    className="rounded-md bg-gray-100 px-2 py-1 text-[0.625rem] text-gray-500 dark:bg-gray-800 dark:text-gray-400"
                                   >
                                     {label}
                                   </span>

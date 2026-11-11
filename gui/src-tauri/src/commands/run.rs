@@ -3,6 +3,7 @@ use super::*;
 mod document;
 mod inputs;
 mod orientation;
+mod preparation;
 mod report;
 mod visuals;
 
@@ -49,6 +50,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     } = snapshot;
     pipeline_config::apply_agent_defaults(&mut config, &settings);
     let _settings_snapshot = crate::settings::freeze_for_run(settings.clone());
+    let _budget = crate::pipeline::review_budget::begin(&settings, pipeline_start);
 
     let paper = std::path::Path::new(paper_path);
 
@@ -150,8 +152,21 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         "none" => Ok(extract::ingest_none()),
         _ => extract::extract(app, &captured_path_text, &config.extraction).await,
     };
+    let mut preparation_stop = None;
     let mut extraction = match extraction_result {
         Ok(value) => value,
+        Err(error) if crate::pipeline::review_budget::stopped(&error) => {
+            preparation_stop = Some(error.clone());
+            crate::models::ExtractionResult {
+                text: String::new(),
+                method: "incomplete".into(),
+                source_path: captured_path_text.to_string(),
+                paper_hash: extract::compute_hash(captured_path)?,
+                quality_notes: vec![format!(
+                    "Extraction stopped before a complete transcription was available: {error}"
+                )],
+            }
+        }
         Err(error) => {
             crate::pipeline::logging::emit(
                 app,
@@ -268,6 +283,34 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         }
     }
 
+    let mut completion = RunCompletion {
+        author_note: author_note.clone(),
+        input_path: paper_path.to_string(),
+        input_mode: input_mode.to_string(),
+        input_interpretation: input_interpretation.to_string(),
+        input_identity,
+        profile_name,
+        workflow_source,
+        workflow_fingerprint,
+        specialist_catalog_revision,
+        variables: durable_variables,
+        extra_inputs: Default::default(),
+        extra_input_sources: provided_inputs.clone(),
+        parent_run_id: None,
+    };
+    if let Some(error) = preparation_stop {
+        return preparation::finish(
+            app,
+            run_writer,
+            &config,
+            &extraction,
+            &settings,
+            completion,
+            pipeline_start.elapsed(),
+            &error,
+        );
+    }
+
     visuals::collect_visual_artifacts(
         app,
         input_mode,
@@ -302,7 +345,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         orientation_path,
         orientation_sampling,
         _orient_tmp,
-    } = orientation::prepare_orientation(
+    } = match orientation::prepare_orientation(
         app,
         &config,
         input_mode,
@@ -312,7 +355,23 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         &mut run_writer,
         author_note.as_deref(),
     )
-    .await?;
+    .await
+    {
+        Ok(oriented) => oriented,
+        Err(error) if crate::pipeline::review_budget::stopped(&error) => {
+            return preparation::finish(
+                app,
+                run_writer,
+                &config,
+                &extraction,
+                &settings,
+                completion,
+                pipeline_start.elapsed(),
+                &error,
+            );
+        }
+        Err(error) => return Err(error),
+    };
     // Review limits count document preparation and orientation too.
     let budget_start = executor::budget::BudgetStart::after_orientation(
         pipeline_start,
@@ -374,7 +433,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         extra_tmps,
         runtime_extra_sources,
         extra_sources,
-    } = inputs::capture_named_inputs(
+    } = match inputs::capture_named_inputs(
         app,
         &config,
         &provided_inputs,
@@ -382,7 +441,23 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         &run_input_dir,
         &mut run_writer,
     )
-    .await?;
+    .await
+    {
+        Ok(inputs) => inputs,
+        Err(error) if crate::pipeline::review_budget::stopped(&error) => {
+            return preparation::finish(
+                app,
+                run_writer,
+                &execution_config,
+                &extraction,
+                &settings,
+                completion,
+                pipeline_start.elapsed(),
+                &error,
+            );
+        }
+        Err(error) => return Err(error),
+    };
     if is_cancelled() {
         return Err("Pipeline cancelled".into());
     }
@@ -437,6 +512,8 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
     let elapsed = pipeline_start.elapsed();
     let markdown = output::render_markdown(&report, diff_text.as_deref(), elapsed, &settings);
 
+    completion.extra_inputs = persisted_inputs;
+    completion.extra_input_sources = extra_sources;
     complete_run(
         app,
         run_writer,
@@ -445,21 +522,7 @@ pub(super) async fn run_pipeline_inner_with_snapshot(
         &extraction.text,
         elapsed,
         &settings,
-        RunCompletion {
-            author_note,
-            input_path: paper_path.to_string(),
-            input_mode: input_mode.to_string(),
-            input_interpretation: input_interpretation.to_string(),
-            input_identity,
-            profile_name,
-            workflow_source,
-            workflow_fingerprint,
-            specialist_catalog_revision,
-            variables: durable_variables,
-            extra_inputs: persisted_inputs,
-            extra_input_sources: extra_sources,
-            parent_run_id: None,
-        },
+        completion,
     )
 }
 
@@ -474,7 +537,10 @@ async fn revision_diff(
 ) -> Option<String> {
     let compared = match crate::runs::load_latest_report_for_input(paper_path, paper_hash) {
         Ok(None) => return None,
-        Ok(Some(prior)) => reconcile::reconcile(app, &prior, report).await,
+        Ok(Some(prior)) => match crate::pipeline::review_budget::check() {
+            Ok(()) => reconcile::reconcile(app, &prior, report).await,
+            Err(error) => Err(format!("Revision comparison skipped: {error}")),
+        },
         Err(error) => Err(error),
     };
     match compared {
@@ -492,10 +558,11 @@ fn record_failed_revision_diff(
     error: &str,
 ) {
     crate::pipeline::logging::emit(app, format!("WARNING: revision diff failed: {error}"));
-    report.quality.limitations.push(
-        "The comparison with the previous Review of this paper could not be completed, so this report has no revision diff."
-            .to_string(),
-    );
+    report.quality.limitations.push(if crate::pipeline::review_budget::stopped(error) {
+        format!("Revision comparison stopped because the review limit was reached; this report has no revision diff. {error}")
+    } else {
+        "The comparison with the previous Review of this paper could not be completed, so this report has no revision diff.".to_string()
+    });
 }
 
 #[cfg(test)]
@@ -553,5 +620,23 @@ mod revision_diff_tests {
             .unwrap()
             .iter()
             .any(|line| line.contains("revision diff failed: You've hit your limit")));
+
+        record_failed_revision_diff(
+            &app,
+            &mut report,
+            "Not started: this Review reached its limit of 2 model calls (2 made or reserved)",
+        );
+        assert!(report
+            .quality
+            .limitations
+            .last()
+            .unwrap()
+            .contains("review limit was reached"));
+        assert!(report
+            .quality
+            .limitations
+            .last()
+            .unwrap()
+            .contains("2 model calls"));
     }
 }

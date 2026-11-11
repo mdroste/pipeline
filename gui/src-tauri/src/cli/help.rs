@@ -54,15 +54,20 @@ OPTIONS:
                               Named input; repeat for multiple inputs.
   -o, --out <FILE>            Write Markdown to FILE instead of stdout.
       --force                 Replace an existing --out file.
-      --max-cost <USD>        Stop starting new steps once estimated direct-API
+      --max-cost <USD>        Stop starting new calls once estimated direct-API
                               spend reaches USD (API list prices). 0 = no limit.
-      --max-calls <N>         Stop starting new steps after N model calls.
-      --max-minutes <N>       Stop starting new steps after N minutes.
+      --max-calls <N>         Stop starting new calls after N model calls.
+      --max-minutes <N>       Stop starting new calls after N minutes.
       --model <PROVIDER[:MODEL[:THINKING]]>
                               Review model for this run, for example
                               claude:claude-opus-5-5:max or chatgpt. Calls that
                               follow the default model use it; an empty MODEL
-                              lets the provider choose.
+                              lets the provider choose. For local models,
+                              colons belong to the ID: local:qwen2.5:14b.
+                              Use --thinking for their thinking level.
+      --model-id <ID>         Exact model ID, including colons; use with
+                              --model <PROVIDER> instead of an inline ID.
+      --thinking <LEVEL>      Thinking level; use this for tagged local models.
       --model-everywhere      Also use --model for stages Settings assigns to
                               another model and for steps the workflow pins.
   -h, --help                  Show this help.
@@ -93,15 +98,20 @@ OPTIONS:
                               Named input shared by every run; repeatable.
   -o, --out-dir <DIR>         Also write each Markdown report to DIR.
       --force                 Replace existing reports in --out-dir.
-      --max-cost <USD>        Stop starting new steps once estimated direct-API
+      --max-cost <USD>        Stop starting new calls once estimated direct-API
                               spend reaches USD (API list prices). 0 = no limit.
-      --max-calls <N>         Stop starting new steps after N model calls.
-      --max-minutes <N>       Stop starting new steps after N minutes.
+      --max-calls <N>         Stop starting new calls after N model calls.
+      --max-minutes <N>       Stop starting new calls after N minutes.
       --model <PROVIDER[:MODEL[:THINKING]]>
                               Review model for this run, for example
                               claude:claude-opus-5-5:max or chatgpt. Calls that
                               follow the default model use it; an empty MODEL
-                              lets the provider choose.
+                              lets the provider choose. For local models,
+                              colons belong to the ID: local:qwen2.5:14b.
+                              Use --thinking for their thinking level.
+      --model-id <ID>         Exact model ID, including colons; use with
+                              --model <PROVIDER> instead of an inline ID.
+      --thinking <LEVEL>      Thinking level; use this for tagged local models.
       --model-everywhere      Also use --model for stages Settings assigns to
                               another model and for steps the workflow pins.
   -h, --help                  Show this help.
@@ -133,6 +143,14 @@ OPTIONS:
       --extra-input <KEY=PATH>
                               Named input; repeatable. Named PDFs also trigger
                               the selected PDF-parser dependency check.
+      --model <PROVIDER[:MODEL[:THINKING]]>
+                              Review model to check, as for run and batch.
+      --model-id <ID>         Exact model ID; requires --model <PROVIDER>.
+      --thinking <LEVEL>      Thinking level; requires --model.
+      --model-everywhere      Override Settings stage choices and workflow pins.
+      --max-cost <USD>        Per-review API cost limit (0 means no limit).
+      --max-calls <N>         Per-review model-call limit (0 means no limit).
+      --max-minutes <N>       Per-review time limit (0 means no limit).
       --json                  Print the complete dependency report as JSON.
   -h, --help                  Show this help.
 

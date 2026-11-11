@@ -36,7 +36,6 @@ import ReportIssueLink from "./components/ReportIssueLink";
 import { workbenchErrorMessage } from "./lib/workbenchError";
 
 const ReviewRunView = lazy(() => import("./components/ReviewRunView"));
-const RunPlanPreview = lazy(() => import("./components/RunPlanPreview"));
 const SettingsPage = lazy(() => import("./components/SettingsPage"));
 const HomePage = lazy(() => import("./components/HomePage"));
 const TasksPage = lazy(() => import("./components/TasksPage"));
@@ -164,8 +163,6 @@ function AppShell() {
     navRailCollapsed,
     toggleNavRail,
     navRailToggleRef,
-    runSetupWidth,
-    setRunSetupWidth,
     theme,
     handleThemeChange,
   } = appearance;
@@ -173,7 +170,6 @@ function AppShell() {
   const {
     hasCurrentRun,
     isRunning,
-    showRunSetup,
     listenersReady,
     providerLimitNotices,
     batchActive,
@@ -455,55 +451,6 @@ function AppShell() {
           }}
         />
 
-        {showRunSetup && (
-          <RunSetupPanel
-            authorNote={authorNote}
-            onAuthorNoteChange={setAuthorNote}
-            authorNoteFocusKey={authorNoteFocusKey}
-            configVersion={configVersion}
-            configError={runConfigError}
-            configLoading={runConfigLoading}
-            dependenciesError={depsError}
-            dependencies={depsReport}
-            inputMode={inputMode}
-            inputSelection={inputSelection}
-            launchError={launchError}
-            listenersReady={listenersReady}
-            localLlmActive={
-              depsReport?.deps.some(
-                (dependency) =>
-                  dependency.name === "Local LLM server" && dependency.found,
-              ) ?? false
-            }
-            paperPath={paperPath}
-            preparingRun={preparingRun}
-            parallelOverrides={parallelOverrides}
-            selectionKey={selectionKey}
-            width={runSetupWidth}
-            runActivity={runActivity}
-            onConfigureWorkflow={() => void handleNavigate("pipeline")}
-            onGenerate={handleGenerate}
-            onPaperPathChange={(path) => {
-              setPaperPath(path);
-              if (path) setRunConfigError(null);
-            }}
-            onInputSelectionChange={(selection) => {
-              setInputSelection(selection);
-              setPaperPath(selection?.paths[0] ?? null);
-              clearLaunchError();
-              if (selection) setRunConfigError(null);
-            }}
-            onPrivacyDetails={() => {
-              void openHelp("privacy");
-            }}
-            onParallelOverridesChange={setParallelOverrides}
-            onProfileChange={handleProfileChange}
-            onRetryConfig={() => void loadRunSetup()}
-            onRetryDependencies={() => void checkDependencies()}
-            onResize={setRunSetupWidth}
-          />
-        )}
-
         <main className="flex min-w-0 flex-1 flex-col">
           <UpdateBanner
             confirmRestart={() => {
@@ -623,11 +570,15 @@ function AppShell() {
                 />
               ) : page === "pipeline" ? (
                 <PipelinePage
+                  initialStageId={
+                    route.page === "pipeline" ? route.stageId : undefined
+                  }
                   onClose={() => void closePipeline()}
                   onDirtyChange={setWorkflowDirty}
                   onOpenGallery={() => handleNavigate("gallery")}
                   onProfileChange={handleProfileChange}
-                  showBack={false}
+                  showBack={route.page === "pipeline" && !!route.fromSetup}
+                  leaveGuardedByShell
                 />
               ) : page === "help" ? (
                 <AboutPage
@@ -646,6 +597,10 @@ function AppShell() {
                   onThemeChange={handleThemeChange}
                   onSystemChange={() => {
                     setConfigVersion((version) => version + 1);
+                    void checkDependencies();
+                  }}
+                  onOpenDiagnostics={() => {
+                    setShowDeps(true);
                     void checkDependencies();
                   }}
                   initialSection={settingsInitialSection}
@@ -718,16 +673,68 @@ function AppShell() {
                   reviewRouting={reviewRouting}
                   onCancel={() => selectedRun && void cancelReview(selectedRun)}
                   onNewReview={() => void handleNewRun()}
+                  onResume={(runId) => void rerunReview(runId, true)}
+                  onConnections={() =>
+                    void router.navigate({
+                      page: "settings",
+                      section: "providers",
+                    })
+                  }
                   onOpenHistory={(runId) =>
                     void openHistoryRun(runId ?? "", null)
                   }
                 />
               ) : (
-                <RunPlanPreview
-                  refreshKey={configVersion}
+                <RunSetupPanel
+                  authorNote={authorNote}
+                  onAuthorNoteChange={setAuthorNote}
+                  authorNoteFocusKey={authorNoteFocusKey}
+                  configVersion={configVersion}
+                  configError={runConfigError}
+                  configLoading={runConfigLoading}
+                  dependenciesError={depsError}
+                  dependencies={depsReport}
                   inputMode={inputMode}
-                  hasInput={!!paperPath}
-                  onOpenDesigner={() => void handleNavigate("pipeline")}
+                  inputSelection={inputSelection}
+                  launchError={launchError}
+                  listenersReady={listenersReady}
+                  localLlmActive={
+                    depsReport?.deps.some(
+                      (dependency) =>
+                        dependency.name === "Local LLM server" &&
+                        dependency.found,
+                    ) ?? false
+                  }
+                  paperPath={paperPath}
+                  preparingRun={preparingRun}
+                  parallelOverrides={parallelOverrides}
+                  selectionKey={selectionKey}
+                  runActivity={runActivity}
+                  onConfigureWorkflow={(stageId) =>
+                    void router.navigate({
+                      page: "pipeline",
+                      stageId,
+                      fromSetup: true,
+                    })
+                  }
+                  onGenerate={handleGenerate}
+                  onPaperPathChange={(path) => {
+                    setPaperPath(path);
+                    if (path) setRunConfigError(null);
+                  }}
+                  onInputSelectionChange={(selection) => {
+                    setInputSelection(selection);
+                    setPaperPath(selection?.paths[0] ?? null);
+                    clearLaunchError();
+                    if (selection) setRunConfigError(null);
+                  }}
+                  onPrivacyDetails={() => {
+                    void openHelp("privacy");
+                  }}
+                  onParallelOverridesChange={setParallelOverrides}
+                  onProfileChange={handleProfileChange}
+                  onRetryConfig={() => void loadRunSetup()}
+                  onRetryDependencies={() => void checkDependencies()}
                 />
               )}
             </Suspense>

@@ -70,7 +70,7 @@ function ChoiceCard({
         <span className="block text-xs font-medium text-gray-800 dark:text-gray-200">
           {title}
         </span>
-        <span className="mt-0.5 block text-[11px] leading-relaxed text-gray-500 dark:text-gray-400">
+        <span className="mt-0.5 block text-[0.6875rem] leading-relaxed text-gray-500 dark:text-gray-400">
           {description}
         </span>
       </span>
@@ -111,15 +111,15 @@ function AdaptiveRoleCard({
         <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
           {role.label}
         </span>
-        <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+        <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[0.5625rem] font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-400">
           {role.level === "discipline" ? "Broad" : group}
         </span>
       </span>
-      <span className="mt-1 block text-[11px] leading-4 text-gray-600 dark:text-gray-300">
+      <span className="mt-1 block text-[0.6875rem] leading-4 text-gray-600 dark:text-gray-300">
         {role.description}
       </span>
       {selected && (
-        <span className="mt-2 block border-t border-blue-200 pt-2 text-[10px] leading-4 text-gray-500 dark:border-blue-900 dark:text-gray-400">
+        <span className="mt-2 block border-t border-blue-200 pt-2 text-[0.625rem] leading-4 text-gray-500 dark:border-blue-900 dark:text-gray-400">
           <span className="font-medium">Scope boundary:</span> {role.exclusions}
         </span>
       )}
@@ -352,7 +352,7 @@ function AddStepDialog({
                 <p className="text-xs font-medium text-blue-950 dark:text-blue-100">
                   Choose an adaptive agent
                 </p>
-                <p className="mt-1 text-[11px] leading-4 text-blue-800 dark:text-blue-200">
+                <p className="mt-1 text-[0.6875rem] leading-4 text-blue-800 dark:text-blue-200">
                   Choose a subject or method specialist. Its complete prompt and
                   execution settings are copied into this review, where you can
                   configure them like any other step.
@@ -623,7 +623,7 @@ function AddStepDialog({
             </p>
           )}
           <div className="flex items-center justify-between gap-3">
-            <p className="text-[11px] text-gray-500 dark:text-gray-400">
+            <p className="text-[0.6875rem] text-gray-500 dark:text-gray-400">
               {mode === "adaptive"
                 ? "Add a copy you can edit for this review design. The original specialist stays unchanged."
                 : "All choices remain editable after creation."}

@@ -91,7 +91,7 @@ export default function MemoryTab({
             key={note.id}
             className="rounded border bg-white p-3 dark:bg-neutral-950"
           >
-            <div className="flex items-center gap-2 text-[11px] text-gray-500">
+            <div className="flex items-center gap-2 text-[0.6875rem] text-gray-500">
               <span>{noteKindLabel(note.kind)}</span>
               <span>· {plainLabel(note.state)}</span>
               <span>
@@ -100,7 +100,7 @@ export default function MemoryTab({
               {note.pinned && <span>· pinned</span>}
             </div>
             {note.importedStatus && (
-              <p className="text-[11px] text-amber-700 dark:text-amber-300">
+              <p className="text-[0.6875rem] text-amber-700 dark:text-amber-300">
                 {importedLabel(note.importedStatus)}
               </p>
             )}
@@ -120,7 +120,7 @@ export default function MemoryTab({
                         });
                       })
                     }
-                    className="rounded border px-2 py-1 text-[11px]"
+                    className="rounded border px-2 py-1 text-[0.6875rem]"
                   >
                     Accept
                   </button>
@@ -136,7 +136,7 @@ export default function MemoryTab({
                         });
                       })
                     }
-                    className="rounded border px-2 py-1 text-[11px]"
+                    className="rounded border px-2 py-1 text-[0.6875rem]"
                   >
                     Reject
                   </button>
@@ -154,7 +154,7 @@ export default function MemoryTab({
                     });
                   })
                 }
-                className="rounded border px-2 py-1 text-[11px]"
+                className="rounded border px-2 py-1 text-[0.6875rem]"
               >
                 {note.pinned ? "Unpin" : "Pin"}
               </button>

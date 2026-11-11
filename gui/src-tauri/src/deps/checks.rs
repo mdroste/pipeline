@@ -731,6 +731,7 @@ pub fn check_snapshot(
     input_path: Option<String>,
     extra_inputs: std::collections::HashMap<String, String>,
 ) -> DepsReport {
+    crate::env::refresh_path();
     check_all_for(
         &settings,
         Some(&config),

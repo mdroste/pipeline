@@ -42,7 +42,7 @@ fn copy_regular(mut file: std::fs::File, destination: &Path, limit: u64) -> Resu
     if let Ok(modified) = modified {
         let _ = pending.as_file().set_modified(modified);
     }
-    pending.persist(destination).map_err(|e| e.to_string())?;
+    crate::safety::persist_file(pending, destination).map_err(|e| e.to_string())?;
     Ok(Copied::Bytes(copied))
 }
 

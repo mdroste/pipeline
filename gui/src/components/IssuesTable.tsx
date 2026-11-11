@@ -542,7 +542,7 @@ export default function IssuesTable({
                   }}
                 />
                 <span
-                  className={`mt-0.5 w-14 px-1.5 py-0.5 rounded text-center text-[10px] font-medium uppercase shrink-0 ${sevStyle(issue.severity)}`}
+                  className={`mt-0.5 w-14 px-1.5 py-0.5 rounded text-center text-[0.625rem] font-medium uppercase shrink-0 ${sevStyle(issue.severity)}`}
                 >
                   {issue.severity || "—"}
                 </span>
@@ -574,7 +574,7 @@ export default function IssuesTable({
                       disabled={!annotationsLoaded}
                       aria-label={`${v} issue: ${issue.title}`}
                       aria-pressed={ann?.status === v}
-                      className={`px-2 py-1 rounded text-[11px] border transition-colors ${
+                      className={`px-2 py-1 rounded text-[0.6875rem] border transition-colors ${
                         ann?.status === v
                           ? VERDICT_STYLES[v]
                           : "border-gray-300 dark:border-gray-600 text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-gray-100 disabled:cursor-wait disabled:opacity-40"
@@ -592,8 +592,8 @@ export default function IssuesTable({
                     <CompactMarkdown markdown={issue.body} />
                   </div>
                   {issue.sources && issue.sources.length > 0 && (
-                    <p className="mt-2 text-[11px] text-gray-500 dark:text-gray-400">
-                      <span className="font-semibold uppercase tracking-[0.1em] text-[10px]">
+                    <p className="mt-2 text-[0.6875rem] text-gray-500 dark:text-gray-400">
+                      <span className="font-semibold uppercase tracking-[0.1em] text-[0.625rem]">
                         Reviewers:
                       </span>{" "}
                       {issue.sources.join(", ")}
@@ -601,7 +601,7 @@ export default function IssuesTable({
                   )}
                   {issue.evidence && issue.evidence.length > 0 && (
                     <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-900/70">
-                      <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-gray-500 dark:text-gray-400">
+                      <p className="text-[0.625rem] font-semibold uppercase tracking-[0.1em] text-gray-500 dark:text-gray-400">
                         Evidence
                       </p>
                       <div className="mt-2 space-y-2">
@@ -627,7 +627,7 @@ export default function IssuesTable({
                                     : `Source ${evidenceIndex + 1}`);
                           const location = (
                             <span
-                              className={`inline-flex rounded-md border px-2 py-1 text-[11px] font-medium ${
+                              className={`inline-flex rounded-md border px-2 py-1 text-[0.6875rem] font-medium ${
                                 canOpen
                                   ? "border-gray-300 bg-white text-gray-700 hover:border-gray-400 hover:text-gray-950 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300 dark:hover:text-white"
                                   : "border-gray-200 text-gray-500 dark:border-gray-800 dark:text-gray-400"
@@ -665,7 +665,7 @@ export default function IssuesTable({
                                     </span>
                                   )}
                                 {evidence.nodeId && (
-                                  <span className="font-mono text-[10px] text-gray-400">
+                                  <span className="font-mono text-[0.625rem] text-gray-400">
                                     {evidence.nodeId}
                                   </span>
                                 )}
@@ -674,7 +674,7 @@ export default function IssuesTable({
                                 evidence.doi ||
                                 evidence.publisher ||
                                 evidence.accessedAt) && (
-                                <p className="mt-1 flex flex-wrap gap-x-2 break-all text-[11px]">
+                                <p className="mt-1 flex flex-wrap gap-x-2 break-all text-[0.6875rem]">
                                   {evidence.url && (
                                     <SafeMarkdownLink
                                       href={evidence.url}
@@ -700,7 +700,7 @@ export default function IssuesTable({
                                 </p>
                               )}
                               {evidence.quote && (
-                                <blockquote className="mt-1.5 border-l-2 border-gray-300 pl-2 text-[11px] italic text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                                <blockquote className="mt-1.5 border-l-2 border-gray-300 pl-2 text-[0.6875rem] italic text-gray-500 dark:border-gray-700 dark:text-gray-400">
                                   <InlineMathText
                                     text={evidence.quote}
                                     verbatim
@@ -785,7 +785,7 @@ export default function IssuesTable({
         </div>
       )}
       {!runId && (
-        <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-4">
+        <p className="text-[0.6875rem] text-gray-500 dark:text-gray-400 mt-4">
           Annotations aren't saved for this view (no saved report).
         </p>
       )}

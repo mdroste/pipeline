@@ -3,8 +3,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 2rem;
+  height: 2rem;
   border-radius: var(--ui-radius-sm);
   color: var(--ui-muted);
   transition:
@@ -26,15 +26,15 @@
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding: 12vh 18px 18px;
+  padding: 12vh 1.125rem 1.125rem;
   background: var(--ui-scrim);
 }
 .workspace-tool-picker {
   display: flex;
   flex-direction: column;
-  width: 520px;
+  width: 32.5rem;
   max-width: 100%;
-  max-height: min(560px, 80vh);
+  max-height: min(35rem, 80vh);
   overflow: hidden;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-md);
@@ -46,35 +46,35 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px 8px;
+  padding: 0.75rem 1rem 0.5rem;
   color: var(--ui-muted);
   font-size: var(--ui-text-meta);
 }
 .workspace-picker-heading button {
-  padding: 2px 8px;
-  font-size: 18px;
+  padding: 0.125rem 0.5rem;
+  font-size: 1.125rem;
 }
 .workspace-tool-picker > input {
-  margin: 0 12px 10px;
-  padding: 10px;
+  margin: 0 0.75rem 0.625rem;
+  padding: 0.625rem;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-sm);
   background: transparent;
-  font-size: 15px;
+  font-size: 0.9375rem;
   outline-offset: 2px;
 }
 .workspace-picker-results {
   min-height: 0;
   overflow: auto;
-  padding: 0 6px 6px;
+  padding: 0 0.375rem 0.375rem;
 }
 .workspace-picker-results button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 0.75rem;
   width: 100%;
-  padding: 10px 12px;
+  padding: 0.625rem 0.75rem;
   border-radius: var(--ui-radius-sm);
   font-size: var(--ui-text-label);
   text-align: left;
@@ -89,12 +89,12 @@
   background: var(--ui-sunken);
 }
 .workspace-picker-results p {
-  padding: 20px 12px;
+  padding: 1.25rem 0.75rem;
   color: var(--ui-muted);
   font-size: var(--ui-text-label);
 }
 .workspace-tool-picker footer {
-  padding: 10px 16px;
+  padding: 0.625rem 1rem;
   border-top: 1px solid var(--ui-border);
   color: var(--ui-muted);
   font-size: var(--ui-text-meta);

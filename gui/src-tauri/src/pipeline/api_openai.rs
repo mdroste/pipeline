@@ -233,7 +233,7 @@ async fn warm_shared_context(
         warm_request.reasoning_effort = None;
         warm_request.response_format = None;
         let warm_label = format!("{label} · cache warm-up");
-        super::logging::record_provider_attempt();
+        super::logging::record_provider_attempt()?;
         match openai_tool_loop(
             app,
             client,
@@ -378,7 +378,7 @@ pub async fn call_openai_api(
         .await?;
     }
 
-    super::logging::record_provider_attempt();
+    super::logging::record_provider_attempt()?;
     let (text, mut usage) = openai_tool_loop(
         app,
         client,
@@ -484,7 +484,7 @@ pub async fn call_local_api(
         response_format: structured_response_format(overrides.output_schema)?,
     };
 
-    super::logging::record_provider_attempt();
+    super::logging::record_provider_attempt()?;
     let (text, usage) = openai_tool_loop(
         app,
         client,

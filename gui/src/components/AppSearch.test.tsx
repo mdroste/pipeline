@@ -63,15 +63,15 @@ const search = async (text: string) => {
 it("finds projects, project views, and automations through the router", async () => {
   const handlers = props();
   render(<AppSearch {...handlers} />);
-  await screen.findByRole("option", { name: /Trade paper/ });
+  await screen.findByRole("option", { name: /^Trade paperProject$/ });
 
-  const user = await search("specification");
+  const user = await search("responses");
   await user.keyboard("{Enter}");
   expect(mocks.navigate).toHaveBeenCalledWith({
     page: "workspace",
     projectId: "trade",
     surface: "project",
-    destination: "grids",
+    destination: "responses",
   });
   expect(handlers.onClose).toHaveBeenCalled();
 });
@@ -91,7 +91,7 @@ it("opens conversations and reviews through their own paths", async () => {
   expect(handlers.onOpenRun).toHaveBeenCalledWith("run");
 });
 
-it("keeps working when one source fails, and says when nothing matches", async () => {
+it("keeps working when one source fails and marks results incomplete", async () => {
   mocks.listRuns.mockRejectedValue(new Error("offline"));
   render(<AppSearch {...props()} />);
   await search("citation");
@@ -100,6 +100,45 @@ it("keeps working when one source fails, and says when nothing matches", async (
   ).toBeVisible();
   await search("zzz");
   await waitFor(() =>
-    expect(screen.getByText("Nothing matches “citationzzz”.")).toBeVisible(),
+    expect(screen.getByText(/Results may be incomplete/)).toBeVisible(),
   );
+});
+
+it("ranks exact matches and lets each group expand", async () => {
+  mocks.listTasks.mockResolvedValue(
+    Array.from({ length: 12 }, (_, index) => ({
+      id: String(index),
+      name: index === 11 ? "Citation" : "Citation check " + index,
+    })),
+  );
+  render(<AppSearch {...props()} />);
+  const user = await search("Citation");
+  expect((await screen.findAllByRole("option"))[0]).toHaveTextContent(
+    "CitationAutomation",
+  );
+  expect(screen.getAllByRole("option")).toHaveLength(6);
+  await user.click(
+    screen.getByRole("button", { name: "Show all 12 automations" }),
+  );
+  expect(screen.getAllByRole("option")).toHaveLength(12);
+});
+it("keeps names available while retrying a failed source", async () => {
+  mocks.listRuns.mockRejectedValueOnce(new Error("offline")).mockResolvedValue([
+    {
+      run_id: "retry",
+      input_name: "Recovered review",
+      profile_name: "Paper",
+    },
+  ]);
+  render(<AppSearch {...props()} />);
+  const user = userEvent.setup();
+  await screen.findByText(/Couldn't load Reviews/);
+  expect(screen.getByRole("option", { name: /Citation check/ })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Retry search" }));
+  expect(
+    await screen.findByRole("option", { name: /Recovered review/ }),
+  ).toBeVisible();
+  expect(
+    screen.queryByText(/Results may be incomplete/),
+  ).not.toBeInTheDocument();
 });

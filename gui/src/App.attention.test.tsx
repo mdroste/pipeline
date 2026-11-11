@@ -218,7 +218,9 @@ describe("App attention", () => {
   it("opens the waiting conversation from the Activity tray", async () => {
     waitingInBackground();
     render(<App />);
-    fireEvent.click(await screen.findByRole("button", { name: /^Activity/ }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^All activity/ }),
+    );
     fireEvent.click(
       await screen.findByRole("button", {
         name: /A conversation needs your approval/,
@@ -268,7 +270,7 @@ describe("App attention", () => {
         page: "workspace",
         projectId: "project-1",
         surface: "project",
-        destination: "checks",
+        destination: "overview",
       }),
     );
   });

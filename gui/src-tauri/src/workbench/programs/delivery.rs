@@ -383,6 +383,6 @@ pub fn export_bundle(store: &Store, ws: &str, id: &str, path: &str) -> Workbench
         zip.finish().map_err(err)?;
     }
     crate::safety::sync_file(temp.as_file()).map_err(err)?;
-    temp.persist(path).map_err(|e| err(e.error))?;
+    crate::safety::persist_file(temp, path).map_err(|e| err(e.error))?;
     Ok(json!({"path":path}))
 }

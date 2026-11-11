@@ -580,7 +580,7 @@ async fn call_claude_inner(
     let mut child = cmd
         .spawn()
         .map_err(|e| format!("Failed to spawn claude: {e}. Is Claude Code installed?"))?;
-    crate::pipeline::logging::record_provider_attempt();
+    crate::pipeline::logging::record_provider_attempt()?;
 
     let (pid, start_time) = track_child_started(&child, app, label);
 

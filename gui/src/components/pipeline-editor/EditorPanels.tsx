@@ -1,4 +1,5 @@
-import { memo, useEffect, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
+import type { WorkflowLintWarning } from "../../lib/pipelineHelpers";
 import type { KeyboardEvent } from "react";
 import type {
   MergeConfig,
@@ -152,7 +153,7 @@ export function PipelineSettingsEditorPanel({
               <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
                 Reuse shared input context
               </span>
-              <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-950/50 dark:text-blue-300">
+              <span className="rounded bg-blue-50 px-1.5 py-0.5 text-[0.625rem] font-medium text-blue-600 dark:bg-blue-950/50 dark:text-blue-300">
                 {ADAPTIVE_REVIEW_PROFILE_IDS.includes(activeProfile)
                   ? "Built-in default"
                   : "Optional"}
@@ -165,7 +166,7 @@ export function PipelineSettingsEditorPanel({
               other providers process each call normally.
             </p>
             {config.context_cache?.enabled && (
-              <p className="text-[11px] text-green-700 dark:text-green-400 mt-1">
+              <p className="text-[0.6875rem] text-green-700 dark:text-green-400 mt-1">
                 Enabled for this review. Cache reads and writes will appear in
                 token usage.
               </p>
@@ -188,7 +189,7 @@ export function PipelineSettingsEditorPanel({
               <button
                 type="button"
                 onClick={() => onResetParallelTemplate("generic")}
-                className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                className="text-[0.625rem] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
                 title="Include the input assessment, step instructions, and file path."
               >
                 Reset to generic
@@ -196,7 +197,7 @@ export function PipelineSettingsEditorPanel({
               <button
                 type="button"
                 onClick={() => onResetParallelTemplate("paper")}
-                className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                className="text-[0.625rem] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
                 title="Give reviewers the paper type, guidance on figures, and instructions for identifying problems."
               >
                 Reset to paper review
@@ -222,6 +223,7 @@ export function PipelineSettingsEditorPanel({
 }
 
 export const StepEditorPanel = memo(function StepEditorPanel({
+  warningTarget,
   step,
   config,
   settings,
@@ -232,6 +234,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
   onPhaseChange,
   onOutputRoleChange,
 }: {
+  warningTarget?: (WorkflowLintWarning & { request: number }) | null;
   step: StepConfig;
   config: PipelineConfig;
   settings: Settings | null;
@@ -250,6 +253,25 @@ export const StepEditorPanel = memo(function StepEditorPanel({
     "prompt" | "inputs" | "execution" | "model"
   >("prompt");
   useEffect(() => setActiveTab("prompt"), [step.id]);
+  const panel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (warningTarget?.stepId === step.id)
+      setActiveTab(warningTarget.field === "prompt" ? "prompt" : "execution");
+  }, [step.id, warningTarget]);
+  useEffect(() => {
+    if (warningTarget?.stepId !== step.id) return;
+    const tab = warningTarget.field === "prompt" ? "prompt" : "execution";
+    if (activeTab !== tab) return;
+    const selector =
+      warningTarget.field === "prompt"
+        ? "textarea"
+        : warningTarget.field === "condition"
+          ? '[aria-label="Run condition"]'
+          : '[aria-label="Fan-out source type"]';
+    const field = panel.current?.querySelector<HTMLElement>(selector);
+    field?.focus();
+    field?.scrollIntoView?.({ block: "nearest" });
+  }, [activeTab, step.id, warningTarget]);
 
   const otherSteps = config.steps
     .filter((candidate) => candidate.enabled && candidate.id !== step.id)
@@ -302,18 +324,31 @@ export const StepEditorPanel = memo(function StepEditorPanel({
 
   if (step.kind === "analyzer") {
     return (
-      <AnalyzerStepPanel
-        step={step}
-        config={config}
-        onUpdate={onUpdate}
-        onPhaseChange={onPhaseChange}
-        onOutputRoleChange={onOutputRoleChange}
-      />
+      <div ref={panel} className="flex-1 min-h-0 overflow-y-auto">
+        <AnalyzerStepPanel
+          step={step}
+          config={config}
+          onUpdate={onUpdate}
+          onPhaseChange={onPhaseChange}
+          onOutputRoleChange={onOutputRoleChange}
+        />
+        <AdvancedStepOptions
+          section="execution"
+          step={step}
+          otherSteps={otherSteps}
+          defaultReportStepIds={defaultReportStepIds}
+          namedInputs={config.extraction?.extra_inputs ?? []}
+          inputMode={config.extraction?.input_mode || "document"}
+          surveyEnabled
+          conditionStepIds={conditionStepIds}
+          onChange={(patch) => onUpdate(step.id, patch)}
+        />
+      </div>
     );
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div ref={panel} className="flex-1 flex flex-col min-h-0">
       <div className="px-5 pt-4 pb-3 border-b border-gray-200 dark:border-gray-700 space-y-2.5">
         <div className="flex items-end gap-3">
           <div className="min-w-0 flex-1">
@@ -332,7 +367,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
             />
           </div>
           <span
-            className={`mb-0.5 rounded-full px-2.5 py-1 text-[11px] font-medium ${
+            className={`mb-0.5 rounded-full px-2.5 py-1 text-[0.6875rem] font-medium ${
               step.enabled
                 ? step.phase === "parallel"
                   ? "bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300"
@@ -483,7 +518,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
             <h4 className="text-xs font-medium text-gray-600 dark:text-gray-300">
               Published results
             </h4>
-            <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+            <p className="mt-1 text-[0.6875rem] text-gray-500 dark:text-gray-400">
               Tell Pipeline which step is the report people read and which
               structured findings Projects tracks.
             </p>
@@ -504,7 +539,7 @@ export const StepEditorPanel = memo(function StepEditorPanel({
             />
             <span>
               Use as the primary report
-              <span className="block text-[10px] text-gray-500 dark:text-gray-400">
+              <span className="block text-[0.625rem] text-gray-500 dark:text-gray-400">
                 Use this step’s output as the final report.
               </span>
             </span>
@@ -525,14 +560,14 @@ export const StepEditorPanel = memo(function StepEditorPanel({
             />
             <span>
               Track findings in the project ledger
-              <span className="block text-[10px] text-gray-500 dark:text-gray-400">
+              <span className="block text-[0.625rem] text-gray-500 dark:text-gray-400">
                 Track this step’s findings across reviews of the document.
                 Pipeline adds the required findings format in the Schemas tab.
               </span>
             </span>
           </label>
           {step.phase !== "sequential" && (
-            <p className="text-[10px] text-amber-700 dark:text-amber-300">
+            <p className="text-[0.625rem] text-amber-700 dark:text-amber-300">
               Choose a sequential step for the final report or tracked findings.
             </p>
           )}

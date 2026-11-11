@@ -132,7 +132,7 @@ impl Storage {
         serde_json::to_writer_pretty(&mut file, &config).map_err(|e| e.to_string())?;
         file.write_all(b"\n").map_err(|e| e.to_string())?;
         crate::safety::sync_file(file.as_file()).map_err(|e| e.to_string())?;
-        file.persist(self.local.join("storage.json"))
+        crate::safety::persist_file(file, self.local.join("storage.json"))
             .map_err(|e| format!("Cannot save data folder setting: {e}"))?;
         #[cfg(unix)]
         if let Ok(directory) = std::fs::File::open(&self.local) {

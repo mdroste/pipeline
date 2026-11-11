@@ -18,6 +18,7 @@ pub(crate) mod orchestration;
 mod profile_import;
 pub(crate) mod rerun;
 mod reuse_artifacts;
+pub(crate) mod review_pdf;
 mod run;
 mod run_context;
 pub(crate) mod run_entry;

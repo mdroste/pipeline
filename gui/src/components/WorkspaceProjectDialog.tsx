@@ -3,6 +3,8 @@ import useModalDialog from "../hooks/useModalDialog";
 import { open } from "@tauri-apps/plugin-dialog";
 import { workspaceClient } from "../lib/workbench/workspaceClient";
 import { researchClient } from "../lib/workbench/researchClient";
+import { projectClient } from "../lib/projectClient";
+import { projectKinds } from "../lib/workspaceNavigation";
 import { workbenchErrorMessage } from "../lib/workbenchError";
 import type { Workspace } from "../lib/workbenchTypes";
 import ReportIssueLink from "./ReportIssueLink";
@@ -33,6 +35,8 @@ export default function WorkspaceProjectDialog({
   const [name, setName] = useState("");
   const [folder, setFolder] = useState<string | null>(null);
   const [paper, setPaper] = useState<string | null>(null);
+  const [kind, setKind] = useState("");
+  const kindSaved = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const created = useRef<Workspace | null>(null);
@@ -90,6 +94,15 @@ export default function WorkspaceProjectDialog({
           })
         ).record;
         created.current = workspace;
+      }
+      if (kind && !kindSaved.current) {
+        const home = await projectClient.home(workspace.id);
+        await projectClient.mutate(workspace.id, {
+          action: "saveHome",
+          expectedRevision: home.settings.revision,
+          settings: { ...home.settings.body, kind },
+        });
+        kindSaved.current = true;
       }
       if (paper && !paperImported.current) {
         await researchClient.importPaper({
@@ -156,6 +169,23 @@ export default function WorkspaceProjectDialog({
             placeholder="e.g. Monetary policy and inequality"
             disabled={busy || Boolean(created.current)}
           />
+        </label>
+        <label className="block text-xs">
+          Kind of paper <span className="text-gray-500">(optional)</span>
+          <select
+            aria-label="Kind of paper"
+            className={`${field} mt-1`}
+            value={kind}
+            onChange={(event) => setKind(event.target.value)}
+            disabled={busy || kindSaved.current}
+          >
+            <option value="">Not set</option>
+            {projectKinds.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.label}
+              </option>
+            ))}
+          </select>
         </label>
         <div className="text-xs">
           <span className="block">

@@ -96,7 +96,7 @@ export default function SetupTab({
           <option value="edit">Allow edits</option>
         </select>
       </label>
-      <p className="text-[11px] text-gray-500">
+      <p className="text-[0.6875rem] text-gray-500">
         {compactAccessSummary(effective)} · {compactModuleSummary(effective)}
       </p>
       {successor && (
@@ -149,7 +149,7 @@ export default function SetupTab({
           >
             Manage agent profiles…
           </button>
-          <p className="mt-1 text-[11px] text-gray-500">
+          <p className="mt-1 text-[0.6875rem] text-gray-500">
             Create profiles, view system prompts, and choose allowed tools.
           </p>
         </div>

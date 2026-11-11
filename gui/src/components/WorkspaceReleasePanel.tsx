@@ -249,7 +249,7 @@ export default function WorkspaceReleasePanel({
           >
             Review this revision…
           </button>
-          <p className="mt-2 text-[10px] text-gray-500">
+          <p className="mt-2 text-[0.625rem] text-gray-500">
             Send the paper and selected document details using your Reviews
             settings and account. Project notes stay out of the review.
           </p>
@@ -265,7 +265,7 @@ export default function WorkspaceReleasePanel({
             {budgets.map((budget) => (
               <div
                 key={budget.metric}
-                className="rounded border bg-white p-2 text-[11px] dark:bg-neutral-950"
+                className="rounded border bg-white p-2 text-[0.6875rem] dark:bg-neutral-950"
               >
                 <span className="font-medium">
                   {budget.metric.replaceAll("_", " ")}: {budget.budgetValue}{" "}

@@ -2,75 +2,16 @@ import { useEffect, useRef, useState } from "react";
 import { stateLabel, taskTime } from "../../lib/taskPresentation";
 import { taskClient } from "../../lib/taskClient";
 import {
-  type Json,
   type Receipt,
   type TaskEvent,
   type TaskRun,
 } from "../../lib/taskTypes";
 import { Outline, Status } from "./shared";
 import ReportIssueLink from "../ReportIssueLink";
+import Output from "./Output";
+import ScopePreview from "./ScopePreview";
+import Recovery from "./Recovery";
 
-function Output({
-  receipt,
-  runId,
-  onError,
-}: {
-  receipt: Receipt;
-  runId: string;
-  onError: (error: string) => void;
-}) {
-  const [full, setFull] = useState<Json>(null);
-  const v = full ?? receipt.output;
-  const object = v && typeof v === "object" && !Array.isArray(v) ? v : null;
-  const result =
-    object?.result &&
-    typeof object.result === "object" &&
-    !Array.isArray(object.result)
-      ? object.result
-      : object;
-  async function exportPaper() {
-    try {
-      await taskClient.artifact(runId, receipt.address, receipt.operation);
-    } catch (e) {
-      onError(String(e));
-    }
-  }
-  return (
-    <>
-      {result &&
-        (result.kind === "artifact" ||
-          result.kind === "artifactTree" ||
-          result.reviewedArtifact) && (
-          <button onClick={() => void exportPaper()}>Save paper…</button>
-        )}
-      {result?.runId && (
-        <p className="task-muted">Review run: {String(result.runId)}</p>
-      )}
-      {result?.highPriorityCount !== undefined && (
-        <p>
-          {String(result.highPriorityCount)} high-priority findings ·{" "}
-          {result.complete === true
-            ? "Complete review"
-            : "Review has limitations"}
-        </p>
-      )}
-      <details
-        onToggle={(e) => {
-          if (e.currentTarget.open && full === null)
-            void taskClient
-              .stepOutput(runId, receipt.address, receipt.operation)
-              .then(setFull)
-              .catch((e) => onError(String(e)));
-        }}
-      >
-        <summary>Output</summary>
-        <pre className="task-result">
-          {typeof v === "string" ? v : JSON.stringify(v, null, 2)}
-        </pre>
-      </details>
-    </>
-  );
-}
 const UNRESOLVED = ["unknown", "failed"];
 /** Past its deadline a wait still takes input, and that starts a new deadline. */
 function lateInput(run: TaskRun) {
@@ -142,11 +83,15 @@ export default function Detail({
   onUpdated,
   onClose,
   onConversation,
+  background = null,
+  onBackgroundSetup,
 }: {
   run: TaskRun;
   onUpdated: (run: TaskRun) => void;
   onClose: () => void;
   onConversation?: (id: string) => void | Promise<void>;
+  background?: boolean | null;
+  onBackgroundSetup?: () => void;
 }) {
   const [events, setEvents] = useState<TaskEvent[]>([]);
   const [busy, setBusy] = useState(false);
@@ -205,36 +150,11 @@ export default function Detail({
       </div>
       <p>{run.reason || run.chain.description}</p>
       {run.state === "draft" && (
-        <div className="task-scope">
-          <h3>Ready to start</h3>
-          <p>{run.chain.description}</p>
-          <dl>
-            <dt>Conversation</dt>
-            <dd>{run.scope.sessionId ?? "No conversation steps"}</dd>
-            <dt>Folder</dt>
-            <dd>{run.scope.runtimeRoot ?? "Automation files and results"}</dd>
-            <dt>Review profiles</dt>
-            <dd>
-              {Object.values(run.scope.profiles)
-                .map((p) => p.profileName)
-                .join(", ") || "None"}{" "}
-              · saved versions
-            </dd>
-            <dt>Limits</dt>
-            <dd>
-              {run.chain.limits.maxActions} actions ·{" "}
-              {run.chain.limits.actionTimeoutSecs / 60} minutes per action ·{" "}
-              {run.chain.limits.deadlineHours} hour deadline
-            </dd>
-            <dt>Starts</dt>
-            <dd>{taskTime(run.dueAt)}</dd>
-          </dl>
-          <p className="task-muted">
-            Assistant steps use this project’s tools and file permissions. Each
-            scheduled run starts a separate conversation. Review steps use their
-            saved design and configured provider account.
-          </p>
-        </div>
+        <ScopePreview
+          run={run}
+          background={background}
+          onBackgroundSetup={onBackgroundSetup}
+        />
       )}
       <div className="task-actions">
         {!run.missionId && (
@@ -288,26 +208,12 @@ export default function Detail({
         </p>
       )}
       {!run.missionId && run.state === "attention" && (
-        <div className="task-attention">
-          <p>
-            Check the completed work before retrying. The interrupted action may
-            already have made changes that Pipeline could not record.
-          </p>
-          <div className="task-actions">
-            <button disabled={busy} onClick={() => void control("reconcile")}>
-              Check saved results and update status
-            </button>
-            <button
-              disabled={busy}
-              onClick={() => void control("refreshContext")}
-            >
-              Use current conversation context
-            </button>
-            <button disabled={busy} onClick={() => void control("retry")}>
-              Retry unfinished actions
-            </button>
-          </div>
-        </div>
+        <Recovery
+          key={run.revision}
+          run={run}
+          busy={busy}
+          onControl={control}
+        />
       )}
       {error && (
         <p className="task-error" role="alert">
@@ -328,9 +234,7 @@ export default function Detail({
               <div className="task-section-heading">
                 <div>
                   <h3>{r.label}</h3>
-                  <small className="task-muted">
-                    {r.address} · {taskTime(r.startedAt)}
-                  </small>
+                  <small className="task-muted">{taskTime(r.startedAt)}</small>
                 </div>
                 <Status state={r.state === "timer" ? "waiting" : r.state} />
               </div>

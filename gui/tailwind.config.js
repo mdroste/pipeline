@@ -55,10 +55,10 @@ export default {
         "ui-3": "var(--ui-shadow-3)",
       },
       fontSize: {
-        "ui-meta": ["var(--ui-text-meta)", "16px"],
-        "ui-label": ["var(--ui-text-label)", "18px"],
-        "ui-body": ["var(--ui-text-body)", "22px"],
-        "ui-title": ["var(--ui-text-title)", "24px"],
+        "ui-meta": ["var(--ui-text-meta)", "1rem"],
+        "ui-label": ["var(--ui-text-label)", "1.125rem"],
+        "ui-body": ["var(--ui-text-body)", "1.375rem"],
+        "ui-title": ["var(--ui-text-title)", "1.5rem"],
       },
       keyframes: {
         "ui-pop": {

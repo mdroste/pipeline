@@ -216,7 +216,7 @@ export default function EngineInstallStatus({
           </summary>
           <pre
             ref={logRef}
-            className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-white p-2.5 font-mono text-[11px] leading-relaxed text-gray-600 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-400"
+            className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-white p-2.5 font-mono text-[0.6875rem] leading-relaxed text-gray-600 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-400"
           >
             {logLines.join("\n")}
           </pre>

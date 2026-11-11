@@ -94,6 +94,10 @@ export interface Receipt {
   child?: Json;
 }
 export interface Scope {
+  conversationTitle?: string;
+  projectName?: string;
+  connectionId?: string | null;
+  reviewModels?: Record<string, import("./types").RosterEntry[]>;
   sessionId: string | null;
   workspaceId: string | null;
   runtimeRoot: string | null;

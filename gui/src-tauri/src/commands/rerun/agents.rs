@@ -14,7 +14,7 @@ use crate::runs::RunWriter;
 
 const AGENT_OVERRIDES_PATH: &str = "context/run_overrides.json";
 
-const UNUSABLE: &str = "This Review was started with its own agent choice, and that choice";
+const UNUSABLE: &str = "This review's saved choices";
 
 pub(in crate::commands) fn save_agent_overrides(
     writer: &mut RunWriter,
@@ -68,9 +68,7 @@ fn agent_names<'a>(agents: impl Iterator<Item = &'a str>) -> String {
 
 /// What the researcher sees before continuing, and what the log records.
 pub(super) fn notice(overrides: &RunModelOverrides) -> String {
-    let mut text =
-        "This Review was started with its own agent choice, and continuing uses it again."
-            .to_string();
+    let mut text = "This review will use its saved choices.".to_string();
     if let Some(review) = &overrides.review {
         let provider = agent_names(std::iter::once(review.provider.as_str()));
         let model = if review.model.trim().is_empty() {
@@ -91,6 +89,15 @@ pub(super) fn notice(overrides: &RunModelOverrides) -> String {
     }
     if let Some(merge) = overrides.merge_agent.as_deref() {
         text.push_str(&format!(" Merge: {}.", agent_names(std::iter::once(merge))));
+    }
+    if let Some(method) = overrides.extraction_method.as_deref() {
+        let name = match method {
+            "pdftotext" => "Local text reader",
+            "llm" => "Selected model",
+            "paddleocr-vl-full" => "Full Parser",
+            _ => method,
+        };
+        text.push_str(&format!(" PDF reading: {name}."));
     }
     text
 }
@@ -136,6 +143,28 @@ mod tests {
         let run = directory.path().join("run");
         std::fs::create_dir_all(run.join("context")).unwrap();
         (directory, run)
+    }
+
+    #[test]
+    fn saved_pdf_choice_survives_resume_without_changing_model_defaults() {
+        let (_directory, run) = run_folder();
+        let choices = RunModelOverrides {
+            extraction_method: Some("pdftotext".into()),
+            ..Default::default()
+        };
+        std::fs::write(
+            run.join(AGENT_OVERRIDES_PATH),
+            serde_json::to_string(&choices).unwrap(),
+        )
+        .unwrap();
+        let saved = read_agent_overrides(&run).unwrap().unwrap();
+        let mut settings = settings();
+        let before = serde_json::to_value(&settings).unwrap();
+        let mut config = retained_workflow();
+        reapply(&saved, &mut settings, &mut config).unwrap();
+        assert_eq!(config.extraction.method, "pdftotext");
+        assert_eq!(serde_json::to_value(&settings).unwrap(), before);
+        assert!(notice(&saved).contains("PDF reading: Local text reader"));
     }
 
     #[test]

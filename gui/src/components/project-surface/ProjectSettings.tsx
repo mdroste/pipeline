@@ -7,7 +7,9 @@ import {
   type RepositoryStatus,
 } from "../../lib/repositoryClient";
 import "./ProjectHome.css";
+import EarlierRecords from "./EarlierRecords";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
+import { projectKinds, projectStages } from "../../lib/workspaceNavigation";
 import {
   Card,
   button,
@@ -17,7 +19,6 @@ import {
   earlierVersions,
   earlierVersionLabel,
   versionLabel,
-  runLabel,
   formatDate,
   type SurfaceApi,
 } from "./shared";
@@ -58,6 +59,7 @@ export default function ProjectSettings({
   const [targetLabel, setTargetLabel] = useState(
     () => data.settings.body.targetLabel ?? "",
   );
+  const [venue, setVenue] = useState(() => data.settings.body.venue ?? "");
   // Saved on blur, Enter, or a short pause on a complete date, so a two-digit
   // month or day is never saved half-typed.
   const savedDate = data.settings.body.targetDate ?? "";
@@ -105,9 +107,6 @@ export default function ProjectSettings({
   };
   const versions = data.papers.filter((p) => p.revision);
   const earlier = earlierVersions(data);
-  const completedRuns = data.executions.filter(
-    (r) => r.outcome === "completed",
-  );
   const inventory = data.inventory?.body;
   const unreadable = inventory?.files.filter((f) => !f.hash) ?? [];
   return (
@@ -156,41 +155,67 @@ export default function ProjectSettings({
               Notes, action items, and comparisons use this version. Importing a
               newer file doesn’t change it.
             </p>
-            <label className="block text-xs">
-              Reference results
-              <select
-                aria-label="Reference results run"
-                className={`${input} mt-1`}
-                value={data.settings.body.baselineExecutionId ?? ""}
-                onChange={(e) =>
-                  void saveSettings({
-                    baselineExecutionId: e.target.value || null,
-                  })
-                }
-              >
-                <option value="">
-                  {completedRuns.length
-                    ? "Not chosen"
-                    : "No completed runs yet"}
-                </option>
-                {completedRuns.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {runLabel(r)}
-                  </option>
-                ))}
-              </select>
-            </label>
+          </Card>
+
+          <Card title="About this paper">
             <p className={muted}>
-              Choose the completed experiment to use as the baseline for new
-              results.
+              The stage decides what the project overview shows first. Kind and
+              venue appear under the project name.
             </p>
-            {data.ledger.staleClaims.length > 0 && (
-              <p className="text-xs text-amber-700 dark:text-amber-300">
-                {data.ledger.staleClaims.length === 1
-                  ? "One claim uses out-of-date evidence."
-                  : `${data.ledger.staleClaims.length} claims use out-of-date evidence.`}
-              </p>
-            )}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="block text-xs">
+                Kind
+                <select
+                  aria-label="Kind of paper"
+                  className={`${input} mt-1`}
+                  value={data.settings.body.kind ?? ""}
+                  onChange={(e) =>
+                    void saveSettings({ kind: e.target.value || null })
+                  }
+                >
+                  <option value="">Not set</option>
+                  {projectKinds.map((kind) => (
+                    <option key={kind.id} value={kind.id}>
+                      {kind.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block text-xs">
+                Stage
+                <select
+                  aria-label="Stage of the paper"
+                  className={`${input} mt-1`}
+                  value={data.settings.body.stage ?? ""}
+                  onChange={(e) =>
+                    void saveSettings({ stage: e.target.value || null })
+                  }
+                >
+                  <option value="">Not set</option>
+                  {projectStages.map((stage) => (
+                    <option key={stage.id} value={stage.id}>
+                      {stage.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label className="block text-xs">
+              Venue
+              <input
+                type="text"
+                aria-label="Venue"
+                className={`${input} mt-1`}
+                value={venue}
+                maxLength={120}
+                placeholder="Journal of Labor Economics"
+                onChange={(e) => setVenue(e.target.value)}
+                onBlur={() => {
+                  if (venue.trim() !== (data.settings.body.venue ?? ""))
+                    void saveSettings({ venue: venue.trim() });
+                }}
+              />
+            </label>
           </Card>
 
           {repository && (
@@ -376,6 +401,12 @@ export default function ProjectSettings({
               </>
             )}
           </Card>
+
+          <EarlierRecords
+            workspaceId={workspaceId}
+            root={workspace?.root ?? null}
+            reportError={reportError}
+          />
         </div>
       </div>
     </div>

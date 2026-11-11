@@ -20,7 +20,7 @@ pub(super) fn write_manifest(dir: &Path, manifest: &RunManifest) -> Result<(), S
         .map_err(|e| format!("Failed to flush manifest temp file: {e}"))?;
     crate::safety::sync_file(temp.as_file())
         .map_err(|e| format!("Failed to sync manifest temp file: {e}"))?;
-    temp.persist(&destination)
+    crate::safety::persist_file(temp, &destination)
         .map_err(|e| format!("Failed to publish manifest: {}", e.error))?;
     #[cfg(unix)]
     {
@@ -50,7 +50,7 @@ pub(super) fn write_text_atomic(dir: &Path, name: &str, content: &[u8]) -> Resul
         .map_err(|error| format!("Failed to flush recovery temp file: {error}"))?;
     crate::safety::sync_file(temp.as_file())
         .map_err(|error| format!("Failed to sync recovery temp file: {error}"))?;
-    temp.persist(destination)
+    crate::safety::persist_file(temp, destination)
         .map_err(|error| format!("Failed to publish recovered file: {}", error.error))?;
     #[cfg(unix)]
     fs::File::open(dir)

@@ -1,5 +1,6 @@
 import type {
   DepsReport,
+  RosterEntry,
   InputSlot,
   PipelineConfig,
   PrimaryInputSelection,
@@ -45,6 +46,7 @@ export interface ExecutionPlanEnvelope {
   /** The usage-limit backup, when it couldn't run right now. */
   backupUnavailable?: string | null;
   usageEstimate?: UsageEstimate;
+  modelRoster?: RosterEntry[];
   hostChecks?: HostCheck[];
   /** Files in the selected folders that won’t fit in the Review’s copy. */
   inputNotices?: string[];
@@ -72,23 +74,52 @@ export function configForRunPreview(
     merge: mergeAgent
       ? { ...config.merge, agents: [mergeAgent] }
       : config.merge,
-    steps: config.steps.map((step) =>
-      step.phase === "parallel" && (overrides || step.agents.length === 0)
-        ? {
-            ...step,
-            agents,
-            model: overrides ? "" : step.model,
-            model_overrides: overrides?.model_overrides ?? step.model_overrides,
-            effort: overrides ? "" : step.effort,
-            effort_overrides:
-              overrides?.effort_overrides ?? step.effort_overrides,
-          }
-        : step.phase === "sequential" &&
-            step.agents.length === 0 &&
-            sequentialAgent
-          ? { ...step, agents: [sequentialAgent] }
-          : step,
-    ),
+    steps: config.steps.map((step) => {
+      const clearPins = !!overrides?.override_workflow_pins;
+      const replaceParallel =
+        !!overrides?.agents.length &&
+        (!overrides.review || clearPins || step.agents.length === 0);
+      if (
+        step.phase === "parallel" &&
+        (step.agents.length === 0 || clearPins || replaceParallel)
+      ) {
+        return {
+          ...step,
+          agents,
+          model: clearPins || replaceParallel ? "" : step.model,
+          model_overrides: replaceParallel
+            ? overrides!.model_overrides
+            : clearPins
+              ? {}
+              : step.model_overrides,
+          effort: clearPins || replaceParallel ? "" : step.effort,
+          effort_overrides: replaceParallel
+            ? overrides!.effort_overrides
+            : clearPins
+              ? {}
+              : step.effort_overrides,
+        };
+      }
+      if (
+        step.phase === "sequential" &&
+        (step.agents.length === 0 || clearPins) &&
+        sequentialAgent
+      ) {
+        return {
+          ...step,
+          agents: [sequentialAgent],
+          ...(clearPins
+            ? {
+                model: "",
+                model_overrides: {},
+                effort: "",
+                effort_overrides: {},
+              }
+            : {}),
+        };
+      }
+      return step;
+    }),
   };
 }
 

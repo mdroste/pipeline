@@ -1,12 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ProjectRecord, Annotation } from "./projectClient";
+import type { ProjectRecord } from "./projectClient";
 import type {
   ExecutionProfile,
   PaperWithRevision,
   ResearchExecution,
   ResearchResultV1,
   ReviewHandoff,
-  SourceRecord,
 } from "./workbenchTypes";
 import type { Finding } from "./types";
 export type StudioKind =
@@ -21,36 +20,6 @@ export type StudioKind =
   | "theory"
   | "check"
   | "direction";
-export const THEORY_KINDS = [
-  "assumption",
-  "conjecture",
-  "proposition",
-  "derivation",
-  "proof_sketch",
-  "unresolved_step",
-  "counterexample",
-  "rejected_approach",
-] as const;
-export const THEORY_STATUSES = [
-  "open",
-  "supported",
-  "refuted",
-  "abandoned",
-] as const;
-export const CHECK_METHODS = [
-  "analytical_argument",
-  "symbolic_identity",
-  "numerical_verification",
-  "numerical_counterexample",
-  "heuristic",
-  "model_assessment",
-] as const;
-export const DIRECTION_STATUSES = [
-  "idea",
-  "active",
-  "converted",
-  "dropped",
-] as const;
 export interface Promotion {
   checkpointId: string;
   path: string;
@@ -88,13 +57,6 @@ export interface TheoryCheck {
   claimsGenerality: boolean;
   origin: string;
 }
-export interface TheoryCheckRecord {
-  check: TheoryCheck;
-  scope: string;
-  label: string;
-  importedFrom?: string | null;
-  importedStatus?: string | null;
-}
 export interface ResearchDirection {
   question: string;
   mechanism: string;
@@ -107,32 +69,6 @@ export interface ResearchDirection {
   taskId: string | null;
   theoryIds: string[];
   dropReason: string;
-}
-export interface TheoryEvidence {
-  analytical: number;
-  symbolic: number;
-  numericalPassed: number;
-  numericalFailed: number;
-  counterexamples: number;
-  heuristic: number;
-  modelAssessment: number;
-  imported: number;
-  label: string;
-}
-export interface TheoryOverview {
-  notes: ProjectRecord<TheoryNote>[];
-  checks: ProjectRecord<TheoryCheckRecord>[];
-  directions: ProjectRecord<ResearchDirection>[];
-  evidence: Record<string, TheoryEvidence>;
-}
-/** Methods whose evidence covers tested instances or assessments only. */
-export function checkCannotClaimGenerality(method: string): boolean {
-  return [
-    "numerical_verification",
-    "numerical_counterexample",
-    "heuristic",
-    "model_assessment",
-  ].includes(method);
 }
 export interface BuildConfig {
   name: string;
@@ -196,8 +132,6 @@ export interface FindingPreview {
   packageHash: string;
   notice: string;
 }
-/** The most records a saved list holds. A longer list shows its newest. */
-export const RECORD_LIST_LIMIT = 500;
 export interface ReportPreview {
   comments: ReportComment[];
   /** Paragraphs in the report; more than `comments` when the split stopped. */
@@ -274,38 +208,6 @@ export interface NumericBinding {
   importedFrom?: string | null;
   importedStatus?: string | null;
 }
-export interface BindingCoverage {
-  record: ProjectRecord<NumericBinding>;
-  state: string;
-  reasons: string[];
-  numericPassed: boolean | null;
-  expected: number | null;
-  dependency: {
-    state: string;
-    changedInputs?: string[];
-    unavailableInputs?: string[];
-    coverage?: string;
-  };
-  result: ResearchResultV1 | null;
-  anchor: Annotation | null;
-}
-export interface BibEntry {
-  id: string;
-  key: string;
-  entryType: string;
-  fields: Record<string, string>;
-  raw: string;
-  start: number;
-  end: number;
-  warnings: string[];
-}
-export interface BibliographyRecord {
-  origin: string;
-  entry?: BibEntry;
-  source: SourceRecord;
-  revisionId?: string;
-  item?: { key: string; version: number; data: { title?: string } };
-}
 export interface LiteratureNote {
   question: string;
   statement: string;
@@ -318,32 +220,6 @@ export interface LiteratureNote {
   support: string;
   method: string;
   relatedVersionIds: string[];
-}
-export interface LiteratureRecord {
-  note: LiteratureNote;
-  source: { title: string; access: string; versionId: string } | null;
-  checklist: {
-    identity: string;
-    access: string;
-    passageRelevance: string;
-    assessmentMethod: string;
-    freshness: string;
-  };
-  importedFrom?: string | null;
-  importedStatus?: string | null;
-}
-export interface ZoteroItem {
-  key: string;
-  version: number;
-  data: { title?: string; name?: string; itemType?: string };
-  library?: unknown;
-}
-export interface ZoteroPreview {
-  serverId: string | null;
-  collection: string;
-  start: number;
-  items: ZoteroItem[];
-  hasMore: boolean;
 }
 export interface JobStatus {
   execution: ResearchExecution;
@@ -374,21 +250,6 @@ export interface Comparison {
   nChange: number | null;
   conversion: UnitConversion | null;
   rationale: string;
-}
-export interface SeriesRecord {
-  series: {
-    resultId: string;
-    variable: string;
-    units: string;
-    shockNormalization: string;
-    horizonUnit: string;
-    horizons: number[];
-    values: (number | null)[];
-    specificationId: string;
-    sampleId: string;
-  };
-  executionId: string;
-  artifactId: string;
 }
 export type StudioAction =
   | { action: "createFile"; checkpointId: null; path: string; base64: string }
@@ -512,8 +373,6 @@ export const studioClient = {
     }),
   history: (workspaceId: string, objectId: string) =>
     invoke<unknown[]>("workbench_studio_history", { workspaceId, objectId }),
-  theory: (workspaceId: string) =>
-    invoke<TheoryOverview>("workbench_theory_overview", { workspaceId }),
   editor: (workspaceId: string, path: string, checkpointId: string | null) =>
     invoke<EditorFile>("workbench_editor_file", {
       workspaceId,
@@ -582,82 +441,4 @@ export const studioClient = {
     invoke<ReviewHandoff>("workbench_focus_review", {
       request: { workspaceId, anchorIds, dependencyAnchorIds, responseIds },
     }),
-  compare: (
-    workspaceId: string,
-    left: ResultRef,
-    right: ResultRef,
-    rationale: string,
-    conversion: UnitConversion | null,
-    relativeMeaningful: boolean,
-  ) =>
-    invoke<Comparison>("workbench_compare_experiment", {
-      request: {
-        workspaceId,
-        left,
-        right,
-        rationale,
-        conversion,
-        relativeMeaningful,
-      },
-    }),
-  compareSeries: (
-    workspaceId: string,
-    leftId: string,
-    rightId: string,
-    rationale: string,
-  ) =>
-    invoke<{
-      comparable: boolean;
-      blockers: string[];
-      horizons: number[];
-      changes: (number | null)[];
-    }>("workbench_compare_series", { workspaceId, leftId, rightId, rationale }),
-  coverage: (workspaceId: string) =>
-    invoke<BindingCoverage[]>("workbench_binding_coverage", { workspaceId }),
-  bibliography: (workspaceId: string, revisionId: string) =>
-    invoke<{
-      entries: BibEntry[];
-      existingKeys: string[];
-      limitations: string;
-    }>("workbench_bibliography_preview", { workspaceId, revisionId }),
-  citations: (workspaceId: string, revisionId: string) =>
-    invoke<{
-      citations: {
-        key: string;
-        start: number;
-        end: number;
-        sources: ProjectRecord<BibliographyRecord>[];
-        notes: ProjectRecord<LiteratureRecord>[];
-      }[];
-      coverage: string;
-    }>("workbench_citation_navigation", { workspaceId, revisionId }),
-  source: (workspaceId: string, versionId: string, start = 0, length = 65536) =>
-    invoke<{ text: string; start: number; end: number; accessState: string }>(
-      "workbench_source_passage",
-      { workspaceId, versionId, start, length },
-    ),
-  zotero: (
-    collection: string | null,
-    start = 0,
-    expectedServer: string | null = null,
-  ) =>
-    invoke<ZoteroPreview>("workbench_zotero_preview", {
-      collection,
-      start,
-      expectedServer,
-    }),
-  importZotero: (
-    workspaceId: string,
-    preview: ZoteroPreview,
-    selected: string[],
-  ) =>
-    invoke<unknown>("workbench_zotero_import", {
-      workspaceId,
-      preview,
-      selected,
-    }),
 };
-export const resultRef = (r: ResearchResultV1): ResultRef => ({
-  executionId: r.sourceExecutionId,
-  resultId: r.resultId,
-});

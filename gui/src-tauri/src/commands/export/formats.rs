@@ -423,8 +423,7 @@ fn write_atomically(target: &Path, bytes: &[u8]) -> Result<(), String> {
         .write_all(bytes)
         .and_then(|_| crate::safety::sync_file(temporary.as_file()))
         .map_err(|error| format!("Could not write the exported file: {error}"))?;
-    temporary
-        .persist(target)
+    crate::safety::persist_file(temporary, target)
         .map_err(|error| format!("Could not save the exported file: {}", error.error))?;
     Ok(())
 }

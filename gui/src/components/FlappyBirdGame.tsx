@@ -546,7 +546,7 @@ export default function FlappyBirdGame({ onClose }: Props) {
       >
         <header className="flex items-start justify-between gap-4 border-b border-emerald-950/10 px-4 py-3 dark:border-white/10 sm:px-5">
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-400">
+            <p className="text-[0.625rem] font-bold uppercase tracking-[0.18em] text-emerald-700 dark:text-emerald-400">
               Classified appendix
             </p>
             <h2
@@ -557,7 +557,7 @@ export default function FlappyBirdGame({ onClose }: Props) {
             </h2>
           </div>
           <div className="flex items-center gap-4">
-            <div className="text-right text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            <div className="text-right text-[0.6875rem] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
               <div>
                 Score{" "}
                 <span
@@ -592,7 +592,7 @@ export default function FlappyBirdGame({ onClose }: Props) {
               className="rounded-xl border border-emerald-950/15 bg-[#edf6f3] px-4 py-6 dark:border-white/10 dark:bg-gray-900 sm:px-8 sm:py-8"
             >
               <div className="text-center">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-400">
+                <p className="text-[0.625rem] font-semibold uppercase tracking-[0.16em] text-emerald-700 dark:text-emerald-400">
                   New round
                 </p>
                 <h3
@@ -643,7 +643,7 @@ export default function FlappyBirdGame({ onClose }: Props) {
 
               <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  <span className="text-[0.625rem] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
                     Pilot
                   </span>
                   <span className="rounded-full bg-emerald-700 px-3 py-1.5 text-xs font-bold tracking-wide text-white dark:bg-emerald-400 dark:text-gray-950">
@@ -653,7 +653,7 @@ export default function FlappyBirdGame({ onClose }: Props) {
                     <button
                       type="button"
                       onClick={changeCharacter}
-                      className="rounded px-2 py-1 text-[11px] font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:hover:bg-gray-800 dark:hover:text-white"
+                      className="rounded px-2 py-1 text-[0.6875rem] font-medium text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 dark:hover:bg-gray-800 dark:hover:text-white"
                     >
                       Change character
                     </button>
@@ -661,7 +661,7 @@ export default function FlappyBirdGame({ onClose }: Props) {
                 </div>
 
                 <div className="flex items-center justify-between gap-3 sm:justify-end">
-                  <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                  <p className="text-[0.6875rem] text-gray-500 dark:text-gray-400">
                     Space / ↑ / click
                   </p>
                   {status === "ready" && (

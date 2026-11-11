@@ -143,6 +143,7 @@ pub(super) async fn rerun_run_inner(
     // without changing the persisted active profile.
     settings.active_profile = workflow.profile_id.clone();
     let _settings_snapshot = crate::settings::freeze_for_run(settings.clone());
+    let _budget = crate::pipeline::review_budget::begin(&settings, start);
 
     preflight_run_storage(std::path::Path::new(&parent.input_path))?;
     let parent_dir = crate::runs::runs_dir()?.join(parent_run_id);

@@ -295,6 +295,25 @@ const LEGACY_FIELDS: &str = r#""referees": [
     ]"#;
 
 #[test]
+fn external_profile_and_bundle_json_accept_one_signature_without_weakening_validation() {
+    let template = workflow_template().unwrap();
+    let bundle =
+        serde_json::json!({"type":"bundle", "settings":crate::settings::Settings::default(),
+        "profiles":[], "active_profile":""})
+        .to_string();
+    for text in [&template.canonical_json, &bundle] {
+        let plain = import_envelope(text).unwrap();
+        let signed = import_envelope(&format!("\u{feff}{text}")).unwrap();
+        assert_eq!(
+            serde_json::to_value(plain).unwrap(),
+            serde_json::to_value(signed).unwrap()
+        );
+    }
+    assert!(import_envelope("\u{feff}{malformed").is_err());
+    assert!(import_envelope(&format!("\u{feff}\u{feff}{}", template.canonical_json)).is_err());
+}
+
+#[test]
 fn a_legacy_profile_import_reads_the_paper_and_the_reports() {
     for file in [
         format!(r#"{{"type": "profile", "name": "Old", {LEGACY_FIELDS}}}"#),

@@ -96,7 +96,7 @@ export function DocumentBundleView({
               with {bundle.extraction?.method}
             </p>
           </div>
-          <code className="rounded bg-gray-100 dark:bg-gray-800 px-2 py-1 text-[11px]">
+          <code className="rounded bg-gray-100 dark:bg-gray-800 px-2 py-1 text-[0.6875rem]">
             {bundle.bundle_id}
           </code>
         </div>
@@ -107,7 +107,7 @@ export function DocumentBundleView({
               className="rounded-lg border border-gray-200 dark:border-gray-700 p-3"
             >
               <div className="text-xl font-semibold">{value}</div>
-              <div className="text-[11px] uppercase tracking-wide text-gray-500">
+              <div className="text-[0.6875rem] uppercase tracking-wide text-gray-500">
                 {label}
               </div>
             </div>
@@ -126,7 +126,7 @@ export function DocumentBundleView({
                 <div className="font-medium">
                   {origin.role} · {origin.kind}
                 </div>
-                <div className="mt-0.5 break-all font-mono text-[11px] text-gray-500">
+                <div className="mt-0.5 break-all font-mono text-[0.6875rem] text-gray-500">
                   {origin.path}
                 </div>
               </div>
@@ -194,22 +194,22 @@ export function DocumentBundleView({
                 >
                   <div className="flex justify-between gap-2">
                     <span className="font-medium truncate">{displayLabel}</span>
-                    <span className="text-[10px] uppercase text-gray-500">
+                    <span className="text-[0.625rem] uppercase text-gray-500">
                       {asset.kind}
                     </span>
                   </div>
-                  <div className="mt-1 text-[11px] text-gray-500">
+                  <div className="mt-1 text-[0.6875rem] text-gray-500">
                     {asset.page ? `Page ${asset.page} · ` : ""}
                     {asset.width && asset.height
                       ? `${asset.width}×${asset.height} · `
                       : ""}
                     {asset.media_type}
                   </div>
-                  <div className="mt-1 truncate font-mono text-[10px] text-gray-600 dark:text-gray-400">
+                  <div className="mt-1 truncate font-mono text-[0.625rem] text-gray-600 dark:text-gray-400">
                     {asset.rel_path}
                   </div>
                   {!canOpen && (
-                    <div className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">
+                    <div className="mt-1 text-[0.625rem] text-amber-700 dark:text-amber-300">
                       Asset missing from this report
                     </div>
                   )}
@@ -235,7 +235,7 @@ export function DocumentBundleView({
                   setKindFilter(kind);
                   setNodeLimit(INITIAL_BUNDLE_NODES);
                 }}
-                className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                className={`rounded-full border px-2 py-0.5 text-[0.6875rem] ${
                   kindFilter === kind
                     ? "border-gray-900 bg-gray-900 text-white dark:border-gray-100 dark:bg-gray-100 dark:text-gray-900"
                     : "border-gray-300 text-gray-600 dark:border-gray-700 dark:text-gray-300"
@@ -271,13 +271,13 @@ export function DocumentBundleView({
                         ({node.number})
                       </span>
                     )}
-                    <div className="mt-0.5 text-[11px] text-gray-500">
+                    <div className="mt-0.5 text-[0.6875rem] text-gray-500">
                       {node.id}
                       {node.page ? ` · page ${node.page}` : ""} ·{" "}
                       {node.provenance?.method}
                     </div>
                   </div>
-                  <span className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[10px] uppercase">
+                  <span className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[0.625rem] uppercase">
                     {node.kind}
                   </span>
                 </div>
@@ -319,7 +319,7 @@ export function DocumentBundleView({
                                 : pageSelection(indexedPage),
                             )
                           }
-                          className="rounded border border-gray-300 dark:border-gray-600 px-2 py-1 text-[11px] disabled:opacity-50"
+                          className="rounded border border-gray-300 dark:border-gray-600 px-2 py-1 text-[0.6875rem] disabled:opacity-50"
                         >
                           View {asset?.label ?? assetId}
                         </button>
@@ -332,7 +332,7 @@ export function DocumentBundleView({
                     <summary className="cursor-pointer text-xs font-medium text-gray-500">
                       {representation.format} representation
                     </summary>
-                    <pre className="mt-1 overflow-auto rounded bg-gray-50 dark:bg-gray-900 p-2 text-[11px] whitespace-pre-wrap">
+                    <pre className="mt-1 overflow-auto rounded bg-gray-50 dark:bg-gray-900 p-2 text-[0.6875rem] whitespace-pre-wrap">
                       {formatRepresentation(representation.content)}
                     </pre>
                   </details>

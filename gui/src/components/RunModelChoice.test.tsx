@@ -251,3 +251,25 @@ describe("RunModelChoice", () => {
     ).toBeVisible();
   });
 });
+
+it("keeps failed model resolution visible and retries it", async () => {
+  mockWorkflow({ steps: [step("review")] });
+  const original = invoke.getMockImplementation()!;
+  let attempts = 0;
+  invoke.mockImplementation((command, args) =>
+    command === "get_model_roster" && attempts++ === 0
+      ? Promise.reject(new Error("model service unavailable"))
+      : original(command, args),
+  );
+  render(<Harness />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "model service unavailable",
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Retry model check" }));
+  await waitFor(() =>
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+  );
+  expect(await screen.findByText(/ChatGPT · GPT-5.6 Sol/)).toBeVisible();
+});

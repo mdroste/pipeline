@@ -113,12 +113,12 @@ describe("Get started sheet", () => {
     const { unmount } = renderHost();
     const dialog = await sheet();
     expect(
-      within(dialog).getByRole("heading", { name: "Connections" }),
+      within(dialog).getByRole("heading", { name: "Choose your first task" }),
     ).toBeVisible();
     expect(within(dialog).queryByRole("radio")).not.toBeInTheDocument();
     await waitFor(() =>
       expect(
-        within(dialog).getByRole("button", { name: "Next" }),
+        within(dialog).getByRole("button", { name: "Check connections" }),
       ).toHaveFocus(),
     );
     await user.keyboard("{Escape}");
@@ -147,6 +147,9 @@ describe("Get started sheet", () => {
     const navigate = vi.spyOn(router, "navigate").mockResolvedValue(true);
     renderHost();
     const dialog = await sheet();
+    await user.click(
+      within(dialog).getByRole("button", { name: /^Review a document/ }),
+    );
     const list = within(dialog).getByRole("list", {
       name: "Model connections",
     });
@@ -183,7 +186,12 @@ describe("Get started sheet", () => {
     const user = userEvent.setup();
     renderHost();
     const dialog = await sheet();
-    await user.click(within(dialog).getByRole("button", { name: "Next" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: /^Start a project/ }),
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "3. Optional tools" }),
+    );
     expect(
       within(dialog).getByRole("heading", { name: "Tools on this computer" }),
     ).toHaveFocus();
@@ -213,61 +221,29 @@ describe("Get started sheet", () => {
     expect(within(dialog).getByText(/Detection looked only/)).toBeVisible();
   });
 
-  it("suggests next steps and opens each destination", async () => {
+  it("preserves the task and step while visiting Settings", async () => {
     const user = userEvent.setup();
     const navigate = vi.spyOn(router, "navigate").mockResolvedValue(true);
     const { props } = renderHost();
-    let dialog = await sheet();
+    const dialog = await sheet();
     await user.click(
-      within(dialog).getByRole("button", { name: "3. Next steps" }),
-    );
-    const steps = within(dialog).getByRole("list", {
-      name: "Suggested next steps",
-    });
-    const templates = within(steps)
-      .getAllByText(/^Template:/)
-      .map((node) => node.textContent);
-    expect(templates).toEqual([
-      "Template: Reference Check",
-      "Template: Replication Package Readiness",
-    ]);
-    expect(within(steps).getByText(/\.tex file, or folder/)).toBeVisible();
-
-    // The mocked navigation must provide the destination that receives focus.
-    render(
-      <button id="gallery-replication-package-readiness">
-        Replication package template
-      </button>,
+      within(dialog).getByRole("button", { name: /^Start a project/ }),
     );
     await user.click(
-      within(steps).getByRole("button", {
-        name: "View Replication Package Readiness in the gallery",
-      }),
+      within(dialog).getByRole("button", { name: "Open ChatGPT in Settings" }),
     );
-    expect(navigate).toHaveBeenCalledWith({ page: "gallery" });
-    expect(
-      screen.getByRole("button", { name: "Replication package template" }),
-    ).toHaveFocus();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-
-    act(() => openGetStarted());
-    dialog = await sheet();
-    await user.click(
-      within(dialog).getByRole("button", { name: "3. Next steps" }),
-    );
-    await user.click(
-      within(dialog).getByRole("button", { name: "New review" }),
-    );
-    expect(props.onNewReview).toHaveBeenCalledOnce();
-    act(() => openGetStarted());
-    dialog = await sheet();
-    await user.click(
-      within(dialog).getByRole("button", { name: "3. Next steps" }),
-    );
-    await user.click(
-      within(dialog).getByRole("button", { name: "New project" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Return to setup" }));
+    expect(
+      within(await sheet()).getByRole("heading", { name: "Connections" }),
+    ).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Create project" }));
     expect(props.onNewProject).toHaveBeenCalledOnce();
+    expect(readGetStarted()).toMatchObject({
+      step: 1,
+      goal: "project",
+      pendingSettings: false,
+    });
     expect(invoke).not.toHaveBeenCalledWith("save_settings", expect.anything());
     navigate.mockRestore();
   });
@@ -277,10 +253,7 @@ describe("Get started sheet", () => {
     renderHost();
     const dialog = await sheet();
     await user.click(
-      within(dialog).getByRole("button", { name: "3. Next steps" }),
-    );
-    await user.click(
-      within(dialog).getByRole("button", { name: "Open the example" }),
+      within(dialog).getByRole("button", { name: "Explore an example review" }),
     );
     const example = await screen.findByRole("dialog", {
       name: "Example review",
@@ -292,7 +265,9 @@ describe("Get started sheet", () => {
       within(example).getByRole("button", { name: "Back to setup" }),
     );
     expect(
-      within(await sheet()).getByRole("heading", { name: "Next steps" }),
+      within(await sheet()).getByRole("heading", {
+        name: "Choose your first task",
+      }),
     ).toBeVisible();
     // Visiting the example is not a dismissal.
     expect(readGetStarted()?.dismissedAt ?? null).toBeNull();

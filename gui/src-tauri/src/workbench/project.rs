@@ -38,6 +38,7 @@ pub(crate) mod assistant_files;
 pub(crate) mod conversation_copy;
 mod discovery_files;
 mod documents;
+pub mod earlier_records;
 mod file_browser;
 mod file_formats;
 mod file_open;

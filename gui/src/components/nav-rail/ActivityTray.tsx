@@ -77,7 +77,7 @@ export default function ActivityTray({
         <NavIcon
           ref={anchor}
           icon="activity"
-          label={summary ? `Activity: ${summary}` : "Activity"}
+          label={summary ? `All activity: ${summary}` : "All activity"}
           current={current}
           active={live}
           aria-haspopup="dialog"
@@ -102,7 +102,7 @@ export default function ActivityTray({
           aria-haspopup="dialog"
           aria-expanded={open}
           data-live={live || undefined}
-          title={summary ? `Activity: ${summary}` : "Activity"}
+          title={summary ? `All activity: ${summary}` : "All activity"}
           onClick={() => setOpen((value) => !value)}
         >
           {running > 0 ? (
@@ -112,7 +112,7 @@ export default function ActivityTray({
           ) : (
             <Icon name="activity" />
           )}
-          <span className="nav-row-label">Activity</span>
+          <span className="nav-row-label">All activity</span>
           {summary && <span className="nav-activity-summary">{summary}</span>}
         </button>
       )}
@@ -120,7 +120,7 @@ export default function ActivityTray({
         open={open}
         onClose={close}
         anchorRef={anchor}
-        label="Activity"
+        label="All activity"
         side={compact ? "right" : "top"}
         align={compact ? "end" : "start"}
         width={304}

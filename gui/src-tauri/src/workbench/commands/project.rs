@@ -679,3 +679,26 @@ pub async fn workbench_studio_export_file(path: String, content: String) -> Work
     })
     .await
 }
+#[tauri::command]
+pub async fn workbench_earlier_records(
+    workspace_id: String,
+) -> WorkbenchResult<crate::workbench::project::earlier_records::EarlierRecords> {
+    run_store(move |store| {
+        crate::workbench::project::earlier_records::earlier_records(&store, &workspace_id)
+    })
+    .await
+}
+#[tauri::command]
+pub async fn workbench_export_earlier_records(
+    workspace_id: String,
+    destination: String,
+) -> WorkbenchResult<crate::workbench::project::earlier_records::EarlierRecordsExport> {
+    run_store(move |store| {
+        crate::workbench::project::earlier_records::export(
+            &store,
+            &workspace_id,
+            std::path::Path::new(&destination),
+        )
+    })
+    .await
+}

@@ -278,6 +278,6 @@ describe("Workbench DTO boundary", () => {
     expect(releaseClient.storageReport()).toBe(promise);
     const failure = { code: "native-error", detail: "unchanged" };
     invoke.mockRejectedValueOnce(failure);
-    await expect(researchClient.listSources("workspace")).rejects.toBe(failure);
+    await expect(researchClient.listPapers("workspace")).rejects.toBe(failure);
   });
 });

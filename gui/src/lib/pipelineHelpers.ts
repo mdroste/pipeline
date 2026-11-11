@@ -217,6 +217,7 @@ export function findUnknownPlaceholders(
 
 export interface WorkflowLintWarning {
   stepId: string;
+  field: "prompt" | "condition" | "iteration";
   message: string;
 }
 
@@ -278,16 +279,19 @@ export function lintCrossStepReferences(
         warnings.push({
           stepId: step.id,
           message: "prompt contains an empty {step:} reference",
+          field: "prompt",
         });
       } else if (!ids.has(id)) {
         warnings.push({
           stepId: step.id,
           message: `prompt references unknown step '{step:${id}}'`,
+          field: "prompt",
         });
       } else if (!enabled.has(id)) {
         warnings.push({
           stepId: step.id,
           message: `prompt references disabled step '{step:${id}}'`,
+          field: "prompt",
         });
       }
       const pointer = reference.includes("#")
@@ -296,7 +300,8 @@ export function lintCrossStepReferences(
       if (pointer && !pointer.startsWith("/")) {
         warnings.push({
           stepId: step.id,
-          message: `'{step:${reference}}' pointer must start with '/' (RFC 6901)`,
+          message: `Start the result path in '{step:${reference}}' with '/'.`,
+          field: "prompt",
         });
       }
     }
@@ -305,17 +310,20 @@ export function lintCrossStepReferences(
       if (!ids.has(condition.step)) {
         warnings.push({
           stepId: step.id,
-          message: `run_if watches unknown step '${condition.step}'`,
+          message: `The run condition refers to a missing step, '${condition.step}'.`,
+          field: "condition",
         });
       } else if (!enabled.has(condition.step)) {
         warnings.push({
           stepId: step.id,
-          message: `run_if watches disabled step '${condition.step}'`,
+          message: `The run condition refers to a disabled step, '${condition.step}'.`,
+          field: "condition",
         });
       } else if (withSchema.has(condition.step)) {
         warnings.push({
           stepId: step.id,
-          message: `run_if matches against step '${condition.step}', whose output is canonical JSON — anchor the pattern to JSON text, not prose`,
+          message: `This condition reads JSON from '${condition.step}'. Match the text as it appears in that result.`,
+          field: "condition",
         });
       }
     }
@@ -325,7 +333,8 @@ export function lintCrossStepReferences(
       ) {
         warnings.push({
           stepId: step.id,
-          message: `run_if survey pointer '${condition.pointer}' does not exist in the orientation schema`,
+          message: `The run condition uses '${condition.pointer}', which is missing from the orientation output format.`,
+          field: "condition",
         });
       }
     }
@@ -337,7 +346,8 @@ export function lintCrossStepReferences(
     ) {
       warnings.push({
         stepId: step.id,
-        message: `fans out over step '${artifact.step}', which returns Markdown rather than a structured artifact`,
+        message: `Cannot repeat over items from '${artifact.step}': it returns Markdown. Choose a result with a list of items.`,
+        field: "iteration",
       });
     }
   }

@@ -507,7 +507,7 @@ export default function ProjectsPage({
               <span className="block truncate text-sm font-medium text-gray-900 dark:text-gray-100">
                 {project.name}
               </span>
-              <span className="mt-0.5 block text-[11px] text-gray-500 dark:text-gray-400">
+              <span className="mt-0.5 block text-[0.6875rem] text-gray-500 dark:text-gray-400">
                 {project.run_ids.length} run
                 {project.run_ids.length === 1 ? "" : "s"} ·{" "}
                 {formatDate(project.updated)}
@@ -554,7 +554,7 @@ export default function ProjectsPage({
                     <p className="truncate text-xs font-medium text-gray-900 dark:text-gray-100">
                       {entry.project.name}
                     </p>
-                    <p className="mt-0.5 text-[10px] text-gray-500">
+                    <p className="mt-0.5 text-[0.625rem] text-gray-500">
                       Moved {formatDate(entry.deleted_at)}
                     </p>
                     <div className="mt-1 flex gap-2">
@@ -562,7 +562,7 @@ export default function ProjectsPage({
                         type="button"
                         disabled={pending}
                         onClick={() => void restoreProject(entry)}
-                        className="text-[11px] text-gray-700 disabled:opacity-40 dark:text-gray-300"
+                        className="text-[0.6875rem] text-gray-700 disabled:opacity-40 dark:text-gray-300"
                       >
                         Restore
                       </button>
@@ -570,7 +570,7 @@ export default function ProjectsPage({
                         type="button"
                         disabled={pending}
                         onClick={() => void permanentlyDeleteProject(entry)}
-                        className="text-[11px] text-red-600 disabled:opacity-40 dark:text-red-400"
+                        className="text-[0.6875rem] text-red-600 disabled:opacity-40 dark:text-red-400"
                       >
                         Delete forever
                       </button>
@@ -636,7 +636,7 @@ export default function ProjectsPage({
                 <p
                   role="status"
                   aria-live="polite"
-                  className="mt-1 text-[11px] text-gray-500 dark:text-gray-400"
+                  className="mt-1 text-[0.6875rem] text-gray-500 dark:text-gray-400"
                 >
                   {detailsStatus === "saving"
                     ? "Saving…"

@@ -1,7 +1,7 @@
 # Pipeline
 
 [![CI](https://github.com/mdroste/pipeline/actions/workflows/build.yml/badge.svg)](https://github.com/mdroste/pipeline/actions/workflows/build.yml)
-[![Version 1.4.4](https://img.shields.io/badge/version-1.4.4-blue)](CHANGELOG.md)
+[![Version 1.4.6](https://img.shields.io/badge/version-1.4.6-blue)](CHANGELOG.md)
 [![License: MIT](https://img.shields.io/github/license/mdroste/pipeline)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](#install)
 [![Windows](https://img.shields.io/badge/Windows-0078D4)](#install)
@@ -100,7 +100,7 @@ manuscripts and code, or start without one to collect sources and notes.
 Conversations use the project material and tools you choose. You can set
 assistant instructions and run your own LaTeX, Stata, R, or Python commands.
 See [Projects and conversations](docs/projects.md) and
-[Analyze and write](docs/analysis-and-writing.md).
+[Write and review](docs/analysis-and-writing.md).
 
 ## Automate repeated work
 

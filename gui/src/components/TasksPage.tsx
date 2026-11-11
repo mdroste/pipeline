@@ -95,7 +95,7 @@ export default function TasksPage({
     return discard;
   };
   const [error, setError] = useState("");
-  const [background, setBackground] = useState(false);
+  const [background, setBackground] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [offset, setOffset] = useState(0);
   const refreshVersion = useRef(0);
@@ -194,7 +194,7 @@ export default function TasksPage({
   return (
     <main className="ui-page tasks-page">
       <PageHeader
-        title="Automations"
+        title="All automations"
         description="Run project work and reviews now or on a schedule, with pauses for your input."
         action={
           view !== "missions" && (
@@ -227,8 +227,9 @@ export default function TasksPage({
         </div>
         <label className="task-background">
           <input
+            id="task-background-mode"
             type="checkbox"
-            checked={background}
+            checked={background === true}
             onChange={(e) => {
               void taskClient
                 .background(e.target.checked)
@@ -390,6 +391,14 @@ export default function TasksPage({
                 <Detail
                   key={selected.id}
                   run={selected}
+                  background={background}
+                  onBackgroundSetup={() => {
+                    const control = document.getElementById(
+                      "task-background-mode",
+                    );
+                    control?.scrollIntoView?.({ block: "center" });
+                    control?.focus();
+                  }}
                   onUpdated={select}
                   onClose={() => {
                     selectedRef.current = null;

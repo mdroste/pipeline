@@ -44,6 +44,8 @@ pub struct ReviewModelChoice {
 /// snapshot, saved with the run, and never written to Settings.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct RunModelOverrides {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_method: Option<String>,
     // Defaults are skipped when serializing so payloads from before these
     // fields keep the same fingerprint.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -428,8 +430,14 @@ pub(super) fn apply_model_overrides(
 ) -> Result<(), String> {
     if let Some(review) = &overrides.review {
         apply_review_model(settings, config, review, overrides)?;
-    } else if overrides.agents.is_empty() {
+    } else if overrides.agents.is_empty() && overrides.extraction_method.is_none() {
         return Err("Select at least one Parallel agent".to_string());
+    }
+    if let Some(method) = overrides.extraction_method.as_deref() {
+        if !matches!(method, "pdftotext" | "llm" | "paddleocr-vl-full") {
+            return Err(format!("Unknown PDF reading method '{method}'"));
+        }
+        config.extraction.method = method.to_string();
     }
     if !overrides.agents.is_empty() {
         settings.default_parallel_agents = overrides.agents.clone();

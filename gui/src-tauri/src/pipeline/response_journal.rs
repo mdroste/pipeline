@@ -115,7 +115,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .map_err(|error| format!("Failed to flush response journal: {error}"))?;
     crate::safety::sync_file(temp.as_file())
         .map_err(|error| format!("Failed to sync response journal: {error}"))?;
-    temp.persist(path)
+    crate::safety::persist_file(temp, path)
         .map_err(|error| format!("Failed to publish response journal: {}", error.error))?;
     #[cfg(unix)]
     std::fs::File::open(directory)

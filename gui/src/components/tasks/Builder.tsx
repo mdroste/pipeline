@@ -13,10 +13,23 @@ import { NumberField } from "./NumberField";
 import OutlineEditor from "./OutlineEditor";
 import { Timing } from "./Timing";
 import ReportIssueLink from "../ReportIssueLink";
+import PaperInput from "./PaperInput";
 
 const LIMITS = { maxActions: 64, deadlineHours: 168, actionTimeoutSecs: 7200 };
 
 type TemplateKind = "review" | "prompt" | "input" | "blank";
+type Draft = {
+  kind: TemplateKind;
+  prompt: string;
+  profile: string;
+  rounds: number;
+  path: string;
+  pristine: boolean;
+  editedChain: Chain | null;
+  name: string;
+  inputs: string;
+  trigger: Trigger;
+};
 
 export default function Builder({
   initialSessionId,
@@ -51,6 +64,10 @@ export default function Builder({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [name, setName] = useState("Review and revise");
+  const [selectedTemplate, setSelectedTemplate] = useState("review");
+  const drafts = useRef(new Map<string, Draft>());
+  const [pathValid, setPathValid] = useState(!initialPath);
   const operation = useRef(crypto.randomUUID());
   const blank: Chain = {
     schemaVersion: 1,
@@ -59,14 +76,65 @@ export default function Builder({
     steps: [],
     limits: LIMITS,
   };
-  const chain =
+  const source =
     editedChain ??
     (kind === "blank" ? blank : template(kind, prompt, profile, rounds, path));
+  const chain = { ...source, name };
   const setChain = (next: Chain) => {
     onDirtyChange?.(true);
     setEditedChain(next);
     setPristine(false);
+    setName(next.name);
   };
+  function selectTemplate(key: string, savedChain?: Chain) {
+    if (key === selectedTemplate) return;
+    drafts.current.set(
+      selectedTemplate,
+      structuredClone({
+        kind,
+        prompt,
+        profile,
+        rounds,
+        path,
+        pristine,
+        editedChain,
+        name,
+        inputs,
+        trigger,
+      }),
+    );
+    const nextKind = savedChain ? "blank" : (key as TemplateKind);
+    const draft = drafts.current.get(key) ?? {
+      kind: nextKind,
+      prompt: "",
+      profile,
+      rounds: 3,
+      path: "",
+      pristine: !savedChain,
+      editedChain: savedChain ? structuredClone(savedChain) : null,
+      name:
+        savedChain?.name ??
+        (nextKind === "blank"
+          ? "New automation"
+          : template(nextKind, "", profile).name),
+      inputs: "{}",
+      trigger: { kind: "now" } as Trigger,
+    };
+    setKind(draft.kind);
+    setPrompt(draft.prompt);
+    setProfile(draft.profile);
+    setRounds(draft.rounds);
+    setPath(draft.path);
+    setPristine(draft.pristine);
+    setEditedChain(draft.editedChain);
+    setName(draft.name);
+    setInputs(draft.inputs);
+    setTrigger(draft.trigger);
+    setSelectedTemplate(key);
+    setError("");
+    setNotice("Your edits stay with each template while this builder is open.");
+    onDirtyChange?.(true);
+  }
   useEffect(() => {
     let alive = true;
     void Promise.all([
@@ -116,15 +184,19 @@ export default function Builder({
     }
   }
   async function saveAsTemplate() {
+    if (busy || !name.trim()) return;
+    setBusy(true);
     setError("");
     setNotice("");
     try {
       const validated = await taskClient.validate(JSON.stringify(chain));
       await taskClient.saveChain(validated);
       setSaved(await taskClient.chains());
-      setNotice("Saved. It is available under Saved automations.");
+      setNotice(`Saved “${chain.name}” to My templates.`);
     } catch (e) {
       setError(String(e));
+    } finally {
+      setBusy(false);
     }
   }
   return (
@@ -170,18 +242,49 @@ export default function Builder({
             key={id}
             type="button"
             aria-label={title}
-            aria-pressed={kind === id && editedChain === null}
-            onClick={() => {
-              onDirtyChange?.(true);
-              setKind(id);
-              setEditedChain(null);
-              setPristine(true);
-            }}
+            aria-pressed={selectedTemplate === id}
+            onClick={() => selectTemplate(id)}
           >
             <strong>{title}</strong>
             <span>{subtitle}</span>
           </button>
         ))}
+      </div>
+      <div className="task-form-row">
+        <label>
+          Automation name
+          <input value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label>
+          My templates
+          <select
+            value={
+              selectedTemplate.startsWith("saved:")
+                ? selectedTemplate.slice(6)
+                : ""
+            }
+            onChange={(e) => {
+              const item = saved.find((v) => v.id === e.target.value);
+              if (item) selectTemplate(`saved:${item.id}`, item.chain);
+            }}
+          >
+            <option value="">
+              {saved.length ? "Choose a template" : "No saved templates yet"}
+            </option>
+            {saved.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.chain.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          disabled={busy || !name.trim() || !chain.steps.length}
+          onClick={() => void saveAsTemplate()}
+        >
+          Save as template
+        </button>
       </div>
       <label>
         Conversation
@@ -240,14 +343,15 @@ export default function Builder({
               </div>
               <details>
                 <summary>Start from an existing paper</summary>
-                <label>
-                  File within the conversation’s folder
-                  <input
-                    value={path}
-                    onChange={(e) => setPath(e.target.value)}
-                    placeholder="/path/to/paper.pdf"
-                  />
-                </label>
+                <PaperInput
+                  sessionId={session}
+                  value={path}
+                  onChange={(next) => {
+                    onDirtyChange?.(true);
+                    setPath(next);
+                  }}
+                  onValidChange={setPathValid}
+                />
                 <p className="task-muted">
                   Leave blank to draft from your idea. Revisions from this
                   template are saved as Markdown.
@@ -256,15 +360,6 @@ export default function Builder({
             </>
           )}
         </>
-      )}
-      {!pristine && (
-        <label>
-          Automation name
-          <input
-            value={chain.name}
-            onChange={(e) => setChain({ ...chain, name: e.target.value })}
-          />
-        </label>
       )}
       <OutlineEditor chain={chain} onChange={setChain} profiles={profiles} />
       <details className="task-advanced">
@@ -305,26 +400,6 @@ export default function Builder({
               }}
             />
           </label>
-          {saved.length > 0 && (
-            <select
-              aria-label="Use a saved automation"
-              value=""
-              onChange={(e) => {
-                const c = saved.find((v) => v.id === e.target.value);
-                if (c) setChain(structuredClone(c.chain));
-              }}
-            >
-              <option value="">Saved automations…</option>
-              {saved.map((c) => (
-                <option value={c.id} key={c.id}>
-                  {c.chain.name}
-                </option>
-              ))}
-            </select>
-          )}
-          <button type="button" onClick={() => void saveAsTemplate()}>
-            Save as template
-          </button>
         </div>
         <label>
           Named inputs
@@ -394,6 +469,8 @@ export default function Builder({
           className="task-primary"
           disabled={
             busy ||
+            !name.trim() ||
+            (pristine && kind === "review" && !!path && !pathValid) ||
             chain.steps.length === 0 ||
             (pristine &&
               kind !== "blank" &&

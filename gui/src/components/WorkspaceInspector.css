@@ -14,16 +14,16 @@
   width: 100%;
 }
 .workspace-assistant-inspector aside > header {
-  padding: 8px 16px;
+  padding: 0.5rem 1rem;
 }
 .workspace-assistant-inspector aside > header h2 {
   font-size: var(--ui-text-title);
 }
 .workspace-assistant-inspector aside > header p {
-  margin-top: 2px;
+  margin-top: 0.125rem;
 }
 .workspace-assistant-inspector .workspace-research-tabs {
-  padding: 0 16px 8px;
+  padding: 0 1rem 0.5rem;
 }
 .workspace-research-content {
   overflow-wrap: anywhere;
@@ -40,36 +40,36 @@
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 20px;
+  padding: 1.25rem;
   font-size: var(--ui-text-label);
 }
 .workspace-inspector-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 18px;
+  gap: 0.75rem;
+  margin-bottom: 1.125rem;
 }
 .workspace-inspector-heading h2 {
   font-size: var(--ui-text-title);
   font-weight: 600;
 }
 .workspace-inspector-heading button {
-  padding: 4px 10px;
+  padding: 0.25rem 0.625rem;
 }
 .workspace-simple-inspector p {
-  margin-bottom: 12px;
+  margin-bottom: 0.75rem;
 }
 .workspace-simple-inspector > button {
   display: block;
-  margin: 12px 0;
-  padding: 7px 10px;
+  margin: 0.75rem 0;
+  padding: 0.4375rem 0.625rem;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-sm);
   font-size: var(--ui-text-meta);
 }
 .workspace-activity-row {
-  padding: 10px 0;
+  padding: 0.625rem 0;
   border-top: 1px solid var(--ui-border);
   overflow-wrap: anywhere;
 }
@@ -80,7 +80,7 @@
 }
 
 .workspace-quick-settings {
-  padding-top: 12px;
+  padding-top: 0.75rem;
   border-top: 1px solid var(--ui-border);
 }
 .workspace-quick-settings > summary {
@@ -91,45 +91,45 @@
 .workspace-quick-settings fieldset > label {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 14px;
+  gap: 0.375rem;
+  margin-top: 0.875rem;
   font-size: var(--ui-text-meta);
 }
 .workspace-quick-settings textarea,
 .workspace-quick-settings input:not([type="checkbox"]) {
   width: 100%;
-  padding: 8px;
+  padding: 0.5rem;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-sm);
   background: var(--ui-surface);
 }
 .workspace-quick-settings p {
-  margin: 12px 0;
+  margin: 0.75rem 0;
   color: var(--ui-muted);
   font-size: var(--ui-text-meta);
 }
 .workspace-quick-settings fieldset > button {
-  padding: 7px 10px;
+  padding: 0.4375rem 0.625rem;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-sm);
   font-size: var(--ui-text-meta);
 }
 .workspace-module-choices {
-  margin-top: 14px;
+  margin-top: 0.875rem;
 }
 .workspace-module-choices label {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 8px 0;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
   font-size: var(--ui-text-meta);
 }
 .workspace-module-choices input {
-  margin-top: 3px;
+  margin-top: 0.1875rem;
 }
 .workspace-module-choices small {
   display: block;
-  margin-top: 3px;
+  margin-top: 0.1875rem;
   color: var(--ui-muted);
   font-size: var(--ui-text-meta);
 }

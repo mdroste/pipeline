@@ -386,3 +386,85 @@ fn author_note_cli_option_is_literal_and_supported_by_run_check_and_batch() {
         .is_err());
     }
 }
+
+#[test]
+fn exact_model_ids_and_limits_are_identical_for_run_check_and_batch() {
+    for (command, input) in [
+        ("run", "--input"),
+        ("check", "--input"),
+        ("batch", "--input-dir"),
+    ] {
+        let parsed = parse_cli(&strings(&[
+            command,
+            input,
+            "paper",
+            "--model",
+            "local:qwen2.5:14b",
+            "--thinking",
+            "high",
+            "--model-everywhere",
+            "--max-cost",
+            "1.25",
+            "--max-calls",
+            "3",
+            "--max-minutes",
+            "10",
+        ]))
+        .unwrap();
+        let (model, limits) = match parsed {
+            ParseAction::Execute(Command::Run(args)) => (args.model, args.limits),
+            ParseAction::Execute(Command::Check(args)) => (args.model, args.limits),
+            ParseAction::Execute(Command::Batch(args)) => (args.model, args.limits),
+            _ => panic!("unexpected command"),
+        };
+        let model = model.overrides().unwrap();
+        let choice = model.review.unwrap();
+        assert_eq!(
+            (
+                choice.provider.as_str(),
+                choice.model.as_str(),
+                choice.effort.as_str()
+            ),
+            ("local", "qwen2.5:14b", "high")
+        );
+        assert!(model.override_workflow_pins && model.clear_settings_exceptions);
+        assert_eq!(limits.overrides().max_cost_usd, Some(1.25));
+        assert_eq!(limits.overrides().max_calls, Some(3));
+        assert_eq!(limits.overrides().max_minutes, Some(10));
+    }
+    let ParseAction::Execute(Command::Check(args)) = parse_cli(&strings(&[
+        "check",
+        "--model-id",
+        "namespace:model:high",
+        "--model",
+        "chatgpt",
+        "--thinking",
+        "low",
+    ]))
+    .unwrap() else {
+        panic!("expected check");
+    };
+    let choice = args.model.overrides().unwrap().review.unwrap();
+    assert_eq!(choice.model, "namespace:model:high");
+    assert_eq!(choice.effort, "low");
+    for options in [
+        vec!["check", "--thinking", "high"],
+        vec!["check", "--model", "local:tag", "--model-id", "tag:other"],
+        vec!["check", "--model", "claude:x:high", "--thinking", "low"],
+        vec!["check", "--max-calls", "1", "--max-calls", "2"],
+    ] {
+        assert!(parse_cli(&strings(&options)).is_err(), "{options:?}");
+    }
+}
+
+#[test]
+fn workflow_loader_accepts_a_single_utf8_signature_and_still_validates_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("workflow.json");
+    let template = pipeline_gui_lib::pipeline_config::workflow_template().unwrap();
+    std::fs::write(&path, format!("\u{feff}{}", template.canonical_json)).unwrap();
+    let loaded = load_cli_workflow(path.to_str().unwrap()).unwrap();
+    assert_eq!(loaded.document.fingerprint, template.fingerprint);
+    std::fs::write(&path, "\u{feff}{malformed").unwrap();
+    assert!(load_cli_workflow(path.to_str().unwrap()).is_err());
+}

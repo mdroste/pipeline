@@ -226,7 +226,7 @@ export default function PaperSelector({
           )}
         </button>
       </div>
-      <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+      <p className="mt-1 text-[0.6875rem] text-gray-500 dark:text-gray-400">
         {inputMode === "folder"
           ? "Drop a folder here, or use the folder picker."
           : "Drop local files here, or use the file and folder pickers."}
@@ -288,7 +288,7 @@ export default function PaperSelector({
               )}
             </select>
           </label>
-          <p className="text-[11px] leading-4 text-gray-500 dark:text-gray-400">
+          <p className="text-[0.6875rem] leading-4 text-gray-500 dark:text-gray-400">
             {selection?.interpretation === "latex_project"
               ? "Pipeline finds the main TeX file and reads the local files it includes."
               : selection?.interpretation === "source_tree"

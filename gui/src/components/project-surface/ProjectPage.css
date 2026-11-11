@@ -8,27 +8,27 @@
   overflow: auto;
 }
 .project-page-body {
-  max-width: 1080px;
+  max-width: 67.5rem;
   margin: 0 auto;
-  padding: 18px 32px 56px;
+  padding: 1.125rem 2rem 3.5rem;
   color: var(--ui-text);
 }
 .project-page-hint {
-  margin: 0 0 8px;
+  margin: 0 0 0.5rem;
   color: var(--ui-muted);
   font-size: var(--ui-text-label);
   line-height: 1.5;
 }
 .project-section {
   min-width: 0;
-  padding: 16px 0 20px;
+  padding: 1rem 0 1.25rem;
   border-top: 1px solid var(--ui-border);
 }
 .project-section > * + * {
-  margin-top: 12px;
+  margin-top: 0.75rem;
 }
 details.project-section {
-  padding: 11px 0;
+  padding: 0.6875rem 0;
 }
 details.project-section > summary {
   cursor: pointer;
@@ -53,18 +53,18 @@ details.project-section > summary::marker {
   border-top: 0;
 }
 .project-section .project-section {
-  padding: 14px 16px;
+  padding: 0.875rem 1rem;
   border: 1px solid var(--ui-border);
   border-radius: var(--ui-radius-md);
 }
 .project-jobs {
   flex-shrink: 0;
-  padding: 7px 14px;
+  padding: 0.4375rem 0.875rem;
   border-bottom: 1px solid var(--ui-border);
   font-size: var(--ui-text-meta);
 }
 .project-jobs > * + * {
-  margin-top: 8px;
+  margin-top: 0.5rem;
 }
 .project-panel {
   display: flex;
@@ -75,18 +75,18 @@ details.project-section > summary::marker {
 }
 .project-panel .workspace-research-content {
   width: 100%;
-  max-width: 1080px;
+  max-width: 67.5rem;
   margin: 0 auto;
-  padding: 4px 32px 56px;
+  padding: 0.25rem 2rem 3.5rem;
 }
 .project-panel > * > .project-page-hint {
   width: 100%;
-  max-width: 1080px;
+  max-width: 67.5rem;
   margin: 0 auto;
-  padding: 18px 32px 12px;
+  padding: 1.125rem 2rem 0.75rem;
 }
 @media (max-width: 720px) {
   .project-page-body {
-    padding: 14px 16px 40px;
+    padding: 0.875rem 1rem 2.5rem;
   }
 }

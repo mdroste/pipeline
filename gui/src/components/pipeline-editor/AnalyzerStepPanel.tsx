@@ -83,7 +83,7 @@ export default function AnalyzerStepPanel({
             <p className="mt-1 text-xs leading-5 text-gray-600 dark:text-gray-400">
               {info.description}
             </p>
-            <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+            <p className="mt-1 text-[0.6875rem] text-gray-500 dark:text-gray-400">
               Reads: {info.reads.join("; ")}. Runs on this computer and makes no
               model call.
             </p>
@@ -131,14 +131,14 @@ export default function AnalyzerStepPanel({
           <span>
             Use this check&apos;s results as the Review&apos;s findings
             {step.phase !== "sequential" && (
-              <span className="block text-[11px] text-gray-500">
+              <span className="block text-[0.6875rem] text-gray-500">
                 Available when it runs after earlier steps.
               </span>
             )}
           </span>
         </label>
       </div>
-      <p className="text-[11px] leading-5 text-gray-500 dark:text-gray-400">
+      <p className="text-[0.6875rem] leading-5 text-gray-500 dark:text-gray-400">
         Later model steps can read this check&apos;s results by selecting this
         step&apos;s output under Inputs.
       </p>

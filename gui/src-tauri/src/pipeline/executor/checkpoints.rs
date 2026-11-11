@@ -58,7 +58,7 @@ pub(super) async fn checkpoint_output(
             .map_err(|error| format!("Failed to flush step checkpoint: {error}"))?;
         crate::safety::sync_file(temp.as_file())
             .map_err(|error| format!("Failed to sync step checkpoint: {error}"))?;
-        temp.persist(&destination)
+        crate::safety::persist_file(temp, &destination)
             .map_err(|error| format!("Failed to publish step checkpoint: {}", error.error))?;
         #[cfg(unix)]
         std::fs::File::open(&directory)
@@ -118,7 +118,7 @@ pub(super) async fn checkpoint_wave(
         let mut temp = tempfile::NamedTempFile::new_in(&directory).map_err(|e| e.to_string())?;
         temp.write_all(&bytes).map_err(|e| e.to_string())?;
         crate::safety::sync_file(temp.as_file()).map_err(|e| e.to_string())?;
-        temp.persist(destination).map_err(|e| e.to_string())?;
+        crate::safety::persist_file(temp, destination).map_err(|e| e.to_string())?;
         #[cfg(unix)]
         std::fs::File::open(&directory)
             .and_then(|directory| crate::safety::sync_file(&directory))
@@ -153,7 +153,7 @@ pub(super) async fn checkpoint_failure(
             .map_err(|error| format!("Failed to flush failure checkpoint: {error}"))?;
         crate::safety::sync_file(temp.as_file())
             .map_err(|error| format!("Failed to sync failure checkpoint: {error}"))?;
-        temp.persist(&destination)
+        crate::safety::persist_file(temp, &destination)
             .map_err(|error| format!("Failed to publish failure checkpoint: {}", error.error))?;
         #[cfg(unix)]
         std::fs::File::open(&directory)

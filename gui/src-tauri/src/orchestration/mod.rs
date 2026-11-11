@@ -15,6 +15,7 @@ mod completion;
 pub mod definition;
 pub mod discovery;
 mod durable;
+pub mod input_files;
 pub mod missions;
 #[path = "coordinator/recovery.rs"]
 mod recovery;

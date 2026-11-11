@@ -10,6 +10,7 @@ mod scoped_ids;
 mod text_imports;
 #[cfg(unix)]
 mod value_macros;
+#[cfg(unix)]
 static JOB_TEST_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 #[test]
 fn bibtex_preserves_nested_fields_and_duplicate_keys() {
@@ -912,8 +913,25 @@ fn theory_notes_keep_unresolved_steps_and_abandoned_reasons_discoverable() {
     open_rejected.status = "open".into();
     assert!(save_theory(&f.store, &f.ws, None, 0, open_rejected).is_err());
     let rejected = save_theory(&f.store, &f.ws, None, 0, rejected).unwrap();
+    // The assistant reads abandoned approaches through the notes they are
+    // copied into, once and only once.
+    assert!(!project_context(&f.store, &f.ws)
+        .unwrap()
+        .contains("contraction constant exceeds one"));
+    let convert = super::super::earlier_records::convert_abandoned_approaches;
+    assert_eq!(convert(&f.store, &f.ws).unwrap(), 1);
+    assert_eq!(convert(&f.store, &f.ws).unwrap(), 0);
+    let notes = research::list_notes(&f.store, &f.ws, true).unwrap();
+    let copied = notes
+        .iter()
+        .find(|n| n.origin == format!("theory:{}", rejected.id))
+        .unwrap();
+    assert_eq!(
+        (copied.kind.as_str(), copied.state.as_str()),
+        ("decision", "accepted")
+    );
     let context = project_context(&f.store, &f.ws).unwrap();
-    assert!(context.contains(&format!("Abandoned approach {}", rejected.id)));
+    assert!(context.contains("Abandoned approach: Existence under log utility"));
     assert!(context.contains("contraction constant exceeds one"));
     assert!(context.contains("Preferences are strictly convex"));
     assert!(!context.contains("Fixed-point argument over the price simplex"));

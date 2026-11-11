@@ -185,6 +185,17 @@ describe("PipelinePage", () => {
     expect(invoke).toHaveBeenCalledWith("list_profiles");
   });
 
+  it("opens the requested step after the workflow loads", async () => {
+    mockLoad(makeConfig());
+    render(<PipelinePage onClose={vi.fn()} initialStageId="consolidate" />);
+    expect(
+      await screen.findByDisplayValue("Merge {prior_outputs}."),
+    ).toBeVisible();
+    expect(
+      screen.queryByDisplayValue("Check the proofs."),
+    ).not.toBeInTheDocument();
+  });
+
   it("uses opaque dark surfaces and a header per section in the navigator", async () => {
     const user = userEvent.setup();
     mockLoad(makeConfig());
@@ -970,7 +981,7 @@ describe("PipelinePage", () => {
 
     expect(onDirtyChange).toHaveBeenCalledWith(false);
     expect(
-      screen.queryByRole("button", { name: "Back" }),
+      screen.queryByRole("button", { name: "Back to review" }),
     ).not.toBeInTheDocument();
 
     await addBlankStep(user);

@@ -44,7 +44,7 @@ function RoleCard({
           {shortRoleLabel(role, group)}
         </h3>
         {isFallback && (
-          <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+          <span className="shrink-0 rounded-full bg-gray-100 px-2 py-0.5 text-[0.5625rem] font-semibold uppercase tracking-wide text-gray-500 dark:bg-gray-800 dark:text-gray-400">
             General reviewer
           </span>
         )}
@@ -86,7 +86,7 @@ function GroupedTab({
             className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs ${group.id === active.id ? "bg-blue-50 font-medium text-blue-900 dark:bg-blue-950/50 dark:text-blue-100" : "text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800"}`}
           >
             <span>{group.label}</span>
-            <span className="ml-2 text-[10px] text-gray-400">
+            <span className="ml-2 text-[0.625rem] text-gray-400">
               {group.roles.length}
             </span>
           </button>
@@ -98,7 +98,7 @@ function GroupedTab({
             {active.label}
           </h3>
           {hint && (
-            <p className="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+            <p className="mt-0.5 text-[0.6875rem] text-gray-500 dark:text-gray-400">
               {hint}
             </p>
           )}
@@ -194,7 +194,7 @@ export default function AutoReviewCatalogDialog({
         <header className="border-b border-gray-200 bg-white px-5 py-4 dark:border-gray-800 dark:bg-gray-900 sm:px-6">
           <div className="flex items-start gap-4">
             <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-blue-700 dark:text-blue-300">
+              <p className="text-[0.625rem] font-semibold uppercase tracking-[0.14em] text-blue-700 dark:text-blue-300">
                 Paper Review and Slide Review
               </p>
               <h2
@@ -218,7 +218,7 @@ export default function AutoReviewCatalogDialog({
             </button>
           </div>
           {catalog && (
-            <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-gray-600 dark:text-gray-300">
+            <div className="mt-3 flex flex-wrap gap-2 text-[0.6875rem] text-gray-600 dark:text-gray-300">
               <span className="rounded-full bg-blue-50 px-2.5 py-1 dark:bg-blue-950/40">
                 {catalog.disciplines.length} discipline
                 {catalog.disciplines.length === 1 ? "" : "s"}
@@ -304,7 +304,7 @@ export default function AutoReviewCatalogDialog({
         </div>
 
         <footer className="flex items-center justify-between border-t border-gray-200 bg-white px-5 py-3 dark:border-gray-800 dark:bg-gray-900 sm:px-6">
-          <p className="text-[10px] text-gray-500 dark:text-gray-400">
+          <p className="text-[0.625rem] text-gray-500 dark:text-gray-400">
             Reviewers check both the subject matter and the methods.
           </p>
           <button

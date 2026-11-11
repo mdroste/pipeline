@@ -121,7 +121,7 @@ function RunRow({
         </span>
         <span className="min-w-0 flex-1">
           <span
-            className={`block truncate text-[13px] leading-5 ${
+            className={`block truncate text-[0.8125rem] leading-5 ${
               unseen || live
                 ? "font-medium text-gray-900 dark:text-neutral-100"
                 : "text-gray-600 dark:text-neutral-400"
@@ -130,7 +130,7 @@ function RunRow({
             {run.label}
           </span>
           <span
-            className={`block truncate text-[11px] leading-4 ${
+            className={`block truncate text-[0.6875rem] leading-4 ${
               run.status === "running"
                 ? "tabular-nums text-blue-700 dark:text-blue-300"
                 : run.status === "failed"
@@ -198,7 +198,7 @@ export default function ReviewRunList({
   ];
   return (
     <div className="space-y-0.5 pt-1">
-      <div className="flex items-center gap-1 pl-2.5 pr-1 text-[11px] text-gray-500 dark:text-neutral-500">
+      <div className="flex items-center gap-1 pl-2.5 pr-1 text-[0.6875rem] text-gray-500 dark:text-neutral-500">
         <p role="status" className="min-w-0 flex-1 truncate tabular-nums">
           {running + queued > 0
             ? `${running} of ${limit} running${queued > 0 ? ` · ${queued} queued` : ""}`
@@ -239,7 +239,7 @@ export default function ReviewRunList({
         <button
           type="button"
           onClick={() => onDismiss()}
-          className="ml-2.5 rounded px-0 py-0.5 text-[11px] text-gray-400 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-neutral-500 dark:hover:text-neutral-200"
+          className="ml-2.5 rounded px-0 py-0.5 text-[0.6875rem] text-gray-400 hover:text-gray-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-neutral-500 dark:hover:text-neutral-200"
         >
           Clear finished
           {finished.length > 1 ? ` (${finished.length})` : ""}

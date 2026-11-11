@@ -11,13 +11,6 @@ import type {
   BuildRecord,
   ResponseRecord,
 } from "../lib/studioClient";
-import { deskClient } from "../lib/deskClient";
-import {
-  programClient,
-  type Campaign,
-  type CampaignStatus,
-  type MonitorState,
-} from "../lib/programClient";
 import { taskClient } from "../lib/taskClient";
 import { repositoryClient } from "../lib/repositoryClient";
 import { workbenchErrorMessage } from "../lib/workbenchError";
@@ -115,8 +108,6 @@ export default function useProjectSignals({
       (value: ProjectSignals[K]) =>
         setSignals((current) => ({ ...current, [name]: value }));
 
-    load(() => studioClient.coverage(workspaceId), set("coverage"));
-    load(() => deskClient.impact(workspaceId), set("impact"));
     load(
       () =>
         studioClient.records<BuildRecord | BuildReceipt>(workspaceId, "build"),
@@ -126,27 +117,6 @@ export default function useProjectSignals({
       () => studioClient.records<ResponseRecord>(workspaceId, "response"),
       set("responses"),
     );
-    load(
-      () =>
-        programClient.call<MonitorState>(workspaceId, { action: "monitors" }),
-      set("monitors"),
-    );
-    load(async () => {
-      const campaigns = await deskClient.records<Campaign>(
-        workspaceId,
-        "revision_campaign",
-      );
-      const superseded = new Set(campaigns.map((record) => record.supersedes));
-      const latest = campaigns
-        .filter((record) => !superseded.has(record.id))
-        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
-      return latest
-        ? programClient.call<CampaignStatus>(workspaceId, {
-            action: "campaignStatus",
-            id: latest.id,
-          })
-        : null;
-    }, set("campaign"));
     load(async () => {
       const tasks = await taskClient.list("session");
       const own = new Set(sessions.current);

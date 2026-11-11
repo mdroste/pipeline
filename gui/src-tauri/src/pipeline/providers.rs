@@ -148,6 +148,7 @@ pub async fn call_llm(
                 }
             });
         let effort = request_effort(provider, transport, &model, &settings, overrides);
+        crate::pipeline::logging::record_resolved_model(&model);
         let provider_label = chooser;
         let (model_text, model_basis) = if cli_chooses {
             match expected_model.as_deref() {

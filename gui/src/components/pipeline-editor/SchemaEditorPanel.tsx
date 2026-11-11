@@ -405,7 +405,7 @@ export default function SchemaEditorPanel({
             <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
               {target.step.label} result
             </h2>
-            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[0.625rem] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">
               Pipeline writes this result
             </span>
           </div>
@@ -426,7 +426,7 @@ export default function SchemaEditorPanel({
             {title}
           </h2>
           <span
-            className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+            className={`rounded-full px-2 py-0.5 text-[0.625rem] font-medium ${
               configuredSchema
                 ? "bg-violet-50 text-violet-700 dark:bg-violet-950/50 dark:text-violet-300"
                 : "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
@@ -441,12 +441,12 @@ export default function SchemaEditorPanel({
                 : "Managed Markdown"}
           </span>
           {target.kind === "step" && !target.step.enabled && (
-            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[0.625rem] text-gray-500 dark:bg-gray-800 dark:text-gray-400">
               Step disabled
             </span>
           )}
           {target.kind === "step" && target.publishesFindings && (
-            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700 dark:bg-gray-800 dark:text-gray-300">
+            <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[0.625rem] text-emerald-700 dark:bg-gray-800 dark:text-gray-300">
               Published findings
             </span>
           )}
@@ -470,7 +470,7 @@ export default function SchemaEditorPanel({
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                   Effective provider schema
                 </h3>
-                <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                <span className="text-[0.625rem] text-gray-500 dark:text-gray-400">
                   Managed by Pipeline
                 </span>
               </div>
@@ -578,7 +578,7 @@ export default function SchemaEditorPanel({
                   </div>
                 </div>
                 {catalog && (
-                  <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-violet-800 dark:text-violet-200">
+                  <div className="mt-3 flex flex-wrap gap-2 text-[0.6875rem] text-violet-800 dark:text-violet-200">
                     <span className="rounded-full bg-white px-2.5 py-1 dark:bg-violet-950/60">
                       {catalog.subjectCount} subject roles
                     </span>
@@ -588,7 +588,7 @@ export default function SchemaEditorPanel({
                     <span className="rounded-full bg-white px-2.5 py-1 dark:bg-violet-950/60">
                       {catalog.genreCount} document genres
                     </span>
-                    <span className="rounded-full bg-white px-2.5 py-1 font-mono text-[10px] dark:bg-violet-950/60">
+                    <span className="rounded-full bg-white px-2.5 py-1 font-mono text-[0.625rem] dark:bg-violet-950/60">
                       {catalog.revision.slice(0, 19)}…
                     </span>
                   </div>
@@ -624,7 +624,7 @@ export default function SchemaEditorPanel({
                     Structure
                   </h3>
                   {!structureSchema && (
-                    <span className="text-[11px] text-gray-500 dark:text-gray-400">
+                    <span className="text-[0.6875rem] text-gray-500 dark:text-gray-400">
                       Showing the last valid version
                     </span>
                   )}
@@ -640,7 +640,7 @@ export default function SchemaEditorPanel({
                 >
                   Portable JSON Schema
                 </label>
-                <p className="mt-1 text-[11px] text-gray-500 dark:text-gray-400">
+                <p className="mt-1 text-[0.6875rem] text-gray-500 dark:text-gray-400">
                   Invalid drafts stay local and cannot be saved into the review.
                 </p>
               </div>
@@ -706,7 +706,7 @@ export default function SchemaEditorPanel({
                   <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
                     Resolved provider schema
                   </h3>
-                  <span className="text-[10px] text-gray-500 dark:text-gray-400">
+                  <span className="text-[0.625rem] text-gray-500 dark:text-gray-400">
                     Generated for the current catalog
                   </span>
                 </div>
@@ -761,7 +761,7 @@ export default function SchemaEditorPanel({
               )}
               {providerPreview && (
                 <div className="mt-3 space-y-3">
-                  <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                  <div className="flex flex-wrap items-center gap-2 text-[0.6875rem]">
                     <span
                       className={`rounded-full px-2.5 py-1 font-medium ${
                         providerPreview.bytes <= providerPreview.limit

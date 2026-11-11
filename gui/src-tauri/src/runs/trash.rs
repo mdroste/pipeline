@@ -163,10 +163,10 @@ pub fn permanently_delete_trashed_run(run_id: &str) -> Result<(), String> {
     sync_directory(&trash)
 }
 
-fn sync_directory(path: &Path) -> Result<(), String> {
+fn sync_directory(_path: &Path) -> Result<(), String> {
     #[cfg(unix)]
-    fs::File::open(path)
+    fs::File::open(_path)
         .and_then(|directory| crate::safety::sync_file(&directory))
-        .map_err(|error| format!("Failed to sync '{}': {error}", path.display()))?;
+        .map_err(|error| format!("Failed to sync '{}': {error}", _path.display()))?;
     Ok(())
 }

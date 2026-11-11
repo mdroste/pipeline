@@ -104,6 +104,12 @@ mod tests {
             std::fs::write(&path, std::process::id().to_string()).unwrap();
             std::thread::sleep(Duration::from_secs(60));
         } else {
+            // The enclosing Job Object test deliberately kills this parent
+            // and its still-running child together; waiting would defeat it.
+            #[expect(
+                clippy::zombie_processes,
+                reason = "fixture verifies whole-job termination"
+            )]
             let _child = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", HELPER, "--nocapture"])
                 .env("PIPELINE_WINDOWS_TREE_HELPER", "child")

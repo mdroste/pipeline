@@ -562,20 +562,6 @@ it("opens the attach menu lazily and offers only things added to a message", asy
   expect(mocks.sendTurn).not.toHaveBeenCalled();
 });
 
-it("sends the researcher to their projects before importing", async () => {
-  const onAllProjects = vi.fn();
-  render(<WorkspacePage onAllProjects={onAllProjects} />, {
-    wrapper: RailHost,
-  });
-  await screen.findByRole("heading", { name: "Policy discussion" });
-  fireEvent.click(screen.getByRole("button", { name: "Add to message" }));
-  fireEvent.click(screen.getByRole("menuitem", { name: /^Add files/ }));
-  fireEvent.click(screen.getByRole("button", { name: "Choose a project" }));
-  expect(onAllProjects).toHaveBeenCalledOnce();
-  expect(mocks.importPaper).not.toHaveBeenCalled();
-  expect(mocks.sendTurn).not.toHaveBeenCalled();
-});
-
 it("jumps to an older response through search while keeping at most 50 transcript messages mounted", async () => {
   snapshot.items = Array.from({ length: 405 }, (_, index) => ({
     id: `message-${index}`,

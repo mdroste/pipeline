@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ExportControls from "./ExportControls";
 import type { PipelineReport } from "../lib/types";
@@ -20,7 +20,7 @@ const fakeReport: PipelineReport = {
 };
 
 async function openMenu() {
-  await userEvent.setup().click(screen.getByRole("button", { name: /Export/ }));
+  await userEvent.setup().click(screen.getByRole("button", { name: "Export" }));
 }
 
 describe("ExportControls", () => {
@@ -31,15 +31,15 @@ describe("ExportControls", () => {
     notify.mockReset();
   });
 
-  it("uses one export menu and accurately labels the print-dialog flow", async () => {
+  it("uses an export dialog and accurately labels the print-dialog flow", async () => {
     render(<ExportControls markdown="# report" />);
     expect(screen.getAllByRole("button")).toHaveLength(1);
     await openMenu();
     expect(
-      screen.getByRole("menuitem", { name: "Save Markdown…" }),
+      screen.getByRole("button", { name: "Save Markdown…" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("menuitem", { name: "Print / save as PDF…" }),
+      screen.getByRole("button", { name: "Print / save as PDF…" }),
     ).toBeVisible();
   });
 
@@ -49,7 +49,7 @@ describe("ExportControls", () => {
     await openMenu();
     await userEvent
       .setup()
-      .click(screen.getByRole("menuitem", { name: "Save Markdown…" }));
+      .click(screen.getByRole("button", { name: "Save Markdown…" }));
     const [command, args] = invoke.mock.calls[0];
     expect(command).toBe("save_report_md");
     expect(args.markdown).toBe("# report");
@@ -69,7 +69,7 @@ describe("ExportControls", () => {
     await openMenu();
     await userEvent
       .setup()
-      .click(screen.getByRole("menuitem", { name: "Print / save as PDF…" }));
+      .click(screen.getByRole("button", { name: "Print / save as PDF…" }));
     expect(invoke).toHaveBeenCalledWith("print_report_html", {
       markdown: "## Clean",
       provenanceMarkdown: "# Provenance",
@@ -79,16 +79,22 @@ describe("ExportControls", () => {
   it("offers safe, forensic, and custom packages only for saved runs", async () => {
     render(<ExportControls runId="saved-run" markdown="# report" />);
     await openMenu();
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Share findings" }));
     expect(
-      screen.getByRole("menuitem", { name: /Shareable report/ }),
+      screen.getByRole("button", { name: /Shareable report/ }),
     ).toHaveTextContent(
       "Excludes unverified findings, source documents, and raw model responses",
     );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Keep an archive" }));
     expect(
-      screen.getByRole("menuitem", { name: /Complete review archive/ }),
+      screen.getByRole("button", { name: /Complete review archive/ }),
     ).toHaveTextContent("Includes private material");
     expect(
-      screen.getByRole("menuitem", { name: "Custom selection…" }),
+      screen.getByRole("button", { name: "Custom selection…" }),
     ).toBeVisible();
   });
 
@@ -106,7 +112,10 @@ describe("ExportControls", () => {
     await openMenu();
     await userEvent
       .setup()
-      .click(screen.getByRole("menuitem", { name: /Shareable report/ }));
+      .click(screen.getByRole("button", { name: "Share findings" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /Shareable report/ }));
     expect(confirmDialog).not.toHaveBeenCalled();
     expect(invoke).toHaveBeenCalledWith("export_run_package", {
       runId: "saved-run",
@@ -133,7 +142,10 @@ describe("ExportControls", () => {
     await openMenu();
     await userEvent
       .setup()
-      .click(screen.getByRole("menuitem", { name: /Complete review archive/ }));
+      .click(screen.getByRole("button", { name: "Keep an archive" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /Complete review archive/ }));
     expect(confirmDialog.mock.calls[0][0]).toMatch(
       /source documents, raw model responses, logs/i,
     );
@@ -147,7 +159,10 @@ describe("ExportControls", () => {
     await openMenu();
     await userEvent
       .setup()
-      .click(screen.getByRole("menuitem", { name: "Custom selection…" }));
+      .click(screen.getByRole("button", { name: "Keep an archive" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Custom selection…" }));
     await userEvent
       .setup()
       .click(
@@ -169,7 +184,10 @@ describe("ExportControls", () => {
     await openMenu();
     await userEvent
       .setup()
-      .click(screen.getByRole("menuitem", { name: "Custom selection…" }));
+      .click(screen.getByRole("button", { name: "Keep an archive" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Custom selection…" }));
     expect(
       screen.getByRole("checkbox", {
         name: "Full report · Includes unverified findings",
@@ -198,7 +216,10 @@ describe("ExportControls", () => {
     await openMenu();
     await userEvent
       .setup()
-      .click(screen.getByRole("menuitem", { name: /Shareable report/ }));
+      .click(screen.getByRole("button", { name: "Share findings" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /Shareable report/ }));
     await userEvent
       .setup()
       .click(await screen.findByRole("button", { name: "Reveal in folder" }));
@@ -207,42 +228,30 @@ describe("ExportControls", () => {
     });
   });
 
-  it("closes the menu on Escape, on an outside press, and moves with arrows", async () => {
+  it("traps focus in the export dialog and restores the trigger on Escape", async () => {
     const user = userEvent.setup();
     render(<ExportControls markdown="# report" />);
-    const trigger = screen.getByRole("button", { name: /Export/ });
+    const trigger = screen.getByRole("button", { name: "Export" });
     await user.click(trigger);
-    expect(
-      screen.getByRole("menuitem", { name: "Save Markdown…" }),
-    ).toHaveFocus();
-    await user.keyboard("{ArrowDown}");
-    expect(
-      screen.getByRole("menuitem", { name: "Print / save as PDF…" }),
-    ).toHaveFocus();
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-    expect(trigger).toHaveFocus();
-
-    await user.click(trigger);
-    fireEvent.pointerDown(document.body);
-    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
-  });
-
-  it("closes the custom selection on Escape and on an outside press", async () => {
-    const user = userEvent.setup();
-    render(<ExportControls runId="saved-run" markdown="# report" />);
-    const open = async () => {
-      await openMenu();
-      await user.click(
-        screen.getByRole("menuitem", { name: "Custom selection…" }),
-      );
-      return screen.getByRole("dialog", { name: "Custom export selection" });
-    };
-    await open();
+    expect(screen.getByRole("dialog", { name: "Export report" })).toBeVisible();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Read or print" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    await open();
-    fireEvent.pointerDown(document.body);
+    expect(trigger).toHaveFocus();
+  });
+
+  it("keeps custom selection inside the export dialog", async () => {
+    const user = userEvent.setup();
+    render(<ExportControls runId="saved-run" markdown="# report" />);
+    await openMenu();
+    await user.click(screen.getByRole("button", { name: "Keep an archive" }));
+    await user.click(screen.getByRole("button", { name: "Custom selection…" }));
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(
+      screen.getByRole("checkbox", { name: "Source documents · Sensitive" }),
+    ).toBeVisible();
+    await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
@@ -261,7 +270,10 @@ describe("ExportControls", () => {
     await openMenu();
     await userEvent
       .setup()
-      .click(screen.getByRole("menuitem", { name: /Complete review archive/ }));
+      .click(screen.getByRole("button", { name: "Keep an archive" }));
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /Complete review archive/ }));
     const card = await screen.findByText(/Complete archive ready/);
     expect(card.closest("[aria-live]")).toHaveClass("absolute");
     expect(notify).toHaveBeenCalledWith(
@@ -290,7 +302,7 @@ describe("ExportControls", () => {
     await userEvent
       .setup()
       .click(
-        screen.getByRole("menuitem", { name: "Export current report files…" }),
+        screen.getByRole("button", { name: "Export current report files…" }),
       );
     expect(invoke).toHaveBeenCalledWith("save_all_artifacts", {
       dir: "/tmp/core",

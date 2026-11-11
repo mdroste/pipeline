@@ -24,7 +24,7 @@ it("serializes and parses every destination round-trip", () => {
       page: "workspace",
       projectId: "ws one",
       surface: "project",
-      destination: "checks",
+      destination: "reviews",
     },
     { page: "workspace", sessionId: "sess-1", surface: "chat" },
     { page: "workspace", projectId: "研究/α%?#" },
@@ -197,4 +197,13 @@ it("opens old Conversations links and saved locations in Projects", () => {
   localStorage.removeItem("pipeline.ui.route");
   localStorage.setItem("pipeline.ui.page", "conversations");
   expect(restoreRoute(localStorage)).toEqual({ page: "project-index" });
+});
+
+it("preserves a selected designer stage and its return to setup", () => {
+  const route = {
+    page: "pipeline" as const,
+    stageId: "technical review",
+    fromSetup: true,
+  };
+  expect(parseRoute(serializeRoute(route))).toEqual(route);
 });

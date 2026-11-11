@@ -330,15 +330,15 @@ export default function EnginesPanel({
                     {engine.label}
                   </span>
                   {!available ? (
-                    <span className="text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                    <span className="text-[0.625rem] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
                       unavailable
                     </span>
                   ) : engine.installed ? (
-                    <span className="text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-green-700 text-white dark:bg-green-600">
+                    <span className="text-[0.625rem] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-green-700 text-white dark:bg-green-600">
                       installed{engine.version ? ` v${engine.version}` : ""}
                     </span>
                   ) : (
-                    <span className="text-[10px] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                    <span className="text-[0.625rem] uppercase tracking-wider font-medium px-1.5 py-0.5 rounded bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300">
                       not installed
                     </span>
                   )}

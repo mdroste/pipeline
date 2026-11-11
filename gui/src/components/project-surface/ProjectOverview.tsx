@@ -1,7 +1,7 @@
-// The project overview answers two questions from state the app already
-// computed: what state is the paper in, and what went out of date since the
-// researcher last looked. Sections with nothing to report do not render, and
-// every row carries one action. Projects with no folder or paper have nothing
+// The project overview answers three questions from state the app already
+// computed: what to do next at this stage of the paper, what is waiting on the
+// researcher, and what changed since they last looked. Sections with nothing
+// to report do not render, and every row carries one action. Projects with no folder or paper have nothing
 // to derive, so they get a short conversation-first page instead.
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -15,10 +15,13 @@ import { router } from "../../lib/router";
 import { workbenchErrorMessage } from "../../lib/workbenchError";
 import { open as openExternal } from "@tauri-apps/plugin-shell";
 import type { ContextItem } from "../../lib/deskClient";
+import { kindLabel, projectStages } from "../../lib/workspaceNavigation";
 import {
   BRIEF_PROMPT,
+  arrangeOverview,
   briefNotes,
   currentManuscript,
+  documentsBlock,
   draftBlock,
   isThinProject,
   leftOff,
@@ -157,14 +160,23 @@ export default function ProjectOverview(props: Props) {
   const resume = leftOff(data, sessions, workspaceId, transcript, payloadText);
   const manuscript = currentManuscript(data).paper;
   const target = targetSummary(data.settings.body, new Date());
-  const blocks = thin
-    ? []
-    : [
-        draftBlock(data, signals),
-        syncBlock(data, signals),
-        roundBlock(signals),
-        repositoryBlock(signals, new Date()),
-      ].filter((block): block is OverviewBlock => Boolean(block));
+  const settings = data.settings.body;
+  const { next, needs, blocks, moreTasks } = arrangeOverview(
+    data,
+    thin
+      ? []
+      : [
+          draftBlock(data, signals),
+          documentsBlock(data),
+          syncBlock(data),
+          roundBlock(signals),
+          repositoryBlock(signals, new Date()),
+        ].filter((block): block is OverviewBlock => Boolean(block)),
+    settings.stage,
+  );
+  const about = [kindLabel(settings.kind), settings.venue?.trim()].filter(
+    Boolean,
+  );
   const since = thin ? null : sinceBlock(data, signals, visit);
 
   const openTasks = data.tasks
@@ -175,7 +187,6 @@ export default function ProjectOverview(props: Props) {
           Number(b.body.status === "deferred") ||
         b.updatedAt.localeCompare(a.updatedAt),
     );
-  const proposed = data.notes.filter((note) => note.state === "proposed");
   const others = own.filter((session) => session.id !== resume?.session.id);
 
   function showNotes() {
@@ -193,6 +204,7 @@ export default function ProjectOverview(props: Props) {
     else if (action.kind === "review") void router.navigate({ page: "main" });
     else if (action.kind === "automation")
       void router.navigate({ page: "tasks", taskId: action.taskId });
+    else if (action.kind === "notes") showNotes();
     else if (action.kind === "link")
       void Promise.resolve()
         .then(() => openExternal(action.url))
@@ -257,21 +269,42 @@ export default function ProjectOverview(props: Props) {
                 ? (workspace?.name ?? "Project overview")
                 : "Project overview"}
             </h1>
-            {target && (
+            {(!!about.length || target) && (
               <p>
-                {target.label} · {target.date} ·{" "}
-                {target.days > 1
-                  ? `in ${target.days} days`
-                  : target.days === 1
-                    ? "tomorrow"
-                    : target.days === 0
-                      ? "today"
-                      : target.days === -1
-                        ? "yesterday"
-                        : `${-target.days} days ago`}
+                {about.join(" · ")}
+                {!!about.length && target && " · "}
+                {target &&
+                  `${target.label} · ${target.date} · ${
+                    target.days > 1
+                      ? `in ${target.days} days`
+                      : target.days === 1
+                        ? "tomorrow"
+                        : target.days === 0
+                          ? "today"
+                          : target.days === -1
+                            ? "yesterday"
+                            : `${-target.days} days ago`
+                  }`}
               </p>
             )}
           </div>
+          <label className="project-overview-stage">
+            <span className="project-home-meta">Stage</span>
+            <select
+              aria-label="Stage of the paper"
+              value={settings.stage ?? ""}
+              onChange={(event) =>
+                void props.saveSettings({ stage: event.target.value || null })
+              }
+            >
+              <option value="">Not set</option>
+              {projectStages.map((stage) => (
+                <option key={stage.id} value={stage.id}>
+                  {stage.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
             className="project-home-link muted"
@@ -280,6 +313,8 @@ export default function ProjectOverview(props: Props) {
             Project settings
           </button>
         </header>
+
+        {next && <Block block={next} busy={loading} onAction={act} />}
 
         <section className="project-brief" aria-label="Research brief">
           <h2>Research brief</h2>
@@ -410,7 +445,7 @@ export default function ProjectOverview(props: Props) {
           </button>
         </section>
 
-        {!thin && loading && !blocks.length && !since && (
+        {!thin && loading && !next && !blocks.length && !since && (
           <p role="status" className="project-home-meta">
             Checking the state of the draft…
           </p>
@@ -429,76 +464,24 @@ export default function ProjectOverview(props: Props) {
               ))}
             </div>
           )}
-          {(since ||
-            !!proposed.length ||
-            !!openTasks.length ||
-            !!others.length) && (
+          {(needs || since || !!others.length) && (
             <div>
+              {needs && <Block block={needs} busy={loading} onAction={act} />}
+              {moreTasks > 0 && (
+                <button
+                  type="button"
+                  className="project-home-link mt-3"
+                  onClick={() => setTab("tasks")}
+                >
+                  All {openTasks.length} action items
+                </button>
+              )}
               {since && (
                 <Block
                   block={since}
                   meta={visit.since ? projectDate(visit.since) : undefined}
                   onAction={act}
                 />
-              )}
-              {(!!proposed.length || !!openTasks.length) && (
-                <section
-                  className="project-overview-block"
-                  aria-label="Needs your decision"
-                >
-                  <h2>Needs your decision</h2>
-                  {!!proposed.length && (
-                    <div className="project-overview-row" data-attention>
-                      <div>
-                        <p>
-                          {proposed.length} suggested{" "}
-                          {proposed.length === 1
-                            ? "note awaits"
-                            : "notes await"}{" "}
-                          your decision
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        className="project-home-link"
-                        onClick={showNotes}
-                      >
-                        Review suggested notes →
-                      </button>
-                    </div>
-                  )}
-                  {openTasks.slice(0, 3).map((task) => (
-                    <div className="project-overview-row" key={task.id}>
-                      <div>
-                        <p>{task.body.objective}</p>
-                        <p className="project-home-meta">
-                          Action item ·{" "}
-                          {task.body.status === "deferred"
-                            ? "Later"
-                            : task.body.status === "investigating"
-                              ? "In progress"
-                              : "Open"}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        className="project-home-link"
-                        onClick={() => setTab("tasks")}
-                      >
-                        Open →
-                      </button>
-                    </div>
-                  ))}
-                  {openTasks.length > 3 && (
-                    <button
-                      type="button"
-                      className="project-home-link mt-3"
-                      onClick={() => setTab("tasks")}
-                    >
-                      All {openTasks.length} action items
-                    </button>
-                  )}
-                </section>
               )}
               {!!others.length && (
                 <section
@@ -532,9 +515,8 @@ export default function ProjectOverview(props: Props) {
         {thin && (
           <p className="project-home-meta project-overview-thin">
             Import a paper or attach the project folder and this page will track
-            the state of the draft: open review findings, numbers and claims
-            that no longer match their results, and what changed since your last
-            visit.
+            the state of the paper: the last build, open review findings, and
+            what changed since your last visit.
           </p>
         )}
         <div className="project-overview-tools">

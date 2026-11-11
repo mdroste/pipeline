@@ -65,7 +65,7 @@ function sameDraft(a: PresetDraft, b: PresetDraft) {
 }
 
 const sectionHeader =
-  "sticky top-0 z-[1] bg-gray-50 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-gray-500 dark:bg-gray-800/50 dark:text-gray-400";
+  "sticky top-0 z-[1] bg-gray-50 px-4 py-1.5 text-[0.625rem] font-semibold uppercase tracking-wider text-gray-500 dark:bg-gray-800/50 dark:text-gray-400";
 
 export default function WorkspaceHarnessEditor({
   snapshot,
@@ -376,13 +376,13 @@ export default function WorkspaceHarnessEditor({
             <span className="block truncate text-sm font-medium text-gray-800 dark:text-gray-200">
               {presetName(preset)}
             </span>
-            <span className="block truncate text-[11px] text-gray-500 dark:text-gray-400">
+            <span className="block truncate text-[0.6875rem] text-gray-500 dark:text-gray-400">
               {presetDescription(preset) ||
                 describePreset(preset, catalog?.modules ?? [])}
             </span>
           </span>
           {inUse && (
-            <span className="shrink-0 rounded-full bg-gray-200 px-2 py-0.5 text-[10px] font-medium text-gray-800 dark:bg-neutral-700 dark:text-neutral-100">
+            <span className="shrink-0 rounded-full bg-gray-200 px-2 py-0.5 text-[0.625rem] font-medium text-gray-800 dark:bg-neutral-700 dark:text-neutral-100">
               In use
             </span>
           )}
@@ -407,7 +407,7 @@ export default function WorkspaceHarnessEditor({
         <span className="block text-sm font-medium text-gray-800 dark:text-gray-200">
           {label}
         </span>
-        <span className="block truncate text-[11px] text-gray-500 dark:text-gray-400">
+        <span className="block truncate text-[0.6875rem] text-gray-500 dark:text-gray-400">
           {detail}
         </span>
       </button>
@@ -504,7 +504,7 @@ export default function WorkspaceHarnessEditor({
             />
           </SidebarHeader>
           {successor && (
-            <p className="m-2 rounded border border-blue-200 bg-blue-50 p-2 text-[11px] text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+            <p className="m-2 rounded border border-blue-200 bg-blue-50 p-2 text-[0.6875rem] text-blue-800 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
               Your next message starts a new assistant session with these
               settings and the saved project context. Earlier messages remain
               visible here.
@@ -512,10 +512,12 @@ export default function WorkspaceHarnessEditor({
           )}
           <div className="min-h-0 flex-1 overflow-y-auto">
             <div className={sectionHeader}>Profiles</div>
-            <div className="px-4 pt-2 text-[10px] text-gray-400">Built-in</div>
+            <div className="px-4 pt-2 text-[0.625rem] text-gray-400">
+              Built-in
+            </div>
             {builtIns.map(presetRow)}
             {customs.length > 0 && (
-              <div className="px-4 pt-2 text-[10px] text-gray-400">
+              <div className="px-4 pt-2 text-[0.625rem] text-gray-400">
                 Your profiles
               </div>
             )}
@@ -523,7 +525,7 @@ export default function WorkspaceHarnessEditor({
             {catalog &&
               !catalog.presets.some((preset) => !preset.builtIn) &&
               !query && (
-                <p className="px-4 py-2 text-[11px] text-gray-500 dark:text-gray-400">
+                <p className="px-4 py-2 text-[0.6875rem] text-gray-500 dark:text-gray-400">
                   Create a profile or duplicate a built-in to get started.
                 </p>
               )}

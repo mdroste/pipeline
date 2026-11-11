@@ -144,13 +144,15 @@ export default function ResultsTab({
             </option>
           ))}
         </select>
-        <p className="text-[11px] text-gray-500">{ADAPTER_HELP[adapter]}</p>
+        <p className="text-[0.6875rem] text-gray-500">
+          {ADAPTER_HELP[adapter]}
+        </p>
         <textarea
           value={argv}
           onChange={(event) => setArgv(event.target.value)}
           rows={3}
           aria-label="Argument vector JSON"
-          className="w-full rounded border bg-white p-2 font-mono text-[11px] dark:bg-neutral-950"
+          className="w-full rounded border bg-white p-2 font-mono text-[0.6875rem] dark:bg-neutral-950"
         />
         <ToolchainPicker
           workspaceId={workspaceId}
@@ -188,7 +190,7 @@ export default function ResultsTab({
             className="mt-1 block w-full rounded border bg-white p-2 text-xs dark:bg-neutral-950"
           />
         </label>
-        <p className="text-[11px] text-gray-500">
+        <p className="text-[0.6875rem] text-gray-500">
           Pipeline stops the command when this runs out. The default is{" "}
           {TIMEOUT_DEFAULT} seconds; the longest allowed is{" "}
           {TIMEOUT_MAX.toLocaleString()} seconds, or two hours.
@@ -256,15 +258,15 @@ export default function ResultsTab({
               className="rounded border bg-white p-3 dark:bg-neutral-950"
             >
               <div className="font-medium">{profile.name}</div>
-              <pre className="mt-1 overflow-auto whitespace-pre-wrap text-[10px] text-gray-500">
+              <pre className="mt-1 overflow-auto whitespace-pre-wrap text-[0.625rem] text-gray-500">
                 {JSON.stringify(profile.argv)}
               </pre>
-              <p className="mt-1 text-[11px] text-gray-500">
+              <p className="mt-1 text-[0.6875rem] text-gray-500">
                 Time limit: {profile.timeoutSeconds} seconds
               </p>
               <div className="mt-2 flex items-center gap-2">
                 <span
-                  className={`text-[11px] ${profile.testStatus === "passed" ? "text-emerald-600" : "text-gray-500"}`}
+                  className={`text-[0.6875rem] ${profile.testStatus === "passed" ? "text-emerald-600" : "text-gray-500"}`}
                 >
                   {plainLabel(profile.testStatus ?? "untested")}
                 </span>
@@ -281,7 +283,7 @@ export default function ResultsTab({
                       });
                     })
                   }
-                  className="rounded border px-2 py-1 text-[11px]"
+                  className="rounded border px-2 py-1 text-[0.6875rem]"
                 >
                   Test
                 </button>
@@ -298,7 +300,7 @@ export default function ResultsTab({
                       });
                     })
                   }
-                  className="rounded border px-2 py-1 text-[11px]"
+                  className="rounded border px-2 py-1 text-[0.6875rem]"
                 >
                   Run
                 </button>
@@ -306,7 +308,7 @@ export default function ResultsTab({
                   type="button"
                   disabled={busy}
                   onClick={() => editProfile(profile)}
-                  className="rounded border px-2 py-1 text-[11px]"
+                  className="rounded border px-2 py-1 text-[0.6875rem]"
                 >
                   Edit
                 </button>
@@ -327,7 +329,7 @@ export default function ResultsTab({
               seconds.
             </p>
           )}
-          <pre className="overflow-auto whitespace-pre-wrap text-[11px]">
+          <pre className="overflow-auto whitespace-pre-wrap text-[0.6875rem]">
             {JSON.stringify(
               {
                 command: hostPreview.preview.command,
@@ -398,7 +400,7 @@ export default function ResultsTab({
                 · {adapterLabel(run.adapter)} ·{" "}
                 {compactHash(run.dependencyHash)}
               </summary>
-              <div className="mt-2 space-y-2 text-[11px]">
+              <div className="mt-2 space-y-2 text-[0.6875rem]">
                 <pre className="overflow-auto whitespace-pre-wrap">
                   {JSON.stringify(run.command)}
                 </pre>
@@ -442,7 +444,7 @@ export default function ResultsTab({
             </details>
           ))}
         </div>
-        <p className="mt-2 text-[10px] text-gray-500">
+        <p className="mt-2 text-[0.625rem] text-gray-500">
           These checks compare exported numbers. Assess identification, causal
           interpretation, and model validity separately.
         </p>

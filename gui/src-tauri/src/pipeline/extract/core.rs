@@ -503,7 +503,7 @@ pub(super) fn ext_eq(path: &Path, expected: &str) -> bool {
 }
 
 /// Compute SHA-256 hash of file contents, first 16 hex chars.
-pub(super) fn compute_hash(path: &Path) -> Result<String, String> {
+pub(crate) fn compute_hash(path: &Path) -> Result<String, String> {
     let file = open_regular_file(path)?;
     let mut reader = std::io::BufReader::new(file);
     let mut hasher = Sha256::new();

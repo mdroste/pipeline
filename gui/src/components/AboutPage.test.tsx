@@ -168,7 +168,9 @@ describe("AboutPage", () => {
       screen.getByText(/sends its prompt and the material it can read/i),
     ).toBeInTheDocument();
     expect(screen.getByText(/plan and data-use terms/i)).toBeInTheDocument();
-    expect(screen.getByText("Reviews")).toBeInTheDocument();
+    expect(
+      screen.getByText("Reviews", { selector: "summary" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Paper Review")).toBeInTheDocument();
     expect(screen.getByText("Paper Review (Fast)")).toBeInTheDocument();
     expect(screen.getByText("Slide Review")).toBeInTheDocument();
@@ -222,18 +224,18 @@ describe("AboutPage", () => {
     const collapsed = screen.getByText("Data & privacy").closest("details");
     expect(collapsed).not.toBeNull();
     expect(collapsed).not.toHaveAttribute("open");
-    expect(screen.getByText("Reviews").closest("details")).not.toHaveAttribute(
-      "open",
-    );
+    expect(
+      screen.getByText("Reviews", { selector: "summary" }).closest("details"),
+    ).not.toHaveAttribute("open");
     unmount();
 
     render(<AboutPage onClose={() => undefined} initialSection="privacy" />);
     expect(
       screen.getByText("Data & privacy").closest("details"),
     ).toHaveAttribute("open");
-    expect(screen.getByText("Reviews").closest("details")).not.toHaveAttribute(
-      "open",
-    );
+    expect(
+      screen.getByText("Reviews", { selector: "summary" }).closest("details"),
+    ).not.toHaveAttribute("open");
   });
 
   it("navigates to the described page from section links", () => {

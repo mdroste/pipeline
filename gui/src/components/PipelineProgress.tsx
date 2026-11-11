@@ -245,7 +245,7 @@ function StageMarker({
   number: number | null;
 }) {
   const base =
-    "relative z-[1] grid h-6 w-6 flex-none place-items-center rounded-full text-[12px] font-semibold tabular-nums";
+    "relative z-[1] grid h-6 w-6 flex-none place-items-center rounded-full text-[0.75rem] font-semibold tabular-nums";
   if (status === "done") {
     return (
       <span className={`${base} bg-green-600 text-white`}>
@@ -636,14 +636,23 @@ export default function PipelineProgress({
         </h3>
         {runElapsed && (
           <span className="text-xs text-gray-500 dark:text-gray-400 tabular-nums">
-            {runElapsed}
+            {runElapsed} elapsed
           </span>
         )}
       </div>
 
+      <p className="pb-3 text-xs text-ink-muted">
+        {
+          stages.filter(
+            (stage) => stage.status === "done" && stage.kind !== "done",
+          ).length
+        }{" "}
+        of {stages.filter((stage) => stage.kind !== "done").length} stages
+        complete{activeStage ? " · " + activeStage.label : ""}
+      </p>
       {reviewRouting && (
         <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 dark:border-blue-900 dark:bg-blue-950/30">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300">
+          <p className="text-[0.625rem] font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300">
             Auto-detected review
           </p>
           <p className="mt-0.5 text-xs font-medium text-blue-950 dark:text-blue-100">
@@ -652,19 +661,19 @@ export default function PipelineProgress({
               .join(" · ")}
           </p>
           {(reviewRouting.subjectLabels?.length ?? 0) > 0 && (
-            <p className="mt-1 text-[11px] leading-4 text-blue-800 dark:text-blue-300">
+            <p className="mt-1 text-[0.6875rem] leading-4 text-blue-800 dark:text-blue-300">
               <span className="font-medium">Subject:</span>{" "}
               {reviewRouting.subjectLabels?.join(", ")}
             </p>
           )}
           {(reviewRouting.methodLabels?.length ?? 0) > 0 && (
-            <p className="text-[11px] leading-4 text-blue-800 dark:text-blue-300">
+            <p className="text-[0.6875rem] leading-4 text-blue-800 dark:text-blue-300">
               <span className="font-medium">Methods:</span>{" "}
               {reviewRouting.methodLabels?.join(", ")}
             </p>
           )}
           {!reviewRouting.subjectLabels && (
-            <p className="mt-1 text-[11px] leading-4 text-blue-800 dark:text-blue-300">
+            <p className="mt-1 text-[0.6875rem] leading-4 text-blue-800 dark:text-blue-300">
               {reviewRouting.specialistLabels.join(", ")}
             </p>
           )}

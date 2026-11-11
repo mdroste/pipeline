@@ -115,7 +115,7 @@ function HarnessInstructionsEditor({
               className="min-h-64 w-full rounded border border-gray-300 bg-gray-50 p-3 text-xs leading-relaxed dark:border-gray-600 dark:bg-gray-800"
             />
           )}
-          <p className="text-[10px] text-gray-500">
+          <p className="text-[0.625rem] text-gray-500">
             {Math.round((byteLength(baseInstructions) / 1024) * 10) / 10} KiB ·
             maximum 256 KiB
           </p>
@@ -171,7 +171,7 @@ function HarnessInstructionsEditor({
         prompt above.
       </p>
       {!readOnly && blocks.length > 0 && (
-        <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[10px]">
+        <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[0.625rem]">
           <span className="mr-1 text-gray-500 dark:text-gray-400">
             Insert built-in block:
           </span>
@@ -207,7 +207,7 @@ function HarnessInstructionsEditor({
           className="min-h-[8rem] w-full flex-1 resize-none rounded-lg border border-gray-300 bg-gray-50 p-4 text-xs leading-relaxed focus:border-transparent focus:outline-none focus:ring-2 focus:ring-gray-400 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200"
         />
       )}
-      <div className="mt-1 text-[10px] text-gray-400">
+      <div className="mt-1 text-[0.625rem] text-gray-400">
         {Math.round((bytes / 1024) * 10) / 10} KiB
       </div>
       {lint.length > 0 && (
@@ -215,7 +215,7 @@ function HarnessInstructionsEditor({
           {lint.map((hit) => (
             <li
               key={hit.message}
-              className={`rounded border px-2 py-1.5 text-[11px] ${
+              className={`rounded border px-2 py-1.5 text-[0.6875rem] ${
                 hit.level === "error"
                   ? "border-red-300 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
                   : "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
@@ -239,10 +239,10 @@ function HarnessInstructionsEditor({
               key={section.id}
               className="rounded border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900"
             >
-              <h4 className="border-b border-gray-100 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:border-gray-800">
+              <h4 className="border-b border-gray-100 px-2 py-1 text-[0.625rem] font-semibold uppercase tracking-wide text-gray-500 dark:border-gray-800">
                 {section.label}
               </h4>
-              <pre className="max-h-40 overflow-auto whitespace-pre-wrap p-2 text-[11px] text-gray-700 dark:text-gray-300">
+              <pre className="max-h-40 overflow-auto whitespace-pre-wrap p-2 text-[0.6875rem] text-gray-700 dark:text-gray-300">
                 {section.text}
               </pre>
             </section>

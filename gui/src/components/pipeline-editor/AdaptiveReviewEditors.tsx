@@ -30,7 +30,7 @@ export function AdaptiveAgentsRow({
         <span className="text-sm font-medium text-blue-800 dark:text-blue-200">
           Adaptive agents
         </span>
-        <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900/60 dark:text-blue-200">
+        <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[0.5625rem] font-semibold uppercase tracking-wide text-blue-700 dark:bg-blue-900/60 dark:text-blue-200">
           {countLabel} agents
         </span>
       </span>

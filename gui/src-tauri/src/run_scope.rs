@@ -36,6 +36,7 @@ pub struct RunScope {
     /// checks them so a cancelled pass fails instead of retrying.
     cancelled_passes: Mutex<Vec<String>>,
     usage: Mutex<CallUsage>,
+    pub(crate) review_budget: Mutex<Option<Arc<Mutex<crate::pipeline::review_budget::State>>>>,
     log_sink: Mutex<Option<std::fs::File>>,
     settings: Mutex<Option<(u64, Settings)>>,
     pub(crate) write_count: AtomicUsize,
@@ -195,6 +196,7 @@ impl RunScope {
             pass_pids: Mutex::new(Vec::new()),
             cancelled_passes: Mutex::new(Vec::new()),
             usage: Mutex::new(CallUsage::default()),
+            review_budget: Mutex::new(None),
             log_sink: Mutex::new(None),
             settings: Mutex::new(None),
             write_count: AtomicUsize::new(0),

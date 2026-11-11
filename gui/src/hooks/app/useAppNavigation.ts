@@ -283,7 +283,8 @@ export function useAppNavigation() {
       page: "workspace",
       projectId: id,
       surface: "project",
-      destination: "plans",
+      // Build jobs, their logs and recovery show above the manuscript.
+      destination: "writing",
     });
   };
 

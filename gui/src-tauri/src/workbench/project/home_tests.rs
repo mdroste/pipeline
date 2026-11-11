@@ -46,6 +46,27 @@ fn target_date_is_optional_validated_and_readable_from_older_settings() {
     )
     .unwrap();
     assert_eq!(saved["body"]["targetDate"], "2026-11-15");
+    assert_eq!(legacy.stage, None);
+    let staged = save(
+        saved["revision"].as_i64().unwrap(),
+        ProjectHomeSettings {
+            kind: Some("theory".into()),
+            stage: Some("revising".into()),
+            venue: "Econometrica".into(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(staged["body"]["stage"], "revising");
+    assert!(save(
+        staged["revision"].as_i64().unwrap(),
+        ProjectHomeSettings {
+            stage: Some("published".into()),
+            ..Default::default()
+        },
+    )
+    .is_err());
+    let saved = staged;
     assert!(save(
         saved["revision"].as_i64().unwrap(),
         ProjectHomeSettings {

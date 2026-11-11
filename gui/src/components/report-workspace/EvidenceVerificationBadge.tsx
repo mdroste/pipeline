@@ -46,7 +46,7 @@ export function EvidenceVerificationBadge({
   const title = `${detail} This checks the quotation only, not whether the comment is correct.`;
   return (
     <span
-      className={`inline-flex rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${tone}`}
+      className={`inline-flex rounded-md border px-1.5 py-0.5 text-[0.625rem] font-medium ${tone}`}
       title={title}
       aria-label={`${label}. ${title}`}
     >

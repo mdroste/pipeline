@@ -22,17 +22,17 @@ it("finds tools across sections and opens the keyboard selection without sending
       .getAllByRole("option")
       .slice(0, 2)
       .map((item) => item.textContent),
-  ).toEqual(["ManuscriptWrite", "FilesLibrary"]);
+  ).toEqual(["ManuscriptPaper", "FilesFiles"]);
   const search = screen.getByRole("combobox", { name: "Find a project view" });
   await waitFor(() => expect(search).toHaveFocus());
-  fireEvent.change(search, { target: { value: "research" } });
+  fireEvent.change(search, { target: { value: "notes" } });
   const options = screen.getAllByRole("option");
   expect(options).toHaveLength(2);
   expect(options[0]).toHaveAttribute("aria-selected", "true");
   fireEvent.keyDown(search, { key: "ArrowDown" });
   expect(options[1]).toHaveAttribute("aria-selected", "true");
   fireEvent.keyDown(search, { key: "Enter" });
-  expect(choose).toHaveBeenCalledWith("memory");
+  expect(choose).toHaveBeenCalledWith("tasks");
   expect(close).toHaveBeenCalledOnce();
 });
 

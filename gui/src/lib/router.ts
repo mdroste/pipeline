@@ -50,7 +50,7 @@ export type AppRoute =
       /** Prefill the automation builder with this input file. */
       automatePath?: string;
     }
-  | { page: "pipeline" }
+  | { page: "pipeline"; stageId?: string; fromSetup?: boolean }
   | { page: "gallery" }
   | { page: "batch" }
   | {
@@ -119,6 +119,10 @@ export function serializeRoute(route: AppRoute): string {
   let path = PAGE_TO_PATH[route.page];
   const query = new URLSearchParams();
   switch (route.page) {
+    case "pipeline":
+      if (route.stageId) query.set("stage", route.stageId);
+      if (route.fromSetup) query.set("from", "setup");
+      break;
     case "main":
       if (route.runKey)
         path = `${RUN_PATH}/${encodeURIComponent(route.runKey)}`;
@@ -178,6 +182,12 @@ export function parseRoute(
       return null;
     }
     switch (page) {
+      case "pipeline":
+        return {
+          page,
+          ...(query.get("stage") ? { stageId: query.get("stage")! } : {}),
+          ...(query.get("from") === "setup" ? { fromSetup: true } : {}),
+        };
       case "main":
         return rest[0] ? { page, runKey: rest[0] } : { page };
       case "workspace":

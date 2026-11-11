@@ -78,7 +78,7 @@ function ExtractionEditor({
             </option>
             <option value="none">None — run from the step prompts alone</option>
           </select>
-          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1.5 leading-relaxed">
+          <p className="text-[0.6875rem] text-gray-500 dark:text-gray-400 mt-1.5 leading-relaxed">
             Selecting a folder in the main window uses folder mode
             automatically, whatever this is set to.
           </p>
@@ -91,7 +91,7 @@ function ExtractionEditor({
         />
 
         {inputMode !== "document" ? (
-          <div className="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
+          <div className="text-[0.6875rem] text-gray-600 dark:text-gray-400 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
             Extraction settings below apply only to document inputs.
           </div>
         ) : null}
@@ -115,13 +115,13 @@ function ExtractionEditor({
             ))}
           </select>
           {hint && (
-            <p className="text-[11px] mt-1.5 leading-relaxed text-gray-500 dark:text-gray-400">
+            <p className="text-[0.6875rem] mt-1.5 leading-relaxed text-gray-500 dark:text-gray-400">
               {hint}
             </p>
           )}
         </div>
 
-        <div className="text-[11px] text-gray-600 dark:text-gray-400 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
+        <div className="text-[0.6875rem] text-gray-600 dark:text-gray-400 leading-relaxed border-t border-gray-100 dark:border-gray-800 pt-3">
           Pipeline uses the PDF method you choose and stops if it cannot read
           the document completely. Adjust speed, memory, OCR, and image options
           in Settings → Reviews → PDF extraction. LaTeX files are read directly.
@@ -272,13 +272,13 @@ function OrientationEditor({
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="rounded bg-green-50 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-gray-800 dark:text-gray-300">
+          <span className="rounded bg-green-50 px-1.5 py-0.5 text-[0.625rem] font-medium text-green-700 dark:bg-gray-800 dark:text-gray-300">
             Required
           </span>
           <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
             Runs before every review
           </span>
-          <span className="ml-auto rounded-full bg-violet-50 px-2 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
+          <span className="ml-auto rounded-full bg-violet-50 px-2 py-0.5 text-[0.625rem] font-medium text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
             {schema ? "Schema configured" : "Object-only schema"} · Schemas tab
           </span>
         </div>
@@ -297,7 +297,7 @@ function OrientationEditor({
             <button
               type="button"
               onClick={() => void restoreRouterPrompt()}
-              className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+              className="text-[0.625rem] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
               title="Restore the generated orientation & classification prompt and its matching output schema. A configured adaptive-agent count is kept."
             >
               Restore adaptive router prompt & schema
@@ -307,7 +307,7 @@ function OrientationEditor({
               <button
                 type="button"
                 onClick={() => void insertDefault("orientation_generic")}
-                className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                className="text-[0.625rem] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
                 title="Insert the generic survey prompt (works for any input)."
               >
                 Insert generic survey
@@ -315,7 +315,7 @@ function OrientationEditor({
               <button
                 type="button"
                 onClick={() => void insertDefault("orientation_folder")}
-                className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                className="text-[0.625rem] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
                 title="Insert the folder survey prompt (explores the folder with the Read tool)."
               >
                 Insert folder survey
@@ -323,7 +323,7 @@ function OrientationEditor({
               <button
                 type="button"
                 onClick={() => void insertDefault("orientation")}
-                className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
+                className="text-[0.625rem] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100 transition-colors"
                 title="Insert the paper-review survey prompt (sections, theorems, tables, notation)."
               >
                 Insert paper survey
@@ -332,7 +332,7 @@ function OrientationEditor({
                 type="button"
                 onClick={() => void useDefault()}
                 disabled={prompt.trim() === ""}
-                className="text-[10px] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100
+                className="text-[0.625rem] text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100
                            disabled:opacity-40 disabled:hover:text-gray-600 dark:disabled:hover:text-gray-400 transition-colors"
                 title="Clear the override; the default template will be used."
               >
@@ -352,14 +352,14 @@ function OrientationEditor({
           />
         </div>
         {autoReview && (
-          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-2 leading-relaxed shrink-0">
+          <p className="text-[0.6875rem] text-gray-500 dark:text-gray-400 mt-2 leading-relaxed shrink-0">
             Pipeline fills the catalog placeholders with the current specialist
             list when the review starts. Browse the Catalog tabs to see those
             specialists.
           </p>
         )}
         {prompt.trim() === "" && (
-          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-2 leading-relaxed shrink-0">
+          <p className="text-[0.6875rem] text-gray-500 dark:text-gray-400 mt-2 leading-relaxed shrink-0">
             Empty — using the bundled default:{" "}
             <span className="font-mono">prompts/orientation.md</span> for
             document inputs,{" "}

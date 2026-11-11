@@ -15,7 +15,7 @@ import TokenUsage from "./TokenUsage";
 function TruncatedPreviewBadge({ truncated }: { truncated?: boolean }) {
   if (!truncated) return null;
   return (
-    <span className="rounded bg-amber-100 px-1.5 py-px text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
+    <span className="rounded bg-amber-100 px-1.5 py-px text-[0.625rem] font-medium uppercase tracking-wide text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">
       Preview truncated
     </span>
   );

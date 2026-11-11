@@ -112,7 +112,7 @@ fn write(path: &Path, state: &State) -> Result<(), String> {
     serde_json::to_writer_pretty(&mut file, state).map_err(|e| e.to_string())?;
     file.write_all(b"\n").map_err(|e| e.to_string())?;
     crate::safety::sync_file(file.as_file()).map_err(|e| e.to_string())?;
-    file.persist(path)
+    crate::safety::persist_file(file, path)
         .map_err(|e| format!("Cannot save update settings: {}", e.error))?;
     #[cfg(unix)]
     if let Ok(directory) = std::fs::File::open(directory) {

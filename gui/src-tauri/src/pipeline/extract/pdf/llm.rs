@@ -145,6 +145,7 @@ pub(in crate::pipeline::extract) async fn run_llm_ranges(
     let mut next = 0usize;
     let mut sections = std::collections::BTreeMap::new();
     let mut range_errors = Vec::new();
+    let mut budget_stop = None;
     while next < ranges.len() && tasks.len() < LLM_EXTRACTION_CONCURRENCY {
         let (start, end) = ranges[next];
         crate::run_scope::spawn_in(
@@ -171,6 +172,10 @@ pub(in crate::pipeline::extract) async fn run_llm_ranges(
         match result {
             Ok(Ok(range_sections)) => sections.extend(range_sections),
             Ok(Err(error)) => {
+                if crate::pipeline::review_budget::stopped(&error) {
+                    budget_stop = Some(error);
+                    continue;
+                }
                 if crate::commands::is_pipeline_cancellation_error(&error) {
                     tasks.abort_all();
                     return Err(error);
@@ -190,7 +195,11 @@ pub(in crate::pipeline::extract) async fn run_llm_ranges(
                 range_errors.push(error);
             }
         }
-        if next < ranges.len() {
+        if budget_stop.is_none() && next < ranges.len() {
+            if let Err(error) = crate::pipeline::review_budget::check() {
+                budget_stop = Some(error);
+                continue;
+            }
             let (start, end) = ranges[next];
             crate::run_scope::spawn_in(
                 &mut tasks,
@@ -208,6 +217,9 @@ pub(in crate::pipeline::extract) async fn run_llm_ranges(
             );
             next += 1;
         }
+    }
+    if let Some(error) = budget_stop {
+        return Err(error);
     }
     Ok((sections, range_errors))
 }
@@ -422,6 +434,88 @@ pub(in crate::pipeline::extract) async fn extract_llm(
 mod tests {
     use super::*;
     use crate::run_scope::fixtures::{hanging_provider, until_called};
+
+    #[tokio::test]
+    async fn range_limits_stop_new_chunks_and_allow_started_chunks_to_finish() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+        for cap in [1, 2] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}/v1", listener.local_addr().unwrap());
+            let calls = Arc::new(AtomicUsize::new(0));
+            let count = calls.clone();
+            let server = tokio::spawn(async move {
+                loop {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let mut reader = BufReader::new(stream);
+                    let mut first = String::new();
+                    reader.read_line(&mut first).await.unwrap();
+                    let mut length = 0;
+                    loop {
+                        let mut line = String::new();
+                        reader.read_line(&mut line).await.unwrap();
+                        if line == "\r\n" {
+                            break;
+                        }
+                        if let Some(value) =
+                            line.to_ascii_lowercase().strip_prefix("content-length:")
+                        {
+                            length = value.trim().parse::<usize>().unwrap();
+                        }
+                    }
+                    reader.read_exact(&mut vec![0; length]).await.unwrap();
+                    let reply = if first.starts_with("GET") {
+                        serde_json::json!({"data":[{"id":"fixture"}]})
+                    } else {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        let content = serde_json::json!({"text":"## Page 1\nFirst page.\n## Page 2\nSecond page.\n## Page 3\nThird page."}).to_string();
+                        serde_json::json!({"model":"fixture", "choices":[{"message":{"role":"assistant","content":content},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":20}})
+                    }.to_string();
+                    reader.get_mut().write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len()).as_bytes()).await.unwrap();
+                }
+            });
+            let settings = crate::settings::Settings {
+                preferred_provider: "local".into(),
+                local_base_url: url,
+                local_model: "fixture".into(),
+                review_max_calls: cap,
+                ..Default::default()
+            };
+            let run = crate::run_scope::ActiveScope::begin(format!("extraction-budget-{cap}"));
+            let bus: crate::emit::EventBus = Arc::new(crate::emit::NullEvents);
+            let result = crate::run_scope::scoped(run.scope().clone(), async {
+                let _budget =
+                    crate::pipeline::review_budget::begin(&settings, std::time::Instant::now());
+                run_llm_ranges(
+                    &bus,
+                    Path::new("paper.pdf"),
+                    "paper.pdf",
+                    &[(1, 1), (2, 2), (3, 3)],
+                    false,
+                    20,
+                    &[],
+                    Arc::new(settings),
+                )
+                .await
+            })
+            .await;
+            server.abort();
+            let _ = server.await;
+            assert!(crate::pipeline::review_budget::stopped(
+                &result.unwrap_err()
+            ));
+            assert_eq!(calls.load(Ordering::SeqCst), cap as usize);
+            assert_eq!(run.scope().usage().provider_attempts, u64::from(cap));
+            assert_eq!(
+                run.scope().usage().output_tokens,
+                20 * u64::from(cap),
+                "in-flight results must finish"
+            );
+        }
+    }
 
     #[tokio::test]
     async fn stopping_a_review_stops_its_extraction_ranges_and_keeps_their_usage() {

@@ -1,21 +1,19 @@
+import { useState } from "react";
+import ReviewPdfOptions from "./ReviewPdfOptions";
 import AuthorNoteField from "./AuthorNoteField";
 import { authorNoteLength, AUTHOR_NOTE_MAX_CHARS } from "../lib/authorNote";
-import { useState } from "react";
 import PaperSelector from "./PaperSelector";
-import SidebarPanel, { SidebarHeader } from "./SidebarPanel";
 import WorkflowPanel from "./WorkflowPanel";
 import RunModelChoice from "./RunModelChoice";
-import { isMac, isWindows } from "../lib/platform";
+import RunPlanPreview from "./RunPlanPreview";
+import PageHeader from "../ui/PageHeader";
 import type {
   DepsReport,
   PipelineConfig,
   PrimaryInputSelection,
   RunModelOverrides,
 } from "../lib/types";
-import ReportIssueLink from "./ReportIssueLink";
 import "./RunSetupPanel.css";
-
-const PRIVACY_NOTICE_KEY = "pipeline.privacyNoticeAcknowledged.v1";
 
 interface Props {
   authorNote: string;
@@ -39,10 +37,9 @@ interface Props {
   /** This review's model choices; null follows Settings and the workflow. */
   parallelOverrides: RunModelOverrides | null;
   selectionKey: number;
-  width: number;
   /** Reviews already queued or running, and how many may run at once. */
   runActivity?: { running: number; queued: number; limit: number };
-  onConfigureWorkflow: () => void;
+  onConfigureWorkflow: (stageId?: string) => void;
   onGenerate: () => void;
   onPaperPathChange: (path: string | null) => void;
   onInputSelectionChange: (selection: PrimaryInputSelection | null) => void;
@@ -51,7 +48,6 @@ interface Props {
   onProfileChange: (config?: PipelineConfig) => void;
   onRetryConfig: () => void;
   onRetryDependencies: () => void;
-  onResize: (width: number) => void;
 }
 
 export default function RunSetupPanel({
@@ -65,14 +61,13 @@ export default function RunSetupPanel({
   dependencies,
   inputMode,
   inputSelection,
-  launchError = null,
+  launchError,
   listenersReady,
   localLlmActive,
   paperPath,
   preparingRun,
   parallelOverrides,
   selectionKey,
-  width,
   runActivity,
   onConfigureWorkflow,
   onGenerate,
@@ -83,50 +78,57 @@ export default function RunSetupPanel({
   onProfileChange,
   onRetryConfig,
   onRetryDependencies,
-  onResize,
 }: Props) {
-  const [showPrivacyNotice, setShowPrivacyNotice] = useState(() => {
-    try {
-      return localStorage.getItem(PRIVACY_NOTICE_KEY) !== "true";
-    } catch {
-      return true;
+  const [sampling, setSampling] = useState(false);
+  const noteTooLong = authorNoteLength(authorNote) > AUTHOR_NOTE_MAX_CHARS;
+  const missingInput = !paperPath && inputMode !== "none";
+  const reason = sampling
+    ? "Reading PDF sample…"
+    : preparingRun
+      ? "Preparing preview…"
+      : configLoading
+        ? "Loading workflow…"
+        : configError
+          ? "Reload the workflow to continue."
+          : missingInput
+            ? "Choose a document to preview this review."
+            : noteTooLong
+              ? "Shorten the author note to continue."
+              : !listenersReady
+                ? "Connecting to the review service…"
+                : null;
+  const target = configError
+    ? "review-workflow"
+    : missingInput
+      ? "review-input"
+      : noteTooLong
+        ? "review-note"
+        : undefined;
+  const focusTarget = () => {
+    const section = target && document.getElementById(target);
+    if (section) {
+      section.scrollIntoView({ block: "center", behavior: "smooth" });
+      section
+        .querySelector<HTMLElement>("button, input, select, textarea")
+        ?.focus();
     }
-  });
-  const canRun =
-    authorNoteLength(authorNote) <= AUTHOR_NOTE_MAX_CHARS &&
-    (paperPath !== null || inputMode === "none") &&
-    !configLoading &&
-    !configError &&
-    listenersReady &&
-    !preparingRun;
-
+  };
   return (
-    <SidebarPanel
-      data-testid="run-setup-panel"
-      width={width}
-      defaultWidth={288}
-      min={240}
-      max={440}
-      onResize={onResize}
-      resizeLabel="Resize report setup"
-    >
-      {/* This panel reaches the window top, beside the main content's strip. */}
-      {isWindows && (
-        <div data-tauri-drag-region className="absolute inset-x-0 top-0 h-6" />
-      )}
-      <div className="run-setup-scroll flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <div
-          data-tauri-drag-region={isMac ? "deep" : undefined}
-          className="sticky top-0 z-10 shrink-0 select-none bg-white dark:bg-gray-900"
-        >
-          <SidebarHeader title="New review" heading="h1" />
-        </div>
-        <div className="flex shrink-0 grow flex-col px-5 pb-6 pt-1">
-          <div className="space-y-5">
+    <div className="ui-page review-setup" data-testid="run-setup-panel">
+      <PageHeader
+        title="New review"
+        description="Choose your document, workflow, and models. Preview the plan before starting."
+      />
+      <div className="review-setup-grid">
+        <div className="review-setup-column">
+          <section
+            id="review-input"
+            className="review-setup-card"
+            aria-label="Review document"
+          >
+            <h2>Document</h2>
             {inputMode === "none" ? (
-              <p className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs leading-5 text-gray-600 dark:border-gray-700 dark:bg-gray-800/50 dark:text-gray-300">
-                This workflow runs without a source document.
-              </p>
+              <p>This workflow runs without a source document.</p>
             ) : (
               <PaperSelector
                 key={selectionKey}
@@ -134,175 +136,132 @@ export default function RunSetupPanel({
                 selection={inputSelection}
                 onPathChange={onPaperPathChange}
                 onSelectionChange={onInputSelectionChange}
-                disabled={configLoading}
+                disabled={configLoading || preparingRun || sampling}
               />
             )}
-
-            <WorkflowPanel
-              disabled={configLoading || preparingRun}
-              onConfigure={onConfigureWorkflow}
-              onProfileChange={onProfileChange}
-              refreshKey={configVersion}
-            />
-
+            {paperPath?.toLowerCase().endsWith(".pdf") &&
+              inputMode !== "none" && (
+                <ReviewPdfOptions
+                  path={paperPath}
+                  value={parallelOverrides}
+                  onChange={onParallelOverridesChange}
+                  disabled={configLoading || preparingRun}
+                  refreshKey={configVersion}
+                  onBusy={setSampling}
+                />
+              )}
+          </section>
+          <section
+            id="review-note"
+            className="review-setup-card"
+            aria-label="Review focus"
+          >
             <AuthorNoteField
               key={selectionKey}
               value={authorNote}
               onChange={onAuthorNoteChange}
               focusKey={authorNoteFocusKey}
-              disabled={configLoading || preparingRun}
+              disabled={configLoading || preparingRun || sampling}
             />
-
-            <RunModelChoice
-              value={parallelOverrides}
-              disabled={configLoading || preparingRun}
-              dependencies={dependencies}
-              localLlmActive={localLlmActive}
+          </section>
+        </div>
+        <div className="review-setup-column">
+          <section
+            id="review-workflow"
+            className="review-setup-card"
+            aria-label="Review workflow"
+          >
+            <WorkflowPanel
+              disabled={configLoading || preparingRun || sampling}
+              onConfigure={() => onConfigureWorkflow()}
+              onProfileChange={onProfileChange}
               refreshKey={configVersion}
-              onChange={onParallelOverridesChange}
             />
-          </div>
-
-          <div className="mt-auto pt-6">
-            {configError && (
-              <div
-                role="alert"
-                className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300"
-              >
-                <p className="font-medium">
-                  Workflow setup could not be loaded.
-                </p>
-                <p className="mt-1 break-words">{configError}</p>
-                <button
-                  type="button"
-                  onClick={onRetryConfig}
-                  className="mt-2 font-medium underline underline-offset-2"
-                >
-                  Retry workflow
-                </button>
-                <ReportIssueLink />
-              </div>
-            )}
-            {launchError && (
-              <div
-                role="alert"
-                className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300"
-              >
-                <p className="font-medium">The review could not be started.</p>
-                <p className="mt-1 break-words">{launchError}</p>
-                <ReportIssueLink />
-              </div>
-            )}
-            {dependenciesError && (
-              <div
-                role="alert"
-                className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300"
-              >
-                <p className="font-medium">System readiness check failed.</p>
-                <p className="mt-1 break-words">{dependenciesError}</p>
-                <button
-                  type="button"
-                  onClick={onRetryDependencies}
-                  className="mt-2 font-medium underline underline-offset-2"
-                >
-                  Retry system check
-                </button>
-                <ReportIssueLink />
-              </div>
-            )}
-            {showPrivacyNotice && (
-              <div
-                role="note"
-                aria-label="Data and privacy"
-                className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-5
-                         text-amber-900 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-200"
-              >
-                <p>
-                  Your AI provider may receive the selected source and any
-                  material each step can read. Web searches send queries to an
-                  external service. Reports and supporting files stay on this
-                  computer until deleted.
-                </p>
-                <div className="mt-2 flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={onPrivacyDetails}
-                    className="font-medium underline underline-offset-2 hover:text-amber-700 dark:hover:text-amber-100"
-                  >
-                    Privacy details
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      try {
-                        localStorage.setItem(PRIVACY_NOTICE_KEY, "true");
-                      } catch {
-                        // The notice can still be dismissed for this session.
-                      }
-                      setShowPrivacyNotice(false);
-                    }}
-                    className="ml-auto rounded border border-amber-300 px-2 py-0.5 font-medium
-                             hover:bg-amber-100 dark:border-amber-800 dark:hover:bg-amber-900/50"
-                  >
-                    Got it
-                  </button>
-                </div>
-              </div>
-            )}
-            {runActivity && runActivity.running + runActivity.queued > 0 && (
-              <p
-                role="status"
-                className="mb-2 text-xs leading-5 text-gray-500 dark:text-gray-400"
-              >
-                {runActivity.running} running
-                {runActivity.queued > 0 ? `, ${runActivity.queued} queued` : ""}
-                .{" "}
-                {runActivity.running + runActivity.queued >= runActivity.limit
-                  ? "This review waits for a free slot."
-                  : "This review starts right away."}
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={onGenerate}
-              disabled={!canRun}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-gray-950 px-4 py-2.5 text-sm font-medium
-                       text-white transition-colors hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2
-                       focus-visible:ring-gray-400 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-gray-300
-                       dark:bg-gray-100 dark:text-gray-950 dark:hover:bg-white dark:focus-visible:ring-offset-gray-900
-                       dark:disabled:bg-gray-700 dark:disabled:text-gray-400"
-            >
-              {preparingRun
-                ? "Preparing report…"
-                : configLoading
-                  ? "Loading workflow…"
-                  : !listenersReady
-                    ? "Preparing event stream…"
-                    : runActivity &&
-                        runActivity.running + runActivity.queued >=
-                          runActivity.limit
-                      ? "Queue review"
-                      : "Start review"}
-              {!configLoading && !preparingRun && listenersReady && (
-                <svg
-                  aria-hidden="true"
-                  className="h-4 w-4"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={1.7}
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="m9 5 7 7-7 7"
-                  />
-                </svg>
-              )}
-            </button>
-          </div>
+            <details className="review-workflow-diagram">
+              <summary>View workflow steps</summary>
+              <RunPlanPreview
+                refreshKey={configVersion}
+                inputMode={inputMode}
+                hasInput={!!paperPath}
+                onOpenDesigner={onConfigureWorkflow}
+              />
+            </details>
+          </section>
+          <RunModelChoice
+            value={parallelOverrides}
+            disabled={configLoading || preparingRun || sampling}
+            dependencies={dependencies}
+            localLlmActive={localLlmActive}
+            refreshKey={configVersion}
+            onChange={onParallelOverridesChange}
+          />
         </div>
       </div>
-    </SidebarPanel>
+      {(configError || launchError || dependenciesError) && (
+        <div role="alert" className="review-setup-errors">
+          {configError && (
+            <div>
+              <p>Couldn't load the workflow. {configError}</p>
+              <button onClick={onRetryConfig}>Retry workflow</button>
+            </div>
+          )}
+          {launchError && <p>Couldn't prepare the review. {launchError}</p>}
+          {dependenciesError && (
+            <div>
+              <p>Couldn't check connections and tools. {dependenciesError}</p>
+              <button onClick={onRetryDependencies}>Retry check</button>
+            </div>
+          )}
+        </div>
+      )}
+      <footer className="review-setup-footer">
+        <div className="min-w-0 flex-1 space-y-1">
+          <p className="text-xs text-ink-muted">
+            The preview shows which providers receive your document.{" "}
+            <button
+              onClick={onPrivacyDetails}
+              className="underline underline-offset-2"
+            >
+              Data and privacy
+            </button>
+          </p>
+          {reason && (
+            <p
+              id="review-preview-reason"
+              role="status"
+              className="text-sm text-ink"
+            >
+              {target ? (
+                <button
+                  className="underline underline-offset-2"
+                  onClick={focusTarget}
+                >
+                  {reason}
+                </button>
+              ) : (
+                reason
+              )}
+            </p>
+          )}
+          {runActivity && runActivity.running + runActivity.queued > 0 && (
+            <p className="text-xs text-ink-muted">
+              {runActivity.running} running · {runActivity.queued} queued.{" "}
+              {runActivity.running + runActivity.queued >= runActivity.limit
+                ? "This review will join the queue after you confirm."
+                : "You can start another review."}
+            </p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onGenerate}
+          disabled={!!reason}
+          aria-describedby={reason ? "review-preview-reason" : undefined}
+          className="ui-page-button primary review-preview-button"
+        >
+          {preparingRun ? "Preparing preview…" : "Preview"}
+        </button>
+      </footer>
+    </div>
   );
 }

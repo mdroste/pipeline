@@ -426,8 +426,9 @@ manifest and up to 16 command plans. Import stays inert until the recipient
 binds each plan to a local toolchain. Limits are 64 MiB in total and 8 MiB per
 entry.
 
-**Results files** use `research-results-v1` or `research-results-v2`. See the
-[exporters README](examples/research-exporters/README.md).
+**Results files** use `research-results-v1` or `research-results-v2`. No view
+imports them since Experiments was retired; the parser stays until the back
+end behind that view is removed.
 
 ## Testing
 

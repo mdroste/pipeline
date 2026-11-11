@@ -1,7 +1,5 @@
 import SetupTab from "./research-panel/SetupTab";
-import DocumentsTab from "./research-panel/DocumentsTab";
 import MemoryTab from "./research-panel/MemoryTab";
-import EvidenceTab from "./research-panel/EvidenceTab";
 import ResultsTab from "./research-panel/ResultsTab";
 import ReleaseTab from "./research-panel/ReleaseTab";
 import { useResearchPanelController } from "./research-panel/useResearchPanelController";
@@ -79,22 +77,14 @@ export default function WorkspaceResearchPanel({
     effective,
     papers,
     setProjectPaperId,
-    sources,
     notes,
-    ledger,
     profiles,
     executions,
     busy,
-    query,
-    setQuery,
-    hits,
-    setHits,
     noteBody,
     setNoteBody,
     noteKind,
     setNoteKind,
-    claim,
-    setClaim,
     profileName,
     setProfileName,
     adapter,
@@ -191,8 +181,8 @@ export default function WorkspaceResearchPanel({
         {!workspaceId && tab !== "setup" && (
           <div className="rounded border border-amber-200 bg-amber-50 p-3 text-amber-800 dark:border-amber-900 dark:bg-amber-950/20 dark:text-amber-200">
             <p>
-              Move this conversation to a project to use documents, notes,
-              evidence, and results.
+              Move this conversation to a project to use notes and saved
+              commands.
             </p>
             {onMove && (
               <button
@@ -223,24 +213,6 @@ export default function WorkspaceResearchPanel({
           />
         )}
 
-        {tab === "documents" && workspaceId && (
-          <DocumentsTab
-            busy={busy}
-            act={act}
-            papers={papers}
-            sources={sources}
-            selectedPaper={selectedPaper}
-            setProjectPaperId={setProjectPaperId}
-            patchSession={patchSession}
-            query={query}
-            setQuery={setQuery}
-            hits={hits}
-            setHits={setHits}
-            workspaceId={workspaceId}
-            projectWorkspace={projectWorkspace}
-          />
-        )}
-
         {tab === "recipes" && snapshot && (
           <fieldset disabled={settingsDisabled}>
             <WorkspaceRecipesPanel
@@ -262,18 +234,6 @@ export default function WorkspaceResearchPanel({
             notes={notes}
             workspaceId={workspaceId}
             snapshot={snapshot}
-          />
-        )}
-
-        {tab === "evidence" && workspaceId && ledger && (
-          <EvidenceTab
-            busy={busy}
-            act={act}
-            claim={claim}
-            setClaim={setClaim}
-            workspaceId={workspaceId}
-            snapshot={snapshot}
-            ledger={ledger}
           />
         )}
 

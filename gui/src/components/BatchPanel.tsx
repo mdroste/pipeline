@@ -644,7 +644,7 @@ export default function BatchPanel({
         {jobs.length > 0 && (
           <div>
             {batchSnapshot && (
-              <p className="mb-2 break-all rounded bg-gray-50 px-3 py-2 text-[11px] text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
+              <p className="mb-2 break-all rounded bg-gray-50 px-3 py-2 text-[0.6875rem] text-gray-500 dark:bg-gray-800/50 dark:text-gray-400">
                 Saved review design{" "}
                 <span className="font-mono">
                   {batchSnapshot.profile_id || "unknown"}

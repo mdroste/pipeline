@@ -36,13 +36,13 @@ function EnumChips({ values }: { values: unknown[] }) {
       {shown.map((value, index) => (
         <span
           key={`${String(value)}-${index}`}
-          className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-700 dark:bg-gray-800 dark:text-gray-300"
+          className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[0.625rem] text-gray-700 dark:bg-gray-800 dark:text-gray-300"
         >
           {typeof value === "string" ? value : JSON.stringify(value)}
         </span>
       ))}
       {values.length > shown.length && (
-        <span className="px-1 text-[10px] text-gray-500 dark:text-gray-400">
+        <span className="px-1 text-[0.625rem] text-gray-500 dark:text-gray-400">
           +{values.length - shown.length} more
         </span>
       )}
@@ -99,19 +99,19 @@ function SchemaNode({
             {name}
           </span>
         )}
-        <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
+        <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[0.625rem] font-medium text-violet-700 dark:bg-violet-950/50 dark:text-violet-300">
           {typeLabel(object)}
         </span>
         {required && (
           <span
-            className="text-[10px] font-medium text-amber-700 dark:text-amber-400"
+            className="text-[0.625rem] font-medium text-amber-700 dark:text-amber-400"
             title="required"
           >
             required
           </span>
         )}
         {bounds && (
-          <span className="text-[10px] text-gray-500 dark:text-gray-400">
+          <span className="text-[0.625rem] text-gray-500 dark:text-gray-400">
             {bounds}
           </span>
         )}
@@ -120,7 +120,7 @@ function SchemaNode({
         )}
       </div>
       {description && (
-        <p className="max-w-2xl pb-0.5 text-[11px] leading-snug text-gray-500 dark:text-gray-400">
+        <p className="max-w-2xl pb-0.5 text-[0.6875rem] leading-snug text-gray-500 dark:text-gray-400">
           {description}
         </p>
       )}

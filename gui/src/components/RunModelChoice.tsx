@@ -21,6 +21,7 @@ import {
   defaultMergeEffortOverrides,
   defaultMergeModelOverrides,
   PROVIDERS,
+  PROVIDER_LABELS,
   providerTransport,
   type Provider,
 } from "../lib/providers";
@@ -80,12 +81,18 @@ export default function RunModelChoice({
   const [settings, setSettings] = useState<Settings | null>(null);
   const [config, setConfig] = useState<PipelineConfig | null>(null);
   const [catalogs, setCatalogs] = useState<Record<string, ModelCatalog>>({});
+  const [catalogErrors, setCatalogErrors] = useState<string[]>([]);
   const [roster, setRoster] = useState<RosterEntry[] | null>(null);
   const [open, setOpen] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [rosterError, setRosterError] = useState<string | null>(null);
+  const [rosterLoading, setRosterLoading] = useState(true);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let live = true;
     setConfig(null);
+    setLoadError(null);
     Promise.all([
       invoke<{ settings: Settings }>("get_settings"),
       invoke<PipelineConfig>("get_pipeline_config"),
@@ -95,14 +102,13 @@ export default function RunModelChoice({
         setSettings(response.settings);
         setConfig(workflow);
       })
-      .catch(() => {
-        // The run readiness error remains authoritative. Keep this optional
-        // control out of the way if Settings cannot be read.
+      .catch((error) => {
+        if (live) setLoadError(String(error));
       });
     return () => {
       live = false;
     };
-  }, [refreshKey]);
+  }, [refreshKey, attempt]);
 
   const providers = useMemo<Provider[]>(() => {
     if (!settings) return ["claude", "codex", "antigravity"];
@@ -117,6 +123,8 @@ export default function RunModelChoice({
   useEffect(() => {
     if (!settings) return;
     let live = true;
+    setCatalogs({});
+    setCatalogErrors([]);
     Promise.allSettled(
       providers.map(async (provider) => {
         const catalog = await invoke<ModelCatalog>("get_model_catalog", {
@@ -128,6 +136,13 @@ export default function RunModelChoice({
       }),
     ).then((results) => {
       if (!live) return;
+      setCatalogErrors(
+        results.flatMap((result, index) =>
+          result.status === "rejected"
+            ? [PROVIDER_LABELS[providers[index]]]
+            : [],
+        ),
+      );
       setCatalogs(
         Object.fromEntries(
           results.flatMap((result) =>
@@ -139,27 +154,62 @@ export default function RunModelChoice({
     return () => {
       live = false;
     };
-  }, [providers, settings]);
+  }, [providers, settings, attempt]);
 
   useEffect(() => {
     if (!settings || !config) return;
     let live = true;
+    setRosterLoading(true);
+    setRosterError(null);
+    setRoster(null);
     invoke<RosterEntry[]>("get_model_roster", {
       runParallelOverrides: value ?? null,
     })
       .then((entries) => {
-        if (live) setRoster(entries);
+        if (live) {
+          setRoster(entries);
+          setRosterLoading(false);
+        }
       })
-      .catch(() => {
-        if (live) setRoster(null);
+      .catch((error) => {
+        if (live) {
+          setRosterError(String(error));
+          setRosterLoading(false);
+        }
       });
     return () => {
       live = false;
     };
-  }, [config, settings, value, refreshKey]);
+  }, [config, settings, value, refreshKey, attempt]);
 
-  if (!settings || !config) return null;
+  if (!settings || !config)
+    return (
+      <section
+        aria-label="Models for this review"
+        className="rounded-ui-md border border-line p-4 text-ui-label"
+      >
+        <h2 className="font-medium">Models for this review</h2>
+        {loadError ? (
+          <div role="alert">
+            <p>Couldn't load model choices. {loadError}</p>
+            <button
+              className="mt-2 underline"
+              onClick={() => setAttempt((n) => n + 1)}
+            >
+              Retry model choices
+            </button>
+          </div>
+        ) : (
+          <p role="status">Loading model choices…</p>
+        )}
+      </section>
+    );
 
+  const hasModelChoice = !!(
+    value?.review ||
+    value?.agents.length ||
+    value?.merge_agent
+  );
   const review = value?.review ?? defaultReview(settings);
   const pickerSettings = withoutDefaultModel(settings);
   const reviewKey = `${review.provider}:${providerTransport(settings, review.provider)}`;
@@ -215,11 +265,17 @@ export default function RunModelChoice({
         <h2 className="text-ui-label font-medium text-ink">
           Models for this review
         </h2>
-        {value && (
+        {hasModelChoice && (
           <button
             type="button"
             disabled={disabled}
-            onClick={() => onChange(null)}
+            onClick={() =>
+              onChange(
+                value?.extraction_method
+                  ? { ...EMPTY, extraction_method: value.extraction_method }
+                  : null,
+              )
+            }
             className="rounded-ui-sm px-1.5 py-1 text-ui-meta text-ink-muted transition-colors hover:bg-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-50"
           >
             Reset
@@ -240,7 +296,7 @@ export default function RunModelChoice({
             {summary.provider}
           </span>
           <span className="text-ui-meta text-ink-muted">
-            {value ? "This review" : "Your default model"}
+            {hasModelChoice ? "This review" : "Your default model"}
           </span>
         </span>
         <span className="block break-words text-ui-body font-medium leading-5 text-ink">
@@ -258,6 +314,42 @@ export default function RunModelChoice({
         </span>
       </button>
 
+      {rosterLoading && (
+        <p role="status" className="px-3 pb-3 text-ui-meta text-ink-muted">
+          Checking models for each step…
+        </p>
+      )}
+      {catalogErrors.length > 0 && (
+        <div
+          role="alert"
+          className="mx-3 mb-3 rounded-ui-sm bg-sunken p-3 text-ui-meta"
+        >
+          <p>
+            Couldn't load model lists for {catalogErrors.join(", ")}. Your saved
+            model choices are still selected.
+          </p>
+          <button
+            className="mt-2 underline"
+            onClick={() => setAttempt((n) => n + 1)}
+          >
+            Retry model lists
+          </button>
+        </div>
+      )}
+      {rosterError && (
+        <div
+          role="alert"
+          className="mx-3 mb-3 rounded-ui-sm bg-sunken p-3 text-ui-meta"
+        >
+          <p>Couldn't check models for each step. {rosterError}</p>
+          <button
+            className="mt-2 underline"
+            onClick={() => setAttempt((n) => n + 1)}
+          >
+            Retry model check
+          </button>
+        </div>
+      )}
       {exceptions.length > 0 && (
         <div
           role="note"

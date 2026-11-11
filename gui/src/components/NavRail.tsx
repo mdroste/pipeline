@@ -451,7 +451,7 @@ export default function NavRail({
           {groupIcon("reviews")}
           <NavIcon
             icon="tasks"
-            label="Automations"
+            label="All automations"
             tooltip="Schedule and run research automations"
             current={activePage === "tasks"}
             onClick={() => onNavigate("tasks")}
@@ -529,7 +529,7 @@ export default function NavRail({
         {group("reviews")}
         <NavRow
           icon="tasks"
-          label="Automations"
+          label="All automations"
           current={activePage === "tasks"}
           onClick={() => onNavigate("tasks")}
           suffix={automationStatus}

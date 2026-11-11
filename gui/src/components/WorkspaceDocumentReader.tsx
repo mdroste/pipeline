@@ -278,7 +278,7 @@ export default function WorkspaceDocumentReader({
                   ? "This document could not be opened"
                   : "Opening document…")}
             </h2>
-            <p className="text-[11px] text-gray-500">
+            <p className="text-[0.6875rem] text-gray-500">
               Captured revision {view?.revision.contentHash.slice(0, 12)}
               {busy && " · Loading…"}
             </p>

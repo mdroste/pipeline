@@ -1,8 +1,2 @@
 export type ResearchTab =
-  | "setup"
-  | "documents"
-  | "recipes"
-  | "memory"
-  | "evidence"
-  | "results"
-  | "release";
+  "setup" | "recipes" | "memory" | "results" | "release";

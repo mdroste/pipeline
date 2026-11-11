@@ -15,7 +15,7 @@ async function openMenu() {
 }
 
 function item(name: string) {
-  return screen.getByRole("menuitem", { name: new RegExp(`^${name}`) });
+  return screen.getByRole("button", { name: new RegExp(`^${name}`) });
 }
 
 describe("report format exports", () => {
@@ -70,9 +70,7 @@ describe("report format exports", () => {
   it("is offered only for saved runs", async () => {
     render(<ExportControls markdown="# report" inputPath="/p/a.pdf" />);
     await openMenu();
-    expect(
-      screen.queryByRole("menuitem", { name: /Export as HTML/ }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Export as HTML/ })).toBeNull();
   });
 
   it("saves HTML through the backend dialog without passing a path", async () => {

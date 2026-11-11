@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn a_stopped_request_offers_only_controls_that_exist() {
         let message = unanswered_request("Run pdftotext?");
-        let controls = include_str!("../../../../src/components/tasks/Detail.tsx");
+        let controls = include_str!("../../../../src/components/tasks/Recovery.tsx");
         for label in [
             "Retry unfinished actions",
             "Use current conversation context",

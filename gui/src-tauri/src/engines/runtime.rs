@@ -392,8 +392,7 @@ fn atomic_replace_runtime_file(path: &Path, bytes: &[u8]) -> Result<(), String> 
         .map_err(|error| format!("Failed to flush parser refresh file: {error}"))?;
     crate::safety::sync_file(temporary.as_file())
         .map_err(|error| format!("Failed to sync parser refresh file: {error}"))?;
-    temporary
-        .persist(path)
+    crate::safety::persist_file(temporary, path)
         .map_err(|error| format!("Failed to publish parser refresh file: {}", error.error))?;
     #[cfg(unix)]
     if let Ok(directory) = std::fs::File::open(parent) {

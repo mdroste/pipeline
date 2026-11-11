@@ -120,7 +120,7 @@ function Cell({
           disabled={busy}
           aria-label={`Override ${row.label} for ${scopeLabel}`}
           onClick={() => onSet(scope, row.key, effectiveValue)}
-          className="rounded border border-dashed border-gray-300 px-2 py-0.5 text-[11px] text-gray-500 hover:border-gray-400 hover:text-gray-700 dark:border-gray-600 dark:text-gray-400"
+          className="rounded border border-dashed border-gray-300 px-2 py-0.5 text-[0.6875rem] text-gray-500 hover:border-gray-400 hover:text-gray-700 dark:border-gray-600 dark:text-gray-400"
         >
           inherits · set
         </button>
@@ -187,7 +187,7 @@ function Cell({
       className={`px-2 py-2 align-top ${winning ? "rounded bg-emerald-50 ring-1 ring-inset ring-emerald-300 dark:bg-emerald-950/30 dark:ring-emerald-700" : ""}`}
     >
       {winning && (
-        <div className="mb-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
+        <div className="mb-0.5 text-[0.5625rem] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300">
           In effect
         </div>
       )}
@@ -223,7 +223,7 @@ function HarnessAccessTable({
       <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         <table className="w-full min-w-[40rem] text-left text-xs">
           <thead>
-            <tr className="border-b border-gray-200 text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:border-gray-700 dark:text-gray-400">
+            <tr className="border-b border-gray-200 text-[0.625rem] font-semibold uppercase tracking-wide text-gray-500 dark:border-gray-700 dark:text-gray-400">
               <th scope="col" className="px-3 py-2">
                 Setting
               </th>
@@ -246,11 +246,11 @@ function HarnessAccessTable({
                     <div className="text-sm font-medium text-gray-800 dark:text-gray-200">
                       {row.label}
                     </div>
-                    <div className="text-[11px] text-gray-500 dark:text-gray-400">
+                    <div className="text-[0.6875rem] text-gray-500 dark:text-gray-400">
                       {row.description}
                     </div>
                     {row.locked && (
-                      <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+                      <div className="mt-1 text-[0.6875rem] text-amber-700 dark:text-amber-300">
                         {row.locked}
                       </div>
                     )}
@@ -283,7 +283,7 @@ function HarnessAccessTable({
       {isApiProvider(conversationProvider(conversationOverrides.runtime)) && (
         <ShellSetup disabled={busy} />
       )}
-      <p className="text-[11px] text-gray-500 dark:text-gray-400">
+      <p className="text-[0.6875rem] text-gray-500 dark:text-gray-400">
         Access changes apply to your next message. Current permissions:{" "}
         <span className="font-mono">{effective.permissionProfile}</span>.
         {successor &&

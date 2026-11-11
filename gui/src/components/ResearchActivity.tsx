@@ -120,7 +120,7 @@ export default function ResearchActivity({
   return (
     <aside
       role={asPage ? undefined : "dialog"}
-      aria-label={asPage ? "Activity" : "Suite activity"}
+      aria-label={asPage ? "All activity" : "Suite activity"}
       className={
         asPage
           ? "ui-page"
@@ -129,7 +129,7 @@ export default function ResearchActivity({
     >
       {asPage ? (
         <PageHeader
-          title="Activity"
+          title="All activity"
           description="See work in progress, completed work, and items that need your attention."
         />
       ) : (
