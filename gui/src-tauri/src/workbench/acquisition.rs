@@ -107,10 +107,12 @@ async fn bytes(request: reqwest::RequestBuilder, max: usize) -> WorkbenchResult<
     body(response, max).await
 }
 /// A bounded response of any status, so connectors can report service errors.
+#[cfg(test)]
 pub(crate) struct Fetched {
     pub status: u16,
     pub body: Vec<u8>,
 }
+#[cfg(test)]
 pub(crate) async fn fetch(
     request: reqwest::RequestBuilder,
     max: usize,

@@ -1,5 +1,6 @@
 //! What a researcher reads back from the studio: build messages, citations,
 //! referee comments, and the links that keep a number tied to its passage.
+use super::theory::theory_note;
 use super::*;
 
 fn report(f: &Fixture, name: &str, paragraphs: usize) -> String {

@@ -1,5 +1,6 @@
-//! Statistical data connectors. Each connector validates its query, names its
-//! bounded HTTPS requests, and interprets the responses without network access,
+//! Qualification code for the retired statistical data connectors. Each
+//! connector validates its query, names its bounded HTTPS requests, and
+//! interprets responses without network access,
 //! so parsing is tested from recorded fixtures. `fetch` performs the requests
 //! outside database workers with the acquisition client (30-second timeout, no
 //! redirects); callers record the capture through the data catalog.
@@ -13,7 +14,7 @@ pub use dbnomics::DbnomicsQuery;
 pub use fred::FredRequest;
 pub use world_bank::WorldBankQuery;
 
-use super::DataAcquisition;
+use super::{ConnectorProvenance, DataAcquisition};
 use crate::workbench::{
     acquisition::{self, Fetched},
     desk::{self, DeskRecord},
@@ -25,26 +26,6 @@ use serde_json::{json, Value};
 /// When the recorded licence, notice and citation text was last checked
 /// against each service's published terms.
 pub(crate) const TERMS_REVIEWED: &str = "2026-10-28";
-
-/// Terms, notice and citation stored on every connector capture.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ConnectorProvenance {
-    /// `fred`, `dbnomics` or `world_bank`.
-    pub connector: String,
-    /// Exact request parameters, without credentials.
-    pub query: Value,
-    /// Request URLs, without credentials.
-    pub request_urls: Vec<String>,
-    /// The source's own "last updated" or indexing time, when it reports one.
-    pub last_updated: Option<String>,
-    pub licence: String,
-    /// Text the source requires wherever its data are shown.
-    pub notice: Option<String>,
-    pub citation: String,
-    pub terms_url: String,
-    pub terms_reviewed: String,
-}
 
 pub(crate) struct Request {
     pub url: reqwest::Url,
@@ -78,19 +59,12 @@ pub(crate) async fn fetch<C: DataConnector + Sync>(connector: &C) -> WorkbenchRe
     connector.capture(responses, &desk::now())
 }
 
-/// Keyless series captures accepted by `workbench_acquire_series`.
+/// Queries for keyless DBnomics and World Bank series captures.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "connector", rename_all = "snake_case")]
 pub enum SeriesQuery {
     Dbnomics(DbnomicsQuery),
     WorldBank(WorldBankQuery),
-}
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SeriesRequest {
-    pub workspace_id: String,
-    pub operation_id: String,
-    pub query: SeriesQuery,
 }
 pub(crate) async fn acquire_series(query: &SeriesQuery) -> WorkbenchResult<Capture> {
     match query {

@@ -426,7 +426,19 @@ describe("SettingsPage providers", () => {
   });
 
   it("refreshes a cloud catalog after an API mode and credential change is saved", async () => {
-    let claudeRequests = 0;
+    const apiSettings = {
+      anthropic_api_key: "sk-complete-key",
+      claude_access_mode: "api",
+    };
+    const credentialRefresh = expect.objectContaining({
+      provider: "claude",
+      refresh: true,
+      settings: expect.objectContaining(apiSettings),
+    });
+    let finishSaving = () => {};
+    const saving = new Promise<void>((resolve) => {
+      finishSaving = resolve;
+    });
     invoke.mockImplementation(
       (
         cmd: string,
@@ -442,12 +454,12 @@ describe("SettingsPage providers", () => {
         }
         if (cmd === "get_model_catalog") {
           if (args?.provider === "claude") {
-            claudeRequests += 1;
+            const api = args.settings?.claude_access_mode === "api";
             return Promise.resolve(
               catalog(
                 "claude",
-                claudeRequests === 1 ? "cli" : "api",
-                claudeRequests === 1 ? "saved-account" : "new-account",
+                api ? "api" : "cli",
+                api ? "new-account" : "saved-account",
               ),
             );
           }
@@ -455,7 +467,12 @@ describe("SettingsPage providers", () => {
             catalog(args?.provider ?? "local", "cli", "current"),
           );
         }
-        if (cmd === "save_settings") return Promise.resolve();
+        if (
+          cmd === "save_settings" &&
+          args?.settings?.anthropic_api_key === apiSettings.anthropic_api_key
+        ) {
+          return saving;
+        }
         return Promise.resolve();
       },
     );
@@ -468,8 +485,9 @@ describe("SettingsPage providers", () => {
       />,
     );
 
-    await waitFor(() => expect(claudeRequests).toBe(1));
-    await user.click(screen.getByRole("button", { name: "Connections" }));
+    await user.click(
+      await screen.findByRole("button", { name: "Connections" }),
+    );
     const claudeModes = screen.getByRole("radiogroup", {
       name: "Claude connection mode",
     });
@@ -480,19 +498,21 @@ describe("SettingsPage providers", () => {
     await user.click(
       screen.getByRole("button", { name: "Save Claude API Key" }),
     );
-    expect(claudeRequests).toBe(1);
-
-    await waitFor(() => expect(claudeRequests).toBe(2));
-    expect(invoke).toHaveBeenCalledWith(
-      "get_model_catalog",
-      expect.objectContaining({
-        provider: "claude",
-        refresh: true,
-        settings: expect.objectContaining({
-          anthropic_api_key: "sk-complete-key",
-          claude_access_mode: "api",
-        }),
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("save_settings", {
+        settings: expect.objectContaining(apiSettings),
       }),
+    );
+    expect(invoke).not.toHaveBeenCalledWith(
+      "get_model_catalog",
+      credentialRefresh,
+    );
+    finishSaving();
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith(
+        "get_model_catalog",
+        credentialRefresh,
+      ),
     );
   });
 });

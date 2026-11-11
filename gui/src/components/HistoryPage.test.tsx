@@ -212,6 +212,7 @@ describe("HistoryPage", () => {
     );
     await user.click(screen.getByRole("button", { name: "Compare selected" }));
 
+    await screen.findByText("Compare reports", undefined, { timeout: 5_000 });
     await waitFor(() => {
       const reportCalls = invoke.mock.calls.filter(
         ([command]) => command === "get_run_report",

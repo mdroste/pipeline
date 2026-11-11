@@ -117,56 +117,6 @@ pub async fn workbench_paper_search(
 }
 
 #[tauri::command]
-pub async fn workbench_import_source(
-    request: crate::workbench::research::ImportSourceRequest,
-) -> WorkbenchResult<crate::workbench::research::SourceImportResult> {
-    run_store(move |store| crate::workbench::research::import_source(&store, request)).await
-}
-
-#[tauri::command]
-pub async fn workbench_list_sources(
-    workspace_id: String,
-) -> WorkbenchResult<Vec<crate::workbench::research::SourceRecord>> {
-    run_store(move |store| crate::workbench::research::list_sources(&store, &workspace_id)).await
-}
-
-#[tauri::command]
-pub async fn workbench_propose_claim(
-    request: crate::workbench::research::ProposeClaimRequest,
-) -> WorkbenchResult<crate::workbench::research::ClaimRecord> {
-    run_store(move |store| crate::workbench::research::propose_claim(&store, request, false)).await
-}
-
-#[tauri::command]
-pub async fn workbench_set_claim_state(
-    request: crate::workbench::research::SetClaimStateRequest,
-) -> WorkbenchResult<crate::workbench::research::ClaimRecord> {
-    run_store(move |store| crate::workbench::research::set_claim_state(&store, request)).await
-}
-
-#[tauri::command]
-pub async fn workbench_propose_evidence(
-    request: crate::workbench::research::ProposeEvidenceRequest,
-) -> WorkbenchResult<crate::workbench::research::EvidenceRecord> {
-    run_store(move |store| crate::workbench::research::propose_evidence(&store, request, false))
-        .await
-}
-
-#[tauri::command]
-pub async fn workbench_confirm_evidence(
-    request: crate::workbench::research::ConfirmEvidenceRequest,
-) -> WorkbenchResult<crate::workbench::research::EvidenceRecord> {
-    run_store(move |store| crate::workbench::research::confirm_evidence(&store, request)).await
-}
-
-#[tauri::command]
-pub async fn workbench_research_ledger(
-    workspace_id: String,
-) -> WorkbenchResult<crate::workbench::research::ResearchLedger> {
-    run_store(move |store| crate::workbench::research::research_ledger(&store, &workspace_id)).await
-}
-
-#[tauri::command]
 pub async fn workbench_save_execution_profile(
     request: crate::workbench::research::SaveExecutionProfileRequest,
 ) -> WorkbenchResult<crate::workbench::research::ExecutionProfile> {
@@ -232,39 +182,6 @@ pub async fn workbench_cancel_execution(
     request: crate::workbench::research::CancelExecutionRequest,
 ) -> WorkbenchResult<()> {
     run_store(move |store| crate::workbench::research::cancel_execution(&store, request)).await
-}
-
-#[tauri::command]
-pub async fn workbench_compare_results(
-    request: crate::workbench::research::CompareResultsRequest,
-) -> WorkbenchResult<crate::workbench::research::ResultComparison> {
-    run_store(move |_store| crate::workbench::research::compare_results(request)).await
-}
-
-#[tauri::command]
-pub async fn workbench_record_structured_result(
-    request: crate::workbench::research::RecordStructuredResultRequest,
-) -> WorkbenchResult<crate::workbench::research::ResearchResultV1> {
-    run_store(move |store| crate::workbench::research::record_structured_result(&store, request))
-        .await
-}
-
-#[tauri::command]
-pub async fn workbench_list_structured_results(
-    workspace_id: String,
-) -> WorkbenchResult<Vec<crate::workbench::research::ResearchResultV1>> {
-    run_store(move |store| {
-        crate::workbench::research::list_structured_results(&store, &workspace_id)
-    })
-    .await
-}
-
-#[tauri::command]
-pub async fn workbench_verify_evidence_results(
-    request: crate::workbench::research::VerifyEvidenceResultsRequest,
-) -> WorkbenchResult<crate::workbench::research::VerificationRecord> {
-    run_store(move |store| crate::workbench::research::verify_evidence_results(&store, request))
-        .await
 }
 
 #[tauri::command]

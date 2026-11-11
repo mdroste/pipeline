@@ -8,7 +8,6 @@ use crate::workbench::{
     data::DataAcquisition,
     store::{WorkbenchError, WorkbenchResult},
 };
-use serde::Deserialize;
 use serde_json::{json, Value};
 
 /// Required by the FRED® API Terms of Use wherever FRED data are shown.
@@ -18,14 +17,10 @@ const SERIES: &str = "https://api.stlouisfed.org/fred/series";
 const OBSERVATIONS: &str = "https://api.stlouisfed.org/fred/series/observations";
 
 /// The key is held only for this request; this type deliberately has no `Debug`.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct FredRequest {
-    pub workspace_id: String,
     pub series_id: String,
     pub vintage: String,
     pub api_key: String,
-    pub operation_id: String,
 }
 impl FredRequest {
     fn validate(&self) -> WorkbenchResult<()> {

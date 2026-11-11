@@ -2,11 +2,13 @@
 //!
 //! Local files are read and profiled by `prepare_local` outside database
 //! workers; `commit` stores the blob and immutable record inside one.
+#[cfg(test)]
+use super::connectors::Capture;
 use super::{
-    connectors::{Capture, ConnectorProvenance},
     csv, dta,
     profile::{fit_dictionary, Profile, RowPreview},
-    xlsx, DataAcquisition, DatasetVersion, ImportDataset, MetadataDataset, SampleDefinition,
+    xlsx, ConnectorProvenance, DataAcquisition, DatasetVersion, ImportDataset, MetadataDataset,
+    SampleDefinition,
 };
 use crate::workbench::{
     desk::{self, err, DeskRecord},
@@ -183,7 +185,7 @@ pub fn commit(store: &Store, p: PreparedDataset) -> WorkbenchResult<DeskRecord> 
         &p.operation_id,
     )
 }
-/// In-memory capture used by tests; production captures use `commit` or `import_capture`.
+/// In-memory capture used by tests; production captures use `commit`.
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)] // Internal capture boundary; callers pass explicit provenance and immutable-version identity.
 pub(crate) fn import_bytes(
@@ -217,7 +219,8 @@ pub(crate) fn import_bytes(
         },
     )
 }
-/// Record a statistical-source capture with its terms, notice and citation.
+/// Record a legacy connector capture while qualifying its saved format.
+#[cfg(test)]
 pub(crate) fn import_capture(
     store: &Store,
     ws: &str,

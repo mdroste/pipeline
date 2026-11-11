@@ -458,12 +458,6 @@ pub async fn workbench_studio_records(
         .await
 }
 #[tauri::command]
-pub async fn workbench_theory_overview(
-    workspace_id: String,
-) -> WorkbenchResult<crate::workbench::project::TheoryOverview> {
-    run_store(move |store| crate::workbench::project::theory_overview(&store, &workspace_id)).await
-}
-#[tauri::command]
 pub async fn workbench_studio_history(
     workspace_id: String,
     object_id: String,
@@ -569,92 +563,6 @@ pub async fn workbench_focus_review(
 ) -> WorkbenchResult<crate::workbench::release::ReviewHandoff> {
     run_store(move |store| crate::workbench::project::focus_review(&store, request)).await
 }
-#[tauri::command]
-pub async fn workbench_compare_experiment(
-    request: crate::workbench::project::CompareExperimentRequest,
-) -> WorkbenchResult<Value> {
-    run_store(move |store| crate::workbench::project::compare_experiment(&store, request)).await
-}
-#[tauri::command]
-pub async fn workbench_compare_series(
-    workspace_id: String,
-    left_id: String,
-    right_id: String,
-    rationale: String,
-) -> WorkbenchResult<Value> {
-    run_store(move |store| {
-        crate::workbench::project::compare_series(
-            &store,
-            &workspace_id,
-            &left_id,
-            &right_id,
-            &rationale,
-        )
-    })
-    .await
-}
-#[tauri::command]
-pub async fn workbench_binding_coverage(workspace_id: String) -> WorkbenchResult<Vec<Value>> {
-    run_store(move |store| crate::workbench::project::binding_coverage(&store, &workspace_id)).await
-}
-#[tauri::command]
-pub async fn workbench_bibliography_preview(
-    workspace_id: String,
-    revision_id: String,
-) -> WorkbenchResult<Value> {
-    run_store(move |store| {
-        crate::workbench::project::preview_bibliography(&store, &workspace_id, &revision_id)
-    })
-    .await
-}
-#[tauri::command]
-pub async fn workbench_citation_navigation(
-    workspace_id: String,
-    revision_id: String,
-) -> WorkbenchResult<Value> {
-    run_store(move |store| {
-        crate::workbench::project::citation_navigation(&store, &workspace_id, &revision_id)
-    })
-    .await
-}
-#[tauri::command]
-pub async fn workbench_source_passage(
-    workspace_id: String,
-    version_id: String,
-    start: usize,
-    length: usize,
-) -> WorkbenchResult<crate::workbench::research::SourceReadResult> {
-    run_store(move |store| {
-        crate::workbench::research::source_read(
-            &store,
-            &workspace_id,
-            &version_id,
-            start,
-            length.min(64 * 1024),
-        )
-    })
-    .await
-}
-#[tauri::command]
-pub async fn workbench_zotero_preview(
-    collection: Option<String>,
-    start: usize,
-    expected_server: Option<String>,
-) -> WorkbenchResult<crate::workbench::project::ZoteroPreview> {
-    crate::workbench::project::zotero_preview(collection, start, expected_server).await
-}
-#[tauri::command]
-pub async fn workbench_zotero_import(
-    workspace_id: String,
-    preview: crate::workbench::project::ZoteroPreview,
-    selected: Vec<String>,
-) -> WorkbenchResult<Value> {
-    run_store(move |store| {
-        crate::workbench::project::import_zotero(&store, &workspace_id, preview, &selected)
-    })
-    .await
-}
-
 #[tauri::command]
 pub async fn workbench_studio_export_file(path: String, content: String) -> WorkbenchResult<()> {
     run_store(move |_store| {

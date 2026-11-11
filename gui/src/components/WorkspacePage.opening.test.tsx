@@ -90,12 +90,6 @@ function RailHost({ children }: { children: ReactNode }) {
     </NavRailSlotProvider>
   );
 }
-const mount = async () => {
-  const view = render(<WorkspacePage />, { wrapper: RailHost });
-  await screen.findByRole("heading", { name: "Policy discussion" });
-  return view;
-};
-
 it("puts the cursor in the composer when a conversation opens", async () => {
   const second = { ...snapshot.session, id: "second", title: "Second chat" };
   mocks.listSessions.mockResolvedValue({
@@ -104,7 +98,19 @@ it("puts the cursor in the composer when a conversation opens", async () => {
   mocks.conversationSnapshot.mockImplementation(async (id: string) =>
     id === second.id ? { ...snapshot, session: second } : snapshot,
   );
-  await mount();
+  render(
+    <WorkspacePage
+      entryRequest={1}
+      entrySurface="chat"
+      entryTarget={{
+        page: "workspace",
+        sessionId: snapshot.session.id,
+        surface: "chat",
+      }}
+    />,
+    { wrapper: RailHost },
+  );
+  await screen.findByRole("heading", { name: "Policy discussion" });
   fireEvent.click(screen.getByRole("button", { name: "Second chat" }));
   await screen.findByRole("heading", { name: "Second chat" });
   await waitFor(() => expect(screen.getByLabelText("Message")).toHaveFocus());

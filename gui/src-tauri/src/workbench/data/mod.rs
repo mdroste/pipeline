@@ -1,10 +1,11 @@
 //! Immutable tabular vintages and declared sample definitions. No rows enter context implicitly.
 //!
 //! `catalog` owns capture, previews and samples; `csv`, `dta` and `xlsx` are
-//! the bounded format readers; `connectors` owns statistical-source requests;
-//! `file_table` and `delimited_table` show live files in the viewer.
+//! the bounded format readers. `file_table` and `delimited_table` show live files in the viewer.
 mod catalog;
-pub mod connectors;
+// Earlier captures retain their provenance. Connector qualification runs only in tests.
+#[cfg(test)]
+mod connectors;
 mod csv;
 mod delimited_table;
 mod dta;
@@ -14,12 +15,11 @@ mod profile;
 mod tests;
 mod xlsx;
 
-#[cfg(test)]
-pub(crate) use catalog::import_bytes;
-pub(crate) use catalog::import_capture;
 pub use catalog::{
     commit, import, import_metadata, prepare_local, preview_rows, save_sample, PreparedDataset,
 };
+#[cfg(test)]
+pub(crate) use catalog::{import_bytes, import_capture};
 pub use delimited_table::{delimited_table, TableResume};
 pub use file_table::{file_table, FileTable};
 pub use profile::{MissingCell, RowPreview};
@@ -122,6 +122,26 @@ pub struct DataAcquisition {
     pub frequency: Option<String>,
     pub transformation: Option<String>,
 }
+/// Terms, notice and citation retained on datasets captured by earlier versions.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectorProvenance {
+    /// `fred`, `dbnomics` or `world_bank`.
+    pub connector: String,
+    /// Exact request parameters, without credentials.
+    pub query: Value,
+    /// Request URLs, without credentials.
+    pub request_urls: Vec<String>,
+    /// The source's own "last updated" or indexing time, when it reports one.
+    pub last_updated: Option<String>,
+    pub licence: String,
+    /// Text the source requires wherever its data are shown.
+    pub notice: Option<String>,
+    pub citation: String,
+    pub terms_url: String,
+    pub terms_reviewed: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ValueLabel {
@@ -179,7 +199,7 @@ pub struct DatasetVersion {
     pub source_format: Option<SourceFormat>,
     /// Statistical-source terms, notice and citation recorded at capture.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub connector: Option<connectors::ConnectorProvenance>,
+    pub connector: Option<ConnectorProvenance>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

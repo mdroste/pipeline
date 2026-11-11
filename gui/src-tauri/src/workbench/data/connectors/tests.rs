@@ -20,11 +20,9 @@ fn status(code: u16, body: &str) -> Fetched {
 }
 fn fred() -> FredRequest {
     FredRequest {
-        workspace_id: "w".into(),
         series_id: "GDP".into(),
         vintage: "2020-01-01".into(),
         api_key: KEY.into(),
-        operation_id: "op".into(),
     }
 }
 const FRED_SERIES: &str = r#"{"realtime_start":"2020-01-01","realtime_end":"2020-01-01","seriess":[{"id":"GDP","realtime_start":"2020-01-01","realtime_end":"2020-01-01","title":"Gross Domestic Product","observation_start":"1947-01-01","observation_end":"2019-07-01","frequency":"Quarterly","frequency_short":"Q","units":"Billions of Dollars","units_short":"Bil. of $","seasonal_adjustment":"Seasonally Adjusted Annual Rate","last_updated":"2019-12-20 07:56:02-06","popularity":93,"notes":"BEA Account Code: A191RC"}]}"#;
@@ -291,10 +289,13 @@ fn world_bank_refuses_invalid_queries_api_errors_and_partial_pages() {
 }
 
 #[test]
-fn series_requests_deserialize_and_record_captures_or_failures() {
-    let request: SeriesRequest = serde_json::from_value(json!({"workspaceId":"w","operationId":"op","query":{"connector":"world_bank","indicator":"SL.UEM.TOTL.ZS","countries":"USA","dateRange":null}})).unwrap();
-    assert!(matches!(request.query, SeriesQuery::WorldBank(_)));
-    let request: SeriesRequest = serde_json::from_value(json!({"workspaceId":"w","operationId":"op","query":{"connector":"dbnomics","seriesId":"IMF/WEO:2024-10/USA.NGDP_RPCH.pcent_change"}})).unwrap();
+fn series_queries_deserialize_and_record_captures_or_failures() {
+    let query: SeriesQuery = serde_json::from_value(json!({"connector":"world_bank","indicator":"SL.UEM.TOTL.ZS","countries":"USA","dateRange":null})).unwrap();
+    assert!(matches!(query, SeriesQuery::WorldBank(_)));
+    let query: SeriesQuery = serde_json::from_value(
+        json!({"connector":"dbnomics","seriesId":"IMF/WEO:2024-10/USA.NGDP_RPCH.pcent_change"}),
+    )
+    .unwrap();
     assert!(
         serde_json::from_value::<SeriesQuery>(json!({"connector":"bls","seriesId":"x"})).is_err()
     );
@@ -310,11 +311,11 @@ fn series_requests_deserialize_and_record_captures_or_failures() {
         .unwrap()
         .record
         .id;
-    let SeriesQuery::Dbnomics(q) = &request.query else {
+    let SeriesQuery::Dbnomics(q) = &query else {
         unreachable!()
     };
     let capture = q.capture(vec![ok(DBNOMICS)], AT);
-    let record = record_series(&store, &ws, &request.query, capture, "capture").unwrap();
+    let record = record_series(&store, &ws, &query, capture, "capture").unwrap();
     assert_eq!(record.kind, "dataset");
     assert_eq!(record.body["connector"]["connector"], "dbnomics");
     assert!(record.body["connector"]["notice"]
@@ -328,7 +329,7 @@ fn series_requests_deserialize_and_record_captures_or_failures() {
     let failed = record_series(
         &store,
         &ws,
-        &request.query,
+        &query,
         Err(WorkbenchError::invalid("offline")),
         "failed",
     )
@@ -345,18 +346,23 @@ fn series_requests_deserialize_and_record_captures_or_failures() {
 #[tokio::test]
 #[ignore = "live DBnomics API; run explicitly when qualifying connectors"]
 async fn live_dbnomics_series() {
-    let c = fetch(&dbnomics("IMF/WEO:2024-10/USA.NGDP_RPCH.pcent_change"))
-        .await
-        .unwrap();
+    let c = acquire_series(&SeriesQuery::Dbnomics(dbnomics(
+        "IMF/WEO:2024-10/USA.NGDP_RPCH.pcent_change",
+    )))
+    .await
+    .unwrap();
     assert!(c.csv.len() > 100);
     assert!(c.provenance.notice.unwrap().contains("DBnomics"));
 }
 #[tokio::test]
 #[ignore = "live World Bank API; run explicitly when qualifying connectors"]
 async fn live_world_bank_indicator() {
-    let c = fetch(&world_bank("USA;BRA", Some("2015:2020")))
-        .await
-        .unwrap();
+    let c = acquire_series(&SeriesQuery::WorldBank(world_bank(
+        "USA;BRA",
+        Some("2015:2020"),
+    )))
+    .await
+    .unwrap();
     assert!(String::from_utf8(c.csv).unwrap().contains("\"BRA\""));
     assert!(c.provenance.licence.contains("CC BY 4.0"));
 }
